@@ -700,7 +700,9 @@ spec is the contract.
   it reads the runs, the analysis, the usage, and the open thread.
 - **The Host and Origin check.** The server answers only a request whose `Host`
   header is `127.0.0.1:<port>` or `localhost:<port>`. An `Origin` header must name
-  the same address. Each other request gets 403 `forbidden`. A route test that
+  the same address. Each other request gets 403 `forbidden`. The one exception is
+  `Origin: null` on a `GET` or `HEAD` under `/report-sessions/`, because a sandboxed
+  report page has an opaque origin. `/api/*` keeps the full check. A route test that
   calls `request()` on the app sends no socket, thus it passes the check.
 - **The web page and the browser sign-in.** Each server serves a placeholder page at
   `/gui/`, in each build channel. `inflexa gui` signs a browser in: it gets a

@@ -8,6 +8,7 @@ import {
     createCitationResolver,
     createSandboxClient,
     PAGE_ASSETS,
+    type MakeSessionPagePublisher,
     type CoreRuntimeDeps,
     type CreateSandboxClientConfig,
     type EmbeddingProvider,
@@ -833,6 +834,25 @@ describe("bootHarnessRuntime", () => {
         // and boot follow the gate, and the lock/pool sit inside the boot's try block).
         expect(calls).not.toContain("postgres");
         expect(calls).not.toContain("boot");
+    });
+});
+
+describe("bootHarnessRuntime — the session-page publisher", () => {
+    const publisher: MakeSessionPagePublisher = () => ({ mintSessionPageAccess: () => errAsync({ error: { message: "unused" } }) });
+
+    test("puts the given factory on core, and binds no page-URL resolver", async () => {
+        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig(), makeSessionPagePublisher: publisher });
+
+        expect(lastCore?.makeSessionPagePublisher).toBe(publisher);
+        expect(lastCore?.resolveReportPageUrl).toBeUndefined();
+    });
+
+    test("leaves the factory off core when the option is absent", async () => {
+        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+
+        expect(lastCore).not.toBeNull();
+        expect(Object.hasOwn(lastCore ?? {}, "makeSessionPagePublisher")).toBe(false);
+        expect(lastCore?.resolveReportPageUrl).toBeUndefined();
     });
 });
 

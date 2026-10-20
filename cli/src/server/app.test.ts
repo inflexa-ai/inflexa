@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PAGE_ASSETS } from "@inflexa-ai/harness/report-render/assets.js";
 import { errAsync, ok, okAsync } from "neverthrow";
 
 import type { ServerActivity, ServerBootState, ServerState, ShutdownMode } from "../api/server.ts";
@@ -15,10 +16,11 @@ import { writeMarker } from "../modules/anchor/marker.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { signIn } from "../test_support/browser_session.ts";
 import { freshDb } from "../test_support/db.ts";
-import { idleLifecycle, startTestServer } from "../test_support/server.ts";
+import { idleLifecycle, startTestServer, type TestServer } from "../test_support/server.ts";
 import { buildApp } from "./app.ts";
 import type { ServerBoot } from "./boot.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
+import { createPageGrantStore } from "./report_page_grants.ts";
 import { serverRoutes, type ServerRouteOpts } from "./routes/server.ts";
 
 const TOKEN = "a".repeat(64);
@@ -44,7 +46,7 @@ function fakeBoot(state: ServerBootState): { boot: ServerBoot; starts: () => num
 
 describe("the credential check", () => {
     const { boot } = fakeBoot(STARTING);
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
 
     test("no Authorization header gives 401 `unauthorized`", async () => {
         const response = await app.request("/api/v1/server");
@@ -74,7 +76,7 @@ describe("the credential check", () => {
 describe("the file system routes", () => {
     // A boot with no runtime: the routes must answer while the runtime boot is not ready.
     const { boot } = fakeBoot(STARTING);
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
     const listPath = "/api/v1/fs/list?path=%2F";
 
     test("no credential gives 401, and the bearer token gives 200 before the runtime boot is ready", async () => {
@@ -89,7 +91,7 @@ describe("the file system routes", () => {
 
 describe("the file route", () => {
     const { boot } = fakeBoot(STARTING);
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
     const FIGURE = "runs/R/A/figures/volcano.png";
     let home = "";
 
@@ -134,7 +136,7 @@ describe("the file route", () => {
 
 describe("the session cookie", () => {
     const { boot } = fakeBoot(STARTING);
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
     const SIGN_IN_AGAIN = "Run `inflexa gui` again.";
 
     async function expectUnauthorized(response: Response, message: string): Promise<void> {
@@ -164,7 +166,7 @@ describe("the session cookie", () => {
 
     test("a cookie of a restarted server gives 401 with the message that names `inflexa gui`", async () => {
         const cookie = await signIn(app, TOKEN);
-        const restarted = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+        const restarted = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
         await expectUnauthorized(await restarted.request("/api/v1/server", { headers: { Cookie: cookie } }), SIGN_IN_AGAIN);
     });
 
@@ -220,7 +222,7 @@ describe("the session cookie", () => {
 
 describe("the Host and Origin check", () => {
     const { boot } = fakeBoot(STARTING);
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
     // The Bun server that `Bun.serve` passes as `c.env`. The check reads the bound port from it.
     const listener = { port: 8436 };
     const send = async (headers: Record<string, string>, path = "/api/v1/server"): Promise<Response> => await app.request(path, { headers }, listener);
@@ -278,8 +280,52 @@ describe("the Host and Origin check", () => {
     });
 });
 
+describe("the Origin null exception of the report pages", () => {
+    // A font of the page asset manifest needs no grant, thus the page route answers it past the proof.
+    const FONT_PATH = `/report-sessions/a1/t1/assets/${PAGE_ASSETS.find((asset) => asset.file.endsWith(".woff2"))!.file}`;
+    let server: TestServer;
+
+    beforeEach(() => {
+        server = startTestServer();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+    });
+
+    async function expectForbidden(response: Response, header: "Host" | "Origin"): Promise<void> {
+        expect(response.status).toBe(403);
+        // An error body of the app is an `ApiError`.
+        const body = (await response.json()) as { error: string; message: string };
+        expect(body.error).toBe("forbidden");
+        expect(body.message).toStartWith(`The ${header} header must be`);
+    }
+
+    test("a GET and a HEAD under `/report-sessions/` with `Origin: null` pass the check and reach the page route", async () => {
+        for (const method of ["GET", "HEAD"]) {
+            const response = await fetch(`${server.baseUrl}${FONT_PATH}`, { method, headers: { Origin: "null" } });
+            // 404 comes from the page route, which finds no analysis `a1`. The check answered 403 before the route.
+            expect(response.status).toBe(404);
+            expect(response.headers.get("Content-Security-Policy")).toBe("sandbox allow-scripts allow-downloads");
+        }
+    });
+
+    test("an `Origin: null` request to `/api/` gets 403 `forbidden`, also with the bearer token", async () => {
+        const auth = { Authorization: `Bearer ${server.token}` };
+        await expectForbidden(await fetch(`${server.baseUrl}/api/v1/projects`, { headers: { ...auth, Origin: "null" } }), "Origin");
+        // A HEAD response has no body to read.
+        expect((await fetch(`${server.baseUrl}/api/v1/server`, { method: "HEAD", headers: { ...auth, Origin: "null" } })).status).toBe(403);
+    });
+
+    test("the exception is for GET and HEAD only, and it keeps the Host check and the check of a named origin", async () => {
+        await expectForbidden(await fetch(`${server.baseUrl}${FONT_PATH}`, { method: "POST", headers: { Origin: "null" } }), "Origin");
+        await expectForbidden(await fetch(`${server.baseUrl}${FONT_PATH}`, { headers: { Origin: "null", Host: `rebind.example:${server.port}` } }), "Host");
+        await expectForbidden(await fetch(`${server.baseUrl}${FONT_PATH}`, { headers: { Origin: "http://rebind.example" } }), "Origin");
+    });
+});
+
 describe("the web GUI", () => {
-    const deps = { token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(STARTING).boot };
+    const deps = { token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(STARTING).boot, pageGrants: createPageGrantStore() };
 
     test("the default app serves the placeholder page at /gui/ with no credential", async () => {
         const response = await buildApp(deps).request("/gui/");
@@ -320,7 +366,12 @@ describe("GET /api/v1/server", () => {
             },
         ];
         for (const state of states) {
-            const response = await buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(state).boot }).request("/api/v1/server", {
+            const response = await buildApp({
+                token: TOKEN,
+                lifecycle: idleLifecycle(),
+                boot: fakeBoot(state).boot,
+                pageGrants: createPageGrantStore(),
+            }).request("/api/v1/server", {
                 headers: AUTH,
             });
             expect(response.status).toBe(200);
@@ -332,7 +383,7 @@ describe("GET /api/v1/server", () => {
         const ready: ServerBootState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "claude-test" } };
         for (const state of [STARTING, ready]) {
             const lifecycle = recordingLifecycle(0);
-            const app = buildApp({ token: TOKEN, lifecycle, boot: fakeBoot(state).boot });
+            const app = buildApp({ token: TOKEN, lifecycle, boot: fakeBoot(state).boot, pageGrants: createPageGrantStore() });
             const read = async (): Promise<unknown> => (await app.request("/api/v1/server", { headers: AUTH })).json();
             expect(await read()).toEqual({ ...state, stopping: null });
 
@@ -358,10 +409,13 @@ describe("POST /api/v1/server/boot", () => {
             failedStep: null,
         };
         const fake = fakeBoot(failed);
-        const response = await buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fake.boot }).request("/api/v1/server/boot", {
-            method: "POST",
-            headers: AUTH,
-        });
+        const response = await buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fake.boot, pageGrants: createPageGrantStore() }).request(
+            "/api/v1/server/boot",
+            {
+                method: "POST",
+                headers: AUTH,
+            },
+        );
         expect(response.status).toBe(202);
         expect(await response.json()).toEqual({ ...failed, stopping: null });
         expect(fake.starts()).toBe(1);
@@ -370,10 +424,13 @@ describe("POST /api/v1/server/boot", () => {
     test("gives the mode of a stop in progress in the 202 body", async () => {
         const lifecycle = recordingLifecycle(0);
         lifecycle.requestShutdown("now");
-        const response = await buildApp({ token: TOKEN, lifecycle, boot: fakeBoot(STARTING).boot }).request("/api/v1/server/boot", {
-            method: "POST",
-            headers: AUTH,
-        });
+        const response = await buildApp({ token: TOKEN, lifecycle, boot: fakeBoot(STARTING).boot, pageGrants: createPageGrantStore() }).request(
+            "/api/v1/server/boot",
+            {
+                method: "POST",
+                headers: AUTH,
+            },
+        );
         expect(response.status).toBe(202);
         expect(await response.json()).toMatchObject({ phase: "starting", stopping: "now" });
     });
@@ -381,7 +438,7 @@ describe("POST /api/v1/server/boot", () => {
 
 describe("a handler that throws", () => {
     test("gives 500 `internal_error` with generic text, never the cause", async () => {
-        const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(STARTING).boot });
+        const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(STARTING).boot, pageGrants: createPageGrantStore() });
         app.get("/api/v1/boom", () => {
             throw new Error("secret internal detail");
         });
@@ -395,7 +452,7 @@ describe("a handler that throws", () => {
 
 describe("the client against the app (no port)", () => {
     const state: ServerBootState = { ...identity, phase: "ready", connection: { provider: "openai", mode: "direct", model: "gpt-test" } };
-    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(state).boot });
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: fakeBoot(state).boot, pageGrants: createPageGrantStore() });
     const clientWith = (token: string): ClientOpts => ({
         discover: () => ok({ baseUrl: "http://127.0.0.1:8436", token }),
         fetch: async (url, init) => await app.request(url, init),
@@ -436,7 +493,7 @@ describe("POST /api/v1/server/shutdown", () => {
 
     test.each([["now"], ["drain"]] as const)("mode %s gives 202 at once, with the mode and the running turns", async (mode) => {
         const lifecycle = recordingLifecycle(2);
-        const response = await buildApp({ token: TOKEN, boot: idle, lifecycle }).request("/api/v1/server/shutdown", {
+        const response = await buildApp({ token: TOKEN, boot: idle, lifecycle, pageGrants: createPageGrantStore() }).request("/api/v1/server/shutdown", {
             method: "POST",
             headers: { ...AUTH, "Content-Type": "application/json" },
             body: JSON.stringify({ mode }),
@@ -448,7 +505,7 @@ describe("POST /api/v1/server/shutdown", () => {
 
     test("a mode that is not `now` or `drain` gives 400 `validation_error`, and starts no stop", async () => {
         const lifecycle = recordingLifecycle(0);
-        const response = await buildApp({ token: TOKEN, boot: idle, lifecycle }).request("/api/v1/server/shutdown", {
+        const response = await buildApp({ token: TOKEN, boot: idle, lifecycle, pageGrants: createPageGrantStore() }).request("/api/v1/server/shutdown", {
             method: "POST",
             headers: { ...AUTH, "Content-Type": "application/json" },
             body: JSON.stringify({ mode: "later" }),
@@ -460,7 +517,7 @@ describe("POST /api/v1/server/shutdown", () => {
 
     test("needs the bearer token", async () => {
         const lifecycle = recordingLifecycle(0);
-        const response = await buildApp({ token: TOKEN, boot: idle, lifecycle }).request("/api/v1/server/shutdown", {
+        const response = await buildApp({ token: TOKEN, boot: idle, lifecycle, pageGrants: createPageGrantStore() }).request("/api/v1/server/shutdown", {
             method: "POST",
             body: JSON.stringify({ mode: "now" }),
         });

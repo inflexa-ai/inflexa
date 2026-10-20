@@ -35,6 +35,23 @@ type RangeRequest = ByteRange | "none" | "unsatisfiable";
 
 const FORBIDDEN_MESSAGE = "The path is outside the files of the analysis.";
 
+/** What differs between the callers of {@link serveFile}. */
+export type FileResponseOpts = {
+    /** Send the file as a download, with a `Content-Disposition` of the requested name. */
+    readonly download: boolean;
+    /**
+     * Headers on each response that carries a file, a 304 included. A value here replaces the default of the same
+     * name, thus a caller that sets `Content-Security-Policy` replaces the type-based `sandbox`, and one that sets
+     * `Cache-Control` replaces `no-cache`.
+     */
+    readonly headers: Readonly<Record<string, string>>;
+    /** The response for a path that is not a regular file (a folder, a socket). */
+    readonly notAFile: (c: Context<ServerEnv>) => Response;
+};
+
+/** The {@link FileResponseOpts} of the file route of an analysis. */
+const FILE_ROUTE_RESPONSE: FileResponseOpts = { download: false, headers: {}, notAFile };
+
 /**
  * The route `GET {A}/files?path=<path>`: the bytes of one file of an analysis. A relative path must have its real path
  * inside the workspace root, and an absolute path must have its real path inside a declared input. The body streams
@@ -60,27 +77,45 @@ export function fileRoutes(opts: FileRouteOpts = DEFAULT_FILE_ROUTE_OPTS): Hono<
 
         const located = await locateTarget(c, c.req.param("analysisId") ?? "", path);
         if (located.isErr()) return located.error;
-        const verdict = await classifyRealPath(located.value.roots, located.value.target);
-        if (verdict.isErr()) return unreadable(c, verdict.error.cause);
-        switch (verdict.value.type) {
-            case "outside":
-                return apiError(c, "forbidden", FORBIDDEN_MESSAGE);
-            case "absent":
-                return verdict.value.insideAsText ? apiError(c, "not_found", "No file at the path.") : apiError(c, "forbidden", FORBIDDEN_MESSAGE);
-            case "in":
-                break;
-            default: {
-                const exhaustive: never = verdict.value;
-                throw new Error(`unhandled real-path verdict: ${JSON.stringify(exhaustive)}`);
-            }
-        }
-
-        const handle = await ResultAsync.fromPromise(opts.open(verdict.value.realPath, OPEN_FLAGS), (cause) => cause);
-        if (handle.isErr()) return openFailure(c, handle.error);
-        return serveHandle(c, opts, handle.value, path, download === "1");
+        return serveFile(c, opts, located.value.roots, located.value.target, path, { ...FILE_ROUTE_RESPONSE, download: download === "1" });
     });
 
     return routes;
+}
+
+/**
+ * The response for `target`: the real-path test against `roots`, the open that refuses a final symbolic link, and
+ * the stat, the tag, the range, and the streamed body. `name` gives the content type and the download name. The
+ * file route of an analysis and the page route of a report session both call it, thus one implementation opens and
+ * streams each served file. A test failure gives 403 `forbidden`, and an absent path inside a root gives 404
+ * `not_found`.
+ */
+export async function serveFile(
+    c: Context<ServerEnv>,
+    opts: FileRouteOpts,
+    roots: readonly ReadRoot[],
+    target: string,
+    name: string,
+    response: FileResponseOpts,
+): Promise<Response> {
+    const verdict = await classifyRealPath(roots, target);
+    if (verdict.isErr()) return unreadable(c, verdict.error.cause);
+    switch (verdict.value.type) {
+        case "outside":
+            return apiError(c, "forbidden", FORBIDDEN_MESSAGE);
+        case "absent":
+            return verdict.value.insideAsText ? apiError(c, "not_found", "No file at the path.") : apiError(c, "forbidden", FORBIDDEN_MESSAGE);
+        case "in":
+            break;
+        default: {
+            const exhaustive: never = verdict.value;
+            throw new Error(`unhandled real-path verdict: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+
+    const handle = await ResultAsync.fromPromise(opts.open(verdict.value.realPath, OPEN_FLAGS), (cause) => cause);
+    if (handle.isErr()) return openFailure(c, handle.error, response);
+    return serveHandle(c, opts, handle.value, name, response);
 }
 
 /**
@@ -103,12 +138,12 @@ async function locateTarget(c: Context<ServerEnv>, analysisId: string, path: str
 }
 
 /** The 403 `forbidden` response for a failure of the disk that has no named meaning, with the code of the operating system in `details.code`. */
-function unreadable(c: Context<ServerEnv>, cause: unknown): Response {
+export function unreadable(c: Context<ServerEnv>, cause: unknown): Response {
     const reason = cause instanceof Error ? cause.message : String(cause);
     return apiError(c, "forbidden", `The server cannot read the file: ${reason}`, { code: errnoCode(cause) });
 }
 
-function openFailure(c: Context<ServerEnv>, cause: unknown): Response {
+function openFailure(c: Context<ServerEnv>, cause: unknown, response: FileResponseOpts): Response {
     switch (errnoCode(cause)) {
         // `O_NOFOLLOW`: a symbolic link replaced the last part of the path after the test.
         case "ELOOP":
@@ -119,7 +154,7 @@ function openFailure(c: Context<ServerEnv>, cause: unknown): Response {
         // A Unix socket does not open: `EOPNOTSUPP` on macOS, `ENXIO` on Linux. It is not a regular file, as `serveHandle` tells.
         case "EOPNOTSUPP":
         case "ENXIO":
-            return notAFile(c);
+            return response.notAFile(c);
         default:
             return unreadable(c, cause);
     }
@@ -133,7 +168,7 @@ function notAFile(c: Context<ServerEnv>): Response {
  * The response for an open file. This function owns `handle`: it closes the handle for each response that has no
  * body, and the body stream closes it for a response that has one.
  */
-async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: FileHandle, path: string, download: boolean): Promise<Response> {
+async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: FileHandle, path: string, response: FileResponseOpts): Promise<Response> {
     const stats = await ResultAsync.fromPromise(handle.stat({ bigint: true }), (cause) => cause);
     if (stats.isErr()) {
         await closeHandle(handle);
@@ -142,7 +177,7 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
     const facts = stats.value;
     if (!facts.isFile()) {
         await closeHandle(handle);
-        return notAFile(c);
+        return response.notAFile(c);
     }
     const size = Number(facts.size);
     // The fields come from the open handle, thus the tag, the length, and the bytes describe one file. The
@@ -152,6 +187,7 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
     const headers = new Headers({ ETag: etag, "Cache-Control": "no-cache" });
     if (matchesNoneMatch(c.req.header("If-None-Match"), etag)) {
         await closeHandle(handle);
+        for (const [header, value] of Object.entries(response.headers)) headers.set(header, value);
         return new Response(null, { status: 304, headers });
     }
 
@@ -162,7 +198,8 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
     headers.set("X-Content-Type-Options", "nosniff");
     headers.set("Accept-Ranges", "bytes");
     if (SANDBOXED_TYPES.has((type.split(";", 1)[0] ?? "").trim().toLowerCase())) headers.set("Content-Security-Policy", "sandbox");
-    if (download) headers.set("Content-Disposition", attachment(name));
+    if (response.download) headers.set("Content-Disposition", attachment(name));
+    for (const [header, value] of Object.entries(response.headers)) headers.set(header, value);
 
     // A range applies only when the `If-Range` header is absent or names the current tag.
     const ifRange = c.req.header("If-Range");

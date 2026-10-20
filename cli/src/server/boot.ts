@@ -1,3 +1,4 @@
+import type { MakeSessionPagePublisher } from "@inflexa-ai/harness";
 import { err, type Result } from "neverthrow";
 
 import pkg from "../../package.json";
@@ -35,8 +36,13 @@ export type ServerBoot = {
 
 /** The work of a boot, and the reactions to its outcome. Tests replace each one. */
 export type ServerBootOpts = {
-    /** Make the machine ready (containers, proxy, embedder), then boot the harness runtime. It reports its steps through `progress`. */
-    readonly boot: (progress: BootProgressOpts) => Promise<Result<HarnessRuntime, ServerBootError>>;
+    /**
+     * Make the machine ready (containers, proxy, embedder), then boot the harness runtime. It reports its steps
+     * through `progress`, and it binds `makeSessionPagePublisher` on the runtime when that value is present.
+     */
+    readonly boot: (progress: BootProgressOpts, makeSessionPagePublisher?: MakeSessionPagePublisher) => Promise<Result<HarnessRuntime, ServerBootError>>;
+    /** The hosted view of a report page: the realization over the grant store of this server. */
+    readonly makeSessionPagePublisher?: MakeSessionPagePublisher;
     /** The clock of the step times. */
     readonly now: () => Date;
     /** Runs one time at the ready edge. */
@@ -148,7 +154,7 @@ export function createServerBoot(startedAt: Date, opts: ServerBootOpts = DEFAULT
         };
         // The second handler keeps the phase from staying `starting` forever when the boot throws past
         // its own Result channel.
-        attempt = opts.boot(progress).then(
+        attempt = opts.boot(progress, opts.makeSessionPagePublisher).then(
             (result) =>
                 settle(
                     result.match(
@@ -173,7 +179,10 @@ export function createServerBoot(startedAt: Date, opts: ServerBootOpts = DEFAULT
  * the harness config gate, then the runtime boot. The server boots with no analysis: the runtime resolves
  * the farm inventory of each analysis from the session of each call.
  */
-async function bootServerRuntime(progress: BootProgressOpts): Promise<Result<HarnessRuntime, ServerBootError>> {
+async function bootServerRuntime(
+    progress: BootProgressOpts,
+    makeSessionPagePublisher?: MakeSessionPagePublisher,
+): Promise<Result<HarnessRuntime, ServerBootError>> {
     const connection = resolveModelConnection();
     if (connection.configError) return err(fromHarnessBootError({ type: "model_connection_invalid", issues: connection.configError.issues }));
 
@@ -190,7 +199,7 @@ async function bootServerRuntime(progress: BootProgressOpts): Promise<Result<Har
     const config = resolveHarnessConfig();
     if (config.configError) return err(fromHarnessBootError({ type: "harness_config_invalid", issues: config.configError.issues }));
 
-    return (await bootHarnessRuntime({ config })).mapErr(fromHarnessBootError);
+    return (await bootHarnessRuntime({ config, makeSessionPagePublisher })).mapErr(fromHarnessBootError);
 }
 
 function fromHarnessBootError(e: HarnessBootError): ServerBootError {

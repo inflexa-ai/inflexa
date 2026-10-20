@@ -1,7 +1,7 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync, type Result } from "neverthrow";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
@@ -56,10 +56,10 @@ import {
 import { createProject, deleteProject, fetchProjects } from "../client/projects.ts";
 import { describeBusyReason, type AnalysisSummary, type DeleteAnalysisResponse, type InputView, type WorkspaceDisposalMode } from "../api/analyses.ts";
 import { DEFAULT_PER_PAGE, MAX_PER_PAGE } from "../api/common.ts";
-import type { PurgedThread, ReportPageFate, ThreadList, ThreadSummary } from "../api/conversation.ts";
-import { deleteThread, fetchThread, fetchThreads, purgeThread, restoreThread, updateThread } from "../client/conversation.ts";
+import type { PurgedThread, ReportPageFate, ReportSessionAccess, ThreadList, ThreadSummary } from "../api/conversation.ts";
+import { deleteThread, fetchThread, fetchThreads, mintReportSessionAccess, purgeThread, restoreThread, updateThread } from "../client/conversation.ts";
 import type { ProjectSummary } from "../api/projects.ts";
-import { openExternal } from "../lib/open_external.ts";
+import { openExternal, type OpenExternalError } from "../lib/open_external.ts";
 import type { AgentEffort, AgentName, AgentSelection, ListedModelView as ListedModel, MeView, ModelList } from "../api/machine.ts";
 import { fetchAgents, fetchMe, fetchModels, fetchSettings, updateAgent } from "../client/machine.ts";
 import { createTransfer } from "../client/store.ts";
@@ -216,6 +216,10 @@ export type SessionOpts = {
     readonly workingDirFor: (a: Analysis) => string | null | Promise<string | null>;
     /** Re-read the open thread's row into the sidebar snapshot. Real: {@link refreshOpenThread}. */
     readonly refreshThread: (analysisId: string, threadId: string) => void;
+    /** Ask the server for a fresh grant on the page of a report session. Real: `POST {A}/report-sessions/{T}/access`. */
+    readonly mintReportPageAccess: (analysisId: string, threadId: string) => ResultAsync<ReportSessionAccess, ClientError>;
+    /** Open a URL in the default browser of the machine. Real: {@link openExternal}. */
+    readonly openUrl: (url: string) => Result<void, OpenExternalError>;
     /** Raise a transient toast. Real: {@link notify}. Injected so refusals and degrades are observable. */
     readonly notify: (notice: Notice) => void;
 };
@@ -263,6 +267,8 @@ export const DEFAULT_SESSION_OPTS: SessionOpts = {
     resolveThreadId,
     workingDirFor,
     refreshThread: (analysisId, threadId) => void refreshOpenThread(analysisId, threadId),
+    mintReportPageAccess: (analysisId, threadId) => mintReportSessionAccess(analysisId, threadId),
+    openUrl: (url) => openExternal(url),
     notify,
 };
 
@@ -1030,6 +1036,8 @@ export async function openSwitchSession(ctx: Workspace, opts: SessionOpts = DEFA
 const REPORT_LIST_FAILED = "Could not list the report sessions of this conversation.";
 const OPEN_SESSION_UNREADABLE = "Could not read this session — nothing was opened.";
 const NO_REPORT_CHILD = "No report session in this conversation — ask the agent to start one.";
+const NO_OPEN_ANALYSIS = "No analysis is open — open an analysis to open the page of a report session.";
+const NOT_A_REPORT_SESSION = "The open session is not a report session — only a report session has a page.";
 
 /**
  * The refusal a report-session flow raises before the boot reaches `ready`.
@@ -1332,6 +1340,60 @@ export async function openSwitchReportSession(ctx: Workspace, opts: SessionOpts 
     }
     if (!scopeStillOpen(ctx, analysis, threadId, opts)) return;
     openReportPicker(ctx, analysis, children.threads, threadId);
+}
+
+/**
+ * Open the page of the open report session in the default browser, through the local server.
+ *
+ * The URL comes from the access route and not from a file path: the page needs its grant and its sandbox,
+ * and a `file://` page has neither. Each open asks for a new grant, thus an older URL that expired does not
+ * stop a person who opens the page again. The refusals with no open analysis and before `ready` speak, because
+ * a leader chord dispatches by id and skips the `enabled` predicate of the command.
+ *
+ * The success notice omits the URL: it carries the grant token, and a toast is on the screen for a while.
+ * The failure notice of the opener carries it, because the person then has no other way to the page.
+ */
+export async function openReportPage(ctx: Workspace, opts: SessionOpts = DEFAULT_SESSION_OPTS): Promise<void> {
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    if (!analysis) {
+        opts.notify({ kind: "info", text: NO_OPEN_ANALYSIS });
+        return;
+    }
+    const phase = bootState().phase;
+    if (phase !== "ready" || !opts.ready()) {
+        opts.notify(reportBootNotice(phase));
+        return;
+    }
+    // An unbound thread has no row, and a thread with no row is no report child.
+    if (threadId === null) {
+        opts.notify({ kind: "info", text: NOT_A_REPORT_SESSION });
+        return;
+    }
+    const read = await readOpenThread(analysis.id, threadId, opts);
+    if (read.kind === "unreadable") {
+        opts.notify({ kind: "error", text: OPEN_SESSION_UNREADABLE });
+        return;
+    }
+    if (read.kind === "none" || read.thread.threadType !== "report") {
+        opts.notify({ kind: "info", text: NOT_A_REPORT_SESSION });
+        return;
+    }
+    const minted = await opts.mintReportPageAccess(analysis.id, threadId);
+    if (!scopeStillOpen(ctx, analysis, threadId, opts)) return;
+    minted.match(
+        (access) =>
+            opts.openUrl(access.url).match(
+                () => opts.notify({ kind: "info", text: "Opened the report page in the browser." }),
+                () => opts.notify({ kind: "warn", text: `Could not launch a browser — open it manually: ${access.url}` }),
+            ),
+        (e) =>
+            opts.notify(
+                e.type === "http" && e.status === 404
+                    ? { kind: "info", text: "This report session has no page yet — the agent renders one with a preview." }
+                    : { kind: "warn", text: `Could not open the report page: ${describeClientError(e)}` },
+            ),
+    );
 }
 
 function AnalysesListDialog(props: { analyses: AnalysisSummary[] }): JSX.Element {
@@ -2756,6 +2818,16 @@ export const commands: Command[] = [
         // where hiding the command would leave a user who searched for it with no answer at all.
         enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
         run: (ctx) => openSwitchReportSession(ctx),
+    },
+    {
+        id: "session.open-report-page",
+        title: "Open report page",
+        description: "Open the page of this report session in the browser",
+        category: "Session",
+        // Gated with its siblings, and for their reason: the thread row lives only in Postgres. The bound
+        // thread is not part of the gate — the flow names a thread that is no report session itself.
+        enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
+        run: (ctx) => openReportPage(ctx),
     },
     {
         id: "session.new",

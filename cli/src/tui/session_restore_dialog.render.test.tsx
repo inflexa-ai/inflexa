@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { okAsync } from "neverthrow";
+import { err, errAsync, okAsync } from "neverthrow";
 
 import type { ThreadList, ThreadSummary } from "../api/conversation.ts";
 import { useKeymapRoot, __resetKeybindCache } from "./keymap.ts";
@@ -54,6 +54,8 @@ function sessionOpts(page: ThreadList, notices: Notice[], restored: string[]): S
         resolveThreadId: async () => null,
         workingDirFor: () => "/work",
         refreshThread: () => {},
+        mintReportPageAccess: () => errAsync({ type: "aborted" }),
+        openUrl: () => err({ type: "open_failed", code: null, cause: null }),
         notify: (n) => notices.push(n),
     };
 }

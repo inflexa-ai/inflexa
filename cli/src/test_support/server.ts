@@ -9,6 +9,7 @@ import { env } from "../lib/env.ts";
 import { buildApp } from "../server/app.ts";
 import type { ServerBoot } from "../server/boot.ts";
 import type { ServerLifecycle } from "../server/lifecycle.ts";
+import { createPageGrantStore } from "../server/report_page_grants.ts";
 import { listen, writeServerDiscovery } from "../server/serve.ts";
 import { assertTestSandbox } from "./sandbox.ts";
 
@@ -77,7 +78,7 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
     const boot = opts.boot ?? idleBoot();
 
     // Test support fails loudly: a test with no server has nothing to run against.
-    const server = listen(buildApp({ token, boot, lifecycle: idleLifecycle() }), 0).match(
+    const server = listen(buildApp({ token, boot, lifecycle: idleLifecycle(), pageGrants: createPageGrantStore() }), 0).match(
         (s) => s,
         (e) => {
             throw new Error(`startTestServer: could not bind a free port: ${String(e.cause)}`);

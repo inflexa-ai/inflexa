@@ -30,6 +30,7 @@ import {
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
     type MachineBudget,
+    type MakeSessionPagePublisher,
     type PackageQuery,
     type PackageRequestOutcome,
     type Pool,
@@ -482,6 +483,11 @@ export function bootHarnessRuntime(
         config?: ResolvedHarnessConfig;
         connection?: ResolvedModelConnection;
         efforts?: Readonly<Record<AgentName, AgentEffort>>;
+        /**
+         * The hosted view of a report page. Only a host that serves the page passes it, the local server. A
+         * runtime that no server holds binds none, because a grant would name a page that no route serves.
+         */
+        makeSessionPagePublisher?: MakeSessionPagePublisher;
     } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
@@ -491,6 +497,7 @@ export function bootHarnessRuntime(
         options.config ?? resolveHarnessConfig(),
         options.connection ?? resolveModelConnection(),
         options.efforts ?? resolveAgentEfforts(),
+        options.makeSessionPagePublisher,
     );
     booting = attempt;
     void attempt.finally(() => {
@@ -620,6 +627,7 @@ async function bootHarnessRuntimeOnce(
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
     efforts: Readonly<Record<AgentName, AgentEffort>>,
+    makeSessionPagePublisher: MakeSessionPagePublisher | undefined,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = harnessLogger("harness");
 
@@ -1250,6 +1258,7 @@ async function bootHarnessRuntimeOnce(
                 resourcePolicy: cfg.resourcePolicy,
                 usageRecorder,
                 ...(assetsDir ? { resolveReportPageAsset: makeReportPageAssetLookup(assetsDir) } : {}),
+                ...(makeSessionPagePublisher ? { makeSessionPagePublisher } : {}),
                 // The eyes of a report session. A spawn refuses outright without them, thus this binding is
                 // what makes the report path exist here at all. The realization runs on the same pinned
                 // runtime that the sandbox uses, thus one boot names one container engine.
