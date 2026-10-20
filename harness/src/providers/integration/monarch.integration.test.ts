@@ -4,16 +4,21 @@
  * Assertions target structure and field presence, never counts or exact terms —
  * Monarch re-releases its annotation sets, so a value assertion here would fail
  * on a curation update rather than on a defect.
+ *
+ * Gated on `CORTEX_LIVE_API_TESTS`. Without the gate the block runs on each
+ * clean checkout, and the suite then depends on the network.
  */
 
 import { describe, expect, it } from "bun:test";
 
 import { getGenePhenotypeProfile } from "../../tools/lib/monarch-client.js";
 
+const LIVE = process.env.CORTEX_LIVE_API_TESTS;
+
 /** Monarch's annotation payloads carry full ontology closures and are large. */
 const TIMEOUT_MS = 120_000;
 
-describe("monarch-client", () => {
+describe.skipIf(!LIVE)("monarch-client", () => {
     it(
         "returns human phenotype associations for a well-annotated gene",
         async () => {
