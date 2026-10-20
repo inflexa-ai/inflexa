@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 #
 # Run the FULL harness test suite (unit + DB + DBOS) against ONE pgvector
-# Postgres. Bun isolates module state per test file, so a module-level
-# singleton in src/__tests__/setup/postgres.ts is NOT shared across the DB
-# files — started from inside the process, each would spin its own container.
-# This script starts ONE container, exports `CORTEX_TEST_PG_URL` (a real
-# OS-process env var, inherited by every file), runs `bun test`, and removes
-# the container on exit (pass, fail, or interrupt). CI does the same thing
-# with a `services:` container (see .github/workflows/test.yml).
+# Postgres. This script starts ONE container, exports `CORTEX_TEST_PG_URL` (a
+# real OS-process env var, inherited by every module registry), runs
+# `bun test`, and removes the container on exit (pass, fail, or interrupt).
+# Three properties set it apart from the container fallback in
+# src/__tests__/setup/postgres.ts:
+#
+#   - It needs no ryuk, because the exit trap removes the container.
+#   - It keeps one container under `--isolate` and `--parallel`, where the
+#     fallback starts one for each database test file.
+#   - It matches CI, which sets `CORTEX_TEST_PG_URL` to one `services:`
+#     container (see .github/workflows/test.yml).
 #
 # Point at an already-running Postgres instead by setting CORTEX_TEST_PG_URL
 # before invoking — the script then skips container startup:

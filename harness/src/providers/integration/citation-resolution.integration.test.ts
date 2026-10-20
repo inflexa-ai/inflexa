@@ -1,7 +1,7 @@
 /**
  * Opt-in live citation-authority contracts.
  *
- * Set CITATION_RESOLUTION_LIVE to run these cases against public upstreams.
+ * Set CORTEX_LIVE_API_TESTS to run these cases against public upstreams.
  * They stay in the normal `bun test` suite and skip as one block when that
  * network precondition is absent.
  */
@@ -11,7 +11,7 @@ import { describe, expect, it } from "bun:test";
 import { createCitationResolver, type CitationResolverConfig } from "../../citations/resolve.js";
 import type { CitationSource } from "../../citations/types.js";
 
-const LIVE = process.env.CITATION_RESOLUTION_LIVE;
+const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 const SOURCES: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed", "arxiv", "semantic_scholar"];
 
 function liveResolver(enabled: readonly CitationSource[]) {

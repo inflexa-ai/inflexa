@@ -13,16 +13,21 @@
  *
  *  2. Fallback: with no `CORTEX_TEST_PG_URL`, a testcontainers-managed
  *     container is launched on the first `getTestPool()` call. Cold start
- *     is ~3s; the `ryuk` sidecar reaps it on process exit. Because the
- *     fallback starts one container per test file (see below), it refuses
- *     to start anything unless a reaper is actually up to remove it again —
- *     see `require-reaper.ts`.
+ *     is ~3s; the `ryuk` sidecar reaps it on process exit. The container
+ *     lives in this module's state, so the fallback starts one container for
+ *     each Bun module registry that runs a database test file: one for a
+ *     default `bun test`; one for each database test file under `--isolate`
+ *     or `--parallel`; one for each worker that runs a database test file
+ *     under `--parallel --no-isolate`. The fallback refuses to start anything
+ *     unless a reaper is actually up to remove it again — see
+ *     `require-reaper.ts`.
  *
- * Why the runner owns the container for the full suite: Bun isolates module
- * state per test file, so a module-level singleton here is NOT shared across
- * the test files — each would spin its own container. A real OS-process
- * env var (`CORTEX_TEST_PG_URL`, exported before `bun test`) IS inherited by
- * every file, so all of them connect to the one container.
+ * Why the runner owns the container in `test:full`: its exit trap removes the
+ * container, so it needs no ryuk. A real OS-process env var
+ * (`CORTEX_TEST_PG_URL`, exported before `bun test`) is inherited by every
+ * module registry, so it keeps one container under `--isolate` and
+ * `--parallel`. It also matches CI, which sets `CORTEX_TEST_PG_URL` to one
+ * service container.
  *
  * Each test should call `withSchema(testName)` to get a `{ pool, drop }`
  * pair and `afterEach(drop)` to tear it down.

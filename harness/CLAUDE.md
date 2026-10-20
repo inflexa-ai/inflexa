@@ -635,10 +635,21 @@ Set `CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex` to skip the
 container start. It points each test at a local Postgres, and it gives instant
 feedback during tight iteration.
 
-That variable is also the only way to make one container serve a whole run. Bun
-gives each test file its own module state. Thus the memoized pool in
-`postgres.ts` is not shared. As a result, the container fallback starts one
-container for each database test file.
+The container fallback keeps its container in the module state of `postgres.ts`.
+Thus it starts one container for each Bun module registry that runs a database
+test file. A registry that runs no database test file starts no container. With
+the Bun that the root `.bun-version` names, the count for each test mode is:
+
+- `bun test`: all test files share one registry, thus one container serves the
+  whole run.
+- `bun test --isolate`: each test file gets a fresh registry, thus each database
+  test file starts one container.
+- `bun test --parallel`: the option implies `--isolate`, thus each database test
+  file starts one container.
+- `bun test --parallel --no-isolate`: each worker keeps one registry, thus each
+  worker that runs a database test file starts one container.
+
+When `CORTEX_TEST_PG_URL` is set, each mode starts no container.
 
 Only the ryuk sidecar removes those containers. The fallback refuses to start a
 container until a reaper can remove it again
@@ -659,9 +670,14 @@ because `bun test` runs no lifecycle script. It is not in a `bunfig.toml`
 preload, because bun resolves bunfig from the cwd only. Thus a file that starts
 no container never meets the guard, and each unit test is such a file.
 
-After a plain `bun test`, ryuk removes the containers of the run and their
-volumes. To start one container for the whole run, use `bun run test:full`.
-As an alternative, export `CORTEX_TEST_PG_URL` at a Postgres that already runs.
+After a plain `bun test`, ryuk removes the container of the run and its volumes.
+`bun run test:full` has three properties that the fallback does not have:
+
+- It needs no ryuk, because its exit trap removes the container.
+- It keeps one container under `--isolate` and `--parallel`.
+- It matches CI, which sets `CORTEX_TEST_PG_URL` to one service container.
+
+To use a Postgres that already runs, export `CORTEX_TEST_PG_URL` at it.
 
 A harness module receives its `Pool` as an injected construction dep
 (`createPool`). Thus a test passes the schema-scoped test pool directly into the

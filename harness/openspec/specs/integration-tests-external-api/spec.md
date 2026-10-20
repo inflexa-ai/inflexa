@@ -19,14 +19,14 @@ the agent loop wraps it as `tool_result { is_error: true }` (see the
 harness-agent-loop spec). Each test saves the real `fetch` and restores it in
 `afterEach`, so stubbing one tool never leaks into another.
 
-The second tier is a small number of **real-upstream integration tests** under
+The second tier is **real-upstream integration tests** under
 `src/providers/integration/`, named `<name>.integration.test.ts`, that exercise
-behavior only a live endpoint can confirm — today, Anthropic prompt-caching
-over a billing gateway (`anthropic-caching.integration.test.ts`). Each wraps its
-`describe` block in `describe.skipIf(!process.env.KEY)` so the whole block
-auto-skips when its key (e.g. `ANTHROPIC_API_KEY`) is absent. This keeps the
-suite green on a clean checkout while still running for anyone who supplies a
-key.
+behavior only a live endpoint can confirm. Each wraps its `describe` block in
+`describe.skipIf(...)` so the whole block auto-skips unless the run opts in. A
+provider that needs a key gates on that key, for example `ANTHROPIC_API_KEY`
+for Anthropic prompt-caching over a billing gateway. A keyless provider has no key
+to gate on, so it gates on `CORTEX_LIVE_API_TESTS`. This keeps the suite green
+and offline on a clean checkout while still running for anyone who opts in.
 
 There is no separate task runner, no justfile, and no `just test-integration`
 target. Everything runs under `bun test`; integration coverage is selected by

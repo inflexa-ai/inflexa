@@ -1,14 +1,17 @@
 /**
  * The guard that stops the container fallback in `postgres.ts` from leaking a
- * `pgvector/pgvector:pg18` container for each database test file.
+ * `pgvector/pgvector:pg18` container.
  *
- * Bun isolates module state per test file, so the memoized promise in
- * `postgres.ts` is NOT shared across test files — on the fallback path each DB
- * file starts its OWN container. Removing them is left entirely to the
- * `ryuk` sidecar. On a rootful podman machine ryuk starts only when it runs
- * privileged, because SELinux in the VM blocks the runtime socket for an
- * unprivileged ryuk; the guard sets that default. Where ryuk cannot start, the
- * containers of a bare `bun test` would stay with nothing to remove them.
+ * The memoized promise in `postgres.ts` lives in the module state of one Bun
+ * module registry, so the fallback starts one container for each registry that
+ * runs a database test file: one for a default `bun test`; one for each
+ * database test file under `--isolate` or `--parallel`; one for each worker
+ * that runs a database test file under `--parallel --no-isolate`. Removing
+ * them is left entirely to the `ryuk` sidecar. On a rootful podman machine
+ * ryuk starts only when it runs privileged, because SELinux in the VM blocks
+ * the runtime socket for an unprivileged ryuk; the guard sets that default.
+ * Where ryuk cannot start, the container of a bare `bun test` would stay with
+ * nothing to remove it.
  *
  * So the fallback asks, BEFORE it starts anything, whether a reaper will
  * actually remove what it is about to start. `getReaper()` is testcontainers'
@@ -66,8 +69,9 @@ Unset ${RYUK_DISABLED_ENV} if it is set. If ryuk cannot start, check these:
 export function refusalMessage(reason: string): string {
     return `Refusing to start a Postgres testcontainer: ${reason}, so nothing would remove it.
 
-Bun gives each test file its own module state, so this fallback starts one container per database
-test file, and without a reaper every one of those outlives the run.
+This fallback starts one container for a default run, one for each database test file under
+--isolate or --parallel, and one for each worker that runs a database test file under
+--parallel --no-isolate. Without a reaper, each of those outlives the run.
 
 ${ROUTES}`;
 }
