@@ -81,7 +81,7 @@ runner here.
 
 ```bash
 tsc -p tsconfig.build.json    # Build: emit dist/ from src/ (also `npm run build`)
-bun test                # Unit tests only — DB/DBOS suites need Postgres (see Testing notes)
+bun test                # Database test files start a Postgres container that ryuk removes after the run (see Testing notes)
 ```
 
 **Runtime**: Node.js. Bun is only for the tests (`bun test`).
@@ -640,24 +640,28 @@ gives each test file its own module state. Thus the memoized pool in
 `postgres.ts` is not shared. As a result, the container fallback starts one
 container for each database test file.
 
-Only the ryuk sidecar removes those containers, and ryuk does not start under
-podman. Thus the fallback refuses to start a container until a reaper can remove
-it again (`__tests__/setup/require-reaper.ts`). The refusal names the routes
-below.
+Only the ryuk sidecar removes those containers. The fallback refuses to start a
+container until a reaper can remove it again
+(`__tests__/setup/require-reaper.ts`). The guard has no opt-out. The refusal
+names the routes below.
+
+On a rootful podman machine, ryuk starts when it runs privileged. SELinux in the
+VM blocks the runtime socket for an unprivileged ryuk. The guard sets
+`TESTCONTAINERS_RYUK_PRIVILEGED=true` when that variable is absent. A value that
+you set stays.
+
+On a rootless podman machine, the runtime socket in the VM is not at
+`/var/run/docker.sock`. Set `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` to that
+path. If `/var/run/docker.sock` does not reach your machine, set `DOCKER_HOST`.
 
 The guard sits on the container-creation path. It is not in a `pretest` script,
 because `bun test` runs no lifecycle script. It is not in a `bunfig.toml`
 preload, because bun resolves bunfig from the cwd only. Thus a file that starts
 no container never meets the guard, and each unit test is such a file.
 
-There are two supported local routes. `bun run test:full` starts the one container
-itself and reaches podman through its docker-compat socket. As an alternative,
-export `CORTEX_TEST_PG_URL` at a Postgres that already runs.
-
-As a last resort, set `CORTEX_TEST_ALLOW_LEAKED_PG=1` and
-`TESTCONTAINERS_RYUK_DISABLED=true` together. The first variable lets the guard
-pass. The second stops testcontainers from a start of ryuk, which fails on
-podman. The cost is one unreaped container for each DB test file.
+After a plain `bun test`, ryuk removes the containers of the run and their
+volumes. To start one container for the whole run, use `bun run test:full`.
+As an alternative, export `CORTEX_TEST_PG_URL` at a Postgres that already runs.
 
 A harness module receives its `Pool` as an injected construction dep
 (`createPool`). Thus a test passes the schema-scoped test pool directly into the

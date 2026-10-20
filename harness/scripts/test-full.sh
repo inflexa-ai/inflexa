@@ -38,12 +38,17 @@ if ! docker info >/dev/null 2>&1; then
     fi
 fi
 
-CID=$(docker run -d --rm \
+# The name and the trap exist before `docker run`, so an interrupt while the
+# container starts still removes it. `docker rm -f -v` on a name that does not
+# exist yet fails, and the trap ignores that.
+NAME="cortex-test-pg-$$-$RANDOM"
+trap 'docker rm -f -v "$NAME" >/dev/null 2>&1 || true' EXIT
+
+CID=$(docker run -d --rm --name "$NAME" \
     -e POSTGRES_USER=cortex -e POSTGRES_PASSWORD=cortex -e POSTGRES_DB=cortex \
     -p 127.0.0.1::5432 \
     pgvector/pgvector:pg18 \
     postgres -c fsync=off -c synchronous_commit=off)
-trap 'docker rm -f -v "$CID" >/dev/null 2>&1 || true' EXIT
 
 for _ in $(seq 1 60); do
     docker exec "$CID" pg_isready -U cortex -d cortex >/dev/null 2>&1 && break
