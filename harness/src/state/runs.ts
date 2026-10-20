@@ -12,6 +12,7 @@
 
 import type { ResultAsync } from "neverthrow";
 
+import { stripNulCharacters } from "../input-sanitization.js";
 import type { DbError } from "../lib/db-result.js";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
@@ -244,6 +245,7 @@ export function reconcileOrphanedRuns(pool: Querier, opts: { now?: number; grace
 /**
  * Write a status to a run row that is still `running`, and report whether the row changed. The first terminal write
  * of a run wins: a row that already holds a terminal status keeps its status, its `completed_at`, and its error.
+ * The error text loses each NUL character, because Postgres rejects a NUL in text and the write must not fail for its own value.
  */
 export function updateRunStatus(
     pool: Querier,
@@ -259,7 +261,7 @@ export function updateRunStatus(
             text: `UPDATE cortex_runs
             SET status = $1, completed_at = $2, error = $3
             WHERE run_id = $4 AND status = 'running'`,
-            values: [status, isTerminal ? now : null, error ?? null, runId],
+            values: [status, isTerminal ? now : null, error === undefined || error === null ? null : stripNulCharacters(error), runId],
         });
         return (result.rowCount ?? 0) > 0;
     });

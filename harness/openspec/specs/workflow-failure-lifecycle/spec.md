@@ -76,9 +76,24 @@ requirement give the overrides. `deriveFinalStatus` MUST return one of
 - If the run has a canceled step, the status is `"canceled"`.
 - If all steps completed, the status is `"completed"`. If fewer steps completed than the plan holds, the status is `"partial"`.
 
-The status write SHALL run inside a `DBOS.runStep` named `persist-final-status`,
-and a failure of that step SHALL be logged with the `runId` and status without
-masking the workflow error.
+The status write SHALL run inside a `DBOS.runStep` named `persist-final-status`.
+The step MUST retry a failed write with backoff. It MUST make at most 5
+attempts. The first wait is 1 second, and each next wait is two times the wait
+before it. A cancel of the workflow MUST stop the retries. A refused write MUST
+NOT retry.
+
+The last failed attempt MUST NOT fail the step. The step SHALL log the failure
+with the `runId` and status, without masking the workflow error, and it MUST
+give a failed result. A replay MUST give the same result. The body MUST then
+take the failed-write path of "The body owns the end of the run unless the
+canceler wins the row".
+
+An attempt can emit `run_completed` in its transaction, and then its commit can
+fail. A later attempt of the same execution MUST NOT emit `run_completed` again.
+
+The status write MUST remove each NUL character from the error text before it
+writes the row. The database rejects a NUL in text, thus the write cannot fail
+for its own values.
 
 The status write MUST change the run row only when the row is still `running`.
 The run canceler can write `canceled` after an engine cancel, while a
@@ -112,9 +127,37 @@ step.
 
 #### Scenario: persist-final-status failure does not mask the workflow error
 
-- **WHEN** the `persist-final-status` step fails
+- **GIVEN** a run whose synthesis failed
+- **WHEN** each attempt of the status write of `persist-final-status` fails
 - **THEN** the error is logged with the `runId` and intended status
-- **AND** the underlying workflow error is preserved in the DBOS workflow record
+- **AND** the body still throws the synthesis error, and the DBOS workflow record keeps it
+
+#### Scenario: An error text with a NUL character is written without it
+
+- **GIVEN** a failure reason that holds a NUL character
+- **WHEN** the status write of `persist-final-status` writes the status `failed`
+- **THEN** the write changes the row, and the error of the row is the failure reason with no NUL character
+
+#### Scenario: A transient failure of the status write retries
+
+- **GIVEN** a `running` run row
+- **WHEN** the first attempt of the status write fails and the second attempt changes the row to `completed`
+- **THEN** the row holds `completed`
+- **AND** the step closes the charge with `{ kind: "ok" }` and revokes the run authorization one time
+- **AND** no `close-running-charge` or `revoke-run-auth` step runs
+
+#### Scenario: A failed commit after the emit does not emit again
+
+- **GIVEN** an attempt of the status write that emits `run_completed` and whose commit then fails
+- **WHEN** the next attempt changes the row
+- **THEN** the run emit holds one `run_completed` event for the execution
+
+#### Scenario: A cancel stops the retries
+
+- **GIVEN** a status write whose first attempt failed before its emit
+- **WHEN** an engine cancel of the parent lands before the next attempt
+- **THEN** the next attempt does not run, and the body stops with the engine cancel
+- **AND** the body closes no charge, revokes no authorization, and emits no `run_completed` event
 
 #### Scenario: A late status write keeps the cancel of the canceler
 
@@ -288,7 +331,7 @@ row, the charge close and the revoke MUST run inside the same step as the write,
 `persist-final-status`. When the status write is refused or fails, the charge
 close and the revoke MUST each run in their own named step,
 `close-running-charge` and `revoke-run-auth`. The requirement "The body owns the
-end of the run only when its status write wins" gives the reason. The body MUST
+end of the run unless the canceler wins the row" gives the reason. The body MUST
 log a failure of one of these acts, and it MUST NOT roll back the side effects
 that did succeed. There SHALL be NO separate `onError`-style hook racing it; child
 step bodies SHALL NOT call `updateRunStatus` or any run-fail helper directly.
@@ -349,13 +392,14 @@ non-rolling-back rule.
 - **WHEN** `collectAndComplete` runs on the suspension branch
 - **THEN** the `pending` rows are left untouched for the resumed workflow to execute
 
-### Requirement: The body owns the end of the run only when its status write wins
+### Requirement: The body owns the end of the run unless the canceler wins the row
 
 The run body and the run canceler race at the end of a run, and the first
 terminal write of the run row wins. The writer that wins the row owns each act
 of the run end: the `run_completed` emit, the charge close, and the
-run-authorization revoke. The body MUST do these acts only as the owner of the
-row.
+run-authorization revoke. When the status write of the body fails, no writer
+owns the row, and the body owns the run end. The body MUST do these acts only
+as the owner of the row, or after its status write failed.
 
 The body MUST NOT emit `run_completed` before its status write. When the write
 of `persist-final-status` changes the row, the same step MUST do these acts, in
@@ -382,7 +426,8 @@ revoke the authorization again.
 
 When the status write is refused or fails, the body MUST close the charge in
 the `close-running-charge` step, and then revoke the authorization in the
-`revoke-run-auth` step. Then it MUST emit `run_completed`. A refused write has
+`revoke-run-auth` step. Then it MUST emit `run_completed`, unless an attempt of
+the status step emitted it in this execution. A refused write has
 two causes:
 
 - The run canceler won the row. The canceler cancels the engine before its
@@ -390,6 +435,28 @@ two causes:
   body then stops, and it does no act of the run end.
 - A recovery runs the status step again after its own write landed and before
   the step was recorded. The body owns the row, thus it completes the run end.
+
+After a failed write, the row stays `running`. Thus, after the emit, the body
+MUST record its run end in the durability engine. The record is a workflow
+event that holds these values:
+
+- the status and the error that the failed write tried to write
+- the result of the charge close, and the result of the revoke.
+
+The run canceler reads it, and then it does no act of the run end (see the
+`run-cancellation` capability). The body MUST NOT record a run end after a won
+or a refused write.
+
+The record MUST come after the charge close, the revoke, and the emit. A cancel
+that lands before the record stops the body, thus the body records nothing, and
+the canceler owns the rest of the run end. A failure of the record other than
+the cancel MUST go to the log, and the body MUST continue with its next
+terminal step.
+
+One race keeps two run ends. An attempt emits `run_completed`, its commit
+fails, and an engine cancel lands before the next attempt. The canceler then
+wins the row and records the second run end. The emit before the commit causes
+this race, and this requirement accepts it.
 
 #### Scenario: A won status write emits one run end before the row shows it
 
@@ -426,9 +493,31 @@ two causes:
 
 #### Scenario: A failed status write still closes the charge
 
-- **WHEN** the status write of `persist-final-status` fails
-- **THEN** the step logs the failure with the `runId` and the status
+- **WHEN** each attempt of the status write of `persist-final-status` fails
+- **THEN** the body logs the failure with the `runId` and the status
 - **AND** the body closes the charge in `close-running-charge`, revokes the authorization in `revoke-run-auth`, and then emits `run_completed`
+
+#### Scenario: A failed status write records the run end
+
+- **WHEN** each attempt of the status write of `persist-final-status` fails
+- **THEN** after the emit, the body records its run end in the engine, with the status and the error of the failed write, and with the results of the charge close and the revoke
+
+#### Scenario: A failed commit after the emit, then a cancel, keeps two run ends
+
+- **GIVEN** an attempt of the status write that emits `run_completed` and whose commit then fails
+- **WHEN** an engine cancel of the parent lands before the next attempt
+- **THEN** the body stops with the engine cancel, and it records no run end in the engine
+
+#### Scenario: A won or a refused write records no run end
+
+- **WHEN** the status write of `persist-final-status` changes the row, or changes nothing
+- **THEN** the body records no run end in the engine
+
+#### Scenario: A failed record does not stop the body
+
+- **GIVEN** a status write that failed on each attempt
+- **WHEN** the record of the run end fails with an error that is not a cancel
+- **THEN** the body logs the failure, and it continues with its next terminal step
 
 ### Requirement: Disabled synthesis is a successful terminal path
 

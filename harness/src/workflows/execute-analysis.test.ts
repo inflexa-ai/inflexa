@@ -50,6 +50,7 @@ import type { KnowledgeClient } from "../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../tools/knowledge/__fixtures__/fake-client.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import { RUN_END_EVENT_KEY } from "../execution/run-end-record.js";
 import { captureMetrics } from "../__tests__/setup/metrics.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 
@@ -95,6 +96,16 @@ interface FakeDbosState {
     workflowIdCounter: number;
     /** Typed suspensions that children sent, drained by the parent's `DBOS.recv(CHILD_SUSPENDED_TOPIC, 0)`. */
     childMessages: ChildSuspended[];
+    /** Step-name → attempt number: a cancel lands before that attempt, and the fake throws the engine cancel instead of running it. */
+    cancelBeforeAttempt: Map<string, number>;
+    /** What `DBOS.stepStatus` gives while an attempt of a step runs. */
+    stepStatus: { stepID: number; currentAttempt: number; maxAttempts: number } | undefined;
+    /** Every `DBOS.setEvent` call in order. */
+    events: Array<{ key: string; value: unknown }>;
+    /** Makes `DBOS.setEvent` throw this error. */
+    setEventError: Error | null;
+    /** Order of the acts that a test marks, with the `setEvent` calls: a test pushes its own marks. */
+    timeline: string[];
 }
 
 let dbosState: FakeDbosState;
@@ -107,6 +118,7 @@ let dbosState: FakeDbosState;
  * put them back in `afterAll`.
  */
 let originalDbosFns: Record<string, unknown> | undefined;
+let originalStepStatus: PropertyDescriptor | undefined;
 
 async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
@@ -119,12 +131,17 @@ async function mockDbos(): Promise<void> {
         waitFirst: dbos.DBOS.waitFirst,
         recv: dbos.DBOS.recv,
         now: dbos.DBOS.now,
+        setEvent: dbos.DBOS.setEvent,
     };
+    originalStepStatus ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "stepStatus");
 
     // `DBOS.runStep` — execute the wrapped fn immediately, unless the step name
     // is registered to throw (the synthesis-failure path injects a throw at the
-    // "synthesize-findings" step without driving the real synthesizer).
-    (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+    // "synthesize-findings" step without driving the real synthesizer). A step with
+    // `retriesAllowed` runs up to `maxAttempts` times with no wait, and `DBOS.stepStatus`
+    // gives the attempt, as DBOS does. A cancel is never retried, and the last attempt
+    // throws its own error.
+    (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string; retriesAllowed?: boolean; maxAttempts?: number }) => {
         const injectedError = config?.name ? dbosState.throwErrorOnStep.get(config.name) : undefined;
         if (injectedError !== undefined) throw injectedError;
         const injected = config?.name ? dbosState.throwOnStep.get(config.name) : undefined;
@@ -136,7 +153,28 @@ async function mockDbos(): Promise<void> {
         if (config?.name && dbosState.resultOnStep.has(config.name)) {
             return dbosState.resultOnStep.get(config.name);
         }
-        return fn();
+        const maxAttempts = config?.retriesAllowed ? (config.maxAttempts ?? 3) : 1;
+        const cancelAt = config?.name ? dbosState.cancelBeforeAttempt.get(config.name) : undefined;
+        for (let attempt = 1; ; attempt++) {
+            if (attempt === cancelAt) throw new DBOSErrors.DBOSWorkflowCancelledError("run-test");
+            dbosState.stepStatus = { stepID: 0, currentAttempt: attempt, maxAttempts };
+            try {
+                return await fn();
+            } catch (error) {
+                if (error instanceof DBOSErrors.DBOSWorkflowCancelledError || attempt >= maxAttempts) throw error;
+            } finally {
+                dbosState.stepStatus = undefined;
+            }
+        }
+    });
+
+    Object.defineProperty(dbos.DBOS, "stepStatus", { configurable: true, get: () => dbosState.stepStatus });
+
+    // `DBOS.setEvent` — record the key and the value, or throw the configured error.
+    (dbos.DBOS.setEvent as unknown) = mock(async (key: string, value: unknown) => {
+        if (dbosState.setEventError !== null) throw dbosState.setEventError;
+        dbosState.events.push({ key, value });
+        dbosState.timeline.push(`setEvent ${key}`);
     });
 
     // `DBOS.startWorkflow(callable, { workflowID })(input)` — return a fake
@@ -197,6 +235,7 @@ afterAll(async () => {
     for (const [name, fn] of Object.entries(originalDbosFns)) {
         (dbos.DBOS as unknown as Record<string, unknown>)[name] = fn;
     }
+    if (originalStepStatus) Object.defineProperty(dbos.DBOS, "stepStatus", originalStepStatus);
 });
 
 beforeEach(async () => {
@@ -212,6 +251,11 @@ beforeEach(async () => {
         nowMs: FAKE_CLOCK_BASE_MS,
         workflowIdCounter: 0,
         childMessages: [],
+        cancelBeforeAttempt: new Map(),
+        stepStatus: undefined,
+        events: [],
+        setEventError: null,
+        timeline: [],
     };
     await mockDbos();
 });
@@ -228,9 +272,17 @@ interface FakePool {
 const RUN_STATUS_WRITE = "UPDATE cortex_runs SET status = $1";
 const WON_STATUS_WRITE = { [RUN_STATUS_WRITE]: [{}] };
 
-/** A configured `Error` makes the matching query throw, the way a failed driver call does. */
-function makeFakePool(rowByText: Record<string, unknown[] | Error> = {}): FakePool {
+/** The answer to one matching query: rows, or an `Error` that makes the query throw. */
+type FakeAnswer = unknown[] | Error;
+
+/**
+ * A configured `Error` makes the matching query throw, the way a failed driver call does. A function
+ * answers by the zero-based count of the earlier queries with the same prefix, so a test can fail the first
+ * attempt of a write and let the next attempt change the row.
+ */
+function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => FakeAnswer)> = {}): FakePool {
     const queries: FakePool["queries"] = [];
+    const callsByPrefix = new Map<string, number>();
     const answer = async (q: { text: string; values?: readonly unknown[] }) => {
         queries.push(q);
         // Crude prefix match on the whitespace-normalized text — returns the configured
@@ -238,7 +290,10 @@ function makeFakePool(rowByText: Record<string, unknown[] | Error> = {}): FakePo
         const text = q.text.trim().replace(/\s+/g, " ");
         for (const prefix of Object.keys(rowByText)) {
             if (text.startsWith(prefix)) {
-                const rows = rowByText[prefix]!;
+                const call = callsByPrefix.get(prefix) ?? 0;
+                callsByPrefix.set(prefix, call + 1);
+                const configured = rowByText[prefix]!;
+                const rows = typeof configured === "function" ? configured(call) : configured;
                 if (rows instanceof Error) throw rows;
                 return { rows, rowCount: rows.length };
             }
@@ -1840,6 +1895,195 @@ describe("executeAnalysis run end ownership", () => {
         expect(timeline.indexOf("EMIT run_completed")).toBeLessThan(timeline.indexOf("COMMIT"));
         const failure = logger.records.find((r) => r.level === "error" && r.msg.endsWith("ledger write failed") && r.fields.status === "completed");
         expect(failure).toBeDefined();
+    });
+
+    describe("the status write retries and records a run end it owns", () => {
+        const statusWrites = (pool: FakePool) => pool.queries.filter((q) => q.text.replace(/\s+/g, " ").startsWith(RUN_STATUS_WRITE));
+        const failsOnce = { [RUN_STATUS_WRITE]: (call: number) => (call === 0 ? new Error("connection reset") : [{}]) };
+        const alwaysFails = { [RUN_STATUS_WRITE]: new Error("connection reset") };
+        const commitFailsOnce = { ...WON_STATUS_WRITE, COMMIT: (call: number) => (call === 0 ? new Error("commit failed") : []) };
+
+        /** The separate steps cannot run: a close or a revoke that happens proves that the status step did it. */
+        function blockSeparateRunEndSteps(): void {
+            dbosState.throwErrorOnStep.set("close-running-charge", cancelError());
+            dbosState.throwErrorOnStep.set("revoke-run-auth", cancelError());
+        }
+
+        it("a transient failure of the status write retries, and the step closes the charge and revokes", async () => {
+            const pool = makeFakePool(failsOnce);
+            const events: RunProvenanceEvent[] = [];
+            const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+            blockSeparateRunEndSteps();
+
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+
+            expect(result.status).toBe("completed");
+            expect(statusWrites(pool)).toHaveLength(2);
+            expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+            expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+            expect(events).toHaveLength(1);
+            expect(dbosState.events).toEqual([]);
+        });
+
+        it("a failed commit after the emit does not emit again on the next attempt", async () => {
+            const pool = makeFakePool(commitFailsOnce);
+            const events: RunProvenanceEvent[] = [];
+            const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+            blockSeparateRunEndSteps();
+
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+
+            expect(result.status).toBe("completed");
+            expect(statusWrites(pool)).toHaveLength(2);
+            expect(events).toHaveLength(1);
+            expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+            expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+        });
+
+        it("a cancel before the next attempt stops the retries and the run end", async () => {
+            const pool = makeFakePool(failsOnce);
+            const events: RunProvenanceEvent[] = [];
+            const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+            dbosState.cancelBeforeAttempt.set("persist-final-status", 2);
+
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+            expect(statusWrites(pool)).toHaveLength(1);
+            expect(events).toEqual([]);
+            expect(record.chargeCloseCalls).toEqual([]);
+            expect(record.mandateRevokeCalls).toEqual([]);
+            expect(dbosState.events).toEqual([]);
+        });
+
+        it("a failed commit after the emit, then a cancel, keeps two run ends: the body records no run end", async () => {
+            const pool = makeFakePool(commitFailsOnce);
+            const events: RunProvenanceEvent[] = [];
+            const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+            dbosState.cancelBeforeAttempt.set("persist-final-status", 2);
+
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+            expect(events).toHaveLength(1);
+            expect(record.chargeCloseCalls).toEqual([]);
+            expect(record.mandateRevokeCalls).toEqual([]);
+            expect(dbosState.events).toEqual([]);
+        });
+
+        it("a failed status write still closes the charge, revokes, and emits one run end after the last attempt", async () => {
+            const pool = makeFakePool(alwaysFails);
+            const events: RunProvenanceEvent[] = [];
+            const logger = createCapturingLogger();
+            const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
+
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+
+            expect(result.status).toBe("completed");
+            expect(statusWrites(pool)).toHaveLength(5);
+            expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
+            expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
+            expect(events).toHaveLength(1);
+            const failures = logger.records.filter((r) => r.level === "error" && r.msg.endsWith("ledger write failed"));
+            expect(failures).toHaveLength(1);
+            expect(failures[0]!.fields).toMatchObject({ runId: "run-test", status: "completed" });
+            const retried = logger.records.filter((r) => r.level === "warn" && r.fields.status === "completed" && r.fields.runId === "run-test");
+            expect(retried).toHaveLength(4);
+        });
+
+        it("a failed status write records the status, the error, and the results of the close and the revoke after the emit", async () => {
+            const pool = makeFakePool(alwaysFails);
+            const { deps } = makeDeps({
+                pool,
+                emitRunEvent: (event) => {
+                    if (event.type === "run_completed") dbosState.timeline.push("emit run_completed");
+                },
+                childResults: completeA(),
+            });
+            const marked: ExecuteAnalysisDeps = {
+                ...deps,
+                runCharge: {
+                    ...deps.runCharge,
+                    close: (args) => {
+                        dbosState.timeline.push("close charge");
+                        return deps.runCharge.close(args);
+                    },
+                },
+                runAuthorizer: {
+                    ...deps.runAuthorizer,
+                    revoke: (authorization, reason) => {
+                        dbosState.timeline.push("revoke authorization");
+                        return deps.runAuthorizer.revoke(authorization, reason);
+                    },
+                },
+            };
+
+            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), marked);
+
+            expect(dbosState.events).toEqual([{ key: RUN_END_EVENT_KEY, value: { status: "completed", error: null, closed: true, revoked: true } }]);
+            expect(dbosState.timeline).toEqual(["close charge", "revoke authorization", "emit run_completed", `setEvent ${RUN_END_EVENT_KEY}`]);
+        });
+
+        it("a failed status write records the failed result of the charge close", async () => {
+            const pool = makeFakePool(alwaysFails);
+            const { deps } = makeDeps({ pool, childResults: completeA() });
+            const refusing: ExecuteAnalysisDeps = { ...deps, runCharge: { ...deps.runCharge, close: () => errAsync({ reason: "host down" }) } };
+
+            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), refusing);
+
+            expect(dbosState.events).toEqual([{ key: RUN_END_EVENT_KEY, value: { status: "completed", error: null, closed: false, revoked: true } }]);
+        });
+
+        it("a won status write records no run end", async () => {
+            const pool = makeFakePool(WON_STATUS_WRITE);
+            const { deps } = makeDeps({ pool, childResults: completeA() });
+
+            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+
+            expect(dbosState.events).toEqual([]);
+        });
+
+        it("a refused status write that the body completes records no run end", async () => {
+            const pool = makeFakePool();
+            const { deps, record } = makeDeps({ pool, childResults: completeA() });
+
+            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+
+            expect(record.chargeCloseCalls).toHaveLength(1);
+            expect(dbosState.events).toEqual([]);
+        });
+
+        it("a failed record of the run end is logged, and the body still sweeps the pending steps", async () => {
+            const pool = makeFakePool(alwaysFails);
+            const logger = createCapturingLogger();
+            const { deps } = makeDeps({ pool, childResults: completeA() });
+            dbosState.setEventError = new Error("event store down");
+
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+
+            expect(result.status).toBe("completed");
+            expect(pool.queries.some((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text))).toBe(true);
+            const failure = logger.records.find((r) => r.level === "error" && JSON.stringify(r.fields).includes("event store down"));
+            expect(failure).toBeDefined();
+        });
+
+        it("a cancel during the record of the run end reaches DBOS unchanged", async () => {
+            const pool = makeFakePool(alwaysFails);
+            const { deps } = makeDeps({ pool, childResults: completeA() });
+            dbosState.setEventError = cancelError();
+
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+        });
+
+        it("a failed status write does not mask the synthesis error, and the record carries the failed status and its error", async () => {
+            const pool = makeFakePool(alwaysFails);
+            const { deps } = makeDeps({ pool, childResults: completeA() });
+            dbosState.throwOnStep.set("synthesize-findings", "synth boom");
+
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("synth boom");
+
+            expect(dbosState.events).toEqual([
+                { key: RUN_END_EVENT_KEY, value: { status: "failed", error: "synthesis-failed: synth boom", closed: true, revoked: true } },
+            ]);
+        });
     });
 });
 

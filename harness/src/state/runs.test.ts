@@ -340,6 +340,17 @@ describe("runs: updateRunStatus", () => {
     it("reports no change for a run that does not exist", async () => {
         expect((await updateRunStatus(pool, "run-nowhere", "completed"))._unsafeUnwrap()).toBe(false);
     });
+
+    it("writes an error text that holds a NUL character, and stores the text without it", async () => {
+        (await insertRun(pool, { runId: "run-nul", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+
+        const changed = (await updateRunStatus(pool, "run-nul", "failed", `step failed:\u0000 bad\u0000bytes`))._unsafeUnwrap();
+        expect(changed).toBe(true);
+
+        const row = (await queryRun(pool, "run-nul"))._unsafeUnwrap();
+        expect(row?.status).toBe("failed");
+        expect(row?.error).toBe("step failed: badbytes");
+    });
 });
 
 describe("runs: a suspended run is terminal", () => {

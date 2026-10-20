@@ -31,18 +31,19 @@ a cancel never overwrites a completion that occurs at the same time.
 
 After a successful engine cancel, the canceler MUST converge the ledgers in this order:
 
-1. the conditional terminal write of the run row
-2. the settle of the step rows
-3. the close of the running charge, with `reason: "canceled"`, only when the terminal write changed the row
-4. the out-of-band revoke of the mandate, only when the terminal write changed the row and the row carries a jti.
+1. the read of the run end that the body recorded (see "The canceler repairs the row of a run whose body recorded its end")
+2. the conditional terminal write of the run row
+3. the settle of the step rows
+4. the close of the running charge, with `reason: "canceled"`, only when the terminal write changed the row and the body recorded no run end
+5. the out-of-band revoke of the mandate, only on the condition of phase 4, and only when the row carries a jti.
 
-Each phase MUST have its own guard, so that one failure does not skip the phases after it.
+Each phase MUST have its own guard, so that one failure does not skip the phases after it. A failed read of the recorded run end is the one exception: the canceler then MUST NOT do the terminal write.
 
 The writer that wins the run row owns the charge close and the mandate revoke. When the terminal write is refused, the body of the run won the row, and the body closes the charge and revokes its authorization. Thus the canceler MUST NOT close the charge or revoke the mandate. When the terminal write fails, the canceler MUST NOT close the charge or revoke the mandate either. The row then stays active, thus a second cancel converges the run.
 
 The settle of the step rows MUST sweep the still-`pending` rows of the run to `skipped`. It MUST also change the still-`running` rows of the run to `canceled`. A row that the running settle changes MUST get `completed_at`, a duration from its `started_at`, and the reason `external_cancel`. Each of the two step writes MUST have its own guard, so that a failure of one does not skip the other. The running settle MUST be conditional on the row status `running`. Thus it never overwrites a terminal status that a child wrote first.
 
-The `converged` flags of the result MUST show what really occurred. `converged.steps` MUST be true only when the two step writes succeed. `converged.mandate` MUST be true for a row with no persisted jti, because no mandate needs a revoke. When the terminal write is refused, `converged.charge` and `converged.mandate` MUST be true, because the canceler has no charge and no mandate to converge. When the terminal write fails, `converged.charge` MUST be false, and `converged.mandate` MUST be false for a row with a persisted jti.
+The `converged` flags of the result MUST show what really occurred. `converged.steps` MUST be true only when the two step writes succeed. `converged.mandate` MUST be true for a row with no persisted jti, because no mandate needs a revoke. When the terminal write is refused, `converged.charge` and `converged.mandate` MUST be true, because the canceler has no charge and no mandate to converge. When the terminal write fails, `converged.charge` MUST be false, and `converged.mandate` MUST be false for a row with a persisted jti. A failed read of the recorded run end MUST give the same flags as a failed terminal write. When the body recorded a run end, `converged.charge` and `converged.mandate` MUST come from the record, as "The canceler repairs the row of a run whose body recorded its end" states.
 
 #### Scenario: Full convergence
 
@@ -117,7 +118,7 @@ The `durationMs` of `run_completed` MUST be `atMs` minus the `started_at` of the
 
 When the read of the cut steps fails, the canceler MUST emit no `step_completed` event, and it MUST still emit `run_completed`.
 
-A cancel whose terminal write changes no row MUST emit nothing, because the run ended by itself and its body recorded the end. A failed terminal write MUST emit nothing. A cancel of an already-terminal run MUST emit nothing. A throw of the run emit MUST go to the log. It MUST NOT skip a later event or a later convergence phase. It MUST NOT change the result of `cancel`. When no run emit is bound, the canceler MUST behave as it did without the seam.
+A cancel whose terminal write changes no row MUST emit nothing, because the run ended by itself and its body recorded the end. A cancel that finds a run end that the body recorded MUST emit nothing, also when its repair write changes the row to `canceled`. A failed read of the recorded run end MUST emit nothing. A failed terminal write MUST emit nothing. A cancel of an already-terminal run MUST emit nothing. A throw of the run emit MUST go to the log. It MUST NOT skip a later event or a later convergence phase. It MUST NOT change the result of `cancel`. When no run emit is bound, the canceler MUST behave as it did with no `ProvenanceSeam`.
 
 #### Scenario: A won cancel records the cut steps and the run end
 
@@ -130,6 +131,12 @@ A cancel whose terminal write changes no row MUST emit nothing, because the run 
 #### Scenario: A concurrent completion emits nothing
 
 - **WHEN** the run changes to `completed` between the read of the canceler and its terminal write
+- **THEN** the run emit receives no event
+
+#### Scenario: A recorded run end emits nothing
+
+- **GIVEN** a running run whose body recorded its run end with the status `canceled`
+- **WHEN** `cancel` runs and its repair write changes the row to `canceled`
 - **THEN** the run emit receives no event
 
 #### Scenario: A second cancel emits nothing
@@ -152,3 +159,54 @@ A cancel whose terminal write changes no row MUST emit nothing, because the run 
 
 - **WHEN** the canceler has no `ProvenanceSeam`, or one with no run emit
 - **THEN** `cancel` converges the ledgers and gives the same result as before, and it emits nothing
+
+### Requirement: The canceler repairs the row of a run whose body recorded its end
+
+After a failed status write, the body of the run does the run end, and it records the run end in the durability engine (see the `workflow-failure-lifecycle` capability). The row of the run then stays `running`. After the engine cancel and before its terminal write, the canceler MUST read that record. The read has three results:
+
+- When the record is present, the body owns the run end. The terminal write MUST write the status and the error of the record, and only to a `running` row. The canceler MUST NOT emit an event, close the charge, or revoke the mandate. When the write changes the row, the canceler MUST record the run outcome metric with the status of the record. It MUST NOT record a step outcome metric. `converged.charge` MUST be the result of the charge close in the record, and `converged.mandate` MUST be the result of the revoke in the record. These flags apply when the write changes the row, when it changes nothing, and when it fails. `finalStatus` MUST be the status of the row after the write.
+- When the record is absent, the canceler MUST do the terminal write of `canceled`, as "Convergence phases run isolated after the engine cancel" states.
+- When the read fails, the canceler MUST NOT do a terminal write. It MUST NOT emit an event, close the charge, or revoke the mandate. The step rows still settle, and `cancel` resolves. The row stays `running`, thus a second cancel converges the run. A record whose value does not have the shape of a recorded run end counts as a failed read.
+
+In each of the three results, `outcome` MUST be `canceled`.
+
+#### Scenario: A recorded run end repairs the row
+
+- **GIVEN** a running run that carries a mandate jti, and whose body recorded its run end with the status `completed`, no error, a successful charge close, and a successful revoke
+- **WHEN** `cancel` runs
+- **THEN** the run row holds `completed`, with `completed_at` set and no error
+- **AND** the canceler emits no event, closes no charge, and revokes no mandate
+- **AND** the result is `outcome: "canceled"`, `finalStatus: "completed"`, and `converged.charge` and `converged.mandate` true
+
+#### Scenario: A recorded run end keeps the error of the body
+
+- **GIVEN** a running run whose body recorded its run end with the status `failed` and an error
+- **WHEN** `cancel` runs
+- **THEN** the run row holds `failed` with that error
+
+#### Scenario: The flags show a failed charge close of the body
+
+- **GIVEN** a running run whose body recorded its run end with a failed charge close and a successful revoke
+- **WHEN** `cancel` runs and the repair write changes the row
+- **THEN** `converged.charge` is false and `converged.mandate` is true
+
+#### Scenario: A repair write that changes nothing records no metric
+
+- **GIVEN** a running run whose body recorded its run end with the status `completed`
+- **WHEN** the row leaves `running` after the read of the canceler and before its repair write
+- **THEN** the repair write changes nothing, the canceler records no run outcome metric, and `finalStatus` is the status of the row
+
+#### Scenario: A record with a wrong shape counts as a failed read
+
+- **GIVEN** a running run that carries a mandate jti, and a recorded value with no `status`
+- **WHEN** `cancel` runs
+- **THEN** the run row stays `running`, the canceler emits no event, closes no charge, and revokes no mandate
+- **AND** `converged.charge` and `converged.mandate` are false
+
+#### Scenario: A failed read of the recorded run end writes nothing
+
+- **GIVEN** a running run that carries a mandate jti
+- **WHEN** the read of the recorded run end fails
+- **THEN** the run row stays `running`
+- **AND** the canceler emits no event, closes no charge, and revokes no mandate
+- **AND** the step rows still settle, `converged.charge` and `converged.mandate` are false, and `cancel` resolves
