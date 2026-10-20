@@ -1037,6 +1037,7 @@ const REPORT_LIST_FAILED = "Could not list the report sessions of this conversat
 const OPEN_SESSION_UNREADABLE = "Could not read this session — nothing was opened.";
 const NO_REPORT_CHILD = "No report session in this conversation — ask the agent to start one.";
 const NO_OPEN_ANALYSIS = "No analysis is open — open an analysis to open the page of a report session.";
+const NO_ANALYSIS_TO_SWITCH = "No analysis is open — open an analysis to switch report sessions.";
 const NOT_A_REPORT_SESSION = "The open session is not a report session — only a report session has a page.";
 
 /**
@@ -1311,7 +1312,10 @@ export async function openReportSession(ctx: Workspace, opts: SessionOpts = DEFA
 export async function openSwitchReportSession(ctx: Workspace, opts: SessionOpts = DEFAULT_SESSION_OPTS): Promise<void> {
     const analysis = ctx.analysis;
     const threadId = ctx.sessionId;
-    if (!analysis) return;
+    if (!analysis) {
+        opts.notify({ kind: "info", text: NO_ANALYSIS_TO_SWITCH });
+        return;
+    }
     const phase = bootState().phase;
     if (phase !== "ready" || !opts.ready()) {
         opts.notify(reportBootNotice(phase));

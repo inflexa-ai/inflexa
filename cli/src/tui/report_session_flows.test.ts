@@ -503,6 +503,18 @@ describe("report session flows", () => {
             expect(t.notices[0]?.text).toContain("No conversation is open");
         });
 
+        test("a dispatch with no open analysis names the reason and opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const t = makeOpts();
+            const w = sessionScope(null, null);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toEqual([{ kind: "info", text: expect.stringContaining("No analysis is open") }]);
+        });
+
         test("a report session lists its siblings — the children of its parent", async () => {
             // The picker inside a report session would otherwise list the children of a report child,
             // which the flat tree guarantees is nothing at all: an empty picker stating there is no
