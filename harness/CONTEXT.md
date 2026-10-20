@@ -785,56 +785,32 @@ Other facts:
   (`DATA_PROFILE_RUN_LITERAL` and `DATA_PROFILE_STEP_LITERAL`) as the run tag
   and the step tag. The unique DBOS `workflowID` does the routing.
 
-### Suspension and resume
+### Suspension
 
-Do not conflate the two replay scenarios:
+A suspension stops a run, and the harness keeps the stored state of the run.
 
-- **Pod-crash recovery** (the harness-durable-runtime spec) replays with the
-  **same input**. The `attempt` does not change, thus each step name is identical
-  and the whole body hits the cache. This is the common case, and it works with no
-  extra work.
-- **A resume after a suspension** deliberately **increases `attempt`**, thus the
-  failed LLM call fires again after the host removes the cause.
-
-The mechanism of the suspension and the resume:
-
-- The step names carry the attempt as a suffix. `attemptStepNameFormatter` (in
-  `sandbox-step.ts`) names the loop steps `llm:${iteration}:${attempt}` and
-  `tool:${name}:${toolUseId}:${attempt}`. The parent names its own steps
-  `open-running-charge:${attempt}`, `close-running-charge:${attempt}`, and
-  `revoke-run-auth:${attempt}`. An increased attempt is a name that the cache has
-  never held, thus the call fires fresh.
+- **Pod-crash recovery** (the harness-durable-runtime spec) replays the body
+  with the same input. Each step name is identical, thus the whole body hits the
+  cache. The step names carry no attempt number, for example `llm:${iteration}`,
+  `tool:${name}:${toolUseId}`, `open-running-charge`, and
+  `close-running-charge`.
 - A suspension starts from a model request that fails with a `suspend` error, or
   from a gate refusal with the suspend flag. The suspend map of the provider
   makes the `suspend` error. Its default maps `402` to `payment_required`.
 - A durable owner records the reason and calls `cancelSelf`
   (`workflows/suspension.ts`). The next step boundary throws
-  `DBOSWorkflowCancelledError`, and the status becomes **`CANCELLED`**. It is not
-  `ERROR`, because `ERROR` is terminal in DBOS v4 and it cannot resume. A child
-  sends a typed suspension on the topic `child-suspended` before it cancels
-  itself. Then the parent cancels the in-flight siblings.
+  `DBOSWorkflowCancelledError`, and the status becomes **`CANCELLED`**, not
+  `ERROR`. A child sends a typed suspension on the topic `child-suspended` before
+  it cancels itself. Then the parent cancels the in-flight siblings.
 - A suspension of an analysis run or of a data profile marks the analysis as
   suspended with `suspendAnalysis` (`state/analyses.ts`). A workflow with a live
   caller does not mark it. The harness carries the reason of the host and never
   reads it.
-- On resume, `prepareExecuteAnalysisResume` atomically increases
-  `cortex_runs.attempt_count`. Then the caller calls `DBOS.resumeWorkflow(wfId)`.
-  The parent body replays, reads the increased `attempt` again, and opens the
-  running charge again under a fresh step name. The workflow ID never moves, thus
-  `cortex_runs.workflow_id` is stable.
-- **Why not `ERROR` plus `forkWorkflow`?** A resume from `ERROR` does not work,
-  because the DBOS resume excludes a terminal status. `forkWorkflow` works, but it
-  makes a new workflow ID, thus Cortex must update its run-to-workflow mapping.
-  `CANCELLED` plus `resumeWorkflow` keeps the ID stable.
-- **A known limitation: the resume of a child is not wired (a follow-up).** A
-  suspension that starts inside a **child** sandbox-step (a sandbox-agent LLM
-  call) is not cleanly resumable today. Three facts cause this. The parent
-  dispatches a child again with `DBOS.startWorkflow(childWorkflowId)`, which
-  **dedups on the existing canceled child**: `initWorkflowStatus` gives the
-  existing status and ignores the new input, thus the increased attempt never
-  reaches the child. Nothing calls `DBOS.resumeWorkflow(childWorkflowId)`, because
-  `resume-execute-analysis.ts` resumes only the parent. The child id
-  `${workflowId}-${idx}` carries **no attempt**, thus even an explicit child
-  resume would replay the step that the cache holds as failed. A fix needs the
-  child id to carry the attempt, or it needs `forkWorkflow`. The resume path must
-  also fire the canceled children again.
+- `suspended_insufficient_funds` is a terminal status of the run row. It does
+  not count as an active run, thus a new run of the same plan can start.
+
+**No resume entry point exists.** The `workflow-failure-lifecycle` spec defers
+the resume of a paused run. Nothing drives a paused run again. A correct resume
+must make step names that the cache does not hold, for the parent and for each
+child. The step names carry no attempt number today, thus a replay of a paused
+run hits the cached failure.
