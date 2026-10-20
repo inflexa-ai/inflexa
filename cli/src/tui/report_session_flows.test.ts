@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { errAsync, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import type { ThreadSummary } from "../api/conversation.ts";
 import type { ClientError } from "../client/api.ts";
+import { mintReportSessionAccess } from "../client/conversation.ts";
+import { fakeClient, type FakeResponse } from "../test_support/fake_client.ts";
 import { conversationSummary, reportSummary, threadListOf, FIXTURE_ANALYSIS_ID } from "../test_support/threads.ts";
 import { __setBootStateForTest } from "./hooks/boot.ts";
 import {
     commands,
     openParentSession,
+    openReportPage,
     openReportSession,
     openSwitchReportSession,
     openSwitchSession,
@@ -129,6 +132,8 @@ describe("report session flows", () => {
             resolveThreadId: async () => "thread-resolved",
             workingDirFor: () => "/work",
             refreshThread: () => {},
+            mintReportPageAccess: () => errAsync({ type: "aborted" }),
+            openUrl: () => err({ type: "open_failed", code: null, cause: null }),
             notify: (n) => {
                 notices.push(n);
             },
@@ -728,6 +733,241 @@ describe("report session flows", () => {
             expect(w.dialogs()).toBe(0);
             expect(t.notices).toHaveLength(1);
             expect(t.notices[0]?.text).toContain("Analysis changed");
+        });
+    });
+
+    describe("the open report page command", () => {
+        const PAGE_URL = "http://127.0.0.1:8436/report-sessions/a1/thread-report-1/index.html?t=abc123";
+        const GRANT: FakeResponse = { status: 200, body: { url: PAGE_URL, expiresAt: "2030-01-01T00:00:00.000Z" } };
+
+        /**
+         * Options whose mint goes through the real fetcher over a fake client, and whose opener records the
+         * URLs it was asked to open. The client fake shows the request the flow sends, and the opener shows
+         * what the person's browser would receive.
+         */
+        function pageOpts(answer: FakeResponse, over: Partial<SessionOpts> = {}, openerFails = false) {
+            const client = fakeClient(() => answer);
+            const urls: string[] = [];
+            const t = makeOpts({
+                getThread: rowsByThreadId([PARENT, CHILD]),
+                mintReportPageAccess: (analysisId, threadId) => mintReportSessionAccess(analysisId, threadId, client.opts),
+                openUrl: (url) => {
+                    urls.push(url);
+                    return openerFails ? err({ type: "open_failed", code: "ENOENT", cause: null }) : ok(undefined);
+                },
+                ...over,
+            });
+            return { ...t, requests: client.requests, urls };
+        }
+
+        test("a report session opens the URL of the server in the browser, and no file path", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([
+                { method: "POST", path: `/api/v1/analyses/${FIXTURE_ANALYSIS_ID}/report-sessions/${CHILD.id}/access`, body: undefined },
+            ]);
+            expect(t.urls).toEqual([PAGE_URL]);
+            expect(t.notices).toEqual([{ kind: "info", text: "Opened the report page in the browser." }]);
+            // The grant token rides the URL, thus the toast must not repeat it.
+            expect(t.notices[0]?.text).not.toContain("abc123");
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+        });
+
+        test("each open asks the server for a new grant", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toHaveLength(2);
+            expect(t.urls).toHaveLength(2);
+        });
+
+        test("a conversation has no page: a notice names the reason and nothing opens", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("info");
+            expect(t.notices[0]?.text).toContain("not a report session");
+        });
+
+        test("a thread with no row is no report session, and it opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, "thread-without-row");
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("not a report session");
+        });
+
+        test("an unbound scope is no report session, and it reads nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, null);
+            let reads = 0;
+            const t = pageOpts(GRANT, {
+                getThread: () => {
+                    reads += 1;
+                    return okAsync(null);
+                },
+            });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(reads).toBe(0);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("not a report session");
+        });
+
+        test("an unreadable thread raises the error notice and opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, { getThread: () => errAsync(serverErr) });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("Could not read this session");
+        });
+
+        test("a session with no page yet gets a notice and nothing opens", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts({ status: 404, body: { error: "not_found", message: "no page" } });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("info");
+            expect(t.notices[0]?.text).toContain("no page yet");
+        });
+
+        test("any other failure of the request is a warning that describes it", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts({ status: 409, body: { error: "conflict", message: "workspace folder is lost" } });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("warn");
+            expect(t.notices[0]?.text).toContain("Could not open the report page");
+            expect(t.notices[0]?.text).toContain("workspace folder is lost");
+        });
+
+        test("an opener that fails gives a warning that carries the URL", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, {}, true);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([PAGE_URL]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("warn");
+            expect(t.notices[0]?.text).toContain(PAGE_URL);
+        });
+
+        test("a dispatch with no open analysis names the reason and opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(null, null);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toEqual([{ kind: "info", text: expect.stringContaining("No analysis is open") }]);
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+        });
+
+        test("a dispatch before the runtime is ready names the state and opens nothing", async () => {
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            __setBootStateForTest({ phase: "starting" } as never);
+            const booting = pageOpts(GRANT);
+            await openReportPage(w.ws, booting.opts);
+            expect(booting.requests).toEqual([]);
+            expect(booting.urls).toEqual([]);
+            expect(booting.notices).toEqual([{ kind: "info", text: expect.stringContaining("still booting") }]);
+
+            __setBootStateForTest({ phase: "failed" } as never);
+            const failed = pageOpts(GRANT);
+            await openReportPage(w.ws, failed.opts);
+            expect(failed.urls).toEqual([]);
+            expect(failed.notices).toHaveLength(1);
+            expect(failed.notices[0]?.kind).toBe("warn");
+            expect(failed.notices[0]?.text).toContain("did not start");
+        });
+
+        test("a session that changes across the mint opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, {
+                mintReportPageAccess: () => {
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync({ url: PAGE_URL, expiresAt: "2030-01-01T00:00:00.000Z" });
+                },
+            });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+
+        test("an analysis that changes across the mint opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, {
+                mintReportPageAccess: () => {
+                    w.swapTo({ analysis: OTHER });
+                    return okAsync({ url: PAGE_URL, expiresAt: "2030-01-01T00:00:00.000Z" });
+                },
+            });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Analysis changed");
+        });
+
+        test("the palette offers the command on an open analysis and a ready boot only", () => {
+            const entry = commands.find((c) => c.id === "session.open-report-page");
+            expect(entry?.title).toBe("Open report page");
+            expect(entry?.category).toBe("Session");
+
+            const open = { analysis: ANALYSIS, sessionId: CHILD.id } as unknown as Workspace;
+            __setBootStateForTest(READY);
+            expect(entry?.enabled?.(open)).toBe(true);
+            expect(entry?.enabled?.({ analysis: null, sessionId: null } as unknown as Workspace)).toBe(false);
+            __setBootStateForTest({ phase: "idle" });
+            expect(entry?.enabled?.(open)).toBe(false);
         });
     });
 });

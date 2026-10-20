@@ -14,6 +14,7 @@ import {
     type MessagePageQuery,
     type PurgedThread,
     type PurgeThreadRequest,
+    type ReportSessionAccess,
     type RetractRequest,
     type RetractResponse,
     type ThreadList,
@@ -182,4 +183,17 @@ export function answerAsk(
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): ResultAsync<AnswerAskResponse, ClientError> {
     return request<AnswerAskResponse>("POST", `${analysisPath(analysisId)}/asks/${encodeURIComponent(askId)}/answer`, { body: reply }, opts);
+}
+
+/**
+ * `POST {A}/report-sessions/:threadId/access`: mint a grant for the page of a report session, and give the URL that
+ * opens it. 404 `not_found` when no preview rendered a page for the session, 409 `conflict` when the workspace folder
+ * cannot be located.
+ */
+export function mintReportSessionAccess(
+    analysisId: string,
+    threadId: string,
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<ReportSessionAccess, ClientError> {
+    return request<ReportSessionAccess>("POST", `${analysisPath(analysisId)}/report-sessions/${encodeURIComponent(threadId)}/access`, {}, opts);
 }

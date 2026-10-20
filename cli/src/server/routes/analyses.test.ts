@@ -36,6 +36,7 @@ import { idleBoot, idleLifecycle } from "../../test_support/server.ts";
 import { buildApp } from "../app.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerEnv } from "../http.ts";
+import { createPageGrantStore } from "../report_page_grants.ts";
 import {
     analysisCollectionRoutes,
     analysisRoutes,
@@ -461,7 +462,7 @@ describe("the analysis guard", () => {
     const auth = { Authorization: `Bearer ${TOKEN}` };
 
     test("404 `not_found` for an unknown analysis, for each `{A}` route", async () => {
-        const app = buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle() });
+        const app = buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle(), pageGrants: createPageGrantStore() });
         for (const path of ["/api/v1/analyses/nope", "/api/v1/analyses/nope/inputs"]) {
             const response = await app.request(path, { headers: auth });
             expect(response.status).toBe(404);
@@ -475,9 +476,12 @@ describe("the analysis guard", () => {
         mkdirSync(join(instanceLockPath(a.id), ".."), { recursive: true });
         writeFileSync(instanceLockPath(a.id), String(process.ppid));
         try {
-            const response = await buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle() }).request(`/api/v1/analyses/${a.id}`, {
-                headers: auth,
-            });
+            const response = await buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle(), pageGrants: createPageGrantStore() }).request(
+                `/api/v1/analyses/${a.id}`,
+                {
+                    headers: auth,
+                },
+            );
             expect(response.status).toBe(409);
             const body = (await response.json()) as ApiError;
             expect(body).toMatchObject({ error: "locked", details: { holderPid: process.ppid } });
@@ -488,10 +492,13 @@ describe("the analysis guard", () => {
     });
 
     test("the resolve route has no analysis id, thus the guard does not answer it", async () => {
-        const response = await buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle() }).request("/api/v1/analyses/resolve", {
-            ...json("POST", { cwd: tmp() }),
-            headers: { ...auth, "Content-Type": "application/json" },
-        });
+        const response = await buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle(), pageGrants: createPageGrantStore() }).request(
+            "/api/v1/analyses/resolve",
+            {
+                ...json("POST", { cwd: tmp() }),
+                headers: { ...auth, "Content-Type": "application/json" },
+            },
+        );
         expect(response.status).toBe(200);
     });
 });

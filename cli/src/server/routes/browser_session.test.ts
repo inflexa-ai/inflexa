@@ -4,6 +4,7 @@ import type { SessionNonce } from "../../api/browser_session.ts";
 import { signIn } from "../../test_support/browser_session.ts";
 import { idleBoot, idleLifecycle } from "../../test_support/server.ts";
 import { buildApp } from "../app.ts";
+import { createPageGrantStore } from "../report_page_grants.ts";
 
 const TOKEN = "a".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -13,7 +14,7 @@ const START = Date.parse("2026-10-08T10:00:00.000Z");
 function appWithClock(): { app: ReturnType<typeof buildApp>; advance: (ms: number) => void } {
     let at = START;
     return {
-        app: buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: idleBoot() }, { now: () => at }),
+        app: buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot: idleBoot(), pageGrants: createPageGrantStore() }, { now: () => at }),
         advance: (ms) => void (at += ms),
     };
 }

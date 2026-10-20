@@ -24,6 +24,7 @@ import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS } from "./boot.ts";
 import type { ServerEnv } from "./http.ts";
 import { createServerLifecycle, DEFAULT_SERVER_LIFECYCLE_OPTS } from "./lifecycle.ts";
 import { defaultInputDriftOpts, watchInputDrift } from "./profile_queue.ts";
+import { createPageGrantStore, createSessionPagePublisherFactory } from "./report_page_grants.ts";
 
 /** The exit code after Ctrl+C: 128 + SIGINT. */
 const SIGINT_EXIT_CODE = 130;
@@ -59,13 +60,18 @@ export type ServeMode = "foreground" | "detached";
 export async function runServe(mode: ServeMode): Promise<void> {
     const startedAt = new Date();
     const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-    const boot = createServerBoot(startedAt, { ...DEFAULT_SERVER_BOOT_OPTS, onSettle: printBootOutcome });
+    const pageGrants = createPageGrantStore();
+    const boot = createServerBoot(startedAt, {
+        ...DEFAULT_SERVER_BOOT_OPTS,
+        makeSessionPagePublisher: createSessionPagePublisherFactory(pageGrants, serverBaseUrl(env.serverPort)),
+        onSettle: printBootOutcome,
+    });
     const lifecycle = createServerLifecycle({ ...DEFAULT_SERVER_LIFECYCLE_OPTS, exit: (code) => shutdown(code) });
     setSignalStop((code) => lifecycle.stopForSignal(code));
 
     // Bind before the discovery file is written: a second server fails here, and it must not replace the file of
     // the server that holds the port.
-    listen(buildApp({ token, boot, lifecycle }), env.serverPort).match(
+    listen(buildApp({ token, boot, lifecycle, pageGrants }), env.serverPort).match(
         () => undefined,
         (e) => fail(describeBindFailure(e.cause)),
     );

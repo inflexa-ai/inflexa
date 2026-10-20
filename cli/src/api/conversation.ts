@@ -168,3 +168,11 @@ export type AskList = ListEnvelope<"asks", PendingAsk>;
 export type AnswerAskResponse = {
     applied: true;
 };
+
+/** The body of `POST {A}/report-sessions/:threadId/access`: a URL that opens the page of a report session. */
+export type ReportSessionAccess = {
+    /** `{base}/report-sessions/{analysisId}/{threadId}/index.html?t={token}`. The token is in the URL, thus a client keeps the URL out of a log. */
+    url: string;
+    /** When the grant behind `url` ends, ISO 8601. */
+    expiresAt: string;
+};

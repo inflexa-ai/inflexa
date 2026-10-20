@@ -8,6 +8,7 @@ import type { ServerBoot } from "./boot.ts";
 import { createBrowserSessionStore, SIGN_IN_AGAIN_MESSAGE, SIGN_IN_PATH, sessionCookieName, type BrowserSessionStore } from "./browser_session.ts";
 import { apiError, listenerPort, type ServerEnv } from "./http.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
+import type { PageGrantStore } from "./report_page_grants.ts";
 import { analysisGuard } from "./analysis_guard.ts";
 import { analysisCollectionRoutes, analysisRoutes } from "./routes/analyses.ts";
 import { anchorRoutes } from "./routes/anchors.ts";
@@ -21,6 +22,7 @@ import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { provenanceRoutes } from "./routes/provenance.ts";
+import { reportPageRoutes, reportSessionAccessRoutes } from "./routes/report_pages.ts";
 import { runRoutes } from "./routes/runs.ts";
 import { serverRoutes } from "./routes/server.ts";
 import { farmLinkRoutes, storeRoutes } from "./routes/store.ts";
@@ -32,6 +34,8 @@ export type AppDeps = {
     readonly token: string;
     readonly boot: ServerBoot;
     readonly lifecycle: ServerLifecycle;
+    /** The page grants of the report sessions. The one store of the process: the publisher of the runtime mints into it. */
+    readonly pageGrants: PageGrantStore;
 };
 
 /** The clock of the browser sign-in store in {@link buildApp}. A test replaces it to move the time. */
@@ -70,8 +74,11 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/analyses/:analysisId/provenance", provenanceRoutes());
     app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId/files", fileRoutes());
+    app.route("/api/v1/analyses/:analysisId/report-sessions", reportSessionAccessRoutes(deps.pageGrants));
     app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId", farmLinkRoutes());
+    // Outside `/api`: no API credential reaches it, and only a page grant gives access.
+    app.route("/report-sessions", reportPageRoutes(deps.pageGrants));
     app.get("/gui", (c) => c.redirect("/gui/", 301));
     app.route("/gui/", guiRoutes());
     app.notFound((c) => apiError(c, "not_found", `No route for ${c.req.method} ${c.req.path}.`));
@@ -90,6 +97,10 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
  * rebind: a page whose host name now points at 127.0.0.1 still sends its own host name, and its own origin on a
  * POST. A page cannot change the two headers.
  *
+ * The one exception is `Origin: null` on a `GET` or `HEAD` under `/report-sessions/`. A report page runs in a
+ * sandbox, thus its origin is opaque, and it sends `null` when it fetches a font. The `Host` check still runs there,
+ * and the route gives a guarded file only to a page grant. `/api/*` keeps the full check.
+ *
  * The port is the port that the listener bound. A request with no Bun server is an in-process `app.request()`
  * of a test. No socket carried it, thus no browser sent it, and it passes.
  */
@@ -103,7 +114,8 @@ function hostOriginGuard(): MiddlewareHandler<ServerEnv> {
                 return apiError(c, "forbidden", `The Host header must be ${hosts.join(" or ")}. The server answers only a request to its own address.`);
             }
             const origin = c.req.header("Origin")?.toLowerCase();
-            if (origin !== undefined && !hosts.some((name) => origin === `http://${name}`)) {
+            const opaquePageFetch = origin === "null" && (c.req.method === "GET" || c.req.method === "HEAD") && c.req.path.startsWith("/report-sessions/");
+            if (origin !== undefined && !opaquePageFetch && !hosts.some((name) => origin === `http://${name}`)) {
                 return apiError(
                     c,
                     "forbidden",

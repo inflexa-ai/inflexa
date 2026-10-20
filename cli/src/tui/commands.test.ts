@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { errAsync, ok, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import { GLYPHS } from "../lib/design_system.ts";
 import { __setClipboardWriterForTest } from "../lib/clipboard.ts";
@@ -320,6 +320,8 @@ describe("session flows", () => {
             refreshThread: (_analysisId, threadId) => {
                 refreshed.push(threadId);
             },
+            mintReportPageAccess: () => errAsync({ type: "aborted" }),
+            openUrl: () => err({ type: "open_failed", code: null, cause: null }),
             notify: (n) => {
                 notices.push(n);
             },
