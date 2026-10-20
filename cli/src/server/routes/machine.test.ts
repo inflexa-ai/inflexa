@@ -581,6 +581,18 @@ describe("POST /api/v1/open-directory", () => {
         expect(opened).toEqual([]);
     });
 
+    test("a `workspace` path that bottoms out in a symbolic-link loop is 404 `not_found`, and opens nothing", async () => {
+        const { id, home } = await seedAnalysis();
+        const wsRoot = join(home, defaultOutputSubdir("alpha"));
+        mkdirSync(wsRoot, { recursive: true });
+        symlinkSync("loop", join(wsRoot, "loop"));
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "loop" }));
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(opened).toEqual([]);
+    });
+
     test("a `workspace` path that names nothing on disk is 404 `not_found`, and opens nothing", async () => {
         const { id, home } = await seedAnalysis();
         const wsRoot = join(home, defaultOutputSubdir("alpha"));
