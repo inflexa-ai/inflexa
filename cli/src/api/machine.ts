@@ -147,8 +147,19 @@ export type MachineSandboxReadiness = {
     catalogFarmPresent: boolean;
 };
 
-/** The body of `POST /api/v1/open`. It names a known folder, never a path or a URL. */
-export type OpenFolderBody = { target: "data_dir" } | { target: "output_dir"; analysisId: string };
+/**
+ * The body of `POST /api/v1/open-directory`. The body names a target, never a path or URL that the
+ * server opens outside a jail: the `workspace` path is jailed to the workspace of the analysis, and
+ * the `input` reference is accepted only when the analysis registers that exact `(path, anchorId)` pair.
+ */
+export type OpenFolderBody =
+    | { target: "data_dir" }
+    | { target: "output_dir"; analysisId: string }
+    | { target: "workspace"; analysisId: string; path: string }
+    | { target: "input"; analysisId: string; path: string; anchorId: string | null }
+    | { target: "logs_dir" }
+    | { target: "reference_store" }
+    | { target: "package_store" };
 
-/** The answer of `POST /api/v1/open`. `opened` is true when the server started the opener of the OS. */
+/** The answer of `POST /api/v1/open-directory`. `opened` is true when the server started the opener of the OS. */
 export type OpenFolderResult = { opened: boolean };
