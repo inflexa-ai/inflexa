@@ -28,7 +28,7 @@ import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { REFERENCE_DATA_CATALOG } from "../reference-data/catalog.js";
 import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../reference-data/receipt.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { RunDedupCollisionError, insertRun, upsertAnalysis, upsertPlan } from "../state/index.js";
+import { RunDedupCollisionError, insertRun, queryNewestPlanRun, updateRunStatus, upsertAnalysis, upsertPlan } from "../state/index.js";
 import {
     PlanMalformedError,
     PlanNotFoundError,
@@ -100,16 +100,18 @@ function fakePool(rowsByPrefix: Record<string, Row[]>): {
     queries: Array<{ text: string; values: unknown[] }>;
 } {
     const queries: Array<{ text: string; values: unknown[] }> = [];
-    const query = (q: { text: string; values?: unknown[] }) => {
-        queries.push({ text: q.text, values: q.values ?? [] });
+    const query = (q: { text: string; values?: unknown[] } | string, params?: unknown[]) => {
+        const text = typeof q === "string" ? q : q.text;
+        queries.push({ text, values: typeof q === "string" ? (params ?? []) : (q.values ?? []) });
         for (const prefix of Object.keys(rowsByPrefix)) {
-            if (q.text.includes(prefix)) {
+            if (text.includes(prefix)) {
                 return Promise.resolve({ rows: rowsByPrefix[prefix]! });
             }
         }
         return Promise.resolve({ rows: [] });
     };
-    return { pool: { query } as unknown as Pool, queries };
+    const connect = async () => ({ query, release: () => {} });
+    return { pool: { query, connect } as unknown as Pool, queries };
 }
 
 function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): ToolContext {
@@ -1119,17 +1121,33 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 });
 
 /**
- * A pool that fails the statements the matcher names and delegates the others. The launch reads the
- * pool through `query` only, thus a bare object stands for it.
+ * A pool whose statements pass through `intercept` first, on the pool and on the client of a
+ * transaction. `intercept` gives an error to fail the statement, or nothing to let it run. The launch
+ * reads the pool through `query` and `connect` only, thus a bare object stands for it.
  */
-function poolFailingOn(pool: Pool, failure: (text: string) => Error | undefined): Pool {
+function interceptingPool(pool: Pool, intercept: (text: string) => Error | undefined | Promise<Error | undefined>): Pool {
+    const guard =
+        (query: (...args: unknown[]) => Promise<unknown>) =>
+        async (q: { text: string } | string, ...rest: unknown[]) => {
+            const error = await intercept(typeof q === "string" ? q : q.text);
+            if (error) throw error;
+            return query(q, ...rest);
+        };
     return {
-        query: (q: { text: string } | string, ...rest: unknown[]) => {
-            const error = failure(typeof q === "string" ? q : q.text);
-            if (error) return Promise.reject(error);
-            return (pool.query as (...args: unknown[]) => Promise<unknown>)(q, ...rest);
+        query: guard(pool.query.bind(pool) as (...args: unknown[]) => Promise<unknown>),
+        connect: async () => {
+            const client = await pool.connect();
+            return {
+                query: guard(client.query.bind(client) as (...args: unknown[]) => Promise<unknown>),
+                release: (...args: unknown[]) => (client.release as (...rest: unknown[]) => void)(...args),
+            };
         },
     } as unknown as Pool;
+}
+
+/** A pool that fails the statements the matcher names, also inside a transaction, and delegates the others. */
+function poolFailingOn(pool: Pool, failure: (text: string) => Error | undefined): Pool {
+    return interceptingPool(pool, failure);
 }
 
 /** The dedup collision as the driver reports it: the unique violation of the active-plan index. */
@@ -1491,6 +1509,166 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(revokes).toEqual(["workflow-start-failed"]);
             expect(await runRows()).toMatchObject([{ status: "failed", error: "workflow start failed" }]);
         });
+
+        describe("the newest run that the caller saw", () => {
+            async function endedRun(runId: string, startedAt?: string): Promise<void> {
+                (
+                    await insertRun(pool, {
+                        runId,
+                        analysisId: ANALYSIS_ID,
+                        threadId: null,
+                        workflowName: "executeAnalysis",
+                        planId: PLAN_ID,
+                        ...(startedAt === undefined ? {} : { startedAt }),
+                    })
+                )._unsafeUnwrap();
+                (await updateRunStatus(pool, runId, "completed"))._unsafeUnwrap();
+            }
+
+            it("gives the newest run with started false for a stale view, and links, reserves, and authorizes nothing", async () => {
+                await seedPlan(planWithPackages);
+                await endedRun("r1");
+                const links: unknown[] = [];
+                const { launcher, launches } = fakeLauncher();
+
+                const launch = (
+                    await launchPlanRun(
+                        deps({
+                            runLauncher: launcher,
+                            runAuthorizer: throwingAuthorizer,
+                            extendAnalysisFarm: (_analysisId, queries) => {
+                                links.push(queries);
+                                return okAsync([]);
+                            },
+                        }),
+                        { session: session(), planId: PLAN_ID, newestRunId: null },
+                    )
+                )._unsafeUnwrap();
+
+                expect(launch).toEqual({ runId: "r1", started: false });
+                expect(links).toEqual([]);
+                expect(launches).toHaveLength(0);
+                expect((await runRows()).map((row) => row.run_id)).toEqual(["r1"]);
+            });
+
+            it("starts a run again when the view shows the newest run", async () => {
+                await seedPlan(validPlan);
+                await endedRun("r1");
+
+                const launch = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID, newestRunId: "r1" }))._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+                expect(launch.runId).not.toBe("r1");
+                expect((await runRows()).map((row) => row.run_id)).toContain(launch.runId);
+            });
+
+            it("starts the first run for a view that showed no run", async () => {
+                await seedPlan(validPlan);
+
+                const launch = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID, newestRunId: null }))._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+            });
+
+            it("compares nothing when the caller gives no newest run", async () => {
+                await seedPlan(validPlan);
+                await endedRun("r1");
+
+                const launch = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+                expect(launch.runId).not.toBe("r1");
+            });
+
+            it("refuses a view of a run that the plan does not have, and reserves nothing", async () => {
+                await seedPlan(planWithPackages);
+                let linked = false;
+
+                const refusal = (
+                    await launchPlanRun(
+                        deps({
+                            runAuthorizer: throwingAuthorizer,
+                            extendAnalysisFarm: () => {
+                                linked = true;
+                                return okAsync([]);
+                            },
+                        }),
+                        { session: session(), planId: PLAN_ID, newestRunId: "r9" },
+                    )
+                )._unsafeUnwrapErr();
+
+                expect(refusal).toEqual({ type: "run_not_found", runId: "r9" });
+                expect(linked).toBe(false);
+                expect(await runRows()).toEqual([]);
+            });
+
+            it("makes the view stale when a run starts and ends during the link pass", async () => {
+                await seedPlan(planWithPackages);
+                const { launcher, launches } = fakeLauncher();
+                const racing: LaunchPlanRunDeps["extendAnalysisFarm"] = (_analysisId, queries) =>
+                    ResultAsync.fromSafePromise(endedRun("r2")).map(() =>
+                        queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })),
+                    );
+
+                const launch = (
+                    await launchPlanRun(deps({ runLauncher: launcher, runAuthorizer: throwingAuthorizer, extendAnalysisFarm: racing }), {
+                        session: session(),
+                        planId: PLAN_ID,
+                        newestRunId: null,
+                    })
+                )._unsafeUnwrap();
+
+                expect(launch).toEqual({ runId: "r2", started: false });
+                expect(launches).toHaveLength(0);
+                expect((await runRows()).map((row) => row.run_id)).toEqual(["r2"]);
+            });
+
+            it("starts one run for two launches with one view, and the second launch waits for the lock of the plan", async () => {
+                await seedPlan(validPlan);
+                let reachedInsert!: () => void;
+                const insertReached = new Promise<void>((resolve) => (reachedInsert = resolve));
+                let releaseInsert!: () => void;
+                const insertGate = new Promise<void>((resolve) => (releaseInsert = resolve));
+                const gated = interceptingPool(pool, async (text) => {
+                    if (!text.includes("INSERT INTO cortex_runs")) return undefined;
+                    reachedInsert();
+                    await insertGate;
+                    return undefined;
+                });
+
+                const first = launchPlanRun(deps({ pool: gated }), { session: session(), planId: PLAN_ID, newestRunId: null });
+                await insertReached;
+                const second = launchPlanRun(deps(), { session: session(), planId: PLAN_ID, newestRunId: null });
+                const settled = await Promise.race([
+                    second.match(
+                        () => "settled",
+                        () => "settled",
+                    ),
+                    new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 200)),
+                ]);
+                releaseInsert();
+                const firstLaunch = (await first)._unsafeUnwrap();
+                const secondLaunch = (await second)._unsafeUnwrap();
+
+                expect(settled).toBe("waiting");
+                expect(firstLaunch.started).toBe(true);
+                expect(secondLaunch).toEqual({ runId: firstLaunch.runId, started: false });
+                expect((await runRows()).map((row) => row.run_id)).toEqual([firstLaunch.runId]);
+            });
+
+            it("gives the new run a start later than the newest start when the clock of the host is behind", async () => {
+                await seedPlan(validPlan);
+                const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+                await endedRun("r1", future);
+
+                const launch = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID, newestRunId: "r1" }))._unsafeUnwrap();
+
+                expect(launch.started).toBe(true);
+                const newest = (await queryNewestPlanRun(pool, { analysisId: ANALYSIS_ID, planId: PLAN_ID }))._unsafeUnwrap();
+                expect(newest?.runId).toBe(launch.runId);
+                expect(newest!.startedAt > future).toBe(true);
+            });
+        });
     });
 
     describe("the plan mode of execute_analysis", () => {
@@ -1561,6 +1739,18 @@ describe("the launch of a stored plan, over a real database", () => {
 
             expect(failure).toBeInstanceOf(Error);
             expect((failure as Error).cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
+        });
+
+        it("runs a plan again after its run ended", async () => {
+            await seedPlan(validPlan);
+            (await insertRun(pool, { runId: "r1", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID }))._unsafeUnwrap();
+            (await updateRunStatus(pool, "r1", "completed"))._unsafeUnwrap();
+
+            const result = (await toolFor().run())._unsafeUnwrap() as { runId: string; status: string };
+
+            expect(result.status).toBe("in_progress");
+            expect(result.runId).not.toBe("r1");
+            expect((await runRows()).map((row) => row.run_id)).toContain(result.runId);
         });
 
         it("fails the call with the error that the launcher threw", async () => {

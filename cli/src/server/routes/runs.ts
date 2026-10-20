@@ -290,9 +290,9 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
             return apiError(c, "draining", "The Inflexa server is stopping and approves no plan. Approve the plan again after the server starts again.");
         const analysisId = analysisParam(c);
         const planId = c.req.param("planId");
-        const body = await readBody<ApprovePlanBody>(c, z.object({ threadId: z.string().min(1) }));
+        const body = await readBody<ApprovePlanBody>(c, z.object({ threadId: z.string().min(1), newestRunId: z.string().min(1).nullable() }));
         if (body.isErr()) return body.error;
-        const { threadId } = body.value;
+        const { threadId, newestRunId } = body.value;
         // The record of the approval lands in the thread between two rounds of a running turn, at the earliest. The
         // approval waits for the turn instead. The check is not a lock: a turn that starts after it still sees a
         // valid sequence of messages.
@@ -302,10 +302,10 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         }
 
         const { identity, auth } = buildChatSession(analysisId, threadId);
-        const approval = await opts.approvePlan(c.get("runtime"), { analysisId, threadId, planId, identity, auth });
+        const approval = await opts.approvePlan(c.get("runtime"), { analysisId, threadId, planId, newestRunId, identity, auth });
         return approval.match(
             (result) => {
-                // An approval that found the run active changed nothing, thus it is no activity.
+                // An approval that found the run active, or a stale view, changed nothing, thus it is no activity.
                 if (result.started) noteAnalysisActivity(analysisId, Date.now());
                 return c.json<PlanApprovalResult>(result, 201);
             },
@@ -483,6 +483,8 @@ function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: Approve
             return apiError(c, "not_found", "Thread not found.");
         case "plan_not_found":
             return apiError(c, "not_found", `This analysis has no plan ${planId}.`);
+        case "run_not_found":
+            return apiError(c, "not_found", `Plan ${planId} has no run ${refusal.runId}.`);
         case "superseded":
             return conflict(`Plan ${planId} was replaced by plan ${refusal.supersededBy}.`, { reason: "superseded", supersededBy: refusal.supersededBy });
         case "plan_invalid":

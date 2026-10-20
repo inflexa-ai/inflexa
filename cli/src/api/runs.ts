@@ -108,12 +108,18 @@ export type RunDetail = RunSummary & {
 export type ApprovePlanBody = {
     /** The conversation thread on which the person approves the plan. */
     threadId: string;
+    /**
+     * The newest run of the plan that the client saw: the first id of the `runIds` of `GET {A}/plans/:planId`, or
+     * `null` when that list was empty. The approval starts a run only when it is the newest run of the plan.
+     */
+    newestRunId: string | null;
 };
 
 /**
- * The 201 body of `POST {A}/plans/:planId/approve`. `started: false` means that a run of the plan was already
- * active: the approval then recorded nothing, and `message` is `null`. `message` is also `null` when the record
- * of an approval that started the run could not be stored.
+ * The 201 body of `POST {A}/plans/:planId/approve`. `started: false` means that a run of the plan was active, or
+ * that the newest run of the plan was not the `newestRunId` of the body (a stale view). `runId` then names that
+ * run, the approval recorded nothing, and `message` is `null`. `message` is also `null` when the record of an
+ * approval that started the run could not be stored.
  */
 export type PlanApprovalResult = {
     planId: string;

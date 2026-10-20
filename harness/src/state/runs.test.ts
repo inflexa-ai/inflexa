@@ -10,6 +10,7 @@ import {
     markRunCanceledIfActive,
     queryActiveRun,
     queryActiveRunsByAnalysis,
+    queryNewestPlanRun,
     queryNonTerminalRunsByAnalysis,
     queryRun,
     queryRunIdsByPlan,
@@ -479,5 +480,78 @@ describe("queryRunIdsByPlan", () => {
         const counted = countingQuerier(pool);
         (await queryRunIdsByPlan(counted.querier, { analysisId: "a-ids", planId: p, limit: 5 }))._unsafeUnwrap();
         expect(counted.calls()).toBe(1);
+    });
+});
+
+describe("queryNewestPlanRun", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("runs_newest_plan_run"));
+        (await upsertAnalysis(pool, "a-newest", null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "a-other", null))._unsafeUnwrap();
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    async function seedPlan(analysisId: string): Promise<string> {
+        return (await insertPlan(pool, { analysisId, plan: { steps: [] } }))._unsafeUnwrap();
+    }
+
+    async function seedRun(runId: string, analysisId: string, planId: string, startedAt: string): Promise<void> {
+        (await insertRun(pool, { runId, analysisId, planId, workflowName: "executeAnalysis", startedAt }))._unsafeUnwrap();
+        (await updateRunStatus(pool, runId, "completed"))._unsafeUnwrap();
+    }
+
+    it("gives the run with the latest start and its start time", async () => {
+        const p = await seedPlan("a-newest");
+        await seedRun("n1", "a-newest", p, "2026-10-01T00:00:00.000Z");
+        await seedRun("n2", "a-newest", p, "2026-10-02T00:00:00.000Z");
+
+        expect((await queryNewestPlanRun(pool, { analysisId: "a-newest", planId: p }))._unsafeUnwrap()).toEqual({
+            runId: "n2",
+            startedAt: "2026-10-02T00:00:00.000Z",
+        });
+    });
+
+    it("breaks a tie of start times with the highest run id", async () => {
+        const p = await seedPlan("a-newest");
+        const at = "2026-10-05T00:00:00.000Z";
+        await seedRun("tie-a", "a-newest", p, at);
+        await seedRun("tie-b", "a-newest", p, at);
+
+        expect((await queryNewestPlanRun(pool, { analysisId: "a-newest", planId: p }))._unsafeUnwrap()?.runId).toBe("tie-b");
+    });
+
+    it("gives null for a plan with no run, and for a plan of another analysis", async () => {
+        const p = await seedPlan("a-newest");
+        const q = await seedPlan("a-other");
+        await seedRun("o1", "a-other", q, "2026-10-01T00:00:00.000Z");
+
+        expect((await queryNewestPlanRun(pool, { analysisId: "a-newest", planId: p }))._unsafeUnwrap()).toBeNull();
+        expect((await queryNewestPlanRun(pool, { analysisId: "a-newest", planId: q }))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("writes the start time that insertRun receives", async () => {
+        const p = await seedPlan("a-newest");
+        const startedAt = "2031-01-02T03:04:05.678Z";
+        (await insertRun(pool, { runId: "written", analysisId: "a-newest", planId: p, workflowName: "executeAnalysis", startedAt }))._unsafeUnwrap();
+
+        expect((await queryRun(pool, "written"))._unsafeUnwrap()?.startedAt).toBe(startedAt);
+    });
+
+    it("writes the start time that reserveRunById receives", async () => {
+        const p = await seedPlan("a-newest");
+        const startedAt = "2032-02-03T04:05:06.789Z";
+        const reservation = (
+            await reserveRunById(pool, { runId: "reserved-written", analysisId: "a-newest", planId: p, workflowName: "executeAnalysis", startedAt })
+        )._unsafeUnwrap();
+
+        expect(reservation.inserted).toBe(true);
+        expect(reservation.row.startedAt).toBe(startedAt);
+        expect((await queryRun(pool, "reserved-written"))._unsafeUnwrap()?.startedAt).toBe(startedAt);
     });
 });

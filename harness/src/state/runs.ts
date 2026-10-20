@@ -26,6 +26,8 @@ export interface InsertRunInput {
     planId?: string | null;
     mandateJti?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     mandateExpiresAt?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+    /** The start time as an ISO string. Without it, the row gets the clock of the host. */
+    startedAt?: string;
 }
 
 export interface RunReservation {
@@ -72,7 +74,7 @@ export class RunDedupCollisionError extends Error {
  * the err channel as a `DbError`.
  */
 export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<void, DbError> {
-    const now = new Date().toISOString();
+    const now = input.startedAt ?? new Date().toISOString();
     return tryMutation("runs.insertRun", async () => {
         await pool.query({
             text: `INSERT INTO cortex_runs
@@ -104,7 +106,7 @@ export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<voi
 
 /** Reserve a deterministic run id, treating same-analysis PK conflict as redelivery. */
 export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsync<RunReservation, DbError> {
-    const now = new Date().toISOString();
+    const now = input.startedAt ?? new Date().toISOString();
     return tryMutation("runs.reserveRunById", async () => {
         const result = await pool.query({
             text: `INSERT INTO cortex_runs
@@ -348,6 +350,27 @@ export function queryRunIdsByPlan(pool: Querier, opts: { analysisId: string; pla
             values: [opts.analysisId, opts.planId, opts.limit],
         });
         return result.rows.map((row) => row.run_id);
+    });
+}
+
+/**
+ * The newest run of one plan of one analysis, or `null` for a plan with no run. The order is the one of
+ * {@link queryRunIdsByPlan}: the latest start first, and the highest run id on a tie of start times.
+ */
+export function queryNewestPlanRun(
+    pool: Querier,
+    opts: { analysisId: string; planId: string },
+): ResultAsync<{ runId: string; startedAt: string } | null, DbError> {
+    return tryQuery("runs.queryNewestPlanRun", async () => {
+        const result = await pool.query<{ run_id: string; started_at: string }>({
+            text: `SELECT run_id, started_at FROM cortex_runs
+            WHERE analysis_id = $1 AND plan_id = $2
+            ORDER BY started_at DESC, run_id DESC
+            LIMIT 1`,
+            values: [opts.analysisId, opts.planId],
+        });
+        const row = result.rows[0];
+        return row ? { runId: row.run_id, startedAt: row.started_at } : null;
     });
 }
 
