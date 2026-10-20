@@ -1,13 +1,13 @@
 /**
- * Covers the two decisions the guard reaches from the environment alone,
- * before it touches a container runtime. The runtime-probing branches are
- * deliberately not exercised: reaching them means starting the real ryuk
- * sidecar, which is a side effect a unit test must not have.
+ * Covers the decisions the guard reaches from the environment alone, before it
+ * touches a container runtime. The runtime-probing branches are deliberately
+ * not exercised: reaching them means starting the real ryuk sidecar, which is
+ * a side effect a unit test must not have.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { assertContainerWillBeReaped, refusalMessage } from "./require-reaper.js";
+import { assertContainerWillBeReaped, defaultRyukPrivileged, refusalMessage } from "./require-reaper.js";
 
 const TOUCHED = ["CORTEX_TEST_ALLOW_LEAKED_PG", "TESTCONTAINERS_RYUK_DISABLED"] as const;
 const saved = new Map(TOUCHED.map((key) => [key, process.env[key]]));
@@ -20,20 +20,38 @@ afterEach(() => {
 });
 
 describe("assertContainerWillBeReaped", () => {
-    it("lets the container start when the leak is explicitly accepted", async () => {
+    // The removed variable must not get past the guard.
+    it("refuses when ryuk is disabled, and never reaches the runtime", async () => {
         process.env.CORTEX_TEST_ALLOW_LEAKED_PG = "1";
-        // Set too, to prove the opt-in is checked before anything else: this
-        // alone would otherwise refuse.
         process.env.TESTCONTAINERS_RYUK_DISABLED = "true";
 
-        await assertContainerWillBeReaped();
+        await expect(assertContainerWillBeReaped()).rejects.toThrow(/TESTCONTAINERS_RYUK_DISABLED=true disables/);
+    });
+});
+
+describe("defaultRyukPrivileged", () => {
+    it("sets the variable to true when it is absent", () => {
+        const env: NodeJS.ProcessEnv = {};
+
+        defaultRyukPrivileged(env);
+
+        expect(env.TESTCONTAINERS_RYUK_PRIVILEGED).toBe("true");
     });
 
-    it("refuses when ryuk is disabled, and never reaches the runtime", async () => {
-        delete process.env.CORTEX_TEST_ALLOW_LEAKED_PG;
-        process.env.TESTCONTAINERS_RYUK_DISABLED = "true";
+    it("keeps a value that the developer set", () => {
+        const env: NodeJS.ProcessEnv = { TESTCONTAINERS_RYUK_PRIVILEGED: "false" };
 
-        await expect(assertContainerWillBeReaped()).rejects.toThrow(/TESTCONTAINERS_RYUK_DISABLED=true/);
+        defaultRyukPrivileged(env);
+
+        expect(env.TESTCONTAINERS_RYUK_PRIVILEGED).toBe("false");
+    });
+
+    it("keeps the empty value", () => {
+        const env: NodeJS.ProcessEnv = { TESTCONTAINERS_RYUK_PRIVILEGED: "" };
+
+        defaultRyukPrivileged(env);
+
+        expect(env.TESTCONTAINERS_RYUK_PRIVILEGED).toBe("");
     });
 });
 
@@ -46,13 +64,12 @@ describe("refusalMessage", () => {
         expect(message).toContain("CORTEX_TEST_PG_URL=");
     });
 
-    // The opt-in gets past this guard, but `GenericContainer.start()` then calls
-    // `getReaper` itself. On a host where ryuk cannot start, that call throws and
-    // no container is created. Thus the message has to name the second variable.
-    it("names both variables that the accept-the-leak route needs", () => {
+    it("names the podman variables and offers no route without a reaper", () => {
         const message = refusalMessage("the ryuk reaper is not running");
 
-        expect(message).toContain("CORTEX_TEST_ALLOW_LEAKED_PG=1");
-        expect(message).toContain("TESTCONTAINERS_RYUK_DISABLED=true");
+        expect(message).toContain("DOCKER_HOST");
+        expect(message).toContain("TESTCONTAINERS_RYUK_PRIVILEGED=true");
+        expect(message).toContain("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE");
+        expect(message).not.toContain("CORTEX_TEST_ALLOW_LEAKED_PG");
     });
 });

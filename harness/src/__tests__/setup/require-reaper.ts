@@ -5,9 +5,10 @@
  * Bun isolates module state per test file, so the memoized promise in
  * `postgres.ts` is NOT shared across test files — on the fallback path each DB
  * file starts its OWN container. Removing them is left entirely to the
- * `ryuk` sidecar, and ryuk does not come up under podman (see CLAUDE.md). Where
- * that holds, a bare `bun test` ends with one standing container for each DB
- * file and nothing to remove them.
+ * `ryuk` sidecar. On a rootful podman machine ryuk starts only when it runs
+ * privileged, because SELinux in the VM blocks the runtime socket for an
+ * unprivileged ryuk; the guard sets that default. Where ryuk cannot start, the
+ * containers of a bare `bun test` would stay with nothing to remove them.
  *
  * So the fallback asks, BEFORE it starts anything, whether a reaper will
  * actually remove what it is about to start. `getReaper()` is testcontainers'
@@ -36,10 +37,10 @@
 
 import { getContainerRuntimeClient, getReaper } from "testcontainers";
 
-/** Set to any non-empty value to accept the leak and start the container anyway. */
-const ALLOW_LEAK_ENV = "CORTEX_TEST_ALLOW_LEAKED_PG";
 /** testcontainers' own switch: "true" swaps the real reaper for a no-op stand-in. */
 const RYUK_DISABLED_ENV = "TESTCONTAINERS_RYUK_DISABLED";
+/** testcontainers reads this lazily, when `getReaper` makes a new ryuk. */
+const RYUK_PRIVILEGED_ENV = "TESTCONTAINERS_RYUK_PRIVILEGED";
 
 const ROUTES = `Use one of the two routes that start ONE container for the whole run:
 
@@ -47,13 +48,15 @@ const ROUTES = `Use one of the two routes that start ONE container for the whole
   CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex bun test [paths...]
                                    points every file at a Postgres that already runs; starts nothing
 
-To start the container regardless, accepting one unreaped container for each database
-test file, set BOTH:
+Unset ${RYUK_DISABLED_ENV} if it is set. If ryuk cannot start, check these:
 
-  ${ALLOW_LEAK_ENV}=1 ${RYUK_DISABLED_ENV}=true bun test [paths...]
-
-Both are needed on a host where ryuk cannot start: the first gets past this guard, and
-the second stops GenericContainer.start() from trying to start ryuk on its own.`;
+  DOCKER_HOST=unix://<socket>      when /var/run/docker.sock does not reach your container machine
+  ${RYUK_PRIVILEGED_ENV}=true
+                                   when SELinux in a podman VM blocks the runtime socket for ryuk
+                                   (this guard sets it when it is absent from the environment)
+  TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=<path>
+                                   when the runtime socket inside the VM is not at /var/run/docker.sock,
+                                   for example on a rootless podman machine`;
 
 /**
  * The refusal a developer reads. It names what is missing and both safe routes,
@@ -70,19 +73,27 @@ ${ROUTES}`;
 }
 
 /**
+ * Make ryuk run privileged unless the developer chose a value. The empty value
+ * counts as a choice.
+ */
+export function defaultRyukPrivileged(env: NodeJS.ProcessEnv): void {
+    if (env[RYUK_PRIVILEGED_ENV] === undefined) env[RYUK_PRIVILEGED_ENV] = "true";
+}
+
+/**
  * Throw unless the container this fallback is about to start will be removed
  * again. Called by `startContainer()` only when `CORTEX_TEST_PG_URL` is unset,
  * i.e. only when a container is actually about to be created.
  */
 export async function assertContainerWillBeReaped(): Promise<void> {
-    if (process.env[ALLOW_LEAK_ENV]) return;
-
     // Checked here as well as inside getReaper: with ryuk disabled getReaper
     // hands back a no-op reaper rather than throwing, so the container would
     // start and never be removed — the exact leak this guard exists to stop.
     if (process.env[RYUK_DISABLED_ENV] === "true") {
         throw new Error(refusalMessage(`${RYUK_DISABLED_ENV}=true disables the ryuk reaper`));
     }
+
+    defaultRyukPrivileged(process.env);
 
     let client;
     try {
