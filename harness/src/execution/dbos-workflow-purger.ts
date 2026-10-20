@@ -80,24 +80,33 @@ export interface DbosWorkflowPurgerDeps {
     readonly logger?: Logger;
 }
 
-export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflowPurgerDeps): WorkflowPurger {
-    const logger = (injected ?? createNoopLogger()).named("workflow-purger");
+/**
+ * One client for each pool, shared by every purger and by the run canceler. A client registers
+ * `error` and `connect` handlers on the pool it is handed, so a client for each caller would
+ * accumulate handler pairs on a long-lived pool. Its `destroy()` ends that pool, so a client over
+ * an injected pool must never be destroyed either — which leaves a per-call client nothing to
+ * release. Creation is lazy so a host that never reaches the engine builds no client. The logger of
+ * the first caller for a pool becomes the engine logger of that pool.
+ */
+const clients = new WeakMap<Pool, Promise<DBOSClient>>();
 
-    // One client per factory, not per call. Creating a client does no I/O, but the
-    // client registers `error` and `connect` handlers on the pool it is handed, so a
-    // client per purge would accumulate handler pairs on a long-lived pool. Its
-    // `destroy()` ends that pool, so a client over an injected pool must never be
-    // destroyed either — which leaves a per-call client nothing to release. Creation
-    // is lazy so building a purger stays free for a host that never purges.
-    let pending: Promise<DBOSClient> | undefined;
-    const engine = (): Promise<DBOSClient> => {
+export function dbosClientFor(pool: Pool, logger: Logger): Promise<DBOSClient> {
+    let client = clients.get(pool);
+    if (client === undefined) {
         // `create` never initializes the system database, and initialization is the
         // only path that reads the connection string once a pool is supplied — so the
         // url is unreachable from this client rather than merely untaken, and there is
-        // none to thread through the seam.
-        pending ??= DBOSClient.create({ systemDatabaseUrl: "", systemDatabasePool: pool, logger: asEngineLogger(logger) });
-        return pending;
-    };
+        // no url to pass.
+        client = DBOSClient.create({ systemDatabaseUrl: "", systemDatabasePool: pool, logger: asEngineLogger(logger) });
+        clients.set(pool, client);
+    }
+    return client;
+}
+
+export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflowPurgerDeps): WorkflowPurger {
+    const logger = (injected ?? createNoopLogger()).named("workflow-purger");
+
+    const engine = (): Promise<DBOSClient> => dbosClientFor(pool, logger);
 
     /**
      * Whether the engine's schema exists at all — the only thing that separates a

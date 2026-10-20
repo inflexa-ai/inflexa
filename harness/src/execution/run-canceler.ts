@@ -16,10 +16,17 @@
  * the body won the row and owns them; a failed write leaves the row `running`,
  * so a second cancel converges the run. The step rows settle on every path.
  *
+ * One exception: after a failed status write the body does the run end and
+ * records it as a workflow event (`run-end-record.ts`), while the row stays
+ * `running`. This module reads that record before its terminal write. A present
+ * record makes the terminal write carry the recorded status and error, and no
+ * act of the run end follows. A failed read writes nothing, so a second cancel
+ * converges the run.
+ *
  * The engine capability stays internal — the production default is the
  * purger's `DBOSClient`-backed child-cascading cancel, which needs no launched
  * engine (see `dbos-workflow-purger.ts` for why the static `DBOS` facade is
- * the wrong tool here). `cancelWorkflows` is an optional test seam over it.
+ * the wrong tool here). `cancelWorkflows` is an optional injected function over it.
  *
  * No stream writes: `DBOS.writeStream` writes only from inside the workflow
  * that owns the stream, so the run-event reader (`run-event-stream.ts`)
@@ -36,11 +43,12 @@ import type { Logger } from "../lib/logger.js";
 import { elapsedSinceIso, recordRunCompleted, recordStepCompleted } from "../lib/metrics.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
-import { markRunCanceledIfActive, queryRun } from "../state/runs.js";
+import { markRunCanceledIfActive, queryRun, updateRunStatus } from "../state/runs.js";
 import type { RunStatus, StepExecutionRow } from "../state/schema.js";
 import { cancelRunningStepExecutions, queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
-import { createDbosWorkflowPurger } from "./dbos-workflow-purger.js";
+import { createDbosWorkflowPurger, dbosClientFor } from "./dbos-workflow-purger.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
+import { parseRecordedRunEnd, RUN_END_EVENT_KEY, type RecordedRunEnd } from "./run-end-record.js";
 
 /** The reason stamped on the run row and the revoke — the same literal
  * `collectAndComplete` records for a cancel it observes from inside. */
@@ -83,9 +91,12 @@ export interface RunCancelerDeps {
     readonly logger?: Logger;
     /** Receives the end of a run that this canceler cancels. An absent binding, or a binding with no run emit, emits nothing. */
     readonly provenance?: ProvenanceSeam;
-    /** Test seam over the engine cancel. Production default: the workflow
+    /** The engine cancel. Production default: the workflow
      * purger's `DBOSClient`-backed cancel, child-cascading and launch-free. */
     readonly cancelWorkflows?: (workflowIds: readonly string[]) => Promise<void>;
+    /** The run end that the body recorded: `null` when it recorded none, a rejection when the read fails.
+     * The value is unchecked engine data. Production default: `DBOSClient.getEvent` with a zero timeout. */
+    readonly readRecordedRunEnd?: (runId: string) => Promise<unknown>;
 }
 
 export interface RunCanceler {
@@ -115,6 +126,10 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
         })();
         await engineCancel(workflowIds);
     };
+
+    const readRecordedRunEnd =
+        deps.readRecordedRunEnd ??
+        (async (runId: string): Promise<unknown> => (await dbosClientFor(pool, logger)).getEvent<unknown>(runId, RUN_END_EVENT_KEY, 0));
 
     /** Steps whose child started (a persisted child workflow id) and has not written its terminal row. */
     const incompleteSteps = async (runId: string): Promise<StepExecutionRow[]> =>
@@ -165,14 +180,39 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 logger.error("late-child cancel sweep failed", { runId, ...logger.errorFields(err) });
             }
 
+            // The run end that the body recorded after a failed status write. A value
+            // that is not a recorded run end counts as a failed read.
+            let recorded: RecordedRunEnd | null = null;
+            let readFailed = false;
+            try {
+                const value = await readRecordedRunEnd(runId);
+                if (value !== null && value !== undefined) {
+                    recorded = parseRecordedRunEnd(value);
+                    if (recorded === null) {
+                        readFailed = true;
+                        logger.error("the recorded run end has the wrong shape", { runId });
+                    }
+                }
+            } catch (err) {
+                readFailed = true;
+                logger.error("the read of the recorded run end failed", { runId, ...logger.errorFields(err) });
+            }
+
             // Convergence — each phase isolated so one failure skips nothing after it.
             // The terminal write has three outcomes: changed (this cancel won the row),
-            // refused (the body won it), failed (the row is unchanged).
+            // refused (the body won it), failed (the row is unchanged). A failed read of
+            // the recorded run end is a failed write that never ran.
             let writeOutcome: "changed" | "refused" | "failed" = "failed";
-            try {
-                writeOutcome = unwrapOrThrow(await markRunCanceledIfActive(pool, runId, EXTERNAL_CANCEL_REASON)) ? "changed" : "refused";
-            } catch (err) {
-                logger.error("markRunCanceledIfActive failed", { runId, ...logger.errorFields(err) });
+            if (!readFailed) {
+                try {
+                    const changed =
+                        recorded === null
+                            ? unwrapOrThrow(await markRunCanceledIfActive(pool, runId, EXTERNAL_CANCEL_REASON))
+                            : unwrapOrThrow(await updateRunStatus(pool, runId, recorded.status, recorded.error));
+                    writeOutcome = changed ? "changed" : "refused";
+                } catch (err) {
+                    logger.error("the terminal write of the run failed", { runId, ...logger.errorFields(err) });
+                }
             }
             const transitioned = writeOutcome === "changed";
             // A terminal step of the workflow that started before the cancel can still
@@ -180,8 +220,12 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             // write wins, and the run-end acts ride behind the write that won: a
             // refused write means the run settled on its own and its own terminal step
             // does them. A cut child never reached its terminal row, so its step
-            // records here too.
-            if (transitioned) {
+            // records here too. A recorded run end means the body did the acts, so
+            // only the run metric rides behind the repair write.
+            if (transitioned && recorded !== null) {
+                recordRunCompleted({ workflow: "analysis", status: recorded.status, durationMs: elapsedSinceIso(row.startedAt) });
+            }
+            if (transitioned && recorded === null) {
                 recordRunCompleted({ workflow: "analysis", status: "canceled", durationMs: elapsedSinceIso(row.startedAt) });
                 for (const step of cutSteps ?? []) recordStepCompleted({ agentId: step.agentId, status: "canceled" });
 
@@ -235,10 +279,11 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             // Only the writer that won the row closes the charge and revokes. A refused
             // write left both to the body; a failed write left the row `running`, so a
             // second cancel converges the run. The flags of a refused write are true
-            // because there is nothing for this cancel to converge.
-            let charge = writeOutcome === "refused";
-            let mandate = writeOutcome === "refused" || (writeOutcome === "failed" && row.mandateJti === null);
-            if (transitioned) {
+            // because there is nothing for this cancel to converge. With a recorded run
+            // end the body did both acts, and the flags are its results.
+            let charge = recorded !== null ? recorded.closed : writeOutcome === "refused";
+            let mandate = recorded !== null ? recorded.revoked : writeOutcome === "refused" || (writeOutcome === "failed" && row.mandateJti === null);
+            if (transitioned && recorded === null) {
                 charge = await deliverNotice(
                     logger.with({ runId }),
                     "RunCharge.close",
@@ -256,7 +301,7 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
 
             // No transition means the run reached a terminal state on its own (or the
             // write failed) — report the row as it stands rather than claiming `canceled`.
-            let finalStatus: RunStatus = "canceled";
+            let finalStatus: RunStatus = recorded?.status ?? "canceled";
             if (!transitioned) {
                 const reread = unwrapOrThrow(await queryRun(pool, runId));
                 finalStatus = reread?.status ?? "canceled";

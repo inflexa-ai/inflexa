@@ -16,7 +16,13 @@ import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import type { Logger, LogFields } from "../lib/logger.js";
 import type { RunProvenanceEvent } from "../provenance/seam.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
-import { createRunCanceler, UnknownRunError } from "./run-canceler.js";
+import type { RecordedRunEnd } from "./run-end-record.js";
+import { createRunCanceler as createRunCancelerWithReads, UnknownRunError, type RunCancelerDeps } from "./run-canceler.js";
+
+/** The read of the recorded run end gives `null` unless a test binds its own, so a test with no record keeps its meaning. */
+function createRunCanceler(deps: RunCancelerDeps) {
+    return createRunCancelerWithReads({ readRecordedRunEnd: async () => null, ...deps });
+}
 
 const session: AgentSession = {
     identity: { user: "tester" },
@@ -111,6 +117,12 @@ function fakeDb(
                 throw new Error(`unexpected step write: ${text}`);
             }
             if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
+            if (text.includes("SET status = $1")) {
+                if (opts.runWriteFails) throw new Error("run write exploded");
+                if (state.run === null || state.run.status !== "running") return { rowCount: 0 };
+                state.run = { ...state.run, status: values?.[0], completed_at: values?.[1], error: values?.[2] };
+                return { rowCount: 1 };
+            }
             if (text.includes("SET status = 'canceled'")) {
                 if (opts.runWriteFails) throw new Error("run write exploded");
                 const active = state.run !== null && state.run.status === "running";
@@ -690,5 +702,195 @@ describe("createRunCanceler run end record", () => {
             });
             expect(closes).toHaveLength(1);
         }
+    });
+});
+
+describe("createRunCanceler recorded run end", () => {
+    function recordedEnd(overrides: Partial<RecordedRunEnd> = {}): RecordedRunEnd {
+        return { status: "completed", error: null, closed: true, revoked: true, ...overrides };
+    }
+
+    function setup(opts: { record?: unknown; readFails?: boolean; row?: Row; onRead?: (db: FakeDb) => void; runWriteFails?: boolean }) {
+        const db = fakeDb(opts.row ?? runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], {
+            runWriteFails: opts.runWriteFails,
+        });
+        const { charge, closes } = recordingCharge();
+        const { authorizer, revoked } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const received: RunProvenanceEvent[] = [];
+        const { logger, errors } = recordingErrorLogger();
+        const canceler = createRunCanceler({
+            pool: db.pool,
+            runCharge: charge,
+            runAuthorizer: authorizer,
+            cancelWorkflows,
+            provenance: { emitRunEvent: (event) => received.push(event) },
+            logger,
+            readRecordedRunEnd: async () => {
+                opts.onRead?.(db);
+                if (opts.readFails) throw new Error("event read exploded");
+                return opts.record ?? null;
+            },
+        });
+        return { db, canceler, closes, revoked, received, errors };
+    }
+
+    it("repairs the row to the recorded status, and emits, closes, and revokes nothing", async () => {
+        const { db, canceler, closes, revoked, received } = setup({ record: recordedEnd() });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.run?.status).toBe("completed");
+        expect(db.state.run?.completed_at).not.toBeNull();
+        expect(db.state.run?.error).toBeNull();
+        expect(received).toEqual([]);
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
+        expect(result).toEqual({
+            runId: "run-1",
+            workflowId: "run-1",
+            outcome: "canceled",
+            finalStatus: "completed",
+            converged: { steps: true, charge: true, mandate: true },
+        });
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+    });
+
+    it("keeps the error of the body on the repaired row", async () => {
+        const { db, canceler, received } = setup({ record: recordedEnd({ status: "failed", error: "synthesis failed" }) });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.run?.status).toBe("failed");
+        expect(db.state.run?.error).toBe("synthesis failed");
+        expect(result.finalStatus).toBe("failed");
+        expect(received).toEqual([]);
+    });
+
+    it("emits nothing for a recorded canceled status", async () => {
+        const { db, canceler, closes, revoked, received } = setup({ record: recordedEnd({ status: "canceled", error: "external_cancel" }) });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.run?.status).toBe("canceled");
+        expect(db.state.run?.error).toBe("external_cancel");
+        expect(result.finalStatus).toBe("canceled");
+        expect(received).toEqual([]);
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
+    });
+
+    it("takes the flags from the record: a failed charge close of the body shows as charge false", async () => {
+        const { canceler } = setup({ record: recordedEnd({ closed: false, revoked: true }) });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.converged).toEqual({ steps: true, charge: false, mandate: true });
+    });
+
+    it("records the run outcome metric with the recorded status, and no step outcome metric", async () => {
+        const capture = captureMetrics();
+        try {
+            const { canceler } = setup({ record: recordedEnd({ status: "failed", error: "boom" }) });
+
+            await canceler.cancel("run-1", session);
+
+            expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "failed", workflow: "analysis" }, 1]]);
+            expect(await capture.sums("cortex.step.completed")).toEqual([]);
+        } finally {
+            await capture.dispose();
+        }
+    });
+
+    it("records no metric when the repair write changes nothing, and reports the status of the row", async () => {
+        const capture = captureMetrics();
+        try {
+            const { db, canceler, received } = setup({
+                record: recordedEnd(),
+                onRead: (fake) => {
+                    fake.state.run = { ...(fake.state.run as Row), status: "partial", completed_at: "2026-08-12T02:00:00.000Z" };
+                },
+            });
+
+            const result = await canceler.cancel("run-1", session);
+
+            expect(db.state.run?.status).toBe("partial");
+            expect(result.finalStatus).toBe("partial");
+            expect(received).toEqual([]);
+            expect(await capture.sums("cortex.run.completed")).toEqual([]);
+        } finally {
+            await capture.dispose();
+        }
+    });
+
+    it("takes the flags from the record when the repair write fails, and leaves the row running", async () => {
+        const capture = captureMetrics();
+        try {
+            const { db, canceler, closes, revoked, received } = setup({ record: recordedEnd({ closed: true, revoked: false }), runWriteFails: true });
+
+            const result = await canceler.cancel("run-1", session);
+
+            expect(db.state.run?.status).toBe("running");
+            expect(received).toEqual([]);
+            expect(closes).toEqual([]);
+            expect(revoked).toEqual([]);
+            expect(await capture.sums("cortex.run.completed")).toEqual([]);
+            expect(result.finalStatus).toBe("running");
+            expect(result.converged).toEqual({ steps: true, charge: true, mandate: false });
+        } finally {
+            await capture.dispose();
+        }
+    });
+
+    it("counts a record with a wrong shape as a failed read", async () => {
+        const { db, canceler, closes, revoked, received, errors } = setup({ record: { error: null, closed: true, revoked: true } });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.run?.status).toBe("running");
+        expect(received).toEqual([]);
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
+        expect(result.finalStatus).toBe("running");
+        expect(result.converged).toEqual({ steps: true, charge: false, mandate: false });
+        expect(errors).toHaveLength(1);
+    });
+
+    it("writes nothing, and acts on nothing, when the read of the recorded run end fails", async () => {
+        const { db, canceler, closes, revoked, received, errors } = setup({ readFails: true });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.run?.status).toBe("running");
+        expect(received).toEqual([]);
+        expect(closes).toEqual([]);
+        expect(revoked).toEqual([]);
+        expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
+        expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
+        expect(result.outcome).toBe("canceled");
+        expect(result.finalStatus).toBe("running");
+        expect(result.converged).toEqual({ steps: true, charge: false, mandate: false });
+        expect(errors).toHaveLength(1);
+    });
+
+    it("gives mandate true for a failed read on a row with no jti, as a failed terminal write does", async () => {
+        const { canceler } = setup({ readFails: true, row: runRow() });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.converged).toEqual({ steps: true, charge: false, mandate: true });
+    });
+
+    it("keeps the current path when no run end is recorded", async () => {
+        const { db, canceler, closes, revoked, received } = setup({ record: null });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(db.state.run?.status).toBe("canceled");
+        expect(result.converged).toEqual({ steps: true, charge: true, mandate: true });
+        expect(received.map((event) => event.type)).toEqual(["step_completed", "run_completed"]);
+        expect(closes).toHaveLength(1);
+        expect(revoked).toHaveLength(1);
     });
 });

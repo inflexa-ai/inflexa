@@ -22,7 +22,8 @@ import type { Pool } from "pg";
 
 import { createDbosLedgerSeeder, type DbosLedgerSeeder } from "../__tests__/setup/dbos-ledger.js";
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
-import { createDbosWorkflowPurger } from "./dbos-workflow-purger.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import { createDbosWorkflowPurger, dbosClientFor } from "./dbos-workflow-purger.js";
 import type { WorkflowPurger } from "./workflow-purger.js";
 
 /**
@@ -251,5 +252,27 @@ describe("createDbosWorkflowPurger against an unreachable ledger", () => {
         expect((await purger.findByIdPrefix("dataprofile:denied:"))._unsafeUnwrapErr().op).toBe("workflowPurger.findByIdPrefix");
         expect((await purger.cancel(["denied-workflow"]))._unsafeUnwrapErr().op).toBe("workflowPurger.cancel");
         expect((await purger.deleteWorkflows(["denied-workflow"], true))._unsafeUnwrapErr().op).toBe("workflowPurger.countDoomed");
+    });
+});
+
+describe("dbosClientFor", () => {
+    // The client registers its handlers on the pool and reads `options` once; creating it opens no connection.
+    function inertPool(): Pool {
+        const fake: Record<string, unknown> = { options: {} };
+        fake.on = () => fake;
+        return fake as unknown as Pool;
+    }
+
+    it("gives every caller of one pool the same client, and a different pool its own", async () => {
+        const logger = createNoopLogger();
+        const pool = inertPool();
+        const otherPool = inertPool();
+
+        const first = await dbosClientFor(pool, logger);
+        const second = await dbosClientFor(pool, logger);
+        const other = await dbosClientFor(otherPool, logger);
+
+        expect(second).toBe(first);
+        expect(other).not.toBe(first);
     });
 });

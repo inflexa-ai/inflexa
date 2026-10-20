@@ -65,8 +65,10 @@
  *       wrote its own terminal row (a cancelled child, or one that died before
  *       `failStep`), closes the running charge with the matching outcome, and
  *       revokes the run authorization through the injected `runAuthorizer`
- *     - when the write is refused or fails, close and revoke in their own
- *       steps, then emit `run_completed`
+ *     - the write retries with backoff on a failed transaction. When the write is
+ *       refused, or fails on each attempt, close and revoke in their own steps, then
+ *       emit `run_completed`. After a failed write the row stays `running`, so the
+ *       body records its run end as a workflow event for the run canceler
  *     - emit terminal stream part
  *     - WRITES NOTHING to the conversation thread (results are pull-only
  *       via `inspectRun`)
@@ -82,6 +84,7 @@ import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import { RUN_END_EVENT_KEY, type RecordedRunEnd } from "../execution/run-end-record.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
@@ -1690,6 +1693,9 @@ async function cancelInFlight(
 
 // ── (6) collectAndComplete ────────────────────────────────────────────
 
+/** The waits between the attempts are 1, 2, 4, and 8 seconds. */
+const FINAL_STATUS_WRITE_RETRY = { retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 } as const;
+
 interface CollectAndCompleteArgs {
     readonly input: ExecuteAnalysisInput;
     readonly runId: string;
@@ -1751,6 +1757,8 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 ? "workflow-suspended"
                 : "workflow-canceled";
 
+    const finalError = failureReason ?? (status === "canceled" ? "external_cancel" : null);
+
     const terminalAtMs = await DBOS.now();
     const emitRunEnd = (): void =>
         emitProvenanceGuarded(
@@ -1794,13 +1802,18 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // commit, so the run canceler waits and then loses, and no reader sees the terminal row before
     // the emit. The cli polls the row and flushes the provenance when it leaves `running`; an emit
     // after the commit can miss that flush. `emitRunEvent` returns `void`, so the emit completes before the commit.
+    //
+    // DBOS retries only a thrown error, so an attempt before the last throws on a failed transaction.
+    // The last attempt returns "failed" instead: the body takes the failed path with no `try`, and a
+    // failure of DBOS to record a won step cannot be mistaken for a failed write. A commit can fail
+    // after the emit, so `emittedInStep` keeps the later attempts from emitting again.
     let emittedInStep = false;
     const finalWrite = await DBOS.runStep(
         async (): Promise<"won" | "refused" | "failed"> => {
             const stepLog = logger.with({ status }).named("persist-final-status");
             const written = await withTransaction(deps.pool, "runs.persistFinalStatus", (client) =>
-                updateRunStatus(client, runId, status, failureReason ?? (status === "canceled" ? "external_cancel" : null)).map((changed) => {
-                    if (changed) {
+                updateRunStatus(client, runId, status, finalError).map((changed) => {
+                    if (changed && !emittedInStep) {
                         emitRunEnd();
                         emittedInStep = true;
                     }
@@ -1808,8 +1821,16 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 }),
             );
             if (written.isErr()) {
-                stepLog.error("ledger write failed", { error: describeDbError(written.error), ...stepLog.errorFields(written.error.cause) });
-                return "failed";
+                const attempt = DBOS.stepStatus;
+                const isLastAttempt =
+                    attempt?.currentAttempt === undefined || attempt.maxAttempts === undefined || attempt.currentAttempt >= attempt.maxAttempts;
+                const failure = { error: describeDbError(written.error), ...stepLog.errorFields(written.error.cause) };
+                if (isLastAttempt) {
+                    stepLog.error("ledger write failed", failure);
+                    return "failed";
+                }
+                stepLog.warn("ledger write failed, the step retries", { ...failure, attempt: attempt.currentAttempt });
+                throw new Error(`ledger write failed: ${describeDbError(written.error)}`, { cause: written.error.cause });
             }
             // A refused write means an earlier write already set a terminal status: the run
             // canceler's, or an earlier run of this step before a crash. That writer owns the run end.
@@ -1832,23 +1853,39 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
             await revokeAuthorization();
             return "won";
         },
-        { name: "persist-final-status" },
+        { name: "persist-final-status", ...FINAL_STATUS_WRITE_RETRY },
     );
 
     // A refused write leaves two owners. When the canceler won, its engine cancel came before its
     // write, so `close-running-charge` throws the cancel and the body does no act of the run end.
     // When a recovery runs the status step again after its own write landed, no cancel occurred and
-    // the body completes the run end here. A failed write leaves the row `running`, and the body
-    // still closes and revokes.
+    // the body completes the run end here. A failed write leaves the row `running` with no owner,
+    // and the body still closes and revokes.
+    let closed = false;
+    let revoked = false;
     if (finalWrite !== "won") {
-        await DBOS.runStep(closeCharge, { name: "close-running-charge" });
-        await DBOS.runStep(revokeAuthorization, { name: "revoke-run-auth" });
+        closed = await DBOS.runStep(closeCharge, { name: "close-running-charge" });
+        revoked = await DBOS.runStep(revokeAuthorization, { name: "revoke-run-auth" });
     }
 
     // The step emits only in the execution that ran it. A won step that DBOS gives from the cache
     // did not run, and a refused or failed write did not emit; the body fires the run end here
     // with the same checkpointed values. It is not step-wrapped, so a recovery replay fires it again.
     if (!emittedInStep) emitRunEnd();
+
+    // After a failed write the row is not terminal, so the body records its run end for the run
+    // canceler. The record comes after the acts: a cancel before it stops the body and the canceler
+    // then owns the run end. A cancel is the only error that goes back to DBOS; a failed record must
+    // not undo an otherwise-complete run, like the sibling terminal steps.
+    if (finalWrite === "failed") {
+        const recorded: RecordedRunEnd = { status, error: finalError, closed, revoked };
+        try {
+            await DBOS.setEvent(RUN_END_EVENT_KEY, recorded);
+        } catch (error) {
+            if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) throw error;
+            logger.error("run end record failed, the run canceler acts as for a run with no record", { status, ...logger.errorFields(error) });
+        }
+    }
 
     // Record the run's synthesis outcome AFTER the status write — a reader that
     // sees a terminal status then also sees whether (and why) synthesis ran. A
