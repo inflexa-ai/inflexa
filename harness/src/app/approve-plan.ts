@@ -35,13 +35,16 @@ export type ApprovePlanInput = {
     analysisId: string;
     threadId: string;
     planId: string;
+    /** The newest run of the plan in the view that the person approved, or `null` when that view showed no run. */
+    newestRunId: string | null;
     identity: Identity;
     auth: AuthContext;
 };
 
 /**
- * The outcome of an approval. `started` is false when a run of the plan was already active: the
- * approval then changed nothing, and `message` is `null`. `message` is also `null` when the record
+ * The outcome of an approval. `started` is false when a run of the plan was already active, or when the
+ * view of the person was stale: the approval then changed nothing, `runId` names the active run or the
+ * newest run of the plan, and `message` is `null`. `message` is also `null` when the record
  * could not be appended, because the run started anyway. It has no `createdAt`: the transcript read
  * adds the time of the row.
  */
@@ -90,7 +93,7 @@ async function approve(deps: ApprovePlanDeps, input: ApprovePlanInput): Promise<
         scope: { kind: "analysis", analysisId, threadId },
         provenance: APPROVAL_PROVENANCE,
     };
-    const launched = await launchPlanRun(deps, { session, planId });
+    const launched = await launchPlanRun(deps, { session, planId, newestRunId: input.newestRunId });
     if (launched.isErr()) return err(launched.error);
     const { runId, started } = launched.value;
     if (!started) return ok({ planId, runId, started: false, message: null });

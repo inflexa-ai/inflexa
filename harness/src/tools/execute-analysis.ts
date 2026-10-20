@@ -4,8 +4,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { err, ok, ResultAsync, type Result } from "neverthrow";
-import type { Pool } from "pg";
+import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
+import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 
 import { capabilityDataRequirement } from "../agents/sandbox-catalog.js";
@@ -19,6 +19,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { readInstalledDatasetIds } from "./sandbox/list-available-refs.js";
+import { tryQuery, withTransaction, type DbError } from "../lib/db-result.js";
 import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -28,7 +29,17 @@ import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-i
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state.js";
 import { validatePlan } from "../schemas/validate-plan.js";
-import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, suspendAnalysis, updateRunStatus, upsertPlan } from "../state/index.js";
+import {
+    RunDedupCollisionError,
+    insertRun,
+    loadPlan,
+    queryActiveRun,
+    queryNewestPlanRun,
+    reserveRunById,
+    suspendAnalysis,
+    updateRunStatus,
+    upsertPlan,
+} from "../state/index.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-hoc-router.js";
 import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
@@ -163,7 +174,10 @@ export type LaunchPlanRunDeps = Pick<
     "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "resourcePolicy" | "extendAnalysisFarm" | "refStorePath" | "logger"
 >;
 
-/** The run of a stored plan. `started` is false when a run of the plan was already active. */
+/**
+ * The run of a stored plan. `started` is false when this call started nothing: `runId` then names the
+ * active run of the plan, or the newest run of the plan when the view of the caller was stale.
+ */
 export type PlanLaunch = { runId: string; started: boolean };
 
 /**
@@ -175,6 +189,7 @@ export type LaunchPlanRunRefusal =
     | { type: "plan_invalid"; planId: string; malformed: boolean; errors: string[] }
     | { type: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
     | { type: "references_missing"; missing: string[]; unavailable?: string }
+    | { type: "run_not_found"; runId: string }
     | { type: "not_authorized"; reason: string }
     | { type: "suspended"; reason: string }
     | { type: "store_failed"; cause: unknown }
@@ -366,7 +381,7 @@ function parseStoredPlan(raw: unknown, planId: string): Result<AnalysisPlan, Ext
 /** The error that a tool body throws for a stored plan that the parse refused. */
 function validateStoredPlan(raw: unknown, planId: string): AnalysisPlan {
     const parsed = parseStoredPlan(raw, planId);
-    if (parsed.isErr()) return throwLaunchRefusal(parsed.error);
+    if (parsed.isErr()) return throwLaunchRefusal(parsed.error, planId);
     return parsed.value;
 }
 
@@ -593,27 +608,62 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
     return ok({ runId, started: true });
 }
 
+/** A caller whose view of the plan does not match the newest run: `runId` is the newest run, or the run that a plan without a run was said to have. */
+type StaleView = { type: "newer"; runId: string } | { type: "missing"; runId: string };
+
+function staleViewOf(newest: string | null, seen: string | null): StaleView | null {
+    if (newest !== null) return newest === seen ? null : { type: "newer", runId: newest };
+    return seen === null ? null : { type: "missing", runId: seen };
+}
+
+/** A stale view starts nothing: it gives the newest run with `started: false`, or `run_not_found` when the plan has no run. */
+function refuseStaleView(view: StaleView): Result<PlanLaunch, LaunchPlanRunRefusal> {
+    return view.type === "newer" ? ok({ runId: view.runId, started: false }) : err({ type: "run_not_found", runId: view.runId });
+}
+
+type PlanSlot = { type: "inserted" } | { type: "stale"; view: StaleView };
+
+function lockPlanLaunch(client: PoolClient, planId: string): ResultAsync<void, DbError> {
+    return tryQuery("execute-analysis.lockPlanLaunch", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`plan-launch:${planId}`])).map(
+        () => undefined,
+    );
+}
+
 /**
- * Reserve a fresh run for a plan. A concurrent launch of the same plan holds the active-plan slot,
- * and its run is the answer.
+ * Reserve a fresh run for a plan under the lock of the plan, thus the reservations of one plan occur one
+ * after the other. A caller with a `newestRunId` reserves nothing when the newest run of the plan is a
+ * different run. The new row starts after the newest start, thus it is the newest run of the plan. A
+ * concurrent launch of the same plan can hold the active-plan slot, and its run is the answer.
  */
 async function reservePlanRun(
     deps: LaunchPlanRunDeps,
-    args: { analysisId: string; threadId: string | null; planId: string },
+    args: { analysisId: string; threadId: string | null; planId: string; newestRunId?: string | null },
 ): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
     const runId = randomUUID();
     try {
-        const inserted = await insertRun(deps.pool, {
-            runId,
-            analysisId: args.analysisId,
-            threadId: args.threadId,
-            workflowName: "executeAnalysis",
-            planId: args.planId,
-        });
-        if (inserted.isErr()) return err({ type: "store_failed", cause: inserted.error });
+        const reserved = await withTransaction(deps.pool, "execute-analysis.reservePlanRun", (client) =>
+            lockPlanLaunch(client, args.planId)
+                .andThen(() => queryNewestPlanRun(client, { analysisId: args.analysisId, planId: args.planId }))
+                .andThen((newest): ResultAsync<PlanSlot, DbError> => {
+                    const stale = args.newestRunId === undefined ? null : staleViewOf(newest?.runId ?? null, args.newestRunId);
+                    if (stale) return okAsync({ type: "stale", view: stale });
+                    const startedAt = newest === null ? undefined : new Date(Math.max(Date.now(), Date.parse(newest.startedAt) + 1)).toISOString();
+                    return insertRun(client, {
+                        runId,
+                        analysisId: args.analysisId,
+                        threadId: args.threadId,
+                        workflowName: "executeAnalysis",
+                        planId: args.planId,
+                        ...(startedAt === undefined ? {} : { startedAt }),
+                    }).map((): PlanSlot => ({ type: "inserted" }));
+                }),
+        );
+        if (reserved.isErr()) return err({ type: "store_failed", cause: reserved.error });
+        if (reserved.value.type === "stale") return refuseStaleView(reserved.value.view);
         return ok({ runId, started: true });
     } catch (cause) {
-        // `insertRun` rejects its promise on a collision of the active-plan index, and on nothing else.
+        // `insertRun` rejects its promise on a collision of the active-plan index, and on nothing else. The
+        // transaction is rolled back and released by now, so the read goes to the pool.
         if (!isDedupCollision(cause)) return err({ type: "store_failed", cause });
         const active = await queryActiveRun(deps.pool, args.analysisId, args.planId);
         if (active.isErr()) return err({ type: "store_failed", cause: active.error });
@@ -647,8 +697,8 @@ async function reserveAdHocRun(
     }
 }
 
-async function launchStoredPlan(deps: LaunchPlanRunDeps, input: { session: AgentSession; planId: string }): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
-    const { session, planId } = input;
+async function launchStoredPlan(deps: LaunchPlanRunDeps, input: LaunchPlanRunInput): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
+    const { session, planId, newestRunId } = input;
     const analysisId = session.scope.analysisId;
 
     const raw = await loadPlan(deps.pool, planId, { analysisId });
@@ -656,6 +706,13 @@ async function launchStoredPlan(deps: LaunchPlanRunDeps, input: { session: Agent
     if (!raw.value) return err({ type: "plan_not_found", planId });
     const plan = parseStoredPlan(raw.value, planId);
     if (plan.isErr()) return err(plan.error);
+
+    if (newestRunId !== undefined) {
+        const newest = await queryNewestPlanRun(deps.pool, { analysisId, planId });
+        if (newest.isErr()) return err({ type: "store_failed", cause: newest.error });
+        const stale = staleViewOf(newest.value?.runId ?? null, newestRunId);
+        if (stale) return refuseStaleView(stale);
+    }
 
     const active = await queryActiveRun(deps.pool, analysisId, planId);
     if (active.isErr()) return err({ type: "store_failed", cause: active.error });
@@ -666,25 +723,35 @@ async function launchStoredPlan(deps: LaunchPlanRunDeps, input: { session: Agent
         planId,
         plan: plan.value,
         mode: "plan",
-        reserve: (frame) => reservePlanRun(deps, { ...frame, planId }),
+        reserve: (frame) => reservePlanRun(deps, { ...frame, planId, ...(newestRunId === undefined ? {} : { newestRunId }) }),
     });
 }
 
 /**
+ * `newestRunId` is the newest run of the plan that the caller saw, or `null` when the caller saw no run.
+ * Without it, the launch compares no run.
+ */
+export type LaunchPlanRunInput = { session: AgentSession; planId: string; newestRunId?: string | null };
+
+/**
  * Start the run of a stored plan. It reads the plan under the analysis of the session, validates it,
- * links its packages, reserves a run, authorizes it, and starts the workflow. It gives the run id, or
- * the refusal, and it emits no chat part. `started` is false when a run of the plan was already active.
+ * compares the newest run of the plan with `newestRunId`, links its packages, reserves a run,
+ * authorizes it, and starts the workflow. It gives the run id, or the refusal, and it emits no chat
+ * part. `started` is false when this call started nothing: a run of the plan was already active, or the
+ * newest run of the plan is not the run that the caller saw. `runId` then names that run.
  *
  * This is an API boundary: a host calls it outside a tool body, thus no outcome above rejects the
  * promise.
  */
-export function launchPlanRun(deps: LaunchPlanRunDeps, input: { session: AgentSession; planId: string }): ResultAsync<PlanLaunch, LaunchPlanRunRefusal> {
+export function launchPlanRun(deps: LaunchPlanRunDeps, input: LaunchPlanRunInput): ResultAsync<PlanLaunch, LaunchPlanRunRefusal> {
     return new ResultAsync(launchStoredPlan(deps, input));
 }
 
 /** Throw the error that the tool body threw before the launch gave a `Result`. */
-function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_authorized" | "suspended" }>): never {
+function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_authorized" | "suspended" }>, planId: string): never {
     switch (refusal.type) {
+        case "run_not_found":
+            throw new Error(`Plan ${planId} has no run ${refusal.runId}`);
         case "plan_not_found":
             throw new PlanNotFoundError(refusal.planId);
         case "plan_invalid":
@@ -746,7 +813,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                 const refusal = launched.error;
                 if (refusal.type === "suspended") return err({ error: `The analysis is suspended: ${refusal.reason}`, retryable: false });
                 if (refusal.type === "not_authorized") return err({ error: `The run was not authorized: ${refusal.reason}`, retryable: false });
-                return throwLaunchRefusal(refusal);
+                return throwLaunchRefusal(refusal, planId);
             }
 
             await emitRunCard(launched.value.runId);

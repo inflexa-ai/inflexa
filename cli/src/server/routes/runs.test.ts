@@ -1194,7 +1194,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         return { app, inputs };
     }
 
-    function approve(app: Hono<ServerEnv>, analysisId: string, body: unknown = { threadId: "t1" }): Response | Promise<Response> {
+    function approve(app: Hono<ServerEnv>, analysisId: string, body: unknown = { threadId: "t1", newestRunId: null }): Response | Promise<Response> {
         return app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -1216,7 +1216,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         expect(response.status).toBe(201);
         expect((await response.json()) as PlanApprovalResult).toEqual(startedApproval);
         expect(inputs).toHaveLength(1);
-        expect(inputs[0]).toMatchObject({ analysisId, threadId: "t1", planId, identity: { user: "local" } });
+        expect(inputs[0]).toMatchObject({ analysisId, threadId: "t1", planId, newestRunId: null, identity: { user: "local" } });
         expect(inputs[0]!.auth).toBeDefined();
     });
 
@@ -1234,11 +1234,35 @@ describe("POST {A}/plans/:planId/approve", () => {
         const analysisId = seedAnalysis();
         const before = activityOf(analysisId);
         const active: PlanApproval = { planId, runId: "r1", started: false, message: null };
+        const { app, inputs } = approvalApp(() => okAsync(active));
 
-        const response = await approve(approvalApp(() => okAsync(active)).app, analysisId);
+        const response = await approve(app, analysisId, { threadId: "t1", newestRunId: "r1" });
 
         expect(response.status).toBe(201);
         expect(await response.json()).toEqual(active);
+        expect(inputs.map((input) => input.newestRunId)).toEqual(["r1"]);
+        expect(activityOf(analysisId)).toBe(before);
+    });
+
+    test("the approval receives the newest run id of the body, for a run id and for null", async () => {
+        const analysisId = seedAnalysis();
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval));
+
+        expect((await approve(app, analysisId, { threadId: "t1", newestRunId: "r1" })).status).toBe(201);
+        expect((await approve(app, analysisId, { threadId: "t1", newestRunId: null })).status).toBe(201);
+
+        expect(inputs.map((input) => input.newestRunId)).toEqual(["r1", null]);
+    });
+
+    test("a stale view gives 201 with the newest run, started false, and message null, and changes no activity", async () => {
+        const analysisId = seedAnalysis();
+        const before = activityOf(analysisId);
+        const stale: PlanApproval = { planId, runId: "r1", started: false, message: null };
+
+        const response = await approve(approvalApp(() => okAsync(stale)).app, analysisId, { threadId: "t1", newestRunId: null });
+
+        expect(response.status).toBe(201);
+        expect(await response.json()).toEqual(stale);
         expect(activityOf(analysisId)).toBe(before);
     });
 
@@ -1265,16 +1289,19 @@ describe("POST {A}/plans/:planId/approve", () => {
         expect((await approve(approvalApp(() => okAsync(startedApproval)).app, analysisId)).status).toBe(201);
     });
 
-    test("an unknown thread and an unknown plan give 404 `not_found`", async () => {
+    test("an unknown thread, an unknown plan, and an unknown run give 404 `not_found`", async () => {
         const analysisId = seedAnalysis();
 
         const thread = await approve(approvalApp(() => errAsync({ type: "thread_not_found" })).app, analysisId);
         const plan = await approve(approvalApp(() => errAsync({ type: "plan_not_found", planId })).app, analysisId);
+        const run = await approve(approvalApp(() => errAsync({ type: "run_not_found", runId: "r9" })).app, analysisId, { threadId: "t1", newestRunId: "r9" });
 
         expect(thread.status).toBe(404);
         expect(await thread.json()).toEqual({ error: "not_found", message: "Thread not found." });
         expect(plan.status).toBe(404);
         expect(await plan.json()).toEqual({ error: "not_found", message: `This analysis has no plan ${planId}.` });
+        expect(run.status).toBe(404);
+        expect(await run.json()).toEqual({ error: "not_found", message: `Plan ${planId} has no run r9.` });
     });
 
     test("each refusal of the plan and of the launch gives 409 `conflict` with its reason and data", async () => {
@@ -1341,11 +1368,18 @@ describe("POST {A}/plans/:planId/approve", () => {
         }
     });
 
-    test("a body with no thread id, an empty thread id, and a body that is not JSON give 400, and the approval does not run", async () => {
+    test("a body with no thread id, an empty thread id, no newest run id, an empty one, a number, and a body that is not JSON give 400, and the approval does not run", async () => {
         const analysisId = seedAnalysis();
         const { app, inputs } = approvalApp(() => okAsync(startedApproval));
 
-        for (const body of [{}, { threadId: "" }, { threadId: 7 }]) {
+        for (const body of [
+            {},
+            { threadId: "" },
+            { threadId: 7 },
+            { threadId: "t1" },
+            { threadId: "t1", newestRunId: "" },
+            { threadId: "t1", newestRunId: 7 },
+        ]) {
             const response = await approve(app, analysisId, body);
             expect(response.status).toBe(400);
             expect(await response.json()).toMatchObject({ error: "validation_error" });
@@ -1390,7 +1424,14 @@ describe("POST {A}/plans/:planId/approve", () => {
             },
         } as unknown as HarnessRuntime;
 
-        const result = await DEFAULT_RUN_ROUTES_OPTS.approvePlan(bound, { analysisId, threadId: "t1", planId, identity: { user: "local" }, auth: {} });
+        const result = await DEFAULT_RUN_ROUTES_OPTS.approvePlan(bound, {
+            analysisId,
+            threadId: "t1",
+            planId,
+            newestRunId: null,
+            identity: { user: "local" },
+            auth: {},
+        });
 
         expect(result._unsafeUnwrap()).toEqual(startedApproval);
         expect(calls).toHaveLength(1);

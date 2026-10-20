@@ -54,6 +54,7 @@ export {
     queryRunsByAnalysis,
     queryRunsByThread,
     queryRunIdsByPlan,
+    queryNewestPlanRun,
 } from "./runs.js";
 export type { InsertRunInput, RunPage, RunReservation } from "./runs.js";
 

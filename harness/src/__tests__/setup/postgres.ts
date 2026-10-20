@@ -137,8 +137,9 @@ export async function withSchema(testName: string): Promise<{
 
     await base.query(`CREATE SCHEMA "${schemaName}"`);
 
-    // Each test gets its own scoped pool so search_path sticks on every
-    // connection pulled from it.
+    // The search_path is a startup parameter, so every connection handed out
+    // resolves tables in the test schema before falling back to public (where
+    // pgvector lives), with no query to race.
     const cfg: PoolConfig = (base as unknown as { options?: PoolConfig }).options ?? {};
     const pool = new Pool({
         host: cfg.host,
@@ -147,24 +148,8 @@ export async function withSchema(testName: string): Promise<{
         password: cfg.password,
         database: cfg.database,
         connectionString: cfg.connectionString,
+        options: `-c search_path=${schemaName},public`,
     });
-
-    // Ensure every connection handed out resolves tables in the test schema
-    // before falling back to public (where pgvector lives).
-    pool.on("connect", (client) => {
-        client.query(`SET search_path TO "${schemaName}", public`).catch(() => {
-            /* ignore */
-        });
-    });
-
-    // The very first query from the pool races the `connect` listener above.
-    // Force a query that waits for search_path to apply.
-    const firstClient = await pool.connect();
-    try {
-        await firstClient.query(`SET search_path TO "${schemaName}", public`);
-    } finally {
-        firstClient.release();
-    }
 
     await initCortexState(pool);
 

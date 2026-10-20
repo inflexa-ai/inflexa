@@ -11,7 +11,7 @@ import { storedMessagesToChat } from "../memory/conversation-display-replay.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { ProvenanceSeam, SessionProvenanceEvent } from "../provenance/seam.js";
-import { insertRun, upsertAnalysis, upsertPlan } from "../state/index.js";
+import { insertRun, updateRunStatus, upsertAnalysis, upsertPlan } from "../state/index.js";
 import { approvePlan, type ApprovePlanDeps } from "./approve-plan.js";
 
 const ANALYSIS_ID = "analysis-approve-1";
@@ -90,10 +90,11 @@ function depsOf(d: ReturnType<typeof doubles>, over: Partial<ApprovePlanDeps> = 
 }
 
 const auth = makeLocalAuth();
-const input = (over: Partial<Parameters<typeof approvePlan>[1]> = {}) => ({
+const input = ({ newestRunId = null, ...over }: Partial<Parameters<typeof approvePlan>[1]> = {}): Parameters<typeof approvePlan>[1] => ({
     analysisId: ANALYSIS_ID,
     threadId: THREAD_ID,
     planId: PLAN_ID,
+    newestRunId,
     identity: IDENTITY,
     auth,
     ...over,
@@ -219,12 +220,53 @@ describe("approvePlan", () => {
         )._unsafeUnwrap();
         const d = doubles();
 
-        const approval = (await approvePlan(depsOf(d), input()))._unsafeUnwrap();
+        const approval = (await approvePlan(depsOf(d), input({ newestRunId: "r-active" })))._unsafeUnwrap();
 
         expect(approval).toEqual({ planId: PLAN_ID, runId: "r-active", started: false, message: null });
         expect(await threadRowCount()).toBe(0);
         expect(d.events).toEqual([]);
         expect(d.launches).toEqual([]);
+    });
+
+    it("records nothing for a stale view of a plan whose run ended, and starts no run", async () => {
+        (
+            await insertRun(pool, { runId: "r-ended", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID })
+        )._unsafeUnwrap();
+        (await updateRunStatus(pool, "r-ended", "completed"))._unsafeUnwrap();
+        const d = doubles();
+
+        const approval = (await approvePlan(depsOf(d), input({ newestRunId: null })))._unsafeUnwrap();
+
+        expect(approval).toEqual({ planId: PLAN_ID, runId: "r-ended", started: false, message: null });
+        expect((await runRows()).map((row) => row.run_id)).toEqual(["r-ended"]);
+        expect(await threadRowCount()).toBe(0);
+        expect(d.events).toEqual([]);
+        expect(d.launches).toEqual([]);
+    });
+
+    it("runs the plan again when the view shows the newest run", async () => {
+        (
+            await insertRun(pool, { runId: "r-ended", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID })
+        )._unsafeUnwrap();
+        (await updateRunStatus(pool, "r-ended", "completed"))._unsafeUnwrap();
+        const d = doubles();
+
+        const approval = (await approvePlan(depsOf(d), input({ newestRunId: "r-ended" })))._unsafeUnwrap();
+
+        expect(approval.started).toBe(true);
+        expect(approval.runId).not.toBe("r-ended");
+        expect(approval.message?.parts.map((part) => part.type)).toEqual(["data-plan-approval", "data-run-card"]);
+        expect(d.launches.map((launch) => launch.workflowId)).toEqual([approval.runId]);
+    });
+
+    it("refuses a view of a run that the plan does not have with run_not_found", async () => {
+        const d = doubles();
+
+        const refusal = (await approvePlan(depsOf(d), input({ newestRunId: "r-missing" })))._unsafeUnwrapErr();
+
+        expect(refusal).toEqual({ type: "run_not_found", runId: "r-missing" });
+        expect(await runRows()).toEqual([]);
+        expect(d.events).toEqual([]);
     });
 
     it("passes a refusal of the launch through, and emits and appends nothing", async () => {
@@ -251,10 +293,11 @@ describe("approvePlan", () => {
     it("gives the run with message null, and logs the failure, when the append of the record fails", async () => {
         const d = doubles();
         const logger = createCapturingLogger();
-        // The record append is the one write that takes a connection of the pool, thus refusing the connection fails the append alone.
+        // The reservation of the run takes the first connection and the record append takes the second, thus refusing the second connection fails the append alone.
+        let connections = 0;
         const flaky = {
             query: (...args: unknown[]) => (pool.query as (...rest: unknown[]) => Promise<unknown>)(...args),
-            connect: () => Promise.reject(new Error("append boom")),
+            connect: () => (++connections === 1 ? pool.connect() : Promise.reject(new Error("append boom"))),
         } as unknown as Pool;
 
         const approval = (await approvePlan(depsOf(d, { pool: flaky, logger }), input()))._unsafeUnwrap();

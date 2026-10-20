@@ -63,7 +63,7 @@ export type {
 // a host route calls them with no `try`. `CoreRuntime.approvePlan` binds the approval over the deps of the
 // conversation agent.
 export { launchPlanRun } from "./tools/execute-analysis.js";
-export type { LaunchPlanRunDeps, LaunchPlanRunRefusal, PlanLaunch } from "./tools/execute-analysis.js";
+export type { LaunchPlanRunDeps, LaunchPlanRunInput, LaunchPlanRunRefusal, PlanLaunch } from "./tools/execute-analysis.js";
 export { approvePlan } from "./app/approve-plan.js";
 export type { ApprovePlanDeps, ApprovePlanInput, ApprovePlanRefusal, PlanApproval } from "./app/approve-plan.js";
 // The outcome of the report-session anchor operation. `ConversationAgentDeps`

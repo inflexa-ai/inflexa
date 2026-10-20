@@ -5,6 +5,7 @@ import type {
     ApprovePlanInput,
     ApprovePlanRefusal,
     LaunchPlanRunDeps,
+    LaunchPlanRunInput,
     LaunchPlanRunRefusal,
     PlanApproval,
     PlanApprovalPart,
@@ -21,14 +22,21 @@ describe("the exports of the plan approval", () => {
     });
 
     it("types the input, the results, the refusals, and the part from the package root", () => {
-        const input: ApprovePlanInput = { analysisId: "a1", threadId: "t1", planId: "pln-0000000a", identity: { user: "u1" }, auth: {} };
+        const input: ApprovePlanInput = { analysisId: "a1", threadId: "t1", planId: "pln-0000000a", newestRunId: null, identity: { user: "u1" }, auth: {} };
         const launch: PlanLaunch = { runId: "r1", started: true };
         const result: PlanApproval = { planId: input.planId, runId: launch.runId, started: launch.started, message: null };
         const launchRefusal: LaunchPlanRunRefusal = { type: "plan_not_found", planId: input.planId };
         const refusal: ApprovePlanRefusal = { type: "superseded", supersededBy: "pln-0000000b" };
         const part: PlanApprovalPart = { type: "data-plan-approval", planId: input.planId, runId: result.runId, approvedAt: "2026-10-13T10:00:00.000Z" };
         const depsKeys: ReadonlyArray<keyof LaunchPlanRunDeps> = ["pool", "runLauncher"];
+        const launchView: Pick<LaunchPlanRunInput, "planId" | "newestRunId"> = { planId: input.planId, newestRunId: input.newestRunId };
 
-        expect([launchRefusal.type, refusal.type, part.type, depsKeys.length]).toEqual(["plan_not_found", "superseded", "data-plan-approval", 2]);
+        expect([launchRefusal.type, refusal.type, part.type, depsKeys.length, launchView.newestRunId]).toEqual([
+            "plan_not_found",
+            "superseded",
+            "data-plan-approval",
+            2,
+            null,
+        ]);
     });
 });

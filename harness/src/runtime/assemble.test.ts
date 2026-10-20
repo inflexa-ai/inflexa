@@ -658,6 +658,7 @@ describe("the approval of the composition", () => {
                     analysisId: ANALYSIS_ID,
                     threadId: THREAD_ID,
                     planId: PLAN_ID,
+                    newestRunId: null,
                     identity: { user: "person-1" },
                     auth: makeLocalAuth(),
                 })
