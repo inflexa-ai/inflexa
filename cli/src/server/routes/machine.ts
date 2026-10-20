@@ -122,8 +122,8 @@ const openFolderBody = z.discriminatedUnion("target", [
     z.object({ target: z.literal("package_store") }),
 ]) satisfies z.ZodType<OpenFolderBody>;
 
-/** The `stat` codes that mean the resolved candidate is absent: no entry, or a part of the path is not a folder. */
-const ABSENT_STAT_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR"]);
+/** The `stat` codes that mean the resolved candidate is absent: no entry, a part of the path is not a folder, or the links loop. */
+const ABSENT_STAT_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
 
 /**
  * The routes of the machine (draft 2.1 and 2.6) that are not the package store: the signed-in account, the
