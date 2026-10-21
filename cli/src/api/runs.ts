@@ -60,8 +60,10 @@ export type RunSummary = {
 
 /**
  * The body of `GET {A}/runs`: newest first. With `active=true`, only the runs that are not terminal. With
- * `threadId`, `total` is a lower bound: the harness has no count of the runs of one thread, thus `total`
- * counts the runs up to this page, plus one when a later page has runs.
+ * `q`, only the runs whose run id or plan title holds the text, with no regard to case. `q` narrows `active`
+ * and `threadId`, and `total` counts the runs that it selects. With `threadId` and no `active=true`, `total`
+ * is a lower bound: the harness has no count of the runs of one thread, thus `total` counts the selected runs
+ * up to this page, plus one when a later page has a selected run.
  */
 export type RunList = ListEnvelope<"runs", RunSummary>;
 

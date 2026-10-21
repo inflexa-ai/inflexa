@@ -162,6 +162,126 @@ describe("queryArtifactPage", () => {
         expect(page.total).toBe(1);
     });
 
+    it("selects the one row of an exact path, with its run, and treats the case of the path as significant", async () => {
+        const analysisId = "path-a1";
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1", fileType: "output" });
+        await seed(pool, { analysisId, path: "runs/r2/s1/output/de.csv.bak", runId: "r2", stepId: "s1", fileType: "output" });
+        await seed(pool, { analysisId: "path-a2", path: "runs/r1/s1/output/de.csv", runId: "r9", stepId: "s1" });
+
+        const exact = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, path: "runs/r1/s1/output/de.csv" }))._unsafeUnwrap();
+        const wrongCase = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, path: "runs/r1/s1/output/DE.csv" }))._unsafeUnwrap();
+        const wildcard = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, path: "runs/r1/s1/output/%" }))._unsafeUnwrap();
+
+        expect(exact.total).toBe(1);
+        expect(exact.entries).toMatchObject([{ path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1" }]);
+        expect(wrongCase).toMatchObject({ entries: [], total: 0, extensionCounts: [] });
+        expect(wildcard.total).toBe(0);
+    });
+
+    it("selects the rows of the extensions, with no regard to the case of the path, in path order", async () => {
+        const analysisId = "ext-a1";
+        await seed(pool, { analysisId, path: "runs/r1/s1/figures/a.PNG" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/b.svg" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/c.csv" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/README" });
+
+        const page = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, extensions: ["png", "svg"] }))._unsafeUnwrap();
+        const none = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, extensions: ["readme"] }))._unsafeUnwrap();
+        const empty = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, extensions: [] }))._unsafeUnwrap();
+
+        expect(page.entries.map((e) => e.path)).toEqual(["runs/r1/s1/figures/a.PNG", "runs/r1/s1/output/b.svg"]);
+        expect(page.total).toBe(2);
+        expect(none.total).toBe(0);
+        expect(empty.total).toBe(4);
+    });
+
+    // The rule of the extension: the text after the last dot of the file name, in lower case.
+    it.each([
+        ["runs/r1/s1/figures/Volcano.PNG", "png"],
+        ["runs/r1/s1/output/a.tar.gz", "gz"],
+        ["a.tar.gz", "gz"],
+        ["runs/r1/s1/output/.bashrc", null],
+        [".bashrc", null],
+        ["runs/r1/s1/output/notes.", null],
+        ["runs/r1.v2/s1/output/README", null],
+        ["runs/r1.v2/s1/output/data.csv", "csv"],
+        ["runs/r1/s1/output/..x", "x"],
+        ["runs/r1/s1/output/.hidden.txt", "txt"],
+        ["runs/r1/s1/output/..", null],
+        ["README", null],
+    ])("gives the extension of %s as %p", async (path, extension) => {
+        const analysisId = `rule-${path}`;
+        await seed(pool, { analysisId, path });
+
+        const page = (await queryArtifactPage(pool, analysisId, PATH_SORT))._unsafeUnwrap();
+
+        expect(page.extensionCounts).toEqual([{ extension, count: 1 }]);
+        if (extension !== null) {
+            const filtered = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, extensions: [extension] }))._unsafeUnwrap();
+            expect(filtered.total).toBe(1);
+        }
+    });
+
+    it("counts the selected rows by extension, in extension order with null last, whatever the window", async () => {
+        const analysisId = "counts-a1";
+        await seed(pool, { analysisId, path: "runs/r1/s1/figures/a.png", runId: "r1" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/figures/b.PNG", runId: "r1" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/c.csv", runId: "r1" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/README", runId: "r1" });
+        await seed(pool, { analysisId, path: "runs/r2/s1/output/d.csv", runId: "r2" });
+
+        const page = (await queryArtifactPage(pool, analysisId, { sort: "path", limit: 1, offset: 0, runId: "r1" }))._unsafeUnwrap();
+        const past = (await queryArtifactPage(pool, analysisId, { sort: "recent", limit: 1, offset: 40, runId: "r1" }))._unsafeUnwrap();
+
+        const expected = [
+            { extension: "csv", count: 1 },
+            { extension: "png", count: 2 },
+            { extension: null, count: 1 },
+        ];
+        expect(page.entries).toHaveLength(1);
+        expect(page.total).toBe(4);
+        expect(page.extensionCounts).toEqual(expected);
+        expect(past.entries).toEqual([]);
+        expect(past.total).toBe(4);
+        expect(past.extensionCounts).toEqual(expected);
+    });
+
+    it("counts only the rows that the filters select", async () => {
+        const analysisId = "counts-a2";
+        await seed(pool, { analysisId, path: "runs/r1/s1/figures/a.png" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/output/c.csv" });
+
+        const page = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, extensions: ["png"] }))._unsafeUnwrap();
+
+        expect(page.extensionCounts).toEqual([{ extension: "png", count: 1 }]);
+    });
+
+    it("sends two statements with each filter, whatever the limit", async () => {
+        const analysisId = "stmt-a1";
+        for (let i = 0; i < 5; i += 1) await seed(pool, { analysisId, path: `runs/r1/s1/output/f${i}.csv`, runId: "r1", stepId: "s1", fileType: "output" });
+        const queries: ArtifactPageQuery[] = [
+            { sort: "path", limit: 1, offset: 0, path: "runs/r1/s1/output/f0.csv" },
+            { sort: "path", limit: 1, offset: 0, extensions: ["csv"] },
+            {
+                sort: "recent",
+                limit: 200,
+                offset: 0,
+                runId: "r1",
+                stepId: "s1",
+                fileType: "output",
+                q: "f",
+                path: "runs/r1/s1/output/f0.csv",
+                extensions: ["csv", "png"],
+            },
+        ];
+
+        for (const query of queries) {
+            const counting = countingQuerier(pool);
+            (await queryArtifactPage(counting.querier, analysisId, query))._unsafeUnwrap();
+            expect(counting.calls()).toBe(2);
+        }
+    });
+
     it("sends two statements whatever the limit", async () => {
         const analysisId = "count-a1";
         for (let i = 0; i < 5; i += 1) await seed(pool, { analysisId, path: `f${i}` });

@@ -10,6 +10,7 @@ import {
     createNoopRunCharge,
     createRunCanceler,
     countArtifactsByRuns,
+    countRunsByAnalysis,
     createRunEventStream,
     FARM_LOCK_FILE,
     loadDataProfileStatus,
@@ -42,7 +43,7 @@ import {
 } from "@inflexa-ai/harness";
 import type { RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import { CONVERSATION_AGENT_ID } from "@inflexa-ai/harness/agents/conversation-agent.js";
-import { queryRunsByThread, queryRunsForInspection } from "@inflexa-ai/harness/state/runs.js";
+import { queryRunsByThread } from "@inflexa-ai/harness/state/runs.js";
 
 import { describeBusyReason, type BusyReason } from "../../api/analyses.ts";
 import type { PageQuery } from "../../api/common.ts";
@@ -91,7 +92,18 @@ import { buildChatSession } from "../../modules/harness/turn.ts";
 import { analysisFarmPath, catalogFarmPath, composeFullFarm, describeFarmCompositionError } from "../../modules/libs/composition.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
+import {
+    apiError,
+    filterValue,
+    holdConnection,
+    internalError,
+    listEnvelope,
+    parsePage,
+    readBody,
+    requireRuntime,
+    sseResponse,
+    type ServerEnv,
+} from "../http.ts";
 import { profileWorkPending, serializeProfileWork } from "../profile_queue.ts";
 import { readSandboxReadiness, sandboxRefusal } from "../sandbox_gate.ts";
 import { newTurnsRefused, runningTurnsByThread } from "../turns.ts";
@@ -108,21 +120,21 @@ const PLAN_RUN_IDS_LIMIT = 100;
 
 /** The harness reads and the machine probes that the routes call. Tests replace each one, because each needs Postgres, DBOS, or the container engine. */
 export type RunRoutesOpts = {
-    /** One page of the runs of an analysis, newest first, and the count of all its runs. */
+    /** One page of the runs of an analysis that the text `q` selects, newest first, and the count of all the runs that it selects. */
     readonly listRuns: (
         pool: Pool,
         analysisId: string,
-        page: { limit: number; offset: number },
+        query: { q?: string; limit: number; offset: number },
     ) => ResultAsync<{ rows: CortexRunRow[]; total: number }, DbError>;
-    /** One page of the runs that the turns of one thread launched, newest first. */
+    /** One page of the runs that the turns of one thread launched and that the text `q` selects, newest first. */
     readonly listThreadRuns: (
         pool: Pool,
         analysisId: string,
         threadId: string,
-        page: { limit: number; offset: number },
+        query: { q?: string; limit: number; offset: number },
     ) => ResultAsync<CortexRunRow[], DbError>;
-    /** Each run of the analysis that is not terminal. The set is bounded by the live concurrency, not by the history. */
-    readonly listActiveRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
+    /** Each run of the analysis that is not terminal and that the text `q` selects. The set is bounded by the live concurrency, not by the history. */
+    readonly listActiveRuns: (pool: Pool, analysisId: string, filter: { q?: string }) => ResultAsync<CortexRunRow[], DbError>;
     readonly getRun: (pool: Pool, runId: string) => ResultAsync<CortexRunRow | null, DbError>;
     /** The step-output count of each run of the list, in one read. A run with no step output has no entry. */
     readonly countArtifacts: (pool: Pool, analysisId: string, runIds: readonly string[]) => ResultAsync<RunArtifactCount[], DbError>;
@@ -177,13 +189,11 @@ export function productionCancelerDeps(pool: Pool): RunCancelerDeps {
 
 /** The production {@link RunRoutesOpts}. */
 export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
-    listRuns: (pool, analysisId, page) =>
-        // The harness has no count of the runs in the newest-first order. The inspection read with no rows is
-        // its count of all the runs of the analysis.
-        ResultAsync.combine([queryRunsByAnalysis(pool, analysisId, page), queryRunsForInspection(pool, analysisId, { limit: 0 })]).map(([rows, counted]) => ({
-            rows,
-            total: counted.total,
-        })),
+    listRuns: (pool, analysisId, query) =>
+        ResultAsync.combine([
+            queryRunsByAnalysis(pool, analysisId, query),
+            countRunsByAnalysis(pool, analysisId, query.q === undefined ? {} : { q: query.q }),
+        ]).map(([rows, total]) => ({ rows, total })),
     listThreadRuns: queryRunsByThread,
     listActiveRuns: queryActiveRunsByAnalysis,
     getRun: queryRun,
@@ -221,7 +231,8 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         const analysisId = analysisParam(c);
         const pool = c.get("runtime").pool;
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
-        const listed = await listRunPage(pool, analysisId, { active: c.req.query("active") === "true", threadId: c.req.query("threadId") }, page, opts);
+        const q = filterValue(c.req.query("q"));
+        const listed = await listRunPage(pool, analysisId, { active: c.req.query("active") === "true", threadId: c.req.query("threadId"), q }, page, opts);
         if (listed.isErr()) return internalError(c, listed.error, "list the runs");
 
         const runs = await summarizeRuns(pool, analysisId, listed.value.rows, opts);
@@ -580,25 +591,29 @@ function loadProfileView(pool: Pool, analysisId: string, opts: RunRoutesOpts): R
 }
 
 /**
- * One page of the runs. `active` gives each run that is not terminal, paged in memory: the set is bounded by
- * the live concurrency. `threadId` reads one row past the page to tell if a later page has runs, and with no
- * count of a thread, `total` is a lower bound (the RunList contract).
+ * One page of the runs that the text `q` selects. `q` narrows each branch, and the harness does the filter before
+ * the page. `active` comes first and ignores `threadId`: it gives each run that is not terminal, paged in
+ * memory, because the set is bounded by the live concurrency. `threadId` reads one row past the page to tell if
+ * a later page has runs, and with no count of a thread, `total` is a lower bound (the RunList contract).
  */
 function listRunPage(
     pool: Pool,
     analysisId: string,
-    filter: { active: boolean; threadId: string | undefined },
+    filter: { active: boolean; threadId: string | undefined; q: string | undefined },
     page: PageQuery,
     opts: RunRoutesOpts,
 ): ResultAsync<{ rows: CortexRunRow[]; total: number }, DbError> {
     const offset = page.page * page.perPage;
-    if (filter.active) return opts.listActiveRuns(pool, analysisId).map((rows) => ({ rows: rows.slice(offset, offset + page.perPage), total: rows.length }));
+    // The harness reads take an absent `q` as no filter, and `exactOptionalPropertyTypes` bars an explicit `undefined`.
+    const text = filter.q === undefined ? {} : { q: filter.q };
+    if (filter.active)
+        return opts.listActiveRuns(pool, analysisId, text).map((rows) => ({ rows: rows.slice(offset, offset + page.perPage), total: rows.length }));
     if (filter.threadId !== undefined) {
         return opts
-            .listThreadRuns(pool, analysisId, filter.threadId, { limit: page.perPage + 1, offset })
+            .listThreadRuns(pool, analysisId, filter.threadId, { ...text, limit: page.perPage + 1, offset })
             .map((rows) => ({ rows: rows.slice(0, page.perPage), total: offset + rows.length }));
     }
-    return opts.listRuns(pool, analysisId, { limit: page.perPage, offset });
+    return opts.listRuns(pool, analysisId, { ...text, limit: page.perPage, offset });
 }
 
 /** True when `runId` is a run of the analysis, or the workflow of its data profile. */

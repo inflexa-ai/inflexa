@@ -334,6 +334,104 @@ describe("GET {A}/runs", () => {
         expect(list).toMatchObject({ total: 2, page: 1, perPage: 1, hasMore: false });
     });
 
+    test("`q` reaches the page read unchanged, and `total` is the count that the read answers", async () => {
+        const analysisId = seedAnalysis();
+        const matching = Array.from({ length: 150 }, (_, index) => runRow({ runId: `v${index}`, analysisId }));
+        const reads: { q?: string; limit: number; offset: number }[] = [];
+        const app = appWith({
+            listRuns: (_pool, _id, query) => {
+                reads.push(query);
+                return okAsync({ rows: matching.slice(query.offset, query.offset + query.limit), total: matching.length });
+            },
+            loadPlan: () => okAsync(null),
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?q=Volcano%2050%25_&perPage=100`)).json()) as RunList;
+
+        expect(reads).toEqual([{ q: "Volcano 50%_", limit: 100, offset: 0 }]);
+        expect(list.runs).toHaveLength(100);
+        expect(list).toMatchObject({ total: 150, hasMore: true });
+    });
+
+    test("`q` with `active=true` reaches the active read, and `total` counts the selected runs", async () => {
+        const analysisId = seedAnalysis();
+        const reads: { q?: string }[] = [];
+        const app = appWith({
+            listActiveRuns: (_pool, _id, filter) => {
+                reads.push(filter);
+                return okAsync([runRow({ runId: "a1", analysisId, status: "running" })]);
+            },
+            loadPlan: () => okAsync(null),
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&q=volcano`)).json()) as RunList;
+
+        expect(reads).toEqual([{ q: "volcano" }]);
+        expect(list.runs.map((run) => run.runId)).toEqual(["a1"]);
+        expect(list.total).toBe(1);
+    });
+
+    test("`q` with `threadId` reaches the thread read, and `total` stays a lower bound", async () => {
+        const analysisId = seedAnalysis();
+        const reads: { threadId: string; q?: string; limit: number; offset: number }[] = [];
+        const app = appWith({
+            listThreadRuns: (_pool, _id, threadId, query) => {
+                reads.push({ threadId, ...query });
+                return okAsync([runRow({ runId: "t1", analysisId, threadId }), runRow({ runId: "t2", analysisId, threadId })]);
+            },
+            loadPlan: () => okAsync(null),
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&q=volcano&perPage=1`)).json()) as RunList;
+
+        expect(reads).toEqual([{ threadId: "th", q: "volcano", limit: 2, offset: 0 }]);
+        expect(list.runs.map((run) => run.runId)).toEqual(["t1"]);
+        expect(list).toMatchObject({ total: 2, hasMore: true });
+    });
+
+    test("`active=true` takes precedence over `threadId` when `q` is present", async () => {
+        const analysisId = seedAnalysis();
+        const reads: { q?: string }[] = [];
+        const app = appWith({
+            listActiveRuns: (_pool, _id, filter) => {
+                reads.push(filter);
+                return okAsync([runRow({ runId: "r1", analysisId, threadId: "t2", status: "running" })]);
+            },
+            loadPlan: () => okAsync(null),
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&threadId=t1&q=volcano`)).json()) as RunList;
+
+        expect(reads).toEqual([{ q: "volcano" }]);
+        expect(list.runs.map((run) => run.runId)).toEqual(["r1"]);
+        expect(list.total).toBe(1);
+    });
+
+    test("an empty `q` gives no `q` to the read of any branch", async () => {
+        const analysisId = seedAnalysis();
+        const defaultReads: object[] = [];
+        const threadReads: object[] = [];
+        const activeReads: object[] = [];
+        const app = appWith({
+            listRuns: (_pool, _id, query) => {
+                defaultReads.push(query);
+                return okAsync({ rows: [], total: 0 });
+            },
+            listThreadRuns: (_pool, _id, _threadId, query) => {
+                threadReads.push(query);
+                return okAsync([]);
+            },
+            listActiveRuns: (_pool, _id, filter) => {
+                activeReads.push(filter);
+                return okAsync([]);
+            },
+        });
+        await app.request(`/api/v1/analyses/${analysisId}/runs?q=`);
+        await app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&q=`);
+        await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&q=`);
+
+        expect(defaultReads).toEqual([{ limit: 100, offset: 0 }]);
+        expect(threadReads).toEqual([{ limit: 101, offset: 0 }]);
+        expect(activeReads).toEqual([{}]);
+        for (const read of [...defaultReads, ...threadReads, ...activeReads]) expect(read).not.toHaveProperty("q");
+    });
+
     test("`threadId` reads one row past the page to tell that a later page has runs", async () => {
         const analysisId = seedAnalysis();
         const threadRuns = ["t1", "t2", "t3"].map((runId) => runRow({ runId, analysisId, threadId: "th" }));

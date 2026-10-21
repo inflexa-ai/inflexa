@@ -76,6 +76,11 @@ export function parsePage(page: string | undefined, perPage: string | undefined)
     return { page: pageNumber, perPage: count };
 }
 
+/** An absent or empty query value is no filter, the same rule as the empty `project` of the analysis list. */
+export function filterValue(value: string | undefined): string | undefined {
+    return value === undefined || value === "" ? undefined : value;
+}
+
 /** A list response: `items` (one page) under `key`, with the paging fields over `total` items. */
 export function listEnvelope<K extends string, T>(key: K, items: T[], total: number, page: PageQuery): ListEnvelope<K, T> {
     // A computed key widens to `string` in TypeScript, so the literal key `K` is restored by the cast. The

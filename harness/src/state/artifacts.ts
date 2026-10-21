@@ -247,6 +247,13 @@ export function queryAnalysisArtifacts(pool: Querier, analysisId: string): Resul
 /** The sort of {@link queryArtifactPage}: `path` is path order, `recent` is newest registration first. */
 export type ArtifactPageSort = "path" | "recent";
 
+/**
+ * The extension of `path` in lower case: the text after the last dot of the file name, which is the part after the
+ * last `/`. The pattern needs one character or more before that dot and one or more after it, thus a name with no dot,
+ * a name whose only dot is its first character, and a name that ends with a dot give `NULL`.
+ */
+const EXTENSION_SQL = `lower(substring(regexp_replace(path, '^.*/', '') from '^.+\\.([^.]+)$'))`;
+
 /** The filters, the sort, and the window of {@link queryArtifactPage}. A filter that is absent selects each row. */
 export interface ArtifactPageQuery {
     runId?: string;
@@ -254,6 +261,13 @@ export interface ArtifactPageQuery {
     fileType?: string;
     /** A part of the path, with no regard to case. Each character matches only itself. */
     q?: string;
+    /** The whole path, with case. It selects the one row of that path. */
+    path?: string;
+    /**
+     * Extensions in lower case, with no dot. A row is selected when the extension of its path is a member. A row with
+     * no extension never matches, and an empty list selects each row. The read compares the members as they are.
+     */
+    extensions?: readonly string[];
     sort: ArtifactPageSort;
     limit: number;
     offset: number;
@@ -272,15 +286,25 @@ export interface ArtifactPageEntry {
     createdAt: string;
 }
 
+/** The count of the selected rows that have one extension. */
+export interface ArtifactExtensionCount {
+    /** The extension in lower case with no dot, or `null` for the rows that have no extension. */
+    extension: string | null;
+    count: number;
+}
+
 /** One page of the ledger, and the count of the rows that the filters select. */
 export interface ArtifactPage {
     entries: ArtifactPageEntry[];
     total: number;
+    /** The selected rows by extension, in the order of the extension with `null` last. The counts sum to `total`. */
+    extensionCounts: ArtifactExtensionCount[];
 }
 
 /**
  * One page of the artifact ledger of an analysis, in two statements: the count of the rows that the filters
- * select, and the page. The count is a separate statement because a page past the end has no row to carry it.
+ * select, grouped by extension, and the page. The count is a separate statement because a page past the end has no
+ * row to carry it. `total` is the sum of the groups.
  *
  * Every row of the analysis is a member, an `input` row and a row with `unrecoverable_at` included. The cost
  * grows with the ledger of the one analysis, because the count reads each filtered row.
@@ -298,12 +322,21 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
         if (query.fileType !== undefined) conditions.push(`file_type = ${bind(query.fileType)}`);
         // `LIKE` would turn `%` and `_` of the input into wildcards.
         if (query.q !== undefined) conditions.push(`strpos(lower(path), lower(${bind(query.q)}::text)) > 0`);
+        if (query.path !== undefined) conditions.push(`path = ${bind(query.path)}`);
+        if (query.extensions !== undefined && query.extensions.length > 0) {
+            conditions.push(`${EXTENSION_SQL} = ANY(${bind([...query.extensions])}::text[])`);
+        }
         const where = conditions.join(" AND ");
 
-        const countResult = await pool.query<{ total: number }>({
-            text: `SELECT COUNT(*)::int AS total FROM cortex_artifacts WHERE ${where}`,
+        const countResult = await pool.query<{ extension: string | null; n: number }>({
+            text: `SELECT ${EXTENSION_SQL} AS extension, COUNT(*)::int AS n
+          FROM cortex_artifacts
+          WHERE ${where}
+          GROUP BY 1
+          ORDER BY 1 ASC NULLS LAST`,
             values,
         });
+        const extensionCounts = countResult.rows.map((r) => ({ extension: r.extension ?? null, count: Number(r.n) }));
         // `path` is unique in one analysis, thus it breaks each tie and two pages never overlap.
         const order = query.sort === "recent" ? "created_at DESC, path ASC" : "path ASC";
         const rowsResult = await pool.query<{
@@ -332,7 +365,8 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
                 stepId: r.source_step ?? null,
                 createdAt: r.created_at,
             })),
-            total: Number(countResult.rows[0]?.total ?? 0),
+            total: extensionCounts.reduce((sum, e) => sum + e.count, 0),
+            extensionCounts,
         };
     });
 }

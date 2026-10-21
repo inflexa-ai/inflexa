@@ -59,5 +59,16 @@ export type ArtifactEntry = {
     createdAt: string;
 };
 
-/** The body of `GET {A}/artifacts`: one page of the ledger. `total` counts the rows that the filters select. */
-export type ArtifactList = ListEnvelope<"artifacts", ArtifactEntry>;
+/** The count of the selected rows that share one extension. */
+export type ArtifactExtensionCount = {
+    /** The extension in lower case, or `null` for the rows whose file name has none. */
+    extension: string | null;
+    count: number;
+};
+
+/**
+ * The body of `GET {A}/artifacts`: one page of the ledger. `total` counts the rows that the filters select.
+ * `extensionCounts` counts the same rows by extension, in the order of the extension with the `null` entry
+ * last. The counts sum to `total` and do not depend on the page.
+ */
+export type ArtifactList = ListEnvelope<"artifacts", ArtifactEntry> & { extensionCounts: ArtifactExtensionCount[] };

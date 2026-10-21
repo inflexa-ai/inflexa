@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { countArtifactsByRuns, queryArtifactPage, readRunSynthesis } from "@inflexa-ai/harness";
-import type { ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, RunArtifactCount } from "@inflexa-ai/harness";
+import { countArtifactsByRuns, countRunsByAnalysis, queryArtifactPage, readRunSynthesis } from "@inflexa-ai/harness";
+import type { ArtifactExtensionCount, ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, RunArtifactCount } from "@inflexa-ai/harness";
 
 import * as runSynthesis from "../execution/run-synthesis.js";
 import * as stateBarrel from "./index.js";
@@ -14,15 +14,17 @@ describe("the exports of the artifact reads", () => {
         expect(queryArtifactPage).toBe(stateBarrel.queryArtifactPage);
         expect(countArtifactsByRuns).toBe(stateBarrel.countArtifactsByRuns);
         expect(readRunSynthesis).toBe(runSynthesis.readRunSynthesis);
+        expect(countRunsByAnalysis).toBe(stateBarrel.countRunsByAnalysis);
     });
 
     it("types the query, the page, and the counts from the package root", async () => {
         const query: ArtifactPageQuery = { sort: "recent", limit: 50, offset: 0, q: "volcano" };
         const entry: ArtifactPageEntry | undefined = undefined;
+        const extensionCount: ArtifactExtensionCount | undefined = undefined;
         const page: ArtifactPage | undefined = undefined;
         const count: RunArtifactCount | undefined = (await countArtifactsByRuns(unusedQuerier, "a1", []))._unsafeUnwrap()[0];
 
-        expect([entry, page, count]).toEqual([undefined, undefined, undefined]);
+        expect([entry, extensionCount, page, count]).toEqual([undefined, undefined, undefined, undefined]);
         expect(query.sort).toBe("recent");
     });
 });

@@ -4,12 +4,20 @@ import type { ResultAsync } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
 
-import type { ArtifactEntry, ArtifactError, ArtifactList, ArtifactSort, ResolvedArtifact, ResolvedArtifacts } from "../../api/artifacts.ts";
+import type {
+    ArtifactEntry,
+    ArtifactError,
+    ArtifactExtensionCount,
+    ArtifactList,
+    ArtifactSort,
+    ResolvedArtifact,
+    ResolvedArtifacts,
+} from "../../api/artifacts.ts";
 import { getLogger } from "../../lib/log.ts";
 import { entryDegraded, materializeTarget, resolveEntryPath, workspaceFileResolvable, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, internalError, listEnvelope, parsePage, readBody, requireRuntime, type ServerEnv } from "../http.ts";
+import { apiError, filterValue, internalError, listEnvelope, parsePage, readBody, requireRuntime, type ServerEnv } from "../http.ts";
 
 /** The harness mints each presentation id as `pres-` and a hex digest. The id names a file in the workspace, thus nothing else passes. */
 const presId = z.string().regex(/^pres-[A-Za-z0-9_-]+$/, "A presentation id is `pres-` and a digest.");
@@ -37,9 +45,17 @@ export type ArtifactRoutesOpts = {
 /** The production {@link ArtifactRoutesOpts}. */
 export const DEFAULT_ARTIFACT_ROUTES_OPTS: ArtifactRoutesOpts = { listArtifacts: queryArtifactPage };
 
-/** An absent or empty query value is no filter, the same rule as the empty `project` of the analysis list. */
-function filterValue(value: string | undefined): string | undefined {
-    return value === undefined || value === "" ? undefined : value;
+/**
+ * The members of the `extension` query value: a list with a comma between the members. The harness compares
+ * each member as it is, thus the lower case and the trim happen here, where the input enters. An empty member is
+ * dropped, and a value with no member gives no filter.
+ */
+function parseExtensions(value: string | undefined): string[] {
+    if (value === undefined) return [];
+    return value
+        .split(",")
+        .map((member) => member.trim().toLowerCase())
+        .filter((member) => member !== "");
 }
 
 /** How many entries of one request resolve at one time. Each entry reads the disk, and the body caps the entries at 1000. */
@@ -49,6 +65,8 @@ const RESOLVE_WIDTH = 8;
  * The routes under `{A}/artifacts`.
  *
  * `GET /` lists the artifact ledger of the analysis, one page for each request. It needs the harness runtime.
+ * `runId`, `stepId`, `fileType`, `path` (an exact path), `q` (a part of the path), and `extension` (a list with
+ * a comma between the members) combine with AND. The response adds `extensionCounts` for the selected rows.
  * The cost of a request grows with the ledger of the one analysis, because the exact `total` reads each
  * filtered row.
  *
@@ -71,18 +89,23 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         const stepId = filterValue(c.req.query("stepId"));
         const fileType = filterValue(c.req.query("fileType"));
         const q = filterValue(c.req.query("q"));
+        const path = filterValue(c.req.query("path"));
+        const extensions = parseExtensions(filterValue(c.req.query("extension")));
         const listed = await opts.listArtifacts(c.get("runtime").pool, analysisId, {
             ...(runId === undefined ? {} : { runId }),
             ...(stepId === undefined ? {} : { stepId }),
             ...(fileType === undefined ? {} : { fileType }),
             ...(q === undefined ? {} : { q }),
+            ...(path === undefined ? {} : { path }),
+            ...(extensions.length === 0 ? {} : { extensions }),
             sort: sort.data,
             limit: page.perPage,
             offset: page.page * page.perPage,
         });
         if (listed.isErr()) return internalError(c, listed.error, "list the artifacts");
         const entries = listed.value.entries.map((entry): ArtifactEntry => ({ ...entry }));
-        return c.json<ArtifactList>(listEnvelope("artifacts", entries, listed.value.total, page));
+        const extensionCounts = listed.value.extensionCounts.map((count): ArtifactExtensionCount => ({ ...count }));
+        return c.json<ArtifactList>({ ...listEnvelope("artifacts", entries, listed.value.total, page), extensionCounts });
     });
 
     routes.post("/resolve", async (c) => {
