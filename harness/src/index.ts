@@ -600,7 +600,7 @@ export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgress
 
 // The artifact ledger reads of one analysis: one page with an exact total, and the step-output count of each run of a list in one statement.
 export { queryArtifactPage, countArtifactsByRuns } from "./state/artifacts.js";
-export type { ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, ArtifactPageSort, RunArtifactCount } from "./state/artifacts.js";
+export type { ArtifactExtensionCount, ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, ArtifactPageSort, RunArtifactCount } from "./state/artifacts.js";
 
 // The validated synthesis record of a run as the flat `data-run-synthesis` part of the run stream, or null.
 export { readRunSynthesis } from "./execution/run-synthesis.js";
@@ -791,6 +791,7 @@ export {
     markRunCanceledIfActive,
     queryRun,
     queryRunsByAnalysis,
+    countRunsByAnalysis,
     queryRunIdsByPlan,
     RunDedupCollisionError,
     RunIdentityCollisionError,

@@ -6,6 +6,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "./analyses.js";
 import { insertPlan } from "./plans.js";
 import {
+    countRunsByAnalysis,
     insertRun,
     markRunCanceledIfActive,
     queryActiveRun,
@@ -14,6 +15,8 @@ import {
     queryNonTerminalRunsByAnalysis,
     queryRun,
     queryRunIdsByPlan,
+    queryRunsByAnalysis,
+    queryRunsByThread,
     queryRunsForInspection,
     reserveRunById,
     RunDedupCollisionError,
@@ -553,5 +556,148 @@ describe("queryNewestPlanRun", () => {
         expect(reservation.inserted).toBe(true);
         expect(reservation.row.startedAt).toBe(startedAt);
         expect((await queryRun(pool, "reserved-written"))._unsafeUnwrap()?.startedAt).toBe(startedAt);
+    });
+});
+
+describe("the text filter of the run reads", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("runs_text_filter"));
+        for (const analysisId of ["t-dex", "t-win", "t-wild", "t-scope", "t-scope-other", "t-comb", "t-count", "t-notitle"]) {
+            (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
+        }
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    async function seedPlan(analysisId: string, plan: unknown): Promise<string> {
+        return (await insertPlan(pool, { analysisId, plan }))._unsafeUnwrap();
+    }
+
+    async function seedRun(
+        runId: string,
+        analysisId: string,
+        startedAt: string,
+        opts: { planId?: string | null; threadId?: string | null; status?: "running" | "completed" } = {},
+    ): Promise<void> {
+        await pool.query({
+            text: `INSERT INTO cortex_runs (run_id, analysis_id, thread_id, workflow_name, status, started_at, plan_id)
+                   VALUES ($1, $2, $3, 'executeAnalysis', $4, $5, $6)`,
+            values: [runId, analysisId, opts.threadId ?? null, opts.status ?? "completed", startedAt, opts.planId ?? null],
+        });
+    }
+
+    const ids = (rows: { runId: string }[]): string[] => rows.map((r) => r.runId);
+
+    it("finds the runs by the plan title or the run id, with no regard to case, newest first", async () => {
+        const old = await seedPlan("t-dex", { title: "Gene index" });
+        const mid = await seedPlan("t-dex", { title: "Pathway enrichment" });
+        await seedRun("r-old", "t-dex", "2026-10-01T00:00:00.000Z", { planId: old });
+        await seedRun("r-mid", "t-dex", "2026-10-02T00:00:00.000Z", { planId: mid });
+        await seedRun("r-dex9", "t-dex", "2026-10-03T00:00:00.000Z");
+
+        const upper = (await queryRunsByAnalysis(pool, "t-dex", { q: "DEX" }))._unsafeUnwrap();
+        const lower = (await queryRunsByAnalysis(pool, "t-dex", { q: "dex" }))._unsafeUnwrap();
+        const count = (await countRunsByAnalysis(pool, "t-dex", { q: "DEX" }))._unsafeUnwrap();
+
+        expect(ids(upper)).toEqual(["r-dex9", "r-old"]);
+        expect(ids(lower)).toEqual(["r-dex9", "r-old"]);
+        expect(count).toBe(2);
+    });
+
+    it("matches a run id without a plan, and ignores a title that is not a string", async () => {
+        const numeric = await seedPlan("t-notitle", { title: 42 });
+        const untitled = await seedPlan("t-notitle", { steps: [] });
+        await seedRun("n-42", "t-notitle", "2026-10-01T00:00:00.000Z");
+        await seedRun("n-numeric", "t-notitle", "2026-10-02T00:00:00.000Z", { planId: numeric });
+        await seedRun("n-untitled", "t-notitle", "2026-10-03T00:00:00.000Z", { planId: untitled });
+
+        const rows = (await queryRunsByAnalysis(pool, "t-notitle", { q: "42" }))._unsafeUnwrap();
+
+        expect(ids(rows)).toEqual(["n-42"]);
+        expect((await countRunsByAnalysis(pool, "t-notitle", { q: "42" }))._unsafeUnwrap()).toBe(1);
+    });
+
+    it("selects the runs before the window, and the count agrees", async () => {
+        const hit = await seedPlan("t-win", { title: "Volcano plot" });
+        const miss = await seedPlan("t-win", { title: "Heatmap" });
+        for (let i = 1; i <= 3; i += 1) await seedRun(`w-hit-${i}`, "t-win", `2026-10-0${i}T00:00:00.000Z`, { planId: hit });
+        for (let i = 4; i <= 8; i += 1) await seedRun(`w-miss-${i}`, "t-win", `2026-10-0${i}T00:00:00.000Z`, { planId: miss });
+
+        const first = (await queryRunsByAnalysis(pool, "t-win", { q: "volcano", limit: 2, offset: 0 }))._unsafeUnwrap();
+        const second = (await queryRunsByAnalysis(pool, "t-win", { q: "volcano", limit: 2, offset: 2 }))._unsafeUnwrap();
+
+        expect(ids(first)).toEqual(["w-hit-3", "w-hit-2"]);
+        expect(ids(second)).toEqual(["w-hit-1"]);
+        expect((await countRunsByAnalysis(pool, "t-win", { q: "volcano" }))._unsafeUnwrap()).toBe(3);
+    });
+
+    it("matches a wildcard character only as itself", async () => {
+        const underscore = await seedPlan("t-wild", { title: "a_b" });
+        const other = await seedPlan("t-wild", { title: "axb" });
+        const percent = await seedPlan("t-wild", { title: "100% done" });
+        await seedRun("wild-1", "t-wild", "2026-10-01T00:00:00.000Z", { planId: underscore });
+        await seedRun("wild-2", "t-wild", "2026-10-02T00:00:00.000Z", { planId: other });
+        await seedRun("wild-3", "t-wild", "2026-10-03T00:00:00.000Z", { planId: percent });
+
+        expect(ids((await queryRunsByAnalysis(pool, "t-wild", { q: "a_b" }))._unsafeUnwrap())).toEqual(["wild-1"]);
+        expect(ids((await queryRunsByAnalysis(pool, "t-wild", { q: "%" }))._unsafeUnwrap())).toEqual(["wild-3"]);
+        expect((await countRunsByAnalysis(pool, "t-wild", { q: "a_b" }))._unsafeUnwrap()).toBe(1);
+    });
+
+    it("gives no title to a plan of a different analysis", async () => {
+        const foreign = await seedPlan("t-scope-other", { title: "volcano" });
+        await seedRun("scope-1", "t-scope", "2026-10-01T00:00:00.000Z", { planId: foreign });
+
+        expect(ids((await queryRunsByAnalysis(pool, "t-scope", { q: "volcano" }))._unsafeUnwrap())).toEqual([]);
+        expect((await countRunsByAnalysis(pool, "t-scope", { q: "volcano" }))._unsafeUnwrap()).toBe(0);
+    });
+
+    it("combines the text with the thread and with the active set", async () => {
+        // The active-plan index admits one running run for each plan, thus each running run gets its own plan.
+        const planOf = (title: string): Promise<string> => seedPlan("t-comb", { title });
+        await seedRun("c-1", "t-comb", "2026-10-01T00:00:00.000Z", { planId: await planOf("Volcano"), threadId: "t1", status: "running" });
+        await seedRun("c-2", "t-comb", "2026-10-02T00:00:00.000Z", { planId: await planOf("Volcano"), threadId: "t1", status: "completed" });
+        await seedRun("c-3", "t-comb", "2026-10-03T00:00:00.000Z", { planId: await planOf("Volcano"), threadId: "t2", status: "running" });
+        await seedRun("c-4", "t-comb", "2026-10-04T00:00:00.000Z", { planId: await planOf("Heatmap"), threadId: "t1", status: "running" });
+
+        const thread = (await queryRunsByThread(pool, "t-comb", "t1", { q: "volcano" }))._unsafeUnwrap();
+        const active = (await queryActiveRunsByAnalysis(pool, "t-comb", { q: "volcano" }))._unsafeUnwrap();
+
+        expect(ids(thread)).toEqual(["c-2", "c-1"]);
+        expect(ids(active)).toEqual(["c-3", "c-1"]);
+    });
+
+    it("selects each run without a text, and sends one statement for the count", async () => {
+        for (let i = 1; i <= 4; i += 1) await seedRun(`k-${i}`, "t-count", `2026-10-0${i}T00:00:00.000Z`);
+        const counted = countingQuerier(pool);
+
+        const total = (await countRunsByAnalysis(counted.querier, "t-count"))._unsafeUnwrap();
+        const filtered = (await countRunsByAnalysis(counted.querier, "t-count", { q: "k-" }))._unsafeUnwrap();
+
+        expect(total).toBe(4);
+        expect(filtered).toBe(4);
+        expect(counted.calls()).toBe(2);
+        expect(ids((await queryRunsByAnalysis(pool, "t-count"))._unsafeUnwrap())).toEqual(["k-4", "k-3", "k-2", "k-1"]);
+    });
+});
+
+describe("a driver failure of the run count", () => {
+    // The read under test calls only `query`, thus an object with a rejecting `query` stands for the whole interface.
+    const rejecting = {
+        query: () => Promise.reject(new Error("connection lost")),
+    } as unknown as Parameters<typeof countRunsByAnalysis>[0];
+
+    it("rides the error channel of countRunsByAnalysis, with the op", async () => {
+        const error = (await countRunsByAnalysis(rejecting, "a1", { q: "x" })).match(
+            () => null,
+            (failure) => failure,
+        );
+
+        expect(error).toMatchObject({ type: "query_failed", op: "runs.countRunsByAnalysis" });
     });
 });

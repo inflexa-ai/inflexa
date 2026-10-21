@@ -173,6 +173,27 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
     });
 }
 
+/** The optional text filter of the run reads. */
+export interface RunTextFilter {
+    /** A part of the run id or of the plan title, with no regard to case. Each character matches only itself. */
+    q?: string;
+}
+
+/**
+ * The SQL condition of the text filter `q` for the bound placeholder `placeholder`. A run matches when its id holds the
+ * text, or when the `title` of the plan of the same analysis holds it. `strpos` is the test, because `LIKE` would turn
+ * `%` and `_` of the input into wildcards. The `analysis_id` condition keeps the plan of a different analysis out, the
+ * same scope as `loadPlan`.
+ */
+function runTextCondition(placeholder: string): string {
+    return `(strpos(lower(run_id), lower(${placeholder}::text)) > 0
+              OR EXISTS (SELECT 1 FROM cortex_plans p
+                         WHERE p.plan_id = cortex_runs.plan_id
+                           AND p.analysis_id = cortex_runs.analysis_id
+                           AND jsonb_typeof(p.plan -> 'title') = 'string'
+                           AND strpos(lower(p.plan ->> 'title'), lower(${placeholder}::text)) > 0))`;
+}
+
 /**
  * Every NON-TERMINAL run of an analysis, newest-first and deliberately unbounded.
  *
@@ -189,9 +210,13 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
  * The status set is the one {@link queryActiveRun} uses — non-terminal means `running`. Keep the two
  * in step: a new non-terminal status added to one and not the other makes a live run invisible to
  * exactly one of its readers.
+ *
+ * With `q`, only the runs that the text filter selects are members.
  */
-export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string): ResultAsync<CortexRunRow[], DbError> {
+export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string, { q }: RunTextFilter = {}): ResultAsync<CortexRunRow[], DbError> {
     return tryQuery("runs.queryActiveRunsByAnalysis", async () => {
+        const values: unknown[] = [analysisId];
+        const text = q === undefined ? "" : `AND ${runTextCondition(`$${values.push(q)}`)}`;
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
@@ -199,8 +224,9 @@ export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string): Re
             FROM cortex_runs
             WHERE analysis_id = $1
               AND status = 'running'
+              ${text}
             ORDER BY started_at DESC`,
-            values: [analysisId],
+            values,
         });
         return result.rows.map(mapRunRow);
     });
@@ -316,22 +342,48 @@ export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow
     });
 }
 
+/**
+ * One window of the runs of an analysis, newest start first. With `q`, the window holds only the runs that the text
+ * filter selects: the filter applies before `limit` and `offset`, and it does not change the order.
+ */
 export function queryRunsByAnalysis(
     pool: Querier,
     analysisId: string,
-    { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
+    { limit = 50, offset = 0, q }: { limit?: number; offset?: number } & RunTextFilter = {},
 ): ResultAsync<CortexRunRow[], DbError> {
     return tryQuery("runs.queryRunsByAnalysis", async () => {
+        const values: unknown[] = [analysisId, limit, offset];
+        const text = q === undefined ? "" : `AND ${runTextCondition(`$${values.push(q)}`)}`;
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
+              ${text}
             ORDER BY started_at DESC LIMIT $2 OFFSET $3`,
-            values: [analysisId, limit, offset],
+            values,
         });
         return result.rows.map(mapRunRow);
+    });
+}
+
+/**
+ * The count of the runs of an analysis, in one statement. With `q`, the count holds only the runs that the text filter
+ * selects, thus it agrees with the windows of {@link queryRunsByAnalysis} for the same `q`.
+ */
+export function countRunsByAnalysis(pool: Querier, analysisId: string, { q }: RunTextFilter = {}): ResultAsync<number, DbError> {
+    return tryQuery("runs.countRunsByAnalysis", async () => {
+        const values: unknown[] = [analysisId];
+        const text = q === undefined ? "" : `AND ${runTextCondition(`$${values.push(q)}`)}`;
+        const result = await pool.query<{ total: number }>({
+            text: `SELECT COUNT(*)::int AS total
+            FROM cortex_runs
+            WHERE analysis_id = $1
+              ${text}`,
+            values,
+        });
+        return Number(result.rows[0]?.total ?? 0);
     });
 }
 
@@ -444,21 +496,25 @@ export function queryRunsForInspection(
     });
 }
 
+/** The runs of one thread of an analysis, newest start first. With `q`, the text filter applies before the window. */
 export function queryRunsByThread(
     pool: Querier,
     analysisId: string,
     threadId: string,
-    { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
+    { limit = 50, offset = 0, q }: { limit?: number; offset?: number } & RunTextFilter = {},
 ): ResultAsync<CortexRunRow[], DbError> {
     return tryQuery("runs.queryRunsByThread", async () => {
+        const values: unknown[] = [analysisId, threadId, limit, offset];
+        const text = q === undefined ? "" : `AND ${runTextCondition(`$${values.push(q)}`)}`;
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1 AND thread_id = $2
+              ${text}
             ORDER BY started_at DESC LIMIT $3 OFFSET $4`,
-            values: [analysisId, threadId, limit, offset],
+            values,
         });
         return result.rows.map(mapRunRow);
     });

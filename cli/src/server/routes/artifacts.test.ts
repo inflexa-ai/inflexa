@@ -222,7 +222,10 @@ describe("GET {A}/artifacts", () => {
     } as const;
 
     /** The routes over a read that records its queries and gives `page`. */
-    function listing(page: ArtifactPage = { entries: [entry], total: 1 }): { app: Hono<ServerEnv>; reads: { analysisId: string; query: ArtifactPageQuery }[] } {
+    function listing(page: ArtifactPage = { entries: [entry], total: 1, extensionCounts: [{ extension: "png", count: 1 }] }): {
+        app: Hono<ServerEnv>;
+        reads: { analysisId: string; query: ArtifactPageQuery }[];
+    } {
         const reads: { analysisId: string; query: ArtifactPageQuery }[] = [];
         const routes = appWith({
             listArtifacts: (_pool, analysisId, query) => {
@@ -234,13 +237,13 @@ describe("GET {A}/artifacts", () => {
     }
 
     test("gives the page in the list shape, and sends the filters with the default sort", async () => {
-        const { app: routes, reads } = listing({ entries: [entry], total: 2 });
+        const { app: routes, reads } = listing({ entries: [entry], total: 2, extensionCounts: [{ extension: "png", count: 2 }] });
 
         const response = await routes.request("/api/v1/analyses/a1/artifacts?fileType=figure&q=volcano&runId=r1&stepId=s1");
         const list = (await response.json()) as ArtifactList;
 
         expect(response.status).toBe(200);
-        expect(list).toEqual({ artifacts: [entry], total: 2, page: 0, perPage: 100, hasMore: false });
+        expect(list).toEqual({ artifacts: [entry], total: 2, page: 0, perPage: 100, hasMore: false, extensionCounts: [{ extension: "png", count: 2 }] });
         expect(reads).toEqual([
             { analysisId: "a1", query: { fileType: "figure", q: "volcano", runId: "r1", stepId: "s1", sort: "path", limit: 100, offset: 0 } },
         ]);
@@ -261,6 +264,47 @@ describe("GET {A}/artifacts", () => {
 
         expect(response.status).toBe(200);
         expect(reads).toEqual([{ analysisId: "a1", query: { sort: "path", limit: 100, offset: 0 } }]);
+    });
+
+    test("`path` reaches the read unchanged, with its case and its characters", async () => {
+        const { app: routes, reads } = listing();
+
+        await routes.request("/api/v1/analyses/a1/artifacts?path=runs/r1/s1/output/De%20Result.CSV");
+
+        expect(reads).toEqual([{ analysisId: "a1", query: { path: "runs/r1/s1/output/De Result.CSV", sort: "path", limit: 100, offset: 0 } }]);
+    });
+
+    test("`extension` reaches the read as a list with the case folded, the spaces trimmed, and the empty members dropped", async () => {
+        const { app: routes, reads } = listing();
+
+        await routes.request("/api/v1/analyses/a1/artifacts?runId=r1&extension=png,%20SVG,");
+
+        expect(reads).toEqual([{ analysisId: "a1", query: { runId: "r1", extensions: ["png", "svg"], sort: "path", limit: 100, offset: 0 } }]);
+    });
+
+    test.each(["", ",", "%20,%20%20,"])("an `extension` value %p with no member gives no `extensions`", async (value) => {
+        const { app: routes, reads } = listing();
+
+        const response = await routes.request(`/api/v1/analyses/a1/artifacts?extension=${value}`);
+
+        expect(response.status).toBe(200);
+        expect(reads).toHaveLength(1);
+        expect(reads[0]?.query).not.toHaveProperty("extensions");
+    });
+
+    test("`extensionCounts` of the read rides the response, with the `null` entry last, and it does not depend on the page", async () => {
+        const extensionCounts = [
+            { extension: "csv", count: 1 },
+            { extension: "png", count: 2 },
+            { extension: null, count: 1 },
+        ];
+        const { app: routes } = listing({ entries: [entry], total: 4, extensionCounts });
+
+        const list = (await (await routes.request("/api/v1/analyses/a1/artifacts?runId=r1&perPage=1")).json()) as ArtifactList;
+
+        expect(list.artifacts).toHaveLength(1);
+        expect(list).toMatchObject({ total: 4, perPage: 1, hasMore: true });
+        expect(list.extensionCounts).toEqual(extensionCounts);
     });
 
     test("400 `validation_error` for a sort value that is not path or recent, with no read", async () => {
