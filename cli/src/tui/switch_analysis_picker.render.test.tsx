@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { testRender } from "@opentui/solid";
+import { ok } from "neverthrow";
 import type { JSX } from "solid-js";
 
 import type { AnalysisList, AnalysisSummary } from "../api/analyses.ts";
@@ -252,6 +253,7 @@ describe("Switch analysis picker identity", () => {
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
+            return ok(undefined);
         });
 
         const workspace = ws();
@@ -276,6 +278,7 @@ describe("Switch analysis picker identity", () => {
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
+            return ok(undefined);
         });
 
         const workspace = ws();

@@ -5,7 +5,15 @@ import "../../extensions/index.ts"; // installs Response.prototype.jsonWith, whi
 import type { ChatSetupError, ModelAccess } from "../proxy/models.ts";
 import { AGENT_EFFORTS } from "../../lib/config.ts";
 import type { ResolvedModelConnection } from "./config.ts";
-import { listConnectionModels, validateModelSelection, type ListModelsSeams, type ValidateSelectionSeams } from "./model_listing.ts";
+import {
+    contextWarning,
+    listConnectionModels,
+    probeContextWindow,
+    validateModelSelection,
+    type ContextWindowOpts,
+    type ListModelsSeams,
+    type ValidateSelectionSeams,
+} from "./model_listing.ts";
 
 // Drives `listConnectionModels` through injected seams so the per-mode request shaping (cliproxy vs.
 // direct OpenAI-compatible vs. direct Anthropic) and the Result-channel degradations are exercised with
@@ -741,5 +749,77 @@ describe("validateModelSelection — per-mode commit validation", () => {
         );
         expect(result).toBe("inconclusive");
         expect(touched).toBe(0);
+    });
+});
+
+describe("probeContextWindow — the window of the chat model", () => {
+    const DIRECT_OLLAMA: ResolvedModelConnection = {
+        mode: "direct",
+        provider: "openai",
+        baseURL: "http://gpu-box:11434/v1",
+        protocol: "openai-compatible",
+        agents: {},
+    };
+
+    function windowOptsFor(connection: ResolvedModelConnection, fetch: ContextWindowOpts["fetch"]): ContextWindowOpts {
+        return {
+            resolveConnection: () => connection,
+            readModelApiKey: () => undefined,
+            resolveAuthCredential: () => {
+                throw new Error("resolveAuthCredential must not be called without an auth block");
+            },
+            fetch,
+        };
+    }
+
+    test("an Ollama endpoint reports the trained window through /api/show at the root without /v1", async () => {
+        const calls: { url: string; init: RequestInit }[] = [];
+        const window = await probeContextWindow(
+            "qwen3:8b",
+            windowOptsFor(DIRECT_OLLAMA, async (url, init) => {
+                calls.push({ url, init });
+                return new Response(JSON.stringify({ model_info: { "general.architecture": "qwen3", "qwen3.context_length": 40960 } }));
+            }),
+        );
+        expect(window).toEqual({ type: "known", tokens: 40960 });
+        expect(calls[0]?.url).toBe("http://gpu-box:11434/api/show");
+        expect(calls[0]?.init.body).toBe(JSON.stringify({ model: "qwen3:8b" }));
+    });
+
+    test("an endpoint without /api/show leaves the window unknown", async () => {
+        const window = await probeContextWindow(
+            "gpt-5",
+            windowOptsFor(DIRECT_OLLAMA, async () => new Response("not found", { status: 404 })),
+        );
+        expect(window).toEqual({ type: "unknown" });
+    });
+
+    test("the cliproxy and the Anthropic wire are not probed", async () => {
+        const fetch: ContextWindowOpts["fetch"] = () => {
+            throw new Error("fetch must not be called");
+        };
+        expect(await probeContextWindow("claude-opus-5-5", windowOptsFor({ mode: "cliproxy", provider: "anthropic", agents: {} }, fetch))).toEqual({
+            type: "not_probed",
+        });
+        expect(await probeContextWindow("claude-opus-5-5", windowOptsFor(DIRECT_ANTHROPIC, fetch))).toEqual({ type: "not_probed" });
+    });
+});
+
+describe("contextWarning", () => {
+    test("a window below the minimum names the model and its window", () => {
+        expect(contextWarning("qwen3:8b", { type: "known", tokens: 40960 })).toBe(
+            "qwen3:8b has a 40,960-token context window. Inflexa needs at least 200,000 tokens and a model with good tool calling.",
+        );
+    });
+
+    test("a window at the minimum, and a connection that was not probed, give no warning", () => {
+        expect(contextWarning("m", { type: "known", tokens: 200_000 })).toBeNull();
+        expect(contextWarning("m", { type: "not_probed" })).toBeNull();
+    });
+
+    test("an unknown window gives the minimum", () => {
+        expect(contextWarning("m", { type: "unknown" })).toBe(
+            "Inflexa needs a chat model with good tool calling and a context window of at least 200,000 tokens.",
+        );
     });
 });

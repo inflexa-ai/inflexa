@@ -38,9 +38,12 @@ import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS } from "../../mo
 import { currentAgentEfforts, currentAgentModels, pendingAgentSelections, requestAgentModelChange } from "../../modules/harness/agent_switch.ts";
 import { AGENT_NAMES, writeAgentSelection } from "../../modules/harness/config.ts";
 import {
+    contextWarning,
     describeListModelsError,
     listConnectionModels,
+    probeContextWindow,
     validateModelSelection,
+    type ContextWindow,
     type ListedModel,
     type ListModelsError,
 } from "../../modules/harness/model_listing.ts";
@@ -56,6 +59,7 @@ const EMBEDDING_MODELS_TIMEOUT_MS = 10_000;
 export type MachineRouteOpts = {
     readonly listModels: () => Promise<Result<ListedModel[], ListModelsError>>;
     readonly validateModel: (model: string) => Promise<ModelAccess>;
+    readonly probeContextWindow: (model: string) => Promise<ContextWindow>;
     readonly listEmbeddingModels: (baseUrl: string, apiKey: string, signal: AbortSignal) => Promise<Result<string[], EmbeddingModelListError>>;
     readonly sandboxReadiness: () => Promise<MachineSandboxReadiness>;
     readonly openExternal: (target: string) => Result<void, OpenExternalError>;
@@ -65,6 +69,7 @@ export type MachineRouteOpts = {
 export const DEFAULT_MACHINE_ROUTE_OPTS: MachineRouteOpts = {
     listModels: () => listConnectionModels(),
     validateModel: (model) => validateModelSelection(model),
+    probeContextWindow: (model) => probeContextWindow(model),
     listEmbeddingModels,
     sandboxReadiness: () => readMachineSandboxReadiness(),
     openExternal,
@@ -165,9 +170,14 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
         const body = await readBody(c, putAgentBody);
         if (body.isErr()) return body.error;
         const selection = body.value;
+        // The minimum window comes from the compaction budget of the conversation agent, thus only the chat model is probed.
+        const [access, window] = await Promise.all([
+            opts.validateModel(selection.model),
+            role === "conversation" ? opts.probeContextWindow(selection.model) : Promise.resolve<ContextWindow>({ type: "not_probed" }),
+        ]);
         // Only a definite `not_found` refuses. An inconclusive check accepts, because a flaky or absent
         // validation route must never take the switch away.
-        if ((await opts.validateModel(selection.model)) === "not_found") {
+        if (access === "not_found") {
             return apiError(c, "validation_error", `This account cannot serve ${selection.model}. Pick another model, or check your credential.`, {
                 fieldErrors: { model: ["not served"] },
             });
@@ -176,7 +186,11 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
         return writeAgentSelection(role, selection).match(
             () => {
                 const outcome = requestAgentModelChange(role, selection);
-                const response: PutAgentResponse = { agent: agentView(role), status: outcome.status };
+                const response: PutAgentResponse = {
+                    agent: agentView(role),
+                    status: outcome.status,
+                    contextWarning: contextWarning(selection.model, window),
+                };
                 return c.json(response);
             },
             (e) => internalError(c, e, "save the agent selection"),

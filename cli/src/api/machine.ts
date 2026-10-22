@@ -31,10 +31,14 @@ export type AgentList = {
 /** The body of `PUT /api/v1/agents/:role`. The server validates the model against the connection first. */
 export type PutAgentRequest = AgentSelection;
 
-/** The body of `PUT /api/v1/agents/:role`: the agent after the save, and if the switch applied now or waits for idle. */
+/**
+ * The body of `PUT /api/v1/agents/:role`: the agent after the save, if the switch applied now or waits for idle, and
+ * the warning for a chat model whose context window is too small, or `null`.
+ */
 export type PutAgentResponse = {
     agent: AgentView;
     status: "applied" | "scheduled";
+    contextWarning: string | null;
 };
 
 /** One model of the connection, with the efforts that it takes and its release date. */

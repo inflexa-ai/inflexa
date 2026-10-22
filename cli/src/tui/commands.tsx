@@ -379,6 +379,7 @@ async function saveAgentSelection(agent: AgentName, selection: AgentSelection): 
                     ? { kind: "info", text: `${agentLabel(agent)} model: ${label}` }
                     : { kind: "info", text: `${agentLabel(agent)} model set to ${label} — applies when agent work settles` },
             );
+            if (response.contextWarning !== null) notify({ kind: "warn", text: response.contextWarning }, 10_000, { queue: true });
             void refreshAgentModels();
             return null;
         },
@@ -849,8 +850,9 @@ function SwitchAnalysisDialog(props: { analyses: AnalysisSummary[]; opts: Analys
                 run: () => {
                     const a = cursor();
                     if (!a) return;
-                    void writeClipboard(a.id); // best-effort, never rejects → notify optimistically
-                    notify({ kind: "info", text: `Copied analysis id ${a.id}` });
+                    void writeClipboard(a.id).then((copied) => {
+                        if (copied.isOk()) notify({ kind: "info", text: `Copied analysis id ${a.id}` });
+                    });
                 },
                 desc: "Copy analysis id",
                 group: "Analysis",
@@ -2861,13 +2863,11 @@ export const commands: Command[] = [
         // workspace scope, so a bound thread is the whole precondition and Postgres is not consulted.
         // The SESSION chip is the same act by mouse; this is its keyboard door.
         enabled: (ctx) => ctx.sessionId !== null,
-        run: (ctx) => {
+        run: async (ctx) => {
             const threadId = ctx.sessionId;
             if (threadId === null) return;
-            // Best-effort by contract, so it never rejects — notify optimistically, as every other
-            // copy in the app does, and in the words the chip uses so one act reads as one act.
-            void writeClipboard(threadId);
-            notify({ kind: "info", text: "Copied to clipboard" });
+            // In the words the chip uses, so one act reads as one act.
+            if ((await writeClipboard(threadId)).isOk()) notify({ kind: "info", text: "Copied to clipboard" });
         },
     },
     {

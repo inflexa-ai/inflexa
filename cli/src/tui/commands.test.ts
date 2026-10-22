@@ -198,6 +198,7 @@ describe("session command gating", () => {
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
+            return ok(undefined);
         });
         try {
             const cmd = commands.find((c) => c.id === "session.copy-id")!;
@@ -210,6 +211,17 @@ describe("session command gating", () => {
             // screen, and the id is what a user pastes into a command.
             expect(copied).toEqual(["01988cdd-7f00-7abc-8def-0123456789ab"]);
             expect(currentNotice()?.text).toBe("Copied to clipboard");
+        } finally {
+            restore();
+            __resetNoticesForTest();
+        }
+    });
+
+    test("a copy that the native clipboard tool did not set shows no confirmation", async () => {
+        const restore = __setClipboardWriterForTest(async () => err({ type: "native_copy_failed" }));
+        try {
+            await commands.find((c) => c.id === "session.copy-id")!.run(scope(ANALYSIS, "01988cdd-7f00-7abc-8def-0123456789ab"));
+            expect(currentNotice()).toBeNull();
         } finally {
             restore();
             __resetNoticesForTest();
