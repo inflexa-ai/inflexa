@@ -794,6 +794,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         // wire that carries no picture there.
         ...(deps.capabilities?.imageToolResults !== undefined ? { imageToolResults: deps.capabilities.imageToolResults } : {}),
         ...(deps.capabilities?.imageUserMessages !== undefined ? { imageUserMessages: deps.capabilities.imageUserMessages } : {}),
+        ...(deps.capabilities?.contextWindow !== undefined ? { contextWindow: deps.capabilities.contextWindow } : {}),
     };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;

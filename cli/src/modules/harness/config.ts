@@ -302,6 +302,8 @@ export type ResolvedModelConnection =
            * name/command/scheme; the token is resolved lazily at the wire, never at boot.
            */
           readonly auth?: ModelAuthConfig;
+          /** The configured context window of the models of this endpoint, in tokens. */
+          readonly contextWindow?: number;
           readonly agents: AgentModelOverrides;
           /** The per-attempt idle bound (ms) the harness provider enforces and advertises. Absent means no guard. */
           readonly requestTimeoutMs?: number;
@@ -383,6 +385,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
         protocol,
         agents,
         ...(connection.auth !== undefined && { auth: connection.auth }),
+        ...(connection.contextWindow !== undefined && { contextWindow: connection.contextWindow }),
         ...requestBounds,
     };
 }

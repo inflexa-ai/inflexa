@@ -106,6 +106,7 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("resolveModel");
             return ok("claude-from-proxy");
         },
+        probeContextWindow: async () => ({ type: "not_probed" }),
         resolveEmbedding: () => {
             calls.push("resolveEmbedding");
             return ok(fakeEmbedding());
