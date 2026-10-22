@@ -2,7 +2,7 @@
 
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import type { ChatStreamEvent } from "../providers/types.js";
-import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent } from "./chat-events.js";
+import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent, MessageStartEvent } from "./chat-events.js";
 import type { ChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
 import { isReconciling, PART_REGISTRY } from "./part-registry.js";
@@ -77,6 +77,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
         case "text-delta":
             return { type: "text-delta", text: event.text, source: toSource(fallbackSource) };
 
+        case "message-start":
+            return { type: "message-start", messageId: event.messageId, role: event.role, source: toSource(event.source) };
+
         default: {
             // The cast names the frame that the type claims. `checkChatPart` is the check.
             const part = flattenDataPart(event);
@@ -139,14 +142,14 @@ export function applyChatFrame(messages: ChatMessage[], frame: ChatFrame, assist
     if (frame.type === "error") {
         return { messages, terminal: { error: frame } };
     }
-    if (frame.type === "iteration") return { messages, terminal: null };
+    if (frame.type === "iteration" || frame.type === "message-start") return { messages, terminal: null };
 
     const partFrame = frame;
     const next = updateAssistant(messages, assistantId, (parts) => applyPartFrame(parts, partFrame));
     return { messages: next, terminal: null };
 }
 
-function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEvent | ChatErrorEvent | IterationEvent>): MessagePart[] {
+function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEvent | ChatErrorEvent | IterationEvent | MessageStartEvent>): MessagePart[] {
     switch (frame.type) {
         case "text-delta":
             return mergeTextDelta(parts, frame.text);
@@ -179,9 +182,11 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
             return started ? next : [...parts, finished];
         }
         default: {
+            // A chat event type that no case above takes is not a part frame, thus this annotation fails to compile.
+            const partFrame: ChatPartFrame = frame;
             // The source routes the frame, and it is not a field of the part. A rest type does not distribute over the
             // union of the part frames, thus the cast names the part that remains.
-            const { source: _source, ...part } = frame;
+            const { source: _source, ...part } = partFrame;
             return upsertPart(parts, part as ChatPart);
         }
     }

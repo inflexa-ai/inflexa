@@ -1,7 +1,7 @@
 /**
  * Chat-stream events — the harness wire vocabulary.
  *
- * Distinct from the 15 `data-*` chat parts (`chat-parts.ts`): those are UI
+ * Distinct from the `data-*` chat parts (`chat-parts.ts`): those are UI
  * presentation payloads a tool emits; these are the agent-loop stream events
  * the host chat route frames as SSE. Together they are the sole
  * host↔frontend wire contract — there is no AI SDK UI Message Stream
@@ -154,8 +154,19 @@ export interface ChatErrorEvent {
     source: EventSource;
 }
 
+/**
+ * The id that the stored display gives a message of the turn. The frames after it belong to that message, up to
+ * the next `message-start` of the same role.
+ */
+export interface MessageStartEvent {
+    type: "message-start";
+    messageId: string;
+    role: "user" | "assistant";
+    source: EventSource;
+}
+
 /** The discriminated union of all chat-stream events. */
-export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent;
+export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent | MessageStartEvent;
 
 /** A `data-*` part as a frame, with the source of its emitter when the emitter stamped one. */
 export type ChatPartFrame = ChatPart & { source?: EventSource };

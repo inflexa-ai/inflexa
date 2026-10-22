@@ -62,6 +62,13 @@ export const ChatErrorEventSchema = z.object({
     source: EventSourceSchema,
 });
 
+export const MessageStartEventSchema = z.object({
+    type: z.literal("message-start"),
+    messageId: z.uuid(),
+    role: z.enum(["user", "assistant"]),
+    source: EventSourceSchema,
+});
+
 export const ChatEventSchema = z.discriminatedUnion("type", [
     TextDeltaEventSchema,
     IterationEventSchema,
@@ -69,4 +76,5 @@ export const ChatEventSchema = z.discriminatedUnion("type", [
     ToolFinishedEventSchema,
     FinishEventSchema,
     ChatErrorEventSchema,
+    MessageStartEventSchema,
 ]);

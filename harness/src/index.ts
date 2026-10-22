@@ -446,6 +446,7 @@ export type {
     ToolCallDetail,
     FinishEvent,
     ChatErrorEvent,
+    MessageStartEvent,
 } from "./contracts/chat-events.js";
 export { toChatFrame, applyChatFrame, checkChatPart } from "./contracts/chat-frame.js";
 export { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "./contracts/subagent-activity.js";

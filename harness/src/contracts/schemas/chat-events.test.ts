@@ -7,7 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import type { z } from "zod";
 
-import { ChatEventSchema, ToolFinishedEventSchema, ToolOutcomeSchema, ToolStartedEventSchema } from "./chat-events.js";
+import { ChatEventSchema, MessageStartEventSchema, ToolFinishedEventSchema, ToolOutcomeSchema, ToolStartedEventSchema } from "./chat-events.js";
 
 type ToolStarted = z.infer<typeof ToolStartedEventSchema>;
 type ToolFinished = z.infer<typeof ToolFinishedEventSchema>;
@@ -97,5 +97,34 @@ describe("ChatEventSchema", () => {
     it("parses the iteration of a sub-agent", () => {
         const nested = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"] };
         expect(ChatEventSchema.parse({ type: "iteration", source: nested })).toEqual({ type: "iteration", source: nested });
+    });
+});
+
+describe("MessageStartEventSchema", () => {
+    const messageStart: z.infer<typeof MessageStartEventSchema> = {
+        type: "message-start",
+        messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30",
+        role: "assistant",
+        source,
+    };
+
+    it("accepts each role through the chat event union", () => {
+        expect(ChatEventSchema.parse(messageStart)).toEqual(messageStart);
+        expect(ChatEventSchema.parse({ ...messageStart, role: "user" })).toEqual({ ...messageStart, role: "user" });
+    });
+
+    it("rejects a frame with a missing field", () => {
+        for (const field of ["messageId", "role", "source"] as const) {
+            const { [field]: _missing, ...rest } = messageStart;
+            expect(MessageStartEventSchema.safeParse(rest).success).toBe(false);
+            expect(ChatEventSchema.safeParse(rest).success).toBe(false);
+        }
+    });
+
+    it("rejects an id that is not a UUID, and a role that is not a message role of the turn", () => {
+        expect(ChatEventSchema.safeParse({ ...messageStart, messageId: "asst-0b9d4f6e" }).success).toBe(false);
+        expect(ChatEventSchema.safeParse({ ...messageStart, messageId: 42 }).success).toBe(false);
+        expect(ChatEventSchema.safeParse({ ...messageStart, role: "system" }).success).toBe(false);
+        expect(ChatEventSchema.safeParse({ ...messageStart, source: { agentId: "conversation-agent" } }).success).toBe(false);
     });
 });

@@ -43,6 +43,7 @@ export {
     ToolFinishedEventSchema,
     FinishEventSchema,
     ChatErrorEventSchema,
+    MessageStartEventSchema,
     ChatEventSchema,
 } from "./chat-events.js";
 

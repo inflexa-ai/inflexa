@@ -112,6 +112,13 @@ export type EmitEvent =
            * taken. As a result a host can fall back to its own observation.
            */
           readonly durationMs?: number;
+      }
+    | {
+          /** The display recorder of a chat turn emits it, not the loop. See `MessageStartEvent`. */
+          readonly type: "message-start";
+          readonly source: EventSource;
+          readonly messageId: string;
+          readonly role: "user" | "assistant";
       };
 
 /**
