@@ -48,8 +48,9 @@ export function FailedFlightDialog(props: { flight: StoreFlightView; onClose: ()
     useDialogCancel(() => props.onClose());
 
     function copyRecord(): void {
-        void writeClipboard(props.flight.message ?? "");
-        notify({ kind: "info", text: "Copied the recorded reason" });
+        void writeClipboard(props.flight.message ?? "").then((copied) => {
+            if (copied.isOk()) notify({ kind: "info", text: "Copied the recorded reason" });
+        });
     }
 
     async function retryFlight(): Promise<void> {

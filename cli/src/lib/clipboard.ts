@@ -1,3 +1,5 @@
+import { err, ok, type Result } from "neverthrow";
+
 import { terminalEnv } from "./env.ts";
 import { getLogger } from "./log.ts";
 
@@ -38,21 +40,29 @@ export function nativeCopyCommand(platform: typeof process.platform, wayland: bo
     return ["xclip", "-selection", "clipboard"];
 }
 
-/** Run the platform's clipboard tool. Best-effort — see {@link writeClipboard} for why it swallows. */
-async function nativeCopy(text: string): Promise<void> {
+/**
+ * Why the native clipboard tool set nothing. OSC 52 gives no acknowledgement, thus this verdict is the only
+ * evidence that a copy reached the clipboard.
+ */
+export type ClipboardError = { type: "native_copy_failed" };
+
+/** Run the platform's clipboard tool. A missing tool (spawn throws ENOENT) and a non-zero exit are both a failed copy. */
+async function nativeCopy(text: string): Promise<Result<void, ClipboardError>> {
     const cmd = nativeCopyCommand(process.platform, terminalEnv.wayland);
-    if (!cmd) return;
+    if (!cmd) return err({ type: "native_copy_failed" });
     try {
         // Bun streams the Blob in as the child's stdin; the tool reads it and sets the clipboard.
         const proc = Bun.spawn({ cmd, stdin: new Blob([text]), stdout: "ignore", stderr: "ignore" });
-        await proc.exited;
-    } catch (err) {
-        // `err` is an unknown spawn failure (typically ENOENT — tool not installed). Logged, not thrown.
-        log.debug({ err, cmd }, "native clipboard copy failed");
+        if ((await proc.exited) === 0) return ok(undefined);
+        log.debug({ cmd, exitCode: proc.exitCode }, "native clipboard copy failed");
+    } catch (cause) {
+        // `cause` is an unknown spawn failure (typically ENOENT — tool not installed).
+        log.debug({ err: cause, cmd }, "native clipboard copy failed");
     }
+    return err({ type: "native_copy_failed" });
 }
 
-let nativeWriter: (text: string) => Promise<void> = nativeCopy;
+let nativeWriter: (text: string) => Promise<Result<void, ClipboardError>> = nativeCopy;
 
 /**
  * Swap the native-tool leg for a double, returning its restore function. Mirrors the `__set…ForTest`
@@ -62,7 +72,7 @@ let nativeWriter: (text: string) => Promise<void> = nativeCopy;
  * into piped output), and letting a test reach the real `pbcopy` would overwrite the clipboard of
  * whoever runs the suite — a side effect no assertion is worth.
  */
-export function __setClipboardWriterForTest(next: (text: string) => Promise<void>): () => void {
+export function __setClipboardWriterForTest(next: (text: string) => Promise<Result<void, ClipboardError>>): () => void {
     const previous = nativeWriter;
     nativeWriter = next;
     return () => {
@@ -71,11 +81,12 @@ export function __setClipboardWriterForTest(next: (text: string) => Promise<void
 }
 
 /**
- * Copy `text` to the clipboard via OSC 52 AND the native OS tool. Best-effort: a missing native tool
- * (`xclip`/`wl-copy` not installed → spawn throws ENOENT) is swallowed so it never crashes the TUI —
- * the OSC 52 path may still have succeeded, and copy is convenience feedback, not a critical path.
+ * Copy `text` to the clipboard via OSC 52 AND the native OS tool. Gives `ok` only when the native tool set the
+ * clipboard. A caller confirms the copy on `ok` and says nothing on `err`: the OSC 52 leg can still have set the
+ * clipboard, but nothing tells whether it did, and a confirmation that can be false leaves the user with an
+ * empty paste and no reason.
  */
-export async function writeClipboard(text: string): Promise<void> {
+export async function writeClipboard(text: string): Promise<Result<void, ClipboardError>> {
     writeOsc52(text);
-    await nativeWriter(text);
+    return nativeWriter(text);
 }

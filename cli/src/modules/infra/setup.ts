@@ -41,6 +41,7 @@ import {
     type AgentName,
     type ResolvedModelConnection,
 } from "../harness/config.ts";
+import { contextWarning, readContextWindow } from "../harness/model_listing.ts";
 import {
     checkModelAccess,
     conventionalDefaultModel,
@@ -2246,9 +2247,9 @@ export type DirectModelDeps = {
  * there); an outcome the validation cannot classify (auth-rejected, unreachable, non-standard status)
  * offers save-anyway — declining re-prompts; a pass — or no validation capability at all — persists to
  * BOTH agents (the cliproxy election's explicit-pick semantics). A write failure only warns: setup's
- * real work is already done, and the model-switch commands can persist the pick later.
+ * real work is already done, and the model-switch commands can persist the pick later. Gives the chosen id.
  */
-export async function collectDirectModel(deps: DirectModelDeps): Promise<void> {
+export async function collectDirectModel(deps: DirectModelDeps): Promise<string> {
     let retryDetail: string | null = null;
     for (;;) {
         const model = (await deps.promptModel(deps.prefill, retryDetail)).trim();
@@ -2272,7 +2273,7 @@ export async function collectDirectModel(deps: DirectModelDeps): Promise<void> {
             () => deps.success(`Model "${model}" set for all model roles.`),
             (e) => deps.warn(`Could not save the model selection: ${e.type}. Set it later with the model-switch commands.`),
         );
-        return;
+        return model;
     }
 }
 
@@ -2318,7 +2319,7 @@ async function collectDirectModelAtSetup(direct: DirectConnectionInput, probe: C
     }
     const prefill = directModelPrefill(listed, direct.provider);
 
-    await collectDirectModel({
+    const model = await collectDirectModel({
         prefill,
         validatedModel: probe !== null && probe.outcome === "pass" ? probe.validatedModel : null,
         promptModel: async (pf, retryDetail) => {
@@ -2350,6 +2351,12 @@ async function collectDirectModelAtSetup(direct: DirectConnectionInput, probe: C
         warn: (message) => log.warn(message),
         success: (message) => log.success(message),
     });
+    // The pick lands on every role, the chat model included. Only the openai-compatible wire serves a model with a small window.
+    if (protocol === "openai-compatible") {
+        const tokens = await readContextWindow(direct.baseURL, cred === null ? {} : Object.fromEntries(wireHeaders(cred, protocol)), model, fetch);
+        const warning = contextWarning(model, tokens === null ? { type: "unknown" } : { type: "known", tokens });
+        if (warning !== null) log.warn(warning);
+    }
 }
 
 /**
@@ -2675,14 +2682,14 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
                     urlShown = true;
                     s.stop(`${PROVIDER_LABEL[provider]} — open this URL in your browser`);
                     const { writeClipboard } = await import("../../lib/clipboard.ts");
-                    await writeClipboard(authUrl);
+                    const copied = await writeClipboard(authUrl);
                     // Print the URL as a plain line outside any box so it's
                     // selectable with a triple-click (note() wraps long URLs
                     // at the box border, breaking copy-paste).
                     console.log();
                     console.log(`  ${authUrl}`);
                     console.log();
-                    log.info("Copied to clipboard.");
+                    if (copied.isOk()) log.info("Copied to clipboard.");
                     if (sshCommand) {
                         note(`${sshCommand}`, "Remote? Tunnel the callback port first");
                     }

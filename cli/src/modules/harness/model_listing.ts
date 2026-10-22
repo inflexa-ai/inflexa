@@ -405,3 +405,103 @@ export async function validateModelSelection(modelId: string, seams: ValidateSel
     }
     return "inconclusive";
 }
+
+// Context-window probe for the chat model. The conversation agent sends a fixed prefix of about 35k tokens and
+// compacts only past 200k (harness `CONVERSATION_COMPACTION`), thus a smaller window overflows silently: the
+// endpoint truncates the prompt and the model answers without its tools. No route that every endpoint shares
+// reports a window, so the probe asks Ollama's own `/api/show`, the backend where small windows occur.
+
+/** The smallest context window that the conversation agent runs in without an overflow before it compacts. */
+export const MIN_CONTEXT_WINDOW = 200_000;
+
+/** Upper bound on one context-window probe. A model switch waits for it, thus it stays short. */
+const CONTEXT_WINDOW_TIMEOUT_MS = 5_000;
+
+/** The part of an Ollama `POST /api/show` body that carries the trained window, as `<architecture>.context_length`. */
+const ollamaShowSchema = z.object({ model_info: z.record(z.string(), z.unknown()) });
+
+/**
+ * The context window of one model:
+ * - `known` — the endpoint reported the trained window of the model;
+ * - `unknown` — the endpoint can serve a small model, but it reported no window;
+ * - `not_probed` — the connection serves only Claude-family models, whose windows are above {@link MIN_CONTEXT_WINDOW}.
+ */
+export type ContextWindow = { type: "known"; tokens: number } | { type: "unknown" } | { type: "not_probed" };
+
+/** The effects of {@link probeContextWindow}. Tests replace each one. */
+export type ContextWindowOpts = Pick<ValidateSelectionSeams, "resolveConnection" | "readModelApiKey" | "resolveAuthCredential" | "fetch">;
+
+/** The production {@link ContextWindowOpts}. */
+export const DEFAULT_CONTEXT_WINDOW_OPTS: ContextWindowOpts = realValidateSeams;
+
+/**
+ * Read the trained window of `modelId` from Ollama's `POST {root}/api/show`, where the root is `baseURL` without its
+ * `/v1`. Ollama documents the server's `num_ctx` on no route, thus the value is the upper bound of the window, not
+ * the window that the server loads. Each failure, a non-Ollama endpoint's 404 included, gives `null`.
+ */
+export async function readContextWindow(
+    baseURL: string,
+    headers: Record<string, string>,
+    modelId: string,
+    fetchFn: ContextWindowOpts["fetch"],
+): Promise<number | null> {
+    const root = baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
+    let res: Response;
+    // fetch throws on a dead endpoint and on the timeout; either way the window stays unknown.
+    try {
+        res = await fetchFn(`${root}/api/show`, {
+            method: "POST",
+            headers: { ...headers, "content-type": "application/json" },
+            body: JSON.stringify({ model: modelId }),
+            signal: AbortSignal.timeout(CONTEXT_WINDOW_TIMEOUT_MS),
+        });
+    } catch {
+        return null;
+    }
+    if (!res.ok) return null;
+    const body = await res.jsonWith(ollamaShowSchema);
+    if (!body) return null;
+    for (const [key, value] of Object.entries(body.model_info)) {
+        if (key.endsWith(".context_length") && typeof value === "number" && value > 0) return value;
+    }
+    return null;
+}
+
+/**
+ * The context window of `modelId` on the configured connection. Only a direct `openai-compatible` connection is
+ * probed: the cliproxy and the Anthropic wire serve Claude-family models. A credential that does not resolve sends
+ * no auth header, because a local Ollama takes none.
+ */
+export async function probeContextWindow(modelId: string, opts: ContextWindowOpts = DEFAULT_CONTEXT_WINDOW_OPTS): Promise<ContextWindow> {
+    const connection = opts.resolveConnection();
+    if (connection.configError || connection.mode === "cliproxy" || connection.protocol === "anthropic") return { type: "not_probed" };
+    let headers: Record<string, string> = {};
+    if (connection.auth !== undefined) {
+        const cred = await opts.resolveAuthCredential(connection.auth);
+        if (cred.isOk()) headers = credentialHeaders(cred.value, connection.protocol);
+    } else {
+        const key = opts.readModelApiKey(connection.provider);
+        if (key) headers = { Authorization: `Bearer ${key}` };
+    }
+    const tokens = await readContextWindow(connection.baseURL, headers, modelId, opts.fetch);
+    return tokens === null ? { type: "unknown" } : { type: "known", tokens };
+}
+
+/** The warning for a chat model with `window`, or `null` when the window is large enough or was not probed. */
+export function contextWarning(modelId: string, window: ContextWindow): string | null {
+    const minimum = MIN_CONTEXT_WINDOW.toLocaleString("en-US");
+    switch (window.type) {
+        case "not_probed":
+            return null;
+        case "unknown":
+            return `Inflexa needs a chat model with good tool calling and a context window of at least ${minimum} tokens.`;
+        case "known":
+            return window.tokens >= MIN_CONTEXT_WINDOW
+                ? null
+                : `${modelId} has a ${window.tokens.toLocaleString("en-US")}-token context window. Inflexa needs at least ${minimum} tokens and a model with good tool calling.`;
+        default: {
+            const exhaustive: never = window;
+            throw new Error(`unhandled ContextWindow: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}

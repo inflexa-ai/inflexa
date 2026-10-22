@@ -581,6 +581,7 @@ describe("Sidebar SESSION section", () => {
         const copied: string[] = [];
         const restore = __setClipboardWriterForTest(async (text) => {
             copied.push(text);
+            return ok(undefined);
         });
         const setup = await testRender(sessionNode(1), { width: 44, height: 24 });
         try {

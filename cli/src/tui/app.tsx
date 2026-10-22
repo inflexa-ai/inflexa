@@ -794,8 +794,9 @@ export function App(props: AppProps) {
                         // matches OpenCode's selection-aware behavior.
                         const selected = renderer.getSelection()?.getSelectedText();
                         if (selected) {
-                            void writeClipboard(selected);
-                            notify({ kind: "info", text: "Copied to clipboard" });
+                            void writeClipboard(selected).then((copied) => {
+                                if (copied.isOk()) notify({ kind: "info", text: "Copied to clipboard" });
+                            });
                             renderer.clearSelection();
                             return;
                         }
@@ -943,8 +944,9 @@ export function App(props: AppProps) {
     function copySelection(): void {
         const text = renderer.getSelection()?.getSelectedText();
         if (!text) return; // empty → a plain click, not a drag
-        void writeClipboard(text); // best-effort, never rejects → notify optimistically
-        notify({ kind: "info", text: "Copied to clipboard" });
+        void writeClipboard(text).then((copied) => {
+            if (copied.isOk()) notify({ kind: "info", text: "Copied to clipboard" });
+        });
         renderer.clearSelection();
     }
 

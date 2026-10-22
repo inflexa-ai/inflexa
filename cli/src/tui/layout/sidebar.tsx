@@ -625,9 +625,9 @@ export function Sidebar(props: SidebarProps) {
     function copySessionId(): void {
         const id = ws.sessionId;
         if (id === null || renderer.getSelection()?.getSelectedText()) return;
-        // Best-effort by contract, so it never rejects — notify optimistically, as the root copy does.
-        void writeClipboard(id);
-        notify({ kind: "info", text: "Copied to clipboard" });
+        void writeClipboard(id).then((copied) => {
+            if (copied.isOk()) notify({ kind: "info", text: "Copied to clipboard" });
+        });
     }
     // The conversation a report child was spawned from, once its row lands on the snapshot. Read off
     // the snapshot rather than the keyed row below, so the title appearing on the refresh's second

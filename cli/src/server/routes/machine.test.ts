@@ -109,7 +109,7 @@ describe("the agents", () => {
     });
 
     test("a model that the account cannot serve is 400 `validation_error` that names it, and nothing is written", async () => {
-        const response = await routesWith({ validateModel: async () => "not_found" }).request(
+        const response = await routesWith({ validateModel: async () => "not_found", probeContextWindow: async () => ({ type: "not_probed" }) }).request(
             "/agents/conversation",
             json("PUT", { model: "claude-nope", effort: "high" }),
         );
@@ -128,6 +128,30 @@ describe("the agents", () => {
             json("PUT", { model: "m", effort: "medium" }),
         );
         expect(response.status).toBe(200);
+    });
+
+    test("a chat model with a small window saves, and the response carries the warning", async () => {
+        const response = await routesWith({
+            validateModel: async () => "inconclusive",
+            probeContextWindow: async () => ({ type: "known", tokens: 40960 }),
+        }).request("/agents/conversation", json("PUT", { model: "qwen3:8b", effort: "medium" }));
+
+        expect(response.status).toBe(200);
+        expect(((await response.json()) as PutAgentResponse).contextWarning).toBe(
+            "qwen3:8b has a 40,960-token context window. Inflexa needs at least 200,000 tokens and a model with good tool calling.",
+        );
+    });
+
+    test("a model for a role other than the chat is not probed", async () => {
+        const response = await routesWith({
+            validateModel: async () => "inconclusive",
+            probeContextWindow: () => {
+                throw new Error("probeContextWindow must not be called");
+            },
+        }).request("/agents/sandbox", json("PUT", { model: "qwen3:8b", effort: "medium" }));
+
+        expect(response.status).toBe(200);
+        expect(((await response.json()) as PutAgentResponse).contextWarning).toBeNull();
     });
 
     test("an unknown role is 404, and an effort off the ladder is 400", async () => {
