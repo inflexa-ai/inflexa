@@ -9,6 +9,7 @@ import {
     contextWarning,
     listConnectionModels,
     probeContextWindow,
+    probedContextWindow,
     validateModelSelection,
     type ContextWindowOpts,
     type ListModelsSeams,
@@ -784,6 +785,22 @@ describe("probeContextWindow — the window of the chat model", () => {
         expect(window).toEqual({ type: "known", tokens: 40960 });
         expect(calls[0]?.url).toBe("http://gpu-box:11434/api/show");
         expect(calls[0]?.init.body).toBe(JSON.stringify({ model: "qwen3:8b" }));
+        // The provider build reads the probed window of the model.
+        expect(probedContextWindow("qwen3:8b")).toBe(40960);
+    });
+
+    test("a configured window wins with no request, on each direct protocol", async () => {
+        const fetch: ContextWindowOpts["fetch"] = () => {
+            throw new Error("fetch must not be called");
+        };
+        expect(await probeContextWindow("qwen3:8b", windowOptsFor({ ...DIRECT_OLLAMA, contextWindow: 16_384 }, fetch))).toEqual({
+            type: "known",
+            tokens: 16_384,
+        });
+        expect(await probeContextWindow("claude-opus-5-5", windowOptsFor({ ...DIRECT_ANTHROPIC, contextWindow: 1_000_000 }, fetch))).toEqual({
+            type: "known",
+            tokens: 1_000_000,
+        });
     });
 
     test("an endpoint without /api/show leaves the window unknown", async () => {

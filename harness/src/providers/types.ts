@@ -36,6 +36,12 @@ export interface ProviderCapabilities {
      * "unknown".
      */
     readonly imageUserMessages?: boolean;
+    /**
+     * The context window of the model in tokens, when the host knows it. A chat
+     * thread then compacts at 80% of the window at the latest. Absent means "at
+     * least the compaction budget of the agent", thus the budget stays as declared.
+     */
+    readonly contextWindow?: number;
 }
 
 /**

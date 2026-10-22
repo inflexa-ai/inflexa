@@ -434,6 +434,16 @@ export type ContextWindowOpts = Pick<ValidateSelectionSeams, "resolveConnection"
 /** The production {@link ContextWindowOpts}. */
 export const DEFAULT_CONTEXT_WINDOW_OPTS: ContextWindowOpts = realValidateSeams;
 
+// The windows that a probe read, by model id. The provider of a model is built synchronously, at boot and at a
+// model switch, thus a probe runs first and the build reads the result here. The connection changes only with a
+// restart, thus the model id is the full key.
+const probedWindows = new Map<string, number>();
+
+/** The window that a probe read for `modelId` in this process, or `undefined`. */
+export function probedContextWindow(modelId: string): number | undefined {
+    return probedWindows.get(modelId);
+}
+
 /**
  * Read the trained window of `modelId` from Ollama's `POST {root}/api/show`, where the root is `baseURL` without its
  * `/v1`. Ollama documents the server's `num_ctx` on no route, thus the value is the upper bound of the window, not
@@ -468,13 +478,16 @@ export async function readContextWindow(
 }
 
 /**
- * The context window of `modelId` on the configured connection. Only a direct `openai-compatible` connection is
- * probed: the cliproxy and the Anthropic wire serve Claude-family models. A credential that does not resolve sends
- * no auth header, because a local Ollama takes none.
+ * The context window of `modelId` on the configured connection. A configured `contextWindow` wins. Else only a direct
+ * `openai-compatible` connection is probed: the cliproxy and the Anthropic wire serve Claude-family models. A
+ * credential that does not resolve sends no auth header, because a local Ollama takes none. A window that the probe
+ * reads is kept for {@link probedContextWindow}.
  */
 export async function probeContextWindow(modelId: string, opts: ContextWindowOpts = DEFAULT_CONTEXT_WINDOW_OPTS): Promise<ContextWindow> {
     const connection = opts.resolveConnection();
-    if (connection.configError || connection.mode === "cliproxy" || connection.protocol === "anthropic") return { type: "not_probed" };
+    if (connection.configError || connection.mode === "cliproxy") return { type: "not_probed" };
+    if (connection.contextWindow !== undefined) return { type: "known", tokens: connection.contextWindow };
+    if (connection.protocol === "anthropic") return { type: "not_probed" };
     let headers: Record<string, string> = {};
     if (connection.auth !== undefined) {
         const cred = await opts.resolveAuthCredential(connection.auth);
@@ -484,7 +497,9 @@ export async function probeContextWindow(modelId: string, opts: ContextWindowOpt
         if (key) headers = { Authorization: `Bearer ${key}` };
     }
     const tokens = await readContextWindow(connection.baseURL, headers, modelId, opts.fetch);
-    return tokens === null ? { type: "unknown" } : { type: "known", tokens };
+    if (tokens === null) return { type: "unknown" };
+    probedWindows.set(modelId, tokens);
+    return { type: "known", tokens };
 }
 
 /** The warning for a chat model with `window`, or `null` when the window is large enough or was not probed. */

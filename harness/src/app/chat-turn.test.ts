@@ -1066,6 +1066,15 @@ describe("runChatTurn — compaction", () => {
         expect(provider.calls.map(isExchangeRequest)).toEqual([false]);
     });
 
+    it("compacts at 80% of a context window that the provider reports below the budget", async () => {
+        await storeMeasuredTurn(CONVERSATION_RULES.turnStartBudget!);
+        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+
+        await runChatTurn({ pool, agents: agents() }, params({ ...provider, capabilities: { toolCalling: true, contextWindow: 1_000 } }));
+
+        expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
+    });
+
     it("runs no turn-start compaction on a report thread, and compacts before the first request with the user message in the view", async () => {
         const store = createThreadStore(pool);
         (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();

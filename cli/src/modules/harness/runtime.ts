@@ -72,6 +72,7 @@ import {
     type AgentName,
     type ModelConnectionIdentity,
 } from "./config.ts";
+import { probeContextWindow, probedContextWindow, type ContextWindow } from "./model_listing.ts";
 // The error type comes from the module that holds the extract, and never from the module that binds the
 // embedded pack. That binding is the release-gated dynamic `import("./content.ts")` in the boot body
 // below, thus a dev run keeps the pack out of its module graph.
@@ -401,6 +402,8 @@ export type BootSeams = {
      */
     readonly readModelApiKey: (provider: string) => string | undefined;
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
+    /** Read the context window of a model, for the provider build to read through {@link probedContextWindow}. Real: {@link probeContextWindow}. */
+    readonly probeContextWindow: (model: string) => Promise<ContextWindow>;
     readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
     /**
      * The harness-owned boot sequence: validate skills → init state → assert the
@@ -440,6 +443,7 @@ const realSeams: BootSeams = {
     readKey: readApiKey,
     readModelApiKey: resolveModelApiKey,
     resolveModel: resolveModelId,
+    probeContextWindow: (model) => probeContextWindow(model),
     resolveEmbedding: () => resolveEmbedder(readConfig()),
     boot: bootHarness,
     sweepEphemeral: sweepEphemeralWorkflows,
@@ -759,6 +763,9 @@ async function bootHarnessRuntimeOnce(
     const conversationModel = conversationResolved.value;
     const sandboxModel = sandboxResolved.value;
     const utilityModel = utilityResolved.value;
+    // Only a chat thread compacts, thus only the window of the chat model caps a budget. A model switch probes in the
+    // agents route, before the rebuild of the provider.
+    await seams.probeContextWindow(conversationModel);
 
     // Resolve the pinned container runtime and the Docker-API socket the sandbox
     // client will dial, BEFORE Postgres (which is provisioned on that same runtime)
@@ -864,6 +871,11 @@ async function bootHarnessRuntimeOnce(
         // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
         // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
         // inside a `tool_result`. The chat-completions wire carries a tool result as text only.
+        // A direct endpoint can serve a model with a small window. The configured value wins over the probed one.
+        const contextWindowOf = (agentModel: string): { contextWindow?: number } => {
+            const window = connection.mode === "direct" ? (connection.contextWindow ?? probedContextWindow(agentModel)) : undefined;
+            return window === undefined ? {} : { contextWindow: window };
+        };
         const providerConfigFor = ({ model: agentModel, effort }: AgentSelection): AiSdkProviderConfig =>
             connection.mode === "cliproxy"
                 ? {
@@ -883,7 +895,7 @@ async function bootHarnessRuntimeOnce(
                         model: agentModel,
                         reasoning: effort,
                         fetch: authFetch,
-                        capabilities: { toolCalling: true, imageToolResults: true },
+                        capabilities: { toolCalling: true, imageToolResults: true, ...contextWindowOf(agentModel) },
                         ...requestBounds,
                     }
                   : {
@@ -894,7 +906,7 @@ async function bootHarnessRuntimeOnce(
                         model: agentModel,
                         reasoning: effort,
                         fetch: authFetch,
-                        capabilities: { toolCalling: true, imageToolResults: false },
+                        capabilities: { toolCalling: true, imageToolResults: false, ...contextWindowOf(agentModel) },
                         ...requestBounds,
                     };
         // The logger is what makes the retry envelope visible. It backs off up to 10 times

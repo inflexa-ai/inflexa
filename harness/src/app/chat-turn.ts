@@ -12,7 +12,7 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import type { CompactionPolicy } from "../loop/compaction.js";
+import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction.js";
 import { finalText, runAgent, type AgentFinish, type AgentRound } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
@@ -389,10 +389,12 @@ function compactionPolicy(
     // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
     const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
     const workingMemory = createWorkingMemory(deps.pool);
+    // A streaming provider sends each text delta with no source, thus a delta of the summary would show as a reply.
+    const provider = params.chat((event) => (event.type === "text-delta" ? undefined : emit(event)));
     return {
-        ...agent.compaction,
-        // A streaming provider sends each text delta with no source, thus a delta of the summary would show as a reply.
-        provider: params.chat((event) => (event.type === "text-delta" ? undefined : emit(event))),
+        // The capabilities are read for each turn, because a host can switch the model of the conversation between turns.
+        ...rulesForContextWindow(agent.compaction, provider.capabilities.contextWindow),
+        provider,
         request: remembers ? MEMORY_COMPACTION_REQUEST : SUMMARY_COMPACTION_REQUEST,
         mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
         keepFirstTurn: threadType === "report",

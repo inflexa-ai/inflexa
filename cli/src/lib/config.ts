@@ -183,6 +183,9 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
         // An optional refreshing credential source, in place of the static env key (see {@link modelAuthSchema}).
         auth: modelAuthSchema.optional(),
+        // The context window of the models of this endpoint, in tokens. It wins over the window that a probe reads,
+        // because only the user knows a server limit such as the `num_ctx` of Ollama. A chat thread compacts at 80% of it.
+        contextWindow: z.number().int().positive().optional(),
         // The per-attempt idle bound and the retry limit for the harness provider. requestTimeoutMs is a
         // positive integer. maxRetries is a non-negative integer, and zero means no retries. Boot carries
         // the two values into the provider config. An absent field keeps the current behavior.
