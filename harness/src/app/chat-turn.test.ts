@@ -12,7 +12,7 @@ import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedPr
 import type { CompactionRules } from "../loop/compaction.js";
 import { runAgent } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
-import type { AgentDefinition } from "../loop/types.js";
+import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, withRequestInputTokens } from "../memory/ai-sdk-message-storage.js";
 import { storedMessagesToChat } from "../memory/conversation-display-replay.js";
 import { createThreadStore } from "../memory/thread-store.js";
@@ -48,6 +48,14 @@ beforeEach(async () => {
 afterEach(async () => {
     await drop();
 });
+
+type TurnEvent = Parameters<EmitFn>[0];
+
+/** The ids that the `message-start` events of a turn name, by role, in the order of the stream. */
+function announcedIds(events: readonly TurnEvent[]): { user: string[]; assistant: string[] } {
+    const ids = (role: "user" | "assistant") => events.flatMap((event) => (event.type === "message-start" && event.role === role ? [event.messageId] : []));
+    return { user: ids("user"), assistant: ids("assistant") };
+}
 
 /** Flatten a message's content to a searchable string. */
 function contentText(content: unknown): string {
@@ -441,6 +449,21 @@ describe("runChatTurn", () => {
         expect(replay[1]!.parts).toEqual([
             { type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: expect.any(Number) },
             { type: "text", text: "the groups differ" },
+        ]);
+    });
+
+    it("announces the id of the user message and of the assistant message, and stores the turn under those ids", async () => {
+        const forwarded: TurnEvent[] = [];
+        const provider = scriptedProvider([toolCall("tu-1"), makeMessage([textBlock("the groups differ")], "end_turn")]);
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { emit: (event) => void forwarded.push(event) }));
+
+        const announced = announcedIds(forwarded);
+        expect(forwarded.slice(0, 2).map((event) => event.type)).toEqual(["message-start", "message-start"]);
+        expect(forwarded.filter((event) => event.type === "message-start")).toHaveLength(2);
+        expect(storedMessagesToChat(await storedRows()).map((message) => [message.role, message.id])).toEqual([
+            ["user", announced.user[0]],
+            ["assistant", announced.assistant[0]],
         ]);
     });
 
@@ -1039,6 +1062,53 @@ describe("runChatTurn — compaction", () => {
         expect(replay[0]!.parts).toEqual([
             { type: "data-compaction", id: replay[0]!.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number), trigger: "turn-start" },
         ]);
+    });
+
+    it("announces the user id and each assistant id of a mid-turn compaction, and the stored messages carry exactly those ids", async () => {
+        const forwarded: TurnEvent[] = [];
+        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { emit: (event) => void forwarded.push(event) }));
+
+        const replay = storedMessagesToChat(await storedRows());
+        const announced = announcedIds(forwarded);
+        expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
+        expect(announced.assistant).toHaveLength(2);
+        expect(replay.filter((message) => message.role !== "system").map((message) => message.id)).toEqual([...announced.user, ...announced.assistant]);
+        const second = forwarded.findIndex((event) => event.type === "message-start" && event.messageId === announced.assistant[1]);
+        expect(forwarded[second + 1]).toMatchObject({ type: "data-compaction", data: { status: "done", trigger: "mid-turn" } });
+    });
+
+    it("announces each id that a turn-start compaction turn stores, and the stream names one assistant id with no stored message", async () => {
+        await storeMeasuredTurn(OVER);
+        const forwarded: TurnEvent[] = [];
+        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { emit: (event) => void forwarded.push(event) }));
+
+        const announced = announcedIds(forwarded);
+        // The stream announces the user id and a first assistant id before the `running` part of the compaction, thus before
+        // the turn opens. The marker round gives a second assistant id, and the stream announces it before the `done` part.
+        expect(forwarded.slice(0, 3)).toMatchObject([
+            { type: "message-start", role: "user" },
+            { type: "message-start", role: "assistant" },
+            { type: "data-compaction", data: { status: "running", trigger: "turn-start" } },
+        ]);
+        expect(announced.assistant).toHaveLength(2);
+        const second = forwarded.findIndex((event) => event.type === "message-start" && event.messageId === announced.assistant[1]);
+        expect(forwarded[second + 1]).toMatchObject({ type: "data-compaction", data: { status: "done", trigger: "turn-start" } });
+        // The store holds the divider before the user message, and the reply under the second assistant id. The rounds
+        // of the compaction keep no assistant part, thus the first assistant id has live frames only and no stored message.
+        const replay = storedMessagesToChat(await storedRows());
+        expect(replay.map((message) => [message.role, message.id])).toEqual([
+            ["system", expect.any(String)],
+            ["user", announced.user[0]],
+            ["assistant", announced.assistant[1]],
+        ]);
+        // The divider is no message of the turn, and the stream names its id as the id of the compaction part.
+        expect(forwarded).toContainEqual(
+            expect.objectContaining({ type: "data-compaction", data: expect.objectContaining({ id: replay[0]?.id, status: "done" }) }),
+        );
     });
 
     it("stores the exchange, and no user message and no turn record, when an abort ends the turn-start compaction", async () => {

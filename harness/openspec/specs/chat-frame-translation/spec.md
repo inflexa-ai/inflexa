@@ -16,6 +16,7 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 - A `data-*` part goes at the end. A part of a type that the registry marks `reconciling` replaces the part with the same type and id, in the position of that part.
 - The source of a `data-*` frame MUST NOT go into the part.
 - An `iteration` changes nothing, and it does not end the turn.
+- A `message-start` changes nothing, and it does not end the turn. It does not make a part.
 - A `finish` ends the turn. It puts `turnUsage` on the assistant message when the frame has one.
 - An `error` ends the turn with the error.
 
@@ -42,6 +43,11 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 - **WHEN** `applyChatFrame` applies an `iteration` frame with the source of the root agent
 - **THEN** the messages do not change, and the turn does not end
 
+#### Scenario: A message-start frame makes no part
+
+- **WHEN** `applyChatFrame` applies a `message-start` frame with the source of the root agent
+- **THEN** the messages do not change, and the turn does not end
+
 ### Requirement: The display of a tool call holds its duration
 
 `ToolCallPart` MUST have the optional field `durationMs`. The display recorder MUST record `durationMs` of `tool-finished` on the part of the call. The stored display MUST keep the field, and the replay MUST give it. A call with no measurement MUST have no `durationMs` key.
@@ -62,14 +68,15 @@ A stored row that holds no `durationMs` MUST still read. Its tool-call part MUST
 
 ### Requirement: The live path and the reload path give the same messages
 
-A test MUST give one sequence of loop events to the live path and to the reload path. The live path is `toChatFrame`, then the sub-agent activity tracker, and then `applyChatFrame` for the frame and for each part that the tracker gives. The reload path is the display recorder, the stored shape, and the replay. The two paths MUST get the same clock. The two message lists MUST be equal.
+A test MUST give one sequence of loop events to one display recorder. The reload path is the display recorder, the stored shape, and the replay. The live path reads the events that the same recorder forwards: `toChatFrame`, then the sub-agent activity tracker, and then `applyChatFrame` for the frame and for each part that the tracker gives. A `message-start` gives the live path the id of the next message. The two paths MUST get the same clock. The two message lists MUST be equal, and the ids of the messages MUST be equal.
 
 Each known difference MUST have its own test. The tests MUST NOT hide a difference. These are the known differences:
 
 - A call that did not finish: the replay gives `incomplete`, and the live message gives no outcome.
 - A call of a sub-agent that did not finish: the replay gives `incomplete` on its entry, and the live entry gives no outcome.
 - An ask with the status `pending` at the end of the turn: the replay gives `aborted`, and the live message keeps `pending`.
-- A compaction: the replay gives a divider message between two assistant messages, and the live message holds the compaction part.
+- A compaction: the replay gives a divider message between two assistant messages. The live path gives the same two assistant messages, and each live message holds the compaction part that came under its id.
+- A turn that forwards no event: the live user message keeps the id that the client gave it.
 - A round with no streamed text: the replay takes the text of the model reply, and the live path shows no text.
 - The text of two rounds with no part between them: the replay keeps two text parts, and the live message joins them.
 - The facts of the stored rows: the replay adds the turn duration, the interruption, the author, and the creation time.
@@ -153,6 +160,7 @@ The harness MUST export `toChatFrame(event, fallbackSource)`. The function takes
 - A `tool-started` gives the call id, the tool name, the detail when there is one, and a copy of the source.
 - A `tool-finished` gives the same fields, the outcome, and `durationMs` when the event has one.
 - A `text-delta` gives the text and `fallbackSource`, because a provider event has no source.
+- A `message-start` gives the message id, the role, and a copy of the source.
 - A `data-*` part gives a flat frame, `{ type, ...data }`, and a copy of the source when the emitter gave one.
 
 A copy of a source MUST hold the `agentId`, the `callPath`, and the `invocationId` when the source has one. A source with no `invocationId` MUST give a copy with no `invocationId` key.
@@ -160,6 +168,8 @@ A copy of a source MUST hold the `agentId`, the `callPath`, and the `invocationI
 The function MUST keep each event and each part of a sub-agent, with its source. Thus each consumer can filter them. The root agent gives no `iteration` frame, thus a consumer of the root frames never reads the start of a model request as output.
 
 `IterationEvent` MUST be a member of the `ChatEvent` union, and `IterationEventSchema` MUST be a member of `ChatEventSchema`. The package MUST export the two. A host reads the frame as "the sub-agent thinks".
+
+`MessageStartEvent` MUST be a member of the `ChatEvent` union, and `MessageStartEventSchema` MUST be a member of `ChatEventSchema`. The package MUST export the two. The frame has the fields `messageId`, `role`, and `source`, and each field is necessary. The schema MUST accept only a UUID as `messageId`, and only `user` or `assistant` as `role`.
 
 The module of the function MUST import only types from outside `src/contracts/`. Thus a browser can load it.
 
@@ -196,6 +206,11 @@ The module of the function MUST import only types from outside `src/contracts/`.
 
 - **WHEN** `ChatEventSchema` parses `{ type: "iteration", source }` with a valid source of a sub-agent
 - **THEN** the parse gives the same frame
+
+#### Scenario: The schema refuses a message-start with no UUID
+
+- **WHEN** `ChatEventSchema` parses a `message-start` frame whose `messageId` is not a UUID, or a frame with no `role`
+- **THEN** the parse fails
 
 ### Requirement: A tracker gives the sub-agent activity of each root tool call
 
@@ -263,3 +278,52 @@ The module of the tracker MUST import only types from outside `src/contracts/`. 
 - **GIVEN** a sub-agent `tool-started` received at `2026-10-12T10:00:00.000Z`, and its `tool-finished` with `durationMs` 800 received later
 - **WHEN** the tracker reads the two frames
 - **THEN** the entry has `endedAt` `2026-10-12T10:00:00.800Z`
+
+### Requirement: The display recorder makes the id of each message
+
+The display recorder MUST make the id of the user message and the id of each assistant message of the turn. A caller cannot give an id. The stream MUST be the only source of the ids that a live surface shows. Each user id and each assistant id of the stored display MUST be an id that the stream announced. An assistant id can have no stored message when its rounds kept no part.
+
+#### Scenario: A turn announces the ids that it stores
+
+- **GIVEN** a turn with text and a tool call in two rounds
+- **WHEN** the recorder forwards its events and takes its rounds
+- **THEN** the sink gets the `message-start` of the user id and of the assistant id before the first event
+- **AND** the stored user message and the stored assistant message carry those two ids
+
+#### Scenario: A turn-start compaction announces an id that it does not store
+
+- **GIVEN** a turn that starts with a turn-start compaction
+- **WHEN** the turn stores its rows
+- **THEN** the stored user message and the stored assistant message carry announced ids
+- **AND** the assistant id that the stream announced before the compaction has no stored message
+
+### Requirement: The display recorder announces an id immediately before an event
+
+The recorder MUST give its sink a `message-start` event for each id, with the source of the root agent. Immediately before the first event that it forwards, it forwards the `message-start` of the user id, and then of the current assistant id. After a marker round gives a new assistant id, it forwards the `message-start` of that id immediately before the next event that it forwards. It forwards one `message-start` for each id, and no more.
+
+#### Scenario: A compaction announces the second assistant id
+
+- **GIVEN** a turn that compacts between two rounds
+- **WHEN** the marker round gives a new assistant id
+- **THEN** the sink gets the `message-start` of the new id immediately before the next event
+- **AND** the stored assistant messages carry the two announced ids
+
+### Requirement: The display recorder announces nothing before the first event
+
+The recorder MUST forward no `message-start` before the first event. A host reads the first call of its sink as the start of the turn. Thus a turn that ends before any event can still get a refusal with no stream.
+
+#### Scenario: A turn with no event announces nothing
+
+- **GIVEN** a turn that ends before its first event
+- **WHEN** the recorder takes its opening and its rounds
+- **THEN** the sink gets no call
+
+### Requirement: The display recorder forwards each event with no change
+
+The recorder MUST forward each event that it gets, of the root agent and of a sub-agent, with no change. A `message-start` that it adds MUST NOT replace an event.
+
+#### Scenario: An event of a sub-agent passes unchanged
+
+- **GIVEN** a turn whose first event is a tool call of a sub-agent
+- **WHEN** the recorder forwards it
+- **THEN** the sink gets the two `message-start` events with the source of the root agent, and then the same event

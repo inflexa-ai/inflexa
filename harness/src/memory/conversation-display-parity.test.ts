@@ -31,8 +31,9 @@ interface RowFacts {
 const ROOT = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
 const SUB = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"], invocationId: "t2" };
 const USER_TEXT = "Compare the two groups.";
-const USER_ID = "user-1";
-const ASSISTANT_ID = "assistant-1";
+/** The ids that a client gives its messages before the stream gives the ids of the harness. */
+const CLIENT_USER_ID = "client-user";
+const CLIENT_ASSISTANT_ID = "client-assistant";
 const USAGE: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
 const ASK = { id: "ask-1", title: "Run the plan?", command: "inflexa run pln-0a1b2c3d" };
 
@@ -50,29 +51,43 @@ function round(events: readonly TurnEvent[]): Round {
     return { events, model: [{ role: "assistant", content: text }] };
 }
 
-/** The live path: each event through `toChatFrame`, the sub-agent tracker, and `applyChatFrame`, then the `finish` of the host. */
-function live(rounds: readonly Round[], turnUsage?: TokenUsageRollup): ChatMessage[] {
-    let messages: ChatMessage[] = [{ id: USER_ID, role: "user", parts: [{ type: "text", text: USER_TEXT }] }];
+/**
+ * The live path: each event that the recorder forwards, through `toChatFrame`, the sub-agent tracker, and `applyChatFrame`, then
+ * the `finish` of the host. The client shows the user message before the stream, and a `message-start` gives a message its id.
+ */
+function live(forwarded: readonly TurnEvent[], turnUsage?: TokenUsageRollup): ChatMessage[] {
+    let messages: ChatMessage[] = [{ id: CLIENT_USER_ID, role: "user", parts: [{ type: "text", text: USER_TEXT }] }];
+    let assistantId = CLIENT_ASSISTANT_ID;
     const tracker = createSubAgentActivityTracker();
     const now = stepClock();
-    for (const event of rounds.flatMap((r) => r.events)) {
+    for (const event of forwarded) {
         const frame = toChatFrame(event, ROOT);
         if (frame === null) continue;
-        messages = applyChatFrame(messages, frame, ASSISTANT_ID).messages;
+        if (frame.type === "message-start") {
+            if (frame.role === "assistant") assistantId = frame.messageId;
+            else messages = messages.map((message) => (message.id === CLIENT_USER_ID ? { ...message, id: frame.messageId } : message));
+            continue;
+        }
+        messages = applyChatFrame(messages, frame, assistantId).messages;
         const activity = tracker.track(frame, now());
-        if (activity !== null) messages = applyChatFrame(messages, activity, ASSISTANT_ID).messages;
+        if (activity !== null) messages = applyChatFrame(messages, activity, assistantId).messages;
     }
-    return applyChatFrame(messages, { type: "finish", source: ROOT, ...(turnUsage === undefined ? {} : { turnUsage }) }, ASSISTANT_ID).messages;
+    return applyChatFrame(messages, { type: "finish", source: ROOT, ...(turnUsage === undefined ? {} : { turnUsage }) }, assistantId).messages;
 }
 
-/** The reload path: the recorder takes each round as `runChatTurn` does, each group goes through the stored shape, and the replay reads the rows. */
-async function replay(rounds: readonly Round[], facts: RowFacts = {}): Promise<ChatMessage[]> {
+/**
+ * The two paths of one turn. The reload path: the recorder takes each round as `runChatTurn` does, each group goes through the
+ * stored shape, and the replay reads the rows. The live path reads what the same recorder forwards.
+ */
+async function bothPaths(rounds: readonly Round[], options: { readonly turnUsage?: TokenUsageRollup; readonly facts?: RowFacts } = {}) {
+    const facts = options.facts ?? {};
+    const forwarded: TurnEvent[] = [];
     const recorder = createConversationDisplayRecorder({
         userText: USER_TEXT,
         agentId: ROOT.agentId,
-        sink: () => {},
-        userMessageId: USER_ID,
-        assistantMessageId: ASSISTANT_ID,
+        sink: (event) => {
+            forwarded.push(event);
+        },
         now: stepClock(),
     });
     const user: ModelMessage = { role: "user", content: USER_TEXT };
@@ -101,7 +116,7 @@ async function replay(rounds: readonly Round[], facts: RowFacts = {}): Promise<C
             });
         }
     }
-    return storedMessagesToChat(rows);
+    return { shown: live(forwarded, options.turnUsage), replayed: storedMessagesToChat(rows) };
 }
 
 describe("the live path and the replay of one turn", () => {
@@ -156,7 +171,7 @@ describe("the live path and the replay of one turn", () => {
     ];
 
     it("gives the same messages", async () => {
-        const shown = live(rounds, USAGE);
+        const { shown, replayed } = await bothPaths(rounds, { turnUsage: USAGE, facts: { turn: { status: "done", usage: USAGE } } });
 
         expect(shown[1]!.parts).toEqual([
             { type: "text", text: "I read the counts and ask the reviewer." },
@@ -190,7 +205,7 @@ describe("the live path and the replay of one turn", () => {
             { type: "text", text: "The run started. I report the result when it ends." },
         ]);
         expect(shown[1]!.usage).toEqual(USAGE);
-        expect(await replay(rounds, { turn: { status: "done", usage: USAGE } })).toEqual(shown);
+        expect(replayed).toEqual(shown);
     });
 });
 
@@ -200,8 +215,9 @@ describe("the known differences between the live path and the replay", () => {
         const rounds = [round([{ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {}, detail: "data/counts.csv" }])];
         const call = { type: "tool-call", toolCallId: "t1", toolName: "read_file", detail: "data/counts.csv" } satisfies MessagePart;
 
-        expect(live(rounds)[1]!.parts).toEqual([call]);
-        expect((await replay(rounds))[1]!.parts).toEqual([{ ...call, outcome: "incomplete" }]);
+        const { shown, replayed } = await bothPaths(rounds);
+        expect(shown[1]!.parts).toEqual([call]);
+        expect(replayed[1]!.parts).toEqual([{ ...call, outcome: "incomplete" }]);
     });
 
     it("a sub-agent call that never finished: the replay gives incomplete, and the live entry gives no outcome", async () => {
@@ -227,18 +243,20 @@ describe("the known differences between the live path and the replay", () => {
         });
         const part = (messages: ChatMessage[]): unknown[] => messages[1]!.parts.filter((p) => p.type === "data-subagent-activity");
 
-        expect(part(live(rounds))).toEqual([activity([entry])]);
-        expect(part(await replay(rounds))).toEqual([activity([{ ...entry, outcome: "incomplete" }])]);
+        const { shown, replayed } = await bothPaths(rounds);
+        expect(part(shown)).toEqual([activity([entry])]);
+        expect(part(replayed)).toEqual([activity([{ ...entry, outcome: "incomplete" }])]);
     });
 
     it("an ask that is pending at the end of the turn: the replay gives aborted, and the live message keeps pending", async () => {
         const rounds = [round([{ type: "data-ask", data: { ...ASK, status: "pending" } }])];
 
-        expect(live(rounds)[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "pending" }]);
-        expect((await replay(rounds))[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "aborted" }]);
+        const { shown, replayed } = await bothPaths(rounds);
+        expect(shown[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "pending" }]);
+        expect(replayed[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "aborted" }]);
     });
 
-    it("a compaction: the replay gives a divider between two assistant messages, and the live message holds the part", async () => {
+    it("a compaction: the replay gives a divider between the two assistant messages, and each live message holds the part", async () => {
         const figures = { tokensBefore: 162_000, durationMs: 21_000 };
         const exchange = [syntheticUserMessage("Reply with the summary."), { role: "assistant", content: "The user compares two groups." } as ModelMessage].map(
             (message) => markCompactionExchange(message, "c-1"),
@@ -257,9 +275,19 @@ describe("the known differences between the live path and the replay", () => {
         ];
         const compaction = { type: "data-compaction", id: "c-1", status: "done", ...figures } satisfies MessagePart;
 
-        expect(live(rounds)[1]!.parts).toEqual([{ type: "text", text: "before" }, compaction, { type: "text", text: "after" }]);
-        const replayed = await replay(rounds);
+        const { shown, replayed } = await bothPaths(rounds);
+
+        // The marker round gives the later rounds a new assistant id. The `done` part comes after it, thus it opens the second message.
+        expect(shown.map((message) => message.parts)).toEqual([
+            [{ type: "text", text: USER_TEXT }],
+            [
+                { type: "text", text: "before" },
+                { type: "data-compaction", id: "c-1", status: "running", tokensBefore: figures.tokensBefore },
+            ],
+            [compaction, { type: "text", text: "after" }],
+        ]);
         expect(replayed.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
+        expect(replayed.filter((message) => message.role !== "system").map((message) => message.id)).toEqual(shown.map((message) => message.id));
         expect(replayed.slice(1).map((message) => message.parts)).toEqual([
             [{ type: "text", text: "before" }],
             [compaction],
@@ -270,16 +298,19 @@ describe("the known differences between the live path and the replay", () => {
     it("a round that streamed no text: the replay takes the text of the model reply, and the live path shows none", async () => {
         const rounds: Round[] = [{ events: [], model: [{ role: "assistant", content: "The whole answer." }] }];
 
-        expect(live(rounds)).toEqual([{ id: USER_ID, role: "user", parts: [{ type: "text", text: USER_TEXT }] }]);
-        expect((await replay(rounds))[1]!.parts).toEqual([{ type: "text", text: "The whole answer." }]);
+        const { shown, replayed } = await bothPaths(rounds);
+        // The turn forwards no event, thus no `message-start` gives the user message the id of the harness.
+        expect(shown).toEqual([{ id: CLIENT_USER_ID, role: "user", parts: [{ type: "text", text: USER_TEXT }] }]);
+        expect(replayed[1]!.parts).toEqual([{ type: "text", text: "The whole answer." }]);
     });
 
     it("the text of two rounds with no part between them: the replay keeps two text parts, and the live message joins them", async () => {
         // A reply that the output limit cut, with no tool call, continues in a new round.
         const rounds = [round([{ type: "text-delta", text: "First half, " }]), round([{ type: "text-delta", text: "second half." }])];
 
-        expect(live(rounds)[1]!.parts).toEqual([{ type: "text", text: "First half, second half." }]);
-        expect((await replay(rounds))[1]!.parts).toEqual([
+        const { shown, replayed } = await bothPaths(rounds);
+        expect(shown[1]!.parts).toEqual([{ type: "text", text: "First half, second half." }]);
+        expect(replayed[1]!.parts).toEqual([
             { type: "text", text: "First half, " },
             { type: "text", text: "second half." },
         ]);
@@ -288,9 +319,13 @@ describe("the known differences between the live path and the replay", () => {
     it("the facts of the stored rows: the replay adds the turn duration, the interruption, the author, and the creation time", async () => {
         const rounds = [round([{ type: "text-delta", text: "partial" }])];
         const createdAt = new Date("2026-09-28T10:00:00.000Z");
-        const [user, reply] = live(rounds, USAGE);
+        const { shown, replayed } = await bothPaths(rounds, {
+            turnUsage: USAGE,
+            facts: { turn: { status: "aborted", usage: USAGE, durationMs: 4321 }, author: "dr.chen@lab.example", createdAt },
+        });
+        const [user, reply] = shown;
 
-        expect(await replay(rounds, { turn: { status: "aborted", usage: USAGE, durationMs: 4321 }, author: "dr.chen@lab.example", createdAt })).toEqual([
+        expect(replayed).toEqual([
             { ...user!, author: "dr.chen@lab.example", createdAt: createdAt.toISOString() },
             { ...reply!, durationMs: 4321, interrupted: true, createdAt: createdAt.toISOString() },
         ]);

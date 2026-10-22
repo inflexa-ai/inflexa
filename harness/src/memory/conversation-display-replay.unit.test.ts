@@ -22,8 +22,6 @@ describe("the stored card of a revised plan", () => {
             userText: "show the plan",
             agentId: SOURCE.agentId,
             sink: () => {},
-            userMessageId: "u",
-            assistantMessageId: "a",
         });
         await recorder.emit({ type: "data-plan", source: SOURCE, data: card });
 
@@ -40,8 +38,6 @@ describe("recorded conversation display replay", () => {
             userText: "show everything",
             agentId: SOURCE.agentId,
             sink: () => {},
-            userMessageId: "user-display",
-            assistantMessageId: "assistant-display",
         });
 
         await recorder.emit({ type: "text-delta", text: "before" });
@@ -99,8 +95,6 @@ describe("recorded conversation display replay", () => {
             userText: "run it",
             agentId: SOURCE.agentId,
             sink: () => {},
-            userMessageId: "u",
-            assistantMessageId: "a",
         });
         await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", input: {}, detail: "scripts/run.py" });
         await recorder.emit({ type: "tool-finished", source: SOURCE, toolUseId: "t1", name: "read_file", outcome: "ok", detail: "scripts/run.py" });
@@ -124,8 +118,6 @@ describe("recorded conversation display replay", () => {
             userText: "run it",
             agentId: SOURCE.agentId,
             sink: () => {},
-            userMessageId: "u",
-            assistantMessageId: "a",
         });
         await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", input: {}, detail: "scripts/run.py" });
 
@@ -145,8 +137,6 @@ describe("recorded conversation display replay", () => {
             userText: "plan it",
             agentId: SOURCE.agentId,
             sink: () => {},
-            userMessageId: "u",
-            assistantMessageId: "a",
             now: () => Date.parse("2026-10-12T10:00:00.000Z"),
         });
         const planner = { agentId: "planner", callPath: ["conversation", "planner"], invocationId: "t1" };
@@ -186,8 +176,6 @@ describe("recorded conversation display replay", () => {
             userText: "run it",
             agentId: SOURCE.agentId,
             sink: () => {},
-            userMessageId: "u",
-            assistantMessageId: "a",
         });
         const base = { id: "ask", title: "Proceed?", command: "inflexa run" };
         await recorder.emit({ type: "data-ask", source: SOURCE, data: { ...base, status: "pending" } });

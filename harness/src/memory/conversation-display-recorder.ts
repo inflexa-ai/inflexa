@@ -6,7 +6,7 @@ import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../cont
 import type { ChatMessage, MessagePart } from "../contracts/message.js";
 import { PART_REGISTRY, type ChatPartType } from "../contracts/part-registry.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
-import type { EmitFn } from "../loop/types.js";
+import type { EmitEvent, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
 
@@ -25,8 +25,6 @@ export interface ConversationDisplayRecorderOptions {
     /** The root agent of the turn. Its call path is `[agentId]`, and an event with a longer path is from a sub-agent. */
     readonly agentId: string;
     readonly sink: EmitFn;
-    readonly userMessageId?: string;
-    readonly assistantMessageId?: string;
     /** The clock for the times of the sub-agent activity, in milliseconds. The default is the wall clock. */
     readonly now?: () => number;
 }
@@ -97,8 +95,10 @@ function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
  */
 export function createConversationDisplayRecorder(options: ConversationDisplayRecorderOptions): ConversationDisplayRecorder {
     // One id for each message of the turn, thus the rounds of a turn replay as one assistant message.
-    const userMessageId = options.userMessageId ?? randomUUID();
-    let assistantMessageId = options.assistantMessageId ?? randomUUID();
+    const userMessageId = randomUUID();
+    let assistantMessageId = randomUUID();
+    let userAnnounced = false;
+    let announcedAssistantId: string | undefined;
     const rootSource: EventSource = { agentId: options.agentId, callPath: [options.agentId] };
     // The messages of the open round. A later update of a part lands in the next round, and the replay replaces the earlier copy.
     let round: ChatMessage[] = [];
@@ -137,9 +137,33 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         apply(frame);
     }
 
+    function messageStart(messageId: string, role: "user" | "assistant"): EmitEvent {
+        return { type: "message-start", messageId, role, source: rootSource };
+    }
+
+    /** The `message-start` of each id that the sink did not get yet. */
+    function announcements(): EmitEvent[] {
+        const starts: EmitEvent[] = [];
+        if (!userAnnounced) {
+            userAnnounced = true;
+            starts.push(messageStart(userMessageId, "user"));
+        }
+        if (announcedAssistantId !== assistantMessageId) {
+            announcedAssistantId = assistantMessageId;
+            starts.push(messageStart(assistantMessageId, "assistant"));
+        }
+        return starts;
+    }
+
+    // A `message-start` goes to the sink only immediately before an event: a host reads the first call of its sink
+    // as the start of the turn, and a turn that ends before any event must still get its plain refusal (for example an HTTP 402).
     const emit: EmitFn = (event) => {
         if (!finished) record(event);
-        return options.sink(event);
+        const starts = announcements();
+        if (starts.length === 0) return options.sink(event);
+        // The calls start in the order of the stream with no await between them: a later emit that its caller does
+        // not await, for example a text delta, must not reach the sink before them.
+        return Promise.all([...starts, event].map((next) => options.sink(next))).then(() => undefined);
     };
 
     function takeOpening(): ConversationUIMessage[] {

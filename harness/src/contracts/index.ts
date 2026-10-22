@@ -53,6 +53,7 @@ export type {
     ToolFinishedEvent,
     FinishEvent,
     ChatErrorEvent,
+    MessageStartEvent,
     ChatEvent,
     ChatFrame,
     ChatPartFrame,

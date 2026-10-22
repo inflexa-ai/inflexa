@@ -403,7 +403,7 @@ The turn record, the paged read of whole turns, and the tail retract read the us
 
 The display recorder MUST NOT take the text of an exchange message as the text of a round. Thus the summary never shows as a reply of the assistant, live or after a reload.
 
-After a marker round, the recorder MUST give the later rounds of the turn a new assistant id. The divider separates the rounds before it from the rounds after it. Thus the replay gives two assistant messages, and the two must not share an id.
+After a marker round, the recorder MUST give the later rounds of the turn a new assistant id. The divider separates the rounds before it from the rounds after it. Thus the replay gives two assistant messages, and the two must not share an id. The stream announces the new id before the next event (see the chat-frame-translation capability).
 
 The rows of a mid-turn compaction belong to the turn that made them. A tail retract removes them with that turn, and the view then goes back to the previous marker. The rows of a turn-start compaction come before the user message of the turn. Thus a tail retract of that turn keeps them, and a turn-start summary stays in the view. The host makes no new call for a compaction.
 

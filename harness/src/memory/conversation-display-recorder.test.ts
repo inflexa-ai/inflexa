@@ -5,22 +5,26 @@ import type { ModelMessage } from "ai";
 import type { EmitFn } from "../loop/types.js";
 import { dropMarkerMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
+import type { ConversationUIMessage } from "./conversation-display-storage.js";
 
 const TOP = { agentId: "conversation", callPath: ["conversation"] };
 const SUB = { agentId: "child", callPath: ["conversation", "child"] };
 
+type TurnEvent = Parameters<EmitFn>[0];
+
 function harness() {
-    const forwarded: Parameters<EmitFn>[0][] = [];
+    const forwarded: TurnEvent[] = [];
     const recorder = createConversationDisplayRecorder({
         userText: "question",
         agentId: TOP.agentId,
         sink: (event) => {
             forwarded.push(event);
         },
-        userMessageId: "u1",
-        assistantMessageId: "a1",
     });
-    return { recorder, forwarded };
+    /** The ids of the `message-start` events of one role that the sink got, in the order of the stream. */
+    const announced = (role: "user" | "assistant"): string[] =>
+        forwarded.flatMap((event) => (event.type === "message-start" && event.role === role ? [event.messageId] : []));
+    return { recorder, forwarded, announced };
 }
 
 describe("conversation display recorder", () => {
@@ -38,7 +42,7 @@ describe("conversation display recorder", () => {
             { type: "data-presentation", id: "p1", data: { id: "p1", content: { kind: "markdown", body: "card" } } },
             { type: "text", text: "after", state: "done" },
         ]);
-        expect(forwarded).toHaveLength(3);
+        expect(forwarded.map((event) => event.type)).toEqual(["message-start", "message-start", "text-delta", "data-presentation", "text-delta"]);
     });
 
     it("keeps each plan step field that the card shows", async () => {
@@ -122,7 +126,7 @@ describe("conversation display recorder", () => {
     });
 
     it("keeps an emitted compaction part out of the assistant message, and forwards it", async () => {
-        const { recorder, forwarded } = harness();
+        const { recorder, forwarded, announced } = harness();
         await recorder.emit({ type: "text-delta", text: "before" });
         await recorder.emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "running", tokensBefore: 162_000 } });
         await recorder.emit({
@@ -131,7 +135,9 @@ describe("conversation display recorder", () => {
             data: { id: "c-1", status: "done", tokensBefore: 162_000, durationMs: 21_000 },
         });
 
-        expect(recorder.takeRound([])).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] }]);
+        expect(recorder.takeRound([])).toEqual([
+            { id: announced("assistant")[0], role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] },
+        ]);
         expect(forwarded.filter((event) => event.type === "data-compaction")).toHaveLength(2);
     });
 
@@ -211,8 +217,6 @@ describe("conversation display recorder — sub-agent activity", () => {
             userText: "question",
             agentId: TOP.agentId,
             sink: () => {},
-            userMessageId: "u1",
-            assistantMessageId: "a1",
             now: () => T0 + 1000 * tick++,
         });
         return recorder;
@@ -286,14 +290,15 @@ describe("conversation display recorder — sub-agent activity", () => {
 });
 
 describe("conversation display recorder — rounds", () => {
-    it("gives the user message of the turn at the opening", () => {
-        const { recorder } = harness();
+    it("gives the user message of the turn at the opening", async () => {
+        const { recorder, announced } = harness();
+        await recorder.emit({ type: "text-delta", text: "answer" });
 
-        expect(recorder.takeOpening()).toEqual([{ id: "u1", role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
+        expect(recorder.takeOpening()).toEqual([{ id: announced("user")[0], role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
     });
 
     it("gives the parts of each round under one assistant id", async () => {
-        const { recorder } = harness();
+        const { recorder, announced } = harness();
         await recorder.emit({ type: "text-delta", text: "first" });
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "c1", name: "read_file", outcome: "ok" });
@@ -301,9 +306,11 @@ describe("conversation display recorder — rounds", () => {
         await recorder.emit({ type: "text-delta", text: "second" });
         const second = recorder.takeRound([]);
 
+        const [assistantId] = announced("assistant");
+        expect(announced("assistant")).toHaveLength(1);
         expect(first).toEqual([
             {
-                id: "a1",
+                id: assistantId,
                 role: "assistant",
                 parts: [
                     { type: "text", text: "first", state: "done" },
@@ -311,7 +318,7 @@ describe("conversation display recorder — rounds", () => {
                 ],
             },
         ]);
-        expect(second).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "second", state: "done" }] }]);
+        expect(second).toEqual([{ id: assistantId, role: "assistant", parts: [{ type: "text", text: "second", state: "done" }] }]);
     });
 
     it("takes the text of the assistant message when the round streamed no text", async () => {
@@ -383,28 +390,115 @@ describe("conversation display recorder — compaction rounds", () => {
     });
 
     it("gives the divider of a drop marker with the status failed, after the assistant message of the parts", async () => {
-        const { recorder } = harness();
+        const { recorder, announced } = harness();
         await recorder.emit({ type: "text-delta", text: "before" });
 
         const round = recorder.takeRound([dropMarkerMessage({ kind: "drop", ...figures, keptTurns: 2 })]);
 
         expect(round.map((message) => [message.id, message.role])).toEqual([
-            ["a1", "assistant"],
+            [announced("assistant")[0], "assistant"],
             ["c-1", "system"],
         ]);
         expect(round[1]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "failed" } }]);
     });
 
     it("gives a round after a marker round a new assistant id", async () => {
-        const { recorder } = harness();
+        const { recorder, announced } = harness();
         await recorder.emit({ type: "text-delta", text: "first" });
         const first = recorder.takeRound([]);
         recorder.takeRound([summaryMarkerMessage("summary", { kind: "summary", ...figures })]);
         await recorder.emit({ type: "text-delta", text: "second" });
         const second = recorder.takeRound([]);
 
-        expect(first[0]!.id).toBe("a1");
-        expect(second[0]!.id).not.toBe("a1");
+        expect(second[0]!.id).not.toBe(first[0]!.id);
+        expect([first[0]!.id, second[0]!.id]).toEqual(announced("assistant"));
         expect(second[0]!.parts).toEqual([{ type: "text", text: "second", state: "done" }]);
+    });
+});
+
+describe("conversation display recorder — message ids", () => {
+    const figures = { id: "c-1", tokensBefore: 162_000, durationMs: 21_000 };
+    const summaryRequest: ModelMessage[] = [
+        syntheticUserMessage("Reply with the summary."),
+        { role: "assistant", content: [{ type: "text", text: "The user compares two groups." }] },
+    ];
+    const exchange = summaryRequest.map((message) => markCompactionExchange(message, "c-1"));
+    const marker = summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures });
+
+    /** The ids of the stored user and assistant messages, in the order of the groups. Two rounds of one message give one id. */
+    function storedIds(groups: readonly ConversationUIMessage[][]): { user: string[]; assistant: string[] } {
+        const ids = (role: "user" | "assistant") => [...new Set(groups.flat().flatMap((message) => (message.role === role ? [message.id] : [])))];
+        return { user: ids("user"), assistant: ids("assistant") };
+    }
+
+    function messageStart(messageId: string | undefined, role: "user" | "assistant"): TurnEvent {
+        if (messageId === undefined) throw new Error(`the stream announced no ${role} id`);
+        return { type: "message-start", messageId, role, source: TOP };
+    }
+
+    it("announces the user id and the assistant id immediately before the first event, and stores the turn under them", async () => {
+        const { recorder, forwarded, announced } = harness();
+        const first: TurnEvent = { type: "text-delta", text: "I read the file." };
+        await recorder.emit(first);
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "c1", name: "read_file", outcome: "ok" });
+        const opening = recorder.takeOpening();
+        const round = recorder.takeRound([]);
+        await recorder.emit({ type: "text-delta", text: "Done." });
+        const last = recorder.takeRound([]);
+
+        expect(announced("user")).toHaveLength(1);
+        expect(announced("assistant")).toHaveLength(1);
+        expect(forwarded.slice(0, 3)).toEqual([messageStart(announced("user")[0], "user"), messageStart(announced("assistant")[0], "assistant"), first]);
+        expect(forwarded.filter((event) => event.type === "message-start")).toHaveLength(2);
+        expect(storedIds([opening, round, last])).toEqual({ user: announced("user"), assistant: announced("assistant") });
+    });
+
+    it("announces the assistant id of the rounds after a marker immediately before the next event", async () => {
+        const { recorder, forwarded, announced } = harness();
+        await recorder.emit({ type: "text-delta", text: "before" });
+        const groups = [recorder.takeOpening(), recorder.takeRound([])];
+        await recorder.emit({ type: "data-compaction", source: TOP, data: { ...figures, status: "running" } });
+        groups.push(recorder.takeRound(exchange), recorder.takeRound([marker]));
+        const atMarker = forwarded.length;
+        const done: TurnEvent = { type: "data-compaction", source: TOP, data: { ...figures, status: "done" } };
+        const after: TurnEvent = { type: "text-delta", text: "after" };
+        await recorder.emit(done);
+        await recorder.emit(after);
+        groups.push(recorder.takeRound([]));
+
+        const [firstId, secondId] = announced("assistant");
+        expect(announced("assistant")).toHaveLength(2);
+        expect(secondId).not.toBe(firstId);
+        expect(forwarded.slice(atMarker)).toEqual([messageStart(secondId, "assistant"), done, after]);
+        expect(storedIds(groups)).toEqual({ user: announced("user"), assistant: announced("assistant") });
+    });
+
+    it("forwards nothing before the first event, thus the first call of the sink comes with the first event", async () => {
+        const { recorder, forwarded, announced } = harness();
+        const opening = recorder.takeOpening();
+        const rounds = [recorder.takeRound(exchange), recorder.takeRound([marker])];
+
+        expect(forwarded).toEqual([]);
+
+        const first: TurnEvent = { type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} };
+        await recorder.emit(first);
+        rounds.push(recorder.takeRound([]));
+
+        // The marker changed the assistant id before any event, thus the stream never names the earlier id.
+        expect(forwarded).toEqual([messageStart(announced("user")[0], "user"), messageStart(announced("assistant")[0], "assistant"), first]);
+        expect(storedIds([opening, ...rounds])).toEqual({ user: announced("user"), assistant: announced("assistant") });
+    });
+
+    it("forwards each event of a sub-agent unchanged, and gives each message-start the source of the root agent", async () => {
+        const { recorder, forwarded, announced } = harness();
+        const started: TurnEvent = { type: "tool-started", source: SUB, toolUseId: "s1", name: "search_pubmed", input: { query: "TP53" } };
+        const card: TurnEvent = { type: "data-presentation", source: SUB, data: { id: "hidden", content: { kind: "markdown", body: "child" } } };
+        await recorder.emit(started);
+        await recorder.emit(card);
+
+        expect(forwarded).toEqual([messageStart(announced("user")[0], "user"), messageStart(announced("assistant")[0], "assistant"), started, card]);
+        expect(forwarded[2]).toBe(started);
+        expect(forwarded[3]).toBe(card);
     });
 });

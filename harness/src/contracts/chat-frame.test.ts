@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import type { ChatStreamEvent } from "../providers/types.js";
-import { applyChatFrame, checkChatPart, toChatFrame } from "./chat-frame.js";
+import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "./chat-frame.js";
 import type { ChatMessage } from "./message.js";
+import { ChatEventSchema } from "./schemas/chat-events.js";
 
 const fallback = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
 const topLevel = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
@@ -13,6 +14,19 @@ describe("toChatFrame", () => {
     test("gives no frame for an iteration of the root agent", () => {
         const ev: EmitEvent = { type: "iteration", source: topLevel, index: 0, final: false };
         expect(toChatFrame(ev, fallback)).toBeNull();
+    });
+
+    test("gives a message-start unchanged, as a root frame that the wire schema accepts", () => {
+        const ev: EmitEvent = { type: "message-start", source: topLevel, messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30", role: "user" };
+        const frame = toChatFrame(ev, fallback);
+        expect(frame).toEqual({ type: "message-start", messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30", role: "user", source: topLevel });
+        expect(frame !== null && isRootFrame(frame)).toBe(true);
+        expect(ChatEventSchema.parse(frame)).toEqual({
+            type: "message-start",
+            messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30",
+            role: "user",
+            source: topLevel,
+        });
     });
 
     test("gives the frame of an iteration of a sub-agent, with its source only", () => {
@@ -284,6 +298,17 @@ describe("applyChatFrame", () => {
         const { messages, terminal } = applyMany([], [{ type: "iteration", source: SOURCE }]);
         expect(terminal).toBeNull();
         expect(messages).toEqual([]);
+    });
+
+    test("a message-start frame makes no part and changes no message", () => {
+        const start: ChatMessage[] = [{ id: ASSISTANT_ID, role: "assistant", parts: [{ type: "text", text: "a" }] }];
+        const result = applyChatFrame(
+            start,
+            { type: "message-start", messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30", role: "assistant", source: SOURCE },
+            ASSISTANT_ID,
+        );
+        expect(result).toEqual({ messages: start, terminal: null });
+        expect(result.messages).toBe(start);
     });
 
     test("keeps the source of a data part frame out of the part", () => {
