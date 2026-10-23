@@ -8,7 +8,7 @@
         "@clack/core": "1.4.3",
         "@clack/prompts": "^1.7.0",
         "@inflexa-ai/harness": "^0.45.1",
-        "@inflexa-ai/prov-kernel": "^0.7.0",
+        "@inflexa-ai/prov-kernel": "^0.7.1",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",
@@ -176,7 +176,7 @@
 
     "@inflexa-ai/harness": ["@inflexa-ai/harness@0.45.1", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.62", "@ai-sdk/openai": "^4.0.74", "@ai-sdk/openai-compatible": "^3.0.55", "@ai-sdk/otel": "^1.0.113", "@ai-sdk/provider": "^4.0.18", "@ai-sdk/provider-utils": "5.0.47", "@anthropic-ai/sdk": "^0.116.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@fontsource-variable/space-grotesk": "5.1.1", "@fontsource/ibm-plex-mono": "5.1.1", "@inflexa-ai/tsprov": "0.6.0", "@kubernetes/client-node": "^1.4.0", "@mozilla/readability": "^0.6.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "@types/dockerode": "^3.3.47", "@types/pg": "^8.20.0", "@types/turndown": "^5.0.6", "ag-grid-community": "36.1.0", "ai": "^7.0.113", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "echarts": "6.1.0", "fast-xml-parser": "^5.10.1", "hono": "^4.12.34", "hyparquet": "^1.28.1", "js-tiktoken": "^1.0.21", "kysely": "^0.29.6", "linkedom": "^0.18.14", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "openai": "^7.4.0", "p-queue": "^9.3.3", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "turndown": "^7.2.4", "zod": "^4.4.3" } }, "sha512-mMF+ElXF2Th5gUspHP4X1hmuz0uafZb7ZSR4z656nP/NxWMVxIAcEErEjpAn1dmm5MlvdxrIr1tJfLxaGG7U3Q=="],
 
-    "@inflexa-ai/prov-kernel": ["@inflexa-ai/prov-kernel@0.7.0", "", { "dependencies": { "@noble/hashes": "^2.3.0", "neverthrow": "^8.2.0", "zod": "^4.4.3" }, "peerDependencies": { "@inflexa-ai/tsprov": "^0.5.1" } }, "sha512-hDjufm3CxBl64GVlBSulli9mUTFUQqjuTkj5GKODPuAZf0Lx2woBFpvJBVuV5avgin/JWHT3i/5/NE4dIw+PhA=="],
+    "@inflexa-ai/prov-kernel": ["@inflexa-ai/prov-kernel@0.7.1", "", { "dependencies": { "@noble/hashes": "^2.3.0", "neverthrow": "^8.2.0", "zod": "^4.4.3" }, "peerDependencies": { "@inflexa-ai/tsprov": "^0.5.1" } }, "sha512-S+ipOFpAs2JvPllYt7osrhiTgd4elaLTnuYOE3oMrxs7mNeqwCzuZlD64qTdxOuhhqjnKhiPsmTiIwUOabxkVQ=="],
 
     "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.5.1", "", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-F2Q+trPPT0YdAs5aQ8LY6OJ718yaVWYABTg5bN1qNqdIJvjjH/NCThbOA2j5IJvevErhpHJXPEqcixeOHiHzGQ=="],
 
