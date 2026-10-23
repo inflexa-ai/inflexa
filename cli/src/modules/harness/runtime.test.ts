@@ -937,17 +937,32 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
     });
 });
 
-// The SearXNG hand-off. The CLI owns the compose stack, so the engine's URL is a
-// derived stack constant: the conversation deps bag must carry it for the harness
-// to attach `web_search`. No gate and no notice belongs in the boot — an engine
-// that is down is a normal `web_search` error result.
-describe("bootHarnessRuntime — the SearXNG base URL", () => {
-    test("hands the conversation deps the loopback URL derived from the channel port", async () => {
+// The web-search engine hand-off. The CLI owns the compose stack, so the SearXNG
+// URL behind the engine is a derived stack constant: the boot builds the
+// engine realization over it and injects it into the conversation deps bag for
+// the harness to attach `web_search`. No gate and no notice belongs in the
+// boot — an engine that is down is a normal `web_search` error result.
+describe("bootHarnessRuntime — the web-search engine", () => {
+    test("injects an engine built from the loopback URL derived from the channel port", async () => {
         await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
 
-        const url = lastCore?.conversation.searxngBaseUrl;
-        expect(url).toBe(env.searxngBaseUrl);
-        expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+        const engine = lastCore?.conversation.webSearch;
+        expect(typeof engine?.search).toBe("function");
+        // The engine must hold the derived URL, so a wrong constant at the wiring
+        // site fails here: the stub answers the request and records where it went.
+        const realFetch = globalThis.fetch;
+        let requested: string | undefined;
+        globalThis.fetch = (async (url: string) => {
+            requested = String(url);
+            return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+        }) as unknown as typeof fetch;
+        try {
+            const page = await engine?.search({ query: "q" });
+            expect(page?._unsafeUnwrap()).toEqual({ answers: [], results: [] });
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+        expect(requested).toBe(`${env.searxngBaseUrl}/search?q=q&format=json`);
     });
 });
 

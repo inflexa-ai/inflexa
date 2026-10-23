@@ -25,6 +25,7 @@ import {
     type ConversationAssemblyDeps,
     type CoreRuntime,
     type CoreWorkflowDeps,
+    createSearxngEngine,
     type DataProfileTriggerDeps,
     type EmbeddingProvider,
     type ExecuteAnalysisInput,
@@ -1165,10 +1166,10 @@ async function bootHarnessRuntimeOnce(
             bioKeys: cfg.bioKeys,
             // The planner of `generate_plan` gains the two knowledge tools when the client is bound.
             ...(knowledge ? { knowledge } : {}),
-            // The SearXNG engine the CLI's compose stack runs, so `web_search` attaches. The
-            // URL is a derived stack constant the CLI owns — no config field and no
-            // environment variable, the same rule as the proxy endpoint.
-            searxngBaseUrl: env.searxngBaseUrl,
+            // The web-search engine over the SearXNG service the CLI's compose stack runs, so
+            // `web_search` attaches. The URL is a derived stack constant the CLI owns — no
+            // config field and no environment variable, the same rule as the proxy endpoint.
+            webSearch: createSearxngEngine({ baseUrl: env.searxngBaseUrl }),
             skillsDir: cfg.skillsDir,
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.

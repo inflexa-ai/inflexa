@@ -16,11 +16,19 @@ import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
+import type { WebSearchEngine } from "../tools/research/web-search.js";
+
+// Composition never calls the engine — a bare stub shapes the deps bag.
+const unusedWebSearchEngine: WebSearchEngine = {
+    async search() {
+        throw new Error("not used at composition time");
+    },
+};
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
 // for asserting the assembled `AgentDefinition`'s shape.
-function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore, searxngBaseUrl?: string) {
+function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore, webSearch?: WebSearchEngine) {
     return createConversationAgent({
         provider: {} as ChatProvider,
         utilityProvider: {} as ChatProvider,
@@ -44,7 +52,7 @@ function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputSto
         citationResolver: unusedCitationResolver,
         ...(hostTools ? { hostTools } : {}),
         ...(toolOutputStore ? { toolOutputStore } : {}),
-        ...(searxngBaseUrl ? { searxngBaseUrl } : {}),
+        ...(webSearch ? { webSearch } : {}),
     });
 }
 
@@ -211,23 +219,23 @@ describe("createConversationAgent", () => {
         expect(withStore.filter((id) => id !== "read_tool_output")).toEqual(withoutStore);
     });
 
-    test("a SearXNG base URL adds web_search after search_arxiv; no URL leaves web_fetch alone", () => {
-        const withUrl = buildAgent(undefined, undefined, "http://127.0.0.1:28437").tools.map((t) => t.id);
-        const withoutUrl = buildAgent().tools.map((t) => t.id);
+    test("an injected web-search engine adds web_search after search_arxiv; no engine leaves web_fetch alone", () => {
+        const withEngine = buildAgent(undefined, undefined, unusedWebSearchEngine).tools.map((t) => t.id);
+        const withoutEngine = buildAgent().tools.map((t) => t.id);
 
         // The description of an unattached tool never enters a model context, so
-        // an embedder that runs no engine must get no `web_search` at all.
-        expect(withoutUrl).not.toContain("web_search");
-        expect(withoutUrl).toContain("web_fetch");
-        expect(withUrl).toContain("web_search");
-        expect(withUrl).toContain("web_fetch");
-        // Both sit directly after `search_arxiv`; with no URL, `web_fetch` holds
+        // an embedder that injects no engine must get no `web_search` at all.
+        expect(withoutEngine).not.toContain("web_search");
+        expect(withoutEngine).toContain("web_fetch");
+        expect(withEngine).toContain("web_search");
+        expect(withEngine).toContain("web_fetch");
+        // Both sit directly after `search_arxiv`; with no engine, `web_fetch` holds
         // that place alone.
-        expect(withUrl[withUrl.indexOf("search_arxiv") + 1]).toBe("web_search");
-        expect(withUrl[withUrl.indexOf("web_search") + 1]).toBe("web_fetch");
-        expect(withoutUrl[withoutUrl.indexOf("search_arxiv") + 1]).toBe("web_fetch");
-        // The URL changes nothing else about the roster.
-        expect(withUrl.filter((id) => id !== "web_search")).toEqual(withoutUrl);
+        expect(withEngine[withEngine.indexOf("search_arxiv") + 1]).toBe("web_search");
+        expect(withEngine[withEngine.indexOf("web_search") + 1]).toBe("web_fetch");
+        expect(withoutEngine[withoutEngine.indexOf("search_arxiv") + 1]).toBe("web_fetch");
+        // The engine changes nothing else about the roster.
+        expect(withEngine.filter((id) => id !== "web_search")).toEqual(withoutEngine);
     });
 
     test("omitting host tools yields exactly the built-in roster", () => {

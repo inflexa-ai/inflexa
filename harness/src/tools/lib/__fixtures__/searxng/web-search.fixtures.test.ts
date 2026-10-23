@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { mapSearxngResponse, SearxngSearchResponseSchema } from "../../../research/web-search.js";
+import { mapSearxngResponse, SearxngSearchResponseSchema } from "../../../research/searxng-engine.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../fixture-runner.js";
 
 runFixtureSuite("searxng golden fixtures — the web search response", [
