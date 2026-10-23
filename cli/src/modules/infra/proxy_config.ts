@@ -12,7 +12,7 @@ import { classifyPath, ensureFileMountSource, publishFileExclusively, tryFs, typ
 // integrity guard baked into the compose-up seam) — the multi-caller threshold that earns it a file of
 // its own. It sits BELOW compose.ts in the import graph (compose imports it, never the reverse): the
 // provisioner cannot live in setup.ts, because setup.ts already imports compose.ts, so a provisioner
-// there would force a compose→setup back-edge the seam design exists to avoid. The classify/heal
+// there would force a compose→setup back-edge the one-guard design exists to avoid. The classify/heal
 // skeleton it runs on is shared with the SearXNG settings provisioner and lives in mount_source.ts.
 
 /**

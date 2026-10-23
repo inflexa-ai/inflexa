@@ -27,7 +27,7 @@ The CLI SHALL define a SearXNG service in the generated compose file for every c
 
 ### Requirement: The SearXNG settings file is provisioned once and kept
 
-The CLI SHALL provision the SearXNG settings file as a `file` mount source through the mount-source integrity seam, before the engine runs. The file SHALL set `use_default_settings: true`, `search.formats` to `html` and `json`, `server.limiter` to `false`, `public_instance` to `false`, and `server.secret_key` to a random value made with the platform crypto. The provisioner SHALL make the key one time: a later run that finds a settings file SHALL keep the file as it is. The path SHALL be channel-aware, the same as every stack path, so a dev stack and an installed stack hold different files.
+The CLI SHALL provision the SearXNG settings file as a `file` mount source through the mount-source integrity guard, before the engine runs. The file SHALL set `use_default_settings: true`, `search.formats` to `html` and `json`, `server.limiter` to `false`, `public_instance` to `false`, and `server.secret_key` to a random value made with the platform crypto. The provisioner SHALL make the key one time: a later run that finds a settings file SHALL keep the file as it is. The path SHALL be channel-aware, the same as every stack path, so a dev stack and an installed stack hold different files.
 
 #### Scenario: The first run makes the file with a random key
 
