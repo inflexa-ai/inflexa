@@ -456,21 +456,25 @@ describe("conversation display recorder — message ids", () => {
 
     it("announces the assistant id of the rounds after a marker immediately before the next event", async () => {
         const { recorder, forwarded, announced } = harness();
-        await recorder.emit({ type: "text-delta", text: "before" });
+        const before: TurnEvent = { type: "text-delta", text: "before" };
+        await recorder.emit(before);
         const groups = [recorder.takeOpening(), recorder.takeRound([])];
-        await recorder.emit({ type: "data-compaction", source: TOP, data: { ...figures, status: "running" } });
-        groups.push(recorder.takeRound(exchange), recorder.takeRound([marker]));
-        const atMarker = forwarded.length;
+        const running: TurnEvent = { type: "data-compaction", source: TOP, data: { ...figures, status: "running" } };
         const done: TurnEvent = { type: "data-compaction", source: TOP, data: { ...figures, status: "done" } };
-        const after: TurnEvent = { type: "text-delta", text: "after" };
+        await recorder.emit(running);
+        groups.push(recorder.takeRound(exchange));
         await recorder.emit(done);
+        groups.push(recorder.takeRound([marker]));
+        const atMarker = forwarded.length;
+        const after: TurnEvent = { type: "text-delta", text: "after" };
         await recorder.emit(after);
         groups.push(recorder.takeRound([]));
 
         const [firstId, secondId] = announced("assistant");
         expect(announced("assistant")).toHaveLength(2);
         expect(secondId).not.toBe(firstId);
-        expect(forwarded.slice(atMarker)).toEqual([messageStart(secondId, "assistant"), done, after]);
+        expect(forwarded.slice(0, atMarker)).toEqual([messageStart(announced("user")[0], "user"), messageStart(firstId, "assistant"), before, running, done]);
+        expect(forwarded.slice(atMarker)).toEqual([messageStart(secondId, "assistant"), after]);
         expect(storedIds(groups)).toEqual({ user: announced("user"), assistant: announced("assistant") });
     });
 

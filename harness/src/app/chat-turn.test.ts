@@ -857,6 +857,29 @@ describe("runChatTurn — compaction", () => {
         return (await createThreadHistory(pool).loadAll(threadId))._unsafeUnwrap().flat();
     }
 
+    const STORED_USER = { id: "<id>", createdAt: "<createdAt>", role: "user", parts: [{ type: "text", text: "compare the two groups" }] };
+    const STORED_REPLY = { id: "<id>", createdAt: "<createdAt>", durationMs: "<durationMs>", role: "assistant", parts: [{ type: "text", text: "done" }] };
+    const storedDivider = (trigger: string) => ({
+        id: "<id>",
+        createdAt: "<createdAt>",
+        role: "system",
+        parts: [{ type: "data-compaction", id: "<id>", status: "done", tokensBefore: OVER, durationMs: "<durationMs>", trigger }],
+    });
+    /** The stored display of a mid-turn compaction turn. The `data-compaction` frames are transient, thus their order on the stream cannot change it. */
+    const MID_TURN_DISPLAY = [
+        STORED_USER,
+        {
+            id: "<id>",
+            createdAt: "<createdAt>",
+            role: "assistant",
+            parts: [{ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: "<durationMs>" }],
+        },
+        storedDivider("mid-turn"),
+        { ...STORED_REPLY, usage: { inputTokens: OVER } },
+    ];
+    /** The stored display of a turn-start compaction turn, with the same reason as {@link MID_TURN_DISPLAY}. */
+    const TURN_START_DISPLAY = [storedDivider("turn-start"), STORED_USER, STORED_REPLY];
+
     function kindOf(message: ModelMessage): string {
         const marker = compactionMarkerOf(message);
         if (marker !== undefined) return `${marker.kind}-marker`;
@@ -1064,6 +1087,22 @@ describe("runChatTurn — compaction", () => {
         ]);
     });
 
+    /** The frames of the compaction before and after the `message-start` of `messageId`. */
+    function compactionAround(forwarded: readonly TurnEvent[], messageId: string | undefined): { before: TurnEvent[]; after: TurnEvent[] } {
+        const start = forwarded.findIndex((event) => event.type === "message-start" && event.messageId === messageId);
+        if (start === -1) throw new Error(`the stream announced no id ${messageId}`);
+        const compaction = (events: readonly TurnEvent[]) => events.filter((event) => event.type === "data-compaction");
+        return { before: compaction(forwarded.slice(0, start)), after: compaction(forwarded.slice(start)) };
+    }
+
+    /** The stored display of the thread with no random id, no time, and no measured duration, thus two runs of one script compare equal. */
+    async function storedDisplay(): Promise<unknown> {
+        const varying = new Set(["id", "createdAt", "durationMs"]);
+        return JSON.parse(
+            JSON.stringify(storedMessagesToChat(await storedRows()), (key, value: unknown) => (varying.has(key) ? `<${key}>` : value)),
+        ) as unknown;
+    }
+
     it("announces the user id and each assistant id of a mid-turn compaction, and the stored messages carry exactly those ids", async () => {
         const forwarded: TurnEvent[] = [];
         const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
@@ -1075,8 +1114,12 @@ describe("runChatTurn — compaction", () => {
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
         expect(announced.assistant).toHaveLength(2);
         expect(replay.filter((message) => message.role !== "system").map((message) => message.id)).toEqual([...announced.user, ...announced.assistant]);
-        const second = forwarded.findIndex((event) => event.type === "message-start" && event.messageId === announced.assistant[1]);
-        expect(forwarded[second + 1]).toMatchObject({ type: "data-compaction", data: { status: "done", trigger: "mid-turn" } });
+        // The two parts of the compaction stream under the first assistant id, before the second id.
+        expect(compactionAround(forwarded, announced.assistant[1])).toMatchObject({
+            before: [{ data: { status: "running", trigger: "mid-turn" } }, { data: { status: "done", trigger: "mid-turn" } }],
+            after: [],
+        });
+        expect(await storedDisplay()).toEqual(MID_TURN_DISPLAY);
     });
 
     it("announces each id that a turn-start compaction turn stores, and the stream names one assistant id with no stored message", async () => {
@@ -1088,15 +1131,18 @@ describe("runChatTurn — compaction", () => {
 
         const announced = announcedIds(forwarded);
         // The stream announces the user id and a first assistant id before the `running` part of the compaction, thus before
-        // the turn opens. The marker round gives a second assistant id, and the stream announces it before the `done` part.
+        // the turn opens. The two parts of the compaction stream under that id. The marker round gives a second assistant
+        // id, and the stream announces it after the `done` part.
         expect(forwarded.slice(0, 3)).toMatchObject([
             { type: "message-start", role: "user" },
             { type: "message-start", role: "assistant" },
             { type: "data-compaction", data: { status: "running", trigger: "turn-start" } },
         ]);
         expect(announced.assistant).toHaveLength(2);
-        const second = forwarded.findIndex((event) => event.type === "message-start" && event.messageId === announced.assistant[1]);
-        expect(forwarded[second + 1]).toMatchObject({ type: "data-compaction", data: { status: "done", trigger: "turn-start" } });
+        expect(compactionAround(forwarded, announced.assistant[1])).toMatchObject({
+            before: [{ data: { status: "running", trigger: "turn-start" } }, { data: { status: "done", trigger: "turn-start" } }],
+            after: [],
+        });
         // The store holds the divider before the user message, and the reply under the second assistant id. The rounds
         // of the compaction keep no assistant part, thus the first assistant id has live frames only and no stored message.
         const replay = storedMessagesToChat(await storedRows());
@@ -1109,6 +1155,7 @@ describe("runChatTurn — compaction", () => {
         expect(forwarded).toContainEqual(
             expect.objectContaining({ type: "data-compaction", data: expect.objectContaining({ id: replay[0]?.id, status: "done" }) }),
         );
+        expect(await storedDisplay()).toEqual(TURN_START_DISPLAY);
     });
 
     it("stores the exchange, and no user message and no turn record, when an abort ends the turn-start compaction", async () => {

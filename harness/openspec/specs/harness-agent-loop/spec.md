@@ -1266,6 +1266,8 @@ The loop MUST emit the progress of each compaction through its `emit`, as a `dat
 
 The loop MUST emit `running` before the exchange. It MUST emit one terminal status under the same id: `done` after a summary marker, or `failed` when the view did not change. The view does not change after an exchange with no summary, an abort, or a throw out of the exchange. A throw then passes through the loop.
 
+The loop MUST emit `done` before it gives the round sink the round of the marker. A chat turn gives the rounds after a marker a new assistant message. Thus the `running` part and the `done` part of one compaction stream into the same message.
+
 The loop MUST NOT emit `tokensAfter`. No figure of the new view exists before the next request. The field stays optional in `CompactionPart` only for a part that an older harness stored.
 
 The part registry MUST list `data-compaction` with the emitter `conversation`, the consumer `conversation`, `transient: true`, and `reconciling: true`. The display recorder does not store a transient part. The stored marker carries the divider (see the harness-thread-history capability).
@@ -1278,6 +1280,12 @@ The loop MUST log each compaction through its `Logger`: at `info` for a summary,
 - **WHEN** the run returns
 - **THEN** the `emit` got one `data-compaction` part with `running` and `tokensBefore`, and then one with `done` and `durationMs`, under the same id
 - **AND** no part carries `tokensAfter`
+
+#### Scenario: The done part comes before the round of the marker
+
+- **GIVEN** a run with a round sink that compacts one time with a summary
+- **WHEN** the run returns
+- **THEN** the `emit` got the `done` part before the round sink got the marker and its records
 
 #### Scenario: An exchange with no summary emits failed
 

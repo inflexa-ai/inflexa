@@ -256,7 +256,7 @@ describe("the known differences between the live path and the replay", () => {
         expect(replayed[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "aborted" }]);
     });
 
-    it("a compaction: the replay gives a divider between the two assistant messages, and each live message holds the part", async () => {
+    it("a compaction: the replay gives a divider between the two assistant messages, and the first live message holds the part", async () => {
         const figures = { tokensBefore: 162_000, durationMs: 21_000 };
         const exchange = [syntheticUserMessage("Reply with the summary."), { role: "assistant", content: "The user compares two groups." } as ModelMessage].map(
             (message) => markCompactionExchange(message, "c-1"),
@@ -267,24 +267,21 @@ describe("the known differences between the live path and the replay", () => {
                 events: [{ type: "data-compaction", source: ROOT, data: { id: "c-1", status: "running", tokensBefore: figures.tokensBefore } }],
                 model: exchange,
             },
-            { events: [], model: [summaryMarkerMessage("The user compares two groups.", { kind: "summary", id: "c-1", ...figures })] },
-            round([
-                { type: "data-compaction", source: ROOT, data: { id: "c-1", status: "done", ...figures } },
-                { type: "text-delta", text: "after" },
-            ]),
+            {
+                events: [{ type: "data-compaction", source: ROOT, data: { id: "c-1", status: "done", ...figures } }],
+                model: [summaryMarkerMessage("The user compares two groups.", { kind: "summary", id: "c-1", ...figures })],
+            },
+            round([{ type: "text-delta", text: "after" }]),
         ];
         const compaction = { type: "data-compaction", id: "c-1", status: "done", ...figures } satisfies MessagePart;
 
         const { shown, replayed } = await bothPaths(rounds);
 
-        // The marker round gives the later rounds a new assistant id. The `done` part comes after it, thus it opens the second message.
+        // The loop emits `done` before the marker round, thus `done` replaces `running` in the first message.
         expect(shown.map((message) => message.parts)).toEqual([
             [{ type: "text", text: USER_TEXT }],
-            [
-                { type: "text", text: "before" },
-                { type: "data-compaction", id: "c-1", status: "running", tokensBefore: figures.tokensBefore },
-            ],
-            [compaction, { type: "text", text: "after" }],
+            [{ type: "text", text: "before" }, compaction],
+            [{ type: "text", text: "after" }],
         ]);
         expect(replayed.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
         expect(replayed.filter((message) => message.role !== "system").map((message) => message.id)).toEqual(shown.map((message) => message.id));

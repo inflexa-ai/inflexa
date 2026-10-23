@@ -2832,6 +2832,28 @@ describe("runAgent — compaction", () => {
         for (const event of exchangeEvents) expect(Object.hasOwn("source" in event && event.source ? event.source : {}, "invocationId")).toBe(false);
     });
 
+    it("emits done before the sink gets the marker round", async () => {
+        const log: string[] = [];
+        const { provider } = compactingProvider([overCall("tu-1"), text("done")], [smallCall("tu-m"), text(SUMMARY)]);
+
+        await runAgent(
+            agentDef([echoTool()]),
+            GO,
+            makeSession(),
+            opts(provider, {
+                compaction: policyOf(provider),
+                emit: (event) => {
+                    if (event.type === "data-compaction") log.push(compactionParts([event])[0]?.status ?? "no status");
+                },
+                onRound: async (round) => {
+                    log.push(markersOf(round.messages).length > 0 ? "marker round" : "round");
+                },
+            }),
+        );
+
+        expect(log).toEqual(["round", "running", "round", "done", "marker round", "round"]);
+    });
+
     it("records the calls of the exchange under the compaction id, and the turn total holds them", async () => {
         const records: LlmUsageRecord[] = [];
         const { provider } = compactingProvider(

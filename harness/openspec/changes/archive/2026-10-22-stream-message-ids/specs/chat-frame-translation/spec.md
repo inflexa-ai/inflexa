@@ -52,7 +52,7 @@ Each known difference MUST have its own test. The tests MUST NOT hide a differen
 - A call that did not finish: the replay gives `incomplete`, and the live message gives no outcome.
 - A call of a sub-agent that did not finish: the replay gives `incomplete` on its entry, and the live entry gives no outcome.
 - An ask with the status `pending` at the end of the turn: the replay gives `aborted`, and the live message keeps `pending`.
-- A compaction: the replay gives a divider message between two assistant messages. The live path gives the same two assistant messages, and each live message holds the compaction part that came under its id.
+- A compaction: the replay gives a divider message between two assistant messages. The live path gives the same two assistant messages, and the first live message holds the compaction part.
 - A turn that forwards no event: the live user message keeps the id that the client gave it.
 - A round with no streamed text: the replay takes the text of the model reply, and the live path shows no text.
 - The text of two rounds with no part between them: the replay keeps two text parts, and the live message joins them.

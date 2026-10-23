@@ -672,9 +672,11 @@ export function openLoop(
             const records = await active.recordsAfter(conversationView([...messages, markerOf(0)], viewOptions).messages);
             const durationMs = Math.round(performance.now() - startedAt);
             messages.push(markerOf(durationMs), ...records);
-            await giveRound();
             settled = true;
+            // The `done` part goes out before the marker round: a chat turn gives the rounds after a marker a new
+            // assistant message, and the `running` and `done` parts of one compaction must stream into the same message.
             await emitPart({ id, status: "done", tokensBefore, durationMs });
+            await giveRound();
             log.info("conversation compacted", { compactionId: id, trigger, tokensBefore, durationMs });
             summarizedLast = true;
             return undefined;
