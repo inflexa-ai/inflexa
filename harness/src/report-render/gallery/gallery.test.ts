@@ -506,7 +506,8 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(series.filter((entry) => entry.type === "line" && entry.name !== undefined).every((entry) => entry.step === "end")).toBe(true);
         for (const group of ["Female", "Male"]) {
             const marks = series.find((entry) => entry.type === "scatter" && entry.name === group);
-            expect((marks?.data as unknown[]).length).toBe(countRows("clinical-km", (row) => row.strata === group && Number(row.n_censor) > 0));
+            const markData = marks?.data as unknown[];
+            expect(markData.length).toBe(countRows("clinical-km", (row) => row.strata === group && Number(row.n_censor) > 0));
         }
         const risk = series.filter((entry) => entry.xAxisIndex === 1).map((entry) => (entry.data as EchartOption[]).map((cell) => cell.name));
         expect(risk).toEqual([
@@ -664,7 +665,8 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const pieces = ((option.visualMap as EchartOption[])[0].pieces as EchartOption[]).map((piece) => [piece.label, piece.color]);
         expect(pieces).toEqual([...[...LD_BINS].reverse().map((bin) => [`${bin.low}–${bin.high}`, bin.color]), [LD_MISSING_NAME, LD_MISSING_COLOR]]);
         const missing = series.find((entry) => entry.name === LD_MISSING_NAME);
-        expect((missing?.data as unknown[]).length).toBe(rows.filter((row) => row.r2 === "").length);
+        const missingData = missing?.data as unknown[];
+        expect(missingData.length).toBe(rows.filter((row) => row.r2 === "").length);
         // The lead variant is the row of the smallest p, a purple diamond with its name.
         const lead = rows.reduce((best, row) => (Number(row.pvalue) < Number(best.pvalue) ? row : best));
         const diamond = series.find((entry) => entry.name === LEAD_VARIANT_NAME) as EchartOption;

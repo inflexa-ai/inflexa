@@ -142,7 +142,8 @@ describe("the sankey figure on the LAML flow table", () => {
         expect(series.nodeGap).toBe(CHART_PAGE_TEXT_PX * 1.25);
         expect(series.labelLayout).toEqual({ hideOverlap: true });
         const single = (option.media as EchartOption[]).find((rule) => (rule.query as EchartOption).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
-        const [singleSeries] = (single?.option as EchartOption).series as EchartOption[];
+        const singleOption = single?.option as EchartOption;
+        const [singleSeries] = singleOption.series as EchartOption[];
         expect(singleSeries.nodeGap).toBeCloseTo(CHART_EXPORT_SIZES.single.textPx * 1.25, 3);
     });
 });
@@ -234,7 +235,8 @@ describe("the sankey figure", () => {
         for (const size of [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide]) {
             const rule = media.find((entry) => (entry.query as EchartOption).maxWidth === size.widthPx);
             expect(rule?.query).toEqual({ minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx });
-            const [series] = (rule?.option as EchartOption).series as EchartOption[];
+            const ruleOption = rule?.option as EchartOption;
+            const [series] = ruleOption.series as EchartOption[];
             const label = series.label as EchartOption;
             expect(label.fontSize).toBe(size.textPx);
             // The room between two of the three stages, less the gap of the label on each side.

@@ -55,7 +55,13 @@ function agentDef(tools: Tool[], maxIterations = 4): AgentDefinition {
 
 function recordingStep(): { runStep: RunStep; names: string[] } {
     const names: string[] = [];
-    return { runStep: (name, fn) => (names.push(name), fn()), names };
+    return {
+        runStep: (name, fn) => {
+            names.push(name);
+            return fn();
+        },
+        names,
+    };
 }
 
 describe("runToTerminal", () => {
