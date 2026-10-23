@@ -99,6 +99,8 @@ import type { CompactionRules } from "../loop/compaction.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { createResolveCitationTool } from "../tools/research/resolve-citation.js";
+import { createWebFetchTool } from "../tools/research/web-fetch.js";
+import { createWebSearchTool } from "../tools/research/web-search.js";
 
 /** Canonical agent id — the single source of truth. */
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
@@ -126,6 +128,8 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     readonly usageRecorder?: UsageRecorder;
     /** Adds `read_tool_output`, and each loop-driving tool gives the same store to its sub-agent. */
     readonly toolOutputStore?: ToolOutputStore;
+    /** The SearXNG base URL of the embedder's search engine; set, `web_search` attaches, absent it does not. `web_fetch` attaches either way. */
+    readonly searxngBaseUrl?: string;
     /** Shared host-side bibliographic verification service. */
     readonly citationResolver: CitationResolver;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
@@ -242,6 +246,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         usageRecorder,
         toolOutputStore,
         citationResolver,
+        searxngBaseUrl,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -276,6 +281,10 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // preprint has no MEDLINE record, thus PubMed alone cannot answer it.
         createSearchSemanticScholarTool({ ...(bioKeys.semanticScholar === undefined ? {} : { apiKey: bioKeys.semanticScholar }) }),
         searchArxivTool,
+        // The web step of research — the SearXNG search of the embedder's engine,
+        // then the guarded page fetch that reads what the search found.
+        ...(searxngBaseUrl ? [createWebSearchTool({ searxngBaseUrl })] : []),
+        createWebFetchTool({ ...(toolOutputStore ? { toolOutputStore } : {}) }),
         // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
         chemblTool,
         // PubChem (compound / crossrefs / assays behind one action).

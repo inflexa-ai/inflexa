@@ -28,7 +28,7 @@ import {
     type V1Volume,
     type V1VolumeMount,
 } from "@kubernetes/client-node";
-import { ResultAsync, err, ok } from "neverthrow";
+import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
@@ -571,7 +571,7 @@ function createOrAdoptJob(
         cause,
     });
     return new ResultAsync(
-        (async () => {
+        (async (): Promise<Result<void, SandboxError>> => {
             const created = await trySandbox(() => batchApi.createNamespacedJob({ namespace, body: job }), createFailed);
             if (created.isOk()) return ok(undefined);
             if (statusOf(created.error) !== 409) return err(created.error);

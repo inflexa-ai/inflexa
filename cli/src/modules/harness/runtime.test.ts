@@ -937,6 +937,20 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
     });
 });
 
+// The SearXNG hand-off. The CLI owns the compose stack, so the engine's URL is a
+// derived stack constant: the conversation deps bag must carry it for the harness
+// to attach `web_search`. No gate and no notice belongs in the boot — an engine
+// that is down is a normal `web_search` error result.
+describe("bootHarnessRuntime — the SearXNG base URL", () => {
+    test("hands the conversation deps the loopback URL derived from the channel port", async () => {
+        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+
+        const url = lastCore?.conversation.searxngBaseUrl;
+        expect(url).toBe(env.searxngBaseUrl);
+        expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    });
+});
+
 // The direct-mode auth-injecting fetch (the config.fetch seam): per-request scheme rewrite + one 401
 // refresh/retry. Driven with a recording underlying fetch so the OUTGOING headers and retry count are the
 // assertions — no real network, no provider boot.

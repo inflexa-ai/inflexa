@@ -33,6 +33,11 @@ Before any `compose up`, the system SHALL ensure every bind-mount source in the 
 - **WHEN** a compose entry point runs while the auth or postgres data directories are absent
 - **THEN** they are created as directories before the engine is invoked
 
+#### Scenario: The SearXNG settings file is provisioned before the engine
+
+- **WHEN** a compose entry point runs in any connection mode and the SearXNG settings file is absent
+- **THEN** the file is written with its canonical content before the engine is invoked, and a later run changes nothing in it
+
 #### Scenario: Manifest covers every bind mount
 
 - **WHEN** the compose file is generated for any connection mode

@@ -80,16 +80,17 @@ describe("devCommandsActive", () => {
 // isDevelopmentBuild is split out. Production values are pinned to their historical literals so a prod
 // install is provably untouched; dev gets fixed siblings that must never collide with them.
 describe("stackPorts", () => {
-    test("production → the historical proxy 8317 / postgres 8432 / admin 8433 trio, plus the server 8431", () => {
+    test("production → the historical proxy 8317 / postgres 8432 / admin 8433 trio, plus the server 8431 and searxng 28437", () => {
         // 8433 is the DBOS admin default's historical value, so a prod install sees no change to any of the
-        // three host ports it binds.
-        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432, admin: 8433, server: 8431 });
+        // three host ports it binds. The searxng port is new, so it takes a fresh block with no historical
+        // value to preserve.
+        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432, searxng: 28437, admin: 8433, server: 8431 });
     });
 
-    test("dev (unset or any non-production channel) → siblings proxy 8318 / postgres 8434 / admin 8435 / server 8436", () => {
-        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 });
-        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 });
-        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 });
+    test("dev (unset or any non-production channel) → siblings proxy 8318 / postgres 8434 / searxng 28438 / admin 8435 / server 8436", () => {
+        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8434, searxng: 28438, admin: 8435, server: 8436 });
+        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8434, searxng: 28438, admin: 8435, server: 8436 });
+        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8434, searxng: 28438, admin: 8435, server: 8436 });
     });
 
     test("dev postgres port avoids 5433 (the harness testcontainer) and 5432 (system PG)", () => {
@@ -114,6 +115,16 @@ describe("stackPorts", () => {
         const dev = Object.values(stackPorts("development"));
         expect(new Set([...prod, ...dev]).size).toBe(prod.length + dev.length);
     });
+
+    test("the searxng ports sit outside the historical 831x/843x blocks and below the ephemeral ranges", () => {
+        // A new service with no historical port: it must not crowd the 831x/84xx families (whose blocks the
+        // channel rule allocates adjacently) and must stay clear of the OS ephemeral range (32768+).
+        for (const channel of ["production", "development"] as const) {
+            const port = stackPorts(channel).searxng;
+            expect(port).toBeGreaterThan(8436);
+            expect(port).toBeLessThan(32768);
+        }
+    });
 });
 
 describe("stackPaths", () => {
@@ -124,6 +135,7 @@ describe("stackPaths", () => {
             cliproxyConfigPath: join(base, "inflexa", "cliproxy", "config.yaml"),
             cliproxyAuthDir: join(base, "inflexa", "cliproxy", "auth"),
             postgresDataDir: join(base, "inflexa", "postgres"),
+            searxngSettingsPath: join(base, "inflexa", "searxng", "settings.yml"),
             composeFilePath: join(base, "inflexa", "docker-compose.yml"),
             setupStatePath: join(base, "inflexa", "setup-state.json"),
             serverFilePath: join(base, "inflexa", "server.json"),
@@ -131,11 +143,12 @@ describe("stackPaths", () => {
         });
     });
 
-    test("dev paths are the sibling variants (cliproxy-dev/, postgres-dev/, docker-compose.dev.yml)", () => {
+    test("dev paths are the sibling variants (cliproxy-dev/, postgres-dev/, searxng-dev/, docker-compose.dev.yml)", () => {
         expect(stackPaths(base, undefined)).toEqual({
             cliproxyConfigPath: join(base, "inflexa", "cliproxy-dev", "config.yaml"),
             cliproxyAuthDir: join(base, "inflexa", "cliproxy-dev", "auth"),
             postgresDataDir: join(base, "inflexa", "postgres-dev"),
+            searxngSettingsPath: join(base, "inflexa", "searxng-dev", "settings.yml"),
             composeFilePath: join(base, "inflexa", "docker-compose.dev.yml"),
             setupStatePath: join(base, "inflexa", "setup-state.dev.json"),
             serverFilePath: join(base, "inflexa", "server.dev.json"),
