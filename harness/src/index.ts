@@ -191,6 +191,14 @@ export { normalizeDetail, DETAIL_MAX_LENGTH } from "./loop/tool-detail.js";
 // Host-agnostic citation verification service and its public contracts.
 export { createCitationResolver } from "./citations/resolve.js";
 export type { CitationResolverConfig, CitationResolverDependencies, CitationResolverSourceConfig } from "./citations/resolve.js";
+
+// The web-search engine type and the SearXNG realization. An embedder cannot
+// build its composition root without these two names: it constructs the engine
+// and types the `webSearch` field of `ConversationAgentDeps` (the front-door
+// rule of the harness-embedder-exports spec). The tools stay off the barrel —
+// the conversation agent constructs them itself.
+export { createSearxngEngine } from "./tools/research/searxng-engine.js";
+export type { WebSearchEngine } from "./tools/research/web-search.js";
 export {
     CitationKindSchema,
     CitationInputSchema,

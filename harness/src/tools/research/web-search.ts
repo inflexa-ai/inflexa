@@ -1,24 +1,18 @@
 /**
  * `web_search` — the web step of the conversation agent's research.
  *
- * One SearXNG instance is the only engine (the embedder owns it and gives its
- * base URL at the composition root). The call rides `apiFetchValidated` with a
- * zod schema over the JSON envelope, and every failure is a normal result: the
- * spec makes an HTTP error, a spent retryable status, a schema mismatch, and a
- * body that is not JSON data variants of the ok channel, not errors of the
- * turn.
- *
- * Absence policy: SearXNG omits what no engine returned, thus every field of
- * the envelope is optional, and the mapper drops a result that misses `url` or
- * `title` and an answer that carries neither `answer` nor `url` — the
- * `search_github_repos` policy.
+ * The tool queries a `WebSearchEngine` the embedder injects at the composition
+ * root; the SearXNG realization ships beside it in `searxng-engine.ts`. The
+ * tool owns the input contract and the search semantics the spec pins — the
+ * domain-filter terms and the host re-filter, the queries merge, the bound —
+ * and every engine failure rides the ok channel as a data-status variant,
+ * never as an error of the turn.
  */
 
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetchValidated, type ApiError } from "../lib/api-utils.js";
 
 export interface WebSearchAnswer {
     readonly answer?: string;
@@ -38,102 +32,30 @@ export type WebSearchOutput =
     | { readonly status: "schema_mismatch"; readonly text: string }
     | { readonly status: "not_json"; readonly text: string; readonly detail?: string };
 
-// SearXNG sends an explicit null for a snippet no engine produced, and it omits
-// a key no engine filled, thus each field is optional and nullable alike. The
-// fields an engine adds (`engine`, `score`, `publishedDate`, …) pass and strip.
-const SearxngResultSchema = z.object({
-    title: z.string().nullable().optional(),
-    url: z.string().nullable().optional(),
-    content: z.string().nullable().optional(),
-});
-
-// An answer is an object of a changing shape (`answer`, `url`, `template`,
-// `engine`, …), thus the schema keeps it loose and the mapper reads the two
-// fields the tool reports.
-export const SearxngSearchResponseSchema = z.object({
-    results: z.array(SearxngResultSchema).optional(),
-    answers: z.array(z.looseObject({ answer: z.string().nullable().optional(), url: z.string().nullable().optional() })).optional(),
-});
-
-/** Map a parsed SearXNG envelope to the tool output rows. */
-export function mapSearxngResponse(response: z.infer<typeof SearxngSearchResponseSchema>): {
-    answers: WebSearchAnswer[];
-    results: WebSearchResult[];
-} {
-    const answers: WebSearchAnswer[] = [];
-    for (const row of response.answers ?? []) {
-        const answer = typeof row.answer === "string" ? row.answer : undefined;
-        const url = typeof row.url === "string" ? row.url : undefined;
-        if (answer === undefined && url === undefined) continue;
-        answers.push({ answer, url });
-    }
-
-    const results: WebSearchResult[] = [];
-    for (const row of response.results ?? []) {
-        if (typeof row.url !== "string" || typeof row.title !== "string") continue;
-        results.push({ title: row.title, url: row.url, snippet: typeof row.content === "string" ? row.content : undefined });
-    }
-    return { answers, results };
+/** One query with its terms already composed: the engine adds transport, not semantics. */
+export interface WebSearchRequest {
+    /** The final query text, `site:` / `-site:` terms included. */
+    readonly query: string;
+    readonly recencyFilter?: "day" | "week" | "month" | "year";
 }
+
+/** What one query returned: the mapped answers and the mapped result rows. */
+export type WebSearchPage = {
+    readonly answers: readonly WebSearchAnswer[];
+    readonly results: readonly WebSearchResult[];
+};
+
+/** The error side of the engine result: the data-status variants the tool reports as normal results. */
+export type WebSearchEngineError = Exclude<WebSearchOutput, { readonly status: "ok" }>;
 
 /**
- * Normalize the SearXNG base URL the embedder gives: `http`/`https` only, no
- * user name and no password, and no query, fragment, or trailing slash. The
- * value is a composition-root constant, thus a bad one throws here at wiring
- * time and not inside a tool call.
+ * The injected web-search engine: an embedder supplies one realization, and the
+ * conversation agent attaches `web_search` iff it did. `search` gets the final
+ * query terms and the optional recency filter, and resolves to the page or to
+ * the error variant that names the failure.
  */
-export function normalizeSearxngBaseUrl(raw: string): string {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw new Error(`The SearXNG base URL must use http or https: ${raw}`);
-    }
-    if (parsed.username !== "" || parsed.password !== "") {
-        throw new Error(`The SearXNG base URL must carry no user name or password: ${raw}`);
-    }
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, "")}`;
-}
-
-/** The first 300 characters of a body, as the HTTP-error text reports it. */
-function bodyExcerpt(body: string): string {
-    return body.length > 300 ? body.slice(0, 300) : body;
-}
-
-/** Map one `ApiError` of the helper to the error data variant it names. */
-export function describeSearchFailure(error: ApiError): WebSearchOutput {
-    switch (error.type) {
-        case "http_status":
-            return {
-                status: "http_error",
-                httpStatus: error.status,
-                text: `SearXNG answered HTTP ${error.status}${error.body ? `: ${bodyExcerpt(error.body)}` : ""}`,
-            };
-        case "invalid_response":
-            return { status: "schema_mismatch", text: `SearXNG response did not match the expected schema: ${error.issues}` };
-        case "timeout":
-            return {
-                status: "not_json",
-                text: `SearXNG did not answer with a valid JSON body: the request timed out after ${error.timeoutMs}ms`,
-            };
-        case "exhausted": {
-            // A spent retryable status arrives as `exhausted` with an `HTTP <status>`
-            // last error, because the helper reports it there and not as `http_status`.
-            const status = /^HTTP (\d+)$/.exec(error.lastError);
-            if (status) {
-                return {
-                    status: "retryable_status",
-                    httpStatus: Number(status[1]),
-                    text: `SearXNG answered HTTP ${status[1]} and spent its retry attempt`,
-                };
-            }
-            // A transport failure and a body that will not parse share this bucket,
-            // and the text stays fixed so it never echoes a runtime parse message.
-            return {
-                status: "not_json",
-                text: "SearXNG did not answer with a valid JSON body",
-                detail: error.lastError,
-            };
-        }
-    }
+export interface WebSearchEngine {
+    search(request: WebSearchRequest): Promise<Result<WebSearchPage, WebSearchEngineError>>;
 }
 
 interface DomainFilter {
@@ -181,13 +103,11 @@ function applyDomainFilter(results: readonly WebSearchResult[], filter: DomainFi
 }
 
 export interface WebSearchToolDeps {
-    /** The base URL of the SearXNG instance the embedder runs. */
-    readonly searxngBaseUrl: string;
+    /** The web-search engine the embedder injected. */
+    readonly engine: WebSearchEngine;
 }
 
 export function createWebSearchTool(deps: WebSearchToolDeps) {
-    const baseUrl = normalizeSearxngBaseUrl(deps.searxngBaseUrl);
-
     return defineTool({
         id: "web_search",
         description:
@@ -223,18 +143,12 @@ export function createWebSearchTool(deps: WebSearchToolDeps) {
             // The input refine guarantees exactly one of `query` and `queries`.
             const queryList = queries ?? [query!];
 
-            const requests = queryList.map((raw) => {
-                const params = new URLSearchParams({ q: queryTerms(raw, filter), format: "json" });
-                if (recencyFilter) params.set("time_range", recencyFilter);
-                return apiFetchValidated(`${baseUrl}/search?${params}`, SearxngSearchResponseSchema, {
-                    headers: { Accept: "application/json" },
-                    maxRetries: 0,
-                }).map((response) => mapSearxngResponse(response));
-            });
+            const requests = queryList.map((raw) => deps.engine.search({ query: queryTerms(raw, filter), ...(recencyFilter ? { recencyFilter } : {}) }));
 
-            const responses: Array<{ answers: WebSearchAnswer[]; results: WebSearchResult[] }> = [];
+            const responses: WebSearchPage[] = [];
             for (const response of await Promise.all(requests)) {
-                if (response.isErr()) return ok(describeSearchFailure(response.error));
+                // An engine failure is the data-status variant the tool reports, not a turn error.
+                if (response.isErr()) return ok(response.error);
                 responses.push(response.value);
             }
 
