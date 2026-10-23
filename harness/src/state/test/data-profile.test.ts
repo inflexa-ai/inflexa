@@ -1,0 +1,880 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { Pool } from "pg";
+
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import {
+    clearDataProfile,
+    completeDataProfile,
+    completeEmptyDataProfile,
+    failDataProfile,
+    loadDataProfileStatus,
+    recordDataProfileWorkflowId,
+    tryRerunDataProfile,
+    tryRetryDataProfile,
+    tryStartDataProfile,
+    expireStaleDataProfile,
+    type DataProfileResult,
+} from "../data-profile.js";
+
+/**
+ * Insert an analysis-state row. `seed` defaults to a non-empty set because every claim
+ * into `running` requires one — a status-transition test that left it NULL would be
+ * asserting the seed conjunct, not the transition it names. Pass `null` or `[]`
+ * explicitly to exercise the unseeded refusals.
+ */
+async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string | null = "pending", seed: string[] | null = ["file-seed"]): Promise<void> {
+    const now = new Date().toISOString();
+    await pool.query({
+        text: `INSERT INTO cortex_analysis_state
+           (analysis_id, status, context, data_profile_status, seed_input_file_ids, created_at, updated_at)
+           VALUES ($1, 'active', NULL, $2, $3::jsonb, $4, $5)`,
+        values: [analysisId, dpStatus, seed === null ? null : JSON.stringify(seed), now, now],
+    });
+}
+
+/** Read `data_profile_status` straight off the row, bypassing `loadDataProfileStatus`'s NULL-collapse. */
+async function rawStatus(pool: Pool, analysisId: string): Promise<string | null> {
+    const res = await pool.query<{ data_profile_status: string | null }>({
+        text: "SELECT data_profile_status FROM cortex_analysis_state WHERE analysis_id = $1",
+        values: [analysisId],
+    });
+    return res.rows[0]?.data_profile_status ?? null;
+}
+
+/** Read `data_profile_workflow_id` straight off the row — the only way to see it on a cleared (NULL-status) row. */
+async function rawWorkflowId(pool: Pool, analysisId: string): Promise<string | null> {
+    const res = await pool.query<{ data_profile_workflow_id: string | null }>({
+        text: "SELECT data_profile_workflow_id FROM cortex_analysis_state WHERE analysis_id = $1",
+        values: [analysisId],
+    });
+    return res.rows[0]?.data_profile_workflow_id ?? null;
+}
+
+/** Rewrite `seed_input_file_ids` directly — the column every claim's CAS conjunct reads. */
+async function setSeed(pool: Pool, analysisId: string, seed: string[] | null): Promise<void> {
+    await pool.query({
+        text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
+        values: [seed === null ? null : JSON.stringify(seed), analysisId],
+    });
+}
+
+const SAMPLE_RESULT = {
+    summary: "3 RNA-seq count matrices",
+    files: [
+        { path: "data/inputs/f1/counts.csv", description: "Raw count matrix" },
+        { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
+    ],
+    profiledAt: "2026-06-09T10:00:00.000Z",
+};
+
+describe("data-profile state transitions", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_state_transitions");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("tryStartDataProfile: pending → running", async () => {
+        await seedAnalysis(pool, "a-start", "pending");
+        const claimed = (await tryStartDataProfile(pool, "a-start"))._unsafeUnwrap();
+        expect(claimed).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-start"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.startedAt).not.toBeNull();
+    });
+
+    it("tryStartDataProfile: only one caller wins the race", async () => {
+        await seedAnalysis(pool, "a-race", "pending");
+        // Both claims start before either is awaited — the eager ResultAsync fires
+        // its query on construction, so the two UPDATEs race at the DB. Awaiting one
+        // before constructing the other would serialize them and mask the race.
+        const raceA = tryStartDataProfile(pool, "a-race");
+        const raceB = tryStartDataProfile(pool, "a-race");
+        const a = (await raceA)._unsafeUnwrap();
+        const b = (await raceB)._unsafeUnwrap();
+        expect([a, b].filter(Boolean)).toHaveLength(1);
+    });
+
+    it("tryStartDataProfile: no-op when not pending", async () => {
+        await seedAnalysis(pool, "a-noop", "completed");
+        const claimed = (await tryStartDataProfile(pool, "a-noop"))._unsafeUnwrap();
+        expect(claimed).toBe(false);
+    });
+
+    it("tryRerunDataProfile: completed → running, preserves data_profile_result", async () => {
+        await seedAnalysis(pool, "a-rerun", "pending");
+        (await tryStartDataProfile(pool, "a-rerun"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-rerun", SAMPLE_RESULT))._unsafeUnwrap();
+
+        const before = (await loadDataProfileStatus(pool, "a-rerun"))._unsafeUnwrap();
+        expect(before?.status).toBe("completed");
+        expect(before?.result).not.toBeNull();
+        expect(before?.completedAt).not.toBeNull();
+
+        const claimed = (await tryRerunDataProfile(pool, "a-rerun"))._unsafeUnwrap();
+        expect(claimed).toBe(true);
+
+        const after = (await loadDataProfileStatus(pool, "a-rerun"))._unsafeUnwrap();
+        expect(after?.status).toBe("running");
+        expect(after?.result).toEqual(SAMPLE_RESULT);
+        expect(after?.completedAt).toBeNull();
+        expect(after?.error).toBeNull();
+        expect(after?.startedAt).not.toBeNull();
+    });
+
+    it("tryRerunDataProfile: no-op when not completed", async () => {
+        await seedAnalysis(pool, "a-rerun-noop", "running");
+        const claimed = (await tryRerunDataProfile(pool, "a-rerun-noop"))._unsafeUnwrap();
+        expect(claimed).toBe(false);
+    });
+
+    it("tryRetryDataProfile: failed → running, preserves data_profile_result", async () => {
+        await seedAnalysis(pool, "a-retry", "pending");
+        (await tryStartDataProfile(pool, "a-retry"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-retry", SAMPLE_RESULT))._unsafeUnwrap();
+        // Reach `failed` the only legitimate way: re-claim `completed → running` (the
+        // re-profile route), then fail from `running` — `failDataProfile` CAS's on
+        // `running`, so a direct `completed → failed` would now no-op.
+        (await tryRerunDataProfile(pool, "a-retry"))._unsafeUnwrap();
+        (await failDataProfile(pool, "a-retry", "sandbox crashed"))._unsafeUnwrap();
+
+        const before = (await loadDataProfileStatus(pool, "a-retry"))._unsafeUnwrap();
+        expect(before?.status).toBe("failed");
+        expect(before?.result).toEqual(SAMPLE_RESULT);
+
+        const claimed = (await tryRetryDataProfile(pool, "a-retry"))._unsafeUnwrap();
+        expect(claimed).toBe(true);
+
+        const after = (await loadDataProfileStatus(pool, "a-retry"))._unsafeUnwrap();
+        expect(after?.status).toBe("running");
+        expect(after?.result).toEqual(SAMPLE_RESULT);
+        expect(after?.error).toBeNull();
+        expect(after?.completedAt).toBeNull();
+    });
+
+    it("tryRetryDataProfile: no-op when not failed", async () => {
+        await seedAnalysis(pool, "a-retry-noop", "completed");
+        const claimed = (await tryRetryDataProfile(pool, "a-retry-noop"))._unsafeUnwrap();
+        expect(claimed).toBe(false);
+    });
+
+    it("failDataProfile preserves prior data_profile_result", async () => {
+        await seedAnalysis(pool, "a-fail-preserve", "pending");
+        (await tryStartDataProfile(pool, "a-fail-preserve"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-fail-preserve", SAMPLE_RESULT))._unsafeUnwrap();
+        (await tryRerunDataProfile(pool, "a-fail-preserve"))._unsafeUnwrap();
+        (await failDataProfile(pool, "a-fail-preserve", "timeout"))._unsafeUnwrap();
+
+        const status = (await loadDataProfileStatus(pool, "a-fail-preserve"))._unsafeUnwrap();
+        expect(status?.status).toBe("failed");
+        expect(status?.error).toBe("timeout");
+        expect(status?.result).toEqual(SAMPLE_RESULT);
+    });
+
+    it("expireStaleDataProfile marks old running profiles as failed", async () => {
+        await seedAnalysis(pool, "a-stale", "pending");
+        (await tryStartDataProfile(pool, "a-stale"))._unsafeUnwrap();
+
+        // Backdate started_at to 15 minutes ago
+        await pool.query({
+            text: `UPDATE cortex_analysis_state
+             SET data_profile_started_at = $1
+             WHERE analysis_id = $2`,
+            values: [new Date(Date.now() - 15 * 60 * 1000).toISOString(), "a-stale"],
+        });
+
+        const expired = (await expireStaleDataProfile(pool, "a-stale", 10 * 60 * 1000))._unsafeUnwrap();
+        expect(expired).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-stale"))._unsafeUnwrap();
+        expect(status?.status).toBe("failed");
+        expect(status?.error).toBe("Data profiling timed out");
+    });
+
+    it("expireStaleDataProfile: no-op when within timeout", async () => {
+        await seedAnalysis(pool, "a-fresh", "pending");
+        (await tryStartDataProfile(pool, "a-fresh"))._unsafeUnwrap();
+
+        const expired = (await expireStaleDataProfile(pool, "a-fresh", 10 * 60 * 1000))._unsafeUnwrap();
+        expect(expired).toBe(false);
+
+        const status = (await loadDataProfileStatus(pool, "a-fresh"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+    });
+
+    it("clearDataProfile: completed → cleared, nulls all six columns", async () => {
+        await seedAnalysis(pool, "a-clear-done", "pending");
+        (await tryStartDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-clear-done", SAMPLE_RESULT))._unsafeUnwrap();
+        // Seed the sixth column the clear must null — the seed helper leaves it null.
+        await pool.query({
+            text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
+            values: [JSON.stringify(["file-aaa", "file-bbb"]), "a-clear-done"],
+        });
+
+        const cleared = (await clearDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
+        expect(cleared).toBe(true);
+
+        const raw = await pool.query({
+            text: `SELECT data_profile_status, data_profile_error, data_profile_started_at,
+                   data_profile_completed_at, data_profile_result, seed_input_file_ids
+            FROM cortex_analysis_state WHERE analysis_id = $1`,
+            values: ["a-clear-done"],
+        });
+        const row = raw.rows[0];
+        expect(row.data_profile_status).toBeNull();
+        expect(row.data_profile_error).toBeNull();
+        expect(row.data_profile_started_at).toBeNull();
+        expect(row.data_profile_completed_at).toBeNull();
+        expect(row.data_profile_result).toBeNull();
+        expect(row.seed_input_file_ids).toBeNull();
+
+        // A cleared profile reads back as "no profile" — the same null a
+        // never-profiled analysis returns.
+        const status = (await loadDataProfileStatus(pool, "a-clear-done"))._unsafeUnwrap();
+        expect(status).toBeNull();
+    });
+
+    it("clearDataProfile: failed → cleared", async () => {
+        await seedAnalysis(pool, "a-clear-failed", "failed");
+        const cleared = (await clearDataProfile(pool, "a-clear-failed"))._unsafeUnwrap();
+        expect(cleared).toBe(true);
+        expect((await loadDataProfileStatus(pool, "a-clear-failed"))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("clearDataProfile: pending → cleared", async () => {
+        await seedAnalysis(pool, "a-clear-pending", "pending");
+        const cleared = (await clearDataProfile(pool, "a-clear-pending"))._unsafeUnwrap();
+        expect(cleared).toBe(true);
+        expect((await loadDataProfileStatus(pool, "a-clear-pending"))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("clearDataProfile: running → skipped, changes nothing", async () => {
+        await seedAnalysis(pool, "a-clear-running", "pending");
+        (await tryStartDataProfile(pool, "a-clear-running"))._unsafeUnwrap();
+
+        const cleared = (await clearDataProfile(pool, "a-clear-running"))._unsafeUnwrap();
+        expect(cleared).toBe(false);
+
+        const status = (await loadDataProfileStatus(pool, "a-clear-running"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.startedAt).not.toBeNull();
+    });
+
+    it("clearDataProfile: absent row → skipped", async () => {
+        const cleared = (await clearDataProfile(pool, "a-clear-missing"))._unsafeUnwrap();
+        expect(cleared).toBe(false);
+    });
+
+    it("clear-then-reseed-then-reprofile lifecycle: the cleared row is claimable once reseeded", async () => {
+        await seedAnalysis(pool, "a-reprofile", "pending");
+        (await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-reprofile", SAMPLE_RESULT))._unsafeUnwrap();
+        (await clearDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
+
+        // The clear nulled status AND seed. Status alone is claimable; the seed is not,
+        // so the row stays unclaimable until the inputs (and their seed) return.
+        expect((await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap()).toBe(false);
+
+        await setSeed(pool, "a-reprofile", ["file-returned"]);
+        expect((await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-reprofile"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.startedAt).not.toBeNull();
+    });
+
+    it("tryStartDataProfile: claims a NULL-status row once it carries a seed", async () => {
+        await seedAnalysis(pool, "a-start-null", "pending");
+        (await clearDataProfile(pool, "a-start-null"))._unsafeUnwrap();
+        // The clear leaves status NULL — confirm the precondition, then reseed and claim.
+        expect((await loadDataProfileStatus(pool, "a-start-null"))._unsafeUnwrap()).toBeNull();
+        await setSeed(pool, "a-start-null", ["file-aaa"]);
+
+        const claimed = (await tryStartDataProfile(pool, "a-start-null"))._unsafeUnwrap();
+        expect(claimed).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-start-null"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+    });
+});
+
+// A `running` row must always name the files it is profiling. The conjunct lives in each
+// claim's CAS rather than in a caller's pre-read, because `clearDataProfile` can null the
+// seed of any non-`running` row at any moment — so a read-then-claim is a race. `[]` is a
+// real value meaning "zero files" (NULL means "leave the stored seed alone" to the upsert),
+// and is refused identically.
+describe("the seed conjunct on every claim into running", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_seed_conjunct");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    const claims = [
+        { name: "tryStartDataProfile", status: "pending", claim: tryStartDataProfile },
+        { name: "tryStartDataProfile (NULL status)", status: null, claim: tryStartDataProfile },
+        { name: "tryRerunDataProfile", status: "completed", claim: tryRerunDataProfile },
+        { name: "tryRetryDataProfile", status: "failed", claim: tryRetryDataProfile },
+    ] as const;
+
+    for (const { name, status, claim } of claims) {
+        const slug = name.replace(/\W+/g, "-").toLowerCase();
+
+        it(`${name}: refuses a NULL seed`, async () => {
+            const id = `null-${slug}`;
+            await seedAnalysis(pool, id, status, null);
+            expect((await claim(pool, id))._unsafeUnwrap()).toBe(false);
+            expect(await rawStatus(pool, id)).toBe(status);
+        });
+
+        it(`${name}: refuses an empty seed`, async () => {
+            const id = `empty-${slug}`;
+            await seedAnalysis(pool, id, status, []);
+            expect((await claim(pool, id))._unsafeUnwrap()).toBe(false);
+            expect(await rawStatus(pool, id)).toBe(status);
+        });
+
+        it(`${name}: claims a non-empty seed`, async () => {
+            const id = `ok-${slug}`;
+            await seedAnalysis(pool, id, status, ["file-aaa"]);
+            expect((await claim(pool, id))._unsafeUnwrap()).toBe(true);
+            expect(await rawStatus(pool, id)).toBe("running");
+        });
+    }
+
+    it("no claim can ever leave a running row with no recorded input set", async () => {
+        // The invariant, stated as a query. Seed every claimable status unseeded, fire every
+        // claim at it, then assert the forbidden state does not exist anywhere in the schema.
+        await seedAnalysis(pool, "inv-pending", "pending", null);
+        await seedAnalysis(pool, "inv-null", null, []);
+        await seedAnalysis(pool, "inv-completed", "completed", null);
+        await seedAnalysis(pool, "inv-failed", "failed", []);
+        for (const id of ["inv-pending", "inv-null", "inv-completed", "inv-failed"]) {
+            (await tryStartDataProfile(pool, id))._unsafeUnwrap();
+            (await tryRerunDataProfile(pool, id))._unsafeUnwrap();
+            (await tryRetryDataProfile(pool, id))._unsafeUnwrap();
+        }
+
+        const seedless = await pool.query<{ analysis_id: string }>(
+            `SELECT analysis_id FROM cortex_analysis_state
+             WHERE data_profile_status = 'running'
+               AND (seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)`,
+        );
+        expect(seedless.rows).toEqual([]);
+    });
+});
+
+// A terminal write (`completeDataProfile` / `failDataProfile`) runs as plain workflow-body
+// code and can reach the ledger after the row it targets was cleared (emptied inputs) or
+// expired (stale-timeout) out from under it — including on a DBOS recovery replay. Both
+// writes CAS on `data_profile_status = 'running'` so a late write finds no running row and
+// no-ops, instead of resurrecting the seedless-`completed` state the seed CAS forbids.
+describe("terminal writes CAS on running — a cleared row is never resurrected", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_terminal_cas");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /**
+     * Drive a claimed-`running` row through the finding's expiry-zombie interleave:
+     * the stale-timeout expiry flips `running → failed`, then `clearDataProfile`
+     * succeeds on that `failed` row (its guard only defers on `running`). Leaves the
+     * row cleared while a notionally-still-live workflow holds the claim.
+     */
+    async function runningThenExpiredThenCleared(id: string): Promise<void> {
+        await seedAnalysis(pool, id, "pending");
+        (await tryStartDataProfile(pool, id))._unsafeUnwrap();
+        await pool.query({
+            text: `UPDATE cortex_analysis_state SET data_profile_started_at = $1 WHERE analysis_id = $2`,
+            values: [new Date(Date.now() - 15 * 60 * 1000).toISOString(), id],
+        });
+        (await expireStaleDataProfile(pool, id, 10 * 60 * 1000))._unsafeUnwrap();
+        expect((await clearDataProfile(pool, id))._unsafeUnwrap()).toBe(true);
+    }
+
+    it("completeDataProfile no-ops after a clear and leaves the row cleared", async () => {
+        await runningThenExpiredThenCleared("a-complete-after-clear");
+
+        const write = (await completeDataProfile(pool, "a-complete-after-clear", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(write).toEqual({ stamped: false });
+
+        // Reads back as "no profile"; nothing resurrected — status, result, and seed all NULL.
+        expect((await loadDataProfileStatus(pool, "a-complete-after-clear"))._unsafeUnwrap()).toBeNull();
+        const raw = await pool.query<{ data_profile_status: string | null; data_profile_result: unknown; seed_input_file_ids: string[] | null }>({
+            text: "SELECT data_profile_status, data_profile_result, seed_input_file_ids FROM cortex_analysis_state WHERE analysis_id = $1",
+            values: ["a-complete-after-clear"],
+        });
+        expect(raw.rows[0]?.data_profile_status).toBeNull();
+        expect(raw.rows[0]?.data_profile_result).toBeNull();
+        expect(raw.rows[0]?.seed_input_file_ids).toBeNull();
+    });
+
+    it("failDataProfile no-ops after a clear and leaves the row cleared", async () => {
+        await runningThenExpiredThenCleared("a-fail-after-clear");
+
+        const write = (await failDataProfile(pool, "a-fail-after-clear", "sandbox crashed"))._unsafeUnwrap();
+        expect(write).toEqual({ stamped: false });
+
+        expect((await loadDataProfileStatus(pool, "a-fail-after-clear"))._unsafeUnwrap()).toBeNull();
+        expect(await rawStatus(pool, "a-fail-after-clear")).toBeNull();
+    });
+
+    it("completeDataProfile still stamps a genuinely running row", async () => {
+        await seedAnalysis(pool, "a-complete-running", "pending");
+        (await tryStartDataProfile(pool, "a-complete-running"))._unsafeUnwrap();
+
+        const write = (await completeDataProfile(pool, "a-complete-running", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(write.stamped).toBe(true);
+        // The accepted stamp carries the start of the claim it closed.
+        expect(write.stamped && write.startedAt).toBe((await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap()?.startedAt ?? null);
+        // And the completion time that it stamped, the one the settle notice carries.
+        expect(write.stamped ? write.completedAt : null).toBe((await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap()?.completedAt ?? null);
+
+        const status = (await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toEqual(SAMPLE_RESULT);
+    });
+
+    it("failDataProfile still stamps a genuinely running row", async () => {
+        await seedAnalysis(pool, "a-fail-running", "pending");
+        (await tryStartDataProfile(pool, "a-fail-running"))._unsafeUnwrap();
+
+        const write = (await failDataProfile(pool, "a-fail-running", "boom"))._unsafeUnwrap();
+        expect(write.stamped).toBe(true);
+        expect(write.stamped && write.startedAt).toBe((await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap()?.startedAt ?? null);
+        expect(write.stamped ? write.completedAt : null).toBe((await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap()?.completedAt ?? null);
+
+        const status = (await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap();
+        expect(status?.status).toBe("failed");
+        expect(status?.error).toBe("boom");
+    });
+});
+
+/**
+ * The persisted profile is the ONLY durable copy — the profiler's scratch tree is deleted
+ * on completion — so the row carries the profiler's whole finding, and a row written before
+ * it was widened must still read. Both directions are asserted on real DB state: a legacy
+ * snapshot written straight into the jsonb column, and a rich one written through
+ * `completeDataProfile`.
+ */
+describe("the persisted profile record", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_result_shape");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /** Write a snapshot straight into the column, bypassing the writer — the only way to forge a legacy row. */
+    async function writeRawResult(analysisId: string, raw: unknown): Promise<void> {
+        await seedAnalysis(pool, analysisId, "completed");
+        await pool.query({
+            text: `UPDATE cortex_analysis_state SET data_profile_result = $1::jsonb WHERE analysis_id = $2`,
+            values: [JSON.stringify(raw), analysisId],
+        });
+    }
+
+    const RICH_RESULT: DataProfileResult = {
+        summary: "Bulk RNA-seq of rectal mucosal biopsies, 24 samples, UC vs healthy controls.",
+        files: [
+            {
+                path: "data/inputs/f1/counts.csv",
+                description: "Raw gene-level count matrix",
+                dataType: "count-matrix",
+                format: "CSV",
+                rows: 20531,
+                cols: 24,
+                tags: ["counts", "gene-level"],
+                warnings: ["3 samples below 5M reads"],
+                metrics: { sparsity: 0.41, medianLibrarySize: 18_400_000, hasEnsemblIds: true, quantifier: "salmon" },
+            },
+            {
+                path: "data/inputs/f2/metadata.csv",
+                description: "Sample metadata: group, sex, age, batch",
+                dataType: "clinical-metadata",
+                format: "CSV",
+                rows: 24,
+                cols: 6,
+                tags: ["metadata"],
+                warnings: [],
+                metrics: { missingRate: 0 },
+            },
+        ],
+        profiledAt: "2026-06-09T10:00:00.000Z",
+        domain: "transcriptomics",
+        subtype: "bulk-rna-seq",
+        organism: {
+            scientificName: "Homo sapiens",
+            taxonId: "9606",
+            source: "metadata",
+            confidence: "high",
+            notes: "organism column in the sample sheet",
+        },
+        tissue: "rectal mucosal biopsy",
+        cellType: "bulk tissue",
+        condition: "Ulcerative Colitis vs healthy controls",
+        accessions: ["GSE123456", "PRJNA987654"],
+        experimentalDesign: "Two groups (12 UC, 12 control), paired by sequencing batch, no technical replicates.",
+        qualityAssessment: {
+            concerns: ["batch confounded with group in batch 2", "3 low-depth samples"],
+        },
+    };
+
+    it("a rich profile round-trips every field through the jsonb column", async () => {
+        await seedAnalysis(pool, "a-rich", "pending");
+        (await tryStartDataProfile(pool, "a-rich"))._unsafeUnwrap();
+        expect((await completeDataProfile(pool, "a-rich", RICH_RESULT))._unsafeUnwrap().stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-rich"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        // Nothing is dropped on the way in or out: the whole record, verbatim.
+        expect(status?.result).toEqual(RICH_RESULT);
+    });
+
+    it("a legacy collapsed row still reads — the widened fields simply come back undefined", async () => {
+        // The exact shape written before the record was widened: three fields, and per-file
+        // entries with nothing but a path and a description.
+        await writeRawResult("a-legacy", {
+            summary: "3 RNA-seq count matrices",
+            files: [
+                { path: "data/inputs/f1/counts.csv", description: "Raw count matrix" },
+                { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
+            ],
+            profiledAt: "2026-01-02T03:04:05.000Z",
+        });
+
+        const status = (await loadDataProfileStatus(pool, "a-legacy"))._unsafeUnwrap();
+        const result = status?.result;
+
+        // It parses — no throw, no null. The original four fields are intact.
+        expect(status?.status).toBe("completed");
+        expect(result?.summary).toBe("3 RNA-seq count matrices");
+        expect(result?.profiledAt).toBe("2026-01-02T03:04:05.000Z");
+        expect(result?.files).toHaveLength(2);
+        expect(result?.files?.[0]?.path).toBe("data/inputs/f1/counts.csv");
+        expect(result?.files?.[0]?.description).toBe("Raw count matrix");
+
+        // And every field added by the widening is absent, not a lie.
+        expect(result?.domain).toBeUndefined();
+        expect(result?.subtype).toBeUndefined();
+        expect(result?.organism).toBeUndefined();
+        expect(result?.tissue).toBeUndefined();
+        expect(result?.cellType).toBeUndefined();
+        expect(result?.condition).toBeUndefined();
+        expect(result?.accessions).toBeUndefined();
+        expect(result?.experimentalDesign).toBeUndefined();
+        expect(result?.qualityAssessment).toBeUndefined();
+        expect(result?.files?.[0]?.dataType).toBeUndefined();
+        expect(result?.files?.[0]?.rows).toBeUndefined();
+        expect(result?.files?.[0]?.metrics).toBeUndefined();
+    });
+
+    it("an explicit null organism survives as null — distinct from a legacy row's absent one", async () => {
+        // The profiler looked and no input identified an organism. That is a finding, and it
+        // must not read back the same as "this snapshot predates the field".
+        const noOrganism: DataProfileResult = {
+            summary: "Unlabelled count matrix.",
+            files: [{ path: "data/inputs/f1/counts.csv", description: "Counts", dataType: "count-matrix", format: "CSV", rows: 100, cols: 4 }],
+            profiledAt: "2026-06-09T10:00:00.000Z",
+            domain: "transcriptomics",
+            organism: null,
+            tissue: null,
+        };
+
+        await seedAnalysis(pool, "a-null-organism", "pending");
+        (await tryStartDataProfile(pool, "a-null-organism"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-null-organism", noOrganism))._unsafeUnwrap();
+
+        const result = (await loadDataProfileStatus(pool, "a-null-organism"))._unsafeUnwrap()?.result;
+        expect(result?.organism).toBeNull();
+        expect(result?.tissue).toBeNull();
+        // An unset optional is dropped by JSON.stringify rather than stored as null.
+        expect(result?.subtype).toBeUndefined();
+        expect(result).toEqual(noOrganism);
+    });
+});
+
+/**
+ * `data_profile_workflow_id` is how a consumer resolves which durable event stream carries
+ * an analysis's profile activity — from the ledger row alone, never by pattern-matching
+ * workflow ids in the durability engine's tables. The workflow BODY writes it (the claim CAS
+ * runs before the id is minted), CAS'd on the row still being `running` so a write that lands
+ * late cannot point a consumer at the workflow of a profile that has already settled.
+ */
+describe("the recorded profile workflow id", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_workflow_id");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("a claimed row's recorded id reads back as workflowId", async () => {
+        await seedAnalysis(pool, "a-wf-record", "pending");
+        (await tryStartDataProfile(pool, "a-wf-record"))._unsafeUnwrap();
+
+        const stamped = (await recordDataProfileWorkflowId(pool, "a-wf-record", "dataprofile:a-wf-record:n1"))._unsafeUnwrap();
+        expect(stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-record"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.workflowId).toBe("dataprofile:a-wf-record:n1");
+    });
+
+    it("a re-profile replaces the prior attempt's id", async () => {
+        await seedAnalysis(pool, "a-wf-replace", "pending");
+        (await tryStartDataProfile(pool, "a-wf-replace"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-replace", "dataprofile:a-wf-replace:n1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-replace", SAMPLE_RESULT))._unsafeUnwrap();
+
+        // The first attempt's id survives its own completion — nothing clears it on settle.
+        const settled = (await loadDataProfileStatus(pool, "a-wf-replace"))._unsafeUnwrap();
+        expect(settled?.workflowId).toBe("dataprofile:a-wf-replace:n1");
+
+        // The rerun claim re-opens the row AND clears the stale pointer, so the window before the
+        // new body records its own id reads as "not addressable" rather than naming a workflow whose
+        // stream has already drained — a consumer would otherwise subscribe and observe nothing with
+        // no way to tell why.
+        expect((await tryRerunDataProfile(pool, "a-wf-replace"))._unsafeUnwrap()).toBe(true);
+        const reclaimed = (await loadDataProfileStatus(pool, "a-wf-replace"))._unsafeUnwrap();
+        expect(reclaimed?.status).toBe("running");
+        expect(reclaimed?.workflowId).toBeNull();
+
+        // The new body's write is the one that lands.
+        expect((await recordDataProfileWorkflowId(pool, "a-wf-replace", "dataprofile:a-wf-replace:n2"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-replace"))._unsafeUnwrap();
+        expect(status?.workflowId).toBe("dataprofile:a-wf-replace:n2");
+    });
+
+    it("a row that never recorded an id reads back workflowId: null, and the read is otherwise unchanged", async () => {
+        // `seedAnalysis` never names the column, so it is NULL by DDL default — the exact
+        // state of a row written before the column existed, once the additive migration ran.
+        // NULL, not missing: the read must render the row, not reject it.
+        await seedAnalysis(pool, "a-wf-absent", "pending");
+        (await tryStartDataProfile(pool, "a-wf-absent"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-absent", SAMPLE_RESULT))._unsafeUnwrap();
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-absent"))._unsafeUnwrap();
+        expect(status?.workflowId).toBeNull();
+        // Everything else the read projects is intact — the missing id costs the caller nothing else.
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toEqual(SAMPLE_RESULT);
+        expect(status?.error).toBeNull();
+        expect(status?.startedAt).not.toBeNull();
+        expect(status?.completedAt).not.toBeNull();
+        expect(status?.seedInputFileIds).toEqual(["file-seed"]);
+    });
+
+    it("refuses a completed row and leaves its recorded id untouched", async () => {
+        await seedAnalysis(pool, "a-wf-completed", "pending");
+        (await tryStartDataProfile(pool, "a-wf-completed"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-completed", "dataprofile:a-wf-completed:n1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-completed", SAMPLE_RESULT))._unsafeUnwrap();
+
+        // A late write from some other attempt. `ok(false)` is the in-band refusal signal.
+        const stamped = (await recordDataProfileWorkflowId(pool, "a-wf-completed", "dataprofile:a-wf-completed:late"))._unsafeUnwrap();
+        expect(stamped).toBe(false);
+
+        // And the refusal is about the ROW, not just the boolean: a consumer reading this
+        // ledger row still resolves the attempt that actually produced the profile.
+        const status = (await loadDataProfileStatus(pool, "a-wf-completed"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.workflowId).toBe("dataprofile:a-wf-completed:n1");
+    });
+
+    it("refuses a failed row and leaves its recorded id untouched", async () => {
+        await seedAnalysis(pool, "a-wf-failed", "pending");
+        (await tryStartDataProfile(pool, "a-wf-failed"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-failed", "dataprofile:a-wf-failed:n1"))._unsafeUnwrap();
+        (await failDataProfile(pool, "a-wf-failed", "sandbox crashed"))._unsafeUnwrap();
+
+        const stamped = (await recordDataProfileWorkflowId(pool, "a-wf-failed", "dataprofile:a-wf-failed:late"))._unsafeUnwrap();
+        expect(stamped).toBe(false);
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-failed"))._unsafeUnwrap();
+        expect(status?.status).toBe("failed");
+        expect(status?.error).toBe("sandbox crashed");
+        expect(status?.workflowId).toBe("dataprofile:a-wf-failed:n1");
+    });
+
+    it("refuses a row with no profile at all", async () => {
+        // A cleared (NULL-status) row is not `running` either, so it is not stampable —
+        // there is no attempt to name.
+        await seedAnalysis(pool, "a-wf-cleared", "pending");
+        (await clearDataProfile(pool, "a-wf-cleared"))._unsafeUnwrap();
+
+        expect((await recordDataProfileWorkflowId(pool, "a-wf-cleared", "dataprofile:a-wf-cleared:n1"))._unsafeUnwrap()).toBe(false);
+        expect(await rawWorkflowId(pool, "a-wf-cleared")).toBeNull();
+    });
+
+    it("clearDataProfile nulls the recorded id — a cleared profile is not addressable", async () => {
+        await seedAnalysis(pool, "a-wf-clear", "pending");
+        (await tryStartDataProfile(pool, "a-wf-clear"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-clear", "dataprofile:a-wf-clear:n1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-clear", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(await rawWorkflowId(pool, "a-wf-clear")).toBe("dataprofile:a-wf-clear:n1");
+
+        expect((await clearDataProfile(pool, "a-wf-clear"))._unsafeUnwrap()).toBe(true);
+
+        // Read raw: the public read collapses a cleared row to null, so it cannot show this.
+        expect(await rawWorkflowId(pool, "a-wf-clear")).toBeNull();
+        expect((await loadDataProfileStatus(pool, "a-wf-clear"))._unsafeUnwrap()).toBeNull();
+    });
+});
+
+// An analysis with no input files has nothing to profile. The empty-set completion stamps
+// the row `completed` at once, with no result and no workflow, and names the empty set as
+// its seed. The CAS refuses a live run and a row whose seed names files.
+describe("completing an analysis with no input files", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_complete_empty");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /** Read the two lifecycle timestamps straight off the row. */
+    async function rawTimestamps(analysisId: string): Promise<{ startedAt: string | null; completedAt: string | null }> {
+        const res = await pool.query<{ data_profile_started_at: string | null; data_profile_completed_at: string | null }>({
+            text: "SELECT data_profile_started_at, data_profile_completed_at FROM cortex_analysis_state WHERE analysis_id = $1",
+            values: [analysisId],
+        });
+        return { startedAt: res.rows[0]?.data_profile_started_at ?? null, completedAt: res.rows[0]?.data_profile_completed_at ?? null };
+    }
+
+    it("stamps a never-profiled NULL-seed row completed, with no result and the empty seed", async () => {
+        await seedAnalysis(pool, "a-empty-null", null, null);
+
+        const stamped = (await completeEmptyDataProfile(pool, "a-empty-null"))._unsafeUnwrap();
+        expect(stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-empty-null"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toBeNull();
+        expect(status?.error).toBeNull();
+        expect(status?.workflowId).toBeNull();
+        expect(status?.seedInputFileIds).toEqual([]);
+
+        // No workflow ran, so the profile started and completed at one instant.
+        const stamps = await rawTimestamps("a-empty-null");
+        expect(stamps.startedAt).not.toBeNull();
+        expect(stamps.completedAt).toBe(stamps.startedAt);
+    });
+
+    it("stamps a pending row seeded with `[]`", async () => {
+        await seedAnalysis(pool, "a-empty-pending", "pending", []);
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-pending"))._unsafeUnwrap()).toBe(true);
+        expect(await rawStatus(pool, "a-empty-pending")).toBe("completed");
+    });
+
+    it("replaces a prior profile whose files are gone with no result", async () => {
+        // The inputs were removed after a profile. The prior result describes files the
+        // analysis no longer has, so the empty completion replaces it.
+        await seedAnalysis(pool, "a-empty-prior", "completed", []);
+        await pool.query({
+            text: "UPDATE cortex_analysis_state SET data_profile_result = $1::jsonb, data_profile_workflow_id = 'dataprofile:a-empty-prior:old' WHERE analysis_id = $2",
+            values: [JSON.stringify(SAMPLE_RESULT), "a-empty-prior"],
+        });
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-prior"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-empty-prior"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toBeNull();
+        expect(await rawWorkflowId(pool, "a-empty-prior")).toBeNull();
+    });
+
+    it("replaces a failed attempt whose files are gone", async () => {
+        await seedAnalysis(pool, "a-empty-failed", "failed", null);
+        await pool.query({
+            text: "UPDATE cortex_analysis_state SET data_profile_error = 'boom' WHERE analysis_id = $1",
+            values: ["a-empty-failed"],
+        });
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-failed"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-empty-failed"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.error).toBeNull();
+    });
+
+    it("refuses a live run and leaves the row untouched", async () => {
+        await seedAnalysis(pool, "a-empty-running", "running", []);
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-running"))._unsafeUnwrap()).toBe(false);
+        expect(await rawStatus(pool, "a-empty-running")).toBe("running");
+    });
+
+    it("refuses a row whose seed names files — the caller's pre-read is not the enforcement", async () => {
+        // A seed upsert landed between a caller's read and this write. The row now names
+        // files, and a `completed` stamp would hide them behind a finished profile.
+        await seedAnalysis(pool, "a-empty-reseeded", "pending", ["file-aaa"]);
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-reseeded"))._unsafeUnwrap()).toBe(false);
+        expect(await rawStatus(pool, "a-empty-reseeded")).toBe("pending");
+        const status = (await loadDataProfileStatus(pool, "a-empty-reseeded"))._unsafeUnwrap();
+        expect(status?.seedInputFileIds).toEqual(["file-aaa"]);
+    });
+
+    it("refuses an analysis with no ledger row", async () => {
+        expect((await completeEmptyDataProfile(pool, "a-empty-norow"))._unsafeUnwrap()).toBe(false);
+    });
+
+    it("is not claimable for a rerun until a later seed names files", async () => {
+        await seedAnalysis(pool, "a-empty-then-files", null, null);
+        expect((await completeEmptyDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(true);
+
+        // `[]` is not a seed, so the rerun claim refuses the completed-empty row.
+        expect((await tryRerunDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(false);
+        expect(await rawStatus(pool, "a-empty-then-files")).toBe("completed");
+
+        // Inputs arrive: the seed upsert names them, and the rerun claim takes the row.
+        await setSeed(pool, "a-empty-then-files", ["file-aaa"]);
+        expect((await tryRerunDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(true);
+        expect(await rawStatus(pool, "a-empty-then-files")).toBe("running");
+    });
+});
