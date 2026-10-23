@@ -21,7 +21,7 @@ Every infra/provisioning command (`setup`, `up`, the boot of the local server, `
 
 ### Requirement: Mount-source integrity before compose
 
-Before any `compose up`, the system SHALL ensure every bind-mount source in the compose plan exists on the host with the correct type — file-typed sources exist as files (provisioned with their canonical content when absent), directory-typed sources exist as directories. The container engine SHALL never be the creator of a mount source. The integrity check SHALL live at one shared seam through which every compose entry point passes, and the mount manifest SHALL derive from the same facts that generate the compose file. Every compose entry point SHALL regenerate the compose file from the current configuration before invoking the seam — the file the engine executes and the manifest the guard provisions SHALL always derive from the same facts in the same invocation, so a compose file written under an earlier configuration can never out-drift the guard. One-off container invocations outside compose that bind-mount a file-typed host path (e.g. the provider-login container) SHALL provision their mount sources through the same seam before the engine is invoked.
+Before any `compose up`, the system SHALL ensure every bind-mount source in the compose plan exists on the host with the correct type — file-typed sources exist as files (provisioned with their canonical content when absent), directory-typed sources exist as directories. The container engine SHALL never be the creator of a mount source. The integrity check SHALL live in one shared guard through which every compose entry point passes, and the mount manifest SHALL derive from the same facts that generate the compose file. Every compose entry point SHALL regenerate the compose file from the current configuration before the guard runs — the file the engine executes and the manifest the guard provisions SHALL always derive from the same facts in the same invocation, so a compose file written under an earlier configuration can never out-drift the guard. One-off container invocations outside compose that bind-mount a file-typed host path (e.g. the provider-login container) SHALL provision their mount sources through the same guard before the engine is invoked.
 
 #### Scenario: Missing file-typed source is provisioned, not manufactured
 
@@ -51,7 +51,7 @@ Before any `compose up`, the system SHALL ensure every bind-mount source in the 
 #### Scenario: One-off container runs are guarded
 
 - **WHEN** the provider-login container starts while the proxy config file is absent or occupied by an engine-manufactured empty directory
-- **THEN** the source is provisioned or healed through the shared seam before the engine is invoked, and the engine never creates it
+- **THEN** the source is provisioned or healed through the shared guard before the engine is invoked, and the engine never creates it
 
 ### Requirement: Safe healing of manufactured state
 

@@ -712,7 +712,7 @@ describe("web_fetch — the byte limits", () => {
         expect(output).toMatchObject({ status: "ok", contentType: "text/plain" });
     });
 
-    it("refuses an HTML body over the limit while it is read, through the hop seam", async () => {
+    it("refuses an HTML body over the limit while it is read, through the injected request client", async () => {
         const html = `<!doctype html><html><body>${"word ".repeat(Math.ceil((FIVE_MB + 1024) / 5))}</body></html>`;
         const output = await fetchUrl("http://example.test/page", {
             hopRequest: recordedHopRequest(

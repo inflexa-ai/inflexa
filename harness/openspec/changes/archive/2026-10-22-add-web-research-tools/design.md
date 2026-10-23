@@ -2,7 +2,7 @@
 
 ## Context
 
-The research in `docs/web-search-research.md` fixes the scope: two tools, SearXNG as the only engine, `searxng.ts` / `ssrf-protection.ts` / `extract.ts` of `nicobailon/pi-web-access` as the reference, and no `pi-web-access` dependency (it is a Pi extension, not a library). The harness already holds the pieces around the two tools: `apiFetchValidated` (`src/tools/lib/api-utils.ts`), the tool factory pattern (`src/tools/research/search-github-repos.ts`), the approval seam (`src/tools/approval/contract.ts`), the tool output store (`src/loop/tool-output.ts`), and `pdf-parse` (`src/lib/regulatory-corpus/fetch-ich.ts`).
+The research in `docs/web-search-research.md` fixes the scope: two tools, SearXNG as the only engine, `searxng.ts` / `ssrf-protection.ts` / `extract.ts` of `nicobailon/pi-web-access` as the reference, and no `pi-web-access` dependency (it is a Pi extension, not a library). The harness already holds the pieces around the two tools: `apiFetchValidated` (`src/tools/lib/api-utils.ts`), the tool factory pattern (`src/tools/research/search-github-repos.ts`), the approval contract (`src/tools/approval/contract.ts`), the tool output store (`src/loop/tool-output.ts`), and `pdf-parse` (`src/lib/regulatory-corpus/fetch-ich.ts`).
 
 ## Goals / Non-Goals
 
@@ -62,7 +62,7 @@ Both tools run in the default step mode: a replay returns the cached result and 
 
 `ConversationAgentDeps.searxngBaseUrl?: string` enables `web_search` (spread-conditional, the `toolOutputStore` pattern); `web_fetch` attaches always. Both sit in the roster directly after `searchArxivTool`. The barrel adds nothing: the conversation agent attaches both tools itself, and an embedder writes its composition root with the URL string alone, so the front-door rule of `harness-embedder-exports` admits no new name.
 
-### The factory takes test seams, and the tests use a real local server
+### The factory takes test doubles, and the tests use a real local server
 
 `createWebFetchTool(deps)` accepts an optional `lookup` and an optional hop `request` beside the tool output store; the defaults are the real `dns.lookup` and the real `node:http`/`node:https` hop, so the shipped path is the tested path. The guarded-address tests run real requests against a local server on `127.0.0.1` (a guarded literal) and on `localhost` (a guarded name through the real lookup), and the DNS-rebinding case injects a `lookup` that answers a public address for the first request and a private address for the second — the second must ask. The unguarded-path and redirect tests use the injected hop with recorded responses, because every address a test machine owns is guarded.
 

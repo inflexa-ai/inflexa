@@ -220,7 +220,7 @@ describe("ensureMountSources integrity guard", () => {
     test("cliproxy: the proxy config and the searxng settings exist as FILES (never directories) before the engine would run", async () => {
         (await ensureMountSources("cliproxy"))._unsafeUnwrap();
         // The ordering property: after the guard, the file-typed sources are real files, so a subsequent
-        // engine invocation can never manufacture a directory at their paths. Verified at the seam rather
+        // engine invocation can never manufacture a directory at their paths. Verified at the guard rather
         // than by spawning a real engine.
         expect(statSync(configPath).isFile()).toBe(true);
         expect(statSync(env.searxngSettingsPath).isFile()).toBe(true);
