@@ -126,7 +126,7 @@ The replay MUST be polite: sequential requests, a minimum gap of 300 ms, and a m
 
 ### Requirement: Real-upstream integration tests live under src/providers/integration and auto-skip without a key
 
-Real-upstream integration tests MUST reside under `src/providers/integration/`, named `<name>.integration.test.ts`. A block for a key-gated provider MUST wrap its `describe` in `describe.skipIf(!process.env.KEY)`. When the gating env var is unset, the entire block is skipped, with no test failure.
+Real-upstream integration tests MUST reside under `src/providers/integration/test/`, named `<name>.integration.test.ts`. A block for a key-gated provider MUST wrap its `describe` in `describe.skipIf(!process.env.KEY)`. When the gating env var is unset, the entire block is skipped, with no test failure.
 
 A block for a keyless provider MUST wrap its `describe` in `describe.skipIf(!process.env.CORTEX_LIVE_API_TESTS)`. Without that gate, a keyless block runs on every clean checkout, and the suite then depends on the network.
 

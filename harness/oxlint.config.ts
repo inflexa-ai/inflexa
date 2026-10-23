@@ -104,7 +104,7 @@ export default typescript({
         {
             // The console realization IS the console sink — writing to console is its whole
             // contract — and its test drives it by capturing those calls.
-            files: ["src/lib/console-logger.ts", "src/lib/console-logger.test.ts"],
+            files: ["src/lib/console-logger.ts", "src/lib/test/console-logger.test.ts"],
             rules: { "no-console": "off" },
         },
         {
@@ -137,8 +137,6 @@ export default typescript({
             // rules whose few reports the harness keeps deliberately.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #703 moves each test beside its code and turns the rule back on.
-                "@inflexa-ai/test-placement": "off",
                 // #705 turns the `no-unsafe-*` family and the conditional-spread ban back on.
                 "@inflexa-ai/no-conditional-spread": "off",
                 "typescript/no-unsafe-argument": "off",
