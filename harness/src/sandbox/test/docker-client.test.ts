@@ -1,0 +1,1382 @@
+/**
+ * Per-backend createSandbox/teardown/isAlive tests against a mocked Docker
+ * client. Covers the contract the SandboxClient factory wraps: the confined
+ * container config, the loopback-published exec port, and container-only
+ * liveness. There is no gateway sidecar and no `--internal` network.
+ */
+
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Docker from "dockerode";
+
+import { createDockerSandboxOps, engineConnectionOptions } from "../docker-client.js";
+import { mintSandboxIdentity } from "../identity.js";
+import type { FarmSource } from "../types.js";
+import { splitSpawn } from "../__fixtures__/spawn.js";
+
+// A real, usable on-disk farm: the Docker client resolves the farm source at
+// each createSandbox and gates the store mounts on a parseable `inflexa.lock`
+// at a known schema version. Tests that expect the /mnt/libs mounts must
+// point at a farm that is actually usable.
+let libRoot: string;
+let farmDir: string;
+let farmSource: FarmSource;
+async function writeUsableFarm(root: string, analysisId: string): Promise<string> {
+    const farm = join(root, "farms", analysisId);
+    await mkdir(farm, { recursive: true });
+    await writeFile(join(farm, "inflexa.lock"), JSON.stringify({ schema: 1, arch: "arm64", packages: [], languages: {} }));
+    return farm;
+}
+// The ref store has no harness-known interior — the Docker client re-checks only that
+// `refStorePath` is, at createSandbox time, a real (non-symlink) directory, so a bare
+// temp dir already models a usable store.
+let refsRoot: string;
+// A real parent of a workspace root. The Docker client writes the cpu files of a
+// sandbox into `<parent>/.cpu/<sandboxId>/`, and it makes `.cpu` only when the
+// parent exists. The `/sessions` root of the other tests is not on disk, thus
+// those sandboxes get no cpu binds and their exact bind lists stay short.
+let wsRoot: string;
+beforeEach(async () => {
+    libRoot = await mkdtemp(join(tmpdir(), "harness-libstore-"));
+    farmDir = await writeUsableFarm(libRoot, "an-1");
+    farmSource = { kind: "fixed", location: { farmPath: farmDir } };
+    refsRoot = await mkdtemp(join(tmpdir(), "harness-refstore-"));
+    wsRoot = await mkdtemp(join(tmpdir(), "harness-workspace-"));
+});
+afterEach(async () => {
+    await rm(libRoot, { recursive: true, force: true });
+    await rm(refsRoot, { recursive: true, force: true });
+    await rm(wsRoot, { recursive: true, force: true });
+});
+
+interface CreatedContainer {
+    name: string;
+    image?: string;
+    env: string[];
+    binds: string[];
+    labels?: Record<string, string>;
+    workingDir?: string;
+    platform?: string;
+    /** Whether the `platform` key was present at all on createOpts — the config-unset case must OMIT it, not pass undefined. */
+    hasPlatformKey: boolean;
+    user?: string;
+    capDrop?: string[];
+    capAdd?: string[];
+    securityOpt?: string[];
+    portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+    memory?: number;
+    memorySwap?: number;
+}
+
+interface CreateOpts {
+    name: string;
+    Image?: string;
+    Env: string[];
+    User?: string;
+    WorkingDir?: string;
+    platform?: string;
+    Labels?: Record<string, string>;
+    HostConfig?: {
+        Binds?: string[];
+        CapDrop?: string[];
+        CapAdd?: string[];
+        SecurityOpt?: string[];
+        PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+        Memory?: number;
+        MemorySwap?: number;
+    };
+}
+
+function notFound(): Error & { statusCode: number } {
+    const err = new Error("no such container") as Error & { statusCode: number };
+    err.statusCode = 404;
+    return err;
+}
+
+/** The one sandbox container the ops create (there is no sidecar). */
+function sandboxOf(created: CreatedContainer[]): CreatedContainer | undefined {
+    return created.find((c) => c.labels?.role === "sandbox");
+}
+
+function envMapOf(container: CreatedContainer): Record<string, string> {
+    return Object.fromEntries(
+        container.env.map((e) => {
+            const idx = e.indexOf("=");
+            return [e.slice(0, idx), e.slice(idx + 1)];
+        }),
+    );
+}
+
+function stubDocker(): {
+    docker: Docker;
+    created: CreatedContainer[];
+    removed: string[];
+    running: Map<string, boolean>;
+    oomKilled: Set<string>;
+    createdNetworks: string[];
+    /** Container name → labels its inspect reports. Seed directly to model a container not created through the ops. */
+    labelsByName: Map<string, Record<string, string>>;
+} {
+    const created: CreatedContainer[] = [];
+    const removed: string[] = [];
+    const running = new Map<string, boolean>();
+    const oomKilled = new Set<string>();
+    const createdNetworks: string[] = [];
+    const labelsByName = new Map<string, Record<string, string>>();
+
+    const makeContainer = (id: string) => ({
+        id,
+        start: async () => {
+            running.set(id, true);
+        },
+        inspect: async () => {
+            if (!running.has(id)) throw notFound();
+            // The sandbox publishes its own exec port to loopback — there is no gateway.
+            return {
+                Config: { Labels: labelsByName.get(id) ?? {} },
+                NetworkSettings: {
+                    Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] },
+                },
+                State: { Running: running.get(id) === true, OOMKilled: oomKilled.has(id) },
+            };
+        },
+        stop: async () => {
+            running.set(id, false);
+        },
+        remove: async () => {
+            removed.push(id);
+            running.delete(id);
+        },
+    });
+
+    const docker = {
+        createContainer: async (opts: CreateOpts) => {
+            created.push({
+                name: opts.name,
+                image: opts.Image,
+                env: opts.Env,
+                binds: opts.HostConfig?.Binds ?? [],
+                labels: opts.Labels,
+                workingDir: opts.WorkingDir,
+                platform: opts.platform,
+                hasPlatformKey: Object.prototype.hasOwnProperty.call(opts, "platform"),
+                user: opts.User,
+                capDrop: opts.HostConfig?.CapDrop,
+                capAdd: opts.HostConfig?.CapAdd,
+                securityOpt: opts.HostConfig?.SecurityOpt,
+                portBindings: opts.HostConfig?.PortBindings,
+                memory: opts.HostConfig?.Memory,
+                memorySwap: opts.HostConfig?.MemorySwap,
+            });
+            labelsByName.set(opts.name, opts.Labels ?? {});
+            return makeContainer(opts.name);
+        },
+        getContainer: (id: string) => makeContainer(id),
+        // The new topology creates no networks; a call here would be a regression.
+        createNetwork: async (opts: { Name: string }) => {
+            createdNetworks.push(opts.Name);
+            return {};
+        },
+    } as unknown as Docker;
+
+    return { docker, created, removed, running, oomKilled, createdNetworks, labelsByName };
+}
+
+const META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } } as const;
+const okFetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
+
+describe("docker createSandbox — confinement", () => {
+    test("a root entrypoint with NET_ADMIN and the firewall flag, and no egress target", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.capDrop).toEqual(["ALL"]);
+        expect(sandbox.securityOpt).toEqual(["no-new-privileges"]);
+        // The container starts as root with exactly the capabilities the entrypoint's setup
+        // consumes: NET_ADMIN installs the egress iptables rules, SETUID/SETGID perform the
+        // setpriv uid/gid drop to the workload user, and SETPCAP applies its bounding-set
+        // clear. All are dropped before the workload runs, leaving its capability sets empty.
+        expect(sandbox.user).toBe("0:0");
+        expect(sandbox.capAdd).toEqual(["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"]);
+
+        const env = envMapOf(sandbox);
+        expect(env.SANDBOX_EGRESS_FIREWALL).toBe("1");
+        // The sandbox never dials out, thus it gets no address to dial.
+        expect(env.CORTEX_BASE_URL).toBeUndefined();
+        expect(env.SANDBOX_TRANSPORT).toBeUndefined();
+    });
+
+    test("the exec port is published to loopback only, and no gateway or network is created", async () => {
+        const { docker, created, createdNetworks } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        // Exactly one container — no sidecar.
+        expect(created).toHaveLength(1);
+        expect(createdNetworks).toEqual([]);
+
+        const binding = sandboxOf(created)!.portBindings?.["8765/tcp"]?.[0];
+        expect(binding?.HostIp).toBe("127.0.0.1");
+        // The SandboxRef carries the mapped host port the daemon assigned.
+        expect(ref.host).toBe("127.0.0.1");
+        expect(ref.port).toBe(32100);
+    });
+
+    test("returns a SandboxRef and registers it; env + binds are wired", async () => {
+        const { docker, created } = stubDocker();
+        const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            refStorePath: refsRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async (session, _spec, ref) => {
+                registered.push({ runId: session.runFrame.runId, stepId: session.runFrame.stepId, sandboxId: ref.sandboxId });
+            },
+        });
+
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(ref.backend).toBe("docker");
+
+        const sandbox = sandboxOf(created)!;
+        const env = envMapOf(sandbox);
+        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+        expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
+
+        expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a");
+        // The farm bind comes after the store bind, and a present ref-store
+        // directory is bound read-only at /mnt/refs (existing behavior).
+        expect(sandbox.binds).toEqual([
+            "/sessions/an-1:/an-1:ro",
+            "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
+            `${libRoot}:/mnt/libs:ro`,
+            `${farmDir}:/mnt/libs/current:ro`,
+            `${refsRoot}:/mnt/refs:ro`,
+        ]);
+        expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
+    });
+
+    test("the thread pools default to one thread and the worker counts to the cpu request", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        // A fork copies the pool size of its parent, thus a pool at the quota
+        // runs workers * quota threads. One thread per pool is the safe
+        // default, and the agent raises it per command through the exec env.
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.OMP_NUM_THREADS).toBe("1");
+        expect(env.OPENBLAS_NUM_THREADS).toBe("1");
+        expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
+        expect(env.LOKY_MAX_CPU_COUNT).toBe("2");
+        // R defaults mclapply to 2 workers. A value here raises the fork count.
+        expect(env.MC_CORES).toBeUndefined();
+    });
+
+    test("a fractional cpu request floors to one worker, and extraEnv overrides the defaults", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                ...splitSpawn({ ...META, resources: { cpu: 0.5, memoryGb: 1 }, extraEnv: { OMP_NUM_THREADS: "8" } }),
+                mintSandboxIdentity("run-1"),
+                {},
+            )
+        )._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("1");
+        expect(env.OPENBLAS_NUM_THREADS).toBe("1");
+        expect(env.OMP_NUM_THREADS).toBe("8");
+    });
+
+    test("the container gets no swap: MemorySwap equals Memory", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        // With swap a fork storm thrashes instead of an OOM kill, and
+        // sandbox-server in the same cgroup stops to answer /exec.
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.memory).toBe(4 * 1024 ** 3);
+        expect(sandbox.memorySwap).toBe(4 * 1024 ** 3);
+    });
+
+    test("the cpu files are bound over the online list and /proc/cpuinfo, and teardown removes them", async () => {
+        const { docker, created } = stubDocker();
+        const hostCpuinfo = [0, 1, 2, 3].map((n) => `processor\t: ${n}\nmodel name\t: Test CPU\n\n`).join("");
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            readHostCpuinfo: async () => hostCpuinfo,
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        // `parallel::detectCores()` greps /proc/cpuinfo and `os.cpu_count()` reads
+        // the online list. Both files describe the host, thus a small file over
+        // each path is the only way to make them report the quota.
+        const cpuDir = join(wsRoot, ".cpu", ref.sandboxId);
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.binds).toEqual([
+            `${wsRoot}/an-1:/an-1:ro`,
+            `${wsRoot}/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw`,
+            `${cpuDir}/online:/sys/devices/system/cpu/online:ro`,
+            `${cpuDir}/cpuinfo:/proc/cpuinfo:ro`,
+        ]);
+        expect(await readFile(join(cpuDir, "online"), "utf8")).toBe("0-1\n");
+        // The first two processor blocks of the host, and no other.
+        expect(await readFile(join(cpuDir, "cpuinfo"), "utf8")).toBe("processor\t: 0\nmodel name\t: Test CPU\n\nprocessor\t: 1\nmodel name\t: Test CPU\n\n");
+
+        (await ops.teardown(ref))._unsafeUnwrap();
+        expect(existsSync(cpuDir)).toBe(false);
+    });
+
+    test("a host with no /proc/cpuinfo binds the online file only", async () => {
+        const { docker, created } = stubDocker();
+        const logger = createCapturingLogger();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            readHostCpuinfo: async () => undefined,
+            farmSource,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const binds = sandboxOf(created)!.binds;
+        expect(binds).toContain(`${join(wsRoot, ".cpu", ref.sandboxId, "online")}:/sys/devices/system/cpu/online:ro`);
+        expect(binds.some((b) => b.endsWith(":/proc/cpuinfo:ro"))).toBe(false);
+        expect(logger.records.some((r) => r.level === "debug" && r.msg.includes("no host /proc/cpuinfo"))).toBe(true);
+    });
+
+    test("a workspace root with no parent on disk gets no cpu binds and a warning", async () => {
+        const { docker, created } = stubDocker();
+        const logger = createCapturingLogger();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join(wsRoot, "absent", id),
+            readHostCpuinfo: async () => "processor\t: 0\n\n",
+            farmSource,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        // The sandbox still starts: the thread env limits each library, and only
+        // the two base calls report the host.
+        expect(sandboxOf(created)!.binds.some((b) => b.includes(".cpu"))).toBe(false);
+        expect(existsSync(join(wsRoot, "absent"))).toBe(false);
+        expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("cpu files not written"))).toBe(true);
+    });
+
+    test("a container that maps no host port is stopped, removed, and reported failed", async () => {
+        const { docker, removed } = stubDocker();
+        // A daemon that starts the container but publishes no port for 8765/tcp.
+        (docker as unknown as { getContainer: (id: string) => unknown }).getContainer = (id: string) => ({
+            id,
+            start: async () => {},
+            stop: async () => {},
+            remove: async () => {
+                removed.push(id);
+            },
+            inspect: async () => ({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
+        });
+        (docker as unknown as { createContainer: (o: CreateOpts) => unknown }).createContainer = async (opts: CreateOpts) => ({
+            id: opts.name,
+            start: async () => {},
+            stop: async () => {},
+            remove: async () => {
+                removed.push(opts.name);
+            },
+            inspect: async () => ({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
+        });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
+        expect(removed.length).toBeGreaterThan(0);
+    });
+});
+
+describe("docker createSandbox — the label set", () => {
+    function labelledOps() {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+        return { ops, created };
+    }
+
+    test("the container carries the six harness labels from the session and the owner workflow id", async () => {
+        const { ops, created } = labelledOps();
+        const identity = mintSandboxIdentity("run-1");
+        (await ops.createSandbox(...splitSpawn(META), identity, {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.labels).toEqual({
+            "app.kubernetes.io/managed-by": "cortex",
+            role: "sandbox",
+            "cortex/sandbox-id": identity.sandboxId,
+            "cortex/analysis-id": "an-1",
+            "cortex/run-id": "run-1",
+            "cortex/step-id": "step-a",
+            "cortex/owner-workflow-id": "run-1-0",
+        });
+    });
+
+    test("the host labels merge under the harness labels, and each host value reaches the container with no change", async () => {
+        const { ops, created } = labelledOps();
+        (
+            await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {
+                "cortex/run-id": "other",
+                "cortex/owner-workflow-id": "other",
+                "example.com/tenant": "acme",
+                "example.com/user": "user@example.com",
+            })
+        )._unsafeUnwrap();
+
+        const labels = sandboxOf(created)!.labels!;
+        expect(labels["cortex/run-id"]).toBe("run-1");
+        expect(labels["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(labels["example.com/tenant"]).toBe("acme");
+        expect(labels["example.com/user"]).toBe("user@example.com");
+    });
+});
+
+describe("docker createSandbox — mounts and platform", () => {
+    test("lib-store-unset omits the /mnt/libs bind and lib-store env", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        const env = envMapOf(sandbox);
+        expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
+        expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(env.R_LIBS_SITE).toBeUndefined();
+        expect(env.NODE_PATH).toBeUndefined();
+        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+    });
+
+    test("forwards the configured platform into createContainer options", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            platform: "linux/arm64",
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.hasPlatformKey).toBe(true);
+        expect(sandboxOf(created)!.platform).toBe("linux/arm64");
+    });
+
+    test("omits the platform key entirely when no platform is configured", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.hasPlatformKey).toBe(false);
+        expect(sandboxOf(created)!.platform).toBeUndefined();
+    });
+
+    test("readOnly omits the rw step bind and pins WorkingDir to the RO tree", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                ...splitSpawn({
+                    runId: "ephemeral",
+                    stepId: "ephemeral",
+                    analysisId: "an-1",
+                    childWorkflowId: "ephemeral:x",
+                    resources: { cpu: 2, memoryGb: 4 },
+                    readOnly: true,
+                }),
+                mintSandboxIdentity("ephemeral"),
+                {},
+            )
+        )._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`, `${farmDir}:/mnt/libs/current:ro`]);
+        expect(sandboxOf(created)!.binds.some((b) => b.endsWith(":rw"))).toBe(false);
+        expect(sandboxOf(created)!.workingDir).toBe("/an-1");
+    });
+
+    test("binds a declared write tail in place of the step directory", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                ...splitSpawn({ ...META, runId: "derive-table", stepId: "derive", writableTail: "report-sessions/thread-1/derived" }),
+                mintSandboxIdentity("derive-table"),
+                {},
+            )
+        )._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        // The tree stays read-only, and the one read-write bind covers the declared tail alone.
+        expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/report-sessions/thread-1/derived:/an-1/report-sessions/thread-1/derived:rw"]);
+        // No step directory of the coordinates reaches a bind.
+        expect(sandbox.binds.some((b) => b.includes("runs/derive-table"))).toBe(false);
+        expect(sandbox.workingDir).toBe("/an-1/report-sessions/thread-1/derived");
+    });
+
+    test("refuses a crafted write tail before any container is created", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        // The mount builders validate each segment, thus a traversal never becomes a bind source. The
+        // refusal is a throw at the builder, and the `ResultAsync` carries it as a rejection.
+        const attempt = async (): Promise<void> => {
+            (await ops.createSandbox(...splitSpawn({ ...META, writableTail: "../escape" }), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        };
+        await expect(attempt()).rejects.toThrow(/Invalid writableTail/);
+        expect(created).toHaveLength(0);
+    });
+
+    test("skips the /mnt/libs mounts when the farm has no inflexa.lock", async () => {
+        const { docker, created } = stubDocker();
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOf(created)!);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(env.R_LIBS_SITE).toBeUndefined();
+    });
+
+    test("logs a warning when a configured store is unusable at create time", async () => {
+        const { docker } = stubDocker();
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
+        const logger = createCapturingLogger();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const warnings = logger.records.filter((r) => r.level === "warn");
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.msg).toContain("inflexa.lock");
+        expect(warnings[0]!.msg).toStartWith("[docker-client] ");
+        expect(warnings[0]!.fields).toMatchObject({ libStorePath: libRoot, farmPath: farmDir });
+    });
+
+    test("degrades to silence rather than throwing when no logger is wired", async () => {
+        const { docker } = stubDocker();
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        // The unusable-store path logs; with no logger injected it must take the
+        // no-op fallback instead of dereferencing undefined.
+        expect((await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {})).isOk()).toBe(true);
+    });
+
+    test("skips the /mnt/libs mounts when the inflexa.lock does not parse", async () => {
+        const { docker, created } = stubDocker();
+        await writeFile(join(farmDir, "inflexa.lock"), "not json");
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("a required package store refuses an unparseable lock, and no container is made", async () => {
+        const { docker, created } = stubDocker();
+        await writeFile(join(farmDir, "inflexa.lock"), "not json");
+        const logger = createCapturingLogger();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            packageStore: "required",
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("farm_unusable");
+            if (result.error.type === "farm_unusable") {
+                expect(result.error.analysisId).toBe("an-1");
+                expect(result.error.farmPath).toBe(farmDir);
+                expect(result.error.lockPath).toBe(join(farmDir, "inflexa.lock"));
+                expect(result.error.lockError).toBe("lock_invalid");
+            }
+        }
+        expect(created).toHaveLength(0);
+        // The refused value carries the reason and the consumer logs the throw,
+        // thus a warning here would record the one fault twice.
+        expect(logger.records.filter((r) => r.level === "warn")).toHaveLength(0);
+    });
+
+    test("a required package store refuses an absent lock with lock_unreadable", async () => {
+        const { docker, created } = stubDocker();
+        await rm(join(farmDir, "inflexa.lock"), { force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            packageStore: "required",
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr() && result.error.type === "farm_unusable") {
+            expect(result.error.lockError).toBe("lock_unreadable");
+            expect(result.error.lockPath).toBe(join(farmDir, "inflexa.lock"));
+        }
+        expect(created).toHaveLength(0);
+    });
+
+    test("skips the /mnt/libs mounts when the inflexa.lock schema version is unknown", async () => {
+        const { docker, created } = stubDocker();
+        await writeFile(join(farmDir, "inflexa.lock"), JSON.stringify({ schema: 99, arch: "arm64", packages: [], languages: {} }));
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("no configured store means the farm source is not called", async () => {
+        const { docker, created } = stubDocker();
+        let resolverCalls = 0;
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource: {
+                kind: "per-analysis",
+                resolve: async () => {
+                    resolverCalls += 1;
+                    return { kind: "available", location: { farmPath: farmDir } };
+                },
+            },
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(resolverCalls).toBe(0);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("a per-analysis resolver refusal returns farm_unavailable with the embedder reason, and no container is made", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource: { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "the store download is in progress" }) },
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("farm_unavailable");
+            if (result.error.type === "farm_unavailable") expect(result.error.reason).toBe("the store download is in progress");
+        }
+        expect(created).toHaveLength(0);
+    });
+
+    test("a per-analysis resolver throw refuses with farm_unavailable, and no container is made", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource: {
+                kind: "per-analysis",
+                resolve: async () => {
+                    throw new Error("boom");
+                },
+            },
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("farm_unavailable");
+        expect(created).toHaveLength(0);
+    });
+
+    test("a per-analysis resolver feeds the farm of THIS analysis, so a farm made between two sandboxes reaches the next one", async () => {
+        const { docker, created } = stubDocker();
+        const resolvedFor: string[] = [];
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource: {
+                kind: "per-analysis",
+                resolve: async (analysisId) => {
+                    resolvedFor.push(analysisId);
+                    return { kind: "available", location: { farmPath: farmDir } };
+                },
+            },
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(resolvedFor).toEqual(["an-1"]);
+        expect(sandboxOf(created)!.binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
+    });
+
+    test("a cache location on the farm resolution mounts read-write at /mnt/libs/cache, after the two store binds", async () => {
+        const { docker, created } = stubDocker();
+        const cacheDir = join(libRoot, "caches", "an-1");
+        await mkdir(cacheDir, { recursive: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource: { kind: "fixed", location: { farmPath: farmDir, cachePath: cacheDir } },
+            toolchainSource: "image",
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        const libsIdx = sandbox.binds.indexOf(`${libRoot}:/mnt/libs:ro`);
+        const farmIdx = sandbox.binds.indexOf(`${farmDir}:/mnt/libs/farm:ro`);
+        const cacheIdx = sandbox.binds.indexOf(`${cacheDir}:/mnt/libs/cache:rw`);
+        expect(libsIdx).toBeGreaterThanOrEqual(0);
+        expect(farmIdx).toBeGreaterThan(libsIdx);
+        expect(cacheIdx).toBeGreaterThan(farmIdx);
+
+        const env = envMapOf(sandbox);
+        expect(env.NUMBA_CACHE_DIR).toBe("/mnt/libs/cache/numba-cache");
+        expect(env.MPLCONFIGDIR).toBe("/mnt/libs/cache/matplotlib_config");
+    });
+
+    test("toolchainSource image mounts the farm at /mnt/libs/farm and moves the resolver env onto the image toolchain", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            toolchainSource: "image",
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.binds).toContain(`${farmDir}:/mnt/libs/farm:ro`);
+        const env = envMapOf(sandbox);
+        expect(env.NODE_PATH).toBe("/opt/node/node_modules");
+        // The farm python/bin ends the PATH, after every image path, thus a
+        // farm script never shadows an image tool.
+        expect(env.PATH!.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
+        expect(env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
+        // Without a cache mount the cache env stays absent — the entrypoint fallback covers it.
+        expect(env.NUMBA_CACHE_DIR).toBeUndefined();
+    });
+});
+
+describe("docker createSandbox — ref store re-check", () => {
+    test("skips the /mnt/refs mount, creates no directory, and logs nothing when the configured store is missing at create time", async () => {
+        const { docker, created } = stubDocker();
+        // refsRoot exists; the configured path under it does not — the normal cold state.
+        const missing = join(refsRoot, "not-installed-yet");
+        const logger = createCapturingLogger();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            farmSource,
+            refStorePath: missing,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
+        // The harness must never materialize the bind source: a real bind would make Docker
+        // auto-create a root-owned dir here, bricking a later reference download.
+        expect(existsSync(missing)).toBe(false);
+        // A missing ref store is the cold state, not a degradation — unlike libs, it warns nothing.
+        expect(logger.records.filter((r) => r.level === "warn")).toHaveLength(0);
+    });
+
+    test("mounts a store created after the ops were built — a mid-session install without a restart", async () => {
+        const { docker, created } = stubDocker();
+        // Absent when the ops are constructed; a reference download creates it before the create.
+        const installedLater = join(refsRoot, "installed-mid-session");
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            refStorePath: installedLater,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        await mkdir(installedLater, { recursive: true });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds).toContain(`${installedLater}:/mnt/refs:ro`);
+    });
+
+    test("skips the /mnt/refs mount when the configured path is a symlink, even to a real directory", async () => {
+        const { docker, created } = stubDocker();
+        // The bind authority must itself be the store directory, not an indirection that
+        // could later be repointed — so a symlink is rejected though it resolves to a dir.
+        const target = join(refsRoot, "real-store");
+        const link = join(refsRoot, "store-link");
+        await mkdir(target, { recursive: true });
+        await symlink(target, link);
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            refStorePath: link,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
+    });
+});
+
+describe("docker teardown / isAlive", () => {
+    test("teardown removes the container", async () => {
+        const { docker, removed } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.teardown(ref))._unsafeUnwrap();
+        expect(removed).toContain(ref.sandboxId);
+    });
+
+    test("teardown of an already-gone container is a no-op success", async () => {
+        const { docker } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            registerSandbox: async () => {},
+        });
+        const result = await ops.teardown({ sandboxId: "sbx-missing", host: "127.0.0.1", port: 9999, backend: "docker" });
+        expect(result.isOk()).toBe(true);
+    });
+
+    test("isAlive is the container's liveness: running→alive, stopped/404→dead", async () => {
+        const { docker, running } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            registerSandbox: async () => {},
+        });
+
+        // 404 (never created) → dead.
+        expect((await ops.isAlive({ sandboxId: "missing", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
+            alive: false,
+            oomKilled: false,
+        });
+
+        running.set("alive", true);
+        expect((await ops.isAlive({ sandboxId: "alive", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
+            alive: true,
+            oomKilled: false,
+        });
+
+        running.set("stopped", false);
+        expect((await ops.isAlive({ sandboxId: "stopped", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
+            alive: false,
+            oomKilled: false,
+        });
+    });
+
+    test("isAlive reports an OOM-killed container as dead with the OOM cause", async () => {
+        const { docker, running, oomKilled } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            registerSandbox: async () => {},
+        });
+
+        running.set("oomed", false);
+        oomKilled.add("oomed");
+        expect((await ops.isAlive({ sandboxId: "oomed", host: "h", port: 1, backend: "docker" }))._unsafeUnwrap()).toEqual({
+            alive: false,
+            oomKilled: true,
+        });
+    });
+
+    test("isAlive errs on non-404 errors so callers can retry", async () => {
+        const erroringDocker = {
+            getContainer: () => ({
+                inspect: async () => {
+                    const err = new Error("server unavailable") as Error & { statusCode: number };
+                    err.statusCode = 503;
+                    throw err;
+                },
+            }),
+        } as unknown as Docker;
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker: erroringDocker,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.isAlive({ sandboxId: "x", host: "h", port: 1, backend: "docker" });
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("liveness_failed");
+    });
+});
+
+/** The owner label the reconcile guard reads (module-private in docker-client.ts). */
+const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
+
+/**
+ * A docker stub whose FIRST `createContainer` fails with `createStatus` and
+ * whose `getContainer(...).inspect()` reports `standing` (or 404s when
+ * `standing` is null). A post-removal recreate lands as a fresh, startable
+ * container. Models the recovery re-run: create fails, then the reconcile
+ * inspects the checkpointed name.
+ */
+function reconcileDocker(opts: { createStatus: number; standing: { labels: Record<string, string>; running: boolean } | null }): {
+    docker: Docker;
+    created: string[];
+    removed: string[];
+} {
+    const created: string[] = [];
+    const removed: string[] = [];
+    let standing = opts.standing;
+    let attempts = 0;
+
+    const container = (id: string) => ({
+        id,
+        start: async () => {
+            if (standing) standing.running = true;
+        },
+        stop: async () => {
+            if (standing) standing.running = false;
+        },
+        remove: async () => {
+            removed.push(id);
+            standing = null;
+        },
+        inspect: async () => {
+            if (!standing) throw notFound();
+            return {
+                Config: { Labels: standing.labels },
+                NetworkSettings: { Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] } },
+                State: { Running: standing.running, OOMKilled: false },
+            };
+        },
+    });
+
+    const docker = {
+        createContainer: async (o: CreateOpts) => {
+            attempts += 1;
+            // The first create is the one that races the standing container; a
+            // later attempt is a post-removal recreate and lands cleanly.
+            if (attempts === 1) {
+                const e = new Error("that name is already in use") as Error & { statusCode: number };
+                e.statusCode = opts.createStatus;
+                throw e;
+            }
+            created.push(o.name);
+            standing = { labels: o.Labels ?? {}, running: false };
+            return container(o.name);
+        },
+        getContainer: (id: string) => container(id),
+    } as unknown as Docker;
+
+    return { docker, created, removed };
+}
+
+describe("docker createSandbox — recovery reconciliation", () => {
+    const ownedLabels = { [OWNER_WORKFLOW_LABEL]: META.childWorkflowId, role: "sandbox" };
+
+    const reconcileOps = (docker: Docker) =>
+        createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+    // The health-re-verification test advances the mocked clock; restore real time after
+    // every case so a thrown assertion can never leave a frozen clock for the next test.
+    afterEach(() => {
+        setSystemTime();
+    });
+
+    test("adopts a running owned container when the engine answers the duplicate create with 500 (podman's shape)", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
+
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(ref.backend).toBe("docker");
+        // Adopted as-is: no create landed and nothing was removed.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("adopts a running owned container when the engine answers the duplicate create with 409 (Docker's shape)", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 409, standing: { labels: ownedLabels, running: true } });
+
+        (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("refuses a standing container owned by a different workflow with name_conflict", async () => {
+        const { docker, created, removed } = reconcileDocker({
+            createStatus: 500,
+            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: true },
+        });
+
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("name_conflict");
+            if (result.error.type === "name_conflict") expect(result.error.owner).toBe("someone-else");
+        }
+        // A foreign container is neither adopted nor removed.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("refuses a STOPPED standing container owned by a different workflow with name_conflict, and never removes it", async () => {
+        const { docker, created, removed } = reconcileDocker({
+            createStatus: 500,
+            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: false },
+        });
+
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("name_conflict");
+            if (result.error.type === "name_conflict") expect(result.error.owner).toBe("someone-else");
+        }
+        // The ownership guard is checked before the running-state check, so a foreign
+        // container is refused whether it is running or stopped. A stopped one must not be
+        // treated as our own reclaimable leftover and removed — the empty removal record
+        // pins that ordering.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("returns the original create error (not the inspect 404) when no container stands under the name", async () => {
+        const { docker } = reconcileDocker({ createStatus: 500, standing: null });
+
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("container_create_failed");
+            // The status is the create's 500, proving the inspect's 404 was never surfaced.
+            if (result.error.type === "container_create_failed") expect(result.error.status).toBe(500);
+        }
+    });
+
+    test("removes and recreates a stopped owned container", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: false } });
+
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        expect(ref.backend).toBe("docker");
+        // The stopped prior attempt is removed, then a fresh container is created.
+        expect(removed.length).toBeGreaterThan(0);
+        expect(created.length).toBeGreaterThan(0);
+    });
+
+    test("re-verifies an adopted container's health: a /health that never returns 200 fails adoption with container_create_failed", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
+
+        // The running owned container is adopted, then its /health is polled afresh. This
+        // stub keeps /health unhealthy AND jumps the mocked clock past the poll deadline on
+        // the first probe, so the loop ends after a single tick instead of the real 30s wait.
+        const unhealthyFetch = (async () => {
+            setSystemTime(new Date(Date.now() + 10 * 60_000));
+            return new Response("unhealthy", { status: 503 });
+        }) as unknown as typeof fetch;
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: unhealthyFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
+        // Adoption path proof: the standing container was running and owned, so nothing was
+        // created or removed. The failure therefore comes from re-verifying the adopted
+        // container's health, not from a create attempt — deleting that re-verification
+        // would let this adoption succeed against an unhealthy sandbox.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+});
+
+describe("engineConnectionOptions", () => {
+    test("maps a configured socket path to dockerode connection options", () => {
+        expect(engineConnectionOptions("/run/podman/podman.sock")).toEqual({ socketPath: "/run/podman/podman.sock" });
+    });
+
+    test("is undefined when unset so construction stays a bare new Docker() (default resolution)", () => {
+        expect(engineConnectionOptions(undefined)).toBeUndefined();
+    });
+});
+
+describe("docker createSandbox — engine connection", () => {
+    test("an injected docker instance takes precedence over a configured engineSocketPath", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            farmSource,
+            engineSocketPath: "/nonexistent/should-not-be-dialed.sock",
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+
+        // The create landed through the injected stub — the configured socket was never dialed.
+        expect(sandboxOf(created)).toBeDefined();
+    });
+});
