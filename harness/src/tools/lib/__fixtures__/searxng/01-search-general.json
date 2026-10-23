@@ -1,0 +1,69 @@
+{
+    "query": "scanpy differential expression",
+    "number_of_results": 47,
+    "results": [
+        {
+            "template": "default.html",
+            "engine": "duckduckgo",
+            "engines": ["duckduckgo", "bing"],
+            "positions": [1, 2],
+            "score": 3.8333333333333335,
+            "category": "general",
+            "url": "https://scanpy.readthedocs.io/en/stable/api/scanpy.tl.rank_genes_groups.html",
+            "title": "scanpy.tl.rank_genes_groups — scanpy 1.11.0 documentation",
+            "content": "Rank genes for characterizing groups. Expects logarithmized data.",
+            "publishedDate": "2025-03-04T10:22:00"
+        },
+        {
+            "template": "default.html",
+            "engine": "bing",
+            "engines": ["bing"],
+            "positions": [3],
+            "score": 1.0,
+            "category": "general",
+            "url": "https://scanpy.readthedocs.io/en/stable/tutorials.html",
+            "title": "Tutorials — scanpy documentation",
+            "content": null
+        },
+        {
+            "template": "default.html",
+            "engine": "startpage",
+            "engines": ["startpage"],
+            "positions": [4],
+            "score": 1.0,
+            "category": "general",
+            "url": "https://www.nature.com/articles/s41592-023-01994-w",
+            "title": "Single-cell best practices — Nature Methods",
+            "publishedDate": "2023-07-10"
+        },
+        {
+            "template": "default.html",
+            "engine": "qwant",
+            "engines": ["qwant"],
+            "positions": [5],
+            "score": 1.0,
+            "category": "general",
+            "url": "https://github.com/scverse/scanpy",
+            "title": null
+        }
+    ],
+    "answers": [
+        {
+            "url": "https://en.wikipedia.org/wiki/Scanpy",
+            "answer": "Scanpy is a scalable Python toolkit for analyzing single-cell gene expression data.",
+            "template": "wikipedia.html"
+        },
+        {
+            "url": "https://pypi.org/project/scanpy/",
+            "answer": null
+        },
+        {
+            "template": "answer.html",
+            "engine": "duckduckgo"
+        }
+    ],
+    "corrections": [],
+    "infoboxes": [],
+    "suggestions": ["scanpy rank genes groups", "scanpy tutorial"],
+    "unresponsive_engines": [["mojeek", "timeout"]]
+}

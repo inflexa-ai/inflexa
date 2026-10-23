@@ -173,11 +173,11 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
 }
 
 /**
- * The host ports the stack binds and the four host-side mount/compose paths it binds — split into pure
+ * The host ports the stack binds and the host-side mount/compose paths it binds — split into pure
  * helpers so the whole stack identity derives from ONE channel signal ({@link isDevelopmentBuild} over the
  * baked build channel, never NODE_ENV), the same signal `compose.ts` names its containers/networks from.
- * Two of the three ports are published by the containers (proxy, Postgres); the third — the DBOS `admin`
- * port — is bound by the harness runtime's in-process admin HTTP server (modules/harness/runtime.ts), not a
+ * The container-published ports (proxy, Postgres, SearXNG) sit beside the DBOS `admin` port, which is
+ * bound by the harness runtime's in-process admin HTTP server (modules/harness/runtime.ts), not a
  * container, yet lives in this same table because this helper is the SINGLE place a channel's owned
  * host-port allocation is decided, so cross-channel collision avoidance is provable in one spot. Exported
  * (rather than folded into `env`) because the frozen `env` reads the channel once at import and cannot be
@@ -201,14 +201,22 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
  * `postgres-dev/`, `docker-compose.dev.yml`). Dev Postgres deliberately avoids 8433 — the PRODUCTION DBOS
  * admin server binds it, so a dev Postgres there would EADDRINUSE the first harness boot on a dual-build
  * machine — plus 5432 (system PG) and 5433 (the harness testcontainer). The production server takes 8431, so
- * the production 84xx ports stay one block (8431-8433) below the dev block (8434-8436). Run together, the full
- * bound-port set is eight distinct listeners: prod {8317, 8431, 8432, 8433} ∪ dev {8318, 8434, 8435, 8436}.
+ * the production 84xx ports stay one block (8431-8433) below the dev block (8434-8436). The SearXNG ports
+ * are new, with no historical value to preserve: the pair takes a fresh block (28437/28438) clear of the
+ * 831x/84xx families and below the ephemeral ranges. Run together, the full bound-port set is ten distinct
+ * listeners: prod {28437, 8317, 8431, 8432, 8433} ∪ dev {28438, 8318, 8434, 8435, 8436}.
  */
 export type StackPorts = {
     /** Host port the CLIProxyAPI container publishes (also the URL the chat backend connects to). */
     readonly cliproxy: number;
     /** Default host port the Postgres container publishes — the channel-aware default for `postgres.port`. */
     readonly postgres: number;
+    /**
+     * Host port the SearXNG metasearch container publishes over its container port 8080. The pair
+     * (28437/28438) takes a fresh block outside the historical 831x/84xx families: the service is new,
+     * so it has no historical value to preserve, and both values stay below the ephemeral ranges.
+     */
+    readonly searxng: number;
     /**
      * Default host port the harness's DBOS admin HTTP server binds — modules/harness/runtime.ts hands it to
      * `DBOS.setConfig({ adminPort })` before `DBOS.launch()`, which opens a live host listener there. It is
@@ -225,11 +233,11 @@ export type StackPorts = {
     readonly server: number;
 };
 
-/** Channel-aware host ports for the stack — dev siblings (8318/8434/8435/8436) off the production set (8317/8432/8433/8431). See {@link StackPorts}. */
+/** Channel-aware host ports for the stack — dev siblings (8318/8434/8435/8436/28438) off the production set (8317/8432/8433/8431/28437). See {@link StackPorts}. */
 export function stackPorts(channel: string | undefined): StackPorts {
     return isDevelopmentBuild(channel)
-        ? { cliproxy: 8318, postgres: 8434, admin: 8435, server: 8436 }
-        : { cliproxy: 8317, postgres: 8432, admin: 8433, server: 8431 };
+        ? { cliproxy: 8318, postgres: 8434, searxng: 28438, admin: 8435, server: 8436 }
+        : { cliproxy: 8317, postgres: 8432, searxng: 28437, admin: 8433, server: 8431 };
 }
 
 /**
@@ -259,6 +267,8 @@ export type StackPaths = {
     readonly cliproxyAuthDir: string;
     /** Postgres data dir, bind-mounted into the Postgres container. */
     readonly postgresDataDir: string;
+    /** SearXNG settings file, bind-mounted read-only into the SearXNG container. */
+    readonly searxngSettingsPath: string;
     /** Generated Docker Compose file orchestrating the stack. */
     readonly composeFilePath: string;
     /**
@@ -286,6 +296,7 @@ export function stackPaths(dataDirBase: string, channel: string | undefined): St
     const dev = isDevelopmentBuild(channel);
     const proxyDir = dev ? "cliproxy-dev" : "cliproxy";
     const postgresDir = dev ? "postgres-dev" : "postgres";
+    const searxngDir = dev ? "searxng-dev" : "searxng";
     const composeFile = dev ? "docker-compose.dev.yml" : "docker-compose.yml";
     const setupStateFile = dev ? "setup-state.dev.json" : "setup-state.json";
     const serverFile = dev ? "server.dev.json" : "server.json";
@@ -294,6 +305,7 @@ export function stackPaths(dataDirBase: string, channel: string | undefined): St
         cliproxyConfigPath: join(dataDirBase, "inflexa", proxyDir, "config.yaml"),
         cliproxyAuthDir: join(dataDirBase, "inflexa", proxyDir, "auth"),
         postgresDataDir: join(dataDirBase, "inflexa", postgresDir),
+        searxngSettingsPath: join(dataDirBase, "inflexa", searxngDir, "settings.yml"),
         composeFilePath: join(dataDirBase, "inflexa", composeFile),
         setupStatePath: join(dataDirBase, "inflexa", setupStateFile),
         serverFilePath: join(dataDirBase, "inflexa", serverFile),
@@ -380,6 +392,13 @@ export const env = Object.freeze({
      */
     postgresDataDir: stackDirs.postgresDataDir,
     /**
+     * SearXNG settings file — bind-mounted read-only into the searxng container at
+     * `/etc/searxng/settings.yml`. Provisioned with a one-time random secret key by
+     * `writeSearxngSettings` (src/modules/infra/searxng_config.ts) through the mount-source guard, so
+     * an existing file is never rewritten.
+     */
+    searxngSettingsPath: stackDirs.searxngSettingsPath,
+    /**
      * Docker Compose file — generated by `inflexa setup` to orchestrate both the
      * proxy and Postgres containers on a shared network. Regenerated on every setup
      * run; the launch-time gate generates it if missing.
@@ -417,6 +436,15 @@ export const env = Object.freeze({
     cliproxyBaseUrl: `http://localhost:${stack.cliproxy}`, // human-facing, no /v1
     cliproxyApiUrl: `http://localhost:${stack.cliproxy}/v1`, // chat backend endpoint
     postgresPort: stack.postgres,
+    /**
+     * SearXNG networking — the channel-aware port of {@link StackPorts.searxng} and the base URL the
+     * harness conversation deps receive (`web_search` reads it). Excluded from envDoc/--help like the
+     * other derived ports: the CLI owns the container, so the endpoint is NOT user-overridable — the
+     * same rule as the proxy endpoint. The URL names 127.0.0.1 because it is a machine-local container
+     * address, never a name a person types.
+     */
+    searxngPort: stack.searxng,
+    searxngBaseUrl: `http://127.0.0.1:${stack.searxng}`,
     /**
      * Default host port the harness runtime's DBOS admin HTTP server binds — the channel-aware default for
      * `harness.adminPort` (modules/harness/config.ts). Excluded from envDoc/--help below like the other
@@ -575,6 +603,8 @@ export const envDoc: Readonly<
             | "cliproxyBaseUrl"
             | "cliproxyApiUrl"
             | "postgresPort"
+            | "searxngPort"
+            | "searxngBaseUrl"
             | "adminPort"
             | "serverPort"
             | "serverFilePath"
@@ -640,6 +670,12 @@ export const envDoc: Readonly<
             process.platform === "win32"
                 ? "not used on Windows: a named volume of the container engine holds the Postgres data"
                 : "Postgres data dir, bind-mounted into the inflexa-postgres container",
+        baseVar: dataVar,
+    },
+    searxngSettingsPath: {
+        kind: "path",
+        label: "searxng settings",
+        description: "SearXNG settings, written by `inflexa setup` and mounted read-only into the searxng container",
         baseVar: dataVar,
     },
     composeFilePath: {

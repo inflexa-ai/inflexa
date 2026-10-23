@@ -1,0 +1,11 @@
+{
+    "01-search-general.json": {
+        "url": "http://127.0.0.1:28437/search",
+        "params": {
+            "q": "scanpy differential expression",
+            "format": "json"
+        },
+        "capturedAt": "2026-10-22",
+        "replay": false
+    }
+}

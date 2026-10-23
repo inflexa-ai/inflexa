@@ -7,6 +7,8 @@ import * as compose from "./compose.ts";
 import {
     POSTGRES_CONTAINER_NAME,
     PROXY_IMAGE,
+    SEARXNG_CONTAINER_NAME,
+    SEARXNG_IMAGE,
     POSTGRES_VOLUME_NAME,
     PROXY_CONTAINER_NAME,
     ensureMountSources,
@@ -58,6 +60,7 @@ const windowsHost: ComposeHost = {
     cliproxyConfigPath: String.raw`C:\Users\dana\AppData\Local\inflexa\cliproxy\config.yaml`,
     cliproxyAuthDir: String.raw`C:\Users\dana\AppData\Local\inflexa\cliproxy\auth`,
     postgresDataDir: String.raw`C:\Users\dana\AppData\Local\inflexa\postgres`,
+    searxngSettingsPath: String.raw`C:\Users\dana\AppData\Local\inflexa\searxng\settings.yml`,
 };
 
 // A quotation mark is legal in a POSIX path (and illegal in a Windows one), so the `"` escape is proven
@@ -67,6 +70,7 @@ const quotedPosixHost: ComposeHost = {
     cliproxyConfigPath: '/home/da"na/.local/share/inflexa/cliproxy/config.yaml',
     cliproxyAuthDir: '/home/da"na/.local/share/inflexa/cliproxy/auth',
     postgresDataDir: '/home/da"na/.local/share/inflexa/postgres',
+    searxngSettingsPath: '/home/da"na/.local/share/inflexa/searxng/settings.yml',
 };
 
 describe("host paths in the compose file", () => {
@@ -74,15 +78,22 @@ describe("host paths in the compose file", () => {
         const yaml = generateComposeFile(resolvePostgresConfig(), "cliproxy", windowsHost);
         expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\cliproxy\\config.yaml:/CLIProxyAPI/config.yaml"`);
         expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\cliproxy\\auth:/root/.cli-proxy-api"`);
+        expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\searxng\\settings.yml:/etc/searxng/settings.yml:ro"`);
         // No raw single backslash survives: `\U` is the escape that made the compose tool reject the file.
         expect(yaml).not.toMatch(/[^\\]\\U/);
-        expect(bindMountHosts(yaml)).toEqual([windowsHost.cliproxyConfigPath, windowsHost.cliproxyAuthDir]);
+        expect(bindMountHosts(yaml)).toEqual([windowsHost.cliproxyConfigPath, windowsHost.cliproxyAuthDir, windowsHost.searxngSettingsPath]);
     });
 
     test("a quotation mark in a path is escaped, and reads back as the exact path", () => {
         const yaml = generateComposeFile(resolvePostgresConfig(), "cliproxy", quotedPosixHost);
         expect(yaml).toContain(String.raw`- "/home/da\"na/.local/share/inflexa/postgres:/var/lib/postgresql"`);
-        expect(bindMountHosts(yaml)).toEqual([quotedPosixHost.cliproxyConfigPath, quotedPosixHost.cliproxyAuthDir, quotedPosixHost.postgresDataDir]);
+        expect(yaml).toContain(String.raw`- "/home/da\"na/.local/share/inflexa/searxng/settings.yml:/etc/searxng/settings.yml:ro"`);
+        expect(bindMountHosts(yaml)).toEqual([
+            quotedPosixHost.cliproxyConfigPath,
+            quotedPosixHost.cliproxyAuthDir,
+            quotedPosixHost.postgresDataDir,
+            quotedPosixHost.searxngSettingsPath,
+        ]);
     });
 
     test("a path with no backslash and no quotation mark is written as it is", () => {
@@ -90,7 +101,25 @@ describe("host paths in the compose file", () => {
         expect(yaml).toContain(`      - "${env.cliproxyConfigPath}:/CLIProxyAPI/config.yaml"\n`);
         expect(yaml).toContain(`      - "${env.cliproxyAuthDir}:/root/.cli-proxy-api"\n`);
         expect(yaml).toContain(`      - "${env.postgresDataDir}:/var/lib/postgresql"\n`);
+        expect(yaml).toContain(`      - "${env.searxngSettingsPath}:/etc/searxng/settings.yml:ro"\n`);
     });
+});
+
+describe("the SearXNG service", () => {
+    const modes: ConnectionMode[] = ["cliproxy", "direct"];
+    for (const mode of modes) {
+        test(`${mode}: defined with the pinned image, the loopback-only port, and the read-only settings mount`, () => {
+            const yaml = generateComposeFile(resolvePostgresConfig(), mode);
+            expect(yaml).toContain(`  ${SEARXNG_CONTAINER_NAME}:`);
+            expect(yaml).toContain(`container_name: ${SEARXNG_CONTAINER_NAME}`);
+            // The pin literal itself, then its dated-tag + digest FORM: never a floating tag.
+            expect(yaml).toContain(`image: ${SEARXNG_IMAGE}`);
+            expect(yaml).toMatch(/image: docker\.io\/searxng\/searxng:\d{4}\.\d{2}\.\d{2}-[0-9a-f]+@sha256:[0-9a-f]{64}\n/);
+            expect(yaml).toContain(`"127.0.0.1:${env.searxngPort}:8080"`);
+            expect(yaml).toContain(`"${env.searxngSettingsPath}:/etc/searxng/settings.yml:ro"`);
+            expect(yaml).toContain("restart: unless-stopped");
+        });
+    }
 });
 
 describe("Postgres data location", () => {
@@ -142,63 +171,76 @@ describe("mount manifest coverage", () => {
         });
     }
 
-    test("direct mode lists only the postgres data dir; cliproxy adds the config file + auth dir", () => {
-        expect(mountManifest("direct").map((source) => source.path)).toEqual([env.postgresDataDir]);
+    test("direct mode lists the postgres data dir and the searxng settings file; cliproxy adds the config file + auth dir", () => {
+        const direct = mountManifest("direct");
+        expect(direct.map((source) => source.path)).toEqual([env.postgresDataDir, env.searxngSettingsPath]);
+        expect(direct.find((source) => source.path === env.searxngSettingsPath)?.kind).toBe("file");
 
         const cliproxy = mountManifest("cliproxy");
         expect(cliproxy.find((source) => source.path === env.cliproxyConfigPath)?.kind).toBe("file");
         expect(cliproxy.find((source) => source.path === env.cliproxyAuthDir)?.kind).toBe("directory");
         expect(cliproxy.find((source) => source.path === env.postgresDataDir)?.kind).toBe("directory");
+        expect(cliproxy.find((source) => source.path === env.searxngSettingsPath)?.kind).toBe("file");
     });
 
     // A named volume is not a mount source, so on a Windows host the manifest lists no Postgres data dir.
     test("a Windows host: every bind mount of the cliproxy file is in the manifest, and nothing else is", () => {
         const hosts = bindMountHosts(generateComposeFile(resolvePostgresConfig(), "cliproxy", windowsHost));
-        expect(hosts.length).toBe(2);
+        expect(hosts.length).toBe(3);
         expect(mountManifest("cliproxy", windowsHost).map((source) => source.path)).toEqual(hosts);
     });
 
-    test("a Windows host in direct mode has no bind mount and an empty manifest", () => {
-        expect(bindMountHosts(generateComposeFile(resolvePostgresConfig(), "direct", windowsHost))).toEqual([]);
-        expect(mountManifest("direct", windowsHost)).toEqual([]);
+    test("a Windows host in direct mode mounts only the settings file, and the manifest covers exactly it", () => {
+        const hosts = bindMountHosts(generateComposeFile(resolvePostgresConfig(), "direct", windowsHost));
+        expect(hosts).toEqual([windowsHost.searxngSettingsPath]);
+        const manifest = mountManifest("direct", windowsHost);
+        expect(manifest.map((source) => source.path)).toEqual(hosts);
+        expect(manifest[0]?.kind).toBe("file");
     });
 });
 
-// ensureMountSources touches REAL host paths (config file, auth dir, postgres data dir) under the
-// mkdtemp sandbox. Guard first (data-loss backstop) and reap them between tests.
+// ensureMountSources touches REAL host paths (config file, auth dir, postgres data dir, searxng settings)
+// under the mkdtemp sandbox. Guard first (data-loss backstop) and reap them between tests.
 describe("ensureMountSources integrity guard", () => {
     const configPath = env.cliproxyConfigPath;
     const cliproxyDir = dirname(configPath);
+    const searxngDir = dirname(env.searxngSettingsPath);
 
     function reset(): void {
         assertTestSandbox(cliproxyDir);
         rmSync(cliproxyDir, { recursive: true, force: true });
+        assertTestSandbox(searxngDir);
+        rmSync(searxngDir, { recursive: true, force: true });
         assertTestSandbox(env.postgresDataDir);
         rmSync(env.postgresDataDir, { recursive: true, force: true });
     }
     beforeEach(reset);
     afterEach(reset);
 
-    test("cliproxy: the proxy config exists as a FILE (never a directory) before the engine would run", async () => {
+    test("cliproxy: the proxy config and the searxng settings exist as FILES (never directories) before the engine would run", async () => {
         (await ensureMountSources("cliproxy"))._unsafeUnwrap();
-        // The ordering property: after the guard, the file-typed source is a real file, so a subsequent
-        // engine invocation can never manufacture a directory at its path. Verified at the seam rather
+        // The ordering property: after the guard, the file-typed sources are real files, so a subsequent
+        // engine invocation can never manufacture a directory at their paths. Verified at the seam rather
         // than by spawning a real engine.
         expect(statSync(configPath).isFile()).toBe(true);
+        expect(statSync(env.searxngSettingsPath).isFile()).toBe(true);
         expect(statSync(env.cliproxyAuthDir).isDirectory()).toBe(true);
         expect(statSync(env.postgresDataDir).isDirectory()).toBe(true);
     });
 
-    test("direct: only the postgres data dir is created; no proxy config is written", async () => {
+    test("direct: the postgres data dir and the searxng settings file are provisioned; no proxy config is written", async () => {
         (await ensureMountSources("direct"))._unsafeUnwrap();
         expect(statSync(env.postgresDataDir).isDirectory()).toBe(true);
+        expect(statSync(env.searxngSettingsPath).isFile()).toBe(true);
         expect(existsSync(configPath)).toBe(false);
     });
 
     test("win32: the guard makes no Postgres data dir, because a named volume holds the data", async () => {
-        // The sandboxed POSIX path with the win32 platform: a Windows path string here would be a
+        // The sandboxed POSIX paths with the win32 platform: a Windows path string here would be a
         // relative name on this host, and a wrong guard would then litter the working directory.
-        (await ensureMountSources("direct", { ...windowsHost, postgresDataDir: env.postgresDataDir }))._unsafeUnwrap();
+        (
+            await ensureMountSources("direct", { ...windowsHost, postgresDataDir: env.postgresDataDir, searxngSettingsPath: env.searxngSettingsPath })
+        )._unsafeUnwrap();
         expect(existsSync(env.postgresDataDir)).toBe(false);
     });
 
@@ -206,6 +248,12 @@ describe("ensureMountSources integrity guard", () => {
         mkdirSync(configPath, { recursive: true });
         (await ensureMountSources("cliproxy"))._unsafeUnwrap();
         expect(statSync(configPath).isFile()).toBe(true);
+    });
+
+    test("heals an empty directory manufactured at the searxng settings path", async () => {
+        mkdirSync(env.searxngSettingsPath, { recursive: true });
+        (await ensureMountSources("direct"))._unsafeUnwrap();
+        expect(statSync(env.searxngSettingsPath).isFile()).toBe(true);
     });
 
     test("refuses a non-empty occupant with a typed path_occupied error, deleting nothing", async () => {
@@ -223,9 +271,11 @@ describe("ensureMountSources integrity guard", () => {
     test("is a no-op on already-healthy state: a second run changes nothing", async () => {
         (await ensureMountSources("cliproxy"))._unsafeUnwrap();
         const before = readFileSync(configPath, "utf8");
+        const settingsBefore = readFileSync(env.searxngSettingsPath, "utf8");
 
         (await ensureMountSources("cliproxy"))._unsafeUnwrap();
         expect(readFileSync(configPath, "utf8")).toBe(before);
+        expect(readFileSync(env.searxngSettingsPath, "utf8")).toBe(settingsBefore);
     });
 });
 
@@ -484,7 +534,7 @@ describe("composePullIfMissing", () => {
     }
 
     test("nothing is missing: no pull, no line, no report", async () => {
-        const run = script({ held: [PROXY_IMAGE, DEFAULT_IMAGE], socket: "/engine.sock" });
+        const run = script({ held: [PROXY_IMAGE, SEARXNG_IMAGE, DEFAULT_IMAGE], socket: "/engine.sock" });
         const reports: BootPullProgress[] = [];
 
         expect((await compose.composePullIfMissing(runtimes.podman, "cliproxy", (p) => reports.push(p))).isOk()).toBe(true);
@@ -512,7 +562,7 @@ describe("composePullIfMissing", () => {
         const run = script({
             socket: "/engine.sock",
             held: [],
-            sizes: { [PROXY_IMAGE]: 100, [DEFAULT_IMAGE]: 200 },
+            sizes: { [PROXY_IMAGE]: 100, [SEARXNG_IMAGE]: 50, [DEFAULT_IMAGE]: 200 },
             pulls: { [PROXY_IMAGE]: { reports: [30] }, [DEFAULT_IMAGE]: { reports: [50, 120] } },
         });
         const reports: BootPullProgress[] = [];
@@ -521,18 +571,19 @@ describe("composePullIfMissing", () => {
 
         expect(run.pulled).toEqual([
             { socket: "/engine.sock", image: PROXY_IMAGE },
+            { socket: "/engine.sock", image: SEARXNG_IMAGE },
             { socket: "/engine.sock", image: DEFAULT_IMAGE },
         ]);
         expect(run.inherited).toEqual([]);
         expect(reports).toEqual([
-            { doneBytes: 30, totalBytes: 300 },
-            { doneBytes: 80, totalBytes: 300 },
-            { doneBytes: 150, totalBytes: 300 },
+            { doneBytes: 30, totalBytes: 350 },
+            { doneBytes: 80, totalBytes: 350 },
+            { doneBytes: 150, totalBytes: 350 },
         ]);
     });
 
     test("only the missing image pulls", async () => {
-        const run = script({ socket: "/engine.sock", held: [PROXY_IMAGE] });
+        const run = script({ socket: "/engine.sock", held: [PROXY_IMAGE, SEARXNG_IMAGE] });
 
         expect((await compose.composePullIfMissing(runtimes.podman, "cliproxy", () => undefined)).isOk()).toBe(true);
 
@@ -572,8 +623,8 @@ describe("composePullIfMissing", () => {
         expect(error.type).toBe("image_pull_failed");
         expect(error.type === "image_pull_failed" ? error.image : "").toBe(DEFAULT_IMAGE);
         expect(error.message).toContain("manifest unknown");
-        // Both pulls settled before the outcome was read.
-        expect(run.pulled).toHaveLength(2);
+        // All three pulls settled before the outcome was read.
+        expect(run.pulled).toHaveLength(3);
         expect(run.inherited).toEqual([]);
     });
 
@@ -592,7 +643,7 @@ describe("composePullIfMissing", () => {
 
         expect((await compose.composePullIfMissing(runtimes.podman, "direct", (p) => reports.push(p))).isOk()).toBe(true);
 
-        expect(run.pulled).toHaveLength(1);
+        expect(run.pulled).toHaveLength(2);
         expect(run.inherited).toHaveLength(1);
         expect(reports).toEqual([]);
     });

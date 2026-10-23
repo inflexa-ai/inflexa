@@ -7,7 +7,9 @@ import type { BootPullProgress } from "../../api/server.ts";
 import { capture, inherit, pullImageThroughEngine, resolveEngineApiSocket, resolveImageTotalBytes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { CONTAINER_DATA_PATH, CONTAINER_PG_PORT, DEFAULT_IMAGE, type PostgresConnection, type PostgresError } from "./postgres_types.ts";
-import { formatInfraStateError, writeProxyConfig, type InfraStateError } from "./proxy_config.ts";
+import { formatInfraStateError, type InfraStateError } from "./mount_source.ts";
+import { writeProxyConfig } from "./proxy_config.ts";
+import { writeSearxngSettings } from "./searxng_config.ts";
 
 // Docker Compose orchestration for the inflexa infrastructure stack. Generates
 // a compose file that places both the CLIProxyAPI proxy and the Postgres
@@ -35,12 +37,22 @@ export const PROXY_IMAGE = "eceasy/cli-proxy-api:v7.3.17@sha256:a1dffb9c23000990
 const PROXY_CONFIG_PATH = "/CLIProxyAPI/config.yaml";
 const PROXY_AUTH_DIR = "/root/.cli-proxy-api";
 
+// The SearXNG metasearch engine, pinned by dated tag AND manifest digest — the same form and for the
+// same reasons as PROXY_IMAGE above: the tag names the build a reviewer checks against the SearXNG
+// changelog, and the digest makes a republished tag inert. NEVER a floating tag: SearXNG moves `latest`
+// daily. No launch-gate calibration point attaches to this image, so a bump is exactly one procedure:
+// change the tag AND the digest together, resolving the digest of the new dated tag from the Docker Hub
+// registry.
+export const SEARXNG_IMAGE = "docker.io/searxng/searxng:2026.10.19-81371861f@sha256:5ed0323b5f5f8701264ef65e239a2bd83cb57098f2b971fa30bf79c06eeae271";
+const SEARXNG_SETTINGS_PATH = "/etc/searxng/settings.yml";
+
 // Container and network names are environment-aware: `inflexa-*` in production
 // builds, `inflexa-dev-*` in dev runs. This prevents a dev session's containers
 // from colliding with (or shadowing) a user's installed binary's containers.
 const PREFIX = env.isDevelopment ? "inflexa-dev" : "inflexa";
 export const PROXY_CONTAINER_NAME = `${PREFIX}-cliproxy`;
 export const POSTGRES_CONTAINER_NAME = `${PREFIX}-postgres`;
+export const SEARXNG_CONTAINER_NAME = `${PREFIX}-searxng`;
 const NETWORK_NAME = PREFIX;
 
 /**
@@ -79,6 +91,8 @@ export type ComposeHost = {
     cliproxyAuthDir: string;
     /** Host path of the Postgres data directory. Mounted only where the location is a bind mount. */
     postgresDataDir: string;
+    /** Host path of the SearXNG settings FILE, bind-mounted read-only into the searxng container. */
+    searxngSettingsPath: string;
 };
 
 // A function, not a constant: the paths are read at call time, exactly as the template read `env`
@@ -89,6 +103,7 @@ function realHost(): ComposeHost {
         cliproxyConfigPath: env.cliproxyConfigPath,
         cliproxyAuthDir: env.cliproxyAuthDir,
         postgresDataDir: env.postgresDataDir,
+        searxngSettingsPath: env.searxngSettingsPath,
     };
 }
 
@@ -135,6 +150,10 @@ export type ConnectionMode = "cliproxy" | "direct";
  * file left on disk under an earlier mode can never out-drift the guard, and switching modes rewrites the
  * file coherently — proxy service dropped for direct, present again for cliproxy. `inflexa down` only
  * stops what is running and never rewrites the file.
+ *
+ * The SearXNG service takes the Postgres position, not the proxy position: it is mode-independent
+ * (defined in `direct` mode too), always after the Postgres block, on the shared network. The harness
+ * reads it for `web_search`; an engine that is down is a normal tool error, so no readiness gate here.
  */
 export function generateComposeFile(conn: PostgresConnection, mode: ConnectionMode, host: ComposeHost = realHost()): string {
     // Every host path goes through escapeYaml: inside a double-quoted scalar a backslash starts an
@@ -189,6 +208,20 @@ ${proxyService}  ${POSTGRES_CONTAINER_NAME}:
       POSTGRES_PASSWORD: "${escapeYaml(conn.password)}"
     volumes:
       - "${dataSource}:${CONTAINER_DATA_PATH}"
+    networks:
+      - ${NETWORK_NAME}
+
+  ${SEARXNG_CONTAINER_NAME}:
+    image: ${SEARXNG_IMAGE}
+    container_name: ${SEARXNG_CONTAINER_NAME}
+    restart: unless-stopped
+    ports:
+      # Loopback-only: the engine answers anyone who reaches the port, and the only listener that must
+      # reach it is the harness on this host — never the LAN.
+      - "127.0.0.1:${env.searxngPort}:8080"
+    volumes:
+      # Read-only: the CLI owns and provisions the settings; the engine must never write them back.
+      - "${escapeYaml(host.searxngSettingsPath)}:${SEARXNG_SETTINGS_PATH}:ro"
     networks:
       - ${NETWORK_NAME}
 
@@ -255,6 +288,11 @@ export function mountManifest(mode: ConnectionMode, host: ComposeHost = realHost
     }
     const data = postgresDataLocation(host);
     if (data.kind === "bind") sources.push({ kind: "directory", path: data.path });
+    // Mode-independent, like the service itself: every mode's compose file mounts the settings file.
+    // writeSearxngSettings always writes `env.searxngSettingsPath`, NOT `host.searxngSettingsPath`, for
+    // the reason two lines above: a test host changes the path the manifest LISTS, never the path the
+    // provisioner writes.
+    sources.push({ kind: "file", path: host.searxngSettingsPath, provision: writeSearxngSettings });
     return sources;
 }
 
@@ -360,7 +398,7 @@ export async function composePull(rt: ContainerRuntime): Promise<Result<void, Po
     if (code !== 0) {
         return err({
             type: "image_pull_failed",
-            image: `${PROXY_IMAGE}, ${DEFAULT_IMAGE}`,
+            image: `${PROXY_IMAGE}, ${SEARXNG_IMAGE}, ${DEFAULT_IMAGE}`,
             message: `Failed to pull images via compose.${stderr ? `\n  ${stderr.trim()}` : ""}`,
         });
     }
@@ -376,7 +414,7 @@ export async function composePullInteractive(rt: ContainerRuntime): Promise<Resu
     if (code !== 0) {
         return err({
             type: "image_pull_failed",
-            image: `${PROXY_IMAGE}, ${DEFAULT_IMAGE}`,
+            image: `${PROXY_IMAGE}, ${SEARXNG_IMAGE}, ${DEFAULT_IMAGE}`,
             message: `Failed to pull images via compose. Run \`${rt.bin} compose -f ${env.composeFilePath} pull\` manually.`,
         });
     }
@@ -402,8 +440,9 @@ export async function composePullIfMissing(
     mode: ConnectionMode,
     onProgress: (progress: BootPullProgress) => void,
 ): Promise<Result<void, PostgresError>> {
-    // Only the images the compose file for this mode actually defines: direct mode omits the proxy.
-    const images = mode === "cliproxy" ? [PROXY_IMAGE, DEFAULT_IMAGE] : [DEFAULT_IMAGE];
+    // Only the images the compose file for this mode actually defines: the proxy is cliproxy-only;
+    // Postgres and SearXNG are mode-independent.
+    const images = mode === "cliproxy" ? [PROXY_IMAGE, SEARXNG_IMAGE, DEFAULT_IMAGE] : [SEARXNG_IMAGE, DEFAULT_IMAGE];
     const held = await Promise.all(
         images.map(async (image) => {
             const { code } = await capture(rt, ["image", "inspect", image]);

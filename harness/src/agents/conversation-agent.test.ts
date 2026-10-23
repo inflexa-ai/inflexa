@@ -20,7 +20,7 @@ import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
 // for asserting the assembled `AgentDefinition`'s shape.
-function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore) {
+function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore, searxngBaseUrl?: string) {
     return createConversationAgent({
         provider: {} as ChatProvider,
         utilityProvider: {} as ChatProvider,
@@ -44,6 +44,7 @@ function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputSto
         citationResolver: unusedCitationResolver,
         ...(hostTools ? { hostTools } : {}),
         ...(toolOutputStore ? { toolOutputStore } : {}),
+        ...(searxngBaseUrl ? { searxngBaseUrl } : {}),
     });
 }
 
@@ -208,6 +209,25 @@ describe("createConversationAgent", () => {
         expect(withStore[withStore.indexOf("grep") + 1]).toBe("read_tool_output");
         expect(withoutStore).not.toContain("read_tool_output");
         expect(withStore.filter((id) => id !== "read_tool_output")).toEqual(withoutStore);
+    });
+
+    test("a SearXNG base URL adds web_search after search_arxiv; no URL leaves web_fetch alone", () => {
+        const withUrl = buildAgent(undefined, undefined, "http://127.0.0.1:28437").tools.map((t) => t.id);
+        const withoutUrl = buildAgent().tools.map((t) => t.id);
+
+        // The description of an unattached tool never enters a model context, so
+        // an embedder that runs no engine must get no `web_search` at all.
+        expect(withoutUrl).not.toContain("web_search");
+        expect(withoutUrl).toContain("web_fetch");
+        expect(withUrl).toContain("web_search");
+        expect(withUrl).toContain("web_fetch");
+        // Both sit directly after `search_arxiv`; with no URL, `web_fetch` holds
+        // that place alone.
+        expect(withUrl[withUrl.indexOf("search_arxiv") + 1]).toBe("web_search");
+        expect(withUrl[withUrl.indexOf("web_search") + 1]).toBe("web_fetch");
+        expect(withoutUrl[withoutUrl.indexOf("search_arxiv") + 1]).toBe("web_fetch");
+        // The URL changes nothing else about the roster.
+        expect(withUrl.filter((id) => id !== "web_search")).toEqual(withoutUrl);
     });
 
     test("omitting host tools yields exactly the built-in roster", () => {

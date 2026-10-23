@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { formatInfraStateError, generateApiKey, proxyConfig, writeProxyConfig } from "./proxy_config.ts";
+import { generateApiKey, proxyConfig, writeProxyConfig } from "./proxy_config.ts";
+import { formatInfraStateError } from "./mount_source.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 

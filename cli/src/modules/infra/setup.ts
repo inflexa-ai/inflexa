@@ -70,7 +70,8 @@ import {
     PROXY_IMAGE,
     type ConnectionMode,
 } from "./compose.ts";
-import { enforceClaudeCloak, formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
+import { enforceClaudeCloak, writeProxyConfig } from "./proxy_config.ts";
+import { formatInfraStateError } from "./mount_source.ts";
 import { readCredentialVerdict } from "./credential_state.ts";
 import {
     answerOf,

@@ -185,12 +185,15 @@ describe("compose file generation", () => {
         expect(generateComposeFile(conn, "direct")).toContain(`image: ${DEFAULT_IMAGE}`);
     });
 
-    test("both service images carry a tag AND a digest — neither floats — in every mode", () => {
+    test("every service image carries a tag AND a digest — neither floats — in every mode", () => {
         const conn = resolvePostgresConfig();
         const cliproxy = generateComposeFile(conn, "cliproxy");
         // The proxy image is pinned by tag+digest and present only in cliproxy mode.
         expect(cliproxy).toContain("image: eceasy/cli-proxy-api:v7.3.17@sha256:");
         expect(cliproxy).toContain("image: pgvector/pgvector:0.8.5-pg18@sha256:");
+        // SearXNG is mode-independent and pinned by dated tag+digest.
+        expect(cliproxy).toContain("image: docker.io/searxng/searxng:2026.10.19-81371861f@sha256:");
+        expect(generateComposeFile(conn, "direct")).toContain("image: docker.io/searxng/searxng:2026.10.19-81371861f@sha256:");
         // No floating tag in either mode.
         expect(cliproxy).not.toContain(":latest");
         expect(generateComposeFile(conn, "direct")).not.toContain(":latest");
@@ -209,10 +212,10 @@ describe("compose file generation", () => {
         expect(yaml).toContain(`"${env.postgresDataDir}:${CONTAINER_DATA_PATH}"`);
     });
 
-    test("cliproxy mode gives both services restart: unless-stopped; direct only Postgres", () => {
+    test("every service gets restart: unless-stopped (three in cliproxy mode, two in direct)", () => {
         const conn = resolvePostgresConfig();
-        expect(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)!.length).toBe(2);
-        expect(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)!.length).toBe(1);
+        expect(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)!.length).toBe(3);
+        expect(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)!.length).toBe(2);
     });
 });
 
