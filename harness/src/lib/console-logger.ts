@@ -26,8 +26,8 @@ function makeConsoleLogger(names: readonly string[], bindings: LogFields): Logge
         (level: LogLevel) =>
         (msg: string, fields?: LogFields): void => {
             // The one sanctioned console site in the harness — writing to console is
-            // this function's entire contract. `no-console` exempts this file by path
-            // in eslint.config.js rather than by an inline disable here.
+            // this function's entire contract. `no-console` exempts this file and its test
+            // by path in oxlint.config.ts rather than by an inline disable here.
             console[level](prefixed(names, msg), { ...bindings, ...fields });
         };
 

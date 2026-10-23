@@ -1,8 +1,8 @@
 name: Lint
 
-# Lints/typechecks the independent subsystems. harness/ and cli/ have ESLint +
-# a tsc typecheck; prov-kernel/ has oxlint + the type check command; harness/
-# adds ruff over its Python package asset.
+# Lints/typechecks the independent subsystems. cli/ has ESLint + a tsc
+# typecheck; harness/ and prov-kernel/ have oxlint + the type check command;
+# harness/ adds ruff over its Python package asset.
 #
 # Every subsystem that ships a lint config and a `lint` script gets a job step
 # for it. Without one, `bun run lint` fails on a developer machine while CI
@@ -91,14 +91,22 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      # The type check command runs under its Node shebang (its TypeScript 7
+      # dependency reads Node child_process internals that Bun's spawn lacks),
+      # so the runner needs Node 22.18 or later — the same pin the release
+      # workflows use. The path resolves against the repo root like setup-bun's.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: ESLint
+      - name: oxlint
         run: bun run lint
 
       - name: Typecheck
-        run: bunx tsc -p tsconfig.json --noEmit
+        run: bun run typecheck
 
       # The input-scan container decoder is Python shipped as a package asset, so
       # its linter is a source-validity gate like the typecheck above. Pinned into

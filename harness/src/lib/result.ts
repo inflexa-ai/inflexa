@@ -111,9 +111,9 @@ export function toThrowable(value: unknown): Error {
  * `.andThen`/`.map`/`.mapErr`, or `.match` both branches. Never reach for
  * this to dodge error handling in composable domain logic.
  *
- * The `must-use-result` lint rule recognizes `unwrapOrThrow(...)` as
- * consuming its Result (see the plugin patch in `eslint.config.js`) — do not
- * rewrite call sites into inline `.match`+throw forms to appease lint.
+ * The `must-use-result` rule of the type check command recognizes
+ * `unwrapOrThrow(...)` as consuming its Result — do not rewrite call sites
+ * into inline `.match`+throw forms to appease the rule.
  */
 export function unwrapOrThrow<T, E>(result: Result<T, E>): T {
     if (result.isErr()) throw toThrowable(result.error);

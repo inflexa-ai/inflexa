@@ -165,14 +165,16 @@ describe("the lollipop figure", () => {
     it("labels the three largest counts with the label column", () => {
         const option = derive();
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
-        expect((labels?.data as Array<{ name: string }>).map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        const labelData = labels?.data as Array<{ name: string }>;
+        expect(labelData.map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
     });
 
     it("draws no stem and no label for a row with no class", () => {
         const rows = [...ROWS, { aa_position: 900, protein_change: "p.S900F", variant_classification: "", count: 50 }];
         const option = derive(lollipop(), INPUTS, rows);
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
-        expect((labels?.data as Array<{ name: string }>).map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        const labelData = labels?.data as Array<{ name: string }>;
+        expect(labelData.map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
         expect(stemSeries(option).flatMap((entry) => (entry.data as Array<{ name: string }>).map((item) => item.name))).not.toContain("p.S900F");
     });
 

@@ -11,7 +11,7 @@
  * C0/C1 control characters and DEL, excluding `\t` (U+0009) and `\n`
  * (U+000A) which are legitimate whitespace in user prose.
  */
-// eslint-disable-next-line no-control-regex -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below).
+// oxlint-disable-next-line no-control-regex -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below).
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 
 /**
@@ -34,7 +34,7 @@ export function normalizeUnicode(text: string): string {
  * arrives through no fault of the model: tool results carry raw command output
  * and file bytes, which is why they are otherwise left unsanitized.
  */
-// eslint-disable-next-line no-control-regex -- matching NUL is the intent; see above.
+// oxlint-disable-next-line no-control-regex -- matching NUL is the intent; see above.
 const NUL = /\u0000/g;
 
 /**

@@ -35,9 +35,7 @@ describe("passGate", () => {
         const foreign = <T>(settled: object): ResultAsync<T, GateFailure> =>
             ({ then: (resolve: (value: unknown) => unknown) => resolve(settled) }) as unknown as ResultAsync<T, GateFailure>;
 
-        // eslint-disable-next-line neverthrow/must-use-result -- the outcome is the fixture: the assertion is about its class, which the checkpoint recipes key on
         const opened = await passGate("RunCharge.open", foreign<number>({ isOk: () => true, value: 7 }));
-        // eslint-disable-next-line neverthrow/must-use-result -- the outcome is the fixture: the assertion is about its class, which the checkpoint recipes key on
         const refused = await passGate("RunCharge.open", foreign<number>({ isOk: () => false, error: { reason: "r", suspend: true } }));
 
         expect(opened).toBeInstanceOf(Ok);
