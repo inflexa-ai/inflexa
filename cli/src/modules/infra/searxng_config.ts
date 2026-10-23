@@ -47,7 +47,10 @@ export async function writeSearxngSettings(): Promise<Result<void, InfraStateErr
  * and a concurrent first write can never replace a key that already landed.
  */
 async function writeFreshSettings(path: string): Promise<Result<void, InfraStateError>> {
-    return publishFileExclusively(path, (tmp) => tryFs(tmp, () => writeFile(tmp, searxngSettings(randomBytes(32).toString("hex")), { mode: 0o600 })));
+    const published = await publishFileExclusively(path, (tmp) =>
+        tryFs(tmp, () => writeFile(tmp, searxngSettings(randomBytes(32).toString("hex")), { mode: 0o600 })),
+    );
+    return published.map((): void => undefined);
 }
 
 /**

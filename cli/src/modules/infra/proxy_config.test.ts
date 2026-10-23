@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { generateApiKey, proxyConfig, writeProxyConfig } from "./proxy_config.ts";
+import { generateApiKey, managementKeyPath, proxyConfig, writeProxyConfig } from "./proxy_config.ts";
 import { formatInfraStateError } from "./mount_source.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
@@ -146,5 +146,23 @@ describe("writeProxyConfig damaged-state matrix", () => {
         expect(second.created).toBe(false);
         // The key is NOT regenerated — the exact same bytes remain on disk.
         expect(readFileSync(configPath, "utf8")).toBe(before);
+    });
+
+    test("two concurrent first runs publish one config: the reported apiKey is the one that landed", async () => {
+        const [a, b] = await Promise.all([writeProxyConfig(), writeProxyConfig()]);
+        const outcomes = [a, b].map((run) => run._unsafeUnwrap());
+
+        // Exactly one call wins the publish (or the second classified the winner's file): either way,
+        // exactly one outcome reports a key, and that key is the key the file holds.
+        const created = outcomes.filter((outcome) => outcome.created);
+        expect(created).toHaveLength(1);
+        if (created.length !== 1 || !created[0]!.created) throw new Error("unreachable — asserted one created outcome above");
+        const config = readFileSync(configPath, "utf8");
+        expect(config).toContain(created[0]!.apiKey);
+
+        // The plaintext management key names the secret-key of the config that landed, and no temp file survives.
+        const management = readFileSync(managementKeyPath(), "utf8").trim();
+        expect(config).toContain(`secret-key: "${management}"`);
+        expect(readdirSync(cliproxyDir).sort()).toEqual(["auth", "config.yaml", "management.key"]);
     });
 });

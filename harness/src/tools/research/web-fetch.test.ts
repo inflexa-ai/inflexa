@@ -26,6 +26,7 @@ import { type KeptToolOutput, type ToolOutputStore } from "../../loop/tool-outpu
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import {
     createWebFetchTool,
+    htmlNestingDepth,
     type WebFetchHopRequest,
     type WebFetchHopRequestHandle,
     type WebFetchHopRequestOptions,
@@ -776,6 +777,53 @@ describe("web_fetch — the extractors", () => {
         );
 
         expect(output).toMatchObject({ status: "ok", text: "just a few plain words" });
+    });
+
+    it("refuses a pathologically nested page as unextractable instead of stalling the parse", async () => {
+        const output = await fetchUrl(
+            "http://example.test/page",
+            extractorDeps({
+                "http://example.test/page": {
+                    status: 200,
+                    headers: { "content-type": "text/html" },
+                    body: `${"<div>".repeat(10_000)}deep page`,
+                },
+            }),
+        );
+
+        expect(output).toMatchObject({ status: "unextractable" });
+        if (output.status !== "unextractable") return;
+        expect(output.detail).toContain("nests deeper than");
+    });
+
+    it("extracts a page nested within the bound, with markup-looking attribute values and comments", async () => {
+        const nested = `${'<div class="level">'.repeat(50)}<article><h1>deep but legal</h1><p>text of the article</p></article>${"</div>".repeat(50)}`;
+        const tricky = `<html><body><div title="</div>"><!-- <div> -->${nested}</div></body></html>`;
+        const output = await fetchUrl(
+            "http://example.test/page",
+            extractorDeps({ "http://example.test/page": { status: 200, headers: { "content-type": "text/html" }, body: tricky } }),
+        );
+
+        expect(output.status).toBe("ok");
+        if (output.status !== "ok") return;
+        expect(output.text).toContain("deep but legal");
+    });
+
+    it("keeps a long unclosed list flat, so list length never trips the nesting bound", async () => {
+        const list = `<html><body><ul>${"<li>item".repeat(2_000)}</ul></body></html>`;
+        const output = await fetchUrl(
+            "http://example.test/page",
+            extractorDeps({ "http://example.test/page": { status: 200, headers: { "content-type": "text/html" }, body: list } }),
+        );
+
+        expect(output.status).toBe("ok");
+        expect(htmlNestingDepth(list)).toBeLessThanOrEqual(10);
+    });
+
+    it("measures raw text and scripts as one level, not as markup structure", () => {
+        const withScript = `<html><body><script>if (1 < 2) { document.write("</div>"); }</script><p>after</p></body></html>`;
+        expect(htmlNestingDepth(withScript)).toBe(3);
+        expect(htmlNestingDepth(`${"<section>".repeat(513)}x`)).toBe(513);
     });
 
     it("turns a PDF into text, whole when it holds at most 100 pages", async () => {

@@ -69,7 +69,7 @@ describe("writeSearxngSettings", () => {
         // the loser must report ok, and the winner's file must stay untouched with no temp left.
         const lost = await publishFileExclusively(settingsPath, (tmp) => tryFs(tmp, () => writeFile(tmp, "loser: settings\n", { mode: 0o600 })));
 
-        expect(lost._unsafeUnwrap()).toBeUndefined();
+        expect(lost._unsafeUnwrap()).toBe("existing");
         expect(readFileSync(settingsPath, "utf8")).toBe(winner);
         expect(readdirSync(settingsDir)).toEqual(["settings.yml"]);
     });
