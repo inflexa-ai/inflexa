@@ -474,6 +474,7 @@ export function applyServerFrame(frame: ChatFrame): void {
         case "iteration":
         case "finish":
         case "error":
+        case "message-start":
             return;
         default: {
             // The one check of a part: each reader past this point trusts the type of the part.

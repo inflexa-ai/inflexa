@@ -446,8 +446,10 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
             case "iteration":
             case "finish":
             case "error":
+            case "message-start":
                 // The REPL reads the summary of the turn after the stream ends, and reports the outcome from it.
-                // Only a sub-agent gives an `iteration`, thus the routing above takes each one.
+                // Only a sub-agent gives an `iteration`, thus the routing above takes each one. The REPL keeps no
+                // message by its id, thus a `message-start` changes nothing.
                 return;
             default: {
                 // The one check of a part: each reader past this point trusts the type of the part.
