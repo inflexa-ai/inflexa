@@ -11,7 +11,11 @@
 - [x] 2.2 Make the live path of `src/memory/conversation-display-parity.test.ts` read the stream of the recorder, and update the known difference of a compaction. Make sure that the two paths give the same ids.
 - [x] 2.3 Make sure that `src/app/chat-turn.test.ts` shows the announced ids against the stored display for a plain turn, a mid-turn compaction, and a turn-start compaction.
 
-## 3. Verification
+## 3. The order of the compaction parts
 
-- [x] 3.1 Run `bun run format:file` on the changed files in `src/`. Then run `bun run typecheck`, `bun run lint`, and `bun test` on each changed test file. Make sure that each command passes.
-- [x] 3.2 Run `bun test` one time for the full harness suite. Make sure that it passes.
+- [x] 3.1 In `compact` of `src/loop/run-agent.ts`, emit the `done` part before the round of the marker (design D4). Make sure that `src/loop/run-agent.test.ts` shows the order, that the parity test and `src/app/chat-turn.test.ts` show the two parts under the first assistant id, and that the stored display of a compaction turn does not change.
+
+## 4. Verification
+
+- [x] 4.1 Run `bun run format:file` on the changed files in `src/`. Then run `bun run typecheck`, `bun run lint`, and `bun test` on each changed test file. Make sure that each command passes.
+- [x] 4.2 Run `bun test` one time for the full harness suite. Make sure that it passes.

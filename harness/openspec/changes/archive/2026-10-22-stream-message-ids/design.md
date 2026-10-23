@@ -35,7 +35,11 @@ When `emit` forwards a `message-start`, it starts each sink call in the order of
 
 `message-start` is a member of `EmitEvent`, thus the recorder can give it to the sink with no second channel. `toChatFrame` copies it to a frame with the source of the root agent. `applyChatFrame` ignores it. Its default branch assigns the frame to `ChatPartFrame`, thus a later event type that no branch takes fails the build.
 
+### D4. The loop emits `done` before the round of the marker
+
+The round of the marker gives the later rounds a new assistant id. If the loop gave that round first, the `done` part would stream under the new id, and the `running` part would stay under the first id. A client would then show a compaction that never ends in the first message. Thus `compact` emits `done`, and then it gives the round. The part is transient, thus the stored display does not change.
+
 ## Risks / Trade-offs
 
-- [The `running` compaction part streams under the first assistant id, and the `done` part under the second id, because the loop stores the marker round before it emits `done`.] → A client must reconcile the compaction part by its id across the two messages. The parity test records the split as a known difference.
 - [The first assistant id of a turn-start compaction has live frames and no stored message.] → The stored display never holds an id that the stream did not announce. A client must accept an announced id with no stored message.
+- [A round sink that throws on the round of the marker throws after the `done` part. The client then sees `done`, and then the error of the turn.] → `runChatTurn` gives a sink that does not throw: a failed write of a round rides the result of the turn.
