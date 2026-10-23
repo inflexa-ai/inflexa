@@ -136,11 +136,17 @@ export async function ensureFileMountSource<T>(
  * calls that share one temp path would clobber each other's bytes before the publish even runs.
  * `writeTmp` owns the content and the mode; the link keeps both, because it adds a name for the temp
  * inode rather than writing a new one.
+ *
+ * The outcome names who won: `"published"` for the call whose file landed, `"existing"` for a call
+ * that lost the race and changed nothing — a provisioner whose minted value must match the published
+ * file (a key the file must keep) branches on it instead of reporting its own dead value.
  */
+export type PublishOutcome = "published" | "existing";
+
 export async function publishFileExclusively(
     path: string,
     writeTmp: (tmp: string) => Promise<Result<void, InfraStateError>>,
-): Promise<Result<void, InfraStateError>> {
+): Promise<Result<PublishOutcome, InfraStateError>> {
     const tmp = `${path}.${randomUUIDv7()}.tmp`;
     const written = await writeTmp(tmp);
     if (written.isErr()) return err(written.error);
@@ -154,7 +160,7 @@ export async function publishFileExclusively(
         if (code !== "EEXIST") return err(linked.error);
     }
     // The winner reaps the temp name the link left behind; a loser reaps the file it never published.
-    return (await tryFs(tmp, () => unlink(tmp))).map((): void => undefined);
+    return (await tryFs(tmp, () => unlink(tmp))).map((): PublishOutcome => (linked.isErr() ? "existing" : "published"));
 }
 
 /**

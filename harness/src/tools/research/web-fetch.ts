@@ -393,6 +393,115 @@ function readBody(response: WebFetchHopResponse, encoding: string, limitBytes: n
     });
 }
 
+/** The nesting bound of the HTML extraction guard. Blink caps its parser DOM depth at the same number, so a page a browser flattens must not cost minutes here either. */
+const MAX_HTML_NESTING = 512;
+
+/** Elements that never take content: an opening tag opens no nesting level. */
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+
+/** Elements whose content is raw text: the scanner skips to their close tag, because markup inside them is not structure. */
+const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title", "xmp", "noscript", "iframe", "noembed"]);
+
+/** An opening tag in a family closes its open peers before it nests — the implied-end rules that keep a list or a table row of any length flat. */
+const IMPLIED_CLOSE_PEERS: Readonly<Record<string, ReadonlySet<string>>> = {
+    li: new Set(["li"]),
+    dt: new Set(["dt", "dd"]),
+    dd: new Set(["dt", "dd"]),
+    p: new Set(["p"]),
+    option: new Set(["option"]),
+    optgroup: new Set(["option", "optgroup"]),
+    td: new Set(["td", "th"]),
+    th: new Set(["td", "th"]),
+    tr: new Set(["tr", "td", "th"]),
+    thead: new Set(["thead", "tbody", "tfoot", "tr", "td", "th"]),
+    tbody: new Set(["thead", "tbody", "tfoot", "tr", "td", "th"]),
+    tfoot: new Set(["thead", "tbody", "tfoot", "tr", "td", "th"]),
+};
+
+/**
+ * Estimate the deepest element nesting of an HTML document in one linear scan, without building a DOM.
+ * Deep nesting is the input shape that makes the linkedom/Readability pair burn CPU for minutes on a
+ * body under the byte limit, and the extraction is synchronous, so no deadline can interrupt it — the
+ * bound must gate the parse, not watch it. The estimate never parses: void elements and self-closing
+ * tags open no level, raw-text elements skip to their close, quoted attribute values hide their `<`,
+ * and an implied-close family pops its open peers, so a list or a table of any length stays flat and a
+ * stray close tag pops to its nearest matching open.
+ */
+export function htmlNestingDepth(html: string): number {
+    let max = 0;
+    const stack: string[] = [];
+    const tagName = (start: number, end: number): string =>
+        html
+            .slice(start, end)
+            .match(/^[a-zA-Z][a-zA-Z0-9:-]*/)?.[0]
+            ?.toLowerCase() ?? "";
+    let i = 0;
+    while (i < html.length) {
+        if (html[i] !== "<") {
+            i++;
+            continue;
+        }
+        if (html.startsWith("<!--", i)) {
+            const end = html.indexOf("-->", i + 4);
+            i = end === -1 ? html.length : end + 3;
+            continue;
+        }
+        if (html.startsWith("<!", i) || html.startsWith("<?", i)) {
+            const end = html.indexOf(">", i);
+            i = end === -1 ? html.length : end + 1;
+            continue;
+        }
+        if (html.startsWith("</", i)) {
+            const end = html.indexOf(">", i);
+            const name = end === -1 ? "" : tagName(i + 2, end);
+            for (let k = stack.length - 1; k >= 0; k--) {
+                if (stack[k] === name) {
+                    stack.length = k;
+                    break;
+                }
+            }
+            i = end === -1 ? html.length : end + 1;
+            continue;
+        }
+        let j = i + 1;
+        let quote = "";
+        while (j < html.length) {
+            const c = html[j];
+            if (quote !== "") {
+                if (c === quote) quote = "";
+            } else if (c === '"' || c === "'") {
+                quote = c;
+            } else if (c === ">") {
+                break;
+            }
+            j++;
+        }
+        if (j >= html.length) break;
+        const name = tagName(i + 1, j);
+        const selfClosed = html[j - 1] === "/";
+        i = j + 1;
+        if (name === "") continue;
+        if (RAW_TEXT_TAGS.has(name)) {
+            const close = new RegExp(`</${name}(?=[\\s/>])`, "gi");
+            close.lastIndex = i;
+            const found = close.exec(html);
+            i = found === null ? html.length : found.index + found[0].length;
+            continue;
+        }
+        if (selfClosed || VOID_TAGS.has(name)) continue;
+        const peers = IMPLIED_CLOSE_PEERS[name];
+        if (peers !== undefined) {
+            while (stack.length > 0 && peers.has(stack[stack.length - 1]!)) stack.pop();
+        }
+        stack.push(name);
+        if (stack.length > max) {
+            max = stack.length;
+            if (max > MAX_HTML_NESTING) return max;
+        }
+    }
+    return max;
+}
+
 function htmlToMarkdown(body: Buffer): string {
     const dom = parseHTML(body.toString("utf8"));
     const article = new Readability(dom.document).parse();
@@ -400,13 +509,17 @@ function htmlToMarkdown(body: Buffer): string {
     return (dom.document.body?.textContent ?? "").trim();
 }
 
-/** Hostile HTML can throw inside the extraction stack; the body text, then the status union, catch the throw. */
+/** Hostile HTML can throw inside the extraction stack; the body text, then the status union, catch the throw. A page that nests past the bound never reaches a parser, because the parse itself is the stall. */
 function htmlExtractionOf(body: Buffer): Extracted {
+    const html = body.toString("utf8");
+    if (htmlNestingDepth(html) > MAX_HTML_NESTING) {
+        return { kind: "unextractable", detail: `the HTML nests deeper than ${MAX_HTML_NESTING} elements` };
+    }
     try {
         return { kind: "text", text: htmlToMarkdown(body) };
     } catch {
         try {
-            const dom = parseHTML(body.toString("utf8"));
+            const dom = parseHTML(html);
             return { kind: "text", text: (dom.document.body?.textContent ?? "").trim() };
         } catch {
             return { kind: "unextractable", detail: "the HTML extraction failed" };

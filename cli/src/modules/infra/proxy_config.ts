@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 import { env } from "../../lib/env.ts";
-import { classifyPath, ensureFileMountSource, tryFs, type InfraStateError } from "./mount_source.ts";
+import { classifyPath, ensureFileMountSource, publishFileExclusively, tryFs, type InfraStateError } from "./mount_source.ts";
 
 // The CLIProxyAPI proxy config (`config.yaml`) and the provider-credential dir are host-side state we
 // own; the compose stack bind-mounts them into the proxy container. This module provisions the config
@@ -98,14 +98,24 @@ export async function enforceClaudeCloak(dir: string): Promise<Result<boolean, I
     return ok(changed);
 }
 
-/** Mint a client key and write the config 0600. Shared by the absent and healed paths. */
+/**
+ * Mint a client key and publish the config 0600. Shared by the absent and healed paths.
+ *
+ * The publish is exclusive, and the management key is written only after it won: the plaintext key must
+ * name the `secret-key` of the config that actually landed, so two concurrent first runs cannot leave a
+ * key file from one run beside the config of the other, and `created: true` always reports the key in
+ * the file. A loser changes nothing and reports `created: false`. A winner that dies between its link
+ * and the key write leaves a config with no key file, which the next run's existing-file path heals.
+ */
 async function writeFreshConfig(path: string): Promise<Result<WriteProxyConfigOutcome, InfraStateError>> {
     const apiKey = generateApiKey();
     const managementKey = generateApiKey();
+    const published = await publishFileExclusively(path, (tmp) => tryFs(tmp, () => writeFile(tmp, proxyConfig(apiKey, managementKey), { mode: 0o600 })));
+    if (published.isErr()) return err(published.error);
+    if (published.value === "existing") return ok({ created: false as const, managementAdded: false });
     const keyWritten = await tryFs(managementKeyPath(), () => writeFile(managementKeyPath(), managementKey, { mode: 0o600 }));
     if (keyWritten.isErr()) return err(keyWritten.error);
-    const written = await tryFs(path, () => writeFile(path, proxyConfig(apiKey, managementKey), { mode: 0o600 }));
-    return written.map(() => ({ created: true, apiKey }));
+    return ok({ created: true as const, apiKey });
 }
 
 /**
