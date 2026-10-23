@@ -244,8 +244,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
      * variant as the message, and the variant itself on `cause`. The `mapErr`
      * happens before the bridge because `toThrowable` passes an `Error`
      * through untouched — thus `unwrapOrThrow` stays the single sanctioned
-     * Result→throw bridge, no second bridge is introduced, and the
-     * `must-use-result` lint patch keeps recognizing every site. The registry
+     * Result→throw bridge, no second bridge is introduced, and the type check
+     * command keeps recognizing every site. The registry
      * unwraps below stay on the plain bridge: they carry a `DbError`.
      */
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);

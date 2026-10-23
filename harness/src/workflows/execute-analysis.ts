@@ -378,10 +378,12 @@ function emitStreamPart(part: unknown): Promise<void> {
 }
 
 /**
- * A failed write rolls back no side effect that succeeded and never fails the
- * run. A DBOS exception passes through with no change.
+ * A failed write rolls back no side effect that succeeded. The step body logs
+ * its own failure and never throws. A DBOS exception passes through with no
+ * change.
  */
 async function ledgerStep(log: Logger, name: string, write: () => ResultAsync<unknown, DbError> | Promise<Result<unknown, DbError>>): Promise<void> {
+    // typecheck-disable-next-line must-use-result -- a ledger miss must not fail the run
     await DBOS.runStep(
         async (): Promise<Result<void, string>> => {
             const written = await write();

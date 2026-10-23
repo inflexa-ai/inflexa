@@ -121,7 +121,8 @@ describe("the Manhattan figure", () => {
         // The page frame reads a window 1280 pixels wide, thus the runtime hides a lead name that still overlaps
         // another on a narrower window.
         expect(names?.labelLayout).toEqual({ hideOverlap: true });
-        const [x, y] = lead?.value as number[];
+        const leadValue = lead?.value as number[];
+        const [x, y] = leadValue;
         const box = guideLabelBox(-Math.log10(5e-8), { min: 1082207, max: high }, asTop(option), "p 5 × 10⁻⁸", PAGE_PLOT_FRAME);
         expect(x >= box.left && x <= box.right && y >= box.bottom && y <= box.top).toBe(false);
     });

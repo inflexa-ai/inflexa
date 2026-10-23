@@ -961,8 +961,9 @@ describe("executeAnalysis body", () => {
         const failed = record.emittedParts.find((p) => p.type === "data-run-failed");
         expect(failed).toBeDefined();
         expect(ChatPartSchema.safeParse(failed).success).toBe(true);
-        expect(typeof failed?.error).toBe("string");
-        expect((failed?.error as string).length).toBeGreaterThan(0);
+        const error = failed?.error;
+        expect(typeof error).toBe("string");
+        expect((error as string).length).toBeGreaterThan(0);
     });
 
     // ── 10.11 Terminal billing close paths ─────────────────────────────

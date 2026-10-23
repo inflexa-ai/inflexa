@@ -456,9 +456,11 @@ describe("the page build of a hybrid SVG", () => {
         );
         // The raster holds the points alone: the axes draw nothing, and the grid stands where the vector grid
         // stands. The image reaches two pixels past the grid, the half of the symbol of 3 pixels rounded up.
-        const grid = (raster.option?.grid as Record<string, unknown>[])[0];
+        const grids = raster.option?.grid as Record<string, unknown>[];
+        const grid = grids[0];
         expect([grid.left, grid.top].map((v) => Math.round(Number(v)))).toEqual([Math.round(ix) + 2, Math.round(iy) + 2]);
-        expect((raster.option?.xAxis as Record<string, unknown>).show).toBe(false);
+        const xAxis = raster.option?.xAxis as Record<string, unknown>;
+        expect(xAxis.show).toBe(false);
     });
 
     it("builds nothing for an option with no point layer", () => {

@@ -259,7 +259,8 @@ describe("the upset figure", () => {
         const media = option.media as EchartOption[];
         const single = media.find((rule) => (rule.query as EchartOption).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
         expect(single).toBeDefined();
-        const series = (single?.option as EchartOption).series as EchartOption[];
+        const singleOption = single?.option as EchartOption;
+        const series = singleOption.series as EchartOption[];
         const place = (option.series as EchartOption[]).findIndex((entry) => entry.id === "members");
         const pageDot = seriesById(option, "members").symbolSize as number;
         expect(series[place].symbolSize as number).toBeLessThan(pageDot);
