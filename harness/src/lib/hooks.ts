@@ -29,6 +29,29 @@ export type GateFailure = {
     readonly suspend: boolean;
 };
 
+/**
+ * The settlement a gate's `ResultAsync` resolves to, read structurally. An embedder whose neverthrow is
+ * a second package copy resolves a settlement that holds the same members without the harness class,
+ * and `passGate` reads it the same way.
+ */
+export type GateSettlement<T> = { isOk(): true; readonly value: T } | { isOk(): false; readonly error: GateFailure };
+
+function settlementOk<T>(settled: GateSettlement<T>): settled is { isOk(): true; readonly value: T } {
+    return settled.isOk();
+}
+
+/** A gate result that an embedder's own neverthrow copy produced: a thenable over the settlement. */
+export type ForeignGateResult<T> = { then(onfulfilled: (settled: GateSettlement<T>) => unknown): unknown };
+
+/** Await the gate result and read it as one settlement, whichever package copy produced it. */
+async function settlementOf<T>(result: ResultAsync<T, GateFailure> | ForeignGateResult<T>): Promise<GateSettlement<T>> {
+    if (result instanceof ResultAsync) {
+        const settled = await result;
+        return settled.isOk() ? { isOk: () => true, value: settled.value } : { isOk: () => false, error: settled.error };
+    }
+    return await result;
+}
+
 export type NoticeFailure = {
     readonly reason: string;
 };
@@ -48,13 +71,13 @@ export type GateRefusal =
  * checkpoint recipes (`runtime/result-serialization.ts`) recognize the class,
  * and a replay reads the same outcome.
  */
-export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure>): ResultAsync<T, GateRefusal> {
+export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure> | ForeignGateResult<T>): ResultAsync<T, GateRefusal> {
     return new ResultAsync(
-        Promise.resolve(result).then((settled) =>
-            settled.isOk()
-                ? ok(settled.value)
-                : err<T, GateRefusal>({ kind: settled.error.suspend ? "suspended" : "failed", gate, reason: settled.error.reason }),
-        ),
+        (async () => {
+            const settled = await settlementOf(result);
+            if (settlementOk(settled)) return ok(settled.value);
+            return err<T, GateRefusal>({ kind: settled.error.suspend ? "suspended" : "failed", gate, reason: settled.error.reason });
+        })(),
     );
 }
 

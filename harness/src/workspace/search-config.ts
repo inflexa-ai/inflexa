@@ -6,7 +6,7 @@
  * same persistent per-analysis pgvector index.
  */
 
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import { createVectorStore } from "../state/vector-store.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -30,7 +30,7 @@ const _ensuredIndexes = new Set<string>();
  * upsert. Per-analysis dimension tracking / re-embedding on a provider switch
  * is a deliberate non-feature for now.
  */
-export async function ensureSearchIndex(pool: Pool, resourceId: string, dimensions: number): Promise<void> {
+export async function ensureSearchIndex(pool: Querier, resourceId: string, dimensions: number): Promise<void> {
     const name = searchIndexName(resourceId);
     if (_ensuredIndexes.has(name)) return;
     const store = createVectorStore(pool);

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import type { ChemblOutput } from "../chembl.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { chemblTool } from "../chembl.js";
@@ -22,7 +27,7 @@ afterEach(() => {
  * answers 404, which ChEMBL's client reads as an expected empty.
  */
 function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = fetchDouble(async (input) => {
         const url = String(input);
         requestedUrls.push(url);
         for (const [pattern, body] of routes) {
@@ -31,14 +36,14 @@ function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
             }
         }
         return new Response("not found", { status: 404 });
-    }) as unknown as typeof fetch;
+    });
 }
 
 function stubStatus(status: number, body = "upstream said no"): void {
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = fetchDouble(async (input) => {
         requestedUrls.push(String(input));
         return new Response(body, { status });
-    }) as unknown as typeof fetch;
+    });
 }
 
 type ChemblInput = Parameters<typeof chemblTool.execute>[0];
@@ -52,9 +57,30 @@ type ResultKey = "compounds" | "drugs" | "mechanisms" | "activities" | "targets"
 type RecordsFor<K extends ResultKey> = Extract<ChemblOutput, Record<K, unknown>> extends Record<K, infer R> ? R : never;
 
 /** Read the action's result key, failing the test if the tool returned another action's shape. */
-function resultKey<K extends ResultKey>(out: ChemblOutput, key: K): RecordsFor<K> {
-    if (!(key in out)) throw new Error(`expected the '${key}' result shape, got ${JSON.stringify(out)}`);
-    return (out as Record<K, RecordsFor<K>>)[key];
+function resultKey(out: ChemblOutput, key: "compounds"): RecordsFor<"compounds">;
+function resultKey(out: ChemblOutput, key: "drugs"): RecordsFor<"drugs">;
+function resultKey(out: ChemblOutput, key: "mechanisms"): RecordsFor<"mechanisms">;
+function resultKey(out: ChemblOutput, key: "activities"): RecordsFor<"activities">;
+function resultKey(out: ChemblOutput, key: "targets"): RecordsFor<"targets">;
+function resultKey(out: ChemblOutput, key: ResultKey): unknown {
+    switch (key) {
+        case "compounds":
+            if ("compounds" in out) return out.compounds;
+            break;
+        case "drugs":
+            if ("drugs" in out) return out.drugs;
+            break;
+        case "mechanisms":
+            if ("mechanisms" in out) return out.mechanisms;
+            break;
+        case "activities":
+            if ("activities" in out) return out.activities;
+            break;
+        case "targets":
+            if ("targets" in out) return out.targets;
+            break;
+    }
+    throw new Error(`expected the '${key}' result shape, got ${JSON.stringify(out)}`);
 }
 
 const EGFR_TARGET = {

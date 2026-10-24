@@ -28,6 +28,10 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { classifyWithinRoot, computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
 import { recordArtifactReconcileDropped, recordLineageInputDropped } from "../lib/metrics.js";
+import { z } from "zod";
+
+/** The `code` field of a Node fs error, the one field the ENOENT refusals of the reconcile read. */
+const ErrnoCodeSchema = z.object({ code: z.string() });
 
 export type ReconcileManifestInput = {
     /** Absolute host root of the analysis's workspace tree. */
@@ -94,7 +98,8 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         try {
             info = await stat(absPath);
         } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            const errno = ErrnoCodeSchema.safeParse(err);
+            if (errno.success && errno.data.code === "ENOENT") {
                 logger.debug("dropping phantom entry", { path: entry.path });
                 collector.removeRecord(entry.path);
                 droppedCount++;
@@ -218,7 +223,8 @@ async function fillInputHashesFromDisk(
         try {
             info = await stat(hostPath);
         } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            const errno = ErrnoCodeSchema.safeParse(err);
+            if (errno.success && errno.data.code === "ENOENT") {
                 // Warn, not debug: a capture layer named a file this step never
                 // consumed, and the count of those is how a reader tells a noisy
                 // hook from an artifact that genuinely vanished under the step.

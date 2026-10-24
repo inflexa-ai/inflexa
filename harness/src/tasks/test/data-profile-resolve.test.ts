@@ -75,7 +75,9 @@ function annotation(name: string, over: Partial<GroupAnnotation> = {}): GroupAnn
     };
 }
 
-function submission(operations: MenuOperation[], over: Partial<ProfileSubmission> = {}): ProfileSubmission {
+function submission(operations: MenuOperation[], over?: Partial<ProfileSubmission>): ProfileSubmission;
+function submission(operations: ReadonlyArray<Record<string, unknown>>, over?: Partial<ProfileSubmission>): Record<string, unknown>;
+function submission(operations: ReadonlyArray<unknown>, over: Partial<ProfileSubmission> = {}): unknown {
     return {
         operations,
         analysisSummary: "A synthetic tree.",
@@ -720,11 +722,9 @@ describe("the recipe", () => {
 
 describe("the submission schema", () => {
     it("makes a declared count and a path pattern unrepresentable", () => {
-        const withCount = ProfileSubmissionSchema.safeParse(
-            submission([{ op: "use", setId: calls.id, group: { ...annotation("calls"), count: 12 } as unknown as GroupAnnotation }]),
-        );
+        const withCount = ProfileSubmissionSchema.safeParse(submission([{ op: "use", setId: calls.id, group: { ...annotation("calls"), count: 12 } }]));
         const withPattern = ProfileSubmissionSchema.safeParse(
-            submission([{ op: "use", setId: calls.id, group: { ...annotation("calls"), pathPattern: "data/**" } as unknown as GroupAnnotation }]),
+            submission([{ op: "use", setId: calls.id, group: { ...annotation("calls"), pathPattern: "data/**" } }]),
         );
         expect(withCount.success).toBe(false);
         expect(withPattern.success).toBe(false);
@@ -741,7 +741,7 @@ describe("the submission schema", () => {
 
     it("refuses a category outside the shipped vocabulary", () => {
         const parsed = ProfileSubmissionSchema.safeParse(
-            submission([{ op: "use", setId: calls.id, group: { ...annotation("calls"), category: "hypercubes" } as unknown as GroupAnnotation }]),
+            submission([{ op: "use", setId: calls.id, group: { ...annotation("calls"), category: "hypercubes" } }]),
         );
         expect(parsed.success).toBe(false);
     });
@@ -752,17 +752,19 @@ describe("the submission schema", () => {
     });
 
     it("has no place to claim an overlap that was never measured", () => {
-        const parsed = ProfileSubmissionSchema.safeParse(
-            submission([{ op: "use", setId: calls.id, group: annotation("calls") }], {
-                dimensions: [
-                    {
-                        label: "subject",
-                        category: "subject",
-                        observations: [{ kind: "slot", setId: calls.id, slotId: subjectSlot.id, checked: { matched: 0, of: 0 } } as never],
-                    },
-                ],
-            }),
-        );
+        const parsed = ProfileSubmissionSchema.safeParse({
+            operations: [{ op: "use", setId: calls.id, group: annotation("calls") }],
+            analysisSummary: "A synthetic tree.",
+            domain: "genomics",
+            organism: null,
+            dimensions: [
+                {
+                    label: "subject",
+                    category: "subject",
+                    observations: [{ kind: "slot", setId: calls.id, slotId: subjectSlot.id, checked: { matched: 0, of: 0 } }],
+                },
+            ],
+        });
         expect(parsed.success).toBe(false);
     });
 });

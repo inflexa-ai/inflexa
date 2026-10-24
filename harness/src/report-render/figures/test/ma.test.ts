@@ -6,20 +6,13 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import {
-    CHART_SOURCE_MEMBER,
-    deriveChartOption,
-    deriveChartRender,
-    type ChartDataSource,
-    type ChartOpts,
-    type ChartRow,
-    type EchartOption,
-} from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { DENSE_NULL_Z } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { MA_FIGURE, MA_P_THRESHOLD } from "../ma.js";
+import { chartSourceOf, markLineData, optionArray, optionAt, pageCall, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -56,10 +49,6 @@ function derive(chartBlock: ChartBlock = block(), rows: readonly ChartRow[] = RO
     return deriveChartOption(chartBlock, rows, undefined, {}, OPTS)._unsafeUnwrap();
 }
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function firstTwo(option: EchartOption): [EchartOption, EchartOption] {
     const [significant, rest] = seriesOf(option);
     if (significant === undefined || rest === undefined) throw new Error("the ma chart holds two series");
@@ -67,7 +56,7 @@ function firstTwo(option: EchartOption): [EchartOption, EchartOption] {
 }
 
 function names(series: EchartOption): string[] {
-    return (series.data as EchartOption[]).map((item) => String(item.name));
+    return optionArray(series, "data").map((item) => String(item.name));
 }
 
 /** The item style of one series, with its members narrowed. */
@@ -83,7 +72,7 @@ describe("the MA figure", () => {
     });
 
     it("draws the mean on a log axis that ends at the decades around the positive means", () => {
-        const x = derive().xAxis as EchartOption;
+        const x = optionAt(derive(), "xAxis");
         expect(x.type).toBe("log");
         expect(x.min).toBe(0.1);
         expect(x.max).toBe(1e6);
@@ -108,9 +97,9 @@ describe("the MA figure", () => {
 
     it("draws a line at zero, and the effect axis symmetric around zero", () => {
         const option = derive();
-        const lines = seriesOf(option).flatMap((series) => ((series.markLine as EchartOption | undefined)?.data as EchartOption[] | undefined) ?? []);
+        const lines = seriesOf(option).flatMap((series) => markLineData(series));
         expect(lines).toEqual([{ yAxis: 0, label: { show: false } }]);
-        const y = option.yAxis as EchartOption;
+        const y = optionAt(option, "yAxis");
         expect(y.min).toBe(-5);
         expect(y.max).toBe(5);
     });
@@ -159,18 +148,14 @@ describe("the dense MA plot", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[];
+    const seriesDataOnThePage = pageCall(CHART_SERIES_BUILDER, "reportSeriesData");
 
     it("reads the payload past the bound, and the page splits the rows by the p column as the server does", () => {
         const rows = denseRows(9000);
         const render = deriveChartRender(block(), rows, COLUMNS, { key: "de", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(render.option);
         expect(source.rule).toEqual({ kind: "ma", column: "padj", cut: MA_P_THRESHOLD });
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);

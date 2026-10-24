@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
+import type { ResultAsync } from "neverthrow";
 
 import type { DbError } from "../../lib/db-result.js";
+import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { createToolOutputStore } from "../../state/tool-outputs.js";
 import { createThreadStore, type ThreadStore, type ThreadType } from "../thread-store.js";
@@ -518,19 +519,14 @@ describe("listRecentThreads", () => {
 
     it("sends one query for threads of 20 analyses", async () => {
         for (let i = 0; i < 20; i++) await seedAt(`many-${i}`, `analysis-many-${i}`, "2026-10-01T10:00:00.000Z");
-        let calls = 0;
-        // The wrapper forwards every `query` call to the pool, and the store reads only through `query`.
-        const countingPool = {
-            query: (...args: unknown[]) => {
-                calls += 1;
-                return (pool.query as (...forwarded: unknown[]) => unknown)(...args);
-            },
-        } as unknown as Pool;
+        // The wrapper forwards every `query` to the pool, and the store reads only through `query`.
+        const counted = countingQuerier(pool);
+        const countingPool = { ...counted.querier, connect: () => pool.connect() };
 
         const threads = (await createThreadStore(countingPool).listRecentThreads({ limit: 50 }))._unsafeUnwrap();
 
         expect(threads).toHaveLength(20);
-        expect(calls).toBe(1);
+        expect(counted.calls()).toBe(1);
     });
 });
 
@@ -719,13 +715,11 @@ describe("createThread integrity rules", () => {
     it("refuses a type outside the closed set", async () => {
         // The check under test is for a value that reached the store from
         // outside this package's type graph — across a package boundary, out of
-        // a JSON body — where the compile-time union never applied. Widening to
-        // `string` first is what reproduces that from inside the graph, and it
-        // is sound for the same reason the store's own widening is: the value
-        // is exactly what an untyped caller could hand in.
+        // a JSON body — where the compile-time union never applied. The input
+        // type admits that caller, and the store refuses the value itself.
         const outOfSet: string = "chronicle";
 
-        const failed = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, type: outOfSet as ThreadType }))._unsafeUnwrapErr();
+        const failed = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, type: outOfSet }))._unsafeUnwrapErr();
 
         expect(failed).toEqual({
             type: "unknown_thread_type",

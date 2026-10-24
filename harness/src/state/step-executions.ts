@@ -5,10 +5,20 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import type { QueryConfig } from "pg";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { PersistedSandboxRef, StepExecutionRow } from "./schema.js";
+import { StepExecutionRowSchema, type StepExecutionRow } from "./schema.js";
+
+/**
+ * The row-reading surface of this module: one query over the text or config form, whose rows the
+ * mapStepExecutionRow parser types. A computed test fake satisfies this shape directly, where the
+ * row-generic of `Querier` cannot be implemented by a fake that computes its rows.
+ */
+export type StepRowQuerier = {
+    query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+};
 
 export type SeedStepExecutionRow = {
     runId: string;
@@ -213,7 +223,7 @@ export function cancelRunningStepExecutions(pool: Querier, runId: string, reason
     });
 }
 
-export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepExecutionRow[], DbError> {
+export function queryStepsByRun(pool: StepRowQuerier, runId: string): ResultAsync<StepExecutionRow[], DbError> {
     return tryQuery("stepExecutions.queryStepsByRun", async () => {
         const result = await pool.query({
             text: `SELECT run_id, step_id, analysis_id, wave, agent_id,
@@ -230,23 +240,24 @@ export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepE
 }
 
 function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
-    return {
-        runId: row.run_id as string,
-        stepId: row.step_id as string,
-        analysisId: row.analysis_id as string,
+    return StepExecutionRowSchema.parse({
+        runId: row.run_id,
+        stepId: row.step_id,
+        analysisId: row.analysis_id,
         wave: Number(row.wave),
-        agentId: row.agent_id as string,
-        status: row.status as StepExecutionRow["status"],
-        startedAt: (row.started_at as string) ?? null,
-        completedAt: (row.completed_at as string) ?? null,
-        durationMs: row.duration_ms === null || row.duration_ms === undefined ? null : Number(row.duration_ms),
-        error: (row.error as string) ?? null,
-        attempts: (row.attempts as number) ?? 1,
-        lastErrorClass: (row.last_error_class as string) ?? null,
-        finishReason: (row.finish_reason as string) ?? null,
+        agentId: row.agent_id,
+        status: row.status,
+        startedAt: row.started_at ?? null,
+        completedAt: row.completed_at ?? null,
+        // `duration_ms` is bigint, which `pg` delivers as a string; the schema wants the number.
+        durationMs: row.duration_ms === undefined || row.duration_ms === null ? null : Number(row.duration_ms),
+        error: row.error ?? null,
+        attempts: row.attempts === undefined || row.attempts === null ? undefined : Number(row.attempts),
+        lastErrorClass: row.last_error_class ?? null,
+        finishReason: row.finish_reason ?? null,
         hitMaxSteps: row.hit_max_steps === 1 || row.hit_max_steps === true,
-        blockedReason: (row.blocked_reason as string) ?? null,
-        sandboxRef: (row.sandbox_ref as PersistedSandboxRef | null) ?? null,
-        childWorkflowId: (row.child_workflow_id as string | null) ?? null,
-    };
+        blockedReason: row.blocked_reason ?? null,
+        sandboxRef: row.sandbox_ref ?? null,
+        childWorkflowId: row.child_workflow_id ?? null,
+    });
 }

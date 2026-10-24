@@ -5,6 +5,7 @@ import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import {
     applyChatFrame,
     checkChatPart,
+    isKnownPartFrame,
     type ChatEvent,
     type ChatFrame,
     type ChatMessage,
@@ -19,7 +20,7 @@ import { describeClientError, type ClientError } from "../../client/api.ts";
 import { abortTurn, createChatTurn, fetchMessages, fetchThread, fetchTurn, fetchTurns, retractTurn, type ChatTurnStream } from "../../client/conversation.ts";
 import { describeCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
-import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
+import { isKnownPart, isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
 import { refreshReportChildren } from "./report_children.ts";
@@ -492,6 +493,7 @@ export function applyServerFrame(frame: ChatFrame): void {
 /** Apply a data frame, then run the side effect of an ask or of a report spawn. */
 function applyDataFrame(frame: ChatPartFrame): void {
     applyFrame(frame);
+    if (!isKnownPartFrame(frame)) return;
     if (frame.type === "data-ask") {
         // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
         // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
@@ -1526,6 +1528,8 @@ export type SessionOpenable = { analysisId: string; entry: OpenableEntry };
  * pixel-shaped presentation gives one entry, and a file reference gives one entry per file.
  */
 function openableEntries(part: Part): OpenableEntry[] {
+    // The registry key is the discriminant: a part of a type this build does not know has no reader here.
+    if (!isKnownPart(part)) return [];
     switch (part.type) {
         case "data-presentation": {
             // The reader deep-copies the chart spec, and a store proxy cannot be cloned, thus the reader
@@ -1563,7 +1567,7 @@ export function sessionOpenables(analysisId: string): SessionOpenable[] {
 export function latestPlanCard(): { planId: string; title: string; steps: PlanCardStepView[] } | null {
     for (const message of [...messages].reverse()) {
         for (const part of [...message.parts].reverse()) {
-            if (part.type === "data-plan") return readPlanCard(part);
+            if (isKnownPart(part) && part.type === "data-plan") return readPlanCard(part);
         }
     }
     return null;

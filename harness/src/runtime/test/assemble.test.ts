@@ -1,14 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { z } from "zod";
 import { okAsync } from "neverthrow";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Pool } from "pg";
-import type { Browser } from "puppeteer-core";
+import { Pool } from "pg";
 
 import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
 
 import { createConversationAgent } from "../../agents/conversation-agent.js";
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createReportSessionAgent } from "../../agents/report-session-agent.js";
 import { createReportSessionRuntime } from "../../app/report-session-runtime.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
@@ -16,21 +17,22 @@ import type { Scope } from "../../auth/types.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
+import { constructionWorkflows, refuse, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
+import { fakeLookBrowser } from "../../lib/__fixtures__/chrome.js";
 import { setBrowserConnector, type ChromeConfig } from "../../lib/chrome.js";
 import type { AcquireEyes, EyesScope } from "../../lib/eyes.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore } from "../../memory/thread-store.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import { upsertAnalysis } from "../../state/analyses.js";
 import { upsertPlan } from "../../state/plans.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../../tools/report-authoring/authoring-tools.js";
-import type { ExaminePageResult } from "../../tools/report-session/index.js";
-import type { StartReportSessionResult } from "../../tools/start-report-session.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
+import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
 import {
     assembleCoreRuntime,
     createThreadAgentResolver,
@@ -38,7 +40,6 @@ import {
     type ConversationAssemblyDeps,
     type CoreRuntime,
     type CoreRuntimeDeps,
-    type CoreWorkflowDeps,
 } from "../assemble.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ThreadStore, ThreadType } from "../../memory/thread-store.js";
@@ -221,30 +222,31 @@ function eyesGateway(): ReportSessionStateGateway {
  *
  * The capture reads the connected flag, it registers the disconnect listener, it opens one context, it sizes
  * one page, it emulates the media features of that page, it drives the page, and it closes the context. The
- * fake carries those members alone. The two-step assertion names the type of puppeteer, because a fake of a
- * class with private members is no structural match.
+ * fake of the fixture carries those members.
  */
-function fakeBrowser(screenshot: string): Browser {
-    const page = {
-        on: () => {},
-        setViewport: () => Promise.resolve(),
-        emulateMediaFeatures: () => Promise.resolve(),
-        goto: () => Promise.resolve(),
-        evaluate: () => Promise.resolve(),
-        screenshot: () => Promise.resolve(screenshot),
-    };
-    const fake = {
-        connected: true,
-        on: () => {},
-        wsEndpoint: () => "ws://fake",
-        createBrowserContext: () =>
-            Promise.resolve({
-                newPage: () => Promise.resolve(page),
-                close: () => Promise.resolve(),
-            }),
-    };
-    return fake as unknown as Browser;
+function fakeBrowser(screenshot: string) {
+    return fakeLookBrowser({ screenshot: () => Promise.resolve(screenshot) });
 }
+
+/** A seam no case drives: the first call throws and names the seam. */
+function refuseReportVersionStore(): ReportVersionStore {
+    return {
+        record: () => refuse("reportVersionStore.record"),
+        getVersion: () => refuse("reportVersionStore.getVersion"),
+        getThreadVersion: () => refuse("reportVersionStore.getThreadVersion"),
+    };
+}
+
+function refuseThreadTitles(): Pick<ThreadStore, "getThread" | "setAutoTitle"> {
+    return { getThread: () => refuse("threads.getThread"), setAutoTitle: () => refuse("threads.setAutoTitle") };
+}
+
+function refuseDerivations(): Pick<ReportSessionStateStore, "appendDerivation"> {
+    return { appendDerivation: () => refuse("derivations.appendDerivation") };
+}
+
+/** The arm one assertion reads off a roster tool outcome. */
+const OutcomeArmSchema = z.looseObject({ outcome: z.string() });
 
 /**
  * Build the report agent over the eyes of one composition, the same wiring as the assembly.
@@ -257,21 +259,21 @@ function fakeBrowser(screenshot: string): Browser {
 function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, root: string): AgentDefinition {
     return createReportSessionAgent({
         model: "test/model",
-        pool: {} as Pool,
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
+        pool: new Pool(),
+        embedding: refuseEmbedding(),
+        workspaceFs: makeFakeWorkspaceFs(),
         gateway: eyesGateway(),
         resolveWorkspaceRoot: async () => root,
-        store: {} as ReportVersionStore,
-        threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
+        store: refuseReportVersionStore(),
+        threads: refuseThreadTitles(),
         chrome,
-        derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
+        derivations: refuseDerivations(),
         eyes,
     });
 }
 
 /** Look at the page of one thread through the eyes tool of a built agent. */
-async function look(agent: AgentDefinition, threadId: string): Promise<ExaminePageResult> {
+async function look(agent: AgentDefinition, threadId: string): Promise<{ outcome: string }> {
     const found = agent.tools.filter((each) => each.id === "examine_page");
     // The roster holds one eyes tool. A wiring that drops it empties this list, thus the assertion fails
     // here and no line below reads an absent member.
@@ -283,7 +285,7 @@ async function look(agent: AgentDefinition, threadId: string): Promise<ExaminePa
     const outcome = await tool.execute({}, { ...ctx, session: { ...ctx.session, scope } });
     // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
     // makes the eyes tool, thus the ok value is the outcome of that tool and a case reads its arm by name.
-    return outcome._unsafeUnwrap() as ExaminePageResult;
+    return OutcomeArmSchema.parse(outcome._unsafeUnwrap());
 }
 
 describe("the eyes of the composition", () => {
@@ -379,20 +381,18 @@ const START_BRIEF = {
  */
 function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, pool: Pool): AgentDefinition {
     return createConversationAgent({
-        provider: {} as ChatProvider,
-        utilityProvider: {} as ChatProvider,
+        provider: unusedChatProvider(),
+        utilityProvider: unusedChatProvider(),
         pool,
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
+        embedding: refuseEmbedding(),
+        workspaceFs: makeFakeWorkspaceFs(),
         model: "test/model",
         utilityModel: "test/utility-model",
-        executeAnalysisWorkflow: (async () => {
-            throw new Error("not used at composition time");
-        }) as never,
+        executeAnalysisWorkflow: async (_input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => refuse("executeAnalysisWorkflow"),
         anchorReportSession: createReportSessionRuntime({ pool }).ensureSessionState,
         resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-        runAuthorizer: {} as RunAuthorizer,
-        runLauncher: {} as RunLauncher,
+        runAuthorizer: createLocalRunAuthorizer(),
+        runLauncher: refuseRunLauncher(),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         skillsDir: "/skills",
         chrome,
@@ -419,7 +419,7 @@ async function seedParent(pool: Pool, analysisId: string, parentThreadId: string
 }
 
 /** Start a report session through the start tool of a built agent. */
-async function startSession(agent: AgentDefinition, analysisId: string, parentThreadId: string): Promise<StartReportSessionResult> {
+async function startSession(agent: AgentDefinition, analysisId: string, parentThreadId: string): Promise<{ outcome: string }> {
     const found = agent.tools.filter((each) => each.id === "start_report_session");
     // The roster holds one start tool. A wiring that drops it empties this list, thus the assertion fails
     // here and no line below reads an absent member.
@@ -431,7 +431,7 @@ async function startSession(agent: AgentDefinition, analysisId: string, parentTh
     const outcome = await tool.execute(START_BRIEF, { ...ctx, session: { ...ctx.session, scope } });
     // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
     // makes the start tool. Thus the ok value is the outcome of that tool.
-    return outcome._unsafeUnwrap() as StartReportSessionResult;
+    return OutcomeArmSchema.parse(outcome._unsafeUnwrap());
 }
 
 describe("the eyes of the start tool", () => {
@@ -519,27 +519,23 @@ describe("the tool output store of the composition", () => {
     /** Each dep that the assembly reads at construction. No agent and no workflow runs in this case. */
     function coreDeps(): CoreRuntimeDeps {
         const conversation: ConversationAssemblyDeps = {
-            provider: {} as ChatProvider,
-            utilityProvider: {} as ChatProvider,
-            pool: {} as Pool,
-            embedding: {} as EmbeddingProvider,
-            workspaceFs: {} as WorkspaceFilesystem,
+            provider: unusedChatProvider(),
+            utilityProvider: unusedChatProvider(),
+            pool: new Pool(),
+            embedding: refuseEmbedding(),
+            workspaceFs: makeFakeWorkspaceFs(),
             model: "test/model",
             utilityModel: "test/utility-model",
             resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-            runAuthorizer: {} as RunAuthorizer,
-            runLauncher: {} as RunLauncher,
+            runAuthorizer: createLocalRunAuthorizer(),
+            runLauncher: refuseRunLauncher(),
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             skillsDir: "/skills",
             chrome: {},
         };
         return {
             conversation,
-            workflows: {
-                sandboxStep: {} as CoreWorkflowDeps["sandboxStep"],
-                buildExecuteAnalysis: () => ({}) as ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]>,
-                dataProfile: {} as CoreWorkflowDeps["dataProfile"],
-            },
+            workflows: constructionWorkflows(),
         };
     }
 
@@ -547,7 +543,7 @@ describe("the tool output store of the composition", () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         const register = dbos.DBOS.registerWorkflow;
         // The registry of DBOS is global to the process, and a launched engine refuses a registration.
-        (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = (workflow: unknown) => workflow;
+        Reflect.set(dbos.DBOS, "registerWorkflow", (workflow: unknown) => workflow);
         try {
             const runtime = assembleCoreRuntime(coreDeps());
 
@@ -560,7 +556,7 @@ describe("the tool output store of the composition", () => {
                 ).toContain("read_tool_output");
             }
         } finally {
-            (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = register;
+            Reflect.set(dbos.DBOS, "registerWorkflow", register);
         }
     });
 });
@@ -622,17 +618,27 @@ describe("the approval of the composition", () => {
             },
         };
         const runAuthorizer: RunAuthorizer = {
-            authorize: () => okAsync({ runSession: {} as never, ownsMandate: true }),
+            authorize: () =>
+                okAsync({
+                    runSession: {
+                        identity: { user: "u-1" },
+                        scope: { kind: "analysis", analysisId: ANALYSIS_ID },
+                        provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+                        runFrame: { runId: "run-assemble" },
+                        auth: makeLocalAuth(),
+                    },
+                    ownsMandate: true,
+                }),
             revoke: () => okAsync(undefined),
             revokeByJti: () => okAsync(undefined),
         };
         const deps: CoreRuntimeDeps = {
             conversation: {
-                provider: {} as ChatProvider,
-                utilityProvider: {} as ChatProvider,
+                provider: unusedChatProvider(),
+                utilityProvider: unusedChatProvider(),
                 pool,
-                embedding: {} as EmbeddingProvider,
-                workspaceFs: {} as WorkspaceFilesystem,
+                embedding: refuseEmbedding(),
+                workspaceFs: makeFakeWorkspaceFs(),
                 model: "test/model",
                 utilityModel: "test/utility-model",
                 resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
@@ -642,16 +648,12 @@ describe("the approval of the composition", () => {
                 skillsDir: "/skills",
                 chrome: {},
             },
-            workflows: {
-                sandboxStep: {} as CoreWorkflowDeps["sandboxStep"],
-                buildExecuteAnalysis: () => ({}) as ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]>,
-                dataProfile: {} as CoreWorkflowDeps["dataProfile"],
-            },
+            workflows: constructionWorkflows(),
         };
         const dbos = await import("@dbos-inc/dbos-sdk");
         const register = dbos.DBOS.registerWorkflow;
         // The registry of DBOS is global to the process, and a launched engine refuses a registration.
-        (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = (workflow: unknown) => workflow;
+        Reflect.set(dbos.DBOS, "registerWorkflow", (workflow: unknown) => workflow);
         try {
             const runtime = assembleCoreRuntime(deps);
 
@@ -669,7 +671,7 @@ describe("the approval of the composition", () => {
             expect(approval.started).toBe(true);
             expect(launched).toEqual([approval.runId]);
         } finally {
-            (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = register;
+            Reflect.set(dbos.DBOS, "registerWorkflow", register);
         }
     });
 });

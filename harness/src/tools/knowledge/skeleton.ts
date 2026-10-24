@@ -151,7 +151,7 @@ function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
 
 /** The forbidden method ids of a step. The client schema reads the field through the loose object. */
 function forbidsOf(step: ProcedureStep): readonly string[] {
-    const forbids = (step as { forbids?: unknown }).forbids;
+    const forbids = step.forbids;
     return Array.isArray(forbids) ? forbids.filter((method): method is string => typeof method === "string") : [];
 }
 
@@ -213,9 +213,7 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
         const flags = steps.flatMap((step) => step.flags ?? []);
         const hardFlag = flags.find((flag) => flag.severity === "flag");
         const claims = [...new Set(steps.flatMap((step) => step.rules))];
-        const packages = [
-            ...new Set(steps.map((step) => (step as { package?: { name: string } }).package?.name).filter((name): name is string => name !== undefined)),
-        ];
+        const packages = [...new Set(steps.map((step) => step.package?.name).filter((name): name is string => name !== undefined))];
         const caveats = [...flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message), ...steps.flatMap(stepCaveats)];
         const method = central?.method;
         // A rule covers the group when a step of the group carries one. A method

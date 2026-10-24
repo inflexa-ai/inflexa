@@ -13,6 +13,7 @@ import { deriveChartOption, type ChartInputs, type ChartRow, type EchartOption }
 import { CHART_PALETTE, GUIDE_LINE_COLOR } from "../../design.js";
 import { FIGURE_MODULES } from "../index.js";
 import { ROC_FIGURE } from "../roc.js";
+import { gridAt, optionArray, optionAt, optionMaybe, optionNumber, optionOf, seriesOf } from "../../test/options.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -57,12 +58,8 @@ function refusal(block: ChartBlock, rows: readonly ChartRow[] = ROWS): string {
 }
 
 /** The series of one option. */
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function firstGrid(option: EchartOption): EchartOption {
-    const grid = (option.grid as EchartOption[])[0];
+    const grid = gridAt(option, 0);
     if (grid === undefined) throw new Error("the roc chart holds no grid");
     return grid;
 }
@@ -74,7 +71,7 @@ describe("the roc figure", () => {
 
     it("draws each group as its empirical curve, through its points in order of the false positive rate", () => {
         const curves = seriesOf(derive(rocBlock())).filter((series) => series.name !== undefined);
-        expect(curves.map((series) => [series.name, series.type, series.step, (series.lineStyle as EchartOption).color])).toEqual([
+        expect(curves.map((series) => [series.name, series.type, series.step, optionAt(series, "lineStyle").color])).toEqual([
             [FULL, "line", undefined, CHART_PALETTE[0]],
             [ALONE, "line", undefined, CHART_PALETTE[1]],
         ]);
@@ -89,15 +86,16 @@ describe("the roc figure", () => {
     });
 
     it("marks chance with a dashed diagonal from 0 to 1", () => {
-        const chance = seriesOf(derive(rocBlock())).find((series) => series.markLine !== undefined)?.markLine as EchartOption;
+        const chance = optionMaybe(optionOf(seriesOf(derive(rocBlock())).find((series) => series.markLine !== undefined)), "markLine");
+        if (chance === undefined) throw new Error("the option holds no chance mark line");
         expect(chance.lineStyle).toEqual({ color: GUIDE_LINE_COLOR, width: 1, type: "dashed" });
         expect(chance.data).toEqual([[{ coord: [0, 0] }, { coord: [1, 1] }]]);
     });
 
     it("holds both axes from 0 to 1 with one tick step", () => {
         const option = derive(rocBlock());
-        const x = option.xAxis as EchartOption;
-        const y = option.yAxis as EchartOption;
+        const x = optionAt(option, "xAxis");
+        const y = optionAt(option, "yAxis");
         expect([x.min, x.max, x.interval, x.name]).toEqual([0, 1, 0.2, "fpr"]);
         expect([y.min, y.max, y.interval, y.name]).toEqual([0, 1, 0.2, "tpr"]);
     });
@@ -113,16 +111,17 @@ describe("the roc figure", () => {
         // The text is the label of a point at the corner (1, 0) of the data, thus it stays in the corner of the
         // square in every container.
         const text = seriesOf(option).find((series) => series.symbolSize === 0);
-        const label = text?.label as EchartOption;
+        const label = optionMaybe(optionOf(text), "label");
+        if (label === undefined) throw new Error("the option holds no corner label");
         expect(text?.data).toEqual([{ value: [1, 0], name: `AUC, ${FULL} = 0.627\nAUC, ${ALONE} = 0.619` }]);
         expect([label.formatter, label.align, label.verticalAlign]).toEqual(["{b}", "right", "bottom"]);
         expect(option.graphic).toBeUndefined();
         // Each square breaks the text into lines inside its width less the insets.
-        const place = seriesOf(option).indexOf(text as EchartOption);
-        for (const rule of option.media as EchartOption[]) {
-            const placed = rule.option as EchartOption;
-            const side = firstGrid(rule.option as EchartOption).width as number;
-            expect((placed.series as EchartOption[])[place]?.label).toEqual({ width: side - 16, overflow: "break" });
+        const place = seriesOf(option).findIndex((series) => series.symbolSize === 0);
+        for (const rule of optionArray(option, "media")) {
+            const placed = optionAt(rule, "option");
+            const side = optionNumber(firstGrid(optionAt(rule, "option")).width);
+            expect(seriesOf(placed)[place]?.label).toEqual({ width: side - 16, overflow: "break" });
         }
     });
 
@@ -130,12 +129,12 @@ describe("the roc figure", () => {
         const option = derive(rocBlock());
         const grid = firstGrid(option);
         expect(grid.width).toBe(grid.height);
-        const legend = option.legend as EchartOption;
+        const legend = optionAt(option, "legend");
         expect(legend.left).toBe(grid.left);
-        expect(legend.top as number).toBeGreaterThan((grid.top as number) + (grid.height as number));
-        const rules = option.media as EchartOption[];
+        expect(optionNumber(legend.top)).toBeGreaterThan(optionNumber(grid.top) + optionNumber(grid.height));
+        const rules = optionArray(option, "media");
         for (const rule of rules) {
-            const placed = firstGrid(rule.option as EchartOption);
+            const placed = firstGrid(optionAt(rule, "option"));
             expect(placed.width).toBe(placed.height);
         }
     });

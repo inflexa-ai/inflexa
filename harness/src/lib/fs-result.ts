@@ -61,10 +61,9 @@ const ABSENT_CODES = new Set(["ENOENT", "ENOTDIR"]);
 /** errno codes that mean "permission denied". */
 const PERMISSION_CODES = new Set(["EACCES", "EPERM"]);
 
-function errnoOf(cause: unknown): string | undefined {
+export function errnoOf(cause: unknown): string | undefined {
     if (cause && typeof cause === "object" && "code" in cause) {
-        const code = (cause as { code?: unknown }).code;
-        return typeof code === "string" ? code : undefined;
+        return typeof cause.code === "string" ? cause.code : undefined;
     }
     return undefined;
 }

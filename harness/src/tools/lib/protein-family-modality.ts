@@ -20,9 +20,7 @@ type FamilyMappingFile = {
     default: { preferred_modality: string; rationale: string };
 };
 
-// The JSON import yields an untyped/structurally-wide value; cast to the declared
-// shape, which the bundled data file is authored to satisfy.
-const dataset = familyMappingData as unknown as FamilyMappingFile;
+const dataset: FamilyMappingFile = familyMappingData;
 
 function loadDataset(): FamilyMappingFile {
     return dataset;

@@ -22,29 +22,39 @@
 
 import { err, ok, type Result } from "neverthrow";
 
-import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
+import type { AuthoredPinRecord, UnresolvedReference } from "../contracts/report-reference.js";
 import type { DraftRefusal } from "./draft-operations.js";
 import { snapshotEntry, type ReportSnapshot } from "./reference-resolver.js";
 
 /**
- * The three reference kinds that name one artifact directly, thus the three kinds that take a hash.
- *
- * The `satisfies` clause ties each literal to a member of the reference union. A renamed kind becomes a
- * compile error here. A new kind passes with no error, because the stamp fills a known kind and it never
- * refuses one.
+ * The three reference kinds that name one artifact directly, thus the three kinds that take a hash. A kind
+ * outside the set passes with no error, because the stamp fills a known kind and it never refuses one.
  */
-const PINNED_KINDS: ReadonlySet<string> = new Set(["artifact-value", "artifact-table", "artifact-file"] satisfies readonly Reference["kind"][]);
+type PinnedKind = "artifact-value" | "artifact-table" | "artifact-file";
 
 /** One path-only reference whose path the snapshot does not hold, with the object that the author wrote. */
 type MissingPin = {
     readonly path: string;
-    readonly record: Record<string, unknown>;
+    readonly record: AuthoredPinRecord;
 };
 
-/** Give `true` when an object carries an artifact pin. Such an object takes a stamp, and a read removes its hash. */
-function holdsPin(record: Record<string, unknown>): boolean {
-    const { kind } = record;
-    return typeof kind === "string" && PINNED_KINDS.has(kind);
+/**
+ * Give the authored record of an object that takes a stamp, or `undefined` when the object takes none.
+ *
+ * The test reads the shape alone, because the payload reaches the stamp before the grammar parse. A hash
+ * that the object carries decides nothing here, because the stamp writes the hash of the snapshot over it.
+ * The copy the function returns is the refusal's view of the author's object: the walk still stamps and
+ * returns the original, and the copy holds the same own enumerable fields, so the serialized refusal is
+ * unchanged.
+ */
+function stampablePin(record: object): { path: string; record: AuthoredPinRecord } | undefined {
+    if (!("kind" in record) || !("path" in record)) return undefined;
+    const kind: unknown = record.kind;
+    const path: unknown = record.path;
+    const pinned: PinnedKind | undefined =
+        kind === "artifact-value" ? "artifact-value" : kind === "artifact-table" ? "artifact-table" : kind === "artifact-file" ? "artifact-file" : undefined;
+    if (pinned === undefined || typeof path !== "string") return undefined;
+    return { path, record: { ...record, kind: pinned, path } };
 }
 
 /**
@@ -55,20 +65,6 @@ function holdsPin(record: Record<string, unknown>): boolean {
  */
 function defineOwn(target: Record<string, unknown>, key: string, value: unknown): void {
     Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
-}
-
-/**
- * Give the artifact path of an object that takes a stamp, or `undefined` when the object takes none.
- *
- * The test reads the shape alone, because the payload reaches the stamp before the grammar parse. A hash
- * that the object carries decides nothing here, because the stamp writes the hash of the snapshot over it.
- */
-function stampablePath(record: Record<string, unknown>): string | undefined {
-    const { path } = record;
-    if (!holdsPin(record) || typeof path !== "string") {
-        return undefined;
-    }
-    return path;
 }
 
 /**
@@ -94,24 +90,24 @@ function stampValue(value: unknown, snapshot: ReportSnapshot, missing: MissingPi
         return value;
     }
 
-    const record = value as Record<string, unknown>;
     let changed = false;
     const next: Record<string, unknown> = {};
-    for (const key of Object.keys(record)) {
-        const stamped = stampValue(record[key], snapshot, missing);
-        if (stamped !== record[key]) {
+    for (const key of Object.keys(value)) {
+        const held: unknown = Reflect.get(value, key);
+        const stamped = stampValue(held, snapshot, missing);
+        if (stamped !== held) {
             changed = true;
         }
         defineOwn(next, key, stamped);
     }
 
-    const path = stampablePath(record);
-    if (path === undefined) {
+    const pin = stampablePin(value);
+    if (pin === undefined) {
         return changed ? next : value;
     }
-    const entry = snapshotEntry(snapshot, path);
+    const entry = snapshotEntry(snapshot, pin.path);
     if (entry === undefined) {
-        missing.push({ path, record });
+        missing.push({ path: pin.path, record: pin.record });
         return changed ? next : value;
     }
     return { ...next, hash: entry.hash };
@@ -134,10 +130,9 @@ export function stampReferenceHashes(payload: unknown, snapshot: ReportSnapshot)
         return ok(stamped);
     }
     const unresolved: UnresolvedReference[] = missing.map((pin) => ({
-        // The payload reaches the stamp before the parse, thus the object holds the fields of a reference
-        // as the author wrote them. The refusal names that object, and this assertion is the one place
-        // where the pre-parse shape enters the parsed reference type.
-        reference: pin.record as unknown as Reference,
+        // The payload reaches the stamp before the parse, thus the refusal carries the object as the
+        // author wrote it, and the `AuthoredPinRecord` arm of `UnresolvedReferenceSchema` types it.
+        reference: pin.record,
         reason: "artifact-missing",
         detail: `no artifact at ${pin.path}`,
     }));
@@ -174,17 +169,17 @@ export function stripReferenceHashes(value: unknown): unknown {
         return value;
     }
 
-    const record = value as Record<string, unknown>;
-    const pinned = holdsPin(record);
+    const pinned = stampablePin(value) !== undefined;
     let changed = false;
     const next: Record<string, unknown> = {};
-    for (const key of Object.keys(record)) {
+    for (const key of Object.keys(value)) {
         if (pinned && key === "hash") {
             changed = true;
             continue;
         }
-        const stripped = stripReferenceHashes(record[key]);
-        if (stripped !== record[key]) {
+        const held: unknown = Reflect.get(value, key);
+        const stripped = stripReferenceHashes(held);
+        if (stripped !== held) {
             changed = true;
         }
         defineOwn(next, key, stripped);

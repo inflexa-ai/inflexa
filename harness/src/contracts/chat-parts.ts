@@ -545,7 +545,8 @@ export type SubAgentActivityPart = {
 
 // ── Union ───────────────────────────────────────────────────────────
 
-export type ChatPart =
+/** The parts whose contracts this version of the package declares — the arms the part registry knows. */
+export type KnownChatPart =
     | PresentationPart
     | PlanPart
     | RunCardPart
@@ -569,3 +570,11 @@ export type ChatPart =
     | ChildSessionStartedPart
     | ReportRenderedPart
     | CompactionPart;
+
+/**
+ * A part of a known contract, or a part whose type this build does not know. An emitter newer than this
+ * build can lead the registry, and such a part already rides through the check boundary and the live view
+ * as the record the emitter sent — so the union admits that record shape, with no change to the stored
+ * payload or to a known part.
+ */
+export type ChatPart = KnownChatPart | ({ type: `data-${string}` } & Record<string, unknown>);

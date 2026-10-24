@@ -11,6 +11,7 @@ import {
     type NumberKind,
 } from "../number-format.js";
 import { TABLE_CELL_FORMATTER } from "../page.js";
+import { pageCall } from "./options.js";
 
 describe("formatNumberCell scientific", () => {
     it("gives a coefficient of two significant digits and an exponent", () => {
@@ -487,11 +488,7 @@ describe("the table cell format", () => {
      * The fragment is browser source text. A read of that text would state the serialization and not the
      * text that a reader sees, thus the test runs the fragment and calls its one entry point.
      */
-    const formatOnThePage = new Function(`${TABLE_CELL_FORMATTER}\nreturn formatCell;`).call(undefined) as (
-        cell: string | number,
-        kind: NumberKind,
-        bound?: number,
-    ) => string;
+    const formatOnThePage = pageCall(TABLE_CELL_FORMATTER, "formatCell");
 
     it("gives the stated text on the server", () => {
         const actual = VECTOR.map((entry) => formatTableCell(entry.cell, entry.kind, entry.bound));

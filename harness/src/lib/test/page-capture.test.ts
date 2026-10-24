@@ -6,9 +6,9 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import type { Browser, MediaFeature, ScreenshotOptions, Viewport } from "puppeteer-core";
+import type { MediaFeature, ScreenshotOptions, Viewport } from "puppeteer-core";
 
-import { setBrowserConnector } from "../chrome.js";
+import { setBrowserConnector, type CaptureArea, type ConnectedBrowser, type LookContext, type LookPage } from "../chrome.js";
 import { capturePage } from "../page-capture.js";
 
 /**
@@ -48,8 +48,39 @@ type ShotPlan = {
 const FULL_PAGE_SHOT = "c2hvdA==";
 const VIEWPORT_SHOT = "dmlld3BvcnQ=";
 
-function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): Browser {
-    const page = {
+type AnyPageFunction = (() => number) | ((attribute: string, blockId: string, margin: number) => CaptureArea | null) | ((...args: never[]) => unknown);
+
+/**
+ * The evaluate member of the fake page: one arm per call form of the capture, so each arm gives the result
+ * type that the read of the result needs, and the name of the page body picks the arm at run time.
+ */
+function makeEvaluateFake(recorder: Recorder, plan: ShotPlan): LookPage["evaluate"] {
+    function evaluate(pageFunction: () => number): Promise<number | undefined>;
+    function evaluate(
+        pageFunction: (attribute: string, blockId: string, margin: number) => CaptureArea | null,
+        attribute: string,
+        blockId: string,
+        margin: number,
+    ): Promise<CaptureArea | null>;
+    function evaluate(pageFunction: (...args: never[]) => unknown, ...args: unknown[]): Promise<unknown>;
+    function evaluate(body: AnyPageFunction, ...args: unknown[]): Promise<number | undefined | CaptureArea | null> {
+        if (body.name === "measureScrollHeight") {
+            recorder.steps.push("measure");
+            return Promise.resolve(plan.scrollHeight);
+        }
+        if (body.name === "measureBlock") {
+            recorder.steps.push("measure-block");
+            recorder.blockMeasures.push(args);
+            return Promise.resolve(plan.blockArea ?? null);
+        }
+        recorder.steps.push("evaluate");
+        return Promise.resolve(undefined);
+    }
+    return evaluate;
+}
+
+function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): ConnectedBrowser {
+    const page: LookPage = {
         on: () => {},
         setViewport: async (viewport: Viewport) => {
             recorder.steps.push("viewport");
@@ -62,21 +93,8 @@ function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): Browser {
         goto: async () => {
             recorder.steps.push("goto");
         },
-        // Each evaluation of the capture is a named function, thus the fake reads the name, and each
-        // evaluation gets its own step name and answer.
-        evaluate: async (body: { name: string }, ...args: unknown[]) => {
-            if (body.name === "measureScrollHeight") {
-                recorder.steps.push("measure");
-                return plan.scrollHeight;
-            }
-            if (body.name === "measureBlock") {
-                recorder.steps.push("measure-block");
-                recorder.blockMeasures.push(args);
-                return plan.blockArea ?? null;
-            }
-            recorder.steps.push("evaluate");
-            return undefined;
-        },
+        waitForSelector: () => Promise.resolve(null),
+        evaluate: makeEvaluateFake(recorder, plan),
         screenshot: async (options: ScreenshotOptions) => {
             recorder.steps.push("screenshot");
             recorder.shots.push(options);
@@ -89,19 +107,17 @@ function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): Browser {
             return options.fullPage === true ? FULL_PAGE_SHOT : VIEWPORT_SHOT;
         },
     };
-    const fake = {
+    const context: LookContext = {
+        newPage: async () => page,
+        close: async () => {},
+    };
+    const fake: ConnectedBrowser = {
         connected: true,
         on: () => {},
         wsEndpoint: () => "ws://capture.test",
-        createBrowserContext: async () => ({
-            newPage: async () => page,
-            close: async () => {},
-        }),
+        createBrowserContext: async () => context,
     };
-    // The capture reads seven members of a page, and the connection cache reads four members of a browser.
-    // The fake carries those members, thus no call of the capture reaches the gap between the fake and the
-    // class of puppeteer.
-    return fake as unknown as Browser;
+    return fake;
 }
 
 let restoreConnector: (() => void) | undefined;
@@ -246,7 +262,8 @@ describe("the degraded capture", () => {
         await expect(capture).rejects.toThrow("the browser is broken");
         // The report of a dead look names the second refusal, thus the first one rides on it as the cause.
         const thrown = await capture.catch((cause: unknown) => cause);
-        expect((thrown as Error).cause).toBe(refusedFullPage);
+        if (!(thrown instanceof Error)) throw new Error("expected an Error");
+        expect(thrown.cause).toBe(refusedFullPage);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
     });
 });

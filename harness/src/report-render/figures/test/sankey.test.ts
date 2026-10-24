@@ -13,6 +13,7 @@ import { chartSvgAssets } from "../../chart-export.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_EXPORT_SIZES, CHART_PALETTE, CHART_PAGE_TEXT_PX, CHART_WIDE_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { SANKEY_LINK_OPACITY, sankeyStages } from "../sankey.js";
+import { optionArray, optionAt, optionList, optionNumber, optionOf, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -55,17 +56,20 @@ function refusal(rows: readonly ChartRow[], encoding: Encoding = ENCODING): stri
 }
 
 function sankeySeries(option: EchartOption): EchartOption {
-    const found = (option.series as EchartOption[]).find((entry) => entry.type === "sankey");
+    const found = seriesOf(option).find((entry) => entry.type === "sankey");
     if (found === undefined) throw new Error("no sankey series");
     return found;
 }
 
-type Node = {
-    name: string;
-    depth: number;
-    itemStyle: { color: string };
-    label: { position: string };
-};
+/** The nodes of one sankey series, each under its read name, or a failed test. */
+function nodeEntries(series: EchartOption): Array<[string, EchartOption]> {
+    return optionList(series.data).map((node) => {
+        const record = optionOf(node);
+        const name = record.name;
+        if (typeof name !== "string") throw new Error(`a sankey node holds the name ${String(name)}`);
+        return [name, record];
+    });
+}
 
 describe("the sankey stages", () => {
     it("gives each node the longest chain of flows from a node with no inflow, and the last stage to each node with no outflow", () => {
@@ -111,7 +115,7 @@ const LAML_FLOWS: ChartRow[] = [
 describe("the sankey figure on the LAML flow table", () => {
     it("puts each FAB subtype in the first stage, each FLT3 status in the second, and each vital status in the last", () => {
         const series = sankeySeries(derive(LAML_FLOWS));
-        const stages = Object.fromEntries((series.data as Node[]).map((node) => [node.name, node.depth]));
+        const stages = Object.fromEntries(nodeEntries(series).map(([name, node]) => [name, node.depth]));
         expect(stages).toEqual({
             M0: 0,
             "FLT3 mutated": 1,
@@ -127,8 +131,8 @@ describe("the sankey figure on the LAML flow table", () => {
             Alive: 2,
             Deceased: 2,
         });
-        expect((series.links as unknown[]).length).toBe(19);
-        const colors = Object.fromEntries((series.data as Node[]).map((node) => [node.name, node.itemStyle.color]));
+        expect(optionList(series.links).length).toBe(19);
+        const colors = Object.fromEntries(nodeEntries(series).map(([name, node]) => [name, optionAt(node, "itemStyle").color]));
         // The first stage holds nine subtypes, more than the Okabe-Ito palette, thus it alone takes the wide palette.
         expect(colors.M0).toBe(CHART_WIDE_PALETTE[0]);
         expect(colors["FAB unknown"]).toBe(CHART_WIDE_PALETTE[8]);
@@ -141,9 +145,9 @@ describe("the sankey figure on the LAML flow table", () => {
         const series = sankeySeries(option);
         expect(series.nodeGap).toBe(CHART_PAGE_TEXT_PX * 1.25);
         expect(series.labelLayout).toEqual({ hideOverlap: true });
-        const single = (option.media as EchartOption[]).find((rule) => (rule.query as EchartOption).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
-        const singleOption = single?.option as EchartOption;
-        const [singleSeries] = singleOption.series as EchartOption[];
+        const single = optionArray(option, "media").find((rule) => optionAt(rule, "query").maxWidth === CHART_EXPORT_SIZES.single.widthPx);
+        const singleOption = optionAt(optionOf(single), "option");
+        const [singleSeries] = seriesOf(singleOption);
         expect(singleSeries?.nodeGap).toBeCloseTo(CHART_EXPORT_SIZES.single.textPx * 1.25, 3);
     });
 });
@@ -151,7 +155,7 @@ describe("the sankey figure on the LAML flow table", () => {
 describe("the sankey labels over the flows", () => {
     it("sets each label on a box of the page color, thus no flow covers the label of a thin node", () => {
         const option = derive(LAML_FLOWS);
-        const label = sankeySeries(option).label as EchartOption;
+        const label = optionAt(sankeySeries(option), "label");
         expect(label.formatter).toBe("{box|{b}}");
         expect(label.rich).toEqual({ box: { backgroundColor: "#ffffff", padding: [0, 2] } });
         const svgs = chartSvgAssets(echarts, "flows", option)._unsafeUnwrap();
@@ -185,14 +189,14 @@ describe("the sankey figure", () => {
     it("draws one sankey series whose nodes keep the order of their first appearance, and the layout keeps it", () => {
         const series = sankeySeries(derive());
         expect(series.layoutIterations).toBe(0);
-        expect((series.data as Node[]).map((node) => node.name)).toEqual(["M1", "Intermediate", "M2", "Favorable", "Poor", "M4", "Alive", "Dead"]);
-        expect((series.data as Node[]).map((node) => node.depth)).toEqual([0, 1, 0, 1, 1, 0, 2, 2]);
+        expect(nodeEntries(series).map(([name]) => name)).toEqual(["M1", "Intermediate", "M2", "Favorable", "Poor", "M4", "Alive", "Dead"]);
+        expect(nodeEntries(series).map(([, node]) => node.depth)).toEqual([0, 1, 0, 1, 1, 0, 2, 2]);
         expect(series.links).toEqual(ROWS.map((row) => ({ source: row.source, target: row.target, value: row.patients })));
     });
 
     it("starts the palette again at each stage, and colors each flow in the color of its source at a light opacity", () => {
         const series = sankeySeries(derive());
-        const colors = Object.fromEntries((series.data as Node[]).map((node) => [node.name, node.itemStyle.color]));
+        const colors = Object.fromEntries(nodeEntries(series).map(([name, node]) => [name, optionAt(node, "itemStyle").color]));
         expect(colors).toEqual({
             M1: CHART_PALETTE[0],
             M2: CHART_PALETTE[1],
@@ -207,8 +211,8 @@ describe("the sankey figure", () => {
     });
 
     it("prints each label beside its node: at the left of the last stage, and at the right of every other stage", () => {
-        const nodes = sankeySeries(derive()).data as Node[];
-        const positions = Object.fromEntries(nodes.map((node) => [node.name, node.label.position]));
+        const nodes = nodeEntries(sankeySeries(derive()));
+        const positions = Object.fromEntries(nodes.map(([name, node]) => [name, optionAt(node, "label").position]));
         expect(positions).toEqual({
             M1: "right",
             Intermediate: "right",
@@ -224,10 +228,10 @@ describe("the sankey figure", () => {
     it("wraps each label into the room between two stages, and names the flow value in the tooltip", () => {
         const option = derive(ROWS);
         const series = sankeySeries(option);
-        const label = series.label as EchartOption;
+        const label = optionAt(series, "label");
         expect(label.overflow).toBe("break");
         expect(label.fontSize).toBe(CHART_PAGE_TEXT_PX);
-        expect(label.width as number).toBeGreaterThan(100);
+        expect(optionNumber(label.width)).toBeGreaterThan(100);
         expect(option.tooltip).toEqual({ trigger: "item" });
         expect(series.name).toBe("patients");
         expect(sankeySeries(deriveChartOption(sankey(ENCODING, { patients: "Patients" }), ROWS)._unsafeUnwrap()).name).toBe("Patients");
@@ -235,18 +239,18 @@ describe("the sankey figure", () => {
 
     it("states the label text size, its wrap width, and the node width of each export in one media rule for each export size", () => {
         const option = derive();
-        const media = option.media as EchartOption[];
+        const media = optionArray(option, "media");
         for (const size of [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide]) {
-            const rule = media.find((entry) => (entry.query as EchartOption).maxWidth === size.widthPx);
+            const rule = media.find((entry) => optionAt(entry, "query").maxWidth === size.widthPx);
             expect(rule?.query).toEqual({ minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx });
-            const ruleOption = rule?.option as EchartOption;
-            const [series] = ruleOption.series as EchartOption[];
+            const ruleOption = optionAt(optionOf(rule), "option");
+            const [series] = seriesOf(ruleOption);
             if (series === undefined) throw new Error("the export rule holds no series");
-            const label = series.label as EchartOption;
+            const label = optionAt(series, "label");
             expect(label.fontSize).toBe(size.textPx);
             // The room between two of the three stages, less the gap of the label on each side.
-            expect(label.width as number).toBeLessThan(size.widthPx / 2);
-            expect(label.width as number).toBeGreaterThan(size.widthPx / 4);
+            expect(optionNumber(label.width)).toBeLessThan(size.widthPx / 2);
+            expect(optionNumber(label.width)).toBeGreaterThan(size.widthPx / 4);
         }
     });
 
@@ -254,11 +258,11 @@ describe("the sankey figure", () => {
         const rows = ROWS.map((row, place) => ({ ...row, sex: place % 2 === 0 ? "Female" : "Male" }));
         const option = derive(rows, { ...ENCODING, group: "sex" });
         const series = sankeySeries(option);
-        expect((series.data as Node[]).every((node) => node.itemStyle.color === MUTED_CHART_COLOR)).toBe(true);
-        const links = series.links as Array<{ lineStyle: { color: string } }>;
+        expect(nodeEntries(series).every(([, node]) => optionAt(node, "itemStyle").color === MUTED_CHART_COLOR)).toBe(true);
+        const links = optionList(series.links).map((link) => ({ lineStyle: optionAt(optionOf(link), "lineStyle") }));
         expect(links[0]?.lineStyle.color).toBe(CHART_PALETTE[0]);
         expect(links[1]?.lineStyle.color).toBe(CHART_PALETTE[1]);
-        expect((option.legend as EchartOption).data).toEqual([
+        expect(optionAt(option, "legend").data).toEqual([
             { name: "Female", icon: "rect" },
             { name: "Male", icon: "rect" },
         ]);
@@ -269,7 +273,7 @@ describe("the sankey figure", () => {
             { source: "M1", target: "Dead", patients: 3, sex: "Female" },
             { source: "M1", target: "Dead", patients: 4, sex: "Male" },
         ];
-        const links = sankeySeries(derive(rows, { ...ENCODING, group: "sex" })).links as unknown[];
+        const links = optionList(sankeySeries(derive(rows, { ...ENCODING, group: "sex" })).links);
         expect(links).toHaveLength(2);
     });
 
@@ -282,8 +286,8 @@ describe("the sankey node gap", () => {
     it("takes a gap under one label line where the stage of the most nodes has no room for it", () => {
         const rows = Array.from({ length: 40 }, (_entry, place) => flow(`S${place}`, "Target", 1));
         const series = sankeySeries(derive(rows));
-        expect(series.nodeGap as number).toBeLessThan(CHART_PAGE_TEXT_PX * 1.25);
-        expect(series.nodeGap as number).toBeGreaterThan(0);
+        expect(optionNumber(series.nodeGap)).toBeLessThan(CHART_PAGE_TEXT_PX * 1.25);
+        expect(optionNumber(series.nodeGap)).toBeGreaterThan(0);
     });
 });
 

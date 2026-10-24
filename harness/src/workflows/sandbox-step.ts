@@ -31,7 +31,7 @@
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { StepPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { recordStepCompleted } from "../lib/metrics.js";
@@ -277,7 +277,7 @@ export type SandboxAgentBuildContext = {
  * without becoming a switch on agentId.
  */
 export type SandboxStepDeps = {
-    readonly pool: Pool;
+    readonly pool: Querier;
     /**
      * Operational logging seam. Omit it and the body falls back to a no-op —
      * but a failed step's cause is written here and NOWHERE else (`failStep`
@@ -757,6 +757,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // Manifest walk, hoisted above the blocked branch so the capped-out
     // predicate can read it. The call is inline (not `DBOS.runStep`-wrapped),
     // so the hoist shifts no function id (see the harness-durable-runtime spec).
+    const noManifest: readonly ArtifactManifestEntry[] = [];
     const manifest = await safeRunValue(
         logger,
         () =>
@@ -766,7 +767,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 runId: input.runId,
             }),
         "post-step.walk",
-        [] as readonly ArtifactManifestEntry[],
+        noManifest,
     );
 
     // Blocker (see the harness-sandbox-agents spec): the agent declared it cannot fulfil the step. A

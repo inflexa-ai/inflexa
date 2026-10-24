@@ -250,9 +250,22 @@ export const UnresolvedReasonSchema = z.enum([
     "extraction-unavailable",
 ]);
 
+/**
+ * The reference of a refusal.
+ *
+ * The validate, finish, and resolver paths refuse a reference that parsed, so it rides as a `Reference`.
+ * The hash stamp runs before the parse, so its refusal carries the object as the author wrote it: a pinned
+ * kind and a path, with every other field unvalidated author text. One type carries both, and no consumer
+ * re-derives which arm a refusal holds.
+ */
+export const AuthoredPinRecordSchema = z.looseObject({
+    kind: z.enum(["artifact-value", "artifact-table", "artifact-file"]),
+    path: z.string(),
+});
+
 /** A reference that resolution could not bind, with the reason and an optional detail. */
 export const UnresolvedReferenceSchema = z.strictObject({
-    reference: ReferenceSchema,
+    reference: z.union([ReferenceSchema, AuthoredPinRecordSchema]),
     reason: UnresolvedReasonSchema,
     detail: z.string().optional(),
 });
@@ -268,6 +281,7 @@ export type DerivationReference = z.infer<typeof DerivationReferenceSchema>;
 export type Reference = z.infer<typeof ReferenceSchema>;
 export type ScalarReference = z.infer<typeof ScalarReferenceSchema>;
 export type UnresolvedReason = z.infer<typeof UnresolvedReasonSchema>;
+export type AuthoredPinRecord = z.infer<typeof AuthoredPinRecordSchema>;
 export type UnresolvedReference = z.infer<typeof UnresolvedReferenceSchema>;
 
 /**
@@ -305,8 +319,8 @@ function sortKeysDeep(value: unknown): unknown {
     }
     if (value !== null && typeof value === "object") {
         const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-            sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
+        for (const key of Object.keys(value).sort()) {
+            sorted[key] = sortKeysDeep(Reflect.get(value, key));
         }
         return sorted;
     }

@@ -20,6 +20,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { UnresolvedReference } from "../contracts/report-reference.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { walkBlocks } from "./block-walk.js";
 import { DraftBlockSchema, type DraftBlock, type DraftDocument, type DraftSectionBlock } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
@@ -155,7 +156,7 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
     }
     // The id stamp sets the target id on the payload before the parse. Thus an id mismatch is
     // unrepresentable, and a replacement always keeps the id of its target.
-    const withId = { ...(payload as Record<string, unknown>), id: operation.targetId };
+    const withId = { ...parseUnknownRecord(payload), id: operation.targetId };
     // The hash stamp then fills each absent reference hash from the snapshot, thus the grammar reads a
     // complete pin. The two stamps are independent, because one reads the block and one reads a reference.
     const hashed = stampReferenceHashes(withId, snapshot);
@@ -385,15 +386,23 @@ function getChildren(document: DraftDocument, containerPath: number[]): DraftBlo
     return blocks;
 }
 
+/** Give `true` when every member of the list is a section. The root of a draft holds sections alone. */
+function isSectionBlocks(blocks: readonly DraftBlock[]): blocks is DraftSectionBlock[] {
+    return blocks.every((block) => block.kind === "section");
+}
+
 /** Rebuild the document with new children at a container path, and share each untouched branch. */
 function setChildren(document: DraftDocument, containerPath: number[], children: DraftBlock[]): DraftDocument {
     if (containerPath.length === 0) {
         // The root holds sections only. Each operation enforces that rule before it builds a candidate.
-        return { ...document, sections: children as DraftSectionBlock[] };
+        if (!isSectionBlocks(children)) return document;
+        return { ...document, sections: children };
     }
-    return { ...document, sections: setChildrenInBlocks(document.sections, containerPath, children) as DraftSectionBlock[] };
+    return { ...document, sections: setChildrenInBlocks(document.sections, containerPath, children) };
 }
 
+function setChildrenInBlocks(blocks: DraftSectionBlock[], containerPath: number[], children: DraftBlock[]): DraftSectionBlock[];
+function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[];
 function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[] {
     const head = containerPath[0];
     if (head === undefined) {

@@ -1,57 +1,57 @@
 import { describe, expect, it } from "bun:test";
 import { err, errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { Pool } from "pg";
 
 import type { AgentSession } from "../../auth/types.js";
+import type { Querier } from "../../state/db.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import type { AgentRunUsage } from "../../loop/metrics.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { ChatProvider } from "../../providers/types.js";
+import { chatProviderDouble } from "../../providers/__fixtures__/chat-provider.js";
+import type { ChatProvider, ChatResponse } from "../../providers/types.js";
+import type { ProviderError } from "../../providers/errors.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "../ad-hoc-router.js";
 
 function providerReturning(input: Record<string, unknown>, capture?: { system?: string }): ChatProvider {
-    return {
-        capabilities: { toolCalling: true },
-        chat: (request: { system: string }) => {
-            if (capture) capture.system = request.system;
-            return okAsync({
-                message: {
-                    role: "assistant",
-                    content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input }],
-                },
-                finishReason: "tool-calls",
-            });
-        },
-        chatStream: async function* () {},
-    } as ChatProvider;
+    return chatProviderDouble((request) => {
+        if (capture) capture.system = typeof request.system === "string" ? request.system : "";
+        return okAsync({
+            message: {
+                role: "assistant",
+                content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input }],
+            },
+            finishReason: "tool-calls",
+        });
+    });
 }
 
 function providerWithoutRouteCall(): ChatProvider {
-    return {
-        capabilities: { toolCalling: true },
-        chat: () => okAsync({ message: { role: "assistant", content: "not a tool call" }, finishReason: "stop" }),
-        chatStream: async function* () {},
-    } as ChatProvider;
+    return chatProviderDouble(() => okAsync({ message: { role: "assistant", content: "not a tool call" }, finishReason: "stop" }));
 }
 
 function providerWaitingForAbort(): ChatProvider {
-    return {
-        capabilities: { toolCalling: true },
-        chat: (_request, _session, signal) =>
-            new ResultAsync(
+    return chatProviderDouble(
+        (_request, _session, signal) =>
+            new ResultAsync<ChatResponse, ProviderError>(
                 new Promise((resolve) => {
-                    signal?.addEventListener("abort", () => resolve(err({ type: "aborted" } as never)), { once: true });
+                    signal?.addEventListener(
+                        "abort",
+                        () => resolve(err<ChatResponse, ProviderError>({ type: "provider", retryable: false, message: "aborted by the test" })),
+                        { once: true },
+                    );
                 }),
             ),
-        chatStream: async function* () {},
-    } as ChatProvider;
+    );
 }
 
-const emptyPool = {
+function providerFailingChat(): ChatProvider {
+    return chatProviderDouble(() => errAsync<ChatResponse, ProviderError>({ type: "provider", retryable: false, message: "provider failed" }));
+}
+
+const emptyPool: Querier = {
     query: async () => ({ rows: [], rowCount: 0 }),
-} as unknown as Pool;
+};
 
 const policy = {
     perStep: { maxCpu: 8, maxMemoryGb: 16, maxGpuCount: 1 },
@@ -168,14 +168,7 @@ describe("ad hoc routing", () => {
             { analysisId: "analysis-1", request: "Custom calculation", session: ctx.session, signal: ctx.signal },
         );
         const providerError = await routeAdHocRequest(
-            {
-                ...common,
-                provider: {
-                    capabilities: { toolCalling: true },
-                    chat: () => errAsync({ type: "provider_failed" } as never),
-                    chatStream: async function* () {},
-                } as ChatProvider,
-            },
+            { ...common, provider: providerFailingChat() },
             { analysisId: "analysis-1", request: "Custom calculation", session: ctx.session, signal: ctx.signal },
         );
 
@@ -357,19 +350,16 @@ describe("ad hoc routing — the usage of the router call", () => {
     }
 
     function providerReportingUsage(): ChatProvider {
-        return {
-            capabilities: { toolCalling: true },
-            chat: () =>
-                okAsync({
-                    message: {
-                        role: "assistant",
-                        content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input: { agentId: "network-agent" } }],
-                    },
-                    finishReason: "tool-calls",
-                    usage: { inputTokens: 120, outputTokens: 30 },
-                }),
-            chatStream: async function* () {},
-        } as ChatProvider;
+        return chatProviderDouble(() =>
+            okAsync({
+                message: {
+                    role: "assistant",
+                    content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input: { agentId: "network-agent" } }],
+                },
+                finishReason: "tool-calls",
+                usage: { inputTokens: 120, outputTokens: 30 },
+            }),
+        );
     }
 
     /** A session inside a run step, thus the record key is replay-stable. */
@@ -410,11 +400,7 @@ describe("ad hoc routing — the usage of the router call", () => {
 
         const route = await routeAdHocRequest(
             {
-                provider: {
-                    capabilities: { toolCalling: true },
-                    chat: () => errAsync({ type: "provider_failed" } as never),
-                    chatStream: async function* () {},
-                } as ChatProvider,
+                provider: providerFailingChat(),
                 model: "utility-model",
                 pool: emptyPool,
                 usageRecorder,

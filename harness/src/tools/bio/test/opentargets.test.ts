@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { openTargetsTool } from "../opentargets.js";
+
+const GqlBodySchema = z.object({ query: z.string(), variables: z.record(z.string(), z.unknown()) });
 
 const realFetch = globalThis.fetch;
 
@@ -21,13 +29,13 @@ type GqlRequest = {
  */
 function stubOpenTargets(responder: (req: GqlRequest) => Response): GqlRequest[] {
     const seen: GqlRequest[] = [];
-    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { query: string; variables: Record<string, unknown> };
+    globalThis.fetch = fetchDouble(async (_url, init) => {
+        const body = GqlBodySchema.parse(JSON.parse(String(init?.body ?? "{}")));
         const operation = /query (\w+)/.exec(body.query)?.[1] ?? "";
         const req: GqlRequest = { operation, variables: body.variables };
         seen.push(req);
         return responder(req);
-    }) as unknown as typeof fetch;
+    });
     return seen;
 }
 

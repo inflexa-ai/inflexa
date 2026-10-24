@@ -145,11 +145,12 @@ runFixtureSuite("CompTox golden fixtures", [
 ]);
 
 describe("the CompTox oracles and the corrected fields", () => {
+    const OpenApiExcerptSchema = z.object({
+        components: z.object({ schemas: z.record(z.string(), z.object({ properties: z.record(z.string(), z.unknown()) })) }),
+    });
+
     function oracleSchemas(domain: string): Record<string, { properties: Record<string, unknown> }> {
-        const spec = readFixture("comptox", `openapi-${domain}.excerpt.json`) as {
-            components: { schemas: Record<string, { properties: Record<string, unknown> }> };
-        };
-        return spec.components.schemas;
+        return OpenApiExcerptSchema.parse(readFixture("comptox", `openapi-${domain}.excerpt.json`)).components.schemas;
     }
 
     it("names the genotoxicity summary fields that the client now declares", () => {
@@ -175,12 +176,12 @@ describe("the CompTox oracles and the corrected fields", () => {
         const props = Object.keys(oracleSchemas("chemical").ChemicalDetailStandard!.properties);
         expect(props).toContain("monoisotopicMass");
         expect(props).not.toContain("averageMass");
-        const detail = readFixture("comptox", "chemical-detail.json") as Record<string, unknown>;
+        const detail = z.record(z.string(), z.unknown()).parse(readFixture("comptox", "chemical-detail.json"));
         expect("averageMass" in detail).toBe(false);
     });
 
     it("declares hitc as a double, thus the active predicate is a threshold", () => {
-        const hitc = oracleSchemas("bioactivity").BioactivityDataAll!.properties.hitc as { type: string; format: string };
+        const hitc = z.object({ type: z.string(), format: z.string() }).parse(oracleSchemas("bioactivity").BioactivityDataAll!.properties.hitc);
         expect(hitc.type).toBe("number");
         expect(hitc.format).toBe("double");
     });

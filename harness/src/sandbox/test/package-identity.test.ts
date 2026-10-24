@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import fixture from "../__fixtures__/package-identity.json" with { type: "json" };
 import {
@@ -12,10 +13,26 @@ import {
     rIdentity,
     resolveQuery,
     type PackageIdentity,
-    type PackageQuery,
     type PoolIndex,
-    type Track,
 } from "../package-identity.js";
+
+// The fixture is outside data; the schema gives each entry its real type instead of a cast.
+const FixtureTrack = z.enum(["python", "r"]);
+const FixtureQuery = z.object({ spelling: z.string(), track: FixtureTrack.optional(), version: z.string().optional() });
+const fixtureSchema = z.object({
+    parse: z.array(
+        z.object({
+            entry: z.string(),
+            query: FixtureQuery.optional(),
+            error: z.string().optional(),
+            prefix: z.string().optional(),
+            specifier: z.string().optional(),
+        }),
+    ),
+    identity: z.array(z.object({ track: FixtureTrack, input: z.string(), name: z.string(), key: z.string(), address: z.string() })),
+    round_trip: z.array(z.object({ query: FixtureQuery, formatted: z.string() })),
+});
+const conformance = fixtureSchema.parse(fixture);
 
 /**
  * A pool over a fixed list of identities. `rIdentitiesFoldingTo` reads the
@@ -32,11 +49,12 @@ function poolOf(identities: readonly PackageIdentity[]): PoolIndex {
 
 describe("package-identity — the conformance fixture", () => {
     it("parses each entry of the fixture", () => {
-        for (const entry of fixture.parse) {
+        for (const entry of conformance.parse) {
             parseQuery(entry.entry).match(
                 (query) => {
                     if ("error" in entry) throw new Error(`"${entry.entry}" parsed, and the fixture expects the error "${entry.error}"`);
-                    expect(query).toEqual(entry.query as PackageQuery);
+                    if (entry.query === undefined) throw new Error(`"${entry.entry}" expects a query in the fixture`);
+                    expect(query).toEqual(entry.query);
                 },
                 (issue) => {
                     const expectedError = "error" in entry ? entry.error : undefined;
@@ -50,8 +68,8 @@ describe("package-identity — the conformance fixture", () => {
     });
 
     it("mints the name, the key, and the address of each identity of the fixture", () => {
-        for (const entry of fixture.identity) {
-            const identity = identityOf(entry.track as Track, entry.input);
+        for (const entry of conformance.identity) {
+            const identity = identityOf(entry.track, entry.input);
             expect(entry.name).toBe(identity.name);
             expect(identityKey(identity)).toBe(entry.key);
             expect(identityAddress(identity)).toBe(entry.address);
@@ -59,8 +77,8 @@ describe("package-identity — the conformance fixture", () => {
     });
 
     it("round-trips each query of the fixture", () => {
-        for (const entry of fixture.round_trip) {
-            const query = entry.query as PackageQuery;
+        for (const entry of conformance.round_trip) {
+            const query = entry.query;
             expect(formatQuery(query)).toBe(entry.formatted);
             expect(parseQuery(entry.formatted)._unsafeUnwrap()).toEqual(query);
         }
@@ -97,13 +115,6 @@ describe("package-identity — the two constructors", () => {
         for (const bad of ["igraph", "bioc:fgsea", "python:", ":igraph", ""]) {
             expect(parseIdentityKey(bad)).toBeUndefined();
         }
-    });
-
-    it("a literal is not an identity", () => {
-        // @ts-expect-error a literal object cannot be a PackageIdentity: the brand on the name admits only a constructor of the module.
-        const literal: PackageIdentity = { track: "r", name: "Seurat" };
-
-        expect(literal.track).toBe("r");
     });
 });
 

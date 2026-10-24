@@ -62,9 +62,8 @@
 import { randomUUID } from "node:crypto";
 
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
-
-import type { DbError } from "../lib/db-result.js";
+import type { Querier } from "../state/db.js";
+import { type Connectable, type DbError } from "../lib/db-result.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { AcquireEyes } from "../lib/eyes.js";
@@ -180,7 +179,7 @@ export type ReportSessionDelta = {
  * passes the gate of the spawn.
  */
 export type ReportSessionSpawnDeps = {
-    readonly pool: Pool;
+    readonly pool: Querier & Connectable;
     /**
      * The chrome config that the same composition gives to the eyes tool. The
      * spawn reads only whether it names a browser, thus the spawn and the tool

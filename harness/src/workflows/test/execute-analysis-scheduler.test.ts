@@ -175,9 +175,9 @@ describe("validatePlanDag", () => {
             caught = err;
         }
         expect(caught).toBeInstanceOf(MissingDependencyError);
-        const err = caught as MissingDependencyError;
-        expect(err.stepId).toBe("B");
-        expect(err.missingDependency).toBe("A");
+        if (!(caught instanceof MissingDependencyError)) throw new Error(`expected MissingDependencyError, got ${String(caught)}`);
+        expect(caught.stepId).toBe("B");
+        expect(caught.missingDependency).toBe("A");
     });
 
     it("throws CycleError on a 2-step self-cycle and reports the involved steps", () => {
@@ -188,8 +188,8 @@ describe("validatePlanDag", () => {
             caught = err;
         }
         expect(caught).toBeInstanceOf(CycleError);
-        const err = caught as CycleError;
-        expect(new Set(err.involvedSteps)).toEqual(new Set(["A", "B"]));
+        if (!(caught instanceof CycleError)) throw new Error(`expected CycleError, got ${String(caught)}`);
+        expect(new Set(caught.involvedSteps)).toEqual(new Set(["A", "B"]));
     });
 
     it("accepts a valid DAG and returns the step map", () => {

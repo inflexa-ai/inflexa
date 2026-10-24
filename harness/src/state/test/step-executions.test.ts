@@ -4,7 +4,8 @@ import type { Pool } from "pg";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { cancelRunningStepExecutions, insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "../step-executions.js";
 import { createBlockerHolder, createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
-import type { ToolContext } from "../../tools/define-tool.js";
+import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 async function seedRunning(pool: Pool, runId: string, stepId: string): Promise<void> {
     (
@@ -232,7 +233,7 @@ describe("step-executions: running settle", () => {
 });
 
 describe("report_blocker tool", () => {
-    const ctx = {} as ToolContext;
+    const { ctx } = makeToolContext();
 
     it("records the blocker outcome into the holder", async () => {
         const holder = createBlockerHolder();
@@ -242,7 +243,7 @@ describe("report_blocker tool", () => {
         const result = (await tool.execute({ reason: "no usable data" }, ctx))._unsafeUnwrap();
 
         expect(holder.outcome).toEqual({ kind: "blocker", reason: "no usable data" });
-        expect((result as { recorded: boolean }).recorded).toBe(true);
+        expect(parseUnknownRecord(result)?.recorded).toBe(true);
     });
 
     it("keeps the first reason when called twice", async () => {

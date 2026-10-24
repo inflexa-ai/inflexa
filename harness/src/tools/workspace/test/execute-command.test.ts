@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { isUnknownArray } from "../../../lib/unknown-array.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -153,7 +154,9 @@ describe("execute_command and the decision record of a script", () => {
 
         // A second run of the same bytes notes nothing more: the last note is the expected digest now.
         await tool.execute({ command: ["Rscript", `${DEFAULT_CWD}/scripts/de.R`] }, ctx);
-        expect(((await record()).unvetted_edits as unknown[]).length).toBe(1);
+        const unvetted = (await record()).unvetted_edits;
+        if (!isUnknownArray(unvetted)) throw new Error("expected the unvetted edits array");
+        expect(unvetted).toHaveLength(1);
     });
 
     it("runs a script of another step whose record it cannot write, and leaves that record as it is", async () => {

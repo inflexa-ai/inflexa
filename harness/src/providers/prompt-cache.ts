@@ -211,7 +211,7 @@ function canHostBreakpoint(message: ModelMessage): boolean {
     if (!Array.isArray(content)) return false;
     const last: unknown = content.at(-1);
     if (typeof last !== "object" || last === null) return false;
-    return (last as { readonly type?: unknown }).type !== "reasoning";
+    return !("type" in last) || last.type !== "reasoning";
 }
 
 /** The index of the last message that can host the breakpoint, or `-1` when none can. */
@@ -230,19 +230,19 @@ function carriesBreakpoint(message: ModelMessage): boolean {
 
 /** The same message with each namespace of `options` merged into its own bag. */
 function withBreakpoint<M extends ModelMessage>(message: M, options: ProviderOptions): M {
-    const merged: Record<string, Record<string, unknown>> = { ...message.providerOptions };
+    const merged: ProviderOptions = { ...message.providerOptions };
     for (const [namespace] of BREAKPOINT_SITES) {
         const marker = options[namespace];
         if (marker === undefined) continue;
         merged[namespace] = { ...message.providerOptions?.[namespace], ...marker };
     }
-    return { ...message, providerOptions: merged as NonNullable<M["providerOptions"]> };
+    return { ...message, providerOptions: merged };
 }
 
 /** The same message with every marker removed, and each namespace dropped when it held nothing else. */
 function withoutBreakpoint<M extends ModelMessage>(message: M): M {
     if (!carriesBreakpoint(message)) return message;
-    const remaining: Record<string, Record<string, unknown>> = { ...message.providerOptions };
+    const remaining: ProviderOptions = { ...message.providerOptions };
     for (const [namespace, key] of BREAKPOINT_SITES) {
         const bag = remaining[namespace];
         if (bag?.[key] === undefined) continue;
@@ -250,7 +250,7 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
         if (Object.keys(rest).length === 0) delete remaining[namespace];
         else remaining[namespace] = rest;
     }
-    return { ...message, providerOptions: remaining as NonNullable<M["providerOptions"]> };
+    return { ...message, providerOptions: remaining };
 }
 
 /**

@@ -5,9 +5,14 @@ import type { ArtifactExtensionCount, ArtifactPage, ArtifactPageEntry, ArtifactP
 
 import * as runSynthesis from "../../execution/run-synthesis.js";
 import * as stateBarrel from "../index.js";
+import type { Querier } from "../db.js";
 
 // An empty list sends no query, thus the read never touches the querier.
-const unusedQuerier = {} as never;
+const unusedQuerier: Querier = {
+    query() {
+        throw new Error("not driven by this test");
+    },
+};
 
 describe("the exports of the artifact reads", () => {
     it("reaches the reads from the package root, as the same functions of their modules", () => {

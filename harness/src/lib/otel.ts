@@ -64,6 +64,7 @@ export type InitOtelOptions = {
 
 let initialized = false;
 let registeredTracerProvider: HarnessTracerProvider | undefined;
+let registeredTracerResource: Record<string, unknown> | undefined;
 let registeredMeterProvider: MeterProvider | undefined;
 
 /**
@@ -137,6 +138,7 @@ export function initOtel(options: InitOtelOptions = {}): void {
         });
         tracerProvider.register();
         registeredTracerProvider = tracerProvider;
+        registeredTracerResource = resource.attributes;
 
         // Debug: verify registration actually worked
         const testTracer = trace.getTracer("otel-init-check");
@@ -201,6 +203,7 @@ export async function shutdownOtel(): Promise<void> {
 export async function __resetOtelForTest(): Promise<void> {
     await shutdownOtel();
     registeredTracerProvider = undefined;
+    registeredTracerResource = undefined;
     registeredMeterProvider = undefined;
     trace.disable();
     metrics.disable();
@@ -212,4 +215,9 @@ export async function __resetOtelForTest(): Promise<void> {
 /** Test hook: whether `initOtel` registered a metric-exporting MeterProvider. Test-only. */
 export function __otelMeterProviderRegisteredForTest(): boolean {
     return registeredMeterProvider !== undefined;
+}
+
+/** Test hook: the attributes of the resource the registered TracerProvider carries. Test-only. */
+export function __otelTracerResourceForTest(): Record<string, unknown> | undefined {
+    return registeredTracerResource;
 }

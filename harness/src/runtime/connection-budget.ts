@@ -21,7 +21,7 @@
  * misconfigured pod fails boot loudly instead of degrading under load.
  */
 
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import type { Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE, resolveAppPoolSize, SAFETY_MARGIN } from "./pools.js";
@@ -35,7 +35,7 @@ export type ConnectionBudgetConfig = {
 };
 
 export type AssertConnectionBudgetOptions = {
-    pool: Pool;
+    pool: Querier;
     logger: Logger;
     config: ConnectionBudgetConfig;
 };

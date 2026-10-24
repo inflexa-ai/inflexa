@@ -136,9 +136,11 @@ function schemaFieldNames(node: unknown, into: Set<string> = new Set()): Set<str
         return into;
     }
     if (node === null || typeof node !== "object") return into;
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    const record = z.record(z.string(), z.unknown()).parse(node);
+    for (const [key, value] of Object.entries(record)) {
         if (key === "properties" && value !== null && typeof value === "object") {
-            for (const property of Object.keys(value as Record<string, unknown>)) into.add(property);
+            const properties = z.record(z.string(), z.unknown()).parse(value);
+            for (const property of Object.keys(properties)) into.add(property);
         }
         schemaFieldNames(value, into);
     }

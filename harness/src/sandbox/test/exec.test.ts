@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 
 import { EXEC_STREAM_BYTE_CAP } from "../../tools/workspace/result-bounds.js";
 import { ExecTimeoutError, runExec, type ExecDeps } from "../exec.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { PROBE_AFTER_UNAVAILABLE_POLLS } from "../liveness.js";
 import type { ExecResult, SandboxLiveness, SandboxRef } from "../types.js";
 
@@ -43,18 +44,26 @@ type SeenRequest = {
     readonly init?: RequestInit;
 };
 
+/** The JSON body the test wrote on the request; the fakes only ever write string bodies. */
+function seenBody(request: SeenRequest): Record<string, unknown> {
+    const raw = request.init?.body;
+    if (typeof raw !== "string") throw new Error("the test writes only string bodies");
+    return parseUnknownRecord(JSON.parse(raw)) ?? {};
+}
+
 /**
  * A sandbox: a POST to `/exec` gets a 202, and each poll gets the next item,
  * latching on the last. `"unavailable"` answers a poll with a 404.
  */
 function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenRequest[] = []): typeof fetch {
     let i = 0;
-    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const double = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         seen.push({ url: String(input), init });
         if (init?.method === "POST") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
         const item = i < polls.length ? polls[i++] : polls[polls.length - 1];
         return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item!);
-    }) as typeof fetch;
+    };
+    return Object.assign(double, { preconnect: fetch.preconnect });
 }
 
 /** Deps that never really sleep and never see a cancel. */
@@ -81,7 +90,7 @@ describe("the submit", () => {
 
         const post = seen.find((r) => r.init?.method === "POST")!;
         expect(post.url).toBe("http://127.0.0.1:8765/exec");
-        expect(JSON.parse(post.init!.body as string)).toEqual({
+        expect(seenBody(post)).toEqual({
             command: ["echo", "hi"],
             execId: EXEC_ID,
             cwd: "/an-1",
@@ -94,7 +103,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
-        const body = JSON.parse(seen[0]!.init!.body as string) as Record<string, unknown>;
+        const body = seenBody(seen[0]!);
         expect(body.stdoutByteCap).toBe(1_048_576);
         expect(body.stderrByteCap).toBe(1_048_576);
     });
@@ -103,17 +112,20 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, execStreamByteCap: 1234, fetch: sandbox([completed], seen) });
 
-        const body = JSON.parse(seen[0]!.init!.body as string) as Record<string, unknown>;
+        const body = seenBody(seen[0]!);
         expect(body.stdoutByteCap).toBe(1234);
         expect(body.stderrByteCap).toBe(1234);
     });
 
     test("a non-202 throws, and no poll follows", async () => {
         const seen: SeenRequest[] = [];
-        const failing = (async (input: RequestInfo | URL, init?: RequestInit) => {
-            seen.push({ url: String(input), init });
-            return new Response("boom", { status: 503 });
-        }) as typeof fetch;
+        const failing = Object.assign(
+            async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+                seen.push({ url: String(input), init });
+                return new Response("boom", { status: 503 });
+            },
+            { preconnect: fetch.preconnect },
+        );
         await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: failing })).rejects.toThrow(/503/);
         expect(seen).toHaveLength(1);
     });

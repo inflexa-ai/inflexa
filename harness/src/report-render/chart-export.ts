@@ -15,7 +15,9 @@ import type * as Echarts from "echarts";
 import { err, ok, type Result } from "neverthrow";
 
 import type { EchartOption } from "./chart.js";
-import { exportOption, OUTLINE_RENDERER, registerChartRenderers } from "./chart-renderers.js";
+import { exportOption, OUTLINE_RENDERER, registerChartRenderers, type RenderApi } from "./chart-renderers.js";
+import { isUnknownArray } from "../lib/unknown-array.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import {
     CHART_BODY_PX,
     CHART_EXPORT_SIZES,
@@ -63,6 +65,27 @@ export type ChartSvgs = {
     readonly double: DataAsset;
 };
 
+/** One pair of pixel numbers, as the renderer API reads it from the coordinate of the chart runtime. */
+function pixelPair(values: readonly number[] | number): [number, number] {
+    if (typeof values === "number") return [values, values];
+    return [values[0] ?? Number.NaN, values[1] ?? Number.NaN];
+}
+
+/**
+ * The part of the chart runtime API that a renderer reads, taken from the API of the runtime.
+ *
+ * The runtime types each item dimension as its parsed value, and the derivation writes numbers alone,
+ * thus the number and text conversions read the same values that the raw API gives.
+ */
+export function rendererApi(api: Echarts.CustomSeriesRenderItemAPI): RenderApi {
+    return {
+        value: (dimension) => Number(api.value(dimension)),
+        coord: (point) => pixelPair(api.coord(point)),
+        size: (delta) => pixelPair(api.size?.(delta) ?? []),
+        visual: (name) => String(api.visual(name)),
+    };
+}
+
 /**
  * Render one option to SVG text at one column size.
  *
@@ -74,9 +97,8 @@ export type ChartSvgs = {
 export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size: ChartExportSize): Result<string, string> {
     echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
     registerChartRenderers({
-        // The runtime types each item dimension as a string or a number. Each item that the derivation writes
-        // for a named renderer holds numbers alone, thus the renderer reads a number at each dimension.
-        registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as Echarts.CustomSeriesRenderItem),
+        registerCustomSeries: (name, render) =>
+            echarts.registerCustomSeries(name, (params, api) => render({ itemPayload: params.itemPayload }, rendererApi(api))),
     });
     let chart: Echarts.ECharts | undefined;
     // The axis jitter of the chart runtime places a point that finds no free place with `Math.random`. The
@@ -152,9 +174,9 @@ function plottedPoints(option: EchartOption): number {
     if (!Array.isArray(series)) return 0;
     let count = 0;
     for (const entry of series) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const fields = entry as EchartOption;
-        if (!Array.isArray(fields.data)) continue;
+        const fields = parseUnknownRecord(entry);
+        if (fields === undefined) continue;
+        if (!isUnknownArray(fields.data)) continue;
         for (const item of fields.data) {
             if (fields.type === "radar") count += polygonCoordinates(item);
             else if (fields.renderItem === OUTLINE_RENDERER) count += outlineVertices(item);
@@ -166,7 +188,7 @@ function plottedPoints(option: EchartOption): number {
 
 /** True when one item draws a coordinate: a number, or a value whose members hold no empty slot. */
 function drawnItem(item: unknown): boolean {
-    const value = typeof item === "object" && item !== null && !Array.isArray(item) ? (item as EchartOption).value : item;
+    const value = parseUnknownRecord(item)?.value ?? item;
     if (typeof value === "number") return true;
     return Array.isArray(value) && value.every((member) => member !== null && member !== undefined && member !== "-");
 }
@@ -185,7 +207,7 @@ const OUTLINE_LEAD_MEMBERS = 4;
 
 /** The count of coordinates that one radar polygon draws: each member of its value that is not empty. */
 function polygonCoordinates(item: unknown): number {
-    const value = typeof item === "object" && item !== null ? (item as EchartOption).value : undefined;
+    const value = parseUnknownRecord(item)?.value;
     return Array.isArray(value) ? value.filter((member) => member !== null && member !== undefined).length : 0;
 }
 

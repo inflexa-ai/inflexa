@@ -11,9 +11,13 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Docker from "dockerode";
 
-import { createDockerSandboxOps, engineConnectionOptions } from "../docker-client.js";
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
+import { createDockerSandboxOps, engineConnectionOptions, type DockerEngine } from "../docker-client.js";
 import { mintSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
@@ -92,9 +96,7 @@ type CreateOpts = {
 };
 
 function notFound(): Error & { statusCode: number } {
-    const err = new Error("no such container") as Error & { statusCode: number };
-    err.statusCode = 404;
-    return err;
+    return Object.assign(new Error("no such container"), { statusCode: 404 });
 }
 
 /** The one sandbox container the ops create (there is no sidecar). */
@@ -112,7 +114,7 @@ function envMapOf(container: CreatedContainer): Record<string, string> {
 }
 
 function stubDocker(): {
-    docker: Docker;
+    docker: DockerEngine;
     created: CreatedContainer[];
     removed: string[];
     running: Map<string, boolean>;
@@ -153,7 +155,7 @@ function stubDocker(): {
         },
     });
 
-    const docker = {
+    const docker: DockerEngine = {
         createContainer: async (opts: CreateOpts) => {
             created.push({
                 name: opts.name,
@@ -176,18 +178,14 @@ function stubDocker(): {
             return makeContainer(opts.name);
         },
         getContainer: (id: string) => makeContainer(id),
-        // The new topology creates no networks; a call here would be a regression.
-        createNetwork: async (opts: { Name: string }) => {
-            createdNetworks.push(opts.Name);
-            return {};
-        },
-    } as unknown as Docker;
+        listContainers: async () => [],
+    };
 
     return { docker, created, removed, running, oomKilled, createdNetworks, labelsByName };
 }
 
 const META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } } as const;
-const okFetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
+const okFetch = fetchDouble(async () => new Response("ok", { status: 200 }));
 
 describe("docker createSandbox — confinement", () => {
     test("a root entrypoint with NET_ADMIN and the firewall flag, and no egress target", async () => {
@@ -434,8 +432,7 @@ describe("docker createSandbox — confinement", () => {
     test("a container that maps no host port is stopped, removed, and reported failed", async () => {
         const { docker, removed } = stubDocker();
         // A daemon that starts the container but publishes no port for 8765/tcp.
-        (docker as unknown as { getContainer: (id: string) => unknown }).getContainer = (id: string) => ({
-            id,
+        docker.getContainer = (id: string) => ({
             start: async () => {},
             stop: async () => {},
             remove: async () => {
@@ -443,8 +440,7 @@ describe("docker createSandbox — confinement", () => {
             },
             inspect: async () => ({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
         });
-        (docker as unknown as { createContainer: (o: CreateOpts) => unknown }).createContainer = async (opts: CreateOpts) => ({
-            id: opts.name,
+        docker.createContainer = async (opts: CreateOpts) => ({
             start: async () => {},
             stop: async () => {},
             remove: async () => {
@@ -1130,15 +1126,25 @@ describe("docker teardown / isAlive", () => {
     });
 
     test("isAlive errs on non-404 errors so callers can retry", async () => {
-        const erroringDocker = {
-            getContainer: () => ({
+        const erroringDocker: DockerEngine = {
+            createContainer: async () => ({
+                start: async () => {},
+                stop: async () => {},
+                remove: async () => {},
                 inspect: async () => {
-                    const err = new Error("server unavailable") as Error & { statusCode: number };
-                    err.statusCode = 503;
-                    throw err;
+                    throw new Error("create is not expected in this test");
                 },
             }),
-        } as unknown as Docker;
+            getContainer: () => ({
+                start: async () => {},
+                stop: async () => {},
+                remove: async () => {},
+                inspect: async () => {
+                    throw Object.assign(new Error("server unavailable"), { statusCode: 503 });
+                },
+            }),
+            listContainers: async () => [],
+        };
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
@@ -1165,7 +1171,7 @@ const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
  * inspects the checkpointed name.
  */
 function reconcileDocker(opts: { createStatus: number; standing: { labels: Record<string, string>; running: boolean } | null }): {
-    docker: Docker;
+    docker: DockerEngine;
     created: string[];
     removed: string[];
 } {
@@ -1196,22 +1202,21 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
         },
     });
 
-    const docker = {
+    const docker: DockerEngine = {
         createContainer: async (o: CreateOpts) => {
             attempts += 1;
             // The first create is the one that races the standing container; a
             // later attempt is a post-removal recreate and lands cleanly.
             if (attempts === 1) {
-                const e = new Error("that name is already in use") as Error & { statusCode: number };
-                e.statusCode = opts.createStatus;
-                throw e;
+                throw Object.assign(new Error("that name is already in use"), { statusCode: opts.createStatus });
             }
             created.push(o.name);
             standing = { labels: o.Labels ?? {}, running: false };
             return container(o.name);
         },
         getContainer: (id: string) => container(id),
-    } as unknown as Docker;
+        listContainers: async () => [],
+    };
 
     return { docker, created, removed };
 }
@@ -1219,7 +1224,7 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
 describe("docker createSandbox — recovery reconciliation", () => {
     const ownedLabels = { [OWNER_WORKFLOW_LABEL]: META.childWorkflowId, role: "sandbox" };
 
-    const reconcileOps = (docker: Docker) =>
+    const reconcileOps = (docker: DockerEngine) =>
         createDockerSandboxOps({
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: async (id) => join("/sessions", id),
@@ -1324,10 +1329,10 @@ describe("docker createSandbox — recovery reconciliation", () => {
         // The running owned container is adopted, then its /health is polled afresh. This
         // stub keeps /health unhealthy AND jumps the mocked clock past the poll deadline on
         // the first probe, so the loop ends after a single tick instead of the real 30s wait.
-        const unhealthyFetch = (async () => {
+        const unhealthyFetch = fetchDouble(async () => {
             setSystemTime(new Date(Date.now() + 10 * 60_000));
             return new Response("unhealthy", { status: 503 });
-        }) as unknown as typeof fetch;
+        });
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",

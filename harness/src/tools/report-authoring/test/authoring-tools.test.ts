@@ -431,12 +431,8 @@ describe("change_block", () => {
         const tools = createReportAuthoringTools(gateway);
         // The loop validates against `inputSchema` before it runs `execute`, thus the retitle call must
         // pass the schema with the `block` key absent.
-        const input = JSON.parse('{"targetId":"s1","title":"Results"}') as Record<string, unknown>;
-        expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
-
-        // `parse` hands back `unknown` (`Tool` erases the schema generic); the safeParse
-        // above proves the shape against the same schema the execute reads.
-        const value = (await tools.change_block.execute(input as Parameters<typeof tools.change_block.execute>[0], ctxForThread("t1")))._unsafeUnwrap();
+        const input = tools.change_block.inputSchema.parse(JSON.parse('{"targetId":"s1","title":"Results"}'));
+        const value = (await tools.change_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
         expect(gateway.peek("t1")!.document.sections[0]!.title).toBe("Results");
@@ -753,9 +749,9 @@ describe("the call detail", () => {
     const tools = createReportAuthoringTools(makeFakeGateway());
 
     /** Run a tool's call hook, asserting that the tool declares one. */
-    function detailOf(tool: { describeCall?: (input: never) => string }, input: unknown): string {
+    function detailOf<I>(tool: { describeCall?: (input: I) => string | undefined }, input: I): string | undefined {
         expect(tool.describeCall).toBeDefined();
-        return tool.describeCall!(input as never);
+        return tool.describeCall!(input);
     }
 
     /** A whole-table reference onto one pinned path. */

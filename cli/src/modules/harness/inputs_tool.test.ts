@@ -186,7 +186,7 @@ describe("manage_inputs — describeCall", () => {
     const tool = createManageInputsTool();
 
     /** Read the hook the way the harness emit site reads it. */
-    function describeCall(input: { action: "add" | "remove" | "list"; paths?: string[] }): string {
+    function describeCall(input: { action: "add" | "remove" | "list"; paths?: string[] }): string | undefined {
         expect(tool.describeCall).toBeDefined();
         return tool.describeCall!(input);
     }
@@ -212,7 +212,7 @@ describe("manage_inputs — describeCall", () => {
 
         // The boundary: a rendered line of exactly the cap still enumerates.
         const atCap = "x".repeat(DETAIL_MAX_LENGTH - "add ".length);
-        expect([...describeCall({ action: "add", paths: [atCap] })].length).toBe(DETAIL_MAX_LENGTH);
+        expect([...(describeCall({ action: "add", paths: [atCap] }) ?? "")].length).toBe(DETAIL_MAX_LENGTH);
         expect(describeCall({ action: "add", paths: [`${atCap}y`] })).toBe("add 1 path");
     });
 

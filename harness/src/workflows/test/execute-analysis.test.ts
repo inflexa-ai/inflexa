@@ -26,15 +26,17 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { z } from "zod";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
 import { ChatPartSchema, RunSynthesisPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { Pool } from "pg";
 import { createWorkingMemory } from "../../memory/working-memory.js";
 import type { AgentSession } from "../../auth/types.js";
 import type { RunChargeOutcome } from "../../billing/run-charge.js";
@@ -44,7 +46,7 @@ import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "
 import type { RunProvenanceEvent } from "../../provenance/seam.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "../sandbox-step.js";
 import { __resetWorkflowMetricsForTest } from "../metrics.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
+import type { ChatProvider } from "../../providers/types.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
@@ -110,6 +112,30 @@ type FakeDbosState = {
 
 let dbosState: FakeDbosState;
 
+/** A dag-state part as the body emits it; the parse fails the test on a drifted shape. */
+const DagStateSchema = z.looseObject({
+    type: z.literal("data-dag-state"),
+    steps: z.array(z.looseObject({ id: z.string(), status: z.string() })),
+});
+
+/** The terminal run part (completed or failed) as the body emits it. */
+const RunTerminalSchema = z.looseObject({
+    type: z.enum(["data-run-failed", "data-run-completed"]),
+    status: z.string().optional(),
+    error: z.string().optional(),
+});
+
+/** The dag-state parts of a captured stream, in write order; a malformed part fails the test. */
+function dagStatesOf(parts: ReadonlyArray<Record<string, unknown>>) {
+    return parts.map((p) => DagStateSchema.parse(p));
+}
+
+/** The one terminal run part of a captured stream, or `undefined` when the run wrote none. */
+function terminalOf(parts: ReadonlyArray<Record<string, unknown>>) {
+    const found = parts.find((p) => p.type === "data-run-failed" || p.type === "data-run-completed");
+    return found === undefined ? undefined : RunTerminalSchema.parse(found);
+}
+
 /**
  * The mocks below are installed by DIRECT property assignment on the DBOS
  * class, which `mock.restore()` does NOT undo — without an explicit restore
@@ -141,88 +167,121 @@ async function mockDbos(): Promise<void> {
     // `retriesAllowed` runs up to `maxAttempts` times with no wait, and `DBOS.stepStatus`
     // gives the attempt, as DBOS does. A cancel is never retried, and the last attempt
     // throws its own error.
-    (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string; retriesAllowed?: boolean; maxAttempts?: number }) => {
-        const injectedError = config?.name ? dbosState.throwErrorOnStep.get(config.name) : undefined;
-        if (injectedError !== undefined) throw injectedError;
-        const injected = config?.name ? dbosState.throwOnStep.get(config.name) : undefined;
-        if (injected !== undefined) throw new Error(injected);
-        // A stubbed result stands in for a named step's body, so a test can drive
-        // the value the parent workflow persists (e.g. the synthesis outcome)
-        // without standing up that step's real machinery (provider, on-disk
-        // summaries, embedder). `.has` is the gate so a falsy stub still applies.
-        if (config?.name && dbosState.resultOnStep.has(config.name)) {
-            return dbosState.resultOnStep.get(config.name);
-        }
-        const maxAttempts = config?.retriesAllowed ? (config.maxAttempts ?? 3) : 1;
-        const cancelAt = config?.name ? dbosState.cancelBeforeAttempt.get(config.name) : undefined;
-        for (let attempt = 1; ; attempt++) {
-            if (attempt === cancelAt) throw new DBOSErrors.DBOSWorkflowCancelledError("run-test");
-            dbosState.stepStatus = { stepID: 0, currentAttempt: attempt, maxAttempts };
-            try {
-                return await fn();
-            } catch (error) {
-                if (error instanceof DBOSErrors.DBOSWorkflowCancelledError || attempt >= maxAttempts) throw error;
-            } finally {
-                dbosState.stepStatus = undefined;
+    Reflect.set(
+        dbos.DBOS,
+        "runStep",
+        mock(async (fn: () => Promise<unknown>, config?: { name?: string; retriesAllowed?: boolean; maxAttempts?: number }) => {
+            const injectedError = config?.name ? dbosState.throwErrorOnStep.get(config.name) : undefined;
+            if (injectedError !== undefined) throw injectedError;
+            const injected = config?.name ? dbosState.throwOnStep.get(config.name) : undefined;
+            if (injected !== undefined) throw new Error(injected);
+            // A stubbed result stands in for a named step's body, so a test can drive
+            // the value the parent workflow persists (e.g. the synthesis outcome)
+            // without standing up that step's real machinery (provider, on-disk
+            // summaries, embedder). `.has` is the gate so a falsy stub still applies.
+            if (config?.name && dbosState.resultOnStep.has(config.name)) {
+                return dbosState.resultOnStep.get(config.name);
             }
-        }
-    });
+            const maxAttempts = config?.retriesAllowed ? (config.maxAttempts ?? 3) : 1;
+            const cancelAt = config?.name ? dbosState.cancelBeforeAttempt.get(config.name) : undefined;
+            for (let attempt = 1; ; attempt++) {
+                if (attempt === cancelAt) throw new DBOSErrors.DBOSWorkflowCancelledError("run-test");
+                dbosState.stepStatus = { stepID: 0, currentAttempt: attempt, maxAttempts };
+                try {
+                    return await fn();
+                } catch (error) {
+                    if (error instanceof DBOSErrors.DBOSWorkflowCancelledError || attempt >= maxAttempts) throw error;
+                } finally {
+                    dbosState.stepStatus = undefined;
+                }
+            }
+        }),
+    );
 
     Object.defineProperty(dbos.DBOS, "stepStatus", { configurable: true, get: () => dbosState.stepStatus });
 
     // `DBOS.setEvent` — record the key and the value, or throw the configured error.
-    (dbos.DBOS.setEvent as unknown) = mock(async (key: string, value: unknown) => {
-        if (dbosState.setEventError !== null) throw dbosState.setEventError;
-        dbosState.events.push({ key, value });
-        dbosState.timeline.push(`setEvent ${key}`);
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "setEvent",
+        mock(async (key: string, value: unknown) => {
+            if (dbosState.setEventError !== null) throw dbosState.setEventError;
+            dbosState.events.push({ key, value });
+            dbosState.timeline.push(`setEvent ${key}`);
+        }),
+    );
 
     // `DBOS.startWorkflow(callable, { workflowID })(input)` — return a fake
     // handle resolving to the configured child result for the step.
-    (dbos.DBOS.startWorkflow as unknown) = mock((_callable: unknown, opts: { workflowID: string }) => async (input: SandboxStepInput) => {
-        dbosState.childInputs.push(input);
-        const result = dbosState.childResults.get(input.stepId);
-        if (!result) {
-            throw new Error(`no fake result for step ${input.stepId}`);
-        }
-        const handle = handleFor(opts.workflowID, result);
-        dbosState.pendingHandles.set(opts.workflowID, handle);
-        return handle;
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "startWorkflow",
+        mock((_callable: unknown, opts: { workflowID: string }) => async (input: SandboxStepInput) => {
+            dbosState.childInputs.push(input);
+            const result = dbosState.childResults.get(input.stepId);
+            if (!result) {
+                throw new Error(`no fake result for step ${input.stepId}`);
+            }
+            const handle = handleFor(opts.workflowID, result);
+            dbosState.pendingHandles.set(opts.workflowID, handle);
+            return handle;
+        }),
+    );
 
     // `DBOS.writeStream("events", part)` — record every emitted part.
-    (dbos.DBOS.writeStream as unknown) = mock(async (_name: string, part: unknown) => {
-        dbosState.emittedParts.push(part as Record<string, unknown>);
-        return undefined;
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "writeStream",
+        mock(async (_name: string, part: unknown) => {
+            const written = parseUnknownRecord(part);
+            if (written) dbosState.emittedParts.push(written);
+            return undefined;
+        }),
+    );
 
     // `DBOS.cancelWorkflow` — record + resolve.
-    (dbos.DBOS.cancelWorkflow as unknown) = mock(async (workflowID: string) => {
-        dbosState.cancelled.add(workflowID);
-        return undefined;
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "cancelWorkflow",
+        mock(async (workflowID: string) => {
+            dbosState.cancelled.add(workflowID);
+            return undefined;
+        }),
+    );
 
     // `DBOS.waitFirst` — the fake handles all settle immediately, so "first to
     // finish" is the first in-flight handle. Returning it deterministically
     // mirrors the checkpointed winner the real `waitFirst` records.
-    (dbos.DBOS.waitFirst as unknown) = mock(async (handles: FakeWorkflowHandle[]) => {
-        if (handles.length === 0) throw new Error("waitFirst: empty handles");
-        return handles[0];
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "waitFirst",
+        mock(async (handles: FakeWorkflowHandle[]) => {
+            if (handles.length === 0) throw new Error("waitFirst: empty handles");
+            return handles[0];
+        }),
+    );
 
     // `DBOS.recv` — the suspension side-channel drains via `recv(topic, 0)`. A
     // test that suspends a child queues its typed message; an empty channel
     // (`null`) lets `drainChildSuspensions` return immediately.
-    (dbos.DBOS.recv as unknown) = mock(async (topic: string) => (topic === CHILD_SUSPENDED_TOPIC ? (dbosState.childMessages.shift() ?? null) : null));
+    Reflect.set(
+        dbos.DBOS,
+        "recv",
+        mock(async (topic: string) => (topic === CHILD_SUSPENDED_TOPIC ? (dbosState.childMessages.shift() ?? null) : null)),
+    );
 
     // `DBOS.now()` — a checkpointed clock in the real engine; here a deterministic
     // monotonic fake so every emitted provenance `atMs`/`durationMs` is
     // stub-sourced (never `Date.now()`) and reproducible across a re-run.
-    (dbos.DBOS.now as unknown) = mock(async () => {
-        const t = dbosState.nowMs;
-        dbosState.nowMs += FAKE_CLOCK_STEP_MS;
-        return t;
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "now",
+        mock(async () => {
+            const t = dbosState.nowMs;
+            dbosState.nowMs += FAKE_CLOCK_STEP_MS;
+            return t;
+        }),
+    );
 }
 
 afterEach(() => {
@@ -233,7 +292,7 @@ afterAll(async () => {
     if (!originalDbosFns) return;
     const dbos = await import("@dbos-inc/dbos-sdk");
     for (const [name, fn] of Object.entries(originalDbosFns)) {
-        (dbos.DBOS as unknown as Record<string, unknown>)[name] = fn;
+        Reflect.set(dbos.DBOS, name, fn);
     }
     if (originalStepStatus) Object.defineProperty(dbos.DBOS, "stepStatus", originalStepStatus);
 });
@@ -262,10 +321,24 @@ beforeEach(async () => {
 
 // ── Fake pool ────────────────────────────────────────────────────────
 
+/**
+ * A chat provider that no test drives: the workflow reads it into the step
+ * arguments, and the tests replace the step callable that would consume it.
+ */
+function unusedChatProvider(): ChatProvider {
+    return {
+        capabilities: { toolCalling: true },
+        chat: () => okAsync({ message: { role: "assistant", content: "" }, finishReason: "stop", requestedModelId: "" }),
+        chatStream: () => {
+            throw new Error("chatStream: not driven by the execute-analysis tests");
+        },
+    };
+}
+
 type FakePool = {
     readonly queries: Array<{ text: string; values?: readonly unknown[] }>;
-    query: Pool["query"];
-    connect: Pool["connect"];
+    /** A real `Pool` whose `query` and `connect` the fake overrides; the own properties win at runtime. */
+    readonly pool: Pool;
 };
 
 /** The status write of `persist-final-status`. The fake pool answers an unmatched query with no changed row, so a test of the won path answers this prefix with one row. */
@@ -300,13 +373,14 @@ function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => 
         }
         return { rows: [], rowCount: 0 };
     };
-    const query = (mock as unknown as <T>(fn: (q: { text: string; values?: readonly unknown[] }) => Promise<T>) => unknown)(answer);
+    const query = async (q: string | { text: string; values?: readonly unknown[] }, values?: unknown[]) =>
+        answer(typeof q === "string" ? { text: q, values: values ?? [] } : q);
     // A transaction client answers from the same map and records into the same timeline as the pool.
     const connect = async () => ({
-        query: async (q: string | { text: string; values?: readonly unknown[] }) => answer(typeof q === "string" ? { text: q } : q),
+        query,
         release: () => undefined,
     });
-    return { queries, query: query as unknown as Pool["query"], connect: connect as unknown as Pool["connect"] };
+    return { queries, pool: Object.assign(new Pool(), { query, connect }) };
 }
 
 /**
@@ -380,14 +454,19 @@ function makeDeps(opts: {
 
     const deps: ExecuteAnalysisDeps = {
         citationResolver: unusedCitationResolver,
-        pool: opts.pool.query ? ({ query: opts.pool.query, connect: opts.pool.connect } as unknown as Pool) : ({} as Pool),
-        provider: {} as unknown as ChatProvider,
-        embedding: {} as unknown as EmbeddingProvider,
+        pool: opts.pool.pool,
+        provider: unusedChatProvider(),
+        embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
         sandboxStepCallable: async () => {
             throw new Error("sandboxStepCallable should not be invoked directly");
         },
         resolveWorkspaceRoot: async (id: string) => join("/tmp/cortex-execute-analysis-test", id),
-        workingMemory: createWorkingMemory({ query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool),
+        workingMemory: createWorkingMemory({
+            query: async () => ({ rows: [], rowCount: 0 }),
+            connect: async () => {
+                throw new Error("workingMemory: no transaction in the execute-analysis tests");
+            },
+        }),
         synthesisModel: "test-synthesis-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         runCharge: {
@@ -495,7 +574,7 @@ describe("executeAnalysis body", () => {
         expect(suspendWrites(pool)).toEqual([]);
         const terminal = record.emittedParts.find((p) => p.type === "data-run-failed" || p.type === "data-run-completed");
         expect(terminal?.type).toBe("data-run-completed");
-        expect((terminal as { status?: string } | undefined)?.status).toBe("partial");
+        expect(terminalOf(record.emittedParts)?.status).toBe("partial");
     });
 
     it("blocked isolation: B blocked → A and C still complete; only B's dependents are doomed", async () => {
@@ -565,9 +644,7 @@ describe("executeAnalysis body", () => {
 
         // The failure settlement marks D skipped in the very same dag emission
         // that shows B failed, while C (independent, still in flight) runs on.
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
-            steps: Array<{ id: string; status: string }>;
-        }>;
+        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         const afterFailure = dagParts.find((p) => p.steps.some((s) => s.id === "B" && s.status === "failed"))!;
         expect(afterFailure.steps.find((s) => s.id === "D")!.status).toBe("skipped");
         expect(afterFailure.steps.find((s) => s.id === "C")!.status).toBe("running");
@@ -661,7 +738,7 @@ describe("executeAnalysis body", () => {
         expect([...result.completedSteps].sort()).toEqual(["A", "B", "C"]);
         expect(result.failedSteps).toEqual([]);
 
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         const statusesOf = (id: string) => dagParts.map((p) => p.steps.find((s) => s.id === id)!.status);
         // Held steps are visibly queued before they run; the admitted step never is.
         expect(statusesOf("B")).toContain("queued");
@@ -685,9 +762,7 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
-            steps: Array<{ id: string; name: string; artifactCount?: number; summary?: string }>;
-        }>;
+        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         expect(dagParts.length).toBeGreaterThan(0);
         for (const part of dagParts) {
             const step = part.steps.find((s) => s.id === "A")!;
@@ -710,11 +785,9 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("failed");
         expect(result.failedSteps).toEqual(["A"]);
-        const terminal = record.emittedParts.find((p) => p.type === "data-run-failed") as { error?: string } | undefined;
+        const terminal = terminalOf(record.emittedParts);
         expect(terminal?.error).toContain("budget");
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
-            steps: Array<{ id: string; status: string; error?: string }>;
-        }>;
+        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         const last = dagParts[dagParts.length - 1]!;
         expect(last.steps[0]!.status).toBe("failed");
         expect(last.steps[0]!.error).toContain("machine budget");
@@ -737,7 +810,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("partial");
         expect(result.completedSteps).toEqual(["B"]);
         expect(result.failedSteps).toEqual(["A"]);
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         const statusesOf = (id: string) => dagParts.map((p) => p.steps.find((s) => s.id === id)!.status);
         expect(statusesOf("B")).toContain("queued");
         expect(statusesOf("B")).toContain("running");
@@ -757,7 +830,7 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }]), deps);
 
         expect(result.status).toBe("completed");
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         // First snapshot after dispatch: all three running at once, none queued.
         const first = dagParts[0]!;
         expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running"]);
@@ -964,7 +1037,8 @@ describe("executeAnalysis body", () => {
         expect(ChatPartSchema.safeParse(failed).success).toBe(true);
         const error = failed?.error;
         expect(typeof error).toBe("string");
-        expect((error as string).length).toBeGreaterThan(0);
+        if (typeof error !== "string") throw new Error("the failed step carries no error text");
+        expect(error.length).toBeGreaterThan(0);
     });
 
     // ── 10.11 Terminal billing close paths ─────────────────────────────
@@ -1498,7 +1572,8 @@ describe("executeAnalysis body", () => {
             DBOSErrors.DBOSWorkflowCancelledError,
         );
         expect(suspendWrites(pool).length).toBe(1);
-        const dag = [...record.emittedParts].reverse().find((p) => p.type === "data-dag-state") as { steps: Array<{ id: string; status: string }> };
+        const dag = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state")).at(-1);
+        if (dag === undefined) throw new Error("the cancelled run emitted no dag-state part");
         expect(dag.steps.find((step) => step.id === "B")?.status).toBe("pending");
 
         const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
@@ -2365,7 +2440,9 @@ describe("executeAnalysis run observation", () => {
 // ── Run and step outcome metrics at the terminal step ────────────────
 
 describe("run and step outcome metrics", () => {
-    /** One `cortex_step_executions` row, cut down to the columns `queryStepsByRun` maps and the residue rule reads. */
+    /** One `cortex_step_executions` row, cut down to the columns `queryStepsByRun` maps and the residue rule reads.
+     *  The fake pool answers every `SELECT` with it, so it also carries the `cortex_runs` columns that
+     *  `runs.queryActiveRun`'s row parse requires. */
     const ledgerRow = (stepId: string, completedAt: string | null, status = completedAt === null ? "running" : "completed"): Record<string, unknown> => ({
         run_id: "run-test",
         step_id: stepId,
@@ -2373,6 +2450,8 @@ describe("run and step outcome metrics", () => {
         wave: 0,
         agent_id: "agent-x",
         status,
+        started_at: "2026-09-05T10:00:00.000Z",
+        workflow_name: "executeAnalysis",
         completed_at: completedAt,
         child_workflow_id: status === "pending" ? null : `run-test-${stepId}`,
     });

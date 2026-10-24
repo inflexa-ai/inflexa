@@ -5,12 +5,12 @@
  */
 
 import type { ModelMessage } from "ai";
-import type { Pool } from "pg";
 
 import type { RequestSession } from "../auth/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
-import type { DbError } from "../lib/db-result.js";
+import { type Connectable, type DbError } from "../lib/db-result.js";
+import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction.js";
 import { finalText, runAgent, type AgentFinish, type AgentRound } from "../loop/run-agent.js";
@@ -40,7 +40,7 @@ import { bindSessionEmit, type ProvenanceSeam } from "../provenance/seam.js";
 export type PrepareChatTurnDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    readonly pool: Pool;
+    readonly pool: Querier & Connectable;
     /**
      * The provenance seam. The turn reads its session emit member, and no other
      * member. The turn holds the one site that writes the conversation thread of
@@ -137,7 +137,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
 }
 
 /** The analysis context and the run activity of a turn. A failed read gives the fallback of its kind. */
-async function readTurnContext(pool: Pool, analysisId: string): Promise<{ readonly analysisContext: string | null; readonly runActivityContext: string }> {
+async function readTurnContext(pool: Querier, analysisId: string): Promise<{ readonly analysisContext: string | null; readonly runActivityContext: string }> {
     const analysisState = await loadAnalysisStatus(pool, analysisId).unwrapOr(null);
     const runActivityContext = await queryNonTerminalRunsByAnalysis(pool, analysisId, RUN_ACTIVITY_DETAIL_LIMIT).match(
         (activity) => renderRunActivity(activity),

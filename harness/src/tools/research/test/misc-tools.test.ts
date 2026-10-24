@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { Pool } from "pg";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
+import type { Querier } from "../../../state/db.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { resolveLibraryIdTool } from "../context7-docs.js";
-import { createInspectRunTool } from "../inspect-run.js";
+import { createInspectRunTool, type InspectRunQuerier } from "../inspect-run.js";
 
 const realFetch = globalThis.fetch;
 
@@ -13,7 +18,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = (async () => response()) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async () => response());
 }
 
 describe("resolveLibraryId (remaining-leaf family)", () => {
@@ -84,29 +89,34 @@ describe("inspectRun (dependency-bearing factory)", () => {
     }
 
     /** A pool that answers the count and row queries used by list mode. */
-    function poolReturning(rows: Array<Record<string, unknown>>): Pool {
+    function poolReturning(rows: Array<Record<string, unknown>>): InspectRunQuerier {
         return {
-            query: async (query: { text: string; values?: unknown[] }) => {
-                if (/COUNT\(\*\)/i.test(query.text)) return { rows: [{ total: rows.length }], rowCount: 1 };
-                const limit = Number(query.values?.[1] ?? rows.length);
-                const offset = Number(query.values?.[2] ?? 0);
+            query: async (queryOrConfig, values) => {
+                const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
+                if (/COUNT\(\*\)/i.test(text)) return { rows: [{ total: rows.length }], rowCount: 1 };
+                const limit = Number(values?.[1] ?? rows.length);
+                const offset = Number(values?.[2] ?? 0);
                 const page = rows.slice(offset, offset + limit);
                 return { rows: page, rowCount: page.length };
             },
-        } as unknown as Pool;
+        };
     }
 
     /** List runs for the session's analysis, unwrapping to the `{ runs }` variant. */
-    async function listRuns(pool: Pool): Promise<Array<Record<string, unknown>>> {
+    async function listRuns(pool: InspectRunQuerier): Promise<Array<Record<string, unknown>>> {
         const { ctx } = makeToolContext();
         const result = (await createInspectRunTool(pool).execute({}, ctx))._unsafeUnwrap();
-        return (result as { runs: Array<Record<string, unknown>> }).runs;
+        if (!("runs" in result)) throw new Error("expected the runs variant");
+        return result.runs;
     }
 
     it("derives the analysis id from the Session and lists runs via the injected pool", async () => {
-        const fakePool = {
-            query: async (query: { text: string }) => (/COUNT\(\*\)/i.test(query.text) ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 }),
-        } as unknown as Pool;
+        const fakePool: InspectRunQuerier = {
+            query: async (queryOrConfig) => {
+                const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
+                return /COUNT\(\*\)/i.test(text) ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+            },
+        };
 
         const tool = createInspectRunTool(fakePool);
         const { ctx } = makeToolContext();
@@ -197,13 +207,14 @@ describe("inspectRun (dependency-bearing factory)", () => {
     }
 
     /** A pool that answers the run lookup and the step lookup separately, keyed by the target table. */
-    function poolForRunDetail(run: Record<string, unknown>, steps: Array<Record<string, unknown>>): Pool {
+    function poolForRunDetail(run: Record<string, unknown>, steps: Array<Record<string, unknown>>): InspectRunQuerier {
         return {
-            query: async (q: { text: string }) => {
-                if (/cortex_step_executions/i.test(q.text)) return { rows: steps, rowCount: steps.length };
+            query: async (queryOrConfig) => {
+                const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
+                if (/cortex_step_executions/i.test(text)) return { rows: steps, rowCount: steps.length };
                 return { rows: [run], rowCount: 1 };
             },
-        } as unknown as Pool;
+        };
     }
 
     it("emits a per-step summaryPath for a completed DAG step but never for the run-phase synthesis row", async () => {
@@ -235,13 +246,8 @@ describe("inspectRun (dependency-bearing factory)", () => {
 
         const result = (
             await createInspectRunTool(pool, { now: () => Date.parse("2026-01-01T00:00:05.000Z"), wait: async () => {} }).execute({ runId: "run-1" }, ctx)
-        )._unsafeUnwrap() as {
-            inspectionState: string;
-            message: string;
-            elapsedMs: number;
-            run: Record<string, unknown>;
-            steps: Array<Record<string, unknown>>;
-        };
+        )._unsafeUnwrap();
+        if (!("elapsedMs" in result)) throw new Error("expected the running-state variant");
 
         expect(result.inspectionState).toBe("in_progress");
         expect(result.message).toContain("Results are not ready");
@@ -268,7 +274,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
 
     it("reports a missing run as an explicit success state", async () => {
         const { ctx } = makeToolContext();
-        const missingPool = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool;
+        const missingPool: Querier = { query: async () => ({ rows: [], rowCount: 0 }) };
         const missing = (await createInspectRunTool(missingPool).execute({ runId: "missing" }, ctx))._unsafeUnwrap();
         expect(missing).toMatchObject({ inspectionState: "not_found" });
     });
@@ -277,13 +283,14 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const rows = [runRow({ status: "running", completed_at: null }), runRow({ status: "completed" })];
         let reads = 0;
         let now = 0;
-        const pool = {
-            query: async (query: { text: string }) => {
-                if (/cortex_step_executions/i.test(query.text)) return { rows: [], rowCount: 0 };
+        const pool: InspectRunQuerier = {
+            query: async (queryOrConfig) => {
+                const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
+                if (/cortex_step_executions/i.test(text)) return { rows: [], rowCount: 0 };
                 const row = rows[Math.min(reads++, rows.length - 1)]!;
                 return { rows: [row], rowCount: 1 };
             },
-        } as unknown as Pool;
+        };
         const { ctx } = makeToolContext();
 
         const result = (

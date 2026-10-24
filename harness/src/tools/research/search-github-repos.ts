@@ -15,6 +15,8 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
 
 const BASE_URL = "https://api.github.com/search/repositories";
 
@@ -51,24 +53,22 @@ const GithubReposResponseSchema = z.object({
 });
 
 export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
-    const items = (raw as { items?: unknown[] } | undefined)?.items;
-    if (!Array.isArray(items)) return [];
-    return items
-        .filter(
-            (i): i is Record<string, unknown> =>
-                typeof i === "object" &&
-                i !== null &&
-                typeof (i as { html_url?: unknown }).html_url === "string" &&
-                typeof (i as { full_name?: unknown }).full_name === "string",
-        )
-        .map((i) => ({
-            url: String(i.html_url),
-            fullName: String(i.full_name),
-            description: typeof i.description === "string" ? i.description : undefined,
-            stars: typeof i.stargazers_count === "number" ? i.stargazers_count : 0,
-            language: typeof i.language === "string" ? i.language : undefined,
-            lastUpdated: typeof i.updated_at === "string" ? i.updated_at : undefined,
-        }));
+    const items = parseUnknownRecord(raw)?.items;
+    if (!isUnknownArray(items)) return [];
+    return items.flatMap((item) => {
+        const record = parseUnknownRecord(item);
+        if (record === undefined || typeof record.html_url !== "string" || typeof record.full_name !== "string") return [];
+        return [
+            {
+                url: String(record.html_url),
+                fullName: String(record.full_name),
+                description: typeof record.description === "string" ? record.description : undefined,
+                stars: typeof record.stargazers_count === "number" ? record.stargazers_count : 0,
+                language: typeof record.language === "string" ? record.language : undefined,
+                lastUpdated: typeof record.updated_at === "string" ? record.updated_at : undefined,
+            },
+        ];
+    });
 }
 
 export function createSearchGithubReposTool(deps: { githubToken?: string }) {

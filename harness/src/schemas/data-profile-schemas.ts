@@ -411,3 +411,35 @@ export const ProfileSubmissionSchema = z
     })
     .strict();
 export type ProfileSubmission = z.infer<typeof ProfileSubmissionSchema>;
+
+// ── The submission as the resolver reads it ───────────────────────────────────
+
+/**
+ * What `resolveProfileSubmission` resolves, as distinct from what an agent may submit.
+ *
+ * A replay (`src/tasks/data-profile-absorb.ts`) carries a persisted annotation through
+ * unchanged, so an id a retired vocabulary served can re-enter here. The agent-facing
+ * schemas above stay strict; the resolver reads `role` and `category` as opaque strings,
+ * so the input view widens exactly those fields.
+ */
+export type GroupAnnotationInput = Omit<GroupAnnotation, "role" | "category"> & { role: string; category: string };
+export type ProfileDimensionInput = Omit<ProfileDimension, "category"> & { category: string };
+
+type WithInputAnnotation<T> = T extends { group: GroupAnnotation } ? Omit<T, "group"> & { group: GroupAnnotationInput } : T;
+
+type SplitBy = Extract<MenuOperation, { op: "split" }>["by"];
+type SplitByInput =
+    | WithInputAnnotation<Extract<SplitBy, { kind: "slot" }>>
+    | (Omit<Extract<SplitBy, { kind: "values" }>, "groups" | "rest"> & {
+          groups: WithInputAnnotation<Extract<SplitBy, { kind: "values" }>["groups"][number]>[];
+          rest?: GroupAnnotationInput;
+      });
+
+export type MenuOperationInput =
+    | WithInputAnnotation<Extract<MenuOperation, { op: "use" | "merge" | "group" }>>
+    | (Omit<Extract<MenuOperation, { op: "split" }>, "by"> & { by: SplitByInput });
+
+export type ProfileSubmissionInput = Omit<ProfileSubmission, "operations" | "dimensions"> & {
+    operations: MenuOperationInput[];
+    dimensions?: ProfileDimensionInput[];
+};

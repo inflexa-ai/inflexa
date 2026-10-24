@@ -58,6 +58,7 @@ import { z } from "zod";
 
 import type { AuthContext } from "../../auth/types.js";
 import { hasBrowserUrl, type ChromeConfig } from "../../lib/chrome.js";
+import { errnoOf } from "../../lib/fs-result.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
@@ -421,7 +422,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             try {
                 await access(pagePath);
             } catch (cause) {
-                if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+                if (errnoOf(cause) === "ENOENT") {
                     // No preview wrote the page yet. The agent runs the preview first.
                     return ok({ outcome: "no-page" });
                 }

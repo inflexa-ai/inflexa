@@ -137,10 +137,6 @@ export default typescript({
             // rules whose few reports the harness keeps deliberately.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #707 turns the assertion-safety set back on.
-                "@inflexa-ai/no-double-cast": "off",
-                "@inflexa-ai/require-assertion-safety": "off",
-                "typescript/no-unsafe-type-assertion": "off",
                 // #706 turns the non-null and unnecessary-assertion set back on.
                 "typescript/no-non-null-assertion": "off",
                 "typescript/no-unnecessary-condition": "off",

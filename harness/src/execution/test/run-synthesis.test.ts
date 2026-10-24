@@ -36,6 +36,7 @@ import {
 } from "../run-synthesis.js";
 import { flattenDataPart } from "../../contracts/chat-frame.js";
 import { RunSynthesisPartSchema } from "../../contracts/schemas/chat-parts.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { RunSynthesis } from "../../schemas/run-synthesis.js";
 import type { ToolContext } from "../../tools/define-tool.js";
 import type { ChatRequest } from "../../providers/types.js";
@@ -74,7 +75,7 @@ function makeToolCtx(): ToolContext {
  * semantic checks (stepId in known set, theme references match findings,
  * keyReferences cited by findings, PMIDs numeric).
  */
-function validSynthesisPayload(): Record<string, unknown> {
+function validSynthesisPayload(): RunSynthesis {
     return {
         runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
@@ -122,7 +123,7 @@ describe("submit_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.accepted).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
@@ -138,14 +139,12 @@ describe("submit_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        const bad = validSynthesisPayload();
         bad.findings[0]!.stepId = "T9S9";
 
-        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            accepted: false;
-            issues: { path: string; code: string }[];
-        };
+        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
+        if (!("issues" in result)) throw new Error("expected a rejected submission");
         expect(result.accepted).toBe(false);
         expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
         expect(holder.outcome).toBeNull();
@@ -156,18 +155,13 @@ describe("submit_synthesis inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        const bad = validSynthesisPayload() as {
-            findings: { references: { pmid: string }[] }[];
-            keyReferences: { pmid: string }[];
-        };
+        const bad = validSynthesisPayload();
         bad.findings[0]!.references[0]!.pmid = "PMC123";
         bad.keyReferences[0]!.pmid = "PMC123";
 
-        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            accepted: false;
-            issues: { path: string }[];
-        };
+        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
+        if (!("issues" in result)) throw new Error("expected a rejected submission");
         expect(result.accepted).toBe(false);
         expect(result.issues.some((i) => i.path.includes("pmid"))).toBe(true);
     });
@@ -179,20 +173,18 @@ describe("submit_synthesis inner tool", () => {
         });
         await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
 
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[]; overview: string };
+        const bad = validSynthesisPayload();
         bad.findings[0]!.stepId = "T9S9";
         bad.overview = "clobbered";
 
-        const second = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            accepted: false;
-            issues: { code: string }[];
-        };
+        const second = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
+        if (!("issues" in second)) throw new Error("expected a rejected submission");
         expect(second.accepted).toBe(false);
         expect(second.issues.some((i) => i.code === "semantic")).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
         if (holder.outcome?.kind === "submitted") {
-            expect(holder.outcome.synthesis.overview).toBe((validSynthesisPayload() as { overview: string }).overview);
+            expect(holder.outcome.synthesis.overview).toBe(validSynthesisPayload().overview);
         }
     });
 
@@ -203,10 +195,10 @@ describe("submit_synthesis inner tool", () => {
         });
         await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
 
-        const revised = validSynthesisPayload() as { overview: string };
+        const revised = validSynthesisPayload();
         revised.overview = "The revised, real synthesis of the run.";
 
-        const second = (await submit.execute({ synthesis: revised }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+        const second = (await submit.execute({ synthesis: revised }, makeToolCtx()))._unsafeUnwrap();
 
         expect(second.accepted).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
@@ -223,7 +215,7 @@ describe("submit_synthesis inner tool", () => {
         await blocker.execute({ reason: "nothing to synthesize" }, makeToolCtx());
         expect(holder.outcome?.kind).toBe("blocker");
 
-        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.accepted).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
@@ -237,10 +229,7 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const result = (await validate.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: true;
-            issues: unknown[];
-        };
+        const result = (await validate.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(true);
         expect(result.issues).toHaveLength(0);
@@ -253,16 +242,8 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const plain = (await validate.execute({ synthesis: JSON.stringify(validSynthesisPayload()) }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: boolean;
-            issues: unknown[];
-        };
-        const fenced = (
-            await validate.execute({ synthesis: "```json\n" + JSON.stringify(validSynthesisPayload()) + "\n```" }, makeToolCtx())
-        )._unsafeUnwrap() as {
-            valid: boolean;
-            issues: unknown[];
-        };
+        const plain = (await validate.execute({ synthesis: JSON.stringify(validSynthesisPayload()) }, makeToolCtx()))._unsafeUnwrap();
+        const fenced = (await validate.execute({ synthesis: "```json\n" + JSON.stringify(validSynthesisPayload()) + "\n```" }, makeToolCtx()))._unsafeUnwrap();
 
         expect(plain.valid).toBe(true);
         expect(plain.issues).toHaveLength(0);
@@ -279,10 +260,7 @@ describe("validate_synthesis inner tool", () => {
 
         const result = (
             await validate.execute({ synthesis: JSON.stringify({ ...validSynthesisPayload(), runId: "other-run" }) }, makeToolCtx())
-        )._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        )._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues).toHaveLength(1);
@@ -296,10 +274,7 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const result = (await validate.execute({ synthesis: { overview: 42, findings: "not an array" } }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string }[];
-        };
+        const result = (await validate.execute({ synthesis: { overview: 42, findings: "not an array" } }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues.length).toBeGreaterThan(0);
@@ -316,17 +291,12 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const bad = validSynthesisPayload() as {
-            conclusions?: string;
-            findings: { references: { pmid: string }[] }[];
-        };
-        delete bad.conclusions;
-        bad.findings[0]!.references[0]!.pmid = "PMC123";
+        const bad = validSynthesisPayload();
+        const broken = { ...bad, conclusions: undefined };
+        broken.findings[0]!.references[0]!.pmid = "PMC123";
+        void bad;
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = (await validate.execute({ synthesis: broken }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.conclusions")).toBe(true);
@@ -349,17 +319,12 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const bad = validSynthesisPayload() as {
-            overview?: string;
-            findings: { stepId: string }[];
-        };
-        delete bad.overview;
-        bad.findings[0]!.stepId = "T9S9";
+        const bad = validSynthesisPayload();
+        const broken = { ...bad, overview: undefined };
+        broken.findings[0]!.stepId = "T9S9";
+        void bad;
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = (await validate.execute({ synthesis: broken }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.overview")).toBe(true);
@@ -377,14 +342,11 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const bad = validSynthesisPayload() as { findings: unknown; keyReferences: { pmid: string }[] };
+        const bad = { ...validSynthesisPayload(), findings: [{ stepId: 7 }] };
         bad.findings = [{ stepId: 7 }];
         bad.keyReferences[0]!.pmid = "PMC999";
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string; message: string; hint?: string }[];
-        };
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "schema" && i.path.startsWith("synthesis.findings."))).toBe(true);
@@ -411,20 +373,13 @@ describe("validate_synthesis inner tool", () => {
             runId: RUN_ID,
         });
 
-        const bad = validSynthesisPayload() as {
-            runId: string;
-            findings: { stepId: string; references: { pmid: string }[] }[];
-            keyReferences: { pmid: string }[];
-        };
+        const bad = validSynthesisPayload();
         bad.runId = "run-999";
         bad.findings[0]!.stepId = "T9S9";
         bad.findings[0]!.references[0]!.pmid = "PMC1";
         bad.keyReferences[0]!.pmid = "PMC2";
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { path: string; code: string }[];
-        };
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues.every((i) => i.code === "semantic")).toBe(true);
@@ -446,13 +401,10 @@ describe("validate_synthesis inner tool", () => {
         });
         await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
 
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        const bad = validSynthesisPayload();
         bad.findings[0]!.stepId = "T9S9";
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
-            valid: false;
-            issues: { code: string }[];
-        };
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
         expect(result.valid).toBe(false);
         expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
@@ -466,7 +418,7 @@ describe("report_blocker inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        const result = (await blocker.execute({ reason: "no synthesizable content" }, makeToolCtx()))._unsafeUnwrap() as { recorded: true };
+        const result = (await blocker.execute({ reason: "no synthesizable content" }, makeToolCtx()))._unsafeUnwrap();
         expect(result.recorded).toBe(true);
         expect(holder.outcome?.kind).toBe("blocker");
         if (holder.outcome?.kind === "blocker") {
@@ -779,10 +731,8 @@ describe("persistSynthesis", () => {
                 synthesis,
             });
             expect(path.endsWith("synthesis.json")).toBe(true);
-            const written = JSON.parse(await readFile(path, "utf8")) as {
-                runId: string;
-            };
-            expect(written.runId).toBe(RUN_ID);
+            const written = parseUnknownRecord(JSON.parse(await readFile(path, "utf8")));
+            expect(written?.runId).toBe(RUN_ID);
         } finally {
             await rm(tempDir, { recursive: true, force: true });
         }
@@ -802,9 +752,9 @@ describe("buildRunSynthesisPart + formatSynthesisEmbeddingText", () => {
         };
         const part = buildRunSynthesisPart(RUN_ID, synthesis);
         expect(part.type).toBe("data-run-synthesis");
-        const data = part.data as { id: string; runId: string };
-        expect(data.id).toBe(`synthesis-${RUN_ID}`);
-        expect(data.runId).toBe(RUN_ID);
+        const data = parseUnknownRecord(part.data);
+        expect(data?.id).toBe(`synthesis-${RUN_ID}`);
+        expect(data?.runId).toBe(RUN_ID);
     });
 
     it("formats the embedding text with the expected sections", () => {
@@ -867,7 +817,8 @@ describe("readRunSynthesis", () => {
 
         const part = await readRunSynthesis({ workspaceRoot: root, runId: RUN_ID });
 
-        expect(part).toEqual(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis)) as never);
+        if (part === null) throw new Error("the synthesis record is on disk, so the read gives the part");
+        expect(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis))).toEqual(part);
         expect(part).toMatchObject({ type: "data-run-synthesis", id: `synthesis-${RUN_ID}` });
         expect(RunSynthesisPartSchema.safeParse(part).success).toBe(true);
         expect(part?.findings[0]?.references).toEqual(synthesis.findings[0]!.references);

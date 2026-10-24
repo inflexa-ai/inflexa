@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
@@ -9,6 +10,11 @@ const realFetch = globalThis.fetch;
 afterEach(() => {
     globalThis.fetch = realFetch;
 });
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 type SeenRequest = {
     readonly url: URL;
@@ -28,19 +34,19 @@ function envelope(status: number, code: string, message: string): Response {
 /** Route a stubbed fetch by URL substring, and record each request. Unmatched URLs 404. */
 function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>): SeenRequest[] {
     const seen: SeenRequest[] = [];
-    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    globalThis.fetch = fetchDouble(async (input, init) => {
         const request: SeenRequest = {
             url: new URL(String(input)),
             method: init?.method ?? "GET",
             authorization: new Headers(init?.headers).get("authorization"),
-            body: typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined,
+            body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {
             if (request.url.toString().includes(needle)) return make(request);
         }
         return envelope(404, "NOT_FOUND", "unrouted");
-    }) as typeof fetch;
+    });
     return seen;
 }
 
@@ -51,7 +57,7 @@ async function run(input: Record<string, unknown>) {
     const { ctx } = makeToolContext();
     // `Tool` erases the schema generic, so `parse` hands back `unknown`; the schema
     // and the execute input type come from one declaration in the tool module.
-    return tool.execute(tool.inputSchema.parse(input) as Parameters<typeof tool.execute>[0], ctx);
+    return tool.execute(tool.inputSchema.parse(input), ctx);
 }
 
 const GLEEVEC = "AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg";
@@ -74,16 +80,14 @@ describe("search_regulatory_approvals — the key", () => {
         const keyless = createSearchRegulatoryApprovalsTool({ apiKey: "" });
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }) as Parameters<typeof keyless.execute>[0], ctx)).rejects.toThrow(
-            /AMASS_API_KEY/,
-        );
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(/AMASS_API_KEY/);
         expect(seen).toHaveLength(0);
     });
 });
 
 describe("search_regulatory_approvals — action 'search'", () => {
     it("keeps 5 matched sections of a record, grouped by document, with the true count", async () => {
-        const base = (readFixture("amass", "regulatory-search.json") as { data: Array<Record<string, unknown>> }).data[0]!;
+        const base = z.object({ data: z.array(z.record(z.string(), z.unknown())) }).parse(readFixture("amass", "regulatory-search.json")).data[0]!;
         const label = { docType: "FDA_LABEL", textType: "Label", sourceUrl: "https://example.test/label.pdf", sourceDate: "2026-07-15" };
         const sections = Array.from({ length: 16 }, (_, i) => ({
             ...label,
@@ -177,7 +181,7 @@ describe("search_regulatory_approvals — action 'details'", () => {
     });
 
     it("gives not_found for an in-band lookup miss, with no get request", async () => {
-        const lookup = readFixture("amass", "regulatory-lookup.json") as { data: Array<{ error?: unknown }> };
+        const lookup = z.object({ data: z.array(z.looseObject({ error: z.unknown().optional() })) }).parse(readFixture("amass", "regulatory-lookup.json"));
         const seen = stubFetch([["/records/lookup", () => json({ data: lookup.data.filter((item) => item.error !== undefined) })]]);
 
         const result = (await run({ action: "details", emaProductNumber: "EMEA/H/C/999999" }))._unsafeUnwrap();
@@ -211,7 +215,9 @@ describe("search_regulatory_approvals — action 'details'", () => {
 
 describe("search_regulatory_approvals — action 'section'", () => {
     it("gives the full text of one section", async () => {
-        const fixture = readFixture("amass", "regulatory-section.json") as { data: { amassId: string; documentSectionId: string } };
+        const fixture = z
+            .looseObject({ data: z.looseObject({ amassId: z.string(), documentSectionId: z.string() }) })
+            .parse(readFixture("amass", "regulatory-section.json"));
         const { amassId, documentSectionId } = fixture.data;
         stubFetch([[`/document-sections/${documentSectionId}`, () => json(fixture)]]);
 

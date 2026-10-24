@@ -17,7 +17,7 @@
  * so misconfigured agents fail at startup, not at the first LLM call.
  */
 
-import type { Pool } from "pg";
+import type { Querier } from "../../state/db.js";
 
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -129,7 +129,7 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly sandboxClient: SandboxClient;
     readonly workspaceFs: WorkspaceFilesystem;
     /** Embedding provider for in-sandbox semantic `workspace_search`. Omit to skip that tool. */

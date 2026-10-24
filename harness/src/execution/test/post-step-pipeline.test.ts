@@ -11,7 +11,7 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
@@ -20,12 +20,13 @@ import type { RunSession } from "../../auth/types.js";
 import type { Logger } from "../../lib/logger.js";
 import { ProvenanceCollector } from "../../provenance/collector.js";
 import type { ProviderError } from "../../providers/errors.js";
-import type { AgentChat, EmbeddingProvider } from "../../providers/types.js";
+import type { EmbeddingProvider } from "../../providers/types.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import type { StepSummary } from "../../schemas/step-summary.js";
 import { createFileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 import { searchIndexName } from "../../workspace/search-config.js";
 import type { ArtifactRegistry } from "../artifact-registry.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { FileMetadataEntry } from "../artifact-metadata.js";
 import { vectorIndexStepOutputs, type PostStepPipelineDeps } from "../post-step-pipeline.js";
 import type { PostStepArtifacts, PostStepContext, SandboxStepInput } from "../../workflows/sandbox-step.js";
@@ -56,7 +57,17 @@ function makePostCtx(analysisId: string): PostStepContext {
     // The vector-index stage reads only `input.{analysisId,runId,stepId,agentId}`
     // and `session`; the remaining `SandboxStepInput` fields, the agent, and the
     // file-metadata cell never reach it.
-    const input = { analysisId, runId: RUN_ID, stepId: STEP_ID, agentId: AGENT_ID } as unknown as SandboxStepInput;
+    const input: SandboxStepInput = {
+        analysisId,
+        runId: RUN_ID,
+        stepId: STEP_ID,
+        agentId: AGENT_ID,
+        runSession: { ...makeRunSession(analysisId), runFrame: { runId: RUN_ID, stepId: STEP_ID } },
+        level: 0,
+        prompt: "",
+        parentWorkflowId: "wf-parent",
+        resources: { cpu: 1, memoryGb: 1 },
+    };
     return {
         input,
         session: makeRunSession(analysisId),
@@ -69,6 +80,16 @@ function makePostCtx(analysisId: string): PostStepContext {
     };
 }
 
+// The post-step seams this suite never drives refuse loudly instead of carrying a cast.
+const refusingRegistry: ArtifactRegistry = {
+    register() {
+        throw new Error("artifactRegistry: not driven by this test");
+    },
+    sync() {
+        throw new Error("artifactRegistry.sync: not driven by this test");
+    },
+};
+
 function makeDeps(pool: Pool, embedding: EmbeddingProvider, logger: Logger): PostStepPipelineDeps {
     // The vector-index stage consumes only pool, logger, and embedding; the other
     // post-step seams are never touched here.
@@ -76,8 +97,8 @@ function makeDeps(pool: Pool, embedding: EmbeddingProvider, logger: Logger): Pos
         pool,
         logger,
         embedding,
-        provider: {} as AgentChat,
-        artifactRegistry: {} as ArtifactRegistry,
+        provider: unusedChatProvider(),
+        artifactRegistry: refusingRegistry,
         resolveWorkspaceRoot: async (id) => id,
     };
 }
@@ -203,7 +224,7 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
 
         // A pool that rejects every query fails `ensureSearchIndex` before any item
         // is attempted; the real schema pool below is untouched.
-        const brokenPool = { query: () => Promise.reject(new Error("index setup boom")) } as unknown as Pool;
+        const brokenPool = Object.assign(new Pool(), { query: () => Promise.reject(new Error("index setup boom")) });
         const logger = createCapturingLogger();
         const deps = makeDeps(
             brokenPool,

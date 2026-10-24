@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 
 const REF = "to_3f9a2c41b8d605e7a1c0";
@@ -24,7 +26,10 @@ function digits(length: number): string {
 async function read(store: ToolOutputStore, input: Record<string, unknown>): Promise<Record<string, unknown>> {
     const tool = createReadToolOutputTool(store);
     const parsed = tool.inputSchema.parse(input);
-    return (await tool.execute(parsed, makeToolContext().ctx))._unsafeUnwrap() as Record<string, unknown>;
+    const out = (await tool.execute(parsed, makeToolContext().ctx))._unsafeUnwrap();
+    const record = parseUnknownRecord(out);
+    if (record === undefined) throw new Error("expected the tool output record");
+    return record;
 }
 
 describe("createReadToolOutputTool", () => {
@@ -66,7 +71,8 @@ describe("createReadToolOutputTool", () => {
         const result = await read(storeWith("b".repeat(1_000)), { ref: REF, pattern: "a*" });
 
         expect(result).toMatchObject({ status: "matches", end: 20, more: true });
-        expect((result.matches as unknown[]).length).toBe(20);
+        if (!isUnknownArray(result.matches)) throw new Error("expected the matches array");
+        expect(result.matches).toHaveLength(20);
     });
 
     it("gives no_matches for a pattern that the window does not hold", async () => {
@@ -91,7 +97,8 @@ describe("createReadToolOutputTool", () => {
         expect(JSON.stringify(result).length).toBeLessThanOrEqual(32_256);
         expect(Number(result.end)).toBeLessThan(16_384);
         expect(result.more).toBe(true);
-        expect((result.text as string).length).toBe(Number(result.end));
+        if (typeof result.text !== "string") throw new Error("expected the paged text");
+        expect(result.text.length).toBe(Number(result.end));
     });
 
     it("keeps a surrogate pair whole at each edge of a window", async () => {

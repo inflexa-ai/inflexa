@@ -10,6 +10,7 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_EXPORT_SIZES, CHART_INK } from "../../design.js";
 import { UPSET_INTERSECTION_LIMIT, UPSET_SET_LIMIT, upsetSummary } from "../upset.js";
+import { optionArray, optionAt, optionList, optionNumber, optionNumbers, optionOf, optionStrings, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -51,13 +52,13 @@ function refusal(rows: readonly ChartRow[], encoding: Encoding = ENCODING): stri
 }
 
 function seriesById(option: EchartOption, id: string): EchartOption {
-    const found = (option.series as EchartOption[]).find((entry) => entry.id === id);
+    const found = seriesOf(option).find((entry) => entry.id === id);
     if (found === undefined) throw new Error(`no series ${id}`);
     return found;
 }
 
 function axesOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption[] {
-    return option[key] as EchartOption[];
+    return optionArray(option, key);
 }
 
 function axisAt(option: EchartOption, key: "xAxis" | "yAxis", index: number): EchartOption {
@@ -157,9 +158,15 @@ describe("the upset figure on the LAML membership table", () => {
         expect(summary.intersections.reduce((sum, entry) => sum + entry.size, 0)).toBe(115);
         const option = derive(LAML_ROWS);
         const bars = seriesById(option, "intersections");
-        expect((bars.data as number[]).slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
-        expect((axisAt(option, "xAxis", bars.xAxisIndex as number).data as string[]).slice(0, 5)).toEqual(["FLT3", "IDH2", "DNMT3A", "TET2", "FLT3 & NPM1"]);
-        expect(axisAt(option, "xAxis", seriesById(option, "members").xAxisIndex as number).name).toBeUndefined();
+        expect(optionNumbers(bars.data).slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
+        expect(optionStrings(axisAt(option, "xAxis", optionNumber(bars.xAxisIndex)).data).slice(0, 5)).toEqual([
+            "FLT3",
+            "IDH2",
+            "DNMT3A",
+            "TET2",
+            "FLT3 & NPM1",
+        ]);
+        expect(axisAt(option, "xAxis", optionNumber(seriesById(option, "members").xAxisIndex)).name).toBeUndefined();
     });
 });
 
@@ -171,9 +178,9 @@ describe("the upset figure", () => {
         expect(bars.data).toEqual([3, 2, 1, 1, 1, 1]);
         expect(bars.label).toEqual(expect.objectContaining({ show: true, position: "top" }));
         expect(bars.itemStyle).toEqual({ color: CHART_INK });
-        const top = axisAt(option, "xAxis", bars.xAxisIndex as number);
+        const top = axisAt(option, "xAxis", optionNumber(bars.xAxisIndex));
         expect(top.data).toEqual(["DNMT3A", "FLT3 & NPM1", "FLT3", "IDH2", "DNMT3A & NPM1", "DNMT3A & FLT3 & NPM1"]);
-        expect(axisAt(option, "yAxis", bars.yAxisIndex as number).name).toBe("Intersection size");
+        expect(axisAt(option, "yAxis", optionNumber(bars.yAxisIndex)).name).toBe("Intersection size");
     });
 
     it("draws the dot matrix: a dark dot for each member set, a light dot for each other set, and a line that joins the member dots", () => {
@@ -182,7 +189,7 @@ describe("the upset figure", () => {
         const absent = seriesById(option, "absent");
         const joins = seriesById(option, "joins");
         // The set axis reads the largest set at the top.
-        const matrixY = axisAt(option, "yAxis", members.yAxisIndex as number);
+        const matrixY = axisAt(option, "yAxis", optionNumber(members.yAxisIndex));
         expect(matrixY).toMatchObject({ type: "category", inverse: true, data: ["DNMT3A", "FLT3", "NPM1", "IDH2"] });
         expect(members.data).toEqual([
             [0, 0],
@@ -197,8 +204,8 @@ describe("the upset figure", () => {
             [5, 2],
         ]);
         expect(members.itemStyle).toEqual(expect.objectContaining({ color: CHART_INK }));
-        expect((absent.data as unknown[]).length).toBe(6 * 4 - 10);
-        expect((absent.itemStyle as EchartOption).color).not.toBe(CHART_INK);
+        expect(optionList(absent.data).length).toBe(6 * 4 - 10);
+        expect(optionAt(absent, "itemStyle").color).not.toBe(CHART_INK);
         // A line joins the top and the bottom member dot of each intersection of two sets or more.
         expect(joins.type).toBe("lines");
         expect(joins.data).toEqual([
@@ -222,8 +229,8 @@ describe("the upset figure", () => {
             },
         ]);
         // The matrix and the bars share the intersection axis.
-        expect(axisAt(option, "xAxis", members.xAxisIndex as number).data).toEqual(
-            axisAt(option, "xAxis", seriesById(option, "intersections").xAxisIndex as number).data,
+        expect(axisAt(option, "xAxis", optionNumber(members.xAxisIndex)).data).toEqual(
+            axisAt(option, "xAxis", optionNumber(seriesById(option, "intersections").xAxisIndex)).data,
         );
     });
 
@@ -231,15 +238,15 @@ describe("the upset figure", () => {
         const option = derive();
         const sets = seriesById(option, "sets");
         expect(sets.data).toEqual([5, 4, 4, 1]);
-        const valueX = axisAt(option, "xAxis", sets.xAxisIndex as number);
+        const valueX = axisAt(option, "xAxis", optionNumber(sets.xAxisIndex));
         expect(valueX).toMatchObject({ type: "value", inverse: true, name: "Set size" });
-        const setY = axisAt(option, "yAxis", sets.yAxisIndex as number);
+        const setY = axisAt(option, "yAxis", optionNumber(sets.yAxisIndex));
         expect(setY).toMatchObject({ type: "category", inverse: true, data: ["DNMT3A", "FLT3", "NPM1", "IDH2"], show: false });
         // The three grids line up: the set bars share the rows of the matrix, and the top bars share its columns.
-        const grids = option.grid as EchartOption[];
-        const matrix = grids[seriesById(option, "members").xAxisIndex as number];
-        const left = grids[sets.xAxisIndex as number];
-        const top = grids[seriesById(option, "intersections").xAxisIndex as number];
+        const grids = optionArray(option, "grid");
+        const matrix = grids[optionNumber(seriesById(option, "members").xAxisIndex)];
+        const left = grids[optionNumber(sets.xAxisIndex)];
+        const top = grids[optionNumber(seriesById(option, "intersections").xAxisIndex)];
         if (matrix === undefined || left === undefined || top === undefined) throw new Error("the option holds fewer than three grids");
         expect(left.top).toBe(matrix.top);
         expect(left.bottom).toBe(matrix.bottom);
@@ -250,30 +257,30 @@ describe("the upset figure", () => {
     it("draws the largest intersections alone past the cap, and the axis title states the hidden count", () => {
         const option = derive(manyIntersections(40));
         const bars = seriesById(option, "intersections");
-        expect(bars.data as unknown[]).toHaveLength(UPSET_INTERSECTION_LIMIT);
-        const matrixX = axisAt(option, "xAxis", seriesById(option, "members").xAxisIndex as number);
+        expect(optionList(bars.data)).toHaveLength(UPSET_INTERSECTION_LIMIT);
+        const matrixX = axisAt(option, "xAxis", optionNumber(seriesById(option, "members").xAxisIndex));
         expect(matrixX.name).toBe(`Intersections: ${UPSET_INTERSECTION_LIMIT} of 40 shown`);
-        expect(axisAt(option, "xAxis", bars.xAxisIndex as number).name).toBeUndefined();
+        expect(axisAt(option, "xAxis", optionNumber(bars.xAxisIndex)).name).toBeUndefined();
     });
 
     it("states no intersection title where each intersection draws", () => {
         const option = derive();
-        expect(axisAt(option, "xAxis", seriesById(option, "members").xAxisIndex as number).name).toBeUndefined();
+        expect(axisAt(option, "xAxis", optionNumber(seriesById(option, "members").xAxisIndex)).name).toBeUndefined();
     });
 
     it("sizes the dots for each export through one media rule for each export size", () => {
         const option = derive(manyIntersections(40));
-        const media = option.media as EchartOption[];
-        const single = media.find((rule) => (rule.query as EchartOption).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
+        const media = optionArray(option, "media");
+        const single = media.find((rule) => optionAt(rule, "query").maxWidth === CHART_EXPORT_SIZES.single.widthPx);
         expect(single).toBeDefined();
-        const singleOption = single?.option as EchartOption;
-        const series = singleOption.series as EchartOption[];
-        const place = (option.series as EchartOption[]).findIndex((entry) => entry.id === "members");
-        const pageDot = seriesById(option, "members").symbolSize as number;
+        const singleOption = optionAt(optionOf(single), "option");
+        const series = seriesOf(singleOption);
+        const place = seriesOf(option).findIndex((entry) => entry.id === "members");
+        const pageDot = optionNumber(seriesById(option, "members").symbolSize);
         const drawn = series[place];
         if (drawn === undefined) throw new Error("the media option holds no members series");
-        expect(drawn.symbolSize as number).toBeLessThan(pageDot);
-        expect(drawn.symbolSize as number).toBeGreaterThan(1);
+        expect(optionNumber(drawn.symbolSize)).toBeLessThan(pageDot);
+        expect(optionNumber(drawn.symbolSize)).toBeGreaterThan(1);
     });
 
     it("gives the same option for the same rows", () => {

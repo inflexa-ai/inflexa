@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
 import type { AgentSession } from "../../auth/types.js";
@@ -94,7 +94,7 @@ function fakeDb(
 ): FakeDb {
     const state = { run, swept: 0, ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })) };
     let stepReads = 0;
-    const pool = {
+    const pool = Object.assign(new Pool(), {
         query: async ({ text, values }: { text: string; values?: unknown[] }) => {
             if (text.includes("UPDATE cortex_step_executions")) {
                 if (text.includes("SET status = 'skipped'")) {
@@ -108,9 +108,10 @@ function fakeDb(
                     // The statement's guard: only a row that is still running changes.
                     for (const row of state.ledger) {
                         if (row.status !== "running") continue;
-                        const startedAt = row.started_at as string | null;
-                        const durationMs = startedAt === null ? null : Date.parse(values?.[1] as string) - Date.parse(startedAt);
-                        Object.assign(row, { status: "canceled", completed_at: values?.[1], duration_ms: durationMs, error: values?.[2] });
+                        const finishedAt = values?.[1];
+                        const durationMs =
+                            typeof row.started_at === "string" && typeof finishedAt === "string" ? Date.parse(finishedAt) - Date.parse(row.started_at) : null;
+                        Object.assign(row, { status: "canceled", completed_at: finishedAt, duration_ms: durationMs, error: values?.[2] });
                     }
                     return { rowCount: 0 };
                 }
@@ -138,7 +139,7 @@ function fakeDb(
             }
             throw new Error(`unexpected query: ${text}`);
         },
-    } as unknown as Pool;
+    });
     return { pool, state };
 }
 
@@ -306,7 +307,8 @@ describe("createRunCanceler", () => {
         // write must refuse the clobber and the result must report the truth.
         const db = fakeDb(runRow());
         const { cancelWorkflows } = recordingCancel(() => {
-            db.state.run = { ...(db.state.run as Row), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
+            if (db.state.run === null) throw new Error("the run row exists");
+            db.state.run = { ...db.state.run, status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
         });
         const { charge } = recordingCharge();
         const { authorizer } = recordingAuthorizer();
@@ -326,7 +328,8 @@ describe("createRunCanceler", () => {
     it("closes no charge and revokes no mandate when the body won the row, and reports both converged", async () => {
         const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[pendingRow("waiting")]]);
         const { cancelWorkflows } = recordingCancel(() => {
-            db.state.run = { ...(db.state.run as Row), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
+            if (db.state.run === null) throw new Error("the run row exists");
+            db.state.run = { ...db.state.run, status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
         });
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
@@ -401,7 +404,8 @@ describe("createRunCanceler", () => {
         const { authorizer } = recordingAuthorizer();
         const { cancelWorkflows } = recordingCancel(() => {
             const child = db.state.ledger.find((row) => row.step_id === "done-first");
-            Object.assign(child as Row, { status: "completed", completed_at: "2026-08-12T00:00:05.000Z", duration_ms: 4000 });
+            if (!child) throw new Error("the child row exists");
+            Object.assign(child, { status: "completed", completed_at: "2026-08-12T00:00:05.000Z", duration_ms: 4000 });
         });
         const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
 
@@ -593,7 +597,8 @@ describe("createRunCanceler run end record", () => {
     it("emits nothing when the run completes between the read and the terminal write", async () => {
         const db = fakeDb(runRow(), [[stepRow("cut", "wf-child-1")]]);
         const { cancelWorkflows } = recordingCancel(() => {
-            db.state.run = { ...(db.state.run as Row), status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
+            if (db.state.run === null) throw new Error("the run row exists");
+            db.state.run = { ...db.state.run, status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
         });
         const { charge } = recordingCharge();
         const { authorizer } = recordingAuthorizer();
@@ -809,7 +814,8 @@ describe("createRunCanceler recorded run end", () => {
             const { db, canceler, received } = setup({
                 record: recordedEnd(),
                 onRead: (fake) => {
-                    fake.state.run = { ...(fake.state.run as Row), status: "partial", completed_at: "2026-08-12T02:00:00.000Z" };
+                    if (fake.state.run === null) throw new Error("the run row exists");
+                    fake.state.run = { ...fake.state.run, status: "partial", completed_at: "2026-08-12T02:00:00.000Z" };
                 },
             });
 

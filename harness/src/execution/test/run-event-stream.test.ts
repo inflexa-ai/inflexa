@@ -23,6 +23,9 @@ import type { RunStatus } from "../../state/schema.js";
 import { insertStepExecution, queryStepsByRun } from "../../state/step-executions.js";
 import { createRunEventStream, type RunEventRunRead, type RunEventStreamDeps } from "../run-event-stream.js";
 
+// The summary arm the reads narrow to.
+type StepSummaryPart = Extract<ChatPart, { type: "data-step-summary" }>;
+
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
 }
@@ -184,8 +187,9 @@ describe("run-event stream — one workflow", () => {
         );
 
         expect(typesOf(seen)).toEqual(["data-dag-state", "data-step-summary", "data-step-summary", "data-run-completed"]);
-        expect((seen[1] as { markdown: string }).markdown).toBe("first");
-        expect((seen[2] as { markdown: string }).markdown).toBe("second");
+        const summaries = seen.filter((p): p is StepSummaryPart => p.type === "data-step-summary");
+        expect(summaries[0]?.markdown).toBe("first");
+        expect(summaries[1]?.markdown).toBe("second");
     });
 
     it("drops values that are not chat data parts and keeps reading", async () => {
@@ -290,7 +294,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await settlesWithin(stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }), 20_000, "fan-in subscription");
 
         // Ordering holds within a stream, not across them — assert on the set.
-        const summaries = seen.filter((p) => p.type === "data-step-summary").map((p) => (p as { markdown: string }).markdown);
+        const summaries = seen.filter((p): p is StepSummaryPart => p.type === "data-step-summary").map((p) => p.markdown);
         expect(summaries.sort()).toEqual(["A", "B"]);
         expect(typesOf(seen).filter((t) => t === "data-run-completed")).toHaveLength(1);
         expect(typesOf(seen).filter((t) => t === "data-step-activity")).toHaveLength(1);
@@ -321,7 +325,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await parent.getResult();
         await settlesWithin(subscription, 20_000, "subscription after the run finished");
 
-        expect((seen.find((p) => p.type === "data-step-summary") as { markdown: string }).markdown).toBe("late child");
+        expect(seen.find((p): p is StepSummaryPart => p.type === "data-step-summary")?.markdown).toBe("late child");
         expect(typesOf(seen)).toContain("data-run-completed");
     });
 
@@ -435,10 +439,10 @@ describe("run-event stream — lifecycle", () => {
 
         // The history the subscriber missed is replayed...
         expect(typesOf(seen)).toContain("data-dag-state");
-        expect((seen.find((p) => p.type === "data-step-summary") as { markdown: string }).markdown).toBe("early summary");
+        expect(seen.find((p): p is StepSummaryPart => p.type === "data-step-summary")?.markdown).toBe("early summary");
         // ...and the reconciling activity ends on the run's current value.
-        const activities = seen.filter((p) => p.type === "data-step-activity");
-        expect((activities.at(-1) as { phase: string }).phase).toBe("complete");
+        const activities = activitiesOf(seen);
+        expect(activities.at(-1)?.phase).toBe("complete");
         expect(typesOf(seen)).toContain("data-run-completed");
     });
 });

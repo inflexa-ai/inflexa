@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Pool } from "pg";
+import type { Querier } from "../../state/db.js";
 
 import { err, errAsync, okAsync } from "neverthrow";
 
@@ -21,8 +21,25 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import { STEP_SUBDIRS, type MountPlanCoords } from "../mount-plan.js";
 import { describeSandboxError, keepSuspendingRefusal, SandboxFailure, type SandboxError } from "../sandbox-error.js";
 import type { FarmSource, SandboxLabels, SandboxSpec } from "../types.js";
-import type { SpawnSession } from "../../auth/types.js";
+import type { RunSession, SpawnSession } from "../../auth/types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
+
+/** The composed client never drives the backend ops in these tests; each member throws, so a surprise call fails the test. */
+function unusedOps(): ReturnType<typeof k8sClient.createK8sSandboxOps> {
+    const unreachable = (): never => {
+        throw new Error("ops: not driven by the create-sandbox-client tests");
+    };
+    return {
+        createSandbox: unreachable,
+        teardown: unreachable,
+        teardownById: unreachable,
+        isAlive: unreachable,
+        isAliveById: unreachable,
+        listManagedSandboxes: unreachable,
+    };
+}
+
+const unusedPool: Querier = { query: async () => ({ rows: [], rowCount: 0 }) };
 
 describe("precreateStepTree — step-tree access mode", () => {
     let root: string;
@@ -131,11 +148,11 @@ describe("createSandboxClient — the k8s libs root threading", () => {
         const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
             captured = cfg;
             // The client is never used — the test ends at the composed config.
-            return {} as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>;
+            return unusedOps();
         });
         try {
             createSandboxClient({
-                pool: {} as unknown as Pool,
+                pool: unusedPool,
                 env: { backend: "k8s", namespace: "sandbox" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -163,7 +180,7 @@ describe("createSandboxClient — the k8s libs root threading", () => {
 describe("createSandboxClient — the required-store fact", () => {
     const FIXED: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
     const base = {
-        pool: {} as unknown as Pool,
+        pool: unusedPool,
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
         resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
@@ -176,11 +193,11 @@ describe("createSandboxClient — the required-store fact", () => {
         let dockerConfig: dockerClient.DockerClientConfig | null = null;
         const k8sSpy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation((cfg) => {
             k8sConfig = cfg;
-            return {} as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>;
+            return unusedOps();
         });
         const dockerSpy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation((cfg) => {
             dockerConfig = cfg;
-            return {} as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>;
+            return unusedOps();
         });
         try {
             createSandboxClient({
@@ -250,7 +267,7 @@ describe("createSandboxClient — the required-store fact", () => {
     });
 
     test("a k8s per-analysis source with no libs mountpoint composes, because the resolver owes the proof", () => {
-        const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation(() => ({}) as unknown as ReturnType<typeof k8sClient.createK8sSandboxOps>);
+        const spy = spyOn(k8sClient, "createK8sSandboxOps").mockImplementation(() => unusedOps());
         try {
             expect(() =>
                 createSandboxClient({
@@ -281,12 +298,10 @@ describe("createSandboxClient — a spawn failure is a value", () => {
             lockError: "lock_invalid",
             cause: new Error("Unexpected token o in JSON at position 1"),
         };
-        const spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(
-            () => ({ createSandbox: () => errAsync(variant) }) as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>,
-        );
+        const spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(() => ({ ...unusedOps(), createSandbox: () => errAsync(variant) }));
         try {
             const client = createSandboxClient({
-                pool: {} as unknown as Pool,
+                pool: unusedPool,
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -314,7 +329,8 @@ describe("createSandboxClient — a spawn failure is a value", () => {
             // The barrel hands an embedder the same class, thus its `instanceof`
             // holds without a deep import.
             expect(thrown).toBeInstanceOf(BarrelSandboxFailure);
-            const failure = thrown as SandboxFailure;
+            if (!(thrown instanceof SandboxFailure)) throw new Error("expected a SandboxFailure");
+            const failure = thrown;
             // The message is the whole description — the head and the reason of
             // the cause — not the bare `type` a `ResultError` would render.
             expect(failure.message).toBe(describeSandboxError(variant));
@@ -344,15 +360,13 @@ describe("createSandboxClient — the label hook", () => {
     beforeEach(async () => {
         root = await mkdtemp(join(tmpdir(), "harness-labels-"));
         calls = [];
-        spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(
-            () =>
-                ({
-                    createSandbox: (session: SpawnSession, spec: SandboxSpec, _identity: unknown, hostLabels: SandboxLabels) => {
-                        calls.push({ session, spec, hostLabels });
-                        return okAsync(REF);
-                    },
-                }) as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>,
-        );
+        spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(() => ({
+            ...unusedOps(),
+            createSandbox: (session, spec, _identity, hostLabels) => {
+                calls.push({ session, spec, hostLabels });
+                return okAsync(REF);
+            },
+        }));
     });
     afterEach(async () => {
         spy.mockRestore();
@@ -361,7 +375,7 @@ describe("createSandboxClient — the label hook", () => {
 
     const clientWith = (resolveSandboxLabels?: Parameters<typeof createSandboxClient>[0]["resolveSandboxLabels"]) =>
         createSandboxClient({
-            pool: {} as unknown as Pool,
+            pool: unusedPool,
             env: { backend: "docker", namespace: "default" },
             image: "sandbox-base:latest",
             resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -377,9 +391,9 @@ describe("createSandboxClient — the label hook", () => {
     });
 
     test("the hook gets the session of the spawn, and its labels reach the backend as the hook gives them", async () => {
-        const seen: SpawnSession[] = [];
+        const seen: RunSession[] = [];
         const client = clientWith((session) => {
-            seen.push(session as SpawnSession);
+            seen.push(session);
             return okAsync({ "example.com/tenant": "acme" });
         });
 
@@ -418,7 +432,7 @@ describe("createSandboxClient — engine connection threading", () => {
 
         try {
             const client = createSandboxClient({
-                pool: {} as unknown as Pool,
+                pool: unusedPool,
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -439,7 +453,7 @@ describe("createSandboxClient — engine connection threading", () => {
 
 describe("createSandboxClient — the toolchain on the client", () => {
     const base = {
-        pool: {} as unknown as Pool,
+        pool: unusedPool,
         env: { backend: "docker" as const, namespace: "" },
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },

@@ -5,16 +5,20 @@ import { parseReference, serializeReference, type ParseReferenceError, type Refe
 const HASH = `sha256:${"a".repeat(64)}`;
 
 /**
- * serializeReference validates nothing; it only encodes. A cast lets a test feed a malformed object
- * through the exact wire encoding, then assert that parseReference rejects it on the way back.
+ * serializeReference validates nothing; it only encodes. A test feeds a malformed object through the exact
+ * wire encoding, then asserts that parseReference rejects it on the way back. The call rides
+ * `Reflect.apply` because the malformed object deliberately fails the `Reference` type that no
+ * complete builder can satisfy.
  */
 function encodeUnchecked(value: unknown): string {
-    return serializeReference(value as unknown as Reference);
+    const encoded: unknown = Reflect.apply(serializeReference, undefined, [value]);
+    if (typeof encoded !== "string") throw new Error("serializeReference returned a non-string");
+    return encoded;
 }
 
 /** Assert that a reference survives a serialize then parse round trip unchanged. */
 function expectRoundTrip(reference: Reference): void {
-    const parsed = parseReference(serializeReference(reference));
+    const parsed = parseReference(encodeUnchecked(reference));
     expect(parsed.isOk()).toBe(true);
     expect(parsed._unsafeUnwrap()).toEqual(reference);
 }
@@ -175,8 +179,8 @@ describe("parseReference — error outcomes", () => {
 
 describe("the row bound of a table binding", () => {
     /** One whole-table binding with the given row bound. */
-    function bounded(rowBound: unknown): Reference {
-        return { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH, rowBound } as unknown as Reference;
+    function bounded<B>(rowBound: B): { kind: "artifact-table"; path: string; hash: string; rowBound: B } {
+        return { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: HASH, rowBound };
     }
 
     it("round-trips a bound of the top rows by a column", () => {

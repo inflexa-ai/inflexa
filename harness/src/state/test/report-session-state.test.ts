@@ -370,8 +370,8 @@ describe("createReportSessionStateStore", () => {
         const second = await pool.connect();
         try {
             // The store calls `query` alone, thus a pooled client stands in for the pool here.
-            const firstStore = createReportSessionStateStore({ pool: first as unknown as Pool });
-            const secondStore = createReportSessionStateStore({ pool: second as unknown as Pool });
+            const firstStore = createReportSessionStateStore({ pool: first });
+            const secondStore = createReportSessionStateStore({ pool: second });
             const record = derivation("race.csv");
 
             await first.query("BEGIN");

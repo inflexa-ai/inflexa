@@ -4,6 +4,7 @@ import * as echarts from "echarts";
 import { CHART_RENDERERS_SOURCE } from "../chart-renderers.js";
 import { CHART_EXPORT_SIZES, CHART_PRINT_THEME_NAME, CHART_PRINT_TEXT_PX, chartTheme } from "../design.js";
 import { composeHybridSvg, holdsPointLayer, HYBRID_SVG_SOURCE, isPointLayer, millimeterRoot, type PointLayerImage, type SvgRootSize } from "../hybrid-svg.js";
+import { optionList, optionNumber, optionOf, optionsOf } from "./options.js";
 
 /** The page functions of the fragment, as the bootstrap runs them. The export option comes from the renderer fragment. */
 function pageTwin(document?: unknown): {
@@ -15,10 +16,73 @@ function pageTwin(document?: unknown): {
     box: (chart: unknown, option: Record<string, unknown>, width: number, height: number) => LayerBox | null;
     hybrid: (runtime: unknown, option: Record<string, unknown>, size: Record<string, unknown>) => string | null;
 } {
-    return new Function(
+    const made: unknown = new Function(
         "document",
-        `${CHART_RENDERERS_SOURCE}\n${HYBRID_SVG_SOURCE}\nreturn { isPointLayer: reportIsPointLayer, millimeterRoot: reportMillimeterRoot, compose: reportComposeHybridSvg, vector: reportHybridVectorOption, raster: reportHybridRasterOption, box: reportPointLayerBox, hybrid: reportHybridSvg };`,
-    ).call(undefined, document) as ReturnType<typeof pageTwin>;
+        `${SOURCE}\nreturn { isPointLayer: reportIsPointLayer, millimeterRoot: reportMillimeterRoot, compose: reportComposeHybridSvg, vector: reportHybridVectorOption, raster: reportHybridRasterOption, box: reportPointLayerBox, hybrid: reportHybridSvg };`,
+    ).call(undefined, document);
+    const page = optionOf(made);
+    const fn = (name: string): ((...args: unknown[]) => unknown) => {
+        const member = page[name];
+        if (typeof member !== "function") throw new Error(`the page source holds no ${name}`);
+        return (...args: unknown[]) => {
+            const given: unknown = Reflect.apply(member, undefined, args);
+            return given;
+        };
+    };
+    return {
+        isPointLayer: (series: unknown): boolean => {
+            const told: unknown = fn("isPointLayer")(series);
+            if (typeof told !== "boolean") throw new Error("the page isPointLayer gave no boolean");
+            return told;
+        },
+        millimeterRoot: (svg: string, size: SvgRootSize): string => pageText(fn("millimeterRoot")(svg, size), "millimeter root"),
+        compose: (svg: string, layer: PointLayerImage, size: SvgRootSize): string => pageText(fn("compose")(svg, layer, size), "hybrid compose"),
+        vector: (option: Record<string, unknown>): Record<string, unknown> => optionOf(fn("vector")(option)),
+        raster: (option: Record<string, unknown>, layer: unknown): Record<string, unknown> => optionOf(fn("raster")(option, layer)),
+        box: (chart: unknown, option: Record<string, unknown>, width: number, height: number): LayerBox | null =>
+            layerBoxOf(fn("box")(chart, option, width, height)),
+        hybrid: (runtime: unknown, option: Record<string, unknown>, size: Record<string, unknown>): string | null =>
+            hybridText(fn("hybrid")(runtime, option, size)),
+    };
+}
+
+/** The text that one page build member gives, or a failed test. */
+function pageText(value: unknown, what: string): string {
+    if (typeof value !== "string") throw new Error(`the page ${what} gave no text`);
+    return value;
+}
+
+const SOURCE = `${CHART_RENDERERS_SOURCE}\n${HYBRID_SVG_SOURCE}`;
+
+/** The text that the page build gives, or `null` when it builds no hybrid file. */
+function hybridText(value: unknown): string | null {
+    if (typeof value === "string") return value;
+    if (value === null) return null;
+    throw new Error("the page build gave no hybrid file");
+}
+
+/** The rectangle that one measured box carries, as numbers. */
+function rectOf(value: unknown): Box {
+    const rect = optionOf(value);
+    return { x: optionNumber(rect.x), y: optionNumber(rect.y), width: optionNumber(rect.width), height: optionNumber(rect.height) };
+}
+
+/** The extents that one measured axis carries, or a failed test. */
+function extentsOf(value: unknown): ({ min: number; max: number } | undefined)[] {
+    return optionList(value).map((extent) =>
+        extent === undefined ? undefined : { min: optionNumber(optionOf(extent).min), max: optionNumber(optionOf(extent).max) },
+    );
+}
+
+/** The measured layer that the page box reader built, or `null` when it measured nothing. */
+function layerBoxOf(value: unknown): LayerBox | null {
+    if (value === null) return null;
+    const layer = optionOf(value);
+    return {
+        boxes: Object.fromEntries(Object.entries(optionOf(layer.boxes)).map(([name, box]) => [name, rectOf(box)])),
+        extents: { xAxis: extentsOf(optionOf(layer.extents).xAxis), yAxis: extentsOf(optionOf(layer.extents).yAxis) },
+        box: rectOf(layer.box),
+    };
 }
 
 type Box = {
@@ -169,18 +233,18 @@ describe("the two draws of a hybrid SVG", () => {
     it("empties each point layer of the vector draw, and keeps each labeled row and two anchors at the extent", () => {
         const input = denseOption();
         const vector = pageTwin().vector(input);
-        const series = vector.series as Record<string, unknown>[];
-        expect(series[0]?.data).toEqual([
+        const series = optionList(vector.series);
+        expect(optionList(optionOf(series[0]).data)).toEqual([
             { value: ["300", 9], name: "rs2", label: { show: true, formatter: "{b}" } },
             { value: [100, 2], symbol: "none", label: { show: false } },
             { value: [300, 9], symbol: "none", label: { show: false } },
         ]);
-        expect(series[0]?.markLine).toEqual({ data: [{ yAxis: 7.3 }] });
+        expect(optionOf(series[0]).markLine).toEqual({ data: [{ yAxis: 7.3 }] });
         // A large layer draws each item alike, thus the vector draw turns the large path off and the anchors draw no symbol.
         expect(series[1]).toMatchObject({ large: false, data: [{ value: [500, 1] }, { value: [900, 4] }] });
         // A name series is no point layer, thus the vector draw keeps it as it is.
-        const nameSeries = (input.series as unknown[])[2];
-        expect(nameSeries).toBe(series[2]);
+        const nameSeries = optionList(input.series)[2];
+        expect(series[2]).toBe(nameSeries);
         expect(vector.graphic).toBe(input.graphic);
     });
 
@@ -191,15 +255,14 @@ describe("the two draws of a hybrid SVG", () => {
             box: {},
         };
         const raster = pageTwin().raster(denseOption(), layer);
-        const series = raster.series as Record<string, unknown>[];
-        expect(series.map((entry) => (entry.data as unknown[]).length)).toEqual([2, 2, 0]);
+        const series = optionList(raster.series);
+        expect(series.map((entry) => optionList(optionOf(entry).data).length)).toEqual([2, 2, 0]);
         // The labeled row draws its point in the raster, and its name draws in the vector file alone.
-        const firstData = series[0]?.data;
-        expect((firstData as Record<string, unknown>[])[1]).toEqual({ value: ["300", 9], name: "rs2" });
+        expect(optionList(optionOf(series[0]).data)[1]).toEqual({ value: ["300", 9], name: "rs2" });
         for (const entry of series) {
-            expect(entry.markLine).toBeUndefined();
-            expect(entry.label).toEqual({ show: false });
-            expect(entry.progressive).toBe(0);
+            expect(optionOf(entry).markLine).toBeUndefined();
+            expect(optionOf(entry).label).toEqual({ show: false });
+            expect(optionOf(entry).progressive).toBe(0);
         }
         expect(raster.grid).toEqual([{ left: 60, top: 24, width: 252, height: 181, containLabel: false, outerBoundsMode: "none" }]);
         expect(raster.xAxis).toEqual({ type: "value", name: "Chromosome", scale: true, show: false, min: 0, max: 1000 });
@@ -223,16 +286,18 @@ describe("the two draws of a hybrid SVG", () => {
         const empty = measured(pageTwin().vector(denseOption()));
         // The grid stands 60 from the left, 24 from the right and the top, and 48 from the bottom. The layer
         // reaches past it by half of the symbol of 3 pixels, up to a whole pixel, thus an edge point keeps its symbol.
-        const grid = empty?.boxes[0] as Box;
+        const grid = empty?.boxes[0];
+        if (grid === undefined) throw new Error("the empty draw measured no grid");
         expect([grid.x, grid.y, grid.x + grid.width, grid.y + grid.height].map((edge) => Math.round(edge * 100) / 100)).toEqual([60, 24, 312, 205]);
-        const box = empty?.box as Box;
+        const box = empty?.box;
+        if (box === undefined) throw new Error("the empty draw measured no box");
         expect([box.x, box.y, box.x + box.width, box.y + box.height].map((edge) => Math.round(edge * 100) / 100)).toEqual([58, 22, 314, 207]);
         // The x axis rounds the extent of its data to 0 and 1000. The anchors keep that extent in the draw with
         // no point, thus each point of the raster lands where the full draw puts it.
         const [x] = empty?.extents.xAxis ?? [];
         expect([x?.min, x?.max].map((end) => Math.round(end ?? NaN))).toEqual([0, 1000]);
-        expect(empty?.extents).toEqual(full?.extents as LayerBox["extents"]);
-        expect(empty?.box).toEqual(full?.box as Box);
+        expect(empty?.extents).toEqual(full?.extents);
+        expect(empty?.box).toEqual(full?.box);
     });
 });
 
@@ -286,7 +351,8 @@ describe("the grid of a facet panel with an empty layer", () => {
     it("seeds each grid from a layer that holds rows, thus a panel whose first layer is empty keeps its rectangle", () => {
         const layer = measured(facetOption());
         expect(layer).not.toBeNull();
-        const [left, right] = [layer?.boxes[0] as Box, layer?.boxes[1] as Box];
+        const [left, right] = [layer?.boxes[0], layer?.boxes[1]];
+        if (left === undefined || right === undefined) throw new Error("the measured layer holds two boxes");
         expect([left.x, left.x + left.width].map((edge) => Math.round(edge))).toEqual([40, 160]);
         expect([right.x, right.x + right.width].map((edge) => Math.round(edge))).toEqual([196, 316]);
         expect(layer?.extents.xAxis.map((extent) => extent !== undefined)).toEqual([true, true]);
@@ -294,9 +360,12 @@ describe("the grid of a facet panel with an empty layer", () => {
 
     it("measures no rectangle for a grid whose each layer is empty, because no point draws there", () => {
         const option = facetOption();
-        const series = option.series as Record<string, unknown>[];
-        series[4] = { ...series[4], data: [] };
-        series[5] = { ...series[5], data: [] };
+        const series = optionList(option.series);
+        const fourth = series[4];
+        const fifth = series[5];
+        if (fourth === undefined || fifth === undefined) throw new Error("the option holds six series");
+        series[4] = { ...optionOf(fourth), data: [] };
+        series[5] = { ...optionOf(fifth), data: [] };
         const layer = measured(option);
         expect(layer).not.toBeNull();
         expect(Object.keys(layer?.boxes ?? {})).toEqual(["0"]);
@@ -304,12 +373,12 @@ describe("the grid of a facet panel with an empty layer", () => {
 
     it("measures nothing for an option whose each point layer is empty", () => {
         const option = facetOption();
-        option.series = (option.series as Record<string, unknown>[]).map((entry) => ({ ...entry, data: [] }));
+        option.series = optionsOf(option.series).map((entry) => ({ ...entry, data: [] }));
         expect(measured(option)).toBeNull();
     });
 
     it("keeps an empty layer a point layer in both twins, because the payload fills the rows on the page", () => {
-        const empty = (facetOption().series as unknown[])[3];
+        const empty = optionList(facetOption().series)[3];
         expect(isPointLayer(empty)).toBe(true);
         expect(pageTwin().isPointLayer(empty)).toBe(true);
     });
@@ -335,7 +404,13 @@ describe("the grid of a facet panel with an empty layer", () => {
         };
         const layer = measured(option);
         expect(layer).not.toBeNull();
-        const boxes = lefts.map((_left, index) => layer?.boxes[index] as Box);
+        const layerBoxes = layer?.boxes;
+        if (layerBoxes === undefined) throw new Error("the measured layer holds no boxes");
+        const boxes = lefts.map((_left, index) => {
+            const box = layerBoxes[index];
+            if (box === undefined) throw new Error(`the measured layer holds no box at ${index}`);
+            return box;
+        });
         expect(boxes.map((box) => [box.x, box.x + box.width].map((edge) => Math.round(edge)))).toEqual(lefts.map((left) => [left, left + 60]));
     });
 });
@@ -367,8 +442,9 @@ describe("the reach of the point layer past its grid", () => {
         const chart = echarts.init(null, undefined, { renderer: "svg", ssr: true, width: 336, height: 253 });
         try {
             chart.setOption(page.vector(option));
-            const box = page.box(chart, option, 336, 253)?.box as Box;
-            return [box.x, box.y, box.x + box.width, box.y + box.height].map((edge) => Math.round(edge));
+            const layer = page.box(chart, option, 336, 253);
+            if (layer === null) throw new Error("the page measured no layer box");
+            return [layer.box.x, layer.box.y, layer.box.x + layer.box.width, layer.box.y + layer.box.height].map((edge) => Math.round(edge));
         } finally {
             chart.dispose();
         }
@@ -391,6 +467,15 @@ describe("the reach of the point layer past its grid", () => {
 });
 
 describe("the page build of a hybrid SVG", () => {
+    /** The echarts options that the page asks for at the raster draw, read from its plain record. */
+    function pageInitOpts(opts: Record<string, unknown>): { renderer: "svg"; ssr: true; width: number; height: number } {
+        const width = opts.width;
+        const height = opts.height;
+        if (opts.ssr !== true || typeof width !== "number" || typeof height !== "number")
+            throw new Error("the page asked for a raster draw without an SSR pixel size");
+        return { renderer: "svg", ssr: true, width, height };
+    }
+
     it("draws the vector file, crops the raster at the grid, and puts one image into the file at the column size", () => {
         echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
         const size = CHART_EXPORT_SIZES.single;
@@ -398,7 +483,7 @@ describe("the page build of a hybrid SVG", () => {
         const drawn: Array<[number, number, number, number]> = [];
         const runtime = {
             init: (dom: unknown, theme: string, opts: Record<string, unknown>) => {
-                if (opts.renderer === "svg") return echarts.init(null, theme, opts as { renderer: "svg"; ssr: true; width: number; height: number });
+                if (opts.renderer === "svg") return echarts.init(null, theme, pageInitOpts(opts));
                 raster.init = { dom, theme, ...opts };
                 return {
                     setOption: (given: Record<string, unknown>) => {
@@ -418,7 +503,12 @@ describe("the page build of a hybrid SVG", () => {
                     ? {
                           width: 0,
                           height: 0,
-                          getContext: () => ({ drawImage: (...args: unknown[]) => drawn.push(args.slice(1) as [number, number, number, number]) }),
+                          getContext: () => ({
+                              drawImage: (...args: unknown[]) => {
+                                  const [sx, sy, sw, sh] = args.slice(1);
+                                  drawn.push([optionNumber(sx), optionNumber(sy), optionNumber(sw), optionNumber(sh)]);
+                              },
+                          }),
                           toDataURL: () => "data:image/png;base64,AAAA",
                       }
                     : {},
@@ -460,11 +550,10 @@ describe("the page build of a hybrid SVG", () => {
         );
         // The raster holds the points alone: the axes draw nothing, and the grid stands where the vector grid
         // stands. The image reaches two pixels past the grid, the half of the symbol of 3 pixels rounded up.
-        const grids = raster.option?.grid as Record<string, unknown>[];
-        const grid = grids[0];
-        if (grid === undefined) throw new Error("the raster holds no grid");
+        const grids = optionList(raster.option?.grid);
+        const grid = optionOf(grids[0]);
         expect([grid.left, grid.top].map((v) => Math.round(Number(v)))).toEqual([Math.round(ix) + 2, Math.round(iy) + 2]);
-        const xAxis = raster.option?.xAxis as Record<string, unknown>;
+        const xAxis = optionOf(raster.option?.xAxis);
         expect(xAxis.show).toBe(false);
     });
 

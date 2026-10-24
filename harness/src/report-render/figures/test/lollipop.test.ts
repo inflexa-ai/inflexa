@@ -10,6 +10,18 @@ import { deriveChartOption, type ChartInputs, type ChartRow, type EchartOption }
 import { STEM_RENDERER } from "../../chart-renderers.js";
 import { firstFreeLanes } from "../common.js";
 import { ALTERATION_CLASS_COLORS } from "../oncoprint.js";
+import {
+    optionArray,
+    optionAt,
+    optionList,
+    optionMaybe,
+    optionNumber,
+    optionNumbers,
+    optionOf,
+    optionPairRows,
+    optionsOf,
+    seriesOf,
+} from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -58,23 +70,19 @@ function derive(block: ChartBlock = lollipop(), inputs: ChartInputs = INPUTS, ro
     return deriveChartOption(block, rows, undefined, inputs)._unsafeUnwrap();
 }
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function stemSeries(option: EchartOption): EchartOption[] {
     return seriesOf(option).filter((entry) => entry.renderItem === STEM_RENDERER);
 }
 
 function axisList(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption[] {
     const axes = option[key];
-    return Array.isArray(axes) ? (axes as EchartOption[]) : [axes as EchartOption];
+    return Array.isArray(axes) ? optionsOf(axes) : [optionOf(axes)];
 }
 
 /** The mark areas of the band: each one as its two corners. */
 function bandAreas(option: EchartOption): Array<[EchartOption, EchartOption]> {
     const carrier = seriesOf(option).find((entry) => entry.markArea !== undefined);
-    return ((carrier?.markArea as EchartOption | undefined)?.data ?? []) as Array<[EchartOption, EchartOption]>;
+    return carrier === undefined ? [] : optionPairRows(optionMaybe(carrier, "markArea")?.data ?? []);
 }
 
 describe("the lollipop figure", () => {
@@ -82,13 +90,13 @@ describe("the lollipop figure", () => {
         const option = derive();
         const stems = stemSeries(option);
         expect(stems.map((entry) => entry.name)).toEqual(["Missense Mutation", "Nonsense Mutation", "Frame Shift Del"]);
-        expect(stems.map((entry) => (entry.itemStyle as EchartOption).color)).toEqual([
+        expect(stems.map((entry) => optionAt(entry, "itemStyle").color)).toEqual([
             ALTERATION_CLASS_COLORS.Missense_Mutation,
             ALTERATION_CLASS_COLORS.Nonsense_Mutation,
             ALTERATION_CLASS_COLORS.Frame_Shift_Del,
         ]);
         const firstStem = stems[0]?.data;
-        const missense = (firstStem as Array<{ value: number[] }>).map((item) => item.value);
+        const missense = optionList(firstStem).map((item) => optionNumbers(optionOf(item).value));
         // The largest count draws first, thus a smaller head at one position draws over the stem of a larger one.
         expect(missense).toEqual([
             [882, 19],
@@ -126,7 +134,7 @@ describe("the lollipop figure", () => {
 
     it("draws each domain as a labeled box on a band under the axis, overlaps in separate lanes", () => {
         const option = derive();
-        const grids = option.grid as EchartOption[];
+        const grids = optionArray(option, "grid");
         expect(grids).toHaveLength(2);
         const areas = bandAreas(option);
         // The backbone of the protein draws first, then each domain.
@@ -136,12 +144,14 @@ describe("the lollipop figure", () => {
             [292, 350],
             [634, 912],
         ]);
-        const lanes = areas.slice(1).map(([from]) => from.yAxis as number);
+        const lanes = areas.slice(1).map(([from]) => optionNumber(from.yAxis));
         expect(lanes[0]).not.toBe(lanes[1]);
         expect(lanes[2]).toBe(lanes[0]);
         const sam = areas[3]?.[0];
         expect(sam?.name).toBe("SAM-dependent MTase C5-type");
-        expect((sam?.label as EchartOption | undefined)?.formatter).toMatch(/^SAM-dependent/);
+        const formatter = sam === undefined ? undefined : optionMaybe(sam, "label")?.formatter;
+        if (typeof formatter !== "string") throw new Error("the band label holds no formatter text");
+        expect(formatter).toMatch(/^SAM-dependent/);
         // The band axis carries the position title, and the stem axis above it carries no tick label.
         const [stemAxis, bandAxis] = axisList(option, "xAxis");
         if (stemAxis === undefined || bandAxis === undefined) throw new Error("the lollipop holds two x axes");
@@ -158,17 +168,18 @@ describe("the lollipop figure", () => {
         const option = derive();
         const labels = bandAreas(option)
             .slice(1)
-            .map(([from]) => (from.label as EchartOption).formatter);
+            .map(([from]) => optionAt(from, "label").formatter);
         expect(labels[0]).toMatch(/^Interaction.*…$/);
         expect(labels[1]).toBe("PWWP");
         const tiny = derive(lollipop(), { track: { rows: [{ start: 591, end: 597, name: "Juxtamembrane", protein_length: 993 }] } });
-        expect((bandAreas(tiny)[1]?.[0]?.label as EchartOption | undefined)?.show).toBe(false);
+        const tinyBox = bandAreas(tiny)[1]?.[0];
+        expect(tinyBox === undefined ? undefined : optionMaybe(tinyBox, "label")?.show).toBe(false);
     });
 
     it("labels the three largest counts with the label column", () => {
         const option = derive();
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
-        const labelData = labels?.data as Array<{ name: string }>;
+        const labelData = labels === undefined ? [] : optionArray(labels, "data");
         expect(labelData.map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
     });
 
@@ -176,14 +187,14 @@ describe("the lollipop figure", () => {
         const rows = [...ROWS, { aa_position: 900, protein_change: "p.S900F", variant_classification: "", count: 50 }];
         const option = derive(lollipop(), INPUTS, rows);
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
-        const labelData = labels?.data as Array<{ name: string }>;
+        const labelData = labels === undefined ? [] : optionArray(labels, "data");
         expect(labelData.map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
-        expect(stemSeries(option).flatMap((entry) => (entry.data as Array<{ name: string }>).map((item) => item.name))).not.toContain("p.S900F");
+        expect(stemSeries(option).flatMap((entry) => optionArray(entry, "data").map((item) => item.name))).not.toContain("p.S900F");
     });
 
     it("names the legend by the classes", () => {
-        const legend = derive().legend as { data: Array<{ name: string; icon: string }> };
-        expect(legend.data).toEqual([
+        const legend = optionAt(derive(), "legend");
+        expect(optionArray(legend, "data")).toEqual([
             { name: "Missense Mutation", icon: "circle" },
             { name: "Nonsense Mutation", icon: "circle" },
             { name: "Frame Shift Del", icon: "circle" },

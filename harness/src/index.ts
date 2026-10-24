@@ -448,7 +448,7 @@ export type {
     ChatErrorEvent,
     MessageStartEvent,
 } from "./contracts/chat-events.js";
-export { toChatFrame, applyChatFrame, checkChatPart } from "./contracts/chat-frame.js";
+export { toChatFrame, applyChatFrame, checkChatPart, isKnownPartFrame } from "./contracts/chat-frame.js";
 export { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "./contracts/subagent-activity.js";
 export type { SubAgentActivityTracker } from "./contracts/subagent-activity.js";
 export type { TextPart, ToolCallPart, MessagePart, ChatMessage } from "./contracts/message.js";

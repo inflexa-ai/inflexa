@@ -38,7 +38,7 @@ import { ResultAsync, ok } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
-import { type FsError, tryFetch, tryFs } from "../lib/fs-result.js";
+import { type FsError, tryFetch, tryFs, errnoOf } from "../lib/fs-result.js";
 import { classifyWithinRoot } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
 
@@ -369,7 +369,7 @@ function openReadNoFollow(absolute: string): ResultAsync<OpenedFile, FsError> {
             try {
                 return { kind: "ok", fh: await fsOpen(absolute, READ_NO_FOLLOW) };
             } catch (cause) {
-                if ((cause as NodeJS.ErrnoException).code === "ELOOP") return { kind: "out_of_scope" };
+                if (errnoOf(cause) === "ELOOP") return { kind: "out_of_scope" };
                 throw cause;
             }
         },

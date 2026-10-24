@@ -486,7 +486,7 @@ export const DIMENSION_PROBES: readonly DimensionProbeEntry[] = [
 // ── Lookups ────────────────────────────────────────────────────────────────
 
 const GROUP_CATEGORY_BY_ID = new Map(GROUP_CATEGORIES.map((entry) => [entry.id, entry]));
-const DIMENSION_CATEGORY_BY_ID = new Map(DIMENSION_CATEGORIES.map((entry) => [entry.id, entry]));
+const DIMENSION_CATEGORY_BY_ID: Map<string, DimensionCategoryEntry> = new Map(DIMENSION_CATEGORIES.map((entry) => [entry.id, entry]));
 
 export function groupCategoryEntry(id: GroupCategory): GroupCategoryEntry {
     return GROUP_CATEGORY_BY_ID.get(id)!;
@@ -504,7 +504,8 @@ export function dimensionCategoryEntry(id: DimensionCategory): DimensionCategory
  * a biological thing that varies and has no category is still biological, and pinning
  * every `other` to technical would misfile it. Undeclared, it defaults to technical.
  */
-export function dimensionScope(id: DimensionCategory, declared?: DimensionScope): DimensionScope {
+/** A replay can carry a category a retired vocabulary served; the lookup below settles the miss as `technical`. */
+export function dimensionScope(id: DimensionCategory | (string & {}), declared?: DimensionScope): DimensionScope {
     if (id === "other") return declared ?? "technical";
     return DIMENSION_CATEGORY_BY_ID.get(id)?.scope ?? "technical";
 }

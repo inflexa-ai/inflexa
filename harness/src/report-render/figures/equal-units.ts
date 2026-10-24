@@ -167,7 +167,7 @@ function placedOption(entry: Placement): EchartOption {
 
 /** One placement moved right by some pixels: each grid, the legend, and each color scale. */
 function shifted(entry: Placement, by: number): Placement {
-    const move = (member: EchartOption): EchartOption => ({ ...member, left: (member.left as number) + by });
+    const move = (member: EchartOption): EchartOption => ({ ...member, left: Number(member.left) + by });
     return {
         ...entry,
         grid: entry.grid.map(move),

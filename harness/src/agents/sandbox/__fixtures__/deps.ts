@@ -5,7 +5,7 @@
  */
 
 import { okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import type { ChatProvider } from "../../../providers/types.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
@@ -79,8 +79,9 @@ export function makeFakeChatProvider(): ChatProvider {
     };
 }
 
+/** An unconnected real pool: the fixtures never reach a query (the fake provider throws first). */
 export function makeFakePool(): Pool {
-    return {} as Pool;
+    return new Pool();
 }
 
 export type MakeDepsOverrides = {

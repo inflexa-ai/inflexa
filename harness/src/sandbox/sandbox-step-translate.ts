@@ -6,7 +6,10 @@
  * into its emitters.
  */
 
+import { z } from "zod";
+
 import type { ActivityEntryPart, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
@@ -98,15 +101,23 @@ export type SandboxTreeDelta = {
     removed?: string[];
 };
 
+const SandboxTreeDeltaSchema = z.object({
+    added: z.array(z.string()).optional(),
+    modified: z.array(z.string()).optional(),
+    removed: z.array(z.string()).optional(),
+});
+
 /** Extract the tree delta from a `data-sandbox-event` part, or null when the
  *  part is some other sandbox event. The wrapper shape is set by
  *  `run-exec.ts`: `{ type: "data-sandbox-event", data: { event } }`
  *  where `event` is the executor's `eventPayload`. */
 export function sandboxTreeDelta(part: { type: string; data?: unknown }): SandboxTreeDelta | null {
     if (part.type !== "data-sandbox-event") return null;
-    const inner = (part.data as { event?: { kind?: string; tree?: SandboxTreeDelta } } | undefined)?.event;
-    if (!inner || inner.kind !== "file-tree" || !inner.tree) return null;
-    return inner.tree;
+    const data = parseUnknownRecord(part.data);
+    const inner = data === undefined ? undefined : parseUnknownRecord(data.event);
+    if (!inner || inner.kind !== "file-tree") return null;
+    const tree = SandboxTreeDeltaSchema.safeParse(inner.tree);
+    return tree.success ? tree.data : null;
 }
 
 /** Apply one on-change delta to the per-step cumulative path set. `added`
@@ -126,5 +137,5 @@ export function applyTreeDelta(files: Set<string>, delta: SandboxTreeDelta): voi
  * `done`) never start with `data-`.
  */
 export function isChatDataPart(event: Parameters<EmitFn>[0]): event is ChatDataPart {
-    return typeof (event as { type?: unknown }).type === "string" && (event as { type: string }).type.startsWith("data-");
+    return "type" in event && typeof event.type === "string" && event.type.startsWith("data-");
 }

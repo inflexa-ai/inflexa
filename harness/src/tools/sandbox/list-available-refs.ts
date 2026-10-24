@@ -36,6 +36,9 @@ import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { errnoOf } from "../../lib/fs-result.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
@@ -311,7 +314,7 @@ export async function readInstalledDatasetIds(deps: ListAvailableRefsDeps): Prom
     } catch (error) {
         // An absent directory is a readable store with nothing installed. Any other failure is the
         // store declining to answer, which is a different fact and gets the honest `undefined`.
-        if ((error as { code?: string }).code === "ENOENT") return new Set();
+        if (errnoOf(error) === "ENOENT") return new Set();
         return undefined;
     }
     const ids = new Set<string>();
@@ -336,16 +339,19 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
         const registryPath = hostJoin(root, "registry.json");
         if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
         const registry: unknown = JSON.parse(await readFile(registryPath, "utf-8"));
-        if (!registry || typeof registry !== "object") return [];
-        const byCategory = (registry as { files?: { by_category?: unknown } }).files?.by_category;
-        if (!byCategory || typeof byCategory !== "object") return [];
-        for (const category of Object.keys(byCategory as Record<string, unknown>).sort()) {
-            const values = (byCategory as Record<string, unknown>)[category];
-            if (!Array.isArray(values)) continue;
+        const registryRecord = parseUnknownRecord(registry);
+        if (!registryRecord) return [];
+        const files = parseUnknownRecord(registryRecord.files);
+        const categories = parseUnknownRecord(files?.by_category);
+        if (!categories) return [];
+        for (const category of Object.keys(categories).sort()) {
+            const values = categories[category];
+            if (!isUnknownArray(values)) continue;
             for (const item of values) {
                 if (legacyEntries.length >= MAX_LEGACY_ENTRIES) break;
-                if (item && typeof item === "object" && typeof (item as { local_path?: unknown }).local_path === "string") {
-                    legacyEntries.push({ ...(item as Record<string, unknown>), category });
+                const itemRecord = parseUnknownRecord(item);
+                if (itemRecord && typeof itemRecord.local_path === "string") {
+                    legacyEntries.push({ ...itemRecord, category });
                 }
             }
         }
@@ -535,8 +541,8 @@ function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan
     }
 
     for (const value of raw.legacyEntries ?? []) {
-        if (!value || typeof value !== "object") continue;
-        const item = value as Record<string, unknown>;
+        const item = parseUnknownRecord(value);
+        if (!item) continue;
         const localPath = stringValue(item.local_path);
         if (!localPath) continue;
         const resolved = resolveRequestedPath(localPath);

@@ -112,7 +112,9 @@ export async function classifyWithinRoot(confinementRoot: string, absPath: strin
     try {
         real = await realpath(absPath);
     } catch (cause) {
-        const code = (cause as NodeJS.ErrnoException).code;
+        // Node's fs rejects with an `ErrnoException`, so the code read covers every real rejection;
+        // a non-Error throw carries no errno code and propagates.
+        const code = cause instanceof Error && "code" in cause ? cause.code : undefined;
         // A path (or symlink target) that does not resolve leaks nothing; let the
         // caller's own not-found/fallback path handle it. Genuine faults (e.g.
         // EACCES traversing a directory) propagate.

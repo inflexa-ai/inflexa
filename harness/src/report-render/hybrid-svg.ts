@@ -29,16 +29,17 @@ export type PointLayerImage = {
     readonly height: number;
 };
 
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
+
 /**
  * True when one series draws a point for each row: a `scatter` whose symbol draws and which shows no series
  * label. A scatter of size zero, or one with a shown label, carries names, and names stay vector text.
  */
 export function isPointLayer(series: unknown): boolean {
-    if (typeof series !== "object" || series === null) return false;
-    const fields = series as Record<string, unknown>;
+    const fields = parseUnknownRecord(series);
+    if (fields === undefined) return false;
     if (fields.type !== "scatter" || fields.symbolSize === 0 || fields.symbol === "none") return false;
-    const label = fields.label;
-    return !(typeof label === "object" && label !== null && (label as Record<string, unknown>).show === true);
+    return parseUnknownRecord(fields.label)?.show !== true;
 }
 
 /** True when an option holds a point layer. The page can then build the hybrid SVG of the option. */

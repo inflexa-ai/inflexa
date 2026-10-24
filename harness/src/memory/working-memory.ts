@@ -29,10 +29,11 @@
  */
 
 import { type Result, type ResultAsync, err, ok, okAsync } from "neverthrow";
-import type { Pool } from "pg";
+
 import { z } from "zod";
 
-import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import { type Connectable, type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import type { Querier } from "../state/db.js";
 
 /**
  * The write-time bounds on working memory. `updateSection` enforces them, the
@@ -280,38 +281,40 @@ function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, Wor
  * Pure section-addressable amendment. Sibling sections are never touched; a
  * refused write returns `err` and the caller writes nothing.
  */
+type SectionWriter = {
+    readonly [S in Section]: (wm: WorkingMemory, value: SectionValue[S]) => Result<WorkingMemory, WorkingMemoryRejection>;
+};
+
+const sectionWriters: SectionWriter = {
+    goal: (wm, value) => {
+        const text = value.text.trim();
+        if (text.length > WORKING_MEMORY_LIMITS.goalChars) {
+            return reject(
+                `the goal is ${text.length} characters — the cap is ${WORKING_MEMORY_LIMITS.goalChars}. It was NOT ` +
+                    `recorded. State the objective in a sentence or two; the supporting detail belongs in ` +
+                    `constraints and findings, not in the goal.`,
+            );
+        }
+        return ok({ ...wm, goal: text });
+    },
+    constraint: (wm, op) => {
+        const origin = op.op === "add" ? op.origin : "agent";
+        return applyEntryOp<Constraint>(wm.constraints, op, "constraints", WORKING_MEMORY_LIMITS.constraints, (text) => ({
+            id: newId(),
+            text,
+            origin,
+        })).map((constraints) => ({ ...wm, constraints }));
+    },
+    hypothesis: (wm, op) =>
+        applyEntryOp<Hypothesis>(wm.hypotheses, op, "hypotheses", WORKING_MEMORY_LIMITS.hypotheses, (text) => ({
+            id: newId(),
+            text,
+        })).map((hypotheses) => ({ ...wm, hypotheses })),
+    finding: (wm, op) => applyFindingOp(wm.findings, op).map((findings) => ({ ...wm, findings })),
+};
+
 function applySectionUpdate<S extends Section>(wm: WorkingMemory, section: S, value: SectionValue[S]): Result<WorkingMemory, WorkingMemoryRejection> {
-    switch (section) {
-        case "goal": {
-            const text = (value as SectionValue["goal"]).text.trim();
-            if (text.length > WORKING_MEMORY_LIMITS.goalChars) {
-                return reject(
-                    `the goal is ${text.length} characters — the cap is ${WORKING_MEMORY_LIMITS.goalChars}. It was NOT ` +
-                        `recorded. State the objective in a sentence or two; the supporting detail belongs in ` +
-                        `constraints and findings, not in the goal.`,
-                );
-            }
-            return ok({ ...wm, goal: text });
-        }
-        case "constraint": {
-            const op = value as SectionValue["constraint"];
-            const origin = op.op === "add" ? op.origin : "agent";
-            return applyEntryOp<Constraint>(wm.constraints, op, "constraints", WORKING_MEMORY_LIMITS.constraints, (text) => ({
-                id: newId(),
-                text,
-                origin,
-            })).map((constraints) => ({ ...wm, constraints }));
-        }
-        case "hypothesis":
-            return applyEntryOp<Hypothesis>(wm.hypotheses, value as SectionValue["hypothesis"], "hypotheses", WORKING_MEMORY_LIMITS.hypotheses, (text) => ({
-                id: newId(),
-                text,
-            })).map((hypotheses) => ({ ...wm, hypotheses }));
-        case "finding":
-            return applyFindingOp(wm.findings, value as SectionValue["finding"]).map((findings) => ({ ...wm, findings }));
-    }
-    // Unreachable — `section` is exhaustively a `Section`.
-    return ok(wm);
+    return sectionWriters[section](wm, value);
 }
 
 /** A finding lifted out of its run bucket, carrying the run it references. */
@@ -391,7 +394,7 @@ export function renderWorkingMemory(wm: WorkingMemory): string {
  * `cortex_working_memory` table is provisioned by the project's state-init
  * DDL.
  */
-export function createWorkingMemory(pool: Pool): WorkingMemoryStore {
+export function createWorkingMemory(pool: Querier & Connectable): WorkingMemoryStore {
     function load(analysisId: string): ResultAsync<WorkingMemory, DbError> {
         // The driver read is the only thing wrapped; `workingMemorySchema.parse`
         // runs in `.map` so a schema-validation throw propagates verbatim rather

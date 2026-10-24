@@ -32,8 +32,8 @@ describe("the self-test twin", () => {
     it("breaks one type against the positive fixture", () => {
         // A twin that only copies the positive fixture proves nothing. The runner
         // guards the schema only while the twin holds a real type break.
-        const positive = readFixture("_selftest", "row.json") as { id: unknown };
-        const drift = readFixture("_selftest", "row.drift.json") as { id: unknown };
+        const positive = z.object({ id: z.unknown() }).parse(readFixture("_selftest", "row.json"));
+        const drift = z.object({ id: z.unknown() }).parse(readFixture("_selftest", "row.drift.json"));
 
         expect(typeof positive.id).toBe("number");
         expect(typeof drift.id).toBe("string");

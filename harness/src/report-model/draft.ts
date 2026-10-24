@@ -41,8 +41,10 @@ export const DraftSectionBlockSchema = z.strictObject({
     blocks: z.lazy(() => z.array(DraftBlockSchema)),
 });
 
+/** The draft block union, before the erasing annotation of {@link DraftBlockSchema}. */
+export const DraftBlockUnionSchema = z.discriminatedUnion("kind", [DraftSectionBlockSchema, ...ATOM_BLOCK_SCHEMAS]);
 /** The draft block union. A `z.ZodType<DraftBlock>` annotation gives the recursive members a stable type. */
-export const DraftBlockSchema: z.ZodType<DraftBlock> = z.discriminatedUnion("kind", [DraftSectionBlockSchema, ...ATOM_BLOCK_SCHEMAS]);
+export const DraftBlockSchema: z.ZodType<DraftBlock> = DraftBlockUnionSchema;
 
 /** The root of a draft. It permits zero sections, thus an empty draft is a legal state. */
 export const DraftDocumentSchema = z.strictObject({

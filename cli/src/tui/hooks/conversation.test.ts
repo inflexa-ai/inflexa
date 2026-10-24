@@ -40,7 +40,7 @@ import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boo
 import { activeAsk, queuedCount } from "./asks.ts";
 import { __resetNoticesForTest, currentNotice } from "./notice.ts";
 import { chatStatus } from "./status.ts";
-import { readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
+import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../types/session.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, type ThreadOpts } from "./thread.ts";
@@ -1829,7 +1829,7 @@ describe("display-card parts map identically live and on reload", () => {
         expect(live).toEqual(reloaded);
         const [card] = live;
         expect(card?.type).toBe("data-presentation");
-        if (card?.type === "data-presentation") {
+        if (card !== undefined && isKnownPart(card) && card.type === "data-presentation") {
             expect(readPresentation(card)).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
         }
     });
@@ -1845,7 +1845,7 @@ describe("display-card parts map identically live and on reload", () => {
         expect(live).toEqual(reloaded);
         const [card] = reloaded;
         expect(card?.type).toBe("data-file-reference");
-        if (card?.type === "data-file-reference") {
+        if (card !== undefined && isKnownPart(card) && card.type === "data-file-reference") {
             const view = readFileReference(card);
             expect(view.entries.length).toBe(2);
             expect(view.folderPath).toBe("runs/r");

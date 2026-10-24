@@ -657,7 +657,7 @@ describe("createRecordVersionTool", () => {
 
     describe("the result detail", () => {
         /** Run the tool's result hook, asserting that the tool declares one. */
-        function detailOf(tool: ReturnType<typeof createRecordVersionTool>, result: RecordVersionResult): string {
+        function detailOf(tool: ReturnType<typeof createRecordVersionTool>, result: RecordVersionResult): string | undefined {
             expect(tool.describeResult).toBeDefined();
             return tool.describeResult!({}, result);
         }

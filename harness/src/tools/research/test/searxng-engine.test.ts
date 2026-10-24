@@ -9,6 +9,11 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { createSearxngEngine, mapSearxngResponse, normalizeSearxngBaseUrl } from "../searxng-engine.js";
 
 const BASE_URL = "http://127.0.0.1:28437";
@@ -24,10 +29,10 @@ afterEach(() => {
 /** Answer every request with one JSON body, and record the URL the engine asked for. */
 function serve(body: unknown, status = 200): void {
     const text = typeof body === "string" ? body : JSON.stringify(body);
-    globalThis.fetch = (async (url: string) => {
+    globalThis.fetch = fetchDouble(async (url) => {
         requested.push(String(url));
         return new Response(text, { status, headers: { "content-type": "application/json" } });
-    }) as unknown as typeof fetch;
+    });
 }
 
 describe("createSearxngEngine — the request", () => {
@@ -122,8 +127,7 @@ describe("createSearxngEngine — the error variants", () => {
     });
 
     it("names that a body was not valid JSON, distinct from the HTTP error text", async () => {
-        globalThis.fetch = (async () =>
-            new Response("<html>not json</html>", { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+        globalThis.fetch = fetchDouble(async () => new Response("<html>not json</html>", { status: 200, headers: { "content-type": "text/html" } }));
 
         const outcome = await engine.search({ query: "q" });
         const error = outcome._unsafeUnwrapErr();

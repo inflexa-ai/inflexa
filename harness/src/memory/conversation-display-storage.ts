@@ -15,7 +15,7 @@
  * reconstruction.
  */
 
-import { validateUIMessages, type DataUIPart, type UIMessage } from "ai";
+import { isDataUIPart, validateUIMessages, type DataUIPart, type UIMessage } from "ai";
 import { z } from "zod";
 
 import type {
@@ -154,7 +154,7 @@ export function envelopeDisplayMessages(messages: readonly ConversationUIMessage
         kind: "ai-sdk-ui-messages",
         aiSdkMajor: 7,
         schemaVersion: SUPPORTED_DISPLAY_SCHEMA_VERSION,
-        messages: structuredClone(messages) as ConversationUIMessage[],
+        messages: structuredClone([...messages]),
     };
 }
 
@@ -191,11 +191,14 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
             // `Object.hasOwn` before the index: a part typed `data-constructor`
             // would otherwise resolve up the prototype chain to something that is
             // not a schema at all, and throw where it should have been dropped.
-            if (!Object.hasOwn(dataSchemas, key)) {
+            // `Object.entries` lists own keys only, so the lookup refuses a
+            // prototype name the same way.
+            const schema = dataSchemaOf(key);
+            if (schema === undefined) {
                 unknownKey.push(part.type);
                 return false;
             }
-            if (!(dataSchemas as Record<string, z.ZodType>)[key]!.safeParse(part.data).success) {
+            if (!schema.safeParse(part.data).success) {
                 schemaMismatch.push(part.type);
                 return false;
             }
@@ -211,6 +214,12 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
         logger?.warn("dropped unrenderable stored display parts", fields);
     }
     return filtered;
+}
+
+/** The schema behind one stored data-part key, or `undefined` when the key was retired or never stood. */
+function dataSchemaOf(key: string): z.ZodType | undefined {
+    const entry = Object.entries(dataSchemas).find(([name]) => name === key);
+    return entry?.[1];
 }
 
 export async function parseStoredDisplayEnvelope(value: unknown, identity: string, logger?: Logger): Promise<StoredDisplayEnvelope> {
@@ -232,9 +241,45 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
     }
 }
 
-/** The data-part key a message part is stored under — its `type` minus the `data-` prefix. */
-function displayPartType(part: Exclude<MessagePart, { type: "text" }>): `data-${keyof ConversationUIData & string}` {
-    return (part.type === "tool-call" ? "data-tool-call" : part.type) as `data-${keyof ConversationUIData & string}`;
+/** The message-part arm a stored data part round-trips from: the payload is the arm minus its discriminant. */
+export type StoredSourcePart = Extract<
+    Exclude<MessagePart, { type: "text" }>,
+    {
+        type:
+            | ToolCallPart["type"]
+            | PresentationPart["type"]
+            | PlanPart["type"]
+            | RunCardPart["type"]
+            | PlanApprovalPart["type"]
+            | FileReferencePart["type"]
+            | AskPart["type"]
+            | ChildSessionStartedPart["type"]
+            | ReportRenderedPart["type"]
+            | CompactionPart["type"]
+            | SubAgentActivityPart["type"];
+    }
+>;
+
+const STORED_SOURCE_TYPES = [
+    "tool-call",
+    "data-presentation",
+    "data-plan",
+    "data-run-card",
+    "data-plan-approval",
+    "data-file-reference",
+    "data-ask",
+    "data-child-session-started",
+    "data-report-rendered",
+    "data-compaction",
+    "data-subagent-activity",
+] as const;
+type _AssertStoredSourceTypesComplete = Exclude<StoredSourcePart["type"], (typeof STORED_SOURCE_TYPES)[number]> extends never ? true : never;
+
+const STORED_SOURCE_TYPE_SET: ReadonlySet<string> = new Set<string>(STORED_SOURCE_TYPES);
+
+/** Whether `part` is an arm the stored vocabulary can hold; anything else cannot become a stored card. */
+export function isStoredSourcePart(part: Exclude<MessagePart, { type: "text" }>): part is StoredSourcePart {
+    return STORED_SOURCE_TYPE_SET.has(part.type);
 }
 
 function closedEntry(entry: SubAgentActivityEntry): ConversationUIData["subagent-activity"]["entries"][number] {
@@ -260,15 +305,58 @@ function displayPartId(part: Exclude<MessagePart, { type: "text" }>): string | u
  * lifetime changes — rather than at each reader. An entry of a sub-agent call
  * closes the same way, and an `incomplete` entry has no end time.
  */
-export function conversationDisplayPart(part: Exclude<MessagePart, { type: "text" }>): DataUIPart<ConversationUIData> {
-    const { type: _type, ...rest } = part;
-    const data =
-        part.type === "tool-call"
-            ? { ...rest, outcome: part.outcome ?? "incomplete" }
-            : part.type === "data-subagent-activity"
-              ? { ...rest, entries: part.entries.map(closedEntry) }
-              : rest;
-    return { type: displayPartType(part), id: displayPartId(part), data } as DataUIPart<ConversationUIData>;
+export function conversationDisplayPart(part: StoredSourcePart): DataUIPart<ConversationUIData> {
+    const id = displayPartId(part);
+    switch (part.type) {
+        case "tool-call": {
+            const { type: _type, ...payload } = part;
+            return { type: "data-tool-call", id, data: { ...payload, outcome: part.outcome ?? "incomplete" } };
+        }
+        case "data-presentation": {
+            const { type: _type, ...data } = part;
+            return { type: "data-presentation", id, data };
+        }
+        case "data-plan": {
+            const { type: _type, ...data } = part;
+            return { type: "data-plan", id, data };
+        }
+        case "data-run-card": {
+            const { type: _type, ...data } = part;
+            return { type: "data-run-card", id, data };
+        }
+        case "data-plan-approval": {
+            const { type: _type, ...data } = part;
+            return { type: "data-plan-approval", id, data };
+        }
+        case "data-file-reference": {
+            const { type: _type, ...data } = part;
+            return { type: "data-file-reference", id, data };
+        }
+        case "data-ask": {
+            const { type: _type, ...data } = part;
+            return { type: "data-ask", id, data };
+        }
+        case "data-child-session-started": {
+            const { type: _type, ...data } = part;
+            return { type: "data-child-session-started", id, data };
+        }
+        case "data-report-rendered": {
+            const { type: _type, ...data } = part;
+            return { type: "data-report-rendered", id, data };
+        }
+        case "data-compaction": {
+            const { type: _type, ...data } = part;
+            return { type: "data-compaction", id, data };
+        }
+        case "data-subagent-activity": {
+            const { type: _type, ...payload } = part;
+            return { type: "data-subagent-activity", id, data: { ...payload, entries: part.entries.map(closedEntry) } };
+        }
+        default: {
+            const unreachable: never = part;
+            return unreachable;
+        }
+    }
 }
 
 /**
@@ -291,9 +379,43 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
                 parts.push({ type: "tool-call", ...part.data });
                 continue;
             }
-            if (part.type.startsWith("data-")) {
-                const data = part as DataUIPart<ConversationUIData>;
-                parts.push({ type: data.type, ...(data.data as object) } as MessagePart);
+            if (isDataUIPart<ConversationUIData>(part)) {
+                switch (part.type) {
+                    case "data-presentation":
+                        parts.push({ type: "data-presentation", ...part.data });
+                        break;
+                    case "data-plan":
+                        parts.push({ type: "data-plan", ...part.data });
+                        break;
+                    case "data-run-card":
+                        parts.push({ type: "data-run-card", ...part.data });
+                        break;
+                    case "data-plan-approval":
+                        parts.push({ type: "data-plan-approval", ...part.data });
+                        break;
+                    case "data-file-reference":
+                        parts.push({ type: "data-file-reference", ...part.data });
+                        break;
+                    case "data-ask":
+                        parts.push({ type: "data-ask", ...part.data });
+                        break;
+                    case "data-child-session-started":
+                        parts.push({ type: "data-child-session-started", ...part.data });
+                        break;
+                    case "data-report-rendered":
+                        parts.push({ type: "data-report-rendered", ...part.data });
+                        break;
+                    case "data-compaction":
+                        parts.push({ type: "data-compaction", ...part.data });
+                        break;
+                    case "data-subagent-activity":
+                        parts.push({ type: "data-subagent-activity", ...part.data });
+                        break;
+                    default: {
+                        const unhandled: never = part;
+                        throw new Error(`stored display part has no chat-part arm: ${String(unhandled)}`);
+                    }
+                }
             }
         }
         if (parts.length === 0) continue;

@@ -8,18 +8,20 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { Pool } from "pg";
+import { Pool } from "pg";
+
+import type { Querier } from "../../state/db.js";
 
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { assertConnectionBudget } from "../connection-budget.js";
 import { DBOS_SYSTEM_POOL_SIZE, DEFAULT_APP_POOL_SIZE } from "../pools.js";
 
-function fakePool(maxConnections: number): Pool {
-    return {
+function fakePool(maxConnections: number): Querier {
+    return Object.assign(new Pool(), {
         query: async () => ({
             rows: [{ max: String(maxConnections) }],
         }),
-    } as unknown as Pool;
+    });
 }
 
 const originalEnv = { ...process.env };

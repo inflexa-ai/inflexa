@@ -9,10 +9,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-node";
+import type { V1Job, V1Pod } from "@kubernetes/client-node";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import { createK8sSandboxOps, waitForPodReady } from "../k8s-client.js";
+import { createK8sSandboxOps, waitForPodReady, type BatchJobApi, type CorePodApi } from "../k8s-client.js";
 import { mintSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
@@ -24,7 +24,7 @@ const resolveWorkspaceRoot = async (analysisId: string) => `${SESSION_PVC_ROOT}/
 /** The managed shape: one farm location, PVC-relative, for every analysis. */
 const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
 
-function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
+function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existingOwner?: string } = {}) {
     const createdJobs: V1Job[] = [];
     const deletedJobs: string[] = [];
     let podIdx = 0;
@@ -33,16 +33,12 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
     let existingDeleted = false;
     const existingOwner = opts.existingOwner ?? "run-1-0";
 
-    const batchApi = {
+    const batchApi: BatchJobApi = {
         createNamespacedJob: async ({ body }: { namespace: string; body: V1Job }) => {
             if (pending409 > 0) {
                 pending409--;
                 // Mirror `@kubernetes/client-node` `ApiException`: status on `.code`.
-                const err = new Error("jobs.batch already exists") as Error & {
-                    code: number;
-                };
-                err.code = 409;
-                throw err;
+                throw Object.assign(new Error("jobs.batch already exists"), { code: 409 });
             }
             createdJobs.push(body);
             return { metadata: { name: body.metadata?.name, uid: "job-uid-1" } };
@@ -52,26 +48,22 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
             existingDeleted = true;
             deletedJobs.push(name);
         },
-        // Used by the spawn step's owner-guard (returns the pre-existing Job with
-        // its recorded owner) and then by `waitForJobGone` after a delete (404).
         listNamespacedJob: async (_args: { namespace: string; labelSelector?: string }) => ({ items: createdJobs }),
         readNamespacedJob: async ({ name }: { namespace: string; name: string }) => {
             if (existingDeleted) {
-                const err = new Error("not found") as Error & { code: number };
-                err.code = 404;
-                throw err;
+                throw Object.assign(new Error("not found"), { code: 404 });
             }
             return { metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } };
         },
-    } as unknown as BatchV1Api;
+    };
 
-    const coreApi = {
+    const coreApi: CorePodApi = {
         listNamespacedPod: async (_args: { namespace: string; labelSelector?: string }) => {
             const pod = podSequence[Math.min(podIdx, podSequence.length - 1)];
             podIdx++;
-            return { items: pod ? [pod as V1Pod] : [] };
+            return { items: pod ? [pod] : [] };
         },
-    } as unknown as CoreV1Api;
+    };
 
     return {
         batchApi,
@@ -847,13 +839,14 @@ describe("k8s job ownership labels", () => {
 
     test("a Job recording no owner reports none rather than guessing", async () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
-        stub.createdJobs.push({
+        const job: V1Job = {
             metadata: {
                 name: "sbx-ownerless",
                 labels: { "cortex/sandbox-id": "sbx-ownerless" },
                 creationTimestamp: new Date(1_700_000_000_000),
             },
-        } as V1Job);
+        };
+        stub.createdJobs.push(job);
 
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
@@ -1176,11 +1169,11 @@ describe("k8s createSandbox — the farm mounts", () => {
 
 describe("k8s waitForPodReady — the slow pod", () => {
     /** A pod list that answers with `pod` every time, and a clock the sleep advances. */
-    function pendingPod(pod: Partial<V1Pod>) {
+    function pendingPod(pod: V1Pod) {
         let clock = 0;
-        const coreApi = {
-            listNamespacedPod: async () => ({ items: [pod as V1Pod] }),
-        } as unknown as CoreV1Api;
+        const coreApi: CorePodApi = {
+            listNamespacedPod: async () => ({ items: [pod] }),
+        };
         return {
             coreApi,
             now: () => clock,
@@ -1208,7 +1201,9 @@ describe("k8s waitForPodReady — the slow pod", () => {
         expect(warnings).toHaveLength(1);
         expect(warnings[0]!.msg).toBe("[k8s-client] sandbox pod is slow to reach Running");
         expect(warnings[0]!.fields).toMatchObject({ sandboxId: "sbx-slow", phase: "Pending", conditionReason: "Unschedulable" });
-        expect(warnings[0]!.fields.waitedMs as number).toBeGreaterThanOrEqual(60_000);
+        const waitedMs = warnings[0]!.fields.waitedMs;
+        if (typeof waitedMs !== "number") throw new Error("the log carries a numeric waitedMs");
+        expect(waitedMs).toBeGreaterThanOrEqual(60_000);
     });
 
     test("says nothing about a pod that comes up inside the minute", async () => {

@@ -11,6 +11,11 @@ import { context, propagation, ROOT_CONTEXT, trace, TraceFlags, type Span as Api
 import { isTracingSuppressed } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-base";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import {
     ATTR_INFLEXA_EXEC_ID,
     ATTR_INFLEXA_STEP_ID,
@@ -180,18 +185,18 @@ describe("stableSpan", () => {
 
 describe("untracedFetch", () => {
     it("sends the active span's traceparent to sandbox-server and runs the fetch with tracing suppressed", async () => {
-        let sent: { headers: Record<string, string>; suppressed: boolean } | undefined;
-        const accepted = (async (_url: string, init: RequestInit & { headers: Record<string, string> }) => {
-            sent = { headers: init.headers, suppressed: isTracingSuppressed(context.active()) };
+        let sent: { headers: Headers; suppressed: boolean } | undefined;
+        const accepted = fetchDouble(async (_url, init) => {
+            sent = { headers: new Headers(init?.headers), suppressed: isTracingSuppressed(context.active()) };
             return new Response("{}", { status: 202 });
-        }) as unknown as typeof fetch;
+        });
 
         const step = tracer().startSpan("sandbox.exec");
         await under(step, () => untracedFetch(accepted, "http://127.0.0.1:8765/exec", { method: "POST", headers: {} }));
         step.end();
 
         const exported = exportedByName("sandbox.exec");
-        expect(sent?.headers.traceparent).toBe(`00-${exported.spanContext().traceId}-${exported.spanContext().spanId}-01`);
+        expect(sent?.headers.get("traceparent")).toBe(`00-${exported.spanContext().traceId}-${exported.spanContext().spanId}-01`);
         expect(sent?.suppressed).toBe(true);
         expect(exportedNames()).toEqual(["sandbox.exec"]);
     });

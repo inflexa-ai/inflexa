@@ -34,7 +34,7 @@ type BenchmarksFile = {
     indication_to_therapeutic_area: { patterns: string[]; therapeutic_area: string }[];
 };
 
-const dataset = benchmarksData as BenchmarksFile;
+const dataset: BenchmarksFile = benchmarksData;
 
 if (!dataset.phase_transitions || !dataset.phase_transitions.all) {
     throw new Error("clinical-benchmarks.json is missing phase_transitions.all baseline");

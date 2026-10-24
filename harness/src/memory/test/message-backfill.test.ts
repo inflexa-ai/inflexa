@@ -1,8 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { PoolClient } from "pg";
 
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "../ai-sdk-message-storage.js";
-import { backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
+import { type BackfillClient, backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
 
 type LegacyRow = {
     readonly thread_id: string;
@@ -11,34 +10,27 @@ type LegacyRow = {
     readonly content_jsonb: string | Array<Record<string, unknown>>;
 };
 
-class FakeBackfillClient {
-    legacyRows: LegacyRow[];
-    remainingRows: Array<{ thread_id: string; seq: string }> = [];
-    readonly updates: unknown[][] = [];
-    readonly queries: string[] = [];
-
-    constructor(rows: LegacyRow[]) {
-        this.legacyRows = rows;
-    }
-
-    async query(text: string, values?: unknown[]): Promise<{ rows: unknown[] }> {
-        this.queries.push(text);
-        if (/^UPDATE messages SET message_envelope/.test(text)) {
-            this.updates.push(values ?? []);
-            return { rows: [] };
-        }
-        if (/LIMIT 1/.test(text)) {
-            return { rows: this.remainingRows };
-        }
-        if (/FROM messages/.test(text) && /message_envelope IS NULL/.test(text)) {
-            return { rows: this.legacyRows };
-        }
-        throw new Error(`unexpected query: ${text}`);
-    }
-}
-
-function asClient(fake: FakeBackfillClient): PoolClient {
-    return fake as unknown as PoolClient;
+function fakeBackfillClient<Row extends LegacyRow>(
+    legacyRows: Row[],
+): BackfillClient<Row> & { legacyRows: Row[]; readonly updates: unknown[][]; readonly queries: string[] } {
+    const updates: unknown[][] = [];
+    const queries: string[] = [];
+    const client = {
+        legacyRows,
+        updates,
+        queries,
+        async query(text: string, values?: unknown[]): Promise<{ rows: Row[] }> {
+            queries.push(text);
+            if (/^UPDATE messages SET message_envelope/.test(text)) {
+                updates.push(values ?? []);
+                return { rows: [] };
+            }
+            if (/LIMIT 1/.test(text)) return { rows: [] };
+            if (/FROM messages/.test(text) && /message_envelope IS NULL/.test(text)) return { rows: client.legacyRows };
+            throw new Error(`unexpected query: ${text}`);
+        },
+    };
+    return client;
 }
 
 describe("legacyAnthropicToModelMessage", () => {
@@ -131,7 +123,7 @@ describe("legacyAnthropicToModelMessage", () => {
 
 describe("backfillAiSdkMessageEnvelopes", () => {
     it("backfills legacy rows idempotently", async () => {
-        const fake = new FakeBackfillClient([
+        const fake = fakeBackfillClient([
             {
                 thread_id: "thread-1",
                 seq: "0",
@@ -140,19 +132,19 @@ describe("backfillAiSdkMessageEnvelopes", () => {
             },
         ]);
 
-        await backfillAiSdkMessageEnvelopes(asClient(fake));
+        await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
         expect(JSON.parse(String(fake.updates[0]![0]))).toEqual(
             envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
         );
 
         fake.legacyRows = [];
-        await backfillAiSdkMessageEnvelopes(asClient(fake));
+        await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
     });
 
     it("fails with row identity for unconvertible legacy rows", async () => {
-        const fake = new FakeBackfillClient([
+        const fake = fakeBackfillClient([
             {
                 thread_id: "thread-bad",
                 seq: "7",
@@ -161,13 +153,13 @@ describe("backfillAiSdkMessageEnvelopes", () => {
             },
         ]);
 
-        await expect(backfillAiSdkMessageEnvelopes(asClient(fake))).rejects.toThrow(/thread-bad\/7/);
+        await expect(backfillAiSdkMessageEnvelopes(fake)).rejects.toThrow(/thread-bad\/7/);
     });
 
     it("does not query DBOS operation outputs while migrating conversation messages", async () => {
-        const fake = new FakeBackfillClient([]);
+        const fake = fakeBackfillClient([]);
 
-        await backfillAiSdkMessageEnvelopes(asClient(fake));
+        await backfillAiSdkMessageEnvelopes(fake);
 
         expect(fake.queries.join("\n")).not.toContain("operation_outputs");
     });

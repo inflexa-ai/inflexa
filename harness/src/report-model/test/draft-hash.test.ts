@@ -19,10 +19,10 @@ describe("computeDraftHash", () => {
         };
         // The same draft with each object's keys in a different source order. A round trip through storage
         // reorders keys, thus the two must hash the same.
-        const reordered = {
+        const reordered: DraftDocument = {
             sections: [{ blocks: [{ content: { prose: "A finding." }, id: "t1", kind: "text" }], title: "Findings", id: "s1", kind: "section" }],
             title: "A report",
-        } as DraftDocument;
+        };
 
         expect(computeDraftHash(reordered)).toBe(computeDraftHash(canonical));
     });

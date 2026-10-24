@@ -25,6 +25,7 @@ import type { Scope } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { isSafeId } from "../../workspace/paths.js";
 import {
@@ -454,7 +455,7 @@ function readId(block: unknown): string | undefined {
 
 /** Read one field of an untyped payload, or `undefined` when the payload is not an object. */
 function fieldOf(value: unknown, field: string): unknown {
-    return value !== null && typeof value === "object" ? (value as Record<string, unknown>)[field] : undefined;
+    return parseUnknownRecord(value)?.[field];
 }
 
 function readStringField(block: unknown, field: string): string | undefined {

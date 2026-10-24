@@ -23,12 +23,29 @@
  */
 
 import { ResultAsync, err, ok } from "neverthrow";
-import type { Pool, PoolClient } from "pg";
+import type { Pool, PoolClient, QueryConfig, QueryResultRow } from "pg";
 
 import type { DomainError } from "./result.js";
 
 /** A query/mutation/connection accepted by the data-access layer. */
 type Querier = Pool | PoolClient;
+
+/**
+ * What a transaction body reads of the client `withTransaction` opens: one
+ * structural `query`. A real `Pool` and `PoolClient` both satisfy it, and so
+ * does a test double that answers `query` alone.
+ */
+export type TransactionQuerier = {
+    query<R extends QueryResultRow = Record<string, unknown>>(
+        queryTextOrConfig: string | QueryConfig,
+        values?: unknown[],
+    ): Promise<{ rows: R[]; rowCount: number | null }>;
+};
+
+/** What `withTransaction` reads of the pool it borrows from: one `connect`. */
+export type Connectable = {
+    connect(): Promise<TransactionQuerier & { release(): void }>;
+};
 
 /**
  * A storage-layer failure. Absence is deliberately NOT modelled: single-row
@@ -76,8 +93,7 @@ const CONSTRAINT_SQLSTATE: Record<string, string> = {
 
 function sqlstate(cause: unknown): string | undefined {
     if (cause && typeof cause === "object" && "code" in cause) {
-        const code = (cause as { code?: unknown }).code;
-        return typeof code === "string" ? code : undefined;
+        return typeof cause.code === "string" ? cause.code : undefined;
     }
     return undefined;
 }
@@ -85,7 +101,7 @@ function sqlstate(cause: unknown): string | undefined {
 /** pg surfaces the tripped constraint's name on `.constraint`. */
 function constraintName(cause: unknown): string {
     if (cause && typeof cause === "object" && "constraint" in cause) {
-        const name = (cause as { constraint?: unknown }).constraint;
+        const name = cause.constraint;
         if (typeof name === "string" && name.length > 0) return name;
     }
     return "unknown";
@@ -178,7 +194,7 @@ export function tryMutation<T>(op: string, fn: () => Promise<T>): ResultAsync<T,
  * the original failure is what matters (an aborted transaction never
  * committed), and `release()` reclaims the connection regardless.
  */
-async function rollbackQuietly(client: PoolClient): Promise<void> {
+async function rollbackQuietly(client: TransactionQuerier): Promise<void> {
     try {
         await client.query("ROLLBACK");
     } catch {
@@ -206,10 +222,10 @@ async function rollbackQuietly(client: PoolClient): Promise<void> {
  * transaction and releases the connection so a cancelled tx never poisons the
  * pool.
  */
-export function withTransaction<T>(pool: Pool, op: string, fn: (client: PoolClient) => ResultAsync<T, DbError>): ResultAsync<T, DbError> {
+export function withTransaction<T>(pool: Connectable, op: string, fn: (client: TransactionQuerier) => ResultAsync<T, DbError>): ResultAsync<T, DbError> {
     return new ResultAsync(
         (async () => {
-            let client: PoolClient;
+            let client: TransactionQuerier & { release(): void };
             try {
                 client = await pool.connect();
             } catch (cause) {

@@ -10,12 +10,13 @@
 
 import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 describe("web_fetch pdf-parse module load", () => {
     it("keeps os.availableParallelism() finite after the public barrel loads", () => {
         const child = Bun.spawnSync({ cmd: [process.execPath, join(import.meta.dir, "../__fixtures__/barrel-load-probe.ts")] });
         expect(child.stderr.toString()).toBe("");
-        const report = JSON.parse(child.stdout.toString()) as { agent: boolean; parallelism: number | "undefined" };
+        const report = z.object({ agent: z.boolean(), parallelism: z.union([z.number(), z.literal("undefined")]) }).parse(JSON.parse(child.stdout.toString()));
         expect(report.agent).toBe(true);
         expect(report.parallelism).not.toBe("undefined");
         expect(report.parallelism).toBeGreaterThan(0);

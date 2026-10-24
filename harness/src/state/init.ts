@@ -11,6 +11,8 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Migrator, type Migration } from "kysely/migration";
 import type { Pool } from "pg";
+
+import type { Querier } from "./db.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { cortexMigrations } from "./migrations/index.js";
@@ -27,7 +29,7 @@ const MIGRATION_LOCK_TIMEOUT_MS = 5_000;
  * Apply the pending migrations of the Cortex state tables. Safe to call on every
  * startup and across concurrent replicas.
  */
-export async function initCortexState(pool: Pool, injected?: Logger): Promise<void> {
+export async function initCortexState(pool: Querier & Pick<Pool, "connect" | "options">, injected?: Logger): Promise<void> {
     const logger = (injected ?? createNoopLogger()).named("cortex-state");
     const { rows } = await pool.query<{ schema: string }>("SELECT current_schema() AS schema");
     const db = new Kysely<unknown>({

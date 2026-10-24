@@ -137,7 +137,7 @@ function headingClass(level: number): string {
  */
 export function renderSection(section: SectionBlock, depth: number, childrenHtml: string): string {
     const level = Math.min(depth + 2, 4);
-    const Heading = `h${level}` as "h2" | "h3" | "h4";
+    const Heading = level === 2 ? "h2" : level === 3 ? "h3" : "h4";
     return String(
         <section id={section.id} class="report-section" {...blockMark(section.id)}>
             <Heading class={headingClass(level)}>{section.title}</Heading>

@@ -22,6 +22,8 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChannelOrder, type ChartEncoding, type ChartTransform } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ArtifactTableReference, type ColumnMeaning } from "../../contracts/report-reference.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import {
     CHART_BODY_MAX_PX,
@@ -55,7 +57,7 @@ export function chartProblem(blockId: string, detail: string): RenderProblem {
 }
 
 /** Convert one cell to a finite number, or `null` when it is absent or not numeric. */
-export function toNumber(cell: Cell | null | undefined): number | null {
+export function toNumber(cell: unknown): number | null {
     if (typeof cell === "number") return Number.isFinite(cell) ? cell : null;
     if (typeof cell === "string") {
         const trimmed = cell.trim();
@@ -73,7 +75,7 @@ export function toNumber(cell: Cell | null | undefined): number | null {
  * person. The replacement reads no locale, thus the same value gives the same text on every host. The raw
  * value stays in the data rows, thus the provenance loses nothing.
  */
-export function categoryName(value: Cell | undefined): string {
+export function categoryName(value: unknown): string {
     return String(value).replaceAll("_", " ");
 }
 
@@ -157,7 +159,7 @@ export function compareCell(a: Cell | undefined, b: Cell | undefined): number {
  * of strings and a column of numbers still meet. A row that lacks the order cell gives its category no place,
  * thus it refuses.
  */
-export function orderCategories<T extends Cell | undefined>(
+export function orderCategories<T>(
     blockId: string,
     rowCount: number,
     categoryAt: (index: number) => Cell | null | undefined,
@@ -787,19 +789,19 @@ function iconsByName(option: EchartOption): Map<string, string> {
  * series names in order, as the runtime does.
  */
 function iconLegend(option: EchartOption): EchartOption | undefined {
-    const legend = option.legend;
-    if (typeof legend !== "object" || legend === null || Array.isArray(legend)) return undefined;
-    const fields = legend as EchartOption;
+    const fields = parseUnknownRecord(option.legend);
+    if (fields === undefined) return undefined;
     if (fields.show === false) return undefined;
     const icons = iconsByName(option);
     if (icons.size === 0) return undefined;
-    const declared = Array.isArray(fields.data) ? (fields.data as unknown[]) : [...icons.keys()];
+    const declared = isUnknownArray(fields.data) ? fields.data : [...icons.keys()];
     const data = declared.map((entry) => {
-        if (typeof entry === "object" && entry !== null && typeof (entry as EchartOption).icon === "string") return entry;
-        const name = typeof entry === "string" ? entry : typeof entry === "object" && entry !== null ? (entry as EchartOption).name : undefined;
+        const entryFields = parseUnknownRecord(entry);
+        if (entryFields !== undefined && typeof entryFields.icon === "string") return entry;
+        const name = typeof entry === "string" ? entry : entryFields?.name;
         const icon = typeof name === "string" ? icons.get(name) : undefined;
         if (icon === undefined || typeof name !== "string") return entry;
-        return typeof entry === "object" && entry !== null ? { ...(entry as EchartOption), icon } : { name, icon };
+        return entryFields === undefined ? { name, icon } : { ...entryFields, icon };
     });
     return { ...fields, data };
 }
@@ -832,15 +834,15 @@ function paletteSlots(option: EchartOption): number {
  * the title clears the labels on the page and in each export.
  */
 function movedTitle(axis: unknown): unknown {
-    if (typeof axis !== "object" || axis === null) return axis;
-    const fields = axis as EchartOption;
+    const fields = parseUnknownRecord(axis);
+    if (fields === undefined) return axis;
     return typeof fields.name === "string" && fields.name !== "" ? { ...fields, nameMoveOverlap: true } : axis;
 }
 
 /** True when a grid, or one grid of a list, contains its labels. */
 function containsLabels(grid: unknown): boolean {
     const grids = Array.isArray(grid) ? grid : [grid];
-    return grids.some((entry) => typeof entry === "object" && entry !== null && (entry as EchartOption).containLabel === true);
+    return grids.some((entry) => parseUnknownRecord(entry)?.containLabel === true);
 }
 
 /** Each axis of one axis member with its title moved off its labels. */

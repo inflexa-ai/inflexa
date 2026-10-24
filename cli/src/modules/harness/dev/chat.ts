@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { randomUUIDv7 } from "bun";
 import { intro, isCancel, log, outro, select, text } from "@clack/prompts";
 import type { ResultAsync } from "neverthrow";
-import { checkChatPart, type AskPart, type ChatFrame, type ChatPartFrame } from "@inflexa-ai/harness/contracts/index.js";
+import { checkChatPart, isKnownPartFrame, type AskPart, type ChatFrame, type ChatPartFrame } from "@inflexa-ai/harness/contracts/index.js";
 import type { OpenableEntry, PresentationBody } from "../../../types/session.ts";
 
 import type { AskReply, ThreadSummary, TurnSummary } from "../../../api/conversation.ts";
@@ -239,7 +239,7 @@ async function runTurn(printer: ChatPrinter, sink: ChatSink, analysisId: string,
 function pendingAsk(frame: ChatFrame): AskPart | null {
     if (frame.type !== "data-ask" || isSubAgentEvent(frame)) return null;
     const checked = checkChatPart(frame);
-    return checked.ok && checked.frame.type === "data-ask" && checked.frame.status === "pending" ? checked.frame : null;
+    return checked.ok && isKnownPartFrame(checked.frame) && checked.frame.type === "data-ask" && checked.frame.status === "pending" ? checked.frame : null;
 }
 
 /** Ask the user for a decision, and send it with `POST {A}/asks/:askId/answer`. A cancelled prompt rejects. */
@@ -465,6 +465,11 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
     };
 
     async function renderDataPart(part: ChatPartFrame): Promise<void> {
+        // Rule 3: observe unknown parts, do not swallow them.
+        if (!isKnownPartFrame(part)) {
+            sink.out(`  [part:${part.type}]\n`);
+            return;
+        }
         switch (part.type) {
             case "data-plan": {
                 const plan = readPlanCard(part);
@@ -504,7 +509,7 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 sink.out(`\n  [approval] ${part.command} — ${part.status}\n`);
                 return;
             default:
-                // Rule 3: observe unknown parts, do not swallow them.
+                // A part of a known type with no render case here.
                 sink.out(`  [part:${part.type}]\n`);
                 return;
         }

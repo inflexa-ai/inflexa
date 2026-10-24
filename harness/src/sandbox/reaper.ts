@@ -21,11 +21,11 @@
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import type { Pool } from "pg";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { untracedWorkflow } from "../lib/otel-spans.js";
+import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { reconcileReapedSandbox } from "../state/active-sandboxes.js";
 import type { SandboxClient } from "./client.js";
@@ -78,7 +78,7 @@ export function terminalStepStatus(workflowStatus: string | null): "canceled" | 
 }
 
 export type ReaperDeps = {
-    pool: Pool;
+    pool: Querier;
     sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById" | "isAliveById">;
     getStatus: (workflowId: string) => Promise<{ status: string } | null>;
     /** Creation-time grace before an unattributable machine is even probed. */
@@ -181,7 +181,7 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
 }
 
 export type RegisterReaperDeps = {
-    pool: Pool;
+    pool: Querier;
     sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById" | "isAliveById">;
     graceMs?: number;
     logger?: Logger;
@@ -202,7 +202,7 @@ export function registerSandboxReaper(deps: RegisterReaperDeps): void {
                     reapOnce({
                         pool: deps.pool,
                         sandboxClient: deps.sandboxClient,
-                        getStatus: async (workflowId) => (await DBOS.getWorkflowStatus(workflowId)) as { status: string } | null,
+                        getStatus: async (workflowId) => await DBOS.getWorkflowStatus(workflowId),
                         graceMs: deps.graceMs,
                         logger: deps.logger,
                     }),

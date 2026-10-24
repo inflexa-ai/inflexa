@@ -15,7 +15,7 @@
 import { ok } from "neverthrow";
 import { z } from "zod";
 
-import { ORGAN_SYSTEMS, type OrganSystem } from "../../contracts/organ-system.js";
+import { ORGAN_SYSTEMS } from "../../contracts/organ-system.js";
 import { SEVERITIES, type Severity } from "../../contracts/severity.js";
 import { CHEMBL_RE, SafetyPanelFileSchema, UNIPROT_RE, type SafetyTarget } from "../../data/safety-panel-schema.js";
 import panelData from "../../data/safety-panel.json" with { type: "json" };
@@ -205,7 +205,7 @@ export const targetSafetyTool = defineTool({
         }
 
         const bySeverity: Record<Severity, number> = { high: 0, medium: 0, low: 0 };
-        const byOrgan: Partial<Record<OrganSystem, number>> = {};
+        const byOrgan: Record<string, number> = {};
         let panelMatched = 0;
         for (const row of rows) {
             if (!row.panelEntry) continue;
@@ -234,7 +234,7 @@ export const targetSafetyTool = defineTool({
                 totalInput: identifiers.length,
                 panelMatched,
                 bySeverity,
-                byOrgan: byOrgan as Record<string, number>,
+                byOrgan,
                 openTargetsWithLiabilities: withLiabilities,
             },
             targets: rows,

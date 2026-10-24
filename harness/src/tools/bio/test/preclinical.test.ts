@@ -9,6 +9,11 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
         status,
@@ -18,13 +23,13 @@ function json(body: unknown, status = 200): Response {
 
 /** Route a stubbed fetch by URL substring. */
 function stubFetch(routes: Array<[string, () => Response]>): void {
-    globalThis.fetch = (async (url: string | URL) => {
+    globalThis.fetch = fetchDouble(async (url) => {
         const u = String(url);
         for (const [needle, make] of routes) {
             if (u.includes(needle)) return make();
         }
         return new Response("unrouted", { status: 404 });
-    }) as typeof fetch;
+    });
 }
 
 const geneDocs = (docs: unknown[]) => json({ response: { docs } });
@@ -182,7 +187,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
 
     it("stays out of the default include set", async () => {
         const seen: string[] = [];
-        globalThis.fetch = (async (url: string | URL) => {
+        globalThis.fetch = fetchDouble(async (url) => {
             const u = String(url);
             seen.push(u);
             if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
@@ -191,7 +196,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
                 if (u.includes(needle)) return make();
             }
             return new Response("unrouted", { status: 404 });
-        }) as typeof fetch;
+        });
 
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1" }, ctx))._unsafeUnwrap();
@@ -204,7 +209,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
 describe("genePreclinicalProfile — both halves", () => {
     it("fetches expression and knockout together by default", async () => {
         const seen: string[] = [];
-        globalThis.fetch = (async (url: string | URL) => {
+        globalThis.fetch = fetchDouble(async (url) => {
             const u = String(url);
             seen.push(u);
             if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
@@ -213,7 +218,7 @@ describe("genePreclinicalProfile — both halves", () => {
                 if (u.includes(needle)) return make();
             }
             return new Response("unrouted", { status: 404 });
-        }) as typeof fetch;
+        });
 
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1" }, ctx))._unsafeUnwrap();

@@ -29,20 +29,65 @@ import { showFileTool } from "../workspace/show-file.js";
 import { createShowPlanTool } from "../workspace/show-plan.js";
 import { createWorkspaceSearchTool } from "../workspace/workspace-search.js";
 import { createWriteFileTool } from "../workspace/write-file.js";
+import { Pool } from "pg";
+
+import { makeFakeChatProvider, makeFakeSandboxClient, makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
+import type { CitationResolver } from "../../citations/types.js";
+import type { RunLauncher } from "../../execution/run-launcher.js";
+import type { WorkingMemoryStore } from "../../memory/working-memory.js";
+import type { EmbeddingProvider } from "../../providers/types.js";
+import type { SandboxRef } from "../../sandbox/types.js";
+import type { WorkspaceMutator } from "../workspace/mutator.js";
 import type { Tool } from "../define-tool.js";
 
-/** A dep bag no hook ever reads. */
-const unused = {} as never;
+/** A dep member describeCall never reaches. */
+function refuse(dep: string): never {
+    throw new Error(`not driven by describeCall: ${dep}`);
+}
+
+const notDrivenQuerier = {
+    async query() {
+        return { rows: [], rowCount: 0 };
+    },
+};
+
+const sandboxRef: SandboxRef = { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" };
+
+const notDrivenWorkingMemory: WorkingMemoryStore = {
+    load: () => refuse("workingMemory.load"),
+    updateSection: () => refuse("workingMemory.updateSection"),
+    render: () => refuse("workingMemory.render"),
+};
+
+const notDrivenResolver: CitationResolver = {
+    resolveOne: () => refuse("resolver.resolveOne"),
+    resolveMany: () => refuse("resolver.resolveMany"),
+};
+
+const notDrivenEmbedding: EmbeddingProvider = {
+    dimensions: 1536,
+    embed: () => refuse("embedding.embed"),
+};
+
+const notDrivenLauncher: RunLauncher = {
+    launch: () => refuse("runLauncher.launch"),
+};
+
+const notDrivenMutator: WorkspaceMutator = {
+    writeFile: () => refuse("mutator.writeFile"),
+    recordWrite: () => refuse("mutator.recordWrite"),
+};
 
 /** Run a tool's hook, asserting it declares one. */
-function describeCall(tool: Tool, input: unknown): string {
+function describeCall(tool: Tool, input: unknown): string | undefined {
     expect(tool.describeCall).toBeDefined();
     return tool.describeCall!(input);
 }
 
 describe("describeCall — conversation roster", () => {
     it("update_working_memory names the operation and section", () => {
-        const tool = createUpdateWorkingMemoryTool(unused, unused);
+        const tool = createUpdateWorkingMemoryTool(notDrivenWorkingMemory, new Pool());
 
         expect(describeCall(tool, { section: "goal", text: "characterize the cohort" })).toBe("set goal");
         expect(describeCall(tool, { section: "hypothesis", text: "batch effect drives PC1" })).toBe("add hypothesis");
@@ -51,14 +96,14 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("workspace_search names the query, and the type filter when set", () => {
-        const tool = createWorkspaceSearchTool(unused, unused);
+        const tool = createWorkspaceSearchTool(notDrivenQuerier, notDrivenEmbedding);
 
         expect(describeCall(tool, { query: "differential expression results", limit: 8 })).toBe("differential expression results");
         expect(describeCall(tool, { query: "qc metrics", type: "summary", limit: 8 })).toBe("qc metrics (summary)");
     });
 
     it("grep names the pattern and the tree it searches", () => {
-        const tool = createGrepTool(unused, "/a/runs/r1/s1");
+        const tool = createGrepTool(makeFakeWorkspaceFs(), "/a/runs/r1/s1");
 
         expect(describeCall(tool, { pattern: "TP53", path: "output" })).toBe("TP53 in output");
         // Neither field alone identifies the call: one pattern over two trees, and two patterns over
@@ -68,13 +113,13 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("list_files names the directory", () => {
-        const tool = createListFilesTool(unused, "/a/runs/r1/s1");
+        const tool = createListFilesTool(makeFakeWorkspaceFs(), "/a/runs/r1/s1");
 
         expect(describeCall(tool, { path: "runs/r1/step-2/output" })).toBe("runs/r1/step-2/output");
     });
 
     it("read_file names the path, plus the head or tail window", () => {
-        const tool = createReadFileTool(unused, "/a/runs/r1/s1");
+        const tool = createReadFileTool(makeFakeWorkspaceFs(), "/a/runs/r1/s1");
 
         expect(describeCall(tool, { path: "output/summary.md" })).toBe("output/summary.md");
         expect(describeCall(tool, { path: "data/inputs/x.csv", headLines: 20 })).toBe("data/inputs/x.csv (first 20 lines)");
@@ -82,7 +127,7 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("inspect_run names the run, or the list page", () => {
-        const tool = createInspectRunTool(unused);
+        const tool = createInspectRunTool(notDrivenQuerier);
 
         expect(describeCall(tool, { runId: "run-7a2f" })).toBe("run-7a2f");
         expect(describeCall(tool, {})).toBe("run list (page 1)");
@@ -90,7 +135,7 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("resolve_citation names the citation it verifies", () => {
-        const tool = createResolveCitationTool(unused);
+        const tool = createResolveCitationTool(notDrivenResolver);
 
         expect(describeCall(tool, { citation: "doi:10.1000/example" })).toBe("verify doi:10.1000/example");
         // The metadata fields are comparison inputs, not the subject of the call.
@@ -124,11 +169,11 @@ describe("describeCall — conversation roster", () => {
 
     it("execute_analysis names the mode and what it runs", () => {
         const tool = createExecuteAnalysisTool({
-            pool: unused,
-            executeAnalysisWorkflow: unused,
-            runAuthorizer: unused,
-            runLauncher: unused,
-            utilityProvider: unused,
+            pool: new Pool(),
+            executeAnalysisWorkflow: () => refuse("executeAnalysisWorkflow"),
+            runAuthorizer: createLocalRunAuthorizer(),
+            runLauncher: notDrivenLauncher,
+            utilityProvider: makeFakeChatProvider(),
             utilityModel: "test-model",
         });
 
@@ -137,7 +182,7 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("inspect_data_profile names the scope, and the page of the file records", () => {
-        const tool = createInspectDataProfileTool(unused);
+        const tool = createInspectDataProfileTool(notDrivenQuerier);
 
         // Both fields are defaulted inside `execute`, so the call that names none
         // is the common one. A hook without the defaults describes it as nothing.
@@ -149,13 +194,17 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("generate_plan names the research question", () => {
-        const tool = createGeneratePlanTool(unused);
+        const tool = createGeneratePlanTool({
+            conversation: { provider: makeFakeChatProvider(), model: "test-model" },
+            pool: new Pool(),
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        });
 
         expect(describeCall(tool, { researchQuestion: "which genes drive resistance in cluster 3" })).toBe("which genes drive resistance in cluster 3");
     });
 
     it("list_available_refs names the subtree it inspects, and marks a filter over it", () => {
-        const tool = createListAvailableRefsTool(unused);
+        const tool = createListAvailableRefsTool({});
 
         expect(describeCall(tool, {})).toBe("full reference store");
         expect(describeCall(tool, { path: "managed/collectri" })).toBe("managed/collectri");
@@ -182,7 +231,7 @@ describe("describeCall — conversation roster", () => {
     // takes the whole line and drops the filter with no trace. Both halves are
     // bounded here instead, thus each one reaches a reader and each marks its cut.
     it("list_available_refs bounds each half, so the cap severs neither the mark nor the filter", () => {
-        const tool = createListAvailableRefsTool(unused);
+        const tool = createListAvailableRefsTool({});
 
         const longNeedle = describeCall(tool, { query: "k".repeat(40) });
         expect(longNeedle).toBe(`matching "${"k".repeat(31)}…"`);
@@ -195,12 +244,12 @@ describe("describeCall — conversation roster", () => {
         // Both halves at once — the worst case, and still one code point inside the cap.
         const both = describeCall(tool, { path: "p".repeat(200), query: "k".repeat(40) });
         expect(both).toBe(`${"p".repeat(75)}… matching "${"k".repeat(31)}…"`);
-        expect(Array.from(both)).toHaveLength(120);
+        expect(Array.from(both ?? "")).toHaveLength(120);
         expect(normalizeDetail(both)).toBe(both);
     });
 
     it("list_available_packages names the presence check before any filter", () => {
-        const tool = createListAvailablePackagesTool(unused);
+        const tool = createListAvailablePackagesTool({});
 
         expect(describeCall(tool, {})).toBe("full package list");
         expect(describeCall(tool, { names: ["Seurat", "scanpy"] })).toBe("Seurat, scanpy");
@@ -221,7 +270,7 @@ describe("describeCall — conversation roster", () => {
     // A needle the cap cuts loses the quote that closes its mark. The bound is the
     // hook's, thus the marked form is always whole and the qualifier keeps its place.
     it("list_available_packages bounds the needle, so the mark always closes", () => {
-        const tool = createListAvailablePackagesTool(unused);
+        const tool = createListAvailablePackagesTool({});
 
         const detail = describeCall(tool, { query: "s".repeat(40), language: "r" });
 
@@ -230,7 +279,7 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("show_plan names the plan", () => {
-        const tool = createShowPlanTool(unused);
+        const tool = createShowPlanTool(notDrivenQuerier);
 
         expect(describeCall(tool, { planId: "pln-1a2b3c4d", title: "Revised plan" })).toBe("pln-1a2b3c4d");
     });
@@ -253,21 +302,21 @@ describe("describeCall — conversation roster", () => {
 
 describe("describeCall — sandbox mutate surface", () => {
     it("write_file names the path and never the content", () => {
-        const tool = createWriteFileTool({ mutator: unused });
+        const tool = createWriteFileTool({ mutator: notDrivenMutator });
 
         expect(describeCall(tool, { path: "output/result.csv", content: "gene,logfc\nBRCA1,2.4" })).toBe("output/result.csv");
     });
 
     it("edit_file names the path", () => {
-        const tool = createEditFileTool({ mutator: unused, workspaceFilesystem: unused, workingDir: "/a/runs/r1/s1" });
+        const tool = createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1" });
 
         expect(describeCall(tool, { path: "scripts/run.py", old_string: "a", new_string: "b", replace_all: false })).toBe("scripts/run.py");
     });
 
     it("execute_command names the script token, else the joined argv", () => {
         const tool = createExecuteCommandTool({
-            sandboxClient: unused,
-            sandbox: unused,
+            sandboxClient: makeFakeSandboxClient(),
+            sandbox: sandboxRef,
             deadlineMs: () => 0,
             defaultCwd: "/a/runs/r1/s1",
         });

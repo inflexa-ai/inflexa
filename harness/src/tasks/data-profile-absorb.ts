@@ -30,10 +30,9 @@
  */
 
 import type { DataProfileDimension, DataProfileGroup, DataProfileRecipeStep, DataProfileResult } from "../contracts/data-profile.js";
-import type { DimensionCategory, GroupCategory, GroupRole } from "../contracts/profile-vocabulary.js";
 import type { SetMenu } from "../input-scan/menu.js";
 import type { DetectedSet, DetectedSets } from "../input-scan/set-types.js";
-import type { GroupAnnotation, MenuOperation, Observation, ProfileDimension, ProfileSubmission } from "../schemas/data-profile-schemas.js";
+import type { GroupAnnotationInput, MenuOperationInput, Observation, ProfileDimensionInput, ProfileSubmissionInput } from "../schemas/data-profile-schemas.js";
 import { resolveProfileSubmission, type ProfileResolution } from "./data-profile-resolve.js";
 
 /** Delta paths named in the repair briefing before the tail folds into a count. */
@@ -44,10 +43,10 @@ export type AbsorbKind = "none" | "full" | "partial" | "stranded";
 export type AbsorbOutcome =
     | { readonly kind: "none" }
     | { readonly kind: "stranded"; readonly reason: string }
-    | { readonly kind: "full"; readonly operations: readonly MenuOperation[]; readonly resolution: ProfileResolution }
+    | { readonly kind: "full"; readonly operations: readonly MenuOperationInput[]; readonly resolution: ProfileResolution }
     | {
           readonly kind: "partial";
-          readonly operations: readonly MenuOperation[];
+          readonly operations: readonly MenuOperationInput[];
           readonly resolution: ProfileResolution;
           /** Kept files the replayed recipe does not account for — what the agent is woken for. */
           readonly delta: readonly string[];
@@ -69,14 +68,14 @@ function keptPaths(detected: DetectedSets): Set<string> {
  * stand: a replay records what the profile already said, and re-adjudicating a category
  * against today's catalogue would be authoring, which is the one thing a replay must not do.
  */
-function annotationOf(group: DataProfileGroup, kept: ReadonlySet<string>): GroupAnnotation {
+function annotationOf(group: DataProfileGroup, kept: ReadonlySet<string>): GroupAnnotationInput {
     const annotations = (group.memberAnnotations ?? []).filter((entry) => kept.has(entry.path));
-    const annotation: GroupAnnotation = {
+    const annotation: GroupAnnotationInput = {
         name: group.name,
         memberRepresents: group.memberRepresents,
         description: group.description,
-        role: group.role as GroupRole,
-        category: group.category as GroupCategory,
+        role: group.role,
+        category: group.category,
         categoryLabel: group.categoryLabel,
         subtype: group.subtype,
         categoryReason: group.categoryReason,
@@ -113,7 +112,7 @@ function requireGroup(ctx: ReplayContext, groupId: string | undefined, op: strin
  * out unclaimed and become the delta rather than landing in a group by default.
  * `undefined` means the step addressed only files that are gone.
  */
-function replayStep(ctx: ReplayContext, step: DataProfileRecipeStep): MenuOperation | undefined {
+function replayStep(ctx: ReplayContext, step: DataProfileRecipeStep): MenuOperationInput | undefined {
     if (step.op === "use") {
         const set = requireSet(ctx, step.templates[0] ?? "", "use");
         return { op: "use", setId: set.id, group: annotationOf(requireGroup(ctx, step.groupIds[0], "use"), ctx.kept) };
@@ -156,7 +155,7 @@ function replayStep(ctx: ReplayContext, step: DataProfileRecipeStep): MenuOperat
  * no longer resolves strands the recipe — rebinding to whatever now occupies that
  * position would silently reattach the dimension to a different slot.
  */
-function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): ProfileDimension {
+function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): ProfileDimensionInput {
     const observations: Observation[] = dimension.observations.map((observation) => {
         if (observation.kind !== "slot") return { ...observation };
         const binding = observation.binding;
@@ -175,9 +174,9 @@ function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): P
     });
 
     const reconciliations = dimension.reconciliations?.map((entry) => ({ ...entry }));
-    const replayed: ProfileDimension = {
+    const replayed: ProfileDimensionInput = {
         label: dimension.label,
-        category: dimension.category as DimensionCategory,
+        category: dimension.category,
         categoryLabel: dimension.categoryLabel,
         scope: dimension.scope,
         description: dimension.description,
@@ -226,10 +225,10 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
     const sweep = prior.recipe.find((step) => step.op === "unclassified");
     if (authored.length === 0) return { kind: "none" };
 
-    let operations: MenuOperation[];
-    let dimensions: ProfileDimension[];
+    let operations: MenuOperationInput[];
+    let dimensions: ProfileDimensionInput[];
     try {
-        operations = authored.map((step) => replayStep(ctx, step)).filter((operation): operation is MenuOperation => operation !== undefined);
+        operations = authored.map((step) => replayStep(ctx, step)).filter((operation): operation is MenuOperationInput => operation !== undefined);
         dimensions = (prior.dimensions ?? []).map((dimension) => replayDimension(ctx, dimension));
     } catch (err) {
         if (err instanceof StrandedRecipe) return { kind: "stranded", reason: err.message };
@@ -239,7 +238,7 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
         return { kind: "stranded", reason: "a step of the recipe addressed files or templates that are gone" };
     }
 
-    const submission: ProfileSubmission = {
+    const submission: ProfileSubmissionInput = {
         operations,
         analysisSummary: prior.summary,
         domain: prior.domain ?? "",
@@ -265,7 +264,7 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
 }
 
 /** A carried-forward group in full, so resubmitting it verbatim needs no recall. */
-function renderAnnotation(group: GroupAnnotation, indent = ""): string[] {
+function renderAnnotation(group: GroupAnnotationInput, indent = ""): string[] {
     const lines = [
         `${indent}  - name: ${group.name}`,
         `${indent}  - role/category: ${group.role} / ${group.category}${group.subtype ? ` (${group.subtype})` : ""}`,

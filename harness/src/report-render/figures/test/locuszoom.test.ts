@@ -8,16 +8,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import {
-    CHART_SOURCE_MEMBER,
-    deriveChartOption,
-    deriveChartRender,
-    type ChartDataSource,
-    type ChartInputs,
-    type ChartOpts,
-    type ChartRow,
-    type EchartOption,
-} from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_RENDERERS_SOURCE, exportOption } from "../../chart-renderers.js";
 import { CHART_BODY_MAX_PX, CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
@@ -37,6 +28,18 @@ import {
     RECOMBINATION_COLOR,
     RECOMBINATION_NAME,
 } from "../locuszoom.js";
+import {
+    chartSourceOf,
+    markLineData,
+    optionArray,
+    optionAt,
+    optionList,
+    optionNumberRows,
+    optionNumbers,
+    optionOf,
+    pageCall,
+    seriesOf,
+} from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -96,10 +99,6 @@ function refusal(chartBlock: ChartBlock, rows: readonly ChartRow[] = ROWS, input
     return deriveChartOption(chartBlock, rows, undefined, inputs, OPTS)._unsafeUnwrapErr().detail;
 }
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function named(option: EchartOption, name: string): EchartOption {
     const found = seriesOf(option).find((entry) => entry.name === name);
     if (found === undefined) throw new Error(`no series "${name}"`);
@@ -108,12 +107,12 @@ function named(option: EchartOption, name: string): EchartOption {
 
 function axes(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption[] {
     const value = option[key];
-    return Array.isArray(value) ? (value as EchartOption[]) : [value as EchartOption];
+    return Array.isArray(value) ? optionList(value).map((entry) => optionOf(entry)) : [optionOf(value)];
 }
 
 /** The pair of each item of one series, whether the item is a bare pair or an object. */
 function pairs(series: EchartOption): number[][] {
-    return (series.data as unknown[]).map((item) => (Array.isArray(item) ? item : ((item as EchartOption).value as number[])) as number[]);
+    return optionList(series.data).map((item) => (Array.isArray(item) ? optionNumbers(item) : optionNumbers(optionOf(item).value)));
 }
 
 function firstSeries(option: EchartOption): EchartOption {
@@ -129,7 +128,7 @@ function firstAxis(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
 }
 
 function firstDataItem(series: EchartOption): EchartOption {
-    const [item] = series.data as EchartOption[];
+    const [item] = optionArray(series, "data");
     if (item === undefined) throw new Error("the series holds no data item");
     return item;
 }
@@ -165,7 +164,7 @@ describe("the regional association plot", () => {
             [0.6, 0.8, "#ffa500"],
             [0.8, 1, "#ff0000"],
         ]);
-        const maps = option.visualMap as EchartOption[];
+        const maps = optionArray(option, "visualMap");
         expect(maps.length).toBe(1);
         const map = maps[0];
         if (map === undefined) throw new Error("the option holds no visual map");
@@ -173,7 +172,7 @@ describe("the regional association plot", () => {
         expect(map.dimension).toBe(2);
         expect(map.seriesIndex).toEqual([0]);
         expect(map.selectedMode).toBe(false);
-        const pieces = map.pieces as EchartOption[];
+        const pieces = optionArray(map, "pieces");
         // The highest bin closes at 1, and each other bin holds its lower end alone.
         expect(pieces.slice(0, 5)).toEqual([
             { gte: 0.8, lte: 1, label: "0.8–1", color: "#ff0000" },
@@ -193,7 +192,7 @@ describe("the regional association plot", () => {
         const r2 = pairs(points).map(r2Of);
         expect(r2).toEqual([...r2].sort((a, b) => a - b));
         const gray = named(option, LD_MISSING_NAME);
-        expect((gray.itemStyle as EchartOption).color).toBe(LD_MISSING_COLOR);
+        expect(optionAt(gray, "itemStyle").color).toBe(LD_MISSING_COLOR);
         expect(gray.z).toBeLessThan(2);
         expect(gray.data).toEqual([{ name: "rs7185735", value: [54010000, -Math.log10(0.4)] }]);
     });
@@ -201,7 +200,7 @@ describe("the regional association plot", () => {
     it("draws the lead variant as a purple diamond with its name on top", () => {
         const lead = named(derive(), LEAD_VARIANT_NAME);
         expect(lead.symbol).toBe("diamond");
-        expect((lead.itemStyle as EchartOption).color).toBe(LEAD_VARIANT_COLOR);
+        expect(optionAt(lead, "itemStyle").color).toBe(LEAD_VARIANT_COLOR);
         expect(LEAD_VARIANT_COLOR).toBe("#9632b8");
         expect(lead.data).toEqual([{ name: "rs1558902", value: [53803574, -Math.log10(7.5e-153)] }]);
         expect(lead.label).toMatchObject({ show: true, position: "top", formatter: "{b}" });
@@ -212,7 +211,7 @@ describe("the regional association plot", () => {
         const line = named(option, RECOMBINATION_NAME);
         expect(line.type).toBe("line");
         expect(line.yAxisIndex).toBe(1);
-        expect((line.lineStyle as EchartOption).color).toBe(RECOMBINATION_COLOR);
+        expect(optionAt(line, "lineStyle").color).toBe(RECOMBINATION_COLOR);
         expect(line.showSymbol).toBe(false);
         expect(pairs(line).map((pair) => pair[0])).toEqual([53650000, 53750000, 53797000, 53803574, 53820527, 53900000, 54010000, 54080000]);
         const right = axes(option, "yAxis")[1];
@@ -222,13 +221,14 @@ describe("the regional association plot", () => {
         expect(right.min).toBe(0);
         // The largest rate is 31, and the axis ends at the round number past it.
         expect(right.max).toBe(40);
-        expect((right.splitLine as EchartOption).show).toBe(false);
+        expect(optionAt(right, "splitLine").show).toBe(false);
     });
 
     it("marks the genome-wide line at 5 × 10⁻⁸, and ends the p axis at a round number past the lead", () => {
         const option = derive();
-        const lines = seriesOf(option).flatMap((entry) => ((entry.markLine as EchartOption | undefined)?.data as EchartOption[] | undefined) ?? []);
-        const guide = lines.find((line) => line.yAxis !== undefined);
+        const lines = seriesOf(option).flatMap((entry) => markLineData(entry));
+        const found = lines.find((line) => !Array.isArray(line) && optionOf(line).yAxis !== undefined);
+        const guide = found === undefined ? undefined : optionOf(found);
         expect(guide?.yAxis).toBe(-Math.log10(5e-8));
         // The line itself names nothing, and a series of its own places the name at a free spot.
         expect(guide?.label).toEqual({ show: false });
@@ -245,14 +245,14 @@ describe("the regional association plot", () => {
         // The window spans 53.65 to 54.08 Mb, thus the ticks step by 0.1 Mb, and the axis ends at the rows.
         expect(x.min).toBe(53650000);
         expect(x.max).toBe(54080000);
-        expect((x.axisLabel as EchartOption).show).toBe(false);
+        expect(optionAt(x, "axisLabel").show).toBe(false);
         // The runtime counts its ticks from the minimum, thus the axis hides them and the tick series draws each mark.
-        expect((x.axisTick as EchartOption).show).toBe(false);
+        expect(optionAt(x, "axisTick").show).toBe(false);
         expect(x.name).toBe("Position on chr16 (Mb)");
         const ticks = named(option, POSITION_TICKS);
         expect(ticks.symbol).toBe("rect");
-        expect((ticks.data as EchartOption[]).map((item) => item.name)).toEqual(["53.7", "53.8", "53.9", "54.0"]);
-        expect((ticks.data as EchartOption[]).map((item) => (item.value as number[])[0])).toEqual([53700000, 53800000, 53900000, 54000000]);
+        expect(optionArray(ticks, "data").map((item) => item.name)).toEqual(["53.7", "53.8", "53.9", "54.0"]);
+        expect(optionArray(ticks, "data").map((item) => optionNumbers(item.value)[0])).toEqual([53700000, 53800000, 53900000, 54000000]);
     });
 
     it("titles the position axis with the declared label in megabases", () => {
@@ -264,21 +264,21 @@ describe("the regional association plot", () => {
         const option = derive();
         const genes = named(option, GENE_NAMES);
         expect(genes.xAxisIndex).toBe(1);
-        const names = (genes.data as EchartOption[]).map((item) => item.name);
+        const names = optionArray(genes, "data").map((item) => item.name);
         // AKTIP and IRX3 lie outside the window, thus they draw nothing.
         expect(names).toEqual(["RPGRIP1L", "MIR1972", "FTO"]);
         expect(genes.label).toMatchObject({ show: true, position: "bottom", fontStyle: "italic" });
-        const spans = ((genes.markLine as EchartOption).data as EchartOption[][]).map((ends) => {
-            const [from, to] = ends;
+        const spans = optionList(optionAt(genes, "markLine").data).map((ends) => {
+            const [from, to] = optionList(ends).map((entry) => optionOf(entry));
             if (from === undefined || to === undefined) throw new Error("the gene span is not a pair of ends");
-            return [from.coord, to.coord] as number[][];
+            return optionNumberRows([from.coord, to.coord]);
         });
         const lanes = spans.map((span) => span[0]?.[1]);
         // The clipped FTO ends at the window, and each overlapping pair sits in two lanes.
         expect(spans[2]?.[1]?.[0]).toBe(54080000);
         expect(lanes[0]).not.toBe(lanes[1]);
         expect(new Set(lanes).size).toBeGreaterThanOrEqual(2);
-        const grids = option.grid as EchartOption[];
+        const grids = optionArray(option, "grid");
         expect(grids.length).toBe(2);
     });
 
@@ -287,7 +287,7 @@ describe("the regional association plot", () => {
             const genes = Array.from({ length: count }, (_, index) => ({ gene: `G${index}`, start: 53650000, end: 54080000 }));
             const inputs: ChartInputs = { track: { rows: genes, columns: ["gene", "start", "end"] } };
             const render = deriveChartRender(locuszoom(), ROWS, undefined, { key: "lz", columns: [] }, inputs, OPTS)._unsafeUnwrap();
-            const plot = (render.option.grid as EchartOption[])[0];
+            const plot = optionArray(render.option, "grid")[0];
             if (plot === undefined) throw new Error("the render holds no plot grid");
             const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
@@ -319,7 +319,7 @@ describe("the guide label of the regional association plot", () => {
     function guideSpot(option: EchartOption): { at: number[]; label: EchartOption } {
         const guide = named(option, GUIDE_LABEL);
         const item = firstDataItem(guide);
-        return { at: item.value as number[], label: guide.label as EchartOption };
+        return { at: optionNumbers(item.value), label: optionOf(guide.label) };
     }
 
     /**
@@ -379,15 +379,16 @@ describe("the guide label of the regional association plot", () => {
 });
 
 describe("the LD legend of an export", () => {
-    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as typeof exportOption;
+    const exportOnThePage = (option: EchartOption, textPx: number, widthPx: number, heightPx: number): EchartOption =>
+        optionOf(pageCall(CHART_RENDERERS_SOURCE, "reportExportOption")(option, textPx, widthPx, heightPx));
 
     it("keeps the row of bins at each column size, on the server and on the page", () => {
         const option = derive();
-        const legend = (option.visualMap as EchartOption[])[0];
+        const legend = optionArray(option, "visualMap")[0];
         for (const size of [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double]) {
             for (const exported of [exportOption, exportOnThePage]) {
                 // A continuous scale grows its bar in an export, and a row of pieces keeps the size of its icons.
-                expect((exported(option, size.textPx, size.widthPx, size.heightPx).visualMap as EchartOption[])[0]).toEqual(legend);
+                expect(optionArray(exported(option, size.textPx, size.widthPx, size.heightPx), "visualMap")[0]).toEqual(legend);
             }
         }
     });
@@ -451,24 +452,20 @@ describe("the dense regional association plot", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[];
+    const seriesDataOnThePage = pageCall(CHART_SERIES_BUILDER, "reportSeriesData");
 
     it("reads the payload past the bound for the points and the recombination line, and the page builds them as the server does", () => {
         const rows = denseRows(20000);
         const render = deriveChartRender(locuszoom(ENCODING, {}), rows, COLUMNS, { key: "fto", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(render.option);
         expect(source.series.length).toBe(2);
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
             expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index]?.data));
         }
         // The points of no r² ride inline after the payload series, one tenth of the rows.
-        expect((named(render.option, LD_MISSING_NAME).data as unknown[]).length).toBe(2000);
+        expect(optionList(named(render.option, LD_MISSING_NAME).data).length).toBe(2000);
     });
 });

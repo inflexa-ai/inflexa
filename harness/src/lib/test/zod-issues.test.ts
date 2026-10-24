@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { hintForZodIssue, repairToolInput } from "../zod-issues.js";
+import { parseUnknownRecord } from "../unknown-containers.js";
 
 /** Parse `input` against `schema` and return the issues it produced. */
 function issuesFor(schema: z.ZodType, input: unknown): z.core.$ZodIssue[] {
@@ -10,6 +11,20 @@ function issuesFor(schema: z.ZodType, input: unknown): z.core.$ZodIssue[] {
 }
 
 /** Parse `input` against `schema` and hand the failure to `repairToolInput`. */
+/** Read one field of a repaired payload; a missing key fails the test at its expectation. */
+function readPath(value: unknown, ...keys: Array<string | number>): unknown {
+    let current: unknown = value;
+    for (const key of keys) {
+        if (Array.isArray(current)) {
+            const index = typeof key === "number" ? key : Number(key);
+            current = index >= 0 && index < current.length ? current[index] : undefined;
+            continue;
+        }
+        current = parseUnknownRecord(current)?.[String(key)];
+    }
+    return current;
+}
+
 function repairAgainst(schema: z.ZodType, input: unknown): unknown | undefined {
     const parsed = schema.safeParse(input);
     expect(parsed.success).toBe(false);
@@ -249,10 +264,10 @@ describe("repairToolInput", () => {
         const schema = z.object({ note: z.string(), synthesis: z.object({ runId: z.string() }) });
         const input = { note: '{"not":"a schema object"}', synthesis: '{"runId":"run-1"}</parameter>' };
 
-        const repaired = repairAgainst(schema, input) as { note: string; synthesis: unknown };
+        const repaired = repairAgainst(schema, input);
 
-        expect(repaired.note).toBe('{"not":"a schema object"}');
-        expect(repaired.synthesis).toEqual({ runId: "run-1" });
+        expect(readPath(repaired, "note")).toBe('{"not":"a schema object"}');
+        expect(readPath(repaired, "synthesis")).toEqual({ runId: "run-1" });
     });
 
     test("does not repair when the schema expected a string", () => {
@@ -315,13 +330,13 @@ describe("repairToolInput", () => {
             ],
         };
 
-        const repaired = repairAgainst(schema, input) as typeof input & { findings: { references: unknown }[] };
+        const repaired = repairAgainst(schema, input);
 
-        expect(repaired.findings[1]!.references).toEqual([{ pmid: "2" }]);
+        expect(readPath(repaired, "findings", 1, "references")).toEqual([{ pmid: "2" }]);
         expect(schema.safeParse(repaired).success).toBe(true);
         // Untouched branches are shared, not copied.
-        expect(repaired.meta).toBe(input.meta);
-        expect(repaired.findings[0]).toBe(input.findings[0]);
+        expect(readPath(repaired, "meta")).toBe(input.meta);
+        expect(readPath(repaired, "findings", 0)).toBe(input.findings[0]);
         expect(input.findings[1]!.references).toBe('[{"pmid":"2"}]</parameter>\n</invoke>');
     });
 

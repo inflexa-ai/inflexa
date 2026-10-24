@@ -12,10 +12,11 @@ import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
+import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-profile.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
@@ -84,7 +85,7 @@ describe("the settle notice of the data profile", () => {
         return {
             logger: silentLogger,
             // The profile body reaches the provider only inside the sandbox agent loop, which no case here enters.
-            provider: {} as ChatProvider,
+            provider: unusedChatProvider(),
             pool,
             sandboxClient,
             workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
@@ -99,18 +100,19 @@ describe("the settle notice of the data profile", () => {
             },
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             // The embedder is read only when the body indexes a profile, which no case here reaches.
-            embedding: { dimensions: 3, embed: () => okAsync([]) } as unknown as EmbeddingProvider,
+            embedding: { dimensions: 3, embed: () => okAsync([]) },
             skillsDir: root,
             notifyDataProfileSettled,
         };
     }
 
-    // The body calls only `createSandbox` of the client before it fails, thus a stand-in with that one method is enough.
+    // The body calls only `createSandbox` of the client before it fails, thus only that method is overridden.
     const refusingSandbox = {
+        ...makeFakeSandboxClient(),
         createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-    } as unknown as SandboxClient;
+    };
     // The empty-manifest path settles before any sandbox call, thus no method of the client is read.
-    const unusedSandbox = {} as unknown as SandboxClient;
+    const unusedSandbox = makeFakeSandboxClient();
 
     function recordingNotice(): { notify: NotifyDataProfileSettled; settlements: DataProfileSettlement[] } {
         const settlements: DataProfileSettlement[] = [];
@@ -131,7 +133,9 @@ describe("the settle notice of the data profile", () => {
 
         const row = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
         expect(row?.status).toBe("completed");
-        expect(settlements).toEqual([{ analysisId, status: "completed", completedAt: row?.completedAt as string }]);
+        const completedAt = row?.completedAt;
+        if (typeof completedAt !== "string") throw new Error("the row carries a stamped time");
+        expect(settlements).toEqual([{ analysisId, status: "completed", completedAt }]);
     });
 
     it("sends one settlement of a failed claim, with the stamped time", async () => {
@@ -142,7 +146,9 @@ describe("the settle notice of the data profile", () => {
 
         const row = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
         expect(row?.status).toBe("failed");
-        expect(settlements).toEqual([{ analysisId, status: "failed", completedAt: row?.completedAt as string }]);
+        const completedAt = row?.completedAt;
+        if (typeof completedAt !== "string") throw new Error("the row carries a stamped time");
+        expect(settlements).toEqual([{ analysisId, status: "failed", completedAt }]);
     });
 
     it("sends nothing when the guard refuses the stamp", async () => {

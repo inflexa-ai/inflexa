@@ -12,12 +12,11 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { metrics, trace } from "@opentelemetry/api";
-import type { ReadableSpan } from "@opentelemetry/sdk-trace-base";
 
 import {
     __otelMeterProviderRegisteredForTest,
+    __otelTracerResourceForTest,
     __resetOtelForTest,
     DEFAULT_METRIC_EXPORT_INTERVAL_MS,
     initOtel,
@@ -26,6 +25,7 @@ import {
     shutdownOtel,
 } from "../otel.js";
 import { untracedWorkflow } from "../otel-spans.js";
+import { parseUnknownRecord } from "../unknown-containers.js";
 
 let collector: Server;
 let endpoint: string;
@@ -44,7 +44,9 @@ beforeAll(async () => {
         });
     });
     await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
-    endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}`;
+    const address = collector.address();
+    if (address === null || typeof address === "string") throw new Error("the collector listens on a port");
+    endpoint = `http://127.0.0.1:${address.port}`;
 });
 
 afterAll(async () => {
@@ -82,25 +84,25 @@ afterEach(async () => {
 /** The resource attributes a span started on the registered provider carries. */
 function registeredResourceAttributes(): Record<string, unknown> {
     const span = trace.getTracer("otel-test").startSpan("probe");
-    const resource = (span as unknown as ReadableSpan).resource;
     span.end();
-    return resource.attributes;
+    return __otelTracerResourceForTest() ?? {};
 }
-
-/** OTLP JSON key/value list, flattened to the attribute record it encodes. */
-type OtlpKeyValue = {
-    readonly key: string;
-    readonly value: { readonly stringValue?: string };
-};
 
 /** The resource attributes on the metrics the exporter posted to the collector. */
 function exportedMetricResourceAttributes(): Record<string, unknown> {
     expect(metricBodies.length).toBeGreaterThan(0);
-    const payload = JSON.parse(metricBodies[0]!) as {
-        resourceMetrics: readonly { resource: { attributes: readonly OtlpKeyValue[] } }[];
-    };
+    const payload = parseUnknownRecord(JSON.parse(metricBodies[0]!));
+    const resourceMetrics = Array.isArray(payload?.resourceMetrics) ? payload.resourceMetrics : [];
+    const first = parseUnknownRecord(resourceMetrics[0]);
+    const resource = parseUnknownRecord(first?.resource);
+    const entries = Array.isArray(resource?.attributes) ? resource.attributes : [];
+    if (entries.length === 0) throw new Error("the exporter posted no resource attributes");
     const attributes: Record<string, unknown> = {};
-    for (const entry of payload.resourceMetrics[0]!.resource.attributes) attributes[entry.key] = entry.value.stringValue;
+    for (const entry of entries) {
+        const kv = parseUnknownRecord(entry);
+        const value = parseUnknownRecord(kv?.value);
+        attributes[String(kv?.key)] = value?.stringValue;
+    }
     return attributes;
 }
 

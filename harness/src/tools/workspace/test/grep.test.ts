@@ -164,6 +164,6 @@ describe("createGrepTool", () => {
 
     it("emits a valid Anthropic input schema", () => {
         const tool = createGrepTool(fakeFs({ files: {}, dirs: {} }));
-        expect((tool.jsonSchema as { type?: unknown }).type).toBe("object");
+        expect(tool.jsonSchema.type).toBe("object");
     });
 });

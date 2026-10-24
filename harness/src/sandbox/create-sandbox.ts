@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { V1Toleration } from "@kubernetes/client-node";
 import { ResultAsync, err, okAsync, type Result } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import type { SpawnSession } from "../auth/types.js";
 import { passGate } from "../lib/hooks.js";
@@ -52,7 +52,7 @@ export type SandboxBackendConfig = {
 
 export type CreateSandboxClientConfig = {
     /** App pool — used for registry writes inside the create/teardown steps. */
-    pool: Pool;
+    pool: Querier;
     /** Backend default + namespace fallback source. */
     env: SandboxBackendConfig;
     /** Default sandbox-base image when the workflow doesn't override per-step. */

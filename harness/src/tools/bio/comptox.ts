@@ -39,12 +39,15 @@ import { getEpaCcteHeaders } from "../lib/toxcast-config.js";
 const HAZARD_DATA_TYPES = ["toxval", "genetox", "cancer", "all"] as const;
 const EXPOSURE_DATA_TYPES = ["seem", "httk", "functional-use", "product-data", "all"] as const;
 
+const HAZARD_DATA_TYPE_IDS: ReadonlySet<string> = new Set(HAZARD_DATA_TYPES);
+const EXPOSURE_DATA_TYPE_IDS: ReadonlySet<string> = new Set(EXPOSURE_DATA_TYPES);
+
 function isHazardDataType(value: string | undefined): value is CtxHazardDataType {
-    return value !== undefined && (HAZARD_DATA_TYPES as readonly string[]).includes(value);
+    return value !== undefined && HAZARD_DATA_TYPE_IDS.has(value);
 }
 
 function isExposureDataType(value: string | undefined): value is CtxExposureDataType {
-    return value !== undefined && (EXPOSURE_DATA_TYPES as readonly string[]).includes(value);
+    return value !== undefined && EXPOSURE_DATA_TYPE_IDS.has(value);
 }
 
 const inputSchema = z

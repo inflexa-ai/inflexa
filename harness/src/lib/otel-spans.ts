@@ -122,7 +122,7 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
     const span = trace.getActiveSpan();
     if (span === undefined || !span.isRecording()) return;
     // The API `Span` has no name accessor; the SDK span the provider hands out does.
-    if ((span as Partial<ReadableSpan>).name !== dbosName) return;
+    if (!("name" in span) || span.name !== dbosName) return;
     span.updateName(name);
     span.setAttributes(attributes);
 }
@@ -158,6 +158,11 @@ export function passThroughTracer(tracer: Tracer, passesThrough: PassThroughRule
     return new PassThroughTracer(tracer, passesThrough);
 }
 
+/** Run `fn(span)` under `contextWithSpan`, so the callback's own result type survives the context switch. */
+function runWithSpan<T>(contextWithSpan: Context, span: ApiSpan, fn: (span: ApiSpan) => T): T {
+    return context.with(contextWithSpan, () => fn(span));
+}
+
 class PassThroughTracer implements Tracer {
     constructor(
         private readonly inner: Tracer,
@@ -176,15 +181,12 @@ class PassThroughTracer implements Tracer {
     startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, options: SpanOptions, fn: F): ReturnType<F>;
     startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, options: SpanOptions, parentContext: Context, fn: F): ReturnType<F>;
     // The inner tracer cannot take this call: its own `startActiveSpan` calls its own `startSpan`, past the rule.
-    startActiveSpan<F extends (span: ApiSpan) => unknown>(
-        name: string,
-        ...rest: [F] | [SpanOptions, F] | [SpanOptions, Context | undefined, F]
-    ): ReturnType<F> {
-        const fn = rest[rest.length - 1] as F;
-        const options = rest.length > 1 ? (rest[0] as SpanOptions) : {};
-        const parentContext = (rest.length > 2 ? (rest[1] as Context | undefined) : undefined) ?? context.active();
+    startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, ...rest: [F] | [SpanOptions, F] | [SpanOptions, Context | undefined, F]): unknown {
+        const parentContext = rest.length === 3 ? (rest[1] ?? context.active()) : context.active();
+        const options: SpanOptions = rest.length === 1 ? {} : rest[0];
+        const fn: F = rest.length === 3 ? rest[2] : rest.length === 2 ? rest[1] : rest[0];
         const span = this.startSpan(name, options, parentContext);
-        return context.with(trace.setSpan(parentContext, span), () => fn(span)) as ReturnType<F>;
+        return runWithSpan(trace.setSpan(parentContext, span), span, fn);
     }
 }
 

@@ -83,8 +83,12 @@ export type ProviderError =
  */
 export function isProviderError(value: unknown): value is ProviderError {
     if (typeof value !== "object" || value === null) return false;
-    const v = value as { type?: unknown; retryable?: unknown; message?: unknown };
-    return (v.type === "auth" || v.type === "suspend" || v.type === "provider") && typeof v.retryable === "boolean" && typeof v.message === "string";
+    if (!("type" in value && "retryable" in value && "message" in value)) return false;
+    return (
+        (value.type === "auth" || value.type === "suspend" || value.type === "provider") &&
+        typeof value.retryable === "boolean" &&
+        typeof value.message === "string"
+    );
 }
 
 export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
@@ -100,19 +104,13 @@ export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
  */
 export function findSuspendError(err: unknown): SuspendError | undefined {
     const asSuspend = (value: unknown): SuspendError | undefined => (isProviderError(value) && value.type === "suspend" ? value : undefined);
-    return findInCauseChain(
-        err,
-        (link) => asSuspend(link) ?? (typeof link === "object" && link !== null ? asSuspend((link as { value?: unknown }).value) : undefined),
-    );
+    return findInCauseChain(err, (link) => asSuspend(link) ?? ("value" in link ? asSuspend(link.value) : undefined));
 }
 
 /** Find a `ProviderError` of any kind, by the walk of {@link findSuspendError}. */
 export function findProviderError(err: unknown): ProviderError | undefined {
     const asProviderError = (value: unknown): ProviderError | undefined => (isProviderError(value) ? value : undefined);
-    return findInCauseChain(
-        err,
-        (link) => asProviderError(link) ?? (typeof link === "object" && link !== null ? asProviderError((link as { value?: unknown }).value) : undefined),
-    );
+    return findInCauseChain(err, (link) => asProviderError(link) ?? ("value" in link ? asProviderError(link.value) : undefined));
 }
 
 /**
@@ -140,7 +138,7 @@ export function toProviderError(e: unknown, workload: string, suspendOn: Suspend
         return {
             type: "provider",
             retryable: true,
-            message: `The provider sent no data for ${workload} within the request timeout of ${timeout.requestTimeoutMs} ms.`,
+            message: `The provider sent no data for ${workload} within the request timeout of ${timeout} ms.`,
             cause: e,
         };
     }
@@ -250,29 +248,21 @@ const CONNECTION_ERROR_CODES = new Set([
 const CONNECTION_ERROR_PATTERN =
     /fetch failed|socket hang up|network error|connection (?:refused|reset|error|closed)|econnrefused|enotfound|etimedout|terminated/i;
 
-type MaybeErrorChain = {
-    status?: unknown;
-    statusCode?: unknown;
-    code?: unknown;
-    name?: unknown;
-    message?: unknown;
-    /** The AI SDK's `APICallError` carries the raw response body under this name. */
-    responseBody?: unknown;
-    cause?: unknown;
-};
-
 /**
  * Walk the `cause` chain up to {@link MAX_CAUSE_HOPS} links, and return the first
  * result that `probe` gives. `probe` gives a value for a link that matches, or
  * `undefined` for a link that does not. The walk stops at the first match, at
- * the hop cap, or at the end of the chain.
+ * the hop cap, or at the end of the chain. Each probe receives a link that the
+ * walk verified to be an object, so the probe reads its fields through the `in`
+ * narrowing and no assertion restates the check.
  */
-function findInCauseChain<T>(err: unknown, probe: (link: unknown) => T | undefined): T | undefined {
+function findInCauseChain<T>(err: unknown, probe: (link: object) => T | undefined): T | undefined {
     let cursor: unknown = err;
     for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
+        if (typeof cursor !== "object" || cursor === null) return undefined;
         const found = probe(cursor);
         if (found !== undefined) return found;
-        cursor = (cursor as MaybeErrorChain).cause;
+        cursor = "cause" in cursor ? cursor.cause : undefined;
     }
     return undefined;
 }
@@ -285,9 +275,8 @@ function findInCauseChain<T>(err: unknown, probe: (link: unknown) => T | undefin
  */
 export function extractStatus(err: unknown): number | undefined {
     return findInCauseChain(err, (link) => {
-        const e = link as MaybeErrorChain;
-        if (typeof e.status === "number") return e.status;
-        if (typeof e.statusCode === "number") return e.statusCode;
+        if ("status" in link && typeof link.status === "number") return link.status;
+        if ("statusCode" in link && typeof link.statusCode === "number") return link.statusCode;
         return undefined;
     });
 }
@@ -302,27 +291,26 @@ export function extractStatus(err: unknown): number | undefined {
  * `— response body:` segment says less than no segment at all.
  */
 function extractResponseBody(err: unknown): string | undefined {
-    let cursor: unknown = err;
-    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        const e = cursor as MaybeErrorChain;
-        if (typeof e.responseBody === "string" && e.responseBody.trim() !== "") return e.responseBody;
-        cursor = e.cause;
-    }
-    return undefined;
+    return findInCauseChain(err, (link) => {
+        if ("responseBody" in link && typeof link.responseBody === "string" && link.responseBody.trim() !== "") return link.responseBody;
+        return undefined;
+    });
 }
 
 /**
- * Walk the `cause` chain for the request-timeout sentinel. The guard aborts a
- * fetch with a `RequestTimeoutError`. The SDK carries the abort reason down the
- * `cause` chain, thus the sentinel can sit one or more hops down.
+ * Walk the `cause` chain for the request-timeout bound. The guard aborts a fetch
+ * with a `RequestTimeoutError`. The SDK carries the abort reason down the `cause`
+ * chain, thus the sentinel can sit one or more hops down. The bound rides the
+ * sentinel, so the walk returns it directly.
  */
-function findRequestTimeout(err: unknown): RequestTimeoutError | undefined {
+function findRequestTimeout(err: unknown): number | undefined {
     return findInCauseChain(err, (link) => {
-        if (link instanceof RequestTimeoutError) return link;
-        // A duplicate class identity across a realm boundary fails `instanceof`,
-        // thus match the name and the field as a fallback.
-        const e = link as MaybeErrorChain & { requestTimeoutMs?: unknown };
-        if (e.name === "RequestTimeoutError" && typeof e.requestTimeoutMs === "number") return link as RequestTimeoutError;
+        if (link instanceof RequestTimeoutError) return link.requestTimeoutMs;
+        // A duplicate class identity across a realm boundary fails `instanceof`, thus match
+        // the name and the field as a fallback.
+        if ("name" in link && link.name === "RequestTimeoutError" && "requestTimeoutMs" in link && typeof link.requestTimeoutMs === "number") {
+            return link.requestTimeoutMs;
+        }
         return undefined;
     });
 }
@@ -341,21 +329,23 @@ const SDK_TIMEOUT_ERROR_NAME = "TimeoutError";
  * an abort reason down the `cause` chain, thus the reason can sit one or more
  * hops down.
  */
-function findSdkTimeout(err: unknown): Error | undefined {
-    return findInCauseChain(err, (link) => {
-        const e = link as MaybeErrorChain;
-        return e.name === SDK_TIMEOUT_ERROR_NAME ? (link as Error) : undefined;
-    });
+/**
+ * Does the `cause` chain hold the timeout that the SDK raises? The `DOMException`
+ * carries no field of its own, thus the name is the one signal. The SDK carries
+ * an abort reason down the `cause` chain, thus the reason can sit one or more
+ * hops down.
+ */
+function hasSdkTimeout(err: unknown): boolean {
+    return findInCauseChain(err, (link) => ("name" in link && link.name === SDK_TIMEOUT_ERROR_NAME ? true : undefined)) ?? false;
 }
 
 /** Does any link of the `cause` chain look like a transport-level failure? */
 function looksLikeConnectionError(err: unknown): boolean {
     return (
         findInCauseChain(err, (link) => {
-            const e = link as MaybeErrorChain;
-            if (typeof e.code === "string" && CONNECTION_ERROR_CODES.has(e.code)) return true;
-            if (typeof e.name === "string" && /^APIConnection/.test(e.name)) return true;
-            if (typeof e.message === "string" && CONNECTION_ERROR_PATTERN.test(e.message)) return true;
+            if ("code" in link && typeof link.code === "string" && CONNECTION_ERROR_CODES.has(link.code)) return true;
+            if ("name" in link && typeof link.name === "string" && /^APIConnection/.test(link.name)) return true;
+            if ("message" in link && typeof link.message === "string" && CONNECTION_ERROR_PATTERN.test(link.message)) return true;
             return undefined;
         }) ?? false
     );
@@ -377,7 +367,7 @@ export function classifyProviderError(e: unknown, suspendOn: SuspendOn = DEFAULT
     // policy as a connection error. This runs before the status and the
     // connection paths, because a timeout carries no HTTP status, and it must not
     // fall to a non-retryable path.
-    if (findRequestTimeout(e) !== undefined || findSdkTimeout(e) !== undefined) return { kind: "provider", retryable: true };
+    if (findRequestTimeout(e) !== undefined || hasSdkTimeout(e)) return { kind: "provider", retryable: true };
 
     const status = extractStatus(e);
 

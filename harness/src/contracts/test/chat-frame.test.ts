@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ChatDataPart, EmitEvent } from "../../loop/types.js";
 import type { ChatStreamEvent } from "../../providers/types.js";
+import type { ChatPartFrame } from "../chat-events.js";
 import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../chat-frame.js";
 import type { ChatMessage } from "../message.js";
 import { ChatEventSchema } from "../schemas/chat-events.js";
@@ -104,7 +105,7 @@ describe("toChatFrame", () => {
     });
 
     test("gives no frame for the provider done envelope", () => {
-        const ev = { type: "done", message: {} } as unknown as ChatStreamEvent;
+        const ev: ChatStreamEvent = { type: "done", response: { message: { role: "assistant", content: "" }, finishReason: "stop" } };
         expect(toChatFrame(ev, fallback)).toBeNull();
     });
 
@@ -426,7 +427,7 @@ describe("applyChatFrame", () => {
     });
 
     test("a data part of a type the registry does not know appends", () => {
-        const part = { type: "data-from-a-newer-emitter", id: "x-1" } as unknown as Parameters<typeof applyChatFrame>[1];
+        const part: Parameters<typeof applyChatFrame>[1] = { type: "data-from-a-newer-emitter", id: "x-1" };
         const { messages } = applyMany([], [part, part]);
         expect(messages[0]!.parts).toHaveLength(2);
     });
@@ -447,12 +448,9 @@ describe("applyChatFrame", () => {
 });
 
 describe("checkChatPart", () => {
-    // Each frame below is loose on purpose: a part frame arrives unchecked, and the check is what types it.
-    type Frame = Parameters<typeof checkChatPart>[0];
-
     test("gives a valid part without the fields that its schema does not know, and keeps the source", () => {
         const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, stale: true, source: topLevel };
-        expect(checkChatPart(frame as unknown as Frame)).toEqual({
+        expect(checkChatPart(frame)).toEqual({
             ok: true,
             frame: { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: topLevel },
         });
@@ -467,46 +465,64 @@ describe("checkChatPart", () => {
             phase: "executing",
             activity: "Running",
             at: "2026-10-12T10:00:00.000Z",
-        };
-        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "always" };
-        expect(checkChatPart(activity as unknown as Frame)).toEqual({ ok: true, frame: activity as unknown as Frame });
-        expect(checkChatPart(ask as unknown as Frame)).toEqual({ ok: true, frame: ask as unknown as Frame });
+        } as const;
+        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "always" } as const;
+        expect(checkChatPart(activity)).toEqual({ ok: true, frame: activity });
+        expect(checkChatPart(ask)).toEqual({ ok: true, frame: ask });
     });
 
     test("accepts a step activity with no time and an ask with no reply", () => {
-        const activity = { type: "data-step-activity", id: "a-1", runId: "r1", stepId: "s1", phase: "executing", activity: "Running" };
-        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "pending" };
-        expect(checkChatPart(activity as unknown as Frame)).toEqual({ ok: true, frame: activity as unknown as Frame });
-        expect(checkChatPart(ask as unknown as Frame)).toEqual({ ok: true, frame: ask as unknown as Frame });
+        const activity = { type: "data-step-activity", id: "a-1", runId: "r1", stepId: "s1", phase: "executing", activity: "Running" } as const;
+        const ask = { type: "data-ask", id: "k1", title: "Run", command: "ls", status: "pending" } as const;
+        expect(checkChatPart(activity)).toEqual({ ok: true, frame: activity });
+        expect(checkChatPart(ask)).toEqual({ ok: true, frame: ask });
     });
 
     test("refuses an ask reply of an unknown kind", () => {
-        const checked = checkChatPart({ type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "maybe" } as unknown as Frame);
+        const checked = checkChatPart({ type: "data-ask", id: "k1", title: "Run", command: "ls", status: "resolved", reply: "maybe" });
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("reply");
     });
 
     test("refuses a part of a known type that its schema rejects", () => {
-        const checked = checkChatPart({ type: "data-ask", id: "a1", title: "Run", command: "ls", status: "maybe" } as unknown as Frame);
+        const checked = checkChatPart({ type: "data-ask", id: "a1", title: "Run", command: "ls", status: "maybe" });
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("status");
     });
 
     test("gives a part of a type that the registry does not know unchanged", () => {
-        const frame = { type: "data-from-a-newer-emitter", id: "x-1", anything: 1 };
-        expect(checkChatPart(frame as unknown as Frame)).toEqual({ ok: true, frame: frame as unknown as Frame });
+        const frame = { type: "data-from-a-newer-emitter", id: "x-1", anything: 1 } as const;
+        expect(checkChatPart(frame)).toEqual({ ok: true, frame });
+    });
+
+    test("gives a part of an unknown type back as the record that arrived, with its source and extra fields", () => {
+        // The passthrough contract is byte for byte: the returned frame is the original record, not the
+        // parse's rebuilt copy of it.
+        const source = { agentId: "root", callPath: ["root"], invocationId: "tu_1", extra: 1 };
+        const frame: ChatPartFrame = {
+            type: "data-from-a-newer-emitter",
+            id: "x-1",
+            extra: { note: "keep" },
+            source,
+        };
+        const checked = checkChatPart(frame);
+        expect(checked.ok).toBe(true);
+        if (checked.ok) {
+            expect(checked.frame).toBe(frame);
+            expect(checked.frame).toEqual(frame);
+        }
     });
 
     test("refuses a part of a known type whose source is malformed", () => {
         const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, source: {} };
-        const checked = checkChatPart(frame as unknown as Frame);
+        const checked = checkChatPart(frame);
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("callPath");
     });
 
     test("refuses a part of a type that the registry does not know whose source is malformed", () => {
         const frame = { type: "data-from-a-newer-emitter", id: "x-1", source: { agentId: "root" } };
-        const checked = checkChatPart(frame as unknown as Frame);
+        const checked = checkChatPart(frame);
         expect(checked.ok).toBe(false);
         if (!checked.ok) expect(checked.error).toContain("callPath");
     });

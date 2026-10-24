@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
+
+import { type Connectable } from "../../lib/db-result.js";
+import type { Querier } from "../../state/db.js";
 import { z } from "zod";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
@@ -35,6 +38,12 @@ import { createUpdateWorkingMemoryTool } from "../../tools/memory/update-working
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../../workflows/suspension.js";
 import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "../chat-turn.js";
+
+/** The tool-result parts of a stored tool message, or a failed test on any other message. */
+function toolResultParts(message: ModelMessage): ToolResultPart[] {
+    if (message.role !== "tool") throw new Error("expected a tool message");
+    return message.content.filter((part): part is ToolResultPart => part.type === "tool-result");
+}
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -195,15 +204,16 @@ describe("prepareChatTurn", () => {
     });
 
     it("injects an unavailable state when only the activity read fails", async () => {
-        const activityFailingPool = {
-            query: (query: string | { text: string; values?: unknown[] }, values?: unknown[]) => {
-                const text = typeof query === "string" ? query : query.text;
+        const activityFailingPool: Querier & Connectable = {
+            query: (textOrConfig, values) => {
+                const text = typeof textOrConfig === "string" ? textOrConfig : textOrConfig.text;
                 if (text.includes("status = 'running'")) {
                     return Promise.reject(new Error("activity unavailable"));
                 }
-                return pool.query(query as never, values as never);
+                return pool.query(textOrConfig, values);
             },
-        } as unknown as Pool;
+            connect: () => pool.connect(),
+        };
 
         const result = await prepareChatTurn({ pool: activityFailingPool }, { analysisId: ANALYSIS_A, threadId: "unavailable-thread", userInput: "hello" });
         expect(result.kind).toBe("ok");
@@ -566,7 +576,7 @@ describe("runChatTurn", () => {
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The turn stopped on an internal error." } });
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "user"]);
-        const answer = rows[4]!.message.content as ToolResultPart[];
+        const answer = toolResultParts(rows[4]!.message);
         expect(answer.map((part) => [part.toolCallId, part.output])).toEqual([["tu-1", { type: "error-text", value: NOT_RUN_TOOL_RESULT }]]);
     });
 
@@ -673,9 +683,9 @@ describe("runChatTurn", () => {
         await runChatTurn({ pool, agents: resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])) }, params(provider));
 
         const round = (await storedRows()).find((row) => row.message.role === "tool")!;
-        const output = (round.message.content as ToolResultPart[])[0]!.output;
-        expect(output.type).toBe("text");
-        const excerpt = (output as { value: string }).value;
+        const output = toolResultParts(round.message)[0]!.output;
+        if (output.type !== "text") throw new Error("expected the cut text output");
+        const excerpt = output.value;
         expect(excerpt.startsWith("[Tool result cut: 50002 characters")).toBe(true);
         expect(excerpt.length).toBeLessThan(text.length);
         const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt)![1]!;
@@ -782,10 +792,7 @@ describe("runChatTurn", () => {
         expect("storeError" in result).toBe(false);
         const rows = await storedRows();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-        expect(rows.filter((row) => row.message.role === "tool").map((row) => (row.message.content as ToolResultPart[])[0]!.toolCallId)).toEqual([
-            "tu-1",
-            "tu-2",
-        ]);
+        expect(rows.filter((row) => row.message.role === "tool").map((row) => toolResultParts(row.message)[0]!.toolCallId)).toEqual(["tu-1", "tu-2"]);
     });
 });
 
@@ -1009,7 +1016,7 @@ describe("runChatTurn — compaction", () => {
 
         const exchange = provider.calls.filter(isExchangeRequest);
         expect(exchange[0]!.messages.at(-1)!.content).toBe(SUMMARY_COMPACTION_REQUEST);
-        const refused = exchange[1]!.messages.at(-1)!.content as ToolResultPart[];
+        const refused = toolResultParts(exchange[1]!.messages.at(-1)!);
         expect(refused[0]!.output).toMatchObject({ type: "error-text" });
         expect(JSON.stringify(refused[0]!.output)).toContain("No tool can run for this request");
         const after = provider.calls.at(-1)!.messages;
@@ -1112,9 +1119,7 @@ describe("runChatTurn — compaction", () => {
     /** The stored display of the thread with no random id, no time, and no measured duration, thus two runs of one script compare equal. */
     async function storedDisplay(): Promise<unknown> {
         const varying = new Set(["id", "createdAt", "durationMs"]);
-        return JSON.parse(
-            JSON.stringify(storedMessagesToChat(await storedRows()), (key, value: unknown) => (varying.has(key) ? `<${key}>` : value)),
-        ) as unknown;
+        return JSON.parse(JSON.stringify(storedMessagesToChat(await storedRows()), (key, value: unknown) => (varying.has(key) ? `<${key}>` : value)));
     }
 
     it("announces the user id and each assistant id of a mid-turn compaction, and the stored messages carry exactly those ids", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { PlanRecord } from "../../state/index.js";
 import { buildPresentationCardData, planCardOf, planPartOf } from "../card-builders.js";
 
@@ -91,7 +92,8 @@ describe("buildPresentationCardData", () => {
             },
         });
 
-        const spec = (card!.content as { spec: Record<string, unknown> }).spec;
+        const spec = parseUnknownRecord(card!.content.spec);
+        if (spec === undefined) throw new Error("expected the card content record");
         expect("title" in spec).toBe(false);
         expect(spec.legend).toEqual({ show: false });
         expect(spec.grid).toEqual({ top: "8%", bottom: "20%", left: "10%", right: "5%" });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 
 import type { ChatFrame, EventSource } from "../chat-events.js";
-import type { SubAgentActivityPart } from "../chat-parts.js";
 import { applyChatFrame, checkChatPart } from "../chat-frame.js";
 import type { ChatMessage } from "../message.js";
 import { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "../subagent-activity.js";
@@ -36,10 +36,24 @@ const finished = (source: EventSource, toolUseId: string, extra: { detail?: stri
 
 const T0 = Date.parse("2026-10-12T10:00:00.000Z");
 
-function partOf(frame: ReturnType<ReturnType<typeof createSubAgentActivityTracker>["track"]>): SubAgentActivityPart {
-    expect(frame?.type).toBe("data-subagent-activity");
-    // The tracker gives only `data-subagent-activity` part frames, and the assertion above fails first on any other frame.
-    return frame as SubAgentActivityPart;
+/** The frame shape these tests read; the passthrough arm of the frame union absorbs the literal type, so the read parses instead of asserting. */
+const SubAgentActivityFrameSchema = z.object({
+    type: z.literal("data-subagent-activity"),
+    id: z.string(),
+    toolCallId: z.string(),
+    dropped: z.number(),
+    entries: z.array(
+        z.looseObject({
+            agentId: z.string(),
+            callPath: z.array(z.string()),
+            outcome: z.string().optional(),
+        }),
+    ),
+});
+
+function partOf(frame: ReturnType<ReturnType<typeof createSubAgentActivityTracker>["track"]>): z.infer<typeof SubAgentActivityFrameSchema> {
+    if (frame === null) throw new Error("expected a data-subagent-activity frame");
+    return SubAgentActivityFrameSchema.parse(frame);
 }
 
 describe("createSubAgentActivityTracker", () => {
@@ -139,7 +153,7 @@ describe("createSubAgentActivityTracker", () => {
     test("the cap counts the calls that it drops", () => {
         const tracker = createSubAgentActivityTracker();
         tracker.track(started(ROOT, "t1"), T0);
-        let part: SubAgentActivityPart | undefined;
+        let part: z.infer<typeof SubAgentActivityFrameSchema> | undefined;
         for (let i = 0; i < SUBAGENT_ACTIVITY_MAX_ENTRIES + 1; i += 1) {
             part = partOf(tracker.track(started(planner("t1"), `s${i}`), T0 + i));
         }

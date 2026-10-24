@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolResultPart } from "ai";
 import { okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
@@ -167,10 +168,9 @@ describe("generateAnalogyReport sub-agent tool", () => {
         const provider = scriptedProvider(() => makeMessage([textBlock("Still prose, no report.")], "end_turn"));
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
 
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap() as {
-            schemaVersion: "1";
-            error: { kind: string; message: string };
-        };
+        const result = z
+            .object({ schemaVersion: z.literal("1"), error: z.object({ kind: z.string(), message: z.string() }) })
+            .parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap());
 
         expect(result.error.kind).toBe("extraction-failed");
         expect(result.error.message).toContain("submitted no report and no blocker");

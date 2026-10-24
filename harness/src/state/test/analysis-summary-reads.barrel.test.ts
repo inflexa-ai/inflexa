@@ -12,9 +12,14 @@ import type {
 } from "@inflexa-ai/harness";
 
 import * as stateBarrel from "../index.js";
+import type { Querier } from "../db.js";
 
 // An empty list sends no query, thus the reads never touch the querier.
-const unusedQuerier = {} as never;
+const unusedQuerier: Querier = {
+    query() {
+        throw new Error("not driven by this test");
+    },
+};
 
 describe("the exports of the grouped analysis reads", () => {
     it("reaches the reads from the package root, as the same functions of the state barrel", () => {

@@ -168,8 +168,12 @@ export type MessageStartEvent = {
 /** The discriminated union of all chat-stream events. */
 export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent | MessageStartEvent;
 
-/** A `data-*` part as a frame, with the source of its emitter when the emitter stamped one. */
-export type ChatPartFrame = ChatPart & { source?: EventSource };
+/**
+ * A `data-*` part as a frame, with the source of its emitter when the emitter stamped one. A part whose type the
+ * part registry does not know rides as the emitter sent it — a newer emitter can lead the registry — so the frame
+ * also admits that record shape. The `data-` prefix stays required, so the loop-event narrowings exclude it.
+ */
+export type ChatPartFrame = (ChatPart & { source?: EventSource }) | ({ type: `data-${string}`; source?: EventSource } & Record<string, unknown>);
 
 /** One frame of a chat stream or a run stream: a loop event or a `data-*` part. */
 export type ChatFrame = ChatEvent | ChatPartFrame;

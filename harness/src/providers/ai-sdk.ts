@@ -28,20 +28,11 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughTracer } from "../lib/otel-spans.js";
+import { isUnknownArray } from "../lib/unknown-array.js";
 import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
 import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
-import type {
-    ChatProvider,
-    ChatRequest,
-    ChatResponse,
-    ChatStreamEvent,
-    ChatUsage,
-    FetchLike,
-    ProviderCapabilities,
-    ProviderOptions,
-    ReasoningPolicy,
-} from "./types.js";
+import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, ProviderCapabilities, ProviderOptions, ReasoningPolicy } from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -83,13 +74,14 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
  * provider over a boot shares one sink.
  */
 function routeSdkWarningsTo(logger: Logger): void {
-    const g = globalThis as { AI_SDK_LOG_WARNINGS?: unknown };
-    if (g.AI_SDK_LOG_WARNINGS !== undefined) return;
-    g.AI_SDK_LOG_WARNINGS = (options: { warnings: readonly unknown[]; provider?: string; model?: string }) => {
+    // The SDK names a global that no declaration of `globalThis` describes, so the install reads and
+    // writes the key reflectively.
+    if (Reflect.get(globalThis, "AI_SDK_LOG_WARNINGS") !== undefined) return;
+    Reflect.set(globalThis, "AI_SDK_LOG_WARNINGS", (options: { warnings: readonly unknown[]; provider?: string; model?: string }) => {
         for (const warning of options.warnings) {
             logger.warn("ai sdk warning", { provider: options.provider, model: options.model, warning });
         }
-    };
+    });
 }
 
 /** With no `suspendOn`, a provider uses {@link DEFAULT_SUSPEND_ON}. */
@@ -151,7 +143,7 @@ export type AiSdkProviderConfig =
           readonly baseURL?: string;
           readonly apiKey: string;
           readonly model: string;
-          readonly fetch?: FetchLike;
+          readonly fetch?: typeof fetch;
           readonly capabilities?: Partial<ProviderCapabilities>;
           /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
           readonly maxOutputTokens?: number;
@@ -189,7 +181,7 @@ export type AiSdkProviderConfig =
           readonly baseURL?: string;
           readonly apiKey: string;
           readonly model: string;
-          readonly fetch?: FetchLike;
+          readonly fetch?: typeof fetch;
           readonly capabilities?: Partial<ProviderCapabilities>;
           /**
            * Output-token ceiling per request. An unset value sends no ceiling, and
@@ -260,7 +252,7 @@ export type AiSdkProviderConfig =
           readonly baseURL: string;
           readonly apiKey?: string;
           readonly model: string;
-          readonly fetch?: FetchLike;
+          readonly fetch?: typeof fetch;
           readonly capabilities?: Partial<ProviderCapabilities>;
           /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
           readonly maxOutputTokens?: number;
@@ -353,12 +345,11 @@ type InputTransformation = {
  */
 function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undefined {
     const entries = metadata?.["anthropic"]?.["iterations"];
-    if (!Array.isArray(entries)) return undefined;
-    for (const entry of entries as unknown[]) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const fields = entry as Record<string, unknown>;
-        if (fields["type"] !== "fallback_message") continue;
-        return typeof fields["model"] === "string" ? fields["model"] : "";
+    if (!isUnknownArray(entries)) return undefined;
+    for (const entry of entries) {
+        if (typeof entry !== "object" || entry === null || !("type" in entry)) continue;
+        if (entry["type"] !== "fallback_message") continue;
+        return "model" in entry && typeof entry["model"] === "string" ? entry["model"] : "";
     }
     return undefined;
 }
@@ -377,11 +368,11 @@ function withoutThinking(message: ChatResponse["message"]): ChatResponse["messag
 /** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
 function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTransformation[] {
     const entries = metadata?.["anthropic"]?.["inputTransformations"];
-    if (!Array.isArray(entries)) return [];
+    if (!isUnknownArray(entries)) return [];
     return entries.map((entry: unknown) => {
-        const fields = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
         const text = (key: string): string | undefined => {
-            const value = fields[key];
+            if (entry === null || typeof entry !== "object" || !(key in entry)) return undefined;
+            const value: unknown = Reflect.get(entry, key);
             return typeof value === "string" ? value : undefined;
         };
         return { type: text("type"), path: text("path"), reason: text("reason") };
@@ -402,8 +393,8 @@ function isAbortError(value: unknown): boolean {
  */
 function apiCallErrorOf(error: unknown): APICallError | undefined {
     if (APICallError.isInstance(error)) return error;
-    const cause = (error as { cause?: unknown } | null | undefined)?.cause;
-    if (APICallError.isInstance(cause)) return cause;
+    if (error === null || typeof error !== "object" || !("cause" in error)) return undefined;
+    if (APICallError.isInstance(error.cause)) return error.cause;
     return undefined;
 }
 
@@ -678,11 +669,28 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
             if (m.content !== "") out.push(m);
             continue;
         }
-        const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
         // The filtered parts are a subset of this message's own content, so the
-        // message remains valid for its role — the cast only re-associates the
-        // narrowed array with the union member TS can no longer correlate.
-        if (parts.length > 0) out.push({ ...m, content: parts } as ModelMessage);
+        // switch recovers the role-to-content correlation that `filter` loses.
+        switch (m.role) {
+            case "assistant": {
+                const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            case "user": {
+                const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
+                if (parts.length > 0) out.push({ ...m, content: parts });
+                break;
+            }
+            case "tool": {
+                // A tool message carries no text part, thus the filter keeps every part.
+                if (m.content.length > 0) out.push(m);
+                break;
+            }
+            case "system":
+                // A system message carries string content only, thus the string arm above took it.
+                break;
+        }
     }
     return out;
 }
@@ -755,9 +763,8 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
 function streamPartFailure(error: unknown): unknown {
     if (error instanceof Error) return error;
     if (typeof error !== "object" || error === null) return new Error(String(error));
-    const reported = error as { readonly type?: unknown; readonly message?: unknown };
-    const type = typeof reported.type === "string" ? reported.type : undefined;
-    const message = typeof reported.message === "string" ? reported.message : undefined;
+    const type = "type" in error && typeof error.type === "string" ? error.type : undefined;
+    const message = "message" in error && typeof error.message === "string" ? error.message : undefined;
     const failure = new Error(message ?? type ?? "The provider reported a stream error.", { cause: error });
     const status = type === undefined ? undefined : STREAM_ERROR_STATUS[type];
     // `extractStatus` walks the chain for this field, thus the named condition
@@ -1136,44 +1143,49 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
  * When the field is absent, `createConfiguredAiSdkProvider` installs no wrapper,
  * and the behavior stays byte-identical.
  */
-export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeoutMs: number): FetchLike {
-    return async (input, init) => {
-        const controller = new AbortController();
-        const callerSignal = init?.signal ?? undefined;
-        const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
-        // The harness runs on Node, where a timer has `unref`. Unref the guard
-        // timer, thus an armed guard does not keep a short-lived process alive.
-        // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
-        timer.unref?.();
-        const clear = (): void => {
-            clearTimeout(timer);
-            // The harness runs on Node, where a caller signal can outlive one fetch
-            // attempt. Remove the abort listener when the attempt settles, thus a
-            // long-lived signal does not retain this closure.
-            callerSignal?.removeEventListener("abort", clear);
-        };
+export function wrapFetchWithRequestTimeout(fetchImpl: typeof fetch, requestTimeoutMs: number): typeof fetch {
+    return Object.assign(
+        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+            const controller = new AbortController();
+            const callerSignal = init?.signal ?? undefined;
+            const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
+            // The harness runs on Node, where a timer has `unref`. Unref the guard
+            // timer, thus an armed guard does not keep a short-lived process alive.
+            // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
+            timer.unref?.();
+            const clear = (): void => {
+                clearTimeout(timer);
+                // The harness runs on Node, where a caller signal can outlive one fetch
+                // attempt. Remove the abort listener when the attempt settles, thus a
+                // long-lived signal does not retain this closure.
+                callerSignal?.removeEventListener("abort", clear);
+            };
 
-        // Compose the guard controller with the caller signal, thus either one
-        // can abort the wire, and the abort reason names its own source. A caller
-        // abort also clears the guard timer at once. Thus an armed timer does not
-        // reach a pointless expiry after the caller cancels.
-        const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
-        callerSignal?.addEventListener("abort", clear, { once: true });
+            // Compose the guard controller with the caller signal, thus either one
+            // can abort the wire, and the abort reason names its own source. A caller
+            // abort also clears the guard timer at once. Thus an armed timer does not
+            // reach a pointless expiry after the caller cancels.
+            const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
+            callerSignal?.addEventListener("abort", clear, { once: true });
 
-        // `timeout: false` is an extension of the fetch init of Bun. Bun cuts a
-        // request that stays idle past its default of 300 seconds, and this key
-        // lifts that cut. Node ignores an unknown member of the init, thus the key
-        // is inert there. A probe on Bun 1.4.2 proved both results: the cut fired
-        // at 360 seconds, because Bun pads the timer to its minute wheel, and a
-        // request with the key completed after 420 seconds. The `RequestInit` type
-        // declares no such member, thus the cast.
-        const forwarded = { ...init, signal, timeout: false } as RequestInit;
-        try {
-            return await fetchImpl(input, forwarded);
-        } finally {
-            clear();
-        }
-    };
+            // `timeout: false` is an extension of the fetch init of Bun. Bun cuts a
+            // request that stays idle past its default of 300 seconds, and this key
+            // lifts that cut. Node ignores an unknown member of the init, thus the key
+            // is inert there. A probe on Bun 1.4.2 proved both results: the cut fired
+            // at 360 seconds, because Bun pads the timer to its minute wheel, and a
+            // request with the key completed after 420 seconds. The `RequestInit` type
+            // declares no such member, thus the wider annotation.
+            const forwarded: RequestInit & { timeout?: boolean } = { ...init, signal, timeout: false };
+            try {
+                return await fetchImpl(input, forwarded);
+            } finally {
+                clear();
+            }
+        },
+        // `typeof fetch` is a callable with the `preconnect` member of the Bun declaration, so the
+        // wrapper carries the member of the fetch it wraps.
+        { preconnect: fetchImpl.preconnect },
+    );
 }
 
 /**
@@ -1221,14 +1233,13 @@ export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     const requestTimeoutMs = config.requestTimeoutMs;
-    const effectiveFetch =
-        requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? (globalThis.fetch as FetchLike), requestTimeoutMs);
+    const effectiveFetch = requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? globalThis.fetch, requestTimeoutMs);
 
     if (config.kind === "anthropic") {
         const provider = createAnthropic({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: effectiveFetch as typeof fetch | undefined,
+            fetch: effectiveFetch,
         });
         // The Anthropic Messages wire renders an image block inside a
         // tool_result, thus the loop can send a picture. A custom baseURL can
@@ -1265,7 +1276,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         const provider = createOpenAI({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: effectiveFetch as typeof fetch | undefined,
+            fetch: effectiveFetch,
         });
         // The Responses wire renders an image block inside a function-call
         // output, thus the loop can send a picture. A custom baseURL can front
@@ -1302,7 +1313,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         name: config.name,
         baseURL: config.baseURL,
         apiKey: config.apiKey,
-        fetch: effectiveFetch as typeof fetch | undefined,
+        fetch: effectiveFetch,
         // Each call of the provider streams, `chat` included. Without this flag
         // the package asks for no usage on a stream, and the call reports none.
         includeUsage: true,

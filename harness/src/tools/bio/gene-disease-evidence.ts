@@ -31,7 +31,7 @@ import { z } from "zod";
 import type { Logger } from "../../lib/logger.js";
 import { defineTool } from "../define-tool.js";
 import { getSomaticMutationFrequencies, type MutationFrequency } from "../lib/cbioportal-client.js";
-import { filterInformative, searchClinvar, type ClinicalSignificance, type ClinvarVariant } from "../lib/clinvar-client.js";
+import { filterInformative, searchClinvar, type ClinvarVariant } from "../lib/clinvar-client.js";
 import { DISGENET_SOURCES, searchDisgenet, type Gda } from "../lib/disgenet-client.js";
 import { searchGwasCatalog, type GwasAssociation, type GwasSearchType } from "../lib/gwas-catalog-client.js";
 
@@ -269,7 +269,7 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                     ? runSource<ClinvarVariant>("clinvar", async () => {
                           const res = await searchClinvar(deps.ncbiApiKey, input.query, {
                               limit,
-                              clinicalSignificance: input.clinicalSignificance as ClinicalSignificance,
+                              clinicalSignificance: input.clinicalSignificance,
                           });
                           const variants = (input.informativeOnly ?? true) ? filterInformative(res.variants) : res.variants;
                           return { records: variants, totalFound: res.totalFound };

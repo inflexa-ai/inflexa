@@ -15,15 +15,16 @@ type Captured = { text: string; values: unknown[] };
 
 function capturingQuerier(): { querier: Querier; captured: Captured[] } {
     const captured: Captured[] = [];
-    const fake = {
-        query: async (q: Captured) => {
-            captured.push(q);
+    const querier: Querier = {
+        query: async (q, values) => {
+            captured.push({
+                text: typeof q === "string" ? q : q.text,
+                values: values ?? (typeof q === "string" ? [] : (q.values ?? [])),
+            });
             return { rows: [], rowCount: 0 };
         },
     };
-    // The functions under test only ever call `.query`; the cast narrows the
-    // fake to the Pool|PoolClient union without dragging in a live pool.
-    return { querier: fake as unknown as Querier, captured };
+    return { querier, captured };
 }
 
 function entry(i: number): RegisterArtifactInput {

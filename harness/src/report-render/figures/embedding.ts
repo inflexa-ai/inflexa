@@ -20,6 +20,8 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PAGE_TEXT_PX, DIVERGING_RAMP, SEQUENTIAL_RAMP } from "../design.js";
 import type { RenderProblem } from "../types.js";
@@ -196,15 +198,16 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const option = composed.value;
     const panels = Math.max(1, panelNames.length);
     const pointPx = embeddingPointPx(cells.length);
-    const series = (Array.isArray(option.series) ? (option.series as EchartOption[]) : []).map((entry) => ({
-        ...entry,
-        large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
-        symbolSize: pointPx,
-        itemStyle:
-            typeof entry.itemStyle === "object" && entry.itemStyle !== null
-                ? { ...entry.itemStyle, opacity: EMBEDDING_OPACITY }
-                : { opacity: EMBEDDING_OPACITY },
-    }));
+    const series = (isUnknownArray(option.series) ? option.series : []).map((entry) => {
+        const fields = parseUnknownRecord(entry) ?? {};
+        const itemStyle = parseUnknownRecord(fields.itemStyle);
+        return {
+            ...fields,
+            large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
+            symbolSize: pointPx,
+            itemStyle: itemStyle === undefined ? { opacity: EMBEDDING_OPACITY } : { ...itemStyle, opacity: EMBEDDING_OPACITY },
+        };
+    });
 
     const ranges = equalRanges(
         cells.map((cell) => cell.x),
@@ -284,14 +287,16 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             series: [...series, ...nameSeries(cells, names, panels, ranges)],
         });
     }
-    const colorChannel = color as ChartChannel;
+    if (color === undefined) {
+        return err(chartProblem(block.id, 'The embedding colors its cells by a "group" channel or by a "color" channel. Name one of the two.'));
+    }
     const map = clippedScale(
         cells.flatMap((cell) => (cell.color === undefined ? [] : [cell.color])),
         scaleTitle,
-        channelName(colorChannel),
-        declaredForColumn(context.meanings, channelColumn(colorChannel)),
+        channelName(color),
+        declaredForColumn(context.meanings, channelColumn(color)),
     );
-    const composedMaps = Array.isArray(option.visualMap) ? (option.visualMap as EchartOption[]) : [];
+    const composedMaps = isUnknownArray(option.visualMap) ? option.visualMap.map((entry) => parseUnknownRecord(entry) ?? {}) : [];
     const seriesIndex = composedMaps.find((entry) => entry.dimension === 2)?.seriesIndex ?? series.map((_entry, index) => index);
     const place = layout.visualMap?.[0] ?? {};
     return ok({ ...out, visualMap: [{ type: "continuous", seriesIndex, dimension: 2, ...map, ...place }] });

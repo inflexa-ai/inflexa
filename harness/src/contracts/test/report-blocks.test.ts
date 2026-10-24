@@ -585,7 +585,8 @@ describe("the canonical figures", () => {
             tracks: ["`heatmap`", "`oncoprint`"],
         };
         for (const [member, names] of Object.entries(readers)) {
-            const text = (quickPath as Record<string, { description?: string }>)[member]?.description ?? "";
+            const described: Record<string, { description?: string | undefined }> = quickPath;
+            const text = described[member]?.description ?? "";
             for (const name of names) expect(text).toContain(name);
         }
         for (const name of ["`km`", "`roc`", "`qq`", "`gsea`"]) expect(ChartBlockSchema.shape.statistics.description).toContain(name);
@@ -631,7 +632,7 @@ describe("the figure extensions", () => {
     });
 
     it("names the readers of each member that the new presets read in its teaching text", () => {
-        const quickPath = ChartBlockSchema.shape.encoding.unwrap().shape as Record<string, { description?: string }>;
+        const quickPath: Record<string, { description?: string | undefined }> = ChartBlockSchema.shape.encoding.unwrap().shape;
         for (const member of ["metric", "color", "label"]) expect(quickPath[member]?.description).toContain("`locuszoom`");
         for (const member of ["x", "group"]) expect(quickPath[member]?.description).toContain("`upset`");
         for (const member of ["x", "y", "value", "group"]) expect(quickPath[member]?.description).toContain("`sankey`");

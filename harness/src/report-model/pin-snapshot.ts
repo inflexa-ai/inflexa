@@ -20,6 +20,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { readSynthesisText } from "../execution/run-synthesis.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { nullProtoRecord } from "../lib/null-proto.js";
 import { queryAnalysisArtifacts } from "../state/artifacts.js";
 import type { Querier } from "../state/db.js";
@@ -92,16 +93,17 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
         return;
     }
     for (const reference of list) {
-        if (typeof reference !== "object" || reference === null) {
+        const fields = parseUnknownRecord(reference);
+        if (fields === undefined) {
             continue;
         }
-        const pmid = (reference as { pmid?: unknown }).pmid;
+        const pmid = fields.pmid;
         if (typeof pmid !== "string") {
             continue;
         }
         const id = pmid.trim();
         if (id.length > 0) {
-            const record = recordOf(reference as { citation?: unknown; description?: unknown });
+            const record = recordOf(fields);
             entries.push(record === undefined ? { key: `pmid:${id}` } : { key: `pmid:${id}`, record });
         }
     }
@@ -129,15 +131,20 @@ function citationsOf(text: string): CitationEntry[] {
     if (typeof parsed !== "object" || parsed === null) {
         return [];
     }
+    const fields = parseUnknownRecord(parsed);
+    if (fields === undefined) {
+        return [];
+    }
     const entries: CitationEntry[] = [];
-    pushPmidCitations((parsed as { keyReferences?: unknown }).keyReferences, entries);
-    const findings = (parsed as { findings?: unknown }).findings;
+    pushPmidCitations(fields.keyReferences, entries);
+    const findings = fields.findings;
     if (Array.isArray(findings)) {
         for (const finding of findings) {
-            if (typeof finding !== "object" || finding === null) {
+            const findingFields = parseUnknownRecord(finding);
+            if (findingFields === undefined) {
                 continue;
             }
-            pushPmidCitations((finding as { references?: unknown }).references, entries);
+            pushPmidCitations(findingFields.references, entries);
         }
     }
     return entries;

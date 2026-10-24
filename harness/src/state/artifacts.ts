@@ -7,7 +7,7 @@ import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { ArtifactRole, ArtifactRow } from "./schema.js";
+import { ArtifactRole, ArtifactRowSchema, type ArtifactRow } from "./schema.js";
 
 export type RegisterArtifactInput = {
     resourceId: string;
@@ -428,18 +428,19 @@ export function updateFileIds(pool: Querier, pairs: Array<{ artifactId: string; 
 }
 
 function mapArtifactRow(row: Record<string, unknown>): ArtifactRow {
-    return {
-        resourceId: row.analysis_id as string,
-        path: row.path as string,
-        artifactId: (row.artifact_id as string) ?? null,
-        fileId: (row.file_id as string) ?? null,
-        hash: row.hash as string,
+    return ArtifactRowSchema.parse({
+        resourceId: row.analysis_id,
+        path: row.path,
+        artifactId: row.artifact_id ?? null,
+        fileId: row.file_id ?? null,
+        hash: row.hash,
+        // `size` is bigint, which `pg` delivers as a string; the schema wants the number.
         size: Number(row.size),
-        role: row.role as ArtifactRow["role"],
-        sourceStep: (row.source_step as string) ?? null,
-        sourceRun: (row.source_run as string) ?? null,
-        createdAt: row.created_at as string,
-        unrecoverableAt: (row.unrecoverable_at as string) ?? null,
-        fileType: (row.file_type as string) ?? null,
-    };
+        role: row.role,
+        sourceStep: row.source_step ?? null,
+        sourceRun: row.source_run ?? null,
+        createdAt: row.created_at,
+        unrecoverableAt: row.unrecoverable_at ?? null,
+        fileType: row.file_type ?? null,
+    });
 }

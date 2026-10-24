@@ -94,6 +94,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
+/** The string the record holds at `key`, or `undefined` when the key is absent or holds a non-string. The XML parser is configured with `parseTagValue: false`, so every text node arrives as a string. */
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+    const value = record[key];
+    return typeof value === "string" ? value : undefined;
+}
+
 function parseXmlRecord(xml: string): Record<string, unknown> | undefined {
     const parsed: unknown = xmlParser.parse(xml);
     return isRecord(parsed) ? parsed : undefined;
@@ -157,57 +163,44 @@ export function parseEsummary(xml: string): PubMedSummary[] {
     });
 }
 
-type MedlineAuthor = {
-    LastName?: string;
-    ForeName?: string;
-    Initials?: string;
-    CollectiveName?: string;
-};
-
-type MeshHeadingItem = {
-    DescriptorName?: { "#text"?: string } | string;
-};
-
 export function parseEfetch(xml: string): ArticleDetail[] {
     const articleSet = childRecord(parseXmlRecord(xml), "PubmedArticleSet");
     if (articleSet === undefined) return [];
     const entries = recordList(articleSet.PubmedArticle);
 
     return entries.map((entry) => {
-        const article = entry;
-        const citation = article.MedlineCitation as Record<string, unknown> | undefined;
-        const articleData = citation?.Article as Record<string, unknown> | undefined;
+        const citation = childRecord(entry, "MedlineCitation");
+        const articleData = childRecord(citation, "Article");
         const pmidValue = citation?.PMID;
-        const pmid =
-            typeof pmidValue === "object" && pmidValue !== null ? String((pmidValue as Record<string, unknown>)["#text"] ?? "") : String(pmidValue ?? "");
-        const abstractValue = (articleData?.Abstract as Record<string, unknown> | undefined)?.AbstractText;
+        const pmid = isRecord(pmidValue) ? String(pmidValue["#text"] ?? "") : String(pmidValue ?? "");
+        const abstractValue = childRecord(articleData, "Abstract")?.AbstractText;
         const abstract = (abstractValue === undefined ? [] : Array.isArray(abstractValue) ? abstractValue : [abstractValue])
             .map((value) => {
                 if (typeof value === "string") return value;
-                if (typeof value !== "object" || value === null) return String(value);
-                const object = value as Record<string, unknown>;
-                const text = String(object["#text"] ?? "");
-                return object["@_Label"] === undefined ? text : `${String(object["@_Label"])}: ${text}`;
+                if (!isRecord(value)) return String(value);
+                const text = String(value["#text"] ?? "");
+                return value["@_Label"] === undefined ? text : `${String(value["@_Label"])}: ${text}`;
             })
             .join("\n\n");
-        const authorValue = (articleData?.AuthorList as Record<string, unknown> | undefined)?.Author;
-        const authors = (authorValue === undefined ? [] : Array.isArray(authorValue) ? authorValue : [authorValue as MedlineAuthor]).map(
-            (author: MedlineAuthor) => author.CollectiveName ?? [author.ForeName ?? author.Initials, author.LastName].filter(Boolean).join(" "),
-        );
-        const journalData = articleData?.Journal as Record<string, unknown> | undefined;
-        const publicationDate = (journalData?.JournalIssue as Record<string, unknown> | undefined)?.PubDate as Record<string, unknown> | undefined;
+        const authors = recordList(childRecord(articleData, "AuthorList")?.Author).map((author) => {
+            const collectiveName = stringField(author, "CollectiveName");
+            if (collectiveName !== undefined) return collectiveName;
+            return [stringField(author, "ForeName") ?? stringField(author, "Initials"), stringField(author, "LastName")].filter(Boolean).join(" ");
+        });
+        const journalData = childRecord(articleData, "Journal");
+        const publicationDate = childRecord(childRecord(journalData, "JournalIssue"), "PubDate");
         let doi = "";
-        const articleIds = ((article.PubmedData as Record<string, unknown> | undefined)?.ArticleIdList as Record<string, unknown> | undefined)?.ArticleId;
-        for (const id of articleIds === undefined ? [] : Array.isArray(articleIds) ? articleIds : [articleIds]) {
-            if (typeof id === "object" && id !== null && (id as Record<string, unknown>)["@_IdType"] === "doi") {
-                doi = String((id as Record<string, unknown>)["#text"] ?? "");
+        const articleIds = childRecord(childRecord(childRecord(entry, "PubmedData"), "ArticleIdList"), "ArticleId");
+        for (const id of recordList(articleIds)) {
+            if (stringField(id, "@_IdType") === "doi") {
+                doi = stringField(id, "#text") ?? "";
             }
         }
-        const meshValue = (citation?.MeshHeadingList as Record<string, unknown> | undefined)?.MeshHeading;
-        const meshTerms = (meshValue === undefined ? [] : Array.isArray(meshValue) ? meshValue : [meshValue as MeshHeadingItem])
-            .map((heading: MeshHeadingItem) => {
+        const meshTerms = recordList(childRecord(citation, "MeshHeadingList")?.MeshHeading)
+            .map((heading) => {
                 const descriptor = heading.DescriptorName;
-                return typeof descriptor === "string" ? descriptor : (descriptor?.["#text"] ?? "");
+                if (typeof descriptor === "string") return descriptor;
+                return isRecord(descriptor) ? String(descriptor["#text"] ?? "") : "";
             })
             .filter(Boolean);
         return {
@@ -226,15 +219,17 @@ export function parseEfetch(xml: string): ArticleDetail[] {
 
 export function parseIdConvResponse(data: unknown): Map<string, string> {
     const result = new Map<string, string>();
-    const records = (data as { records?: Array<{ pmid?: string; pmcid?: string }> } | undefined)?.records ?? [];
-    for (const record of records) if (record.pmid !== undefined && record.pmcid !== undefined) result.set(record.pmid, record.pmcid);
+    const parsed = IdConvResponseSchema.safeParse(data);
+    for (const record of parsed.success ? (parsed.data.records ?? []) : []) {
+        if (record.pmid !== undefined && record.pmcid !== undefined) result.set(record.pmid, record.pmcid);
+    }
     return result;
 }
 
 function flattenTextContent(node: unknown): string {
     if (typeof node === "string" || typeof node === "number") return String(node);
-    if (node === null || typeof node !== "object") return "";
-    return Object.entries(node as Record<string, unknown>)
+    if (!isRecord(node)) return "";
+    return Object.entries(node)
         .flatMap(([key, value]) => {
             if (key.startsWith("@_") || key === "fig" || key === "table-wrap" || key === "supplementary-material") return [];
             if (key === "#text") return [String(value)];
@@ -254,11 +249,10 @@ function extractParagraphs(container: Record<string, unknown>): string {
 }
 
 function extractSection(section: unknown, output: ArticleSection[]): void {
-    if (section === null || typeof section !== "object") return;
-    const object = section as Record<string, unknown>;
-    const text = extractParagraphs(object);
-    if (text) output.push({ heading: typeof object.title === "string" ? object.title : "", text });
-    const nested = object.sec;
+    if (!isRecord(section)) return;
+    const text = extractParagraphs(section);
+    if (text) output.push({ heading: typeof section.title === "string" ? section.title : "", text });
+    const nested = section.sec;
     for (const child of nested === undefined ? [] : Array.isArray(nested) ? nested : [nested]) extractSection(child, output);
 }
 

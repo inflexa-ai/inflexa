@@ -23,9 +23,15 @@ import {
     type ExtractionArtifact,
     type ExtractionRequest,
 } from "../production-resolver.js";
-import type { ArtifactSnapshot, ReportSnapshot } from "../reference-resolver.js";
+import type { ArtifactSnapshot, ReportSnapshot, ResolvedValue } from "../reference-resolver.js";
 
 type Row = Record<string, string | number>;
+
+// The table arm is the only one this suite reads; a different arm fails the test here, once.
+function tableOf(value: ResolvedValue): { rows: Row[]; total?: number } {
+    if (value.type !== "table") throw new Error(`expected the table arm, got ${value.type}`);
+    return value;
+}
 
 const ANALYSIS = "analysis-prod";
 const PARQUET_FIXTURE = fileURLToPath(new URL("../__fixtures__/sample.parquet", import.meta.url));
@@ -392,7 +398,7 @@ describe("production resolver, the row bound", () => {
 
         const result = await resolver.resolve(reference, snapshotOf([{ path: "bound.csv", hash }]));
 
-        const resolved = result._unsafeUnwrap() as { type: "table"; rows: Row[]; total?: number };
+        const resolved = tableOf(result._unsafeUnwrap());
         // The resolved table is the bounded table. Thus the card, the data asset, and the gate read one set.
         expect(resolved.rows.length).toBe(20);
         expect(resolved.rows[0]?.gene).toBe("G0");
@@ -420,7 +426,7 @@ describe("production resolver, the row bound", () => {
         const result = await resolver.resolve(reference, snapshotOf([{ path: "padj.csv", hash }]));
 
         // A CSV holds each cell as text. A text compare would rank `0.02` before `1e-9`.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["B", "C"]);
+        expect(tableOf(result._unsafeUnwrap()).rows.map((row) => row.gene)).toEqual(["B", "C"]);
     });
 
     test("a tie keeps the order of the file, thus two runs give one result", async () => {
@@ -432,7 +438,7 @@ describe("production resolver, the row bound", () => {
         const first = await resolver.resolve(reference, snapshot);
         const second = await resolver.resolve(reference, snapshot);
 
-        expect((first._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["A", "B", "C"]);
+        expect(tableOf(first._unsafeUnwrap()).rows.map((row) => row.gene)).toEqual(["A", "B", "C"]);
         expect(second._unsafeUnwrap()).toEqual(first._unsafeUnwrap());
     });
 
@@ -446,7 +452,7 @@ describe("production resolver, the row bound", () => {
         // The code-unit order puts each capital before each lowercase letter. An ICU collation ranks `a`
         // before `A`, and it varies with the host. The bounded rows reach the bytes of the data asset,
         // thus the order of the bound is part of the content address of that asset.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.label)).toEqual(["A", "B", "a"]);
+        expect(tableOf(result._unsafeUnwrap()).rows.map((row) => row.label)).toEqual(["A", "B", "a"]);
         expect("a".localeCompare("A", "en")).toBeLessThan(0);
     });
 
@@ -459,7 +465,7 @@ describe("production resolver, the row bound", () => {
 
         // The column is numeric, thus `NA` is the absence of a measurement. A bound of the top two rows
         // gives the two measurements, and never the two sentinels.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["C", "A"]);
+        expect(tableOf(result._unsafeUnwrap()).rows.map((row) => row.gene)).toEqual(["C", "A"]);
     });
 
     test("a sentinel stays last under an ascending bound too", async () => {
@@ -470,7 +476,7 @@ describe("production resolver, the row bound", () => {
         const result = await resolver.resolve(reference, snapshotOf([{ path: "sentinel-asc.csv", hash }]));
 
         // The direction orders the measurements. It never lifts a row that holds no rank.
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["C", "B", "A"]);
+        expect(tableOf(result._unsafeUnwrap()).rows.map((row) => row.gene)).toEqual(["C", "B", "A"]);
     });
 
     test("a column where nothing parses ranks by its text", async () => {
@@ -480,7 +486,7 @@ describe("production resolver, the row bound", () => {
 
         const result = await resolver.resolve(reference, snapshotOf([{ path: "labels.csv", hash }]));
 
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["B", "A"]);
+        expect(tableOf(result._unsafeUnwrap()).rows.map((row) => row.gene)).toEqual(["B", "A"]);
     });
 
     test("a bound over an inherited member of a plain object refuses, and it throws nothing", async () => {
@@ -514,7 +520,7 @@ describe("production resolver, the row bound", () => {
 
         const result = await resolver.resolve(reference, snapshotOf([{ path: "subset.csv", hash }]));
 
-        expect((result._unsafeUnwrap() as { rows: Row[] }).rows).toEqual([{ gene: "B" }]);
+        expect(tableOf(result._unsafeUnwrap()).rows).toEqual([{ gene: "B" }]);
     });
 
     test("the fixture realization bounds the same rows as the production one", async () => {

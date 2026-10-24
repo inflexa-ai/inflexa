@@ -10,6 +10,7 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { FIGURE_PRESET_TYPES, type FigureContext, type FigureMember, type FigureModule } from "../index.js";
+import { seriesOf, optionAt } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -55,7 +56,7 @@ function withFigure(chartType: ChartType, module: FigureModule): ChartOpts {
 
 /** The names of the series of one option. */
 function seriesNames(option: EchartOption): unknown[] {
-    return (option.series as EchartOption[]).map((entry) => entry.name);
+    return seriesOf(option).map((entry) => entry.name);
 }
 
 const ROWS: ChartRow[] = [
@@ -83,7 +84,7 @@ describe("the figure registry", () => {
         const registered = deriveChartOption(block("scatter", { x: "x", y: "y" }), ROWS, undefined, {}, withFigure("scatter", module))._unsafeUnwrap();
         expect(seriesNames(registered)).toEqual(["from the module"]);
         const kept = deriveChartOption(block("line", { x: "x", y: "y" }), ROWS, undefined, {}, withFigure("scatter", module))._unsafeUnwrap();
-        expect((kept.series as EchartOption[])[0]?.type).toBe("line");
+        expect(seriesOf(kept)[0]?.type).toBe("line");
     });
 
     it("runs the layout discipline and the figure rules over the option of a module", () => {
@@ -91,7 +92,7 @@ describe("the figure registry", () => {
         const option = deriveChartOption(block("volcano", { x: "x", y: "y" }), ROWS, undefined, {}, withFigure("volcano", module))._unsafeUnwrap();
         expect(option.toolbox).toBeUndefined();
         expect(option.legend).toEqual({ show: false });
-        expect((option.xAxis as EchartOption).axisLabel).toEqual({ interval: 0 });
+        expect(optionAt(option, "xAxis").axisLabel).toEqual({ interval: 0 });
     });
 
     it("refuses each figure preset that has no module, and names the preset", () => {

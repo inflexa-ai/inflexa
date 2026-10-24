@@ -6,7 +6,12 @@ import type { FsError } from "../../lib/fs-result.js";
 import type { ListResult, ReadBytesResult, StatResult, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { MAX_SCANNED_FILES, renderInputScanManifest, scanInputTree } from "../scan.js";
 
-const SESSION = { scope: { kind: "analysis", analysisId: "a1" } } as unknown as AgentSession;
+const SESSION: AgentSession = {
+    identity: { user: "scan-test" },
+    scope: { kind: "analysis", analysisId: "a1" },
+    provenance: { agentId: "scan-test", callPath: [] },
+    auth: {},
+};
 
 function okAsync<T>(value: T): ResultAsync<T, FsError> {
     return new ResultAsync(Promise.resolve(ok(value)));

@@ -12,6 +12,7 @@ import { chatStatus } from "../hooks/status.ts";
 import { bootState } from "../hooks/boot.ts";
 import { messages, streamText, streamPartId, errorMsg, loadMessages, resetHotState } from "../hooks/conversation.ts";
 import { reportChildren, watchReportChildren } from "../hooks/report_children.ts";
+import { isKnownPart } from "../../modules/harness/chat_printer.ts";
 
 /**
  * The live conversation: the sticky message stream plus the error banner. State (the message store,
@@ -44,7 +45,7 @@ export function Chat(props: ChatProps) {
         const claimed = new Set<string>();
         for (const message of messages) {
             for (const part of message.parts) {
-                if (part.type === "data-child-session-started" && part.threadType === "report") claimed.add(part.threadId);
+                if (isKnownPart(part) && part.type === "data-child-session-started" && part.threadType === "report") claimed.add(part.threadId);
             }
         }
         return claimed;

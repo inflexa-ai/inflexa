@@ -66,7 +66,7 @@ function recordingStep(): { runStep: RunStep; names: string[] } {
 
 describe("runToTerminal", () => {
     it("skips the salvage turn when the first run resolves", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("t1", "submit", { answer: "done" })], "tool_use"),
             makeMessage([textBlock("ok")], "end_turn"),
@@ -101,7 +101,7 @@ describe("runToTerminal", () => {
     });
 
     it("runs a salvage turn that captures the outcome when the first run ends on prose", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const tool = submitTool(cell);
         const provider = scriptedProvider((_i, request) => {
             const last = request.messages.at(-1);
@@ -129,7 +129,7 @@ describe("runToTerminal", () => {
     });
 
     it("salvages a run that the early cap stopped, and the salvage turn ignores the cap", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const submit = submitTool(cell);
         const probe = defineTool({
             id: "probe",
@@ -169,7 +169,7 @@ describe("runToTerminal", () => {
     });
 
     it("does not salvage when the signal is already aborted", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const ac = new AbortController();
         ac.abort();
         const provider = scriptedProvider([makeMessage([textBlock("thinking")], "end_turn")]);
@@ -193,7 +193,7 @@ describe("runToTerminal", () => {
     });
 
     it("namespaces salvage step names so durable callers do not collide cache keys", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const tool = submitTool(cell);
         const { runStep, names } = recordingStep();
         const provider = scriptedProvider((_i, request) => {
@@ -222,7 +222,7 @@ describe("runToTerminal", () => {
     });
 
     it("reports the usage of both passes on the returned finish", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const tool = submitTool(cell);
         const provider = scriptedProvider((_i, request) => {
             const last = request.messages.at(-1);
@@ -253,7 +253,7 @@ describe("runToTerminal", () => {
     });
 
     it("leaves both rollups absent when neither pass reported usage", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const tool = submitTool(cell);
         // Both passes run — the first ends on prose, the salvage one submits —
         // and no reply carries usage, so the summed rollups must stay absent
@@ -287,7 +287,7 @@ describe("runToTerminal", () => {
     });
 
     it("declares each tool of the agent on each salvage request", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const submit = submitTool(cell);
         const blocker = countedTool("report_blocker");
         const agent = agentDef([countedTool("search").tool, countedTool("read").tool, submit, blocker.tool]);
@@ -319,7 +319,7 @@ describe("runToTerminal", () => {
     });
 
     it("refuses a salvage call of a tool that is not terminal", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const submit = submitTool(cell);
         const search = countedTool("search");
         const provider = scriptedProvider([
@@ -338,16 +338,26 @@ describe("runToTerminal", () => {
 
         expect(search.runs()).toBe(0);
         expect(cell.value).toBe("salvaged");
-        const refused = messages.flatMap((m) => (m.role === "tool" ? (m.content as ToolResultPart[]) : [])).find((r) => r.toolCallId === "s1")!;
+        const refused = messages
+            .flatMap((m) => {
+                if (m.role !== "tool") return [];
+                const content = m.content;
+                if (typeof content === "string") throw new Error("the tool message carries string content");
+                return content;
+            })
+            .filter((r): r is ToolResultPart => r.type === "tool-result")
+            .find((r) => r.toolCallId === "s1")!;
         expect(refused.output.type).toBe("error-text");
-        expect(JSON.parse((refused.output as { value: string }).value)).toEqual({
+        const refusedOutput = refused.output;
+        if (refusedOutput.type !== "error-text") throw new Error("the refused call holds no error text");
+        expect(JSON.parse(refusedOutput.value)).toEqual({
             error: "The tool search is not available for this request, thus it did not run. The tools that can run now: submit.",
             retryable: false,
         });
     });
 
     it("throws before the first run when a terminal tool is not a declared tool of the agent", async () => {
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const provider = scriptedProvider([makeMessage([textBlock("thinking")], "end_turn")]);
 
         const run = runToTerminal(

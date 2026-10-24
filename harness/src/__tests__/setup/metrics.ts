@@ -6,15 +6,7 @@
  */
 
 import { type Attributes, metrics } from "@opentelemetry/api";
-import {
-    AggregationTemporality,
-    type HistogramMetricData,
-    InMemoryMetricExporter,
-    MeterProvider,
-    type MetricData,
-    PeriodicExportingMetricReader,
-    type SumMetricData,
-} from "@opentelemetry/sdk-metrics";
+import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
 import { __resetMetricsForTest } from "../../lib/metrics.js";
 
@@ -44,12 +36,21 @@ export function captureMetrics(): MetricsCapture {
 
     return {
         async sums(name) {
-            const metric = (await find(name)) as SumMetricData | undefined;
-            return metric?.dataPoints.map((dp) => [dp.attributes, dp.value]) ?? [];
+            const metric = await find(name);
+            return (metric?.dataPoints ?? []).flatMap((dp) => {
+                const pointValue: unknown = dp.value;
+                return typeof pointValue === "number" ? [[dp.attributes, pointValue] as const] : [];
+            });
         },
         async histograms(name) {
-            const metric = (await find(name)) as HistogramMetricData | undefined;
-            return metric?.dataPoints.map((dp) => [dp.attributes, { count: dp.value.count, sum: dp.value.sum }]) ?? [];
+            const metric = await find(name);
+            return (metric?.dataPoints ?? []).flatMap((dp) => {
+                const pointValue: unknown = dp.value;
+                if (typeof pointValue !== "object" || pointValue === null || !("count" in pointValue) || !("sum" in pointValue)) return [];
+                const { count, sum } = pointValue;
+                if (typeof count !== "number") return [];
+                return [[dp.attributes, { count, sum: typeof sum === "number" ? sum : undefined }] as const];
+            });
         },
         async dispose() {
             await provider.shutdown();

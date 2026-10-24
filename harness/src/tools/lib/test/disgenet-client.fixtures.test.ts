@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { GdaResponseSchema } from "../disgenet-client.js";
@@ -64,7 +65,7 @@ runFixtureSuite("DisGeNET golden fixtures", [
 
 describe("the DisGeNET envelope", () => {
     it("is the live shape of the one keyless route", () => {
-        const body = readFixture("disgenet", "v1-public-version.json") as Record<string, unknown>;
+        const body = z.record(z.string(), z.unknown()).parse(readFixture("disgenet", "v1-public-version.json"));
         expect(Object.keys(body)).toEqual(["status", "payload", "httpStatus"]);
         expect(body.status).toBe("OK");
         expect(body.httpStatus).toBe(200);

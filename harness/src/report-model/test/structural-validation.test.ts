@@ -384,4 +384,21 @@ describe("validateReferenceStructure", () => {
             expect(failureFor(valueReference(ghostPath, ghostHash), diskFreeSnapshot)).toBeUndefined();
         });
     });
+
+    describe("the rows of the artifact", () => {
+        it("fails a row bound over an artifact whose rows a row forbids, instead of throwing", () => {
+            // The cell shape of a row admits a string and a number alone. The definition writes the
+            // boolean that the declared shape forbids, so the tier reads a lying row and must refuse it
+            // through the Err channel instead of raising out of the read.
+            const malformedPath = "runs/run-1/step-h/output/bad.csv";
+            const malformedHash = `sha256:${"6".repeat(64)}`;
+            const row: Record<string, string | number> = { gene: "TP53" };
+            Object.defineProperty(row, "padj", { value: true, enumerable: true, writable: true, configurable: true });
+            const malformed: ReportSnapshot = { artifacts: { [malformedPath]: { hash: malformedHash, rows: [row] } } };
+            const bounded = { ...tableReference(malformedPath, malformedHash), rowBound: { column: "gene", count: 20 } };
+            const failure = failureFor(bounded, malformed);
+            expect(failure?.reason).toBe("unreadable-artifact");
+            expect(failure?.detail).toContain("padj");
+        });
+    });
 });

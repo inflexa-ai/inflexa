@@ -9,6 +9,8 @@ import { createDetailResolver } from "../../tools/detail-resolver.js";
 import { createExecuteCommandTool } from "../../tools/workspace/execute-command.js";
 import { createReadFileTool } from "../../tools/workspace/read-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
+import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
+import { makeFakeSandboxClient, makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "../data-profile-activity.js";
 
 // The data-profile workflow body is not reachable from a unit test — it needs a launched durability
@@ -28,15 +30,23 @@ const FRAME = { runId: "data-profile", stepId: "profile" } as const;
  * The workflow body builds the same thing from `agentDef.tools`; the phrases a
  * user reads come from the tools themselves, not from a table here.
  */
+const notDrivenMutator: WorkspaceMutator = {
+    writeFile: () => {
+        throw new Error("mutator.writeFile: not driven by this test");
+    },
+    recordWrite: () => {
+        throw new Error("mutator.recordWrite: not driven by this test");
+    },
+};
 const resolveDetail = createDetailResolver([
     createExecuteCommandTool({
-        sandboxClient: {} as never,
-        sandbox: {} as never,
+        sandboxClient: makeFakeSandboxClient(),
+        sandbox: { sandboxId: "sbx-test", host: "127.0.0.1", port: 8765, backend: "docker" },
         deadlineMs: () => 0,
         defaultCwd: "/analysis/runs/data-profile/profile",
     }),
-    createReadFileTool({} as never, "/analysis/runs/data-profile/profile"),
-    createWriteFileTool({ mutator: {} as never }),
+    createReadFileTool(makeFakeWorkspaceFs(), "/analysis/runs/data-profile/profile"),
+    createWriteFileTool({ mutator: notDrivenMutator }),
     defineTool({
         id: "submit_profile",
         description: "Submit the profiling results. Declares no hook.",
@@ -50,7 +60,16 @@ const resolveDetail = createDetailResolver([
 const ACTIVITY_ID = "step-activity-data-profile-profile";
 const ENTRY_ID = "activity-entry-data-profile-profile";
 
-type Recorded = { type: string; id: string; runId: string; stepId: string; phase: string; activity: string; at?: string };
+const RecordedSchema = z.object({
+    type: z.string(),
+    id: z.string(),
+    runId: z.string(),
+    stepId: z.string(),
+    phase: z.string(),
+    activity: z.string(),
+    at: z.string().optional(),
+});
+type Recorded = z.infer<typeof RecordedSchema>;
 
 const CLOCK_START = Date.parse("2026-10-12T10:00:00.000Z");
 
@@ -65,7 +84,7 @@ function recorder(): { parts: Recorded[]; emitter: ProfileActivityEmitter } {
     const parts: Recorded[] = [];
     const emitter = createProfileActivityEmitter(
         async (part) => {
-            parts.push(part as Recorded);
+            parts.push(RecordedSchema.parse(part));
         },
         FRAME,
         createNoopLogger(),
@@ -223,8 +242,7 @@ describe("profile activity emitter — a failed write never fails the profile", 
         let rejectActivity = true;
         const emitter = createProfileActivityEmitter(
             async (part) => {
-                // The emitter writes only the parts that `activityEmission` builds, and each of them has the fields of `Recorded`.
-                const recorded = part as Recorded;
+                const recorded = RecordedSchema.parse(part);
                 if (rejectActivity && recorded.type === "data-step-activity") {
                     rejectActivity = false;
                     throw new Error("transient");
@@ -247,8 +265,7 @@ describe("profile activity emitter — a failed write never fails the profile", 
         let rejectEntry = true;
         const emitter = createProfileActivityEmitter(
             async (part) => {
-                // The emitter writes only the parts that `activityEmission` builds, and each of them has the fields of `Recorded`.
-                const recorded = part as Recorded;
+                const recorded = RecordedSchema.parse(part);
                 if (rejectEntry && recorded.type === "data-activity-entry") {
                     rejectEntry = false;
                     throw new Error("transient");

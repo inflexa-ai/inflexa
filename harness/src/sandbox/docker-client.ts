@@ -77,6 +77,35 @@ const OWNER_WORKFLOW_LABEL = OWNER_WORKFLOW_KEY;
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
 const CPU_FILES_DIR = ".cpu";
 
+/**
+ * The surface of a Docker engine that this module reads. The classes of
+ * `dockerode` carry private members, so an injected engine — a test double or a
+ * wrapper — names this shape instead. A real `Docker` instance satisfies it.
+ */
+type EngineContainer = {
+    start(): Promise<unknown>;
+    stop(options?: { t?: number }): Promise<unknown>;
+    remove(options?: { force?: boolean; v?: boolean }): Promise<unknown>;
+    inspect(): Promise<EngineInspectInfo>;
+};
+
+type EngineInspectInfo = {
+    Config?: { Labels?: Record<string, string> };
+    State: { Running?: boolean; OOMKilled?: boolean };
+    NetworkSettings: { Ports?: Record<string, Array<{ HostPort?: string }>> };
+};
+
+type EngineContainerInfo = {
+    Labels?: Record<string, string>;
+    Created?: unknown;
+};
+
+export type DockerEngine = {
+    createContainer(options: Docker.ContainerCreateOptions): Promise<EngineContainer>;
+    getContainer(id: string): EngineContainer;
+    listContainers(options?: { all?: boolean; filters?: { label?: string[] } }): Promise<EngineContainerInfo[]>;
+};
+
 export type DockerClientConfig = {
     image: string;
     /** Workspace-root resolution seam; each analysis's resolved root is the bind source for its tree mounts. */
@@ -125,7 +154,7 @@ export type DockerClientConfig = {
      */
     engineSocketPath?: string;
     /** Injected for tests. */
-    docker?: Docker;
+    docker?: DockerEngine;
     /** Injected for tests so `/health` polling can be stubbed. */
     fetch?: typeof fetch;
     /**
@@ -246,13 +275,13 @@ export function engineConnectionOptions(engineSocketPath: string | undefined): D
  * (both calls fail) still reports the create failure.
  */
 async function createOrAdopt(
-    docker: Docker,
+    docker: DockerEngine,
     createOpts: Docker.ContainerCreateOptions,
     name: string,
     ownerWorkflowId: string,
     createFailed: (status: number | undefined, cause: unknown) => SandboxError,
     logger: Logger,
-): Promise<Result<{ container: Docker.Container; alreadyRunning: boolean }, SandboxError>> {
+): Promise<Result<{ container: EngineContainer; alreadyRunning: boolean }, SandboxError>> {
     const created = await trySandbox(() => docker.createContainer(createOpts), createFailed);
     if (created.isOk()) return ok({ container: created.value, alreadyRunning: false });
 
@@ -283,7 +312,7 @@ async function createOrAdopt(
     return ok({ container: recreated.value, alreadyRunning: false });
 }
 
-function removeContainerIgnoreMissing(docker: Docker, sandboxId: string): ResultAsync<void, SandboxError> {
+function removeContainerIgnoreMissing(docker: DockerEngine, sandboxId: string): ResultAsync<void, SandboxError> {
     return trySandbox(
         async () => {
             const container = docker.getContainer(sandboxId);

@@ -8,12 +8,23 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { Pool } from "pg";
 
 import { createCapturingLogger, silentLogger } from "../../__tests__/setup/logger.js";
+import type { Querier } from "../../state/db.js";
+import type { DBOSSpan } from "@dbos-inc/dbos-sdk";
 import { __resetDbosStateForTest, __setDbosStateForTest, dbosSdkConfig, dbosSdkLogger, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "../dbos.js";
 
-const stubConfig = {} as DbosConfig;
+const stubConfig: DbosConfig = {
+    dbHost: "",
+    dbPort: "",
+    dbName: "",
+    dbUser: "",
+    dbPassword: "",
+    dbSslMode: "disable",
+    appName: "dbos-test",
+    adminPort: "",
+    executorId: "dbos-test",
+};
 
 const fullConfig: DbosConfig = {
     dbHost: "db.internal",
@@ -46,7 +57,7 @@ afterEach(() => {
 afterAll(async () => {
     if (originalShutdown === undefined) return;
     const dbos = await import("@dbos-inc/dbos-sdk");
-    (dbos.DBOS.shutdown as unknown) = originalShutdown;
+    Reflect.set(dbos.DBOS, "shutdown", originalShutdown);
 });
 
 describe("dbosState", () => {
@@ -94,7 +105,7 @@ describe("launchDbos / shutdownDbos", () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         originalShutdown ??= dbos.DBOS.shutdown;
         const stub = mock(() => Promise.reject(new Error("boom")));
-        (dbos.DBOS.shutdown as unknown) = stub;
+        Reflect.set(dbos.DBOS, "shutdown", stub);
 
         const { shutdownDbos } = await import("../dbos.js");
         // Must not throw — the wider shutdown sequence depends on this.
@@ -147,8 +158,13 @@ describe("dbosSdkLogger", () => {
     it("carries the stack and the operation context as fields, not in the message", () => {
         const logger = createCapturingLogger();
         const sdk = dbosSdkLogger(logger, "info");
-        const span = { attributes: { "dbos.operation.workflow_id": "wf-1", "dbos.operation.name": "executeAnalysis" } };
-        sdk.error("step failed", { stack: "Error: step failed\n    at x", span: span as never });
+        const span: DBOSSpan = {
+            attributes: { "dbos.operation.workflow_id": "wf-1", "dbos.operation.name": "executeAnalysis" },
+            setStatus: () => span,
+            setAttribute: () => span,
+            addEvent: () => span,
+        };
+        sdk.error("step failed", { stack: "Error: step failed\n    at x", span });
         expect(logger.records).toHaveLength(1);
         expect(logger.records[0]!.msg).toBe("[sdk] step failed");
         expect(logger.records[0]!.fields).toEqual({
@@ -162,12 +178,12 @@ describe("dbosSdkLogger", () => {
 describe("legacy ephemeral workflow migration sweep", () => {
     it("cancels only pending rows for the current executor before recovery", async () => {
         const queries: Array<{ text: string; values?: unknown[] }> = [];
-        const pool = {
-            query: async (query: { text: string; values?: unknown[] }) => {
-                queries.push(query);
+        const pool: Querier = {
+            query: async (query) => {
+                if (typeof query !== "string") queries.push(query);
                 return { rows: [], rowCount: 2 };
             },
-        } as unknown as Pool;
+        };
 
         await sweepEphemeralWorkflows({ pool, logger: silentLogger, executorId: "executor-1" });
 

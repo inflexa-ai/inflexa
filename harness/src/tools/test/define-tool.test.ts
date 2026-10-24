@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { defineTool } from "../define-tool.js";
 import { createRegistry } from "../registry.js";
 
@@ -20,7 +21,8 @@ describe("defineTool", () => {
 
         expect(tool.id).toBe("search-thing");
         expect(tool.jsonSchema.type).toBe("object");
-        const props = tool.jsonSchema.properties as Record<string, unknown>;
+        const props = parseUnknownRecord(tool.jsonSchema.properties);
+        if (props === undefined) throw new Error("expected the properties record");
         expect(props.query).toBeDefined();
         expect(props.limit).toBeDefined();
         // z.toJSONSchema's draft marker is stripped before handing the schema

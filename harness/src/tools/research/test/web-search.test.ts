@@ -43,10 +43,10 @@ async function search(raw: Record<string, unknown>, engine: WebSearchEngine): Pr
     const tool = createWebSearchTool({ engine });
     // The loop parses the model input through the schema before it runs the body
     // (run-agent.ts), thus the defaults and the input refine are part of the path.
-    const input = tool.inputSchema.parse(raw) as Parameters<typeof tool.execute>[0];
+    const input = tool.inputSchema.parse(raw);
     const { ctx } = makeToolContext();
     const result = await tool.execute(input, ctx);
-    return result._unsafeUnwrap() as WebSearchOutput;
+    return result._unsafeUnwrap();
 }
 
 function resultsOf(output: WebSearchOutput): string[] {
@@ -189,7 +189,7 @@ describe("web_search — an engine failure rides the ok channel", () => {
         [{ status: "retryable_status", httpStatus: 503, text: "SearXNG answered HTTP 503 and spent its retry attempt" }],
         [{ status: "schema_mismatch", text: "SearXNG response did not match the expected schema: results" }],
         [{ status: "not_json", text: "SearXNG did not answer with a valid JSON body" }],
-    ] as [WebSearchEngineError][])("reports %s verbatim as a normal result", async (error) => {
+    ] satisfies [WebSearchEngineError][])("reports %s verbatim as a normal result", async (error) => {
         const output = await search({ query: "q" }, stubEngine({ q: error }));
 
         expect(output).toEqual(error);

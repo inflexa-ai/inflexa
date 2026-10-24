@@ -32,10 +32,9 @@ const snapshot: ReportSnapshot = {
 function field(value: unknown, ...keys: Array<string | number>): unknown {
     let current: unknown = value;
     for (const key of keys) {
-        if (current === null || typeof current !== "object") {
-            return undefined;
-        }
-        current = (current as Record<string | number, unknown>)[key];
+        // A record parse would drop the very own `__proto__` key this suite guards, so read through the guard.
+        if (current === null || typeof current !== "object" || !(key in current)) return undefined;
+        current = Reflect.get(current, key);
     }
     return current;
 }
@@ -225,8 +224,9 @@ describe("the faithful copy", () => {
         const stamped = stampReferenceHashes(payload, snapshot)._unsafeUnwrap();
 
         expect(field(stamped, "binding", "hash")).toBe(OUTPUT_HASH);
+        if (typeof stamped !== "object" || stamped === null) throw new Error("the stamp gives an object");
         // A plain assignment at this key reaches the prototype setter, thus the copy would lose the key.
-        expect(Object.hasOwn(stamped as object, "__proto__")).toBe(true);
+        expect(Object.hasOwn(stamped, "__proto__")).toBe(true);
         expect(field(stamped, "__proto__", "note")).toBe("an own key");
         expect(Object.getPrototypeOf(stamped)).toBe(Object.prototype);
     });

@@ -16,6 +16,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { Scope } from "../../auth/types.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createThreadStore } from "../../memory/thread-store.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import { upsertAnalysis } from "../../state/analyses.js";
@@ -281,7 +282,7 @@ describe("createReportSessionRuntime", () => {
             values: [threadId],
         });
         expect(after[0]!.snapshot).toEqual(before[0]!.snapshot);
-        expect(Object.keys(after[0]!.snapshot as Record<string, unknown>)).not.toContain(record.outputPath);
+        expect(Object.keys(parseUnknownRecord(after[0]!.snapshot) ?? {})).not.toContain(record.outputPath);
     });
 
     it("binds a derived path through the authoring tools, and the stamp fills its hash", async () => {

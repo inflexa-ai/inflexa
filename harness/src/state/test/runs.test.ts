@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "../analyses.js";
+import type { Querier } from "../db.js";
 import { insertPlan } from "../plans.js";
 import {
     countRunsByAnalysis,
@@ -688,9 +689,9 @@ describe("the text filter of the run reads", () => {
 
 describe("a driver failure of the run count", () => {
     // The read under test calls only `query`, thus an object with a rejecting `query` stands for the whole interface.
-    const rejecting = {
+    const rejecting: Querier = {
         query: () => Promise.reject(new Error("connection lost")),
-    } as unknown as Parameters<typeof countRunsByAnalysis>[0];
+    };
 
     it("rides the error channel of countRunsByAnalysis, with the op", async () => {
         const error = (await countRunsByAnalysis(rejecting, "a1", { q: "x" })).match(

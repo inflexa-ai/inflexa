@@ -17,7 +17,7 @@
  * Example: `runId: invalid_type (expected string)`.
  */
 
-import type { z } from "zod";
+import { z } from "zod";
 
 /** The most issues that one failure describes. */
 const MAX_ISSUES = 10;
@@ -78,47 +78,47 @@ function schemaPath(schema: z.ZodType, path: readonly PropertyKey[]): string {
 
 /** The schema of the declared field `key`, looking through wrappers and unions. */
 function fieldOf(schema: z.core.$ZodType, key: string): z.core.$ZodType | undefined {
-    const def = (unwrap(schema) as z.core.$ZodTypes)._zod.def;
-    if (def.type === "object") return Object.hasOwn(def.shape, key) ? def.shape[key] : undefined;
-    if (def.type === "union") {
-        for (const option of def.options) {
+    const inner = unwrap(schema);
+    if (inner instanceof z.ZodObject) {
+        const shape: z.core.$ZodShape = inner.shape;
+        return Object.hasOwn(shape, key) ? shape[key] : undefined;
+    }
+    if (inner instanceof z.ZodUnion) {
+        for (const option of inner.options) {
             const field = fieldOf(option, key);
             if (field !== undefined) return field;
         }
+        return undefined;
     }
-    if (def.type === "intersection") return fieldOf(def.left, key) ?? fieldOf(def.right, key);
+    if (inner instanceof z.ZodIntersection) return fieldOf(inner.def.left, key) ?? fieldOf(inner.def.right, key);
     return undefined;
 }
 
 function elementOf(schema: z.core.$ZodType, index: number): z.core.$ZodType | undefined {
-    const def = (unwrap(schema) as z.core.$ZodTypes)._zod.def;
-    if (def.type === "array") return def.element;
-    if (def.type === "tuple") return def.items[index] ?? def.rest ?? undefined;
+    const inner = unwrap(schema);
+    if (inner instanceof z.ZodArray) return inner.element;
+    if (inner instanceof z.ZodTuple) return inner.def.items[index] ?? inner.def.rest ?? undefined;
     return undefined;
 }
 
 function unwrap(schema: z.core.$ZodType): z.core.$ZodType {
     let current = schema;
     for (let depth = 0; depth < 16; depth++) {
-        const def = (current as z.core.$ZodTypes)._zod.def;
-        switch (def.type) {
-            case "optional":
-            case "nullable":
-            case "default":
-            case "prefault":
-            case "nonoptional":
-            case "catch":
-            case "readonly":
-                current = def.innerType;
-                break;
-            case "pipe":
-                current = def.in;
-                break;
-            case "lazy":
-                current = def.getter();
-                break;
-            default:
-                return current;
+        if (
+            current instanceof z.ZodOptional ||
+            current instanceof z.ZodNullable ||
+            current instanceof z.ZodDefault ||
+            current instanceof z.ZodPrefault ||
+            current instanceof z.ZodNonOptional ||
+            current instanceof z.ZodCatch ||
+            current instanceof z.ZodReadonly ||
+            current instanceof z.ZodLazy
+        ) {
+            current = current.unwrap();
+        } else if (current instanceof z.ZodPipe) {
+            current = current.in;
+        } else {
+            return current;
         }
     }
     return current;

@@ -140,7 +140,7 @@ export async function withSchema(testName: string): Promise<{
     // The search_path is a startup parameter, so every connection handed out
     // resolves tables in the test schema before falling back to public (where
     // pgvector lives), with no query to race.
-    const cfg: PoolConfig = (base as unknown as { options?: PoolConfig }).options ?? {};
+    const cfg: PoolConfig = base.options;
     const pool = new Pool({
         host: cfg.host,
         port: cfg.port,

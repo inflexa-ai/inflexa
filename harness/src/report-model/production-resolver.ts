@@ -37,6 +37,7 @@ import type {
 import type { Suspension } from "../workflows/suspension.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import {
@@ -443,7 +444,11 @@ function parseJsonTable(text: string): Row[] | undefined {
             return undefined;
         }
         const row: Row = {};
-        for (const [key, cell] of Object.entries(item as Record<string, unknown>)) {
+        const fields = parseUnknownRecord(item);
+        if (fields === undefined) {
+            return undefined;
+        }
+        for (const [key, cell] of Object.entries(fields)) {
             if (cell !== null && typeof cell === "object") {
                 return undefined;
             }

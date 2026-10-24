@@ -18,14 +18,14 @@
  */
 
 import { ok, type Result } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
 import type { EnsureSessionStateResult } from "../app/report-session-runtime.js";
 import { compositionHasEyes, createReportSessionSpawn, type ReportBrief, type ReportSessionSpawnDeps, type SpawnRefusal } from "../app/spawn-report-session.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
-import { describeDbError, type DbError } from "../lib/db-result.js";
+import { describeDbError, type Connectable, type DbError } from "../lib/db-result.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
 import type { ThreadInputError, ThreadType } from "../memory/thread-store.js";
@@ -110,7 +110,7 @@ export type StartReportSessionResult =
  * opens the gate of that spawn.
  */
 export type StartReportSessionToolDeps = {
-    readonly pool: Pool;
+    readonly pool: Querier & Connectable;
     readonly chrome: ChromeConfig;
     /**
      * The eyes seam of the composition. A bound seam gives a browser for one

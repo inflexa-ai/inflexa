@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -18,10 +24,10 @@ afterEach(() => {
 });
 
 function stubResponse(status: number, body: unknown): void {
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = fetchDouble(async (input) => {
         requestedUrls.push(String(input));
         return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
-    }) as unknown as typeof fetch;
+    });
 }
 
 /** The `query` parameter of the one request the tool made, decoded. */
@@ -188,7 +194,7 @@ describe("searchProtein — no match", () => {
 
 describe("searchProtein — the bound on the answer", () => {
     it("trims to the limit and reports that more rows existed", async () => {
-        const row = (readFixture("uniprot", "search_BRCA1_reviewed.json") as { results: unknown[] }).results[0]!;
+        const row = z.object({ results: z.array(z.unknown()) }).parse(readFixture("uniprot", "search_BRCA1_reviewed.json")).results[0]!;
         // The client asks for `limit + 1` rows, thus three rows for a limit of 2
         // is what "UniProt held more" looks like on the wire.
         stubResponse(200, { results: [row, row, row] });

@@ -54,11 +54,11 @@ export function declaredDataRequirements(): readonly { agentId: string; capabili
  * `PlanStepSchema.agent`. A non-empty tuple, as `z.enum` requires.
  */
 export const PLANNABLE_AGENT_IDS: readonly [string, ...string[]] = (() => {
-    const ids = PLANNABLE_AGENT_CATALOG.map((meta) => meta.id);
-    if (ids.length === 0) {
+    const [first, ...rest] = PLANNABLE_AGENT_CATALOG.map((meta) => meta.id);
+    if (first === undefined) {
         throw new Error("PLANNABLE_AGENT_CATALOG is empty");
     }
-    return ids as [string, ...string[]];
+    return [first, ...rest];
 })();
 
 /**

@@ -11,6 +11,8 @@
 
 import { z } from "zod";
 
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
 
 const IMPC_BASE = "https://www.ebi.ac.uk/mi/impc/solr";
@@ -58,13 +60,11 @@ const ImpcSolrDocSchema = z.object({
     marker_symbol: z.string().optional(),
     mgi_accession_id: z.string().optional(),
 });
-type ImpcSolrDoc = z.infer<typeof ImpcSolrDocSchema>;
 
 // The `response` envelope shared by every IMPC Solr core, validated at the fetch boundary.
 const ImpcSolrResponseSchema = z.object({
     response: z.object({ docs: z.array(ImpcSolrDocSchema).optional(), numFound: z.number().optional() }).optional(),
 });
-type ImpcSolrResponse = z.infer<typeof ImpcSolrResponseSchema>;
 
 export type MpTerm = {
     id: string;
@@ -106,10 +106,8 @@ function escapeSolrValue(value: string): string {
 }
 
 export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
-    // `raw` is the untyped IMPC Solr response; we reach `.response.docs` defensively
-    // (optional-chained, defaulted to []) and treat each doc's fields as optional below.
-    const docs: ImpcSolrDoc[] = (raw as ImpcSolrResponse | null)?.response?.docs ?? [];
-    if (!Array.isArray(docs) || docs.length === 0) {
+    const docs = solrDocsOf(raw);
+    if (docs.length === 0) {
         return { mpTerms: [], organSystems: [], sexDimorphic: false, phenotypeCount: 0 };
     }
 
@@ -119,17 +117,17 @@ export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
     const allSexes = new Set<string>();
 
     for (const doc of docs) {
-        const mpId: string | undefined = doc.mp_term_id;
+        const mpId = readString(doc, "mp_term_id");
         if (!mpId) continue;
         const newP = typeof doc.p_value === "number" && Number.isFinite(doc.p_value) ? doc.p_value : null;
         const existing = byMp.get(mpId);
         if (!existing) {
-            byMp.set(mpId, { id: mpId, term: doc.mp_term_name ?? "", bestPValue: newP });
+            byMp.set(mpId, { id: mpId, term: readString(doc, "mp_term_name") ?? "", bestPValue: newP });
         } else if (newP !== null && (existing.bestPValue === null || newP < existing.bestPValue)) {
             existing.bestPValue = newP;
         }
 
-        const tops: unknown = doc.top_level_mp_term_name;
+        const tops = doc.top_level_mp_term_name;
         if (Array.isArray(tops)) {
             for (const t of tops) {
                 const key = typeof t === "string" ? t.toLowerCase() : "";
@@ -161,33 +159,35 @@ export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
     return { mpTerms, organSystems, sexDimorphic, phenotypeCount: byMp.size };
 }
 
+function readString(record: Record<string, unknown>, key: string): string | undefined {
+    const value = record[key];
+    return typeof value === "string" ? value : undefined;
+}
+
+/** The `.response.docs` of a Solr envelope, each doc as the record its fields are read off; a non-record doc is skipped. */
+function solrDocsOf(raw: unknown): Record<string, unknown>[] {
+    const docs = parseUnknownRecord(parseUnknownRecord(raw)?.response)?.docs;
+    if (!isUnknownArray(docs)) return [];
+    return docs.flatMap((doc) => {
+        const record = parseUnknownRecord(doc);
+        return record === undefined ? [] : [record];
+    });
+}
+
 export function buildViabilityCalls(docsB: unknown, docsC: unknown): ViabilityCall[] {
-    // `docsB`/`docsC` are untyped IMPC Solr responses; the `.response.docs` reach is
-    // optional-chained + defaulted, so a shape mismatch degrades to an empty result.
-    const bDocs: ImpcSolrDoc[] = (docsB as ImpcSolrResponse | null)?.response?.docs ?? [];
-    const cDocs: ImpcSolrDoc[] = (docsC as ImpcSolrResponse | null)?.response?.docs ?? [];
     const seen = new Set<string>();
     const out: ViabilityCall[] = [];
 
-    for (const d of bDocs) {
-        const pid = d.parameter_stable_id;
+    for (const d of [...solrDocsOf(docsB), ...solrDocsOf(docsC)]) {
+        const pid = readString(d, "parameter_stable_id");
         if (!pid || seen.has(pid)) continue;
         seen.add(pid);
+        const mpId = readString(d, "mp_term_id");
+        const mpName = readString(d, "mp_term_name");
         out.push({
-            zygosity: d.parameter_name ?? "",
+            zygosity: readString(d, "parameter_name") ?? "",
             parameterStableId: pid,
-            mpTerm: d.mp_term_id && d.mp_term_name ? { id: d.mp_term_id, name: d.mp_term_name } : null,
-        });
-    }
-
-    for (const d of cDocs) {
-        const pid = d.parameter_stable_id;
-        if (!pid || seen.has(pid)) continue;
-        seen.add(pid);
-        out.push({
-            zygosity: d.parameter_name ?? "",
-            parameterStableId: pid,
-            mpTerm: null,
+            mpTerm: mpId && mpName ? { id: mpId, name: mpName } : null,
         });
     }
     return out;

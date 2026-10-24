@@ -249,8 +249,13 @@ describe("a snapshot of the kinds era", () => {
     it("marks file-addressed entries with a metadata path and pattern entries with none", () => {
         const resolved = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED });
         for (const entry of resolved) {
-            if (entry.metadata.path !== undefined) expect(entry.id).toBe(`/a1/${entry.metadata.path as string}`);
-            else expect(entry.metadata.type).not.toBe("input");
+            const path = entry.metadata.path;
+            if (path === undefined) {
+                expect(entry.metadata.type).not.toBe("input");
+                continue;
+            }
+            if (typeof path !== "string") throw new Error("a file-addressed entry names a string path");
+            expect(entry.id).toBe(`/a1/${path}`);
         }
         expect(resolved.some((e) => e.metadata.path !== undefined)).toBe(true);
 

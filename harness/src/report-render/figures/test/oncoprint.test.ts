@@ -10,6 +10,7 @@ import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption 
 import { CHART_BODY_PX, CHART_SLOT_LIMIT } from "../../design.js";
 import { CELL_GLYPH_RENDERER } from "../../chart-renderers.js";
 import { ALTERATION_CLASS_COLORS, CELL_GROUND_COLOR, ONCOPRINT_ROW_PX } from "../oncoprint.js";
+import { optionArray, optionAt, optionList, optionNumbers, optionOf, optionStrings, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -47,12 +48,8 @@ function derive(encoding: Encoding = RANKED, rows: ChartRow[] = ROWS): EchartOpt
     return deriveChartOption(oncoprint(encoding), rows)._unsafeUnwrap();
 }
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function axesOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption[] {
-    return option[key] as EchartOption[];
+    return optionArray(option, key);
 }
 
 /** The custom series of the matrix. */
@@ -64,11 +61,13 @@ function cellSeries(option: EchartOption): EchartOption {
 
 /** The class place of the cell of one sample and one gene, read through the axes of the matrix. */
 function cellClass(option: EchartOption, sample: string, gene: string): number {
-    const samples = (axesOf(option, "xAxis")[0]?.data ?? []) as string[];
-    const genes = (axesOf(option, "yAxis")[0]?.data ?? []) as string[];
-    const item = (cellSeries(option).data as Array<number[] | { value: number[] }>)
-        .map((entry) => (Array.isArray(entry) ? entry : entry.value))
-        .find((value) => value[0] === samples.indexOf(sample) && value[1] === genes.indexOf(gene));
+    const xAxis = axesOf(option, "xAxis")[0];
+    const yAxis = axesOf(option, "yAxis")[0];
+    if (xAxis === undefined || yAxis === undefined) throw new Error("the matrix holds a category axis of each kind");
+    const samples = optionStrings(xAxis.data);
+    const genes = optionStrings(yAxis.data);
+    const cells = optionList(cellSeries(option).data).map((entry) => (Array.isArray(entry) ? optionNumbers(entry) : optionNumbers(optionOf(entry).value)));
+    const item = cells.find((value) => value[0] === samples.indexOf(sample) && value[1] === genes.indexOf(gene));
     if (item === undefined) throw new Error(`no cell for ${sample} ${gene}`);
     const glyphClass = item[2];
     if (glyphClass === undefined) throw new Error(`no class for the cell of ${sample} ${gene}`);
@@ -80,18 +79,18 @@ describe("the oncoprint figure", () => {
         const option = derive();
         const cells = cellSeries(option);
         expect(cells.type).toBe("custom");
-        expect(cells.data as unknown[]).toHaveLength(3 * 4);
-        const payload = cells.itemPayload as { colors: string[]; ground: string };
+        expect(optionList(cells.data)).toHaveLength(3 * 4);
+        const payload = optionOf(cells.itemPayload);
         expect(payload.ground).toBe(CELL_GROUND_COLOR);
-        expect(payload.colors[cellClass(option, "TCGA-AB-2945", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.Missense_Mutation);
-        expect(payload.colors[cellClass(option, "TCGA-AB-2965", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.In_Frame_Ins);
+        expect(optionStrings(payload.colors)[cellClass(option, "TCGA-AB-2945", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.Missense_Mutation);
+        expect(optionStrings(payload.colors)[cellClass(option, "TCGA-AB-2965", "FLT3")]).toBe(ALTERATION_CLASS_COLORS.In_Frame_Ins);
         expect(cellClass(option, "TCGA-AB-2802", "FLT3")).toBe(-1);
     });
 
     it("gives each common class its fixed color, and an unknown class a palette color outside the map", () => {
         const option = derive();
-        const payload = cellSeries(option).itemPayload as { colors: string[] };
-        const silent = payload.colors[cellClass(option, "TCGA-AB-2802", "DNMT3A")];
+        const payload = optionOf(cellSeries(option).itemPayload);
+        const silent = optionStrings(payload.colors)[cellClass(option, "TCGA-AB-2802", "DNMT3A")];
         expect(Object.values(ALTERATION_CLASS_COLORS)).not.toContain(silent);
         expect(silent).toMatch(/^#[0-9a-f]{6}$/);
         // The fixed map holds the common classes of the MAF standard.
@@ -126,7 +125,12 @@ describe("the oncoprint figure", () => {
         expect(bars.map((entry) => entry.name)).toEqual(["Missense Mutation", "Frame Shift Ins", "In Frame Ins", "Silent"]);
         for (const bar of bars) expect(bar.stack).toBe(bars[0]?.stack);
         // Each sample sums the classes of its altered genes, and the unaltered sample counts zero.
-        const totals = [0, 1, 2, 3].map((place) => bars.reduce((sum, bar) => sum + ((bar.data as number[])[place] ?? 0), 0));
+        const totals = [0, 1, 2, 3].map((place) =>
+            bars.reduce((sum, bar) => {
+                const cell = optionList(bar.data)[place];
+                return sum + (typeof cell === "number" ? cell : 0);
+            }, 0),
+        );
         expect(totals).toEqual([3, 3, 2, 0]);
         expect(axesOf(option, "xAxis")[1]).toMatchObject({ gridIndex: 1, data: axesOf(option, "xAxis")[0]?.data });
     });
@@ -136,9 +140,9 @@ describe("the oncoprint figure", () => {
         const share = seriesOf(option).find((entry) => entry.type === "bar" && entry.xAxisIndex === 2);
         expect(share).toBeDefined();
         // Four samples hold the denominator, the unaltered one included.
-        const data = share?.data as Array<{ value: number; label: { formatter: string } }>;
+        const data = optionList(share?.data).map((item) => optionOf(item));
         expect(data.map((item) => item.value)).toEqual([0.5, 0.75, 0.75]);
-        expect(data.map((item) => item.label.formatter)).toEqual(["50%", "75%", "75%"]);
+        expect(data.map((item) => optionAt(item, "label").formatter)).toEqual(["50%", "75%", "75%"]);
         expect(axesOf(option, "yAxis")[2]).toMatchObject({ gridIndex: 2, inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] });
     });
 
@@ -151,8 +155,8 @@ describe("the oncoprint figure", () => {
 
     it("names the legend by the classes, and draws no legend entry for the cells or the share", () => {
         const option = derive();
-        const legend = option.legend as { data: Array<{ name: string }> };
-        expect(legend.data.map((entry) => entry.name)).toEqual(["Missense Mutation", "Frame Shift Ins", "In Frame Ins", "Silent"]);
+        const legend = optionAt(option, "legend");
+        expect(optionArray(legend, "data").map((entry) => entry.name)).toEqual(["Missense Mutation", "Frame Shift Ins", "In Frame Ins", "Silent"]);
     });
 
     it("refuses a gene and a sample that hold two classes", () => {
@@ -206,7 +210,7 @@ describe("the oncoprint figure", () => {
 
         it("draws each track as one strip of category colors under the matrix, and the legend names each value", () => {
             const option = derive({ ...RANKED, tracks: ["subtype"] }, rows);
-            expect(option.grid as EchartOption[]).toHaveLength(4);
+            expect(optionArray(option, "grid")).toHaveLength(4);
             const strips = seriesOf(option).filter((entry) => entry.xAxisIndex === 3);
             expect(strips.map((entry) => entry.name)).toEqual(["M1", "M2", "M4"]);
             expect(strips.every((entry) => entry.renderItem === CELL_GLYPH_RENDERER)).toBe(true);
@@ -215,7 +219,7 @@ describe("the oncoprint figure", () => {
                 [0, 0, -1],
                 [2, 0, -1],
             ]);
-            const grounds = strips.map((entry) => (entry.itemPayload as { ground: string }).ground);
+            const grounds = strips.map((entry) => optionOf(entry.itemPayload).ground);
             expect(new Set(grounds).size).toBe(3);
             expect(axesOf(option, "yAxis")[3]).toMatchObject({ gridIndex: 3, data: ["subtype"] });
             // The sample title moves under the strips.
@@ -223,7 +227,7 @@ describe("the oncoprint figure", () => {
             if (matrix === undefined) throw new Error("the matrix holds no category axis");
             expect(matrix.name).toBeUndefined();
             expect(axesOf(option, "xAxis")[3]?.name).toBe("sample (n = 4)");
-            const legend = (option.legend as { data: Array<{ name: string }> }).data.map((entry) => entry.name);
+            const legend = optionArray(optionAt(option, "legend"), "data").map((entry) => entry.name);
             expect(legend.slice(-3)).toEqual(["M1", "M2", "M4"]);
         });
 
@@ -257,7 +261,7 @@ describe("the height of an oncoprint of many genes", () => {
     /** The height of one gene row on the page, in pixels. */
     function rowPx(encoding: Encoding, rows: ChartRow[]): number {
         const render = deriveChartRender(oncoprint(encoding), rows, undefined, { key: "onco", columns: [] })._unsafeUnwrap();
-        const matrix = (render.option.grid as EchartOption[])[0];
+        const matrix = optionArray(render.option, "grid")[0];
         if (matrix === undefined) throw new Error("the oncoprint holds no grid");
         const share = 100 - Number.parseFloat(String(matrix.top)) - Number.parseFloat(String(matrix.bottom));
         return (render.bodyPx * share) / 100 / 20;

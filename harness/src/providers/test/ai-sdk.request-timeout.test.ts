@@ -4,7 +4,12 @@ import { createServer, type ServerResponse } from "node:http";
 import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, wrapFetchWithRequestTimeout, type AiSdkProviderConfig } from "../ai-sdk.js";
 import { isProviderError } from "../errors.js";
-import type { ChatRequest, ChatStreamEvent, FetchLike } from "../types.js";
+import type { ChatRequest, ChatStreamEvent } from "../types.js";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 const request: ChatRequest = {
     system: "You are a test model.",
@@ -20,7 +25,7 @@ const OK_COMPLETION = [
 ].join("");
 
 /** Build an OpenAI-compatible config over a fake fetch, with the guard fields set per test. */
-function openAiConfig(fetch: FetchLike, opts: { requestTimeoutMs?: number; maxRetries?: number } = {}): AiSdkProviderConfig {
+function openAiConfig(fetch: typeof globalThis.fetch, opts: { requestTimeoutMs?: number; maxRetries?: number } = {}): AiSdkProviderConfig {
     return {
         kind: "openai-compatible",
         name: "test",
@@ -43,8 +48,8 @@ function sseResponse(body: string): Response {
  * aborts, and then it rejects with the abort reason, the same as a real fetch.
  * It models a server that holds the connection before the response headers.
  */
-function fetchThatNeverStarts(onCall?: () => void): FetchLike {
-    return (_input, init) => {
+function fetchThatNeverStarts(onCall?: () => void): typeof fetch {
+    return fetchDouble((_input, init) => {
         onCall?.();
         return new Promise<Response>((_resolve, reject) => {
             const signal = init?.signal;
@@ -52,7 +57,7 @@ function fetchThatNeverStarts(onCall?: () => void): FetchLike {
             if (signal.aborted) return reject(signal.reason);
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
         });
-    };
+    });
 }
 
 /**
@@ -60,8 +65,8 @@ function fetchThatNeverStarts(onCall?: () => void): FetchLike {
  * equal pieces with `gapMs` between each. It models a steady stream. It errors
  * the body when its signal aborts.
  */
-function fetchWithSteadyBody(body: string, chunks: number, gapMs: number): FetchLike {
-    return (_input, init) => {
+function fetchWithSteadyBody(body: string, chunks: number, gapMs: number): typeof fetch {
+    return fetchDouble((_input, init) => {
         const signal = init?.signal;
         const encoded = new TextEncoder().encode(body);
         const size = Math.ceil(encoded.length / chunks);
@@ -88,7 +93,7 @@ function fetchWithSteadyBody(body: string, chunks: number, gapMs: number): Fetch
             },
         });
         return Promise.resolve(new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
-    };
+    });
 }
 
 describe("request-timeout guard", () => {
@@ -135,18 +140,18 @@ describe("request-timeout guard", () => {
             const outcome = await provider.chat(request, makeSession(), controller.signal);
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            expect(err).toBeInstanceOf(DOMException);
-            expect((err as DOMException).name).toBe("AbortError");
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            expect(err.name).toBe("AbortError");
         }
     });
 
     it("retries a guard expiry with a fresh window and succeeds on the next attempt", async () => {
         let calls = 0;
-        const fetch: FetchLike = (input, init) => {
+        const fetch = fetchDouble((input, init) => {
             calls += 1;
             if (calls === 1) return fetchThatNeverStarts()(input, init);
             return Promise.resolve(sseResponse(OK_COMPLETION));
-        };
+        });
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetch, { requestTimeoutMs: 30 }),
         });
@@ -188,35 +193,41 @@ describe("request-timeout guard", () => {
         const realClearTimeout = globalThis.clearTimeout;
         const live = new Set<ReturnType<typeof setTimeout>>();
         let lastArmed: ReturnType<typeof setTimeout> | undefined;
-        globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
-            const handle = realSetTimeout(...args);
-            live.add(handle);
-            lastArmed = handle;
-            return handle;
-        }) as typeof globalThis.setTimeout;
-        globalThis.clearTimeout = ((handle?: ReturnType<typeof setTimeout>) => {
-            if (handle !== undefined) live.delete(handle);
-            realClearTimeout(handle);
-        }) as typeof globalThis.clearTimeout;
+        // The trap keeps the exact `typeof setTimeout` of the real timer; a plain
+        // wrapper arrow cannot carry the timer interface's extra members.
+        globalThis.setTimeout = new Proxy(realSetTimeout, {
+            apply(target: typeof setTimeout, thisArg: unknown, args: Parameters<typeof setTimeout>) {
+                const handle = target.apply(thisArg, args);
+                live.add(handle);
+                lastArmed = handle;
+                return handle;
+            },
+        });
+        globalThis.clearTimeout = new Proxy(realClearTimeout, {
+            apply(target: typeof clearTimeout, thisArg: unknown, [handle]: [handle?: ReturnType<typeof setTimeout>]) {
+                if (handle !== undefined) live.delete(handle);
+                return target.apply(thisArg, [handle]);
+            },
+        });
 
         try {
             // A body that never ends and ignores its signal. The SDK bound owns each
             // gap of such a body, thus the guard must hold no timer for it.
-            const headersThenStall: FetchLike = () => {
+            const headersThenStall = fetchDouble(() => {
                 const body = new ReadableStream<Uint8Array>({
                     pull() {
                         return new Promise<void>(() => {});
                     },
                 });
                 return Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
-            };
+            });
 
             const wrapped = wrapFetchWithRequestTimeout(headersThenStall, 10_000);
             const caller = new AbortController();
             const response = await wrapped("http://models.local/v1", { signal: caller.signal });
 
-            expect(lastArmed).toBeDefined();
-            const guardTimer = lastArmed as ReturnType<typeof setTimeout>;
+            const guardTimer = lastArmed;
+            if (guardTimer === undefined) throw new Error("expected the guard to arm a timer");
             // The fetch promise settled at the headers, thus the one armed timer
             // left the live set and cannot reach a late, pointless expiry.
             expect(live.has(guardTimer)).toBe(false);
@@ -236,7 +247,10 @@ describe("request-timeout guard", () => {
         // The guard forwards the body of the transport as it is. A wrapper around
         // the body was the source of the timer-leak class of defect.
         const source = new Response("payload", { status: 201, statusText: "Created", headers: { "content-type": "text/plain" } });
-        const wrapped = wrapFetchWithRequestTimeout(() => Promise.resolve(source), 10_000);
+        const wrapped = wrapFetchWithRequestTimeout(
+            fetchDouble(() => Promise.resolve(source)),
+            10_000,
+        );
 
         const response = await wrapped("http://models.local/v1");
 
@@ -248,33 +262,41 @@ describe("request-timeout guard", () => {
 describe("request-timeout transport lift", () => {
     it("adds `timeout: false` to the forwarded init", async () => {
         const inits: (RequestInit | undefined)[] = [];
-        const wrapped = wrapFetchWithRequestTimeout((_input, init) => {
-            inits.push(init);
-            return Promise.resolve(sseResponse(OK_COMPLETION));
-        }, 10_000);
+        const wrapped = wrapFetchWithRequestTimeout(
+            fetchDouble((_input, init) => {
+                inits.push(init);
+                return Promise.resolve(sseResponse(OK_COMPLETION));
+            }),
+            10_000,
+        );
 
         await wrapped("http://models.local/v1", { method: "POST" });
 
-        const forwarded = inits[0] as (RequestInit & { timeout?: unknown }) | undefined;
-        expect(forwarded?.timeout).toBe(false);
-        expect(forwarded?.method).toBe("POST");
-        expect(forwarded?.signal).toBeDefined();
+        const forwarded = inits[0];
+        if (forwarded === undefined || !("timeout" in forwarded)) throw new Error("expected the forwarded init to carry the timeout key");
+        expect(forwarded.timeout).toBe(false);
+        expect(forwarded.method).toBe("POST");
+        expect(forwarded.signal).toBeDefined();
     });
 
     it("adds no `timeout` key when the field is absent", async () => {
         const inits: (RequestInit | undefined)[] = [];
         const provider = createConfiguredAiSdkProvider({
-            config: openAiConfig((_input, init) => {
-                inits.push(init);
-                return Promise.resolve(sseResponse(OK_COMPLETION));
-            }),
+            config: openAiConfig(
+                fetchDouble((_input, init) => {
+                    inits.push(init);
+                    return Promise.resolve(sseResponse(OK_COMPLETION));
+                }),
+            ),
         });
 
         const result = await provider.chat(request, makeSession());
 
         expect(result.isOk()).toBe(true);
         expect(inits).toHaveLength(1);
-        expect(Object.hasOwn(inits[0] as object, "timeout")).toBe(false);
+        const forwarded = inits[0];
+        if (forwarded === undefined) throw new Error("expected one forwarded init");
+        expect(Object.hasOwn(forwarded, "timeout")).toBe(false);
     });
 });
 
@@ -303,8 +325,8 @@ describe("request-timeout advertisement", () => {
             const outcome = await provider.chat(request, makeSession(), controller.signal);
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            expect(err).toBeInstanceOf(DOMException);
-            expect((err as DOMException).name).toBe("AbortError");
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            expect(err.name).toBe("AbortError");
         }
     });
 });
@@ -498,8 +520,8 @@ describe("SDK chunk bound", () => {
 
             expect(events).toEqual([{ type: "text-delta", text: "a" }]);
             expect(isProviderError(failure)).toBe(false);
-            expect(failure).toBeInstanceOf(DOMException);
-            expect((failure as DOMException).name).toBe("AbortError");
+            if (!(failure instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(failure)}`);
+            expect(failure.name).toBe("AbortError");
         } finally {
             await endpoint.close();
         }

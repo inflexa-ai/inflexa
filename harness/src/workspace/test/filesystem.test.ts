@@ -198,7 +198,9 @@ describe("createWorkspaceFilesystem", () => {
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
             expect(result.error.type).toBe("fetch_failed");
-            expect((result.error.cause as Error).message).toContain("upstream 502");
+            const cause = result.error.cause;
+            if (!(cause instanceof Error)) throw new Error("expected an Error cause");
+            expect(cause.message).toContain("upstream 502");
         }
         // The tool edge would `unwrapOrThrow` this Result. `fetch_failed` carries no
         // `message` field, so the thrown `ResultError.message` falls back to the

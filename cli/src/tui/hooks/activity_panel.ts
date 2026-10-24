@@ -11,6 +11,7 @@ import type { Notice } from "../theme.ts";
 import { bootState } from "./boot.ts";
 import { notify, type NotifyOptions } from "./notice.ts";
 import { activeSubjects, refreshSidebarData, RUN_STATUS_TERMINAL, type PanelSubject } from "./sidebar_live.ts";
+import { isKnownPart } from "../../modules/harness/chat_printer.ts";
 
 // Which subject the activity panel is showing, whether it is dismissed, and what that subject is
 // doing right now — held here (not inside `app.tsx`) so the state is decoupled from its renderer, the
@@ -263,7 +264,7 @@ const DEFAULT_ACTIVITY_PANEL_OPTS: ActivityPanelOpts = {
         // sidebar snapshots, and the next focus change opens the stream again.
         if (opened.isErr()) return;
         for await (const frame of opened.value) {
-            if (frame.isOk() && frame.value.type === "data-step-activity") onActivity(frame.value);
+            if (frame.isOk() && isKnownPart(frame.value) && frame.value.type === "data-step-activity") onActivity(frame.value);
         }
     },
 };

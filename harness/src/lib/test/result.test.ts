@@ -21,8 +21,8 @@ describe("toThrowable", () => {
     it("wraps a structured DomainError, keeping the value on .cause", () => {
         const domain = { type: "db_query_failed", cause: { code: "23505" } };
         const thrown = toThrowable(domain);
-        expect(thrown).toBeInstanceOf(ResultError);
-        expect((thrown as ResultError).value).toBe(domain);
+        if (!(thrown instanceof ResultError)) throw new Error("expected a ResultError");
+        expect(thrown.value).toBe(domain);
         expect(thrown.cause).toBe(domain);
         expect(thrown.message).toBe("db_query_failed");
     });
@@ -43,8 +43,9 @@ describe("unwrapOrThrow", () => {
             unwrapOrThrow(err(budgetErr));
             throw new Error("expected throw");
         } catch (thrown) {
+            if (!(thrown instanceof ResultError)) throw new Error("expected a ResultError", { cause: thrown });
             // The classifier walks `.cause`: ResultError → domain → { status: 402 }.
-            expect((thrown as ResultError).cause).toBe(budgetErr);
+            expect(thrown.cause).toBe(budgetErr);
         }
     });
 });

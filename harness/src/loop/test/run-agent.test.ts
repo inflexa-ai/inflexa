@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
-import { err, errAsync, ok, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
@@ -32,11 +32,17 @@ import {
     thinkingBlock,
     toolUseBlock,
 } from "../__fixtures__/scripted-provider.js";
+import type { ToolCallDetail } from "../../contracts/chat-events.js";
 import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "../compaction.js";
 import { continueAgent } from "../continue-agent.js";
 import { runAgent, WRAP_UP_REQUEST, type AgentRound, type RunAgentOptions } from "../run-agent.js";
 import { passthroughStep } from "../run-step.js";
 import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage, RunStep } from "../types.js";
+
+/** The value an llm step stores: the chat Result, as the loop's step body returns it. */
+type LlmStepValue = Result<ChatResponse, ProviderError>;
+/** The value a tool step stores: the dispatch pair, or the bare part an older build cached. */
+type ToolStepValue = { result: ToolResultPart; detail?: ToolCallDetail; record?: unknown } | ToolResultPart;
 
 // ── Harness helpers ─────────────────────────────────────────────────
 
@@ -74,9 +80,10 @@ function recordingStep(): { runStep: RunStep; names: string[] } {
 
 function toolResultParts(message: ModelMessage | undefined): ToolResultPart[] {
     expect(message).toBeDefined();
-    expect(message!.role).toBe("tool");
-    expect(Array.isArray(message!.content)).toBe(true);
-    return message!.content as ToolResultPart[];
+    if (message === undefined || message.role !== "tool") throw new Error("the message is not a tool message");
+    const content = message.content;
+    if (typeof content === "string") throw new Error("the tool message carries string content");
+    return content.filter((part): part is ToolResultPart => part.type === "tool-result");
 }
 
 function outputValue(result: ToolResultPart): unknown {
@@ -114,7 +121,8 @@ describe("runAgent — invariant 1: provider metadata", () => {
 
         const assistant = messages.at(-1)!;
         expect(assistant.role).toBe("assistant");
-        const content = assistant.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
+        const content = assistant.content;
+        if (typeof content === "string") throw new Error("the assistant message carries string content");
         const reasoning = content.find((b) => b.type === "reasoning");
         expect(reasoning).toMatchObject({
             type: "reasoning",
@@ -250,12 +258,17 @@ describe("runAgent — call records", () => {
      * symbol key — does not survive it.
      */
     function cachingStep(cache: Map<string, unknown>): RunStep {
-        return async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-            if (cache.has(name)) return cache.get(name) as T;
+        // The overloads carry the replay contract: a stored step returns the value of the step kind
+        // that wrote it, which is what lets the memo read its stored value without an assertion.
+        async function step(name: string, fn: () => Promise<LlmStepValue>): Promise<LlmStepValue>;
+        async function step(name: string, fn: () => Promise<ToolStepValue>): Promise<ToolStepValue>;
+        async function step(name: string, fn: () => Promise<unknown>): Promise<unknown> {
+            if (cache.has(name)) return cache.get(name);
             const value = await fn();
             cache.set(name, name.startsWith("tool-") ? JSON.parse(JSON.stringify(value)) : value);
             return value;
-        };
+        }
+        return step;
     }
 
     const script = () => [
@@ -345,7 +358,8 @@ describe("runAgent — max-iteration wrap-up", () => {
         expect(wrapUpRequest.content).toBe(WRAP_UP_REQUEST);
         const last = messages.at(-1)!;
         expect(last.role).toBe("assistant");
-        const content = last.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
+        const content = last.content;
+        if (typeof content === "string") throw new Error("the assistant message carries string content");
         expect(content.some((b) => b.type === "text" && b.text === "here is where I reached")).toBe(true);
         expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
     });
@@ -640,14 +654,17 @@ describe("runAgent — a picture on a tool result", () => {
         const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
 
         const result = toolResultParts(messages[2])[0]!;
-        expect(result.output.type).toBe("content");
-        const parts = (result.output as { type: "content"; value: Array<{ type: string }> }).value;
+        const output = result.output;
+        if (output.type !== "content") throw new Error("the result carries no content output");
+        const parts = output.value;
         // The text part carries the faults, and it holds no bytes.
-        const textPart = parts.find((p) => p.type === "text") as { type: "text"; text: string };
+        const textPart = parts.find((p) => p.type === "text");
+        if (textPart === undefined) throw new Error("the content holds no text part");
         expect(JSON.parse(textPart.text)).toEqual({ faults: ["boom"] });
         expect(textPart.text).not.toContain("PNGBYTES");
         // The file part carries the picture bytes and the media type.
-        const filePart = parts.find((p) => p.type === "file") as { type: "file"; mediaType: string; data: unknown };
+        const filePart = parts.find((p) => p.type === "file");
+        if (filePart === undefined) throw new Error("the content holds no file part");
         expect(filePart.mediaType).toBe("image/png");
         expect(filePart.data).toEqual({ type: "data", data: "PNGBYTES" });
     });
@@ -727,8 +744,9 @@ function fallbackImagingProvider(script: ChatResponse[]): ScriptedProvider {
 function userParts(message: ModelMessage | undefined): unknown[] {
     expect(message).toBeDefined();
     expect(message!.role).toBe("user");
-    expect(Array.isArray(message!.content)).toBe(true);
-    return message!.content as unknown[];
+    const content = message!.content;
+    if (typeof content === "string") throw new Error("the user message carries string content");
+    return content;
 }
 
 /** The delay of the slow call of the batch case, in milliseconds. */
@@ -1054,12 +1072,19 @@ describe("runAgent — tool mask and budget", () => {
             steps[slot]!.value = value;
             return value;
         };
-        const replay: RunStep = async <T>(name: string, _fn: () => Promise<T>): Promise<T> => {
-            const step = steps[position++];
-            if (step === undefined) throw new Error(`the replay started the step ${name}, which the recording does not hold`);
-            if (step.name !== name) throw new Error(`the replay started the step ${name} where the recording holds ${step.name}`);
-            return step.value as T;
-        };
+        // The overloads carry the replay contract: a stored step returns the value of the step kind
+        // that recorded it, which is what lets the replay read its stored value without an assertion.
+        const replay: RunStep = (() => {
+            async function replayStep(name: string, fn: () => Promise<LlmStepValue>): Promise<LlmStepValue>;
+            async function replayStep(name: string, fn: () => Promise<ToolStepValue>): Promise<ToolStepValue>;
+            async function replayStep(name: string, _fn: () => Promise<unknown>): Promise<unknown> {
+                const step = steps[position++];
+                if (step === undefined) throw new Error(`the replay started the step ${name}, which the recording does not hold`);
+                if (step.name !== name) throw new Error(`the replay started the step ${name} where the recording holds ${step.name}`);
+                return step.value;
+            }
+            return replayStep;
+        })();
         return { record, replay, names: () => steps.map((step) => step.name) };
     }
 
@@ -1520,8 +1545,10 @@ function guardedTool(): Tool {
 }
 
 function deniedReason(result: ToolResultPart): string {
-    expect(result.output.type).toBe("execution-denied");
-    return (result.output as { type: "execution-denied"; reason: string }).reason;
+    const output = result.output;
+    if (output.type !== "execution-denied") throw new Error("the result is not an execution denial");
+    if (output.reason === undefined) throw new Error("the denial carries no reason");
+    return output.reason;
 }
 
 describe("runAgent — approval denial", () => {
@@ -1606,7 +1633,7 @@ describe("runAgent — event provenance", () => {
             session,
             opts(provider, {
                 emit: (e) => {
-                    events.push(e as EmitEvent);
+                    if (isLoopEvent(e)) events.push(e);
                 },
             }),
         );
@@ -1636,7 +1663,7 @@ describe("runAgent — event provenance", () => {
                 invocationId: "tu-parent",
                 emit: (e) => {
                     // The scripted provider does not stream, so the loop emits only events with a source and no provider text.
-                    events.push(e as EmitEvent);
+                    if (isLoopEvent(e)) events.push(e);
                 },
             }),
         );
@@ -1664,7 +1691,7 @@ describe("runAgent — event provenance", () => {
             opts(provider, {
                 emit: (e) => {
                     // The scripted provider does not stream, so the loop emits only events with a source and no provider text.
-                    events.push(e as EmitEvent);
+                    if (isLoopEvent(e)) events.push(e);
                 },
             }),
         );
@@ -1675,6 +1702,11 @@ describe("runAgent — event provenance", () => {
 });
 
 // ── Call detail and the three-way outcome (tool-call-detail) ─────────
+
+/** The loop's events carry a required source; a provider delta carries none and a data part an optional one, so the loop's type strings are the sound discriminant. */
+function isLoopEvent(event: Parameters<EmitFn>[0]): event is EmitEvent {
+    return event.type === "iteration" || event.type === "tool-started" || event.type === "tool-finished" || event.type === "message-start";
+}
 
 /** Every `tool-started` / `tool-finished` event a run emitted, in order. */
 function toolEvents(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[] {
@@ -1695,7 +1727,7 @@ async function runCapturingToolEvents(
         opts(provider, {
             ...overrides,
             emit: (e) => {
-                events.push(e as EmitEvent);
+                if (isLoopEvent(e)) events.push(e);
             },
         }),
     );
@@ -1779,7 +1811,8 @@ describe("runAgent — tool call detail", () => {
         ]);
 
         const events = await runCapturingToolEvents([noisy], provider);
-        const detail = (events[0] as { detail?: string }).detail!;
+        const detail = events[0]!.detail;
+        if (detail === undefined) throw new Error("the started event carries no call detail");
 
         expect(detail).not.toContain("\n");
         expect(detail).toHaveLength(120);
@@ -1878,7 +1911,8 @@ describe("runAgent — tool result detail", () => {
         ]);
 
         const events = await runCapturingToolEvents([noisy], provider);
-        const detail = (events[1] as { detail?: string }).detail!;
+        const detail = events[1]!.detail;
+        if (detail === undefined) throw new Error("the finished event carries no call detail");
 
         expect(detail.startsWith("wrote line one")).toBe(true);
         expect(detail).not.toContain("\n");
@@ -1914,12 +1948,18 @@ describe("runAgent — tool result detail", () => {
     // in flight when the shape of that return widened replays the bare result and never re-enters
     // the body. This step stands for such a replay: it drops the pair and gives the bare value back.
     it("reads a replayed step that cached the bare result, and keeps the started detail", async () => {
-        const replayBareResult: RunStep = async (_name, fn) => {
-            const settled = (await fn()) as { result?: unknown };
-            // The cast restates the shape the body returns. The step store is untyped across two
-            // builds of the loop, thus only the read site can state which of the two it holds.
-            return (settled.result ?? settled) as never;
-        };
+        const replayBareResult: RunStep = (() => {
+            // The overload carries the replay contract: this stored step holds the bare part an older
+            // build cached, not the pair the current body returns.
+            async function step(name: string, fn: () => Promise<ToolStepValue>): Promise<ToolResultPart>;
+            async function step(name: string, fn: () => Promise<unknown>): Promise<unknown>;
+            async function step(name: string, fn: () => Promise<unknown>): Promise<unknown> {
+                const settled: unknown = await fn();
+                if (typeof settled !== "object" || settled === null || !("result" in settled)) return settled;
+                return settled.result ?? settled;
+            }
+            return step;
+        })();
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "render", { path: "draft" })], "tool_use"),
             makeMessage([textBlock("done")], "end_turn"),
@@ -2412,7 +2452,7 @@ describe("runAgent — compaction", () => {
             const isExchange = isExchangeRequest(request);
             sent.push({
                 exchange: isExchange,
-                messages: JSON.parse(JSON.stringify(request.messages)) as ModelMessage[],
+                messages: [...structuredClone(request.messages)],
                 toolNames: Object.keys(request.tools),
                 system: request.system,
             });
@@ -2438,12 +2478,18 @@ describe("runAgent — compaction", () => {
         cause: { status: 400 },
     };
 
+    const compactionData = z.object({
+        id: z.string(),
+        status: z.string(),
+        tokensBefore: z.number(),
+        durationMs: z.number().optional(),
+        trigger: z.string().optional(),
+    });
+
     function compactionParts(
         events: readonly Parameters<EmitFn>[0][],
     ): { id: string; status: string; tokensBefore: number; durationMs?: number; trigger?: string }[] {
-        return events
-            .filter((event) => event.type === "data-compaction")
-            .map((event) => (event as { data: { id: string; status: string; tokensBefore: number } }).data);
+        return events.flatMap((event) => (event.type === "data-compaction" ? [compactionData.parse(event.data)] : []));
     }
 
     function markersOf(messages: readonly ModelMessage[]): string[] {

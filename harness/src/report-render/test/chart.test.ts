@@ -2,15 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition, ChartTransform } from "../../contracts/report-blocks.js";
 import { renderChart } from "../views/chart-view.js";
-import {
-    CHART_SOURCE_MEMBER,
-    deriveChartOption,
-    deriveChartRender,
-    transformColumn,
-    type ChartDataSource,
-    type ChartRow,
-    type EchartOption,
-} from "../chart.js";
+import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartRow, type EchartOption } from "../chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "../chart-presets.js";
 import { CHART_RENDERERS_SOURCE, exportOption } from "../chart-renderers.js";
 import {
@@ -30,6 +22,7 @@ import {
 import { POINT_NAMES } from "../figures/dense.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { ReferenceLedger } from "../references.js";
+import { chartSourceOf, optionList, optionNumbers, optionNumber, optionOf, pageCall } from "./options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -71,12 +64,12 @@ function composedBlock(composition: ChartComposition, extra: { id?: string; titl
 
 /** Narrow one option field to an object. */
 function asObj(value: unknown): Record<string, unknown> {
-    return value as Record<string, unknown>;
+    return optionOf(value);
 }
 
 /** Narrow one option field to an array. */
 function asArr(value: unknown): unknown[] {
-    return value as unknown[];
+    return optionList(value);
 }
 
 /**
@@ -618,7 +611,7 @@ describe("the axis name placement", () => {
             // assertion also proves that the normalizer carries both fields through untouched.
             expect(xAxis.nameLocation).toBe("middle");
             expect(typeof xAxis.nameGap).toBe("number");
-            expect(xAxis.nameGap as number).toBeGreaterThan(DEFAULT_NAME_GAP);
+            expect(optionNumber(xAxis.nameGap)).toBeGreaterThan(DEFAULT_NAME_GAP);
         });
     }
 
@@ -1598,9 +1591,8 @@ describe("the quick-path transform", () => {
 
 describe("the composition guards", () => {
     it("refuses a composition that carries no series", () => {
-        // The schema holds a composition to one series at least, thus the cast is the only way to reach the
-        // guard that protects the axes of the derivation.
-        const empty = { series: [] } as unknown as ChartComposition;
+        // zod holds the one-series rule at parse time alone, so an empty series list is type-legal and reaches the derivation guard.
+        const empty: ChartComposition = { series: [] };
         const problem = deriveChartOption(composedBlock(empty, { id: "ce" }), [{ t: 1 }])._unsafeUnwrapErr();
         expect(problem.kind).toBe("invalid-chart-input");
         expect(problem.blockId).toBe("ce");
@@ -1709,11 +1701,6 @@ describe("the dense chart reads the shared payload", () => {
     /** The payload that a dense chart reads: the block id, and the columns of the encoded table. */
     const target = { key: "c1", columns: COLUMNS };
 
-    /** The data source of one derived option, or `undefined` where the option carries its rows. */
-    function sourceOf(option: EchartOption): ChartDataSource | undefined {
-        return option[CHART_SOURCE_MEMBER] as ChartDataSource | undefined;
-    }
-
     it("keeps a chart under the bound byte-identical to the inline derivation", () => {
         const rows = denseRows(20);
         const render = deriveChartRender(volcano, rows, COLUMNS, target)._unsafeUnwrap();
@@ -1722,7 +1709,7 @@ describe("the dense chart reads the shared payload", () => {
         // page, thus the test compares the serialization and not the shape.
         expect(render.readsPayload).toBe(false);
         expect(JSON.stringify(render.option)).toBe(JSON.stringify(derive(volcano, rows, COLUMNS)));
-        expect(sourceOf(render.option)).toBeUndefined();
+        expect(render.option[CHART_SOURCE_MEMBER]).toBeUndefined();
     });
 
     it("ships no per-row data past the bound, and names the payload of its artifact", () => {
@@ -1741,15 +1728,15 @@ describe("the dense chart reads the shared payload", () => {
         expect(json.length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
         // No cell of the table reaches the option, thus the page holds one copy of the rows.
         expect(json).not.toContain("G4001");
-        expect(sourceOf(render.option)?.payload).toBe("c1");
+        expect(chartSourceOf(render.option).payload).toBe("c1");
     });
 
     it("describes each series by the payload columns, the transform, and the classification", () => {
-        const source = sourceOf(deriveChartRender(volcano, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
+        const source = chartSourceOf(deriveChartRender(volcano, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
 
         // The preset splits the rows itself, thus each series names its category and the rule carries the
         // two cuts that the guides draw.
-        expect(source?.rule).toEqual({ kind: "volcano", cut: -Math.log10(VOLCANO_P_THRESHOLD), effect: VOLCANO_EFFECT_THRESHOLD });
+        expect(source.rule).toEqual({ kind: "volcano", cut: -Math.log10(VOLCANO_P_THRESHOLD), effect: VOLCANO_EFFECT_THRESHOLD });
         expect(source?.series.map((entry) => entry.category)).toEqual([0, 1, 2]);
         for (const entry of source?.series ?? []) {
             expect(entry.x).toEqual({ column: 1, numeric: true });
@@ -1763,15 +1750,20 @@ describe("the dense chart reads the shared payload", () => {
             series: [{ form: "line", encoding: { x: { column: "padj", transform: "rank" }, y: "log2fc", group: "arm", label: "gene" } }],
             annotations: [{ kind: "point-labels", column: "padj", order: "asc", n: 6 }],
         });
-        const source = sourceOf(deriveChartRender(composed, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
+        const source = chartSourceOf(deriveChartRender(composed, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
 
-        expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
+        expect(source.series.map((entry) => entry.value)).toEqual(["a", "b"]);
         expect(source?.series[0]?.group).toEqual({ column: 3 });
         // A line draws along the x axis, thus the page sorts its points as the derivation does.
         expect(source?.series[0]?.sort).toBe(true);
         // The flags name the rows of the payload, thus each split carries the labels of the rows that it
         // holds and the two lists together hold the declared count.
-        expect([...(source?.series[0]?.flags ?? []), ...(source?.series[1]?.flags ?? [])].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+        expect(
+            [
+                ...(source.series[0]?.flags === undefined ? [] : optionNumbers(source.series[0].flags)),
+                ...(source.series[1]?.flags === undefined ? [] : optionNumbers(source.series[1].flags)),
+            ].sort((a, b) => a - b),
+        ).toEqual([0, 1, 2, 3, 4, 5]);
         expect(source?.rule).toBeUndefined();
     });
 
@@ -1806,11 +1798,11 @@ describe("the dense chart reads the shared payload", () => {
         for (const series of asArr(render.option.series)) {
             expect(asObj(series).data).toEqual([]);
         }
-        const source = sourceOf(render.option);
-        expect(source?.payload).toBe("c1");
-        expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
-        expect(source?.series[0]?.x).toEqual({ column: 1, numeric: true });
-        expect(source?.series[0]?.y).toEqual({ column: 2, numeric: true });
+        const source = chartSourceOf(render.option);
+        expect(source.payload).toBe("c1");
+        expect(source.series.map((entry) => entry.value)).toEqual(["a", "b"]);
+        expect(source.series[0]?.x).toEqual({ column: 1, numeric: true });
+        expect(source.series[0]?.y).toEqual({ column: 2, numeric: true });
     });
 
     it("keeps a quick path under the bound on the bytes of its base rule", () => {
@@ -1886,10 +1878,7 @@ describe("the channel transform", () => {
      * The fragment is browser source text. A read of that text would state the serialization and not the
      * numbers that a chart plots, thus the test runs the fragment and calls its one entry point.
      */
-    const transformOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportTransform;`).call(undefined) as (
-        cells: (string | number)[],
-        transform: ChartTransform,
-    ) => (number | null)[];
+    const transformOnThePage = pageCall(CHART_SERIES_BUILDER, "reportTransform");
 
     /** The server transform of one column of cells. The helper reads rows, thus each cell rides one row. */
     function transformOnTheServer(entry: Entry): (number | null)[] {
@@ -1925,12 +1914,8 @@ describe("a dense category axis", () => {
     }
 
     /** The page twin of the export option. */
-    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as (
-        option: EchartOption,
-        textPx: number,
-        widthPx: number,
-        heightPx: number,
-    ) => EchartOption;
+    const exportOnThePage = (option: EchartOption, textPx: number, widthPx: number, heightPx: number): EchartOption =>
+        optionOf(pageCall(CHART_RENDERERS_SOURCE, "reportExportOption")(option, textPx, widthPx, heightPx));
 
     /**
      * The count of labels that the axis prints. A numeric interval prints every (interval + 1)th label. Any other
@@ -1965,7 +1950,7 @@ describe("a dense category axis", () => {
         expect(axes.length).toBe(2);
         for (const axis of axes) {
             const label = asObj(axis.axisLabel);
-            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[axis.gridIndex as number]?.width))) / 100;
+            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[optionNumber(axis.gridIndex)]?.width))) / 100;
             expect(label.rotate).toBe(90);
             expect(printedLabels(200, label)).toBeLessThanOrEqual(Math.floor(panelPx / (CHART_PAGE_TEXT_PX * LINE_SHARE)));
         }

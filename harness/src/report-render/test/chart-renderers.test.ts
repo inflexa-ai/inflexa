@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
+
+import { optionList, optionNumber, optionOf, optionPair } from "./options.js";
+import { rendererApi } from "../chart-export.js";
 import { CHART_INK, GUIDE_LINE_COLOR } from "../design.js";
 
 import {
@@ -43,7 +46,7 @@ function stubApi(item: readonly number[]): RenderApi {
     };
 }
 
-function childAt(element: RenderedElement, index: number): RenderedElement {
+function childAt(element: PageElement, index: number): PageElement {
     const child = (element.children ?? [])[index];
     if (child === undefined) throw new Error(`the element drew no child at ${index}`);
     return child;
@@ -90,15 +93,50 @@ const STEM_ITEMS: readonly number[][] = [
     [0, 0],
 ];
 
+/** One rendered element that a page renderer built: the members the tests read, and the children one level down. */
+type PageElement = {
+    type: RenderedElement["type"];
+    shape?: Record<string, unknown>;
+    style?: Record<string, unknown>;
+    children?: PageElement[];
+};
+
+/** The rendered element that a page renderer built, each child read one level down. */
+
+/** One renderer function of the page: checked as a function, and read as the twin of the server renderer.
+ * The drawn value is the object that the page built, so each read of the test compares what the page built. */
+function isRendererFunction(value: unknown): value is (params: unknown, api: RenderApi) => PageElement {
+    return typeof value === "function";
+}
+
+/** The four edges that the shape of one glyph child carries, as numbers. */
+function rectShape(element: PageElement, place: number): { x: number; y: number; width: number; height: number } {
+    const shape = optionOf(childAt(element, place).shape);
+    return { x: optionNumber(shape.x), y: optionNumber(shape.y), width: optionNumber(shape.width), height: optionNumber(shape.height) };
+}
+
 /** The page twin of the renderers and of the registration step, as the bootstrap runs them. */
-const onThePage = new Function(
+const made: unknown = new Function(
     `${CHART_RENDERERS_SOURCE}\nreturn { interval: reportIntervalRenderer, outline: reportOutlineRenderer, glyph: reportCellGlyphRenderer, stem: reportStemRenderer, register: reportRegisterRenderers };`,
-).call(undefined) as {
-    interval: (params: unknown, api: RenderApi) => RenderedElement;
-    outline: (params: unknown, api: RenderApi) => RenderedElement;
-    glyph: (params: unknown, api: RenderApi) => RenderedElement;
-    stem: (params: unknown, api: RenderApi) => RenderedElement;
-    register: (runtime: { registerCustomSeries(name: string, render: unknown): void }) => void;
+).call(undefined);
+const page = optionOf(made);
+
+function rendererOf(name: string): (params: unknown, api: RenderApi) => PageElement {
+    const member = page[name];
+    if (!isRendererFunction(member)) throw new Error(`the page source holds no ${name}`);
+    return member;
+}
+
+const onThePage = {
+    interval: rendererOf("interval"),
+    outline: rendererOf("outline"),
+    glyph: rendererOf("glyph"),
+    stem: rendererOf("stem"),
+    register: (runtime: { registerCustomSeries(name: string, render: unknown): void }): void => {
+        const member = page.register;
+        if (typeof member !== "function") throw new Error("the page source holds no register");
+        Reflect.apply(member, undefined, [runtime]);
+    },
 };
 
 describe("the named renderers", () => {
@@ -147,7 +185,7 @@ describe("the named renderers", () => {
     it("draws an outline as one closed polygon, symmetric about its center", () => {
         const element = outlineRenderer({}, stubApi(outlineItem(3, -0.2)));
         expect(element.type).toBe("polygon");
-        const points = (element.shape as { points: Array<[number, number]> }).points;
+        const points = optionList(optionOf(element.shape).points).map((point) => optionPair(point));
         expect(points.length).toBe(2 * VIOLIN_GRID_POINTS);
         const center = 3 - 0.2 * BAND_X;
         // The right side runs up the grid and the left side runs down it, thus the two mirror each other.
@@ -175,8 +213,8 @@ describe("the named renderers", () => {
         const element = cellGlyphRenderer(GLYPH_PARAMS, stubApi([7, 2, 1]));
         const children = element.children ?? [];
         expect(children.map((child) => child.style?.fill)).toEqual(["#e0e0e0", "#d55e00"]);
-        const ground = childAt(element, 0).shape as { x: number; y: number; width: number; height: number };
-        const glyph = childAt(element, 1).shape as { x: number; y: number; width: number; height: number };
+        const ground = rectShape(element, 0);
+        const glyph = rectShape(element, 1);
         // The glyph spans the width of the ground and a share of its height, thus the gray shows above and below it.
         expect(glyph.width).toBe(ground.width);
         expect(glyph.height).toBeCloseTo(ground.height * CELL_GLYPH_SHARE, 10);
@@ -228,7 +266,10 @@ describe("the named renderers", () => {
  */
 function ssrSvg(option: Record<string, unknown>): string {
     // Each item of these options holds numbers alone, thus each renderer reads a number at each dimension.
-    registerChartRenderers({ registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as echarts.CustomSeriesRenderItem) });
+    registerChartRenderers({
+        registerCustomSeries: (name, render) =>
+            echarts.registerCustomSeries(name, (params, api) => render({ itemPayload: params.itemPayload }, rendererApi(api))),
+    });
     const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 400, height: 300 });
     try {
         chart.setOption({ animation: false, ...option });

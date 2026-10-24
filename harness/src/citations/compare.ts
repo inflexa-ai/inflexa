@@ -25,7 +25,7 @@ function recordValue(record: CitationRecord, field: CitationField): Comparable |
 }
 
 function normalizedValue(field: CitationField, value: Comparable): string {
-    if (field === "authors") return (value as string[]).map(normalizeAuthor).sort().join("|");
+    if (field === "authors" && Array.isArray(value)) return value.map(normalizeAuthor).sort().join("|");
     if (field === "year") return String(value);
     return normalizeComparable(String(value));
 }
@@ -35,7 +35,7 @@ function authorMatch(supplied: readonly string[], source: readonly string[]): bo
 }
 
 function fieldMatches(field: CitationField, supplied: Comparable, source: Comparable): boolean {
-    if (field === "authors") return authorMatch(supplied as string[], source as string[]);
+    if (field === "authors" && Array.isArray(supplied) && Array.isArray(source)) return authorMatch(supplied, source);
     if (field === "year") return Math.abs(Number(supplied) - Number(source)) <= 1;
     if (field === "title" || field === "venue") {
         const left = new Set(normalizeComparable(String(supplied)).split(" ").filter(Boolean));

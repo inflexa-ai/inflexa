@@ -26,11 +26,11 @@ beforeEach(async () => {
     originalStartWorkflow ??= dbos.DBOS.startWorkflow;
     contextAtStart = undefined;
     inputAtStart = undefined;
-    (dbos.DBOS.startWorkflow as unknown) = () => async (input: unknown) => {
+    Reflect.set(dbos.DBOS, "startWorkflow", () => async (input: unknown) => {
         contextAtStart = context.active();
         inputAtStart = input;
         return {};
-    };
+    });
 });
 
 afterEach(async () => {
@@ -43,7 +43,7 @@ afterEach(async () => {
 afterAll(async () => {
     if (originalStartWorkflow === undefined) return;
     const dbos = await import("@dbos-inc/dbos-sdk");
-    (dbos.DBOS.startWorkflow as unknown) = originalStartWorkflow;
+    Reflect.set(dbos.DBOS, "startWorkflow", originalStartWorkflow);
 });
 
 const workflow = async (_input: { readonly planId: string }): Promise<unknown> => undefined;
@@ -85,9 +85,9 @@ describe("createDbosRunLauncher", () => {
 
     it("ends the root span and rethrows when the start fails", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
-        (dbos.DBOS.startWorkflow as unknown) = () => async () => {
+        Reflect.set(dbos.DBOS, "startWorkflow", () => async () => {
             throw new Error("system database down");
-        };
+        });
         const launcher = createDbosRunLauncher();
 
         await expect(launcher.launch(workflow, { workflowId: "run-3" }, { planId: "p" })).rejects.toThrow("system database down");

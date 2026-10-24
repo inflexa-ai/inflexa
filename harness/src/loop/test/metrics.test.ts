@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { errAsync, ok, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
@@ -15,6 +15,9 @@ import { __resetMetricsForTest } from "../metrics.js";
 import { runAgent } from "../run-agent.js";
 import { passthroughStep } from "../run-step.js";
 import type { AgentDefinition, RunStep } from "../types.js";
+
+/** The value an llm step stores: the chat Result, as the loop's step body returns it. */
+type LlmStepValue = Result<ChatResponse, ProviderError>;
 
 const ITERATIONS_METRIC = "cortex.harness.agent.iterations";
 const CAP_HITS_METRIC = "cortex.harness.agent.cap_hits";
@@ -99,14 +102,20 @@ describe("runAgent metrics", () => {
         const iterations = collected.find((m) => m.descriptor.name === ITERATIONS_METRIC);
         expect(iterations).toBeDefined();
         expect(iterations!.dataPoints).toHaveLength(1);
-        const value = iterations!.dataPoints[0]!.value as { count: number; sum: number };
-        expect(value.count).toBe(1);
-        expect(value.sum).toBe(3);
+        const histogram = iterations!.dataPoints[0]!.value;
+        if (typeof histogram !== "object" || histogram === null || !("count" in histogram) || !("sum" in histogram)) {
+            throw new Error("the iterations metric exported no histogram value");
+        }
+        expect(histogram.count).toBe(1);
+        expect(histogram.sum).toBe(3);
 
         // A non-capped run never touches the cap-hit counter.
         const capHits = collected.find((m) => m.descriptor.name === CAP_HITS_METRIC);
         if (capHits !== undefined) {
-            const total = capHits.dataPoints.reduce((acc, dp) => acc + (dp.value as number), 0);
+            const total = capHits.dataPoints.reduce((acc, dp) => {
+                const pointValue: unknown = dp.value;
+                return typeof pointValue === "number" ? acc + pointValue : acc;
+            }, 0);
             expect(total).toBe(0);
         }
     });
@@ -123,12 +132,16 @@ describe("runAgent metrics", () => {
         const collected = await collectMetrics();
         const capHits = collected.find((m) => m.descriptor.name === CAP_HITS_METRIC);
         expect(capHits).toBeDefined();
-        const total = capHits!.dataPoints.reduce((acc, dp) => acc + (dp.value as number), 0);
+        const total = capHits!.dataPoints.reduce((acc, dp) => {
+            const pointValue: unknown = dp.value;
+            return typeof pointValue === "number" ? acc + pointValue : acc;
+        }, 0);
         expect(total).toBe(1);
 
         const iterations = collected.find((m) => m.descriptor.name === ITERATIONS_METRIC);
-        const value = iterations!.dataPoints[0]!.value as { sum: number };
-        expect(value.sum).toBe(2);
+        const histogram = iterations!.dataPoints[0]!.value;
+        if (typeof histogram !== "object" || histogram === null || !("sum" in histogram)) throw new Error("the iterations metric exported no histogram value");
+        expect(histogram.sum).toBe(2);
     });
 });
 
@@ -138,7 +151,10 @@ describe("runAgent token counters for each call", () => {
 
     async function series(name: string): Promise<{ attributes: Record<string, unknown>; value: number }[]> {
         const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
-        return (metric?.dataPoints ?? []).map((dp) => ({ attributes: { ...dp.attributes }, value: dp.value as number }));
+        return (metric?.dataPoints ?? []).flatMap((dp) => {
+            const pointValue: unknown = dp.value;
+            return typeof pointValue === "number" ? [{ attributes: { ...dp.attributes }, value: pointValue }] : [];
+        });
     }
 
     const LABELS = { agent_id: "metrics-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
@@ -183,7 +199,7 @@ describe("runAgent token counters for each call", () => {
             capabilities: { toolCalling: true },
             chat: () => {
                 calls += 1;
-                if (calls === 3) return errAsync({ type: "provider", retryable: false, message: "upstream exploded" } as ProviderError);
+                if (calls === 3) return errAsync({ type: "provider", retryable: false, message: "upstream exploded" });
                 return okAsync(toolCall(calls));
             },
         };
@@ -211,12 +227,19 @@ describe("runAgent token counters for each call", () => {
     it("counts each call once when a recovery replays the steps of the run", async () => {
         // Mimics DBOS replay: a stored step returns its value and skips the body.
         const stored = new Map<string, unknown>();
-        const replayingStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-            if (stored.has(name)) return stored.get(name) as T;
-            const value = await fn();
-            stored.set(name, value);
-            return value;
-        };
+        // The overloads carry the replay contract: a stored step returns the value of the step kind
+        // that wrote it, which is what lets the memo read its stored value without an assertion.
+        const replayingStep: RunStep = (() => {
+            async function replayingStep(name: string, fn: () => Promise<LlmStepValue>): Promise<LlmStepValue>;
+            async function replayingStep(name: string, fn: () => Promise<unknown>): Promise<unknown>;
+            async function replayingStep(name: string, fn: () => Promise<unknown>): Promise<unknown> {
+                if (stored.has(name)) return stored.get(name);
+                const value = await fn();
+                stored.set(name, value);
+                return value;
+            }
+            return replayingStep;
+        })();
         const records: LlmUsageRecord[] = [];
         const usageRecorder: UsageRecorder = {
             record: (record) => {

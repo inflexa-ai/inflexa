@@ -90,7 +90,10 @@ function callBig(length: number, id = "tu-1"): ChatResponse[] {
 function onlyResult(messages: readonly ModelMessage[]): ToolResultPart {
     const tool = messages.find((m) => m.role === "tool");
     expect(tool).toBeDefined();
-    return (tool!.content as ToolResultPart[])[0]!;
+    const content = tool!.content;
+    if (typeof content === "string") throw new Error("the tool message carries string content");
+    const results = content.filter((part): part is ToolResultPart => part.type === "tool-result");
+    return results[0]!;
 }
 
 function textOf(result: ToolResultPart): string {
@@ -190,11 +193,13 @@ describe("runAgent — long tool results", () => {
         const { messages } = await runAgent(agentDef([eyes]), GO, makeSession(), opts(provider));
 
         const output = onlyResult(messages).output;
-        expect(output.type).toBe("content");
-        const parts = (output as Extract<ToolResultPart["output"], { type: "content" }>).value;
+        if (output.type !== "content") throw new Error("the result carries no content output");
+        const parts = output.value;
         expect(parts).toHaveLength(2);
         expect(parts[0]).toMatchObject({ type: "text" });
-        expect((parts[0] as { text: string }).text.startsWith("[Tool result cut: ")).toBe(true);
+        const first = parts[0];
+        if (first === undefined || first.type !== "text") throw new Error("the first part is not text");
+        expect(first.text.startsWith("[Tool result cut: ")).toBe(true);
         expect(parts[1]).toEqual({ type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } });
     });
 
@@ -319,9 +324,11 @@ describe("runAgent — long tool results", () => {
             opts(scriptedProvider(callBig(40_000)), { runStep, toolOutputStore: memoryStore() }),
         );
 
-        const stepOutput = outputs.get("tool-big-tu-1") as { result: ToolResultPart };
+        const stepOutput = z
+            .looseObject({ result: z.looseObject({ output: z.looseObject({ type: z.string(), value: z.string() }) }) })
+            .parse(outputs.get("tool-big-tu-1"));
         expect(stepOutput.result.output.type).toBe("text");
-        expect(textOf(stepOutput.result).startsWith("[Tool result cut: ")).toBe(true);
+        expect(stepOutput.result.output.value.startsWith("[Tool result cut: ")).toBe(true);
     });
 
     it("cuts a long result of an earlier call in the round of a truncation", async () => {
@@ -333,7 +340,11 @@ describe("runAgent — long tool results", () => {
 
         const { messages } = await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(provider, { toolOutputStore: store }));
 
-        const results = messages.find((m) => m.role === "tool")!.content as ToolResultPart[];
+        const toolMessage = messages.find((m) => m.role === "tool");
+        expect(toolMessage).toBeDefined();
+        const messageContent = toolMessage!.content;
+        if (typeof messageContent === "string") throw new Error("the tool message carries string content");
+        const results = messageContent.filter((part): part is ToolResultPart => part.type === "tool-result");
         expect(results.map((r) => r.toolCallId)).toEqual(["tu-A", "tu-B"]);
         expect(textOf(results[0]!).startsWith("[Tool result cut: 40000 characters")).toBe(true);
         expect(store.puts.map((kept) => kept.toolCallId)).toEqual(["tu-A"]);
@@ -414,9 +425,12 @@ describe("runAgent — long tool results", () => {
             opts(provider, { toolOutputStore: store }),
         );
 
-        const read = (messages.filter((m) => m.role === "tool")[1]!.content as ToolResultPart[])[0]!;
-        expect(read.output.type).toBe("json");
-        expect((read.output as { value: unknown }).value).toMatchObject({
+        const toolMessages = messages.filter((m) => m.role === "tool");
+        const readContent = toolMessages[1]!.content;
+        if (typeof readContent === "string") throw new Error("the tool message carries string content");
+        const read = readContent.filter((part): part is ToolResultPart => part.type === "tool-result")[0]!;
+        if (read.output.type !== "json") throw new Error("the result carries no json output");
+        expect(read.output.value).toMatchObject({
             status: "ok",
             offset: 0,
             end: 16_384,

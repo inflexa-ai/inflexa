@@ -24,22 +24,23 @@ import { join } from "node:path";
 import type { ToolResultPart } from "ai";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
-import type { Pool } from "pg";
 import { z } from "zod";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
-import { isReconciling, type ChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
+import { isKnownPartType, isReconciling } from "@inflexa-ai/harness/contracts/part-registry.js";
 
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { SpawnSession } from "../../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../../__tests__/setup/logger.js";
 import { classifyReadPath } from "../../provenance/collector.js";
-import type { AgentChat, ChatRequest, ChatResponse, ChatUsage, EmbeddingProvider } from "../../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
+import type { Querier } from "../../state/db.js";
 import type { SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../../execution/artifact-registry.js";
 import type { GateFailure } from "../../lib/hooks.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -124,29 +125,50 @@ async function mockDbos(): Promise<void> {
     // Every `DBOS.runStep` runs its body inline — the body under test only needs
     // the steps to execute, not to be cached. The self-cancel of a suspension
     // raises the cancellation at its step, as the real engine does.
-    (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
-        if (config?.name === "self-cancel-suspended") throw new DBOSErrors.DBOSWorkflowCancelledError("child");
-        return fn();
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "runStep",
+        mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+            if (config?.name === "self-cancel-suspended") throw new DBOSErrors.DBOSWorkflowCancelledError("child");
+            return fn();
+        }),
+    );
 
-    (dbos.DBOS.send as unknown) = mock(async (destination: string, message: unknown, topic?: string) => {
-        dbosState.sent.push({ destination, message, topic });
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "send",
+        mock(async (destination: string, message: unknown, topic?: string) => {
+            dbosState.sent.push({ destination, message, topic });
+        }),
+    );
 
-    (dbos.DBOS.cancelWorkflow as unknown) = mock(async (workflowId: string | undefined) => {
-        dbosState.cancelled.push(workflowId);
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "cancelWorkflow",
+        mock(async (workflowId: string | undefined) => {
+            dbosState.cancelled.push(workflowId);
+        }),
+    );
 
-    (dbos.DBOS.writeStream as unknown) = mock(async (_name: string, part: unknown) => {
-        dbosState.emittedParts.push(part as Record<string, unknown>);
-        return undefined;
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "writeStream",
+        mock(async (_name: string, part: unknown) => {
+            const written = parseUnknownRecord(part);
+            if (written) dbosState.emittedParts.push(written);
+            return undefined;
+        }),
+    );
 
-    (dbos.DBOS.now as unknown) = mock(async () => {
-        const t = dbosState.nowMs;
-        dbosState.nowMs += FAKE_CLOCK_STEP_MS;
-        return t;
-    });
+    Reflect.set(
+        dbos.DBOS,
+        "now",
+        mock(async () => {
+            const t = dbosState.nowMs;
+            dbosState.nowMs += FAKE_CLOCK_STEP_MS;
+            return t;
+        }),
+    );
 }
 
 /**
@@ -171,7 +193,7 @@ afterAll(async () => {
     if (!originalDbosFns) return;
     const dbos = await import("@dbos-inc/dbos-sdk");
     for (const [name, fn] of Object.entries(originalDbosFns)) {
-        (dbos.DBOS as unknown as Record<string, unknown>)[name] = fn;
+        Reflect.set(dbos.DBOS, name, fn);
     }
 });
 
@@ -184,8 +206,8 @@ const USAGE_AGENT_ID = "scientific-executor";
 const STEP_MODEL_ID = "test-step-model";
 
 /** A pool that answers every query with an empty rowset — no ledger assertions here. */
-function makeFakePool(): Pool {
-    return { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool;
+function makeFakePool(): Querier {
+    return { query: async () => ({ rows: [], rowCount: 0 }) };
 }
 
 const SANDBOX_REF: SandboxRef = {
@@ -201,13 +223,16 @@ function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxS
             spawns.push({ session, spec });
             return okAsync(SANDBOX_REF);
         },
-        submitExec: async () => undefined,
-        awaitExec: async () => {
-            throw new Error("awaitExec: the usage tests run a tool-less agent");
+        exec: async () => {
+            throw new Error("exec: the usage tests run a tool-less agent");
         },
         isAlive: async () => ({ alive: true, oomKilled: false }),
+        isAliveById: async () => ({ alive: true, oomKilled: false }),
         teardown: async () => undefined,
-    } as unknown as SandboxClient;
+        teardownById: async () => undefined,
+        listManagedSandboxes: async () => [],
+        toolchainSource: "store",
+    };
 }
 
 /**
@@ -273,13 +298,13 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         pool: makeFakePool(),
         logger: silentLogger,
         provider: makeProvider(usage),
-        embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) } as EmbeddingProvider,
+        embedding: { dimensions: 3, embed: (texts: readonly string[]) => okAsync(texts.map(() => [0, 0, 0])) },
         sandboxClient: makeSandboxClient(),
         artifactRegistry: {
             register: () => okAsync({ registered: [], failed: [], failedCount: 0 }),
             sync: () => okAsync(undefined),
-        } as ArtifactRegistry,
-        workspaceFs: {} as WorkspaceFilesystem,
+        },
+        workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: async () => workspaceRoot,
         model: STEP_MODEL_ID,
         buildAgent: async ({ fileMetadata }) => stepAgent(fileMetadata),
@@ -296,9 +321,8 @@ function foldStream(parts: ReadonlyArray<Record<string, unknown>>): Array<Record
     const out: Array<Record<string, unknown>> = [];
     const indexById = new Map<string, number>();
     for (const part of parts) {
-        const type = part.type as ChatPartType;
-        const id = part.id as string | undefined;
-        if (id === undefined || !isReconciling(type)) {
+        const { type, id } = part;
+        if (typeof type !== "string" || typeof id !== "string" || !isKnownPartType(type) || !isReconciling(type)) {
             out.push(part);
             continue;
         }
@@ -448,15 +472,19 @@ describe("sandbox-step activity history", () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         let rejected = false;
         // A direct assignment through `unknown`, the same as `mockDbos`; the `afterAll` hook restores the original.
-        (dbos.DBOS.writeStream as unknown) = mock(async (_name: string, part: unknown) => {
-            // The body writes only object parts to its stream, so the part is a record with a `type` key.
-            const recorded = part as Record<string, unknown>;
-            if (!rejected && recorded.type === "data-activity-entry") {
-                rejected = true;
-                throw new Error("stream unavailable");
-            }
-            dbosState.emittedParts.push(recorded);
-        });
+        Reflect.set(
+            dbos.DBOS,
+            "writeStream",
+            mock(async (_name: string, part: unknown) => {
+                const recorded = parseUnknownRecord(part);
+                if (recorded === undefined) return;
+                if (!rejected && recorded.type === "data-activity-entry") {
+                    rejected = true;
+                    throw new Error("stream unavailable");
+                }
+                dbosState.emittedParts.push(recorded);
+            }),
+        );
         const logger = createCapturingLogger();
 
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), logger });
@@ -556,10 +584,14 @@ describe("sandbox-step post-step continuations", () => {
     it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {
         await seedStepOutput();
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const runInline = dbos.DBOS.runStep as unknown as (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown>;
+        const runInline = dbos.DBOS.runStep;
         const cached = [{ dbPath: `runs/${USAGE_RUN_ID}/${USAGE_STEP_ID}/output/result.csv`, description: "cached description", metadata: { format: "csv" } }];
-        (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
-            config?.name === "post-step.generate-file-metadata" ? cached : runInline(fn, config),
+        Reflect.set(
+            dbos.DBOS,
+            "runStep",
+            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
+                config?.name === "post-step.generate-file-metadata" ? cached : runInline(fn, config),
+            ),
         );
         const replies = [makeMessage([textBlock("done")], "end_turn"), makeMessage([textBlock("## Summary")], "end_turn")];
         const provider = scriptedProvider((i) => replies[i]!);
@@ -610,7 +642,7 @@ describe("sandbox-step kept tool outputs", () => {
                 durationMs: 5,
                 timedOut: false,
             }),
-        } as unknown as SandboxClient;
+        };
         const provider = scriptedProvider((i) =>
             i === 0
                 ? makeMessage([toolUseBlock("tu-x", "execute_command", { command: ["python", "run.py"] })], "tool_use")
@@ -640,8 +672,8 @@ describe("sandbox-step kept tool outputs", () => {
         expect(store.puts[0]).toMatchObject({ analysisId: ANALYSIS_ID, toolName: "execute_command", toolCallId: "tu-x" });
         expect(store.puts[0]).not.toHaveProperty("threadId");
         const excerpt = toolResultIn(provider.calls[1]!, "tu-x")!;
-        expect(excerpt.output.type).toBe("text");
-        const tail = (excerpt.output as { value: string }).value.split("\n").at(-1)!;
+        if (excerpt.output.type !== "text") throw new Error(`expected a text excerpt, got ${String(excerpt.output.type)}`);
+        const tail = excerpt.output.value.split("\n").at(-1)!;
         expect(tail).toContain("ValueError: no batch column");
         expect(tail).toContain('"timedOut":false');
     });
@@ -673,8 +705,8 @@ describe("sandbox-step kept tool outputs", () => {
         expect(result.status).toBe("complete");
         expect(provider.calls).toHaveLength(4);
         const read = toolResultIn(provider.calls[3]!, "tu-read")!;
-        expect(read.output.type).toBe("json");
-        expect((read.output as { value: unknown }).value).toMatchObject({ status: "ok", offset: 0 });
+        if (read.output.type !== "json") throw new Error(`expected a json excerpt, got ${String(read.output.type)}`);
+        expect(read.output.value).toMatchObject({ status: "ok", offset: 0 });
     });
 
     it("logs one warn when the step has a store and its agent declares no read_tool_output", async () => {
@@ -693,11 +725,15 @@ describe("sandbox-step blocker replay", () => {
     it("keeps the blocked status on a replay, which returns the cached report_blocker step and runs no execute", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         const cache = new Map<string, unknown>();
-        (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
-            const value = await fn();
-            cache.set(config!.name!, value);
-            return value;
-        });
+        Reflect.set(
+            dbos.DBOS,
+            "runStep",
+            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+                const value = await fn();
+                cache.set(config!.name!, value);
+                return value;
+            }),
+        );
         const reason = "The input has no batch column.";
         const replies = [makeMessage([toolUseBlock("b1", "report_blocker", { reason })], "tool_use"), makeMessage([textBlock("blocked")], "end_turn")];
         const holders: BlockerHolder[] = [];
@@ -712,8 +748,10 @@ describe("sandbox-step blocker replay", () => {
 
         const first = await runSandboxStepBody(usageStepInput(), blockerDeps(scriptedProvider((i) => replies[i]!)));
 
-        (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
-            cache.has(config!.name!) ? cache.get(config!.name!) : fn(),
+        Reflect.set(
+            dbos.DBOS,
+            "runStep",
+            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => (cache.has(config!.name!) ? cache.get(config!.name!) : fn())),
         );
         const replayProvider = scriptedProvider(() => {
             throw new Error("the replay called the provider");
@@ -766,16 +804,16 @@ describe("sandbox-step spawn", () => {
 // ── suspension ────────────────────────────────────────────────────────
 
 describe("sandbox-step suspension", () => {
-    function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
+    function statementPool(): { pool: Querier; statements: Array<{ text: string; values: readonly unknown[] }> } {
         const statements: Array<{ text: string; values: readonly unknown[] }> = [];
-        const pool = {
-            query: async (arg: unknown, params?: unknown[]) => {
-                const text = typeof arg === "string" ? arg : ((arg as { text?: string }).text ?? "");
-                const values = typeof arg === "object" && arg !== null && "values" in arg ? ((arg as { values?: unknown[] }).values ?? []) : (params ?? []);
+        const pool: Querier = {
+            query: async (arg, params) => {
+                const text = typeof arg === "string" ? arg : arg.text;
+                const values = typeof arg === "object" && "values" in arg ? (arg.values ?? []) : (params ?? []);
                 statements.push({ text, values });
                 return { rows: [], rowCount: 0 };
             },
-        } as unknown as Pool;
+        };
         return { pool, statements };
     }
 
@@ -818,7 +856,7 @@ describe("sandbox-step suspension", () => {
             teardown: async (ref: SandboxRef) => {
                 teardowns.push(ref.sandboxId);
             },
-        } as unknown as SandboxClient;
+        };
 
         await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusing })).rejects.toBeInstanceOf(
             DBOSErrors.DBOSWorkflowCancelledError,
@@ -832,7 +870,7 @@ describe("sandbox-step suspension", () => {
         const refusing = {
             ...makeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-        } as unknown as SandboxClient;
+        };
 
         await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), sandboxClient: refusing })).rejects.toThrow("labels_unavailable");
 
@@ -1015,17 +1053,18 @@ describe("sandbox-step capped-out empty manifest", () => {
      * assertable. `updateStepExecution` calls `query({ text, values })` (the
      * config form) while other writers use `query(text, params)` — record both.
      */
-    function makeRecordingPool(): { pool: Pool; values: unknown[] } {
+    function makeRecordingPool(): { pool: Querier; values: unknown[] } {
         const values: unknown[] = [];
-        const pool = {
-            query: async (arg: unknown, params?: unknown[]) => {
-                if (typeof arg === "object" && arg !== null && "values" in arg) {
-                    values.push(...((arg as { values?: unknown[] }).values ?? []));
+        const pool: Querier = {
+            query: async (arg, params) => {
+                if (typeof arg === "object" && "values" in arg) {
+                    const fromConfig: readonly unknown[] = arg.values ?? [];
+                    values.push(...fromConfig);
                 }
                 values.push(...(params ?? []));
                 return { rows: [], rowCount: 0 };
             },
-        } as unknown as Pool;
+        };
         return { pool, values };
     }
 

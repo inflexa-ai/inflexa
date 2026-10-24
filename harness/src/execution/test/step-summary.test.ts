@@ -24,6 +24,13 @@ type RecordedCall = {
     readonly req: ChatRequest;
 };
 
+/** The trailing assistant text the scripted provider answered with; anything else fails the test. */
+function lastTextOf(req: ChatRequest): string {
+    const last = req.messages.at(-1);
+    if (last === undefined || typeof last.content !== "string") throw new Error("expected a text message");
+    return last.content;
+}
+
 function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provider: ChatProvider; calls: RecordedCall[] } {
     const calls: RecordedCall[] = [];
     let i = 0;
@@ -148,9 +155,9 @@ describe("generateStepSummary", () => {
     it("appends the artifact list to the summary request", async () => {
         const { provider, calls } = makeProvider([textMessage("summary")]);
         await generateStepSummary(options(provider));
-        const last = calls[0]!.req.messages.at(-1) as { content: string };
+        const last = lastTextOf(calls[0]!.req);
         for (const path of ARTIFACT_PATHS) {
-            expect(last.content).toContain(path);
+            expect(last).toContain(path);
         }
     });
 
@@ -239,8 +246,10 @@ describe("generateStepSummary", () => {
                 requests.push({ ...req, messages: [...req.messages] });
                 if (requests.length === 1) return okAsync(readFileCall("r1", "output/long.txt"));
                 if (requests.length === 2) {
-                    const excerpt = toolResults(req).find((r) => r.toolCallId === "r1")!.output as { value: string };
-                    const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt.value)![1]!;
+                    const found = toolResults(req).find((r) => r.toolCallId === "r1")!;
+                    const outputValue = "value" in found.output ? found.output.value : undefined;
+                    if (typeof outputValue !== "string") throw new Error("expected a string read output");
+                    const ref = /reference "(to_[0-9a-f]{20})"/.exec(outputValue)![1]!;
                     return okAsync(makeMessage([toolUseBlock("k1", "read_tool_output", { ref, offset: 60_000 })], "tool_use"));
                 }
                 return okAsync(textMessage("# Long\n\n- all read"));
@@ -258,7 +267,8 @@ describe("generateStepSummary", () => {
         expect(kept).toHaveLength(1);
         const page = toolResults(requests[2]!).find((r) => r.toolCallId === "k1")!;
         expect(page.output.type).toBe("json");
-        expect((page.output as { value: unknown }).value).toMatchObject({ status: "ok", offset: 60_000 });
+        if (page.output.type !== "json") throw new Error("expected the json output arm");
+        expect(page.output.value).toMatchObject({ status: "ok", offset: 60_000 });
     });
 
     it("produces an honest no-output summary for an empty-artifact step (no fabrication)", async () => {
@@ -268,8 +278,7 @@ describe("generateStepSummary", () => {
         const out = await generateStepSummary(options(provider, { artifactPaths: [] }));
         expect(out?.markdown).toContain("no output files");
         // The request must signal the empty state to the model.
-        const prompt = calls[0]!.req.messages.at(-1) as { content: string };
-        expect(prompt.content).toContain("none");
+        expect(lastTextOf(calls[0]!.req)).toContain("none");
     });
 
     it("returns undefined and does not throw when the provider throws", async () => {

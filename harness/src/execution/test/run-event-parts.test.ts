@@ -6,23 +6,27 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { ChatPart } from "../../contracts/chat-parts.js";
+import type { ChatPart, StepPhase } from "../../contracts/chat-parts.js";
 import { foldRunEventParts, parseRunEventPart, pipeFoldedRunEvents } from "../run-event-parts.js";
 
-const activity = (id: string, phase: string, text: string): ChatPart =>
-    ({ type: "data-step-activity", id, runId: "run-1", stepId: "T1S1", phase, activity: text }) as ChatPart;
+const activity = (id: string, phase: StepPhase, text: string): ChatPart => ({
+    type: "data-step-activity",
+    id,
+    runId: "run-1",
+    stepId: "T1S1",
+    phase,
+    activity: text,
+});
 
-// The cast gives `phase` its union type: the callers pass only phases of `StepPhase`.
-const entry = (seq: number, phase: string, text: string): ChatPart =>
-    ({
-        type: "data-activity-entry",
-        id: `activity-entry-run-1-T1S1-${seq}`,
-        runId: "run-1",
-        stepId: "T1S1",
-        phase,
-        activity: text,
-        at: `2026-10-12T10:00:0${seq}.000Z`,
-    }) as ChatPart;
+const entry = (seq: number, phase: StepPhase, text: string): ChatPart => ({
+    type: "data-activity-entry",
+    id: `activity-entry-run-1-T1S1-${seq}`,
+    runId: "run-1",
+    stepId: "T1S1",
+    phase,
+    activity: text,
+    at: `2026-10-12T10:00:0${seq}.000Z`,
+});
 
 const summary = (stepId: string, markdown: string): ChatPart => ({
     type: "data-step-summary",
@@ -123,14 +127,14 @@ describe("foldRunEventParts", () => {
     });
 
     it("does not collapse across part types that share an id", () => {
-        const dag = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] } as ChatPart;
-        const ask = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" } as ChatPart;
+        const dag: ChatPart = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] };
+        const ask: ChatPart = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" };
 
         expect(foldRunEventParts([dag, ask])).toEqual([dag, ask]);
     });
 
     it("passes through a reconciling part carrying no id rather than dropping it", () => {
-        const idless = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" } as ChatPart;
+        const idless: ChatPart = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" };
 
         expect(foldRunEventParts([idless, idless])).toEqual([idless, idless]);
     });
@@ -243,14 +247,14 @@ describe("pipeFoldedRunEvents", () => {
     });
 
     it("does not collapse across part types that share an id", async () => {
-        const dag = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] } as ChatPart;
-        const ask = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" } as ChatPart;
+        const dag: ChatPart = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] };
+        const ask: ChatPart = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" };
 
         expect(await delivered(burst([dag, ask]))).toEqual([dag, ask]);
     });
 
     it("delivers each reconciling part that carries no id", async () => {
-        const idless = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" } as ChatPart;
+        const idless: ChatPart = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" };
 
         expect(await delivered(burst([idless, idless]))).toEqual([idless, idless]);
     });

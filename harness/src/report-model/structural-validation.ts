@@ -18,7 +18,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { columnsHeldByNoRow, fileTypeHoldsNoCell, snapshotEntry, type ReportSnapshot } from "./reference-resolver.js";
+import { columnsHeldByNoRow, fileTypeHoldsNoCell, snapshotEntry, snapshotRows, type ReportSnapshot } from "./reference-resolver.js";
 
 /** The three reference kinds that name one artifact directly. Each one carries the artifact pin fields. */
 type PinnedReference = ArtifactValueReference | ArtifactTableReference | ArtifactFileReference;
@@ -68,7 +68,11 @@ function validateColumns(reference: ArtifactTableReference, snapshot: ReportSnap
             return fail(reference, "locator-out-of-range", `the chart names column ${outside.join(", ")}, which the bound column subset leaves out`);
         }
     }
-    const absent = columnsHeldByNoRow(snapshotEntry(snapshot, reference.path)?.rows ?? [], columns);
+    const readRows = snapshotRows(snapshotEntry(snapshot, reference.path));
+    if (readRows.isErr()) {
+        return fail(reference, "unreadable-artifact", `the artifact at ${reference.path} holds a malformed row: ${readRows.error}`);
+    }
+    const absent = columnsHeldByNoRow(readRows.value, columns);
     if (absent.length > 0) {
         return fail(reference, "locator-out-of-range", `the chart names column ${absent.join(", ")}, which the bound table does not hold`);
     }
@@ -98,7 +102,11 @@ export function validateReferenceStructure(reference: Reference, snapshot: Repor
             // artifact does not hold refuses here, exactly as a grammar column of a chart does.
             const bound = reference.rowBound;
             if (bound !== undefined) {
-                const absent = columnsHeldByNoRow(snapshotEntry(snapshot, reference.path)?.rows ?? [], [bound.column]);
+                const readRows = snapshotRows(snapshotEntry(snapshot, reference.path));
+                if (readRows.isErr()) {
+                    return fail(reference, "unreadable-artifact", `the artifact at ${reference.path} holds a malformed row: ${readRows.error}`);
+                }
+                const absent = columnsHeldByNoRow(readRows.value, [bound.column]);
                 if (absent.length > 0) {
                     return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the bound table does not hold`);
                 }

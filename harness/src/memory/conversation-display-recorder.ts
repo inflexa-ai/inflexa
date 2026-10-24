@@ -3,12 +3,13 @@ import type { ModelMessage, UIMessagePart } from "ai";
 
 import type { ChatFrame, ChatPartFrame, EventSource } from "../contracts/chat-events.js";
 import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../contracts/chat-frame.js";
+import type { CompactionPart } from "../contracts/chat-parts.js";
 import type { ChatMessage, MessagePart } from "../contracts/message.js";
 import { PART_REGISTRY, type ChatPartType } from "../contracts/part-registry.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { EmitEvent, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
-import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
+import { conversationDisplayPart, isStoredSourcePart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
 
 export type ConversationDisplayRecorder = {
     readonly emit: EmitFn;
@@ -32,13 +33,22 @@ export type ConversationDisplayRecorderOptions = {
 type DisplayPart = UIMessagePart<ConversationUIData, Record<string, never>>;
 
 function jsonCopy<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
+    return structuredClone(value);
 }
 
+const DURABLE_CONVERSATION_PART_TYPES: ReadonlySet<string> = new Set(
+    Object.entries(PART_REGISTRY)
+        .filter(([, descriptor]) => descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient)
+        .map(([type]) => type),
+);
+
 function durableConversationType(type: string): type is ChatPartType {
-    if (!Object.hasOwn(PART_REGISTRY, type)) return false;
-    const descriptor = PART_REGISTRY[type as ChatPartType];
-    return descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient;
+    return DURABLE_CONVERSATION_PART_TYPES.has(type);
+}
+
+/** Each chat event type is named without the `data-` prefix, thus a `data-` frame is a part frame. */
+function isPartFrame(frame: ChatFrame): frame is ChatPartFrame {
+    return frame.type.startsWith("data-");
 }
 
 /** The checked part of a data frame, copied at receipt, because the emitter keeps its own reference to the payload. */
@@ -55,6 +65,7 @@ function recordedPart(frame: ChatPartFrame): ChatPartFrame {
 function displayParts(parts: readonly MessagePart[]): DisplayPart[] {
     return parts.flatMap((part): DisplayPart[] => {
         if (part.type === "text") return part.text.length === 0 ? [] : [{ type: "text", text: part.text, state: "done" }];
+        if (!isStoredSourcePart(part)) return [];
         if (part.type === "data-ask" && part.status === "pending") return [conversationDisplayPart({ ...part, status: "aborted" })];
         return [conversationDisplayPart(part)];
     });
@@ -77,7 +88,7 @@ function assistantText(messages: readonly ModelMessage[]): string {
 
 /** The divider of a compaction marker: a `system` message with the part at the final status of the compaction. */
 function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
-    const compaction: MessagePart & { type: "data-compaction" } = {
+    const compaction: CompactionPart = {
         type: "data-compaction",
         id: marker.id,
         status: marker.kind === "summary" ? "done" : "failed",
@@ -130,9 +141,8 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         const activity = subAgentActivity.track(frame, now());
         if (activity !== null && durableConversationType(activity.type)) apply(recordedPart(activity));
         if (!isRootFrame(frame)) return;
-        if (frame.type.startsWith("data-")) {
-            // Each chat event type is named without the `data-` prefix, thus a `data-` frame is a part frame.
-            if (durableConversationType(frame.type)) apply(recordedPart(frame as ChatPartFrame));
+        if (isPartFrame(frame)) {
+            if (durableConversationType(frame.type)) apply(recordedPart(frame));
             return;
         }
         apply(frame);

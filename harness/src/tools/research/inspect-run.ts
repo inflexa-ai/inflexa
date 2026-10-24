@@ -9,7 +9,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { ok, type Result } from "neverthrow";
-import type { Pool } from "pg";
+import type { QueryConfig } from "pg";
 import { z } from "zod";
 
 import { scopeResource } from "../../auth/types.js";
@@ -146,10 +146,19 @@ const inputSchema = z
     });
 
 /**
+ * The pool surface this tool reads: one query whose rows the state row parsers type. A computed test fake
+ * satisfies this shape directly, where the row-generic of `Querier` cannot be implemented by a fake that
+ * computes its rows.
+ */
+export type InspectRunQuerier = {
+    query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+};
+
+/**
  * Build the run-inspection tool. The optional clock is an internal testing
  * seam for deterministic cutoff and transition coverage.
  */
-export function createInspectRunTool(pool: Pool, clock: InspectRunClock = systemClock) {
+export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunClock = systemClock) {
     return defineTool({
         id: "inspect_run",
         description:

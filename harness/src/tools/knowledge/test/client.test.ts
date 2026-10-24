@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
+import { z } from "zod";
+
 import { createHttpKnowledgeClient, RecommendResponseSchema, type KnowledgeSituation } from "../client.js";
+import { SituationFieldsSchema } from "../situation.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import {
     contractAnswer,
     fakeKnowledgeClient,
@@ -36,7 +40,7 @@ function stubService() {
         hostname: "127.0.0.1",
         async fetch(request) {
             const url = new URL(request.url);
-            const body = request.method === "POST" ? ((await request.clone().json()) as Record<string, unknown>) : undefined;
+            const body = request.method === "POST" ? parseUnknownRecord(await request.clone().json()) : undefined;
             served.push({ method: request.method, pathname: url.pathname, body });
             if (request.headers.get("authorization") !== "Bearer secret") return Response.json({ error: "unauthorized" }, { status: 401 });
             // A pin on another release refuses every operation with the served digest, before any work.
@@ -54,7 +58,7 @@ function stubService() {
                 return Response.json({ ...contractAnswer(), step_types: ["model_design"], environment: [] });
             }
             if (url.pathname === "/v1/recommend") {
-                const body = (await request.json()) as { situation: KnowledgeSituation };
+                const body = z.object({ situation: SituationFieldsSchema }).parse(await request.json());
                 if (body.situation.n_groups === 99) {
                     return Response.json(
                         { error: "validation", message: "bad field", issues: [{ field: "n_groups", message: "too many", permitted: ["2"] }] },
@@ -65,7 +69,7 @@ function stubService() {
             }
             if (url.pathname === "/v1/check") return Response.json(notAssessedCheckAnswer());
             if (url.pathname === "/v1/template/render") {
-                const body = (await request.json()) as { template: string };
+                const body = z.object({ template: z.string() }).parse(await request.json());
                 if (body.template === "tpl-x") return Response.json({ error: "server", message: "boom" }, { status: 500 });
                 return Response.json(substituteRenderAnswer());
             }

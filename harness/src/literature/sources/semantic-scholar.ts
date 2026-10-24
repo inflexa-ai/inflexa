@@ -87,7 +87,9 @@ export function parseSemanticScholarResponse(raw: unknown): SemanticScholarSearc
     if (!parsed.success) return [];
     return (parsed.data.data ?? []).flatMap((paper) => {
         const mapped = mapPaper(paper);
-        return mapped?.title === undefined ? [] : [mapped as SemanticScholarSearchPaper];
+        if (mapped === undefined || mapped.title === undefined) return [];
+        const { title } = mapped;
+        return [{ ...mapped, title }];
     });
 }
 

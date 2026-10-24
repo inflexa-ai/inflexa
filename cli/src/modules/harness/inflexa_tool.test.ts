@@ -716,7 +716,7 @@ describe("run_inflexa — the child's working directory", () => {
 
 describe("run_inflexa — describeCall", () => {
     /** Read the hook the way the harness emit site reads it. */
-    function describeCall(argv: string[]): string {
+    function describeCall(argv: string[]): string | undefined {
         const tool = makeTool(recordingSubprocess().fn);
         expect(tool.describeCall).toBeDefined();
         return tool.describeCall!({ argv });

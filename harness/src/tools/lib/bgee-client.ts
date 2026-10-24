@@ -13,6 +13,8 @@
 
 import { z } from "zod";
 
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
 
 const ENSEMBL_BASE = "https://rest.ensembl.org";
@@ -81,7 +83,6 @@ const BgeeCallSchema = z.object({
     expressionQuality: z.string().optional(),
     expressionState: z.string().optional(),
 });
-type BgeeCall = z.infer<typeof BgeeCallSchema>;
 
 const BgeeExpressionResponseSchema = z.object({
     data: z.object({ calls: z.array(BgeeCallSchema).optional() }).optional(),
@@ -94,31 +95,34 @@ export const EnsemblHomologyResponseSchema = z.object({
 });
 
 export function parseExpressionResponse(raw: unknown): TissueRow[] {
-    // `raw` is the untyped Bgee API payload; `.data.calls` is reached defensively and
-    // the `Array.isArray` guard below means a shape mismatch degrades to an empty list.
-    const calls = (raw as { data?: { calls?: BgeeCall[] } } | null)?.data?.calls;
-    if (!Array.isArray(calls)) return [];
+    const calls = parseUnknownRecord(parseUnknownRecord(raw)?.data)?.calls;
+    if (!isUnknownArray(calls)) return [];
 
     const out: TissueRow[] = [];
-    for (const call of calls) {
-        const anatName: string = call?.condition?.anatEntity?.name ?? "";
+    for (const entry of calls) {
+        const call = parseUnknownRecord(entry);
+        if (!call) continue;
+        const condition = parseUnknownRecord(call.condition);
+        const anatEntity = parseUnknownRecord(condition?.anatEntity);
+        const anatName: string = typeof anatEntity?.name === "string" ? anatEntity.name : "";
         const tissue = anatName.trim().toLowerCase();
         if (!tissue) continue;
 
-        const cellTypeName: string | undefined = call?.condition?.cellType?.name;
+        const cellTypeRecord = parseUnknownRecord(condition?.cellType);
+        const cellTypeName = cellTypeRecord?.name;
         const cellType = typeof cellTypeName === "string" && cellTypeName.trim() !== "" ? cellTypeName.trim().toLowerCase() : null;
 
-        const rawScore = call?.expressionScore?.expressionScore;
+        const rawScore = parseUnknownRecord(call.expressionScore)?.expressionScore;
         let expressionScore: number | null = null;
         if (typeof rawScore === "string" || typeof rawScore === "number") {
             const n = typeof rawScore === "number" ? rawScore : parseFloat(rawScore);
             expressionScore = Number.isFinite(n) ? n : null;
         }
 
-        const quality = call?.expressionQuality;
+        const quality = call.expressionQuality;
         const confidence: "gold" | "silver" | null = quality === "gold" || quality === "silver" ? quality : null;
 
-        const stateRaw = call?.expressionState;
+        const stateRaw = call.expressionState;
         const expressionState: "expressed" | "not expressed" = stateRaw === "not expressed" ? "not expressed" : "expressed";
 
         out.push({

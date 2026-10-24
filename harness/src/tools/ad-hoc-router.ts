@@ -1,5 +1,5 @@
 import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
 import { PLANNABLE_AGENT_CATALOG } from "../agents/sandbox-catalog.js";
@@ -12,6 +12,7 @@ import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js"
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { countChatTokens, type AgentRunUsage } from "../loop/metrics.js";
 import { accountForChatCall } from "../loop/run-agent.js";
 import { packagesSection, resourceEstimationSection } from "../prompts/planner.js";
@@ -74,7 +75,7 @@ export type AdHocRoute = {
 export type AdHocRouterDeps = {
     readonly provider: ChatProvider;
     readonly model: string;
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly resourcePolicy?: ResourcePolicy;
     readonly logger?: Logger;
     /**
@@ -123,7 +124,7 @@ function resourceBounds(policy?: ResourcePolicy): string {
     ].join(" ");
 }
 
-async function profileOrientation(pool: Pool, analysisId: string, logger: Logger): Promise<string> {
+async function profileOrientation(pool: Querier, analysisId: string, logger: Logger): Promise<string> {
     try {
         const status = unwrapOrThrow(await loadDataProfileStatus(pool, analysisId));
         if (!status?.result) return "No persisted data-profile facts are available.";
@@ -217,10 +218,11 @@ async function routePackages(
 }
 
 function routeTool() {
+    const schema: Record<string, unknown> = z.toJSONSchema(routeSchema);
     return {
         submit_route: aiTool({
             description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
-            inputSchema: jsonSchema(z.toJSONSchema(routeSchema) as unknown as Parameters<typeof jsonSchema>[0]),
+            inputSchema: jsonSchema(schema),
         }),
     };
 }
@@ -305,7 +307,7 @@ export async function routeAdHocRequest(
         clearTimeout(timer);
     }
 
-    const candidate = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const candidate = parseUnknownRecord(raw) ?? {};
     const requestedAgent = typeof candidate.agentId === "string" ? candidate.agentId : undefined;
     const validAgent = requestedAgent !== undefined && PLANNABLE_AGENT_CATALOG.some((agent) => agent.id === requestedAgent);
     const agentId = validAgent ? requestedAgent : AD_HOC_FALLBACK_AGENT_ID;

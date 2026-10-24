@@ -24,8 +24,8 @@ describe.skipIf(!LIVE)("live QuickGO", () => {
         const { ctx } = makeToolContext();
         const output = (await lookupAnnotationTool.execute({ vocabulary: "go", goId: ROOT_TERM }, ctx))._unsafeUnwrap();
 
-        expect(output).toHaveProperty("terms");
-        const terms = (output as { terms?: { id: string; name: string; definition?: string; aspect?: string }[] }).terms ?? [];
+        if (!("terms" in output)) throw new Error("expected the terms arm");
+        const terms = output.terms ?? [];
         expect(terms.length).toBeGreaterThan(0);
         expect(terms[0]!.id).toBe(ROOT_TERM);
         expect(terms[0]!.name.length).toBeGreaterThan(0);

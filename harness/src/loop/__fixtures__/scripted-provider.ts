@@ -22,9 +22,8 @@ function mapFinishReason(
         case "refusal":
             return "content-filter";
         default:
-            // `unknown` rides through untyped on purpose: this fixture drives a finish
-            // the provider types do not model, and the loop must settle whatever arrives.
-            return finishReason as ChatResponse["finishReason"];
+            // The fixture drives finish words the SDK does not model; the loop settles whatever arrives.
+            return finishReason;
     }
 }
 

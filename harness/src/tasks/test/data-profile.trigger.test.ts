@@ -2,10 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { Querier } from "../../state/db.js";
+
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { StagedInput } from "../../execution/staged-input.js";
+import type { SignableInput } from "../../execution/input-signature.js";
 import { loadDataProfileStatus, tryRetryDataProfile } from "../../state/data-profile.js";
 import { computeInputSignature } from "../../execution/input-signature.js";
 import { runDataProfile, triggerDataProfile, type DataProfileTriggerDeps } from "../data-profile.js";
@@ -33,9 +36,9 @@ function stagedInput(fileId: string): StagedInput {
  * absent from the deserialized object despite the required-`number` type. This is
  * the recovered-legacy shape the input signature has to digest around.
  */
-function legacyStagedInput(fileId: string): StagedInput {
+function legacyStagedInput(fileId: string): SignableInput {
     const { mtimeMs: _dropped, ...legacy } = stagedInput(fileId);
-    return legacy as StagedInput;
+    return legacy;
 }
 
 /**
@@ -45,7 +48,7 @@ function legacyStagedInput(fileId: string): StagedInput {
  * exactly the unseeded state that the claim CAS refuses, and that the trigger's guard
  * refuses when the manifest names files.
  */
-async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string | null = "pending"): Promise<void> {
+async function seedAnalysis(pool: Querier, analysisId: string, dpStatus: string | null = "pending"): Promise<void> {
     const now = new Date().toISOString();
     await pool.query({
         text: `INSERT INTO cortex_analysis_state
@@ -56,7 +59,7 @@ async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string | n
 }
 
 /** Write `seed_input_file_ids` directly — the column the guard and the CAS both read. */
-async function setSeed(pool: Pool, analysisId: string, seed: string[] | null): Promise<void> {
+async function setSeed(pool: Querier, analysisId: string, seed: string[] | null): Promise<void> {
     await pool.query({
         text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
         values: [seed === null ? null : JSON.stringify(seed), analysisId],
@@ -71,7 +74,7 @@ async function setSeed(pool: Pool, analysisId: string, seed: string[] | null): P
  * holds the dispatch open so compensation can never race our read of the committed CAS
  * result. The guard and the claim both run to completion upstream of that await.
  */
-function parkedDispatchDeps(pool: Pool): DataProfileTriggerDeps {
+function parkedDispatchDeps(pool: Querier): DataProfileTriggerDeps {
     return {
         pool,
         runAuthorizer: {
@@ -94,7 +97,7 @@ function parkedDispatchDeps(pool: Pool): DataProfileTriggerDeps {
  * claimed into `running`. The throwing body only documents the contract that
  * `deps.workflow` must stay unreached on every refusal path.
  */
-function tripwireDeps(pool: Pool): DataProfileTriggerDeps {
+function tripwireDeps(pool: Querier): DataProfileTriggerDeps {
     return {
         pool,
         runAuthorizer: createLocalRunAuthorizer(),
@@ -106,7 +109,7 @@ function tripwireDeps(pool: Pool): DataProfileTriggerDeps {
 
 /** Read `data_profile_status` straight off the row, bypassing the NULL-collapse
  * in `loadDataProfileStatus`. */
-async function rawStatus(pool: Pool, analysisId: string): Promise<string | null> {
+async function rawStatus(pool: Querier, analysisId: string): Promise<string | null> {
     const res = await pool.query<{ data_profile_status: string | null }>({
         text: "SELECT data_profile_status FROM cortex_analysis_state WHERE analysis_id = $1",
         values: [analysisId],
@@ -332,15 +335,14 @@ describe("triggerDataProfile seed-first guard", () => {
             pool: {
                 ...pool,
                 // Wipe the seed the instant the guard finishes reading it, before the CAS runs.
-                query: async (...args: Parameters<Pool["query"]>) => {
+                query: async (...args: Parameters<Querier["query"]>) => {
                     const res = await pool.query(...args);
-                    const text = typeof args[0] === "string" ? args[0] : (args[0] as { text: string }).text;
+                    const first = args[0]!;
+                    const text = typeof first === "string" ? first : first.text;
                     if (text.includes("SELECT seed_input_file_ids")) await setSeed(pool, "a-raced", null);
                     return res;
                 },
-                // The spread above loses `Pool`'s prototype methods; only `query` is exercised
-                // by `triggerDataProfile`, and it is replaced. The cast asserts exactly that.
-            } as unknown as Pool,
+            },
         };
 
         const result = (
@@ -358,7 +360,7 @@ describe("triggerDataProfile seed-first guard", () => {
     it("gives a failed ledger read as its err, not as a `failed` outcome", async () => {
         const faulty: DataProfileTriggerDeps = {
             ...tripwireDeps(pool),
-            pool: { query: async () => Promise.reject(new Error("connection terminated")) } as unknown as Pool,
+            pool: { query: async () => Promise.reject(new Error("connection terminated")) },
         };
 
         const failure = (

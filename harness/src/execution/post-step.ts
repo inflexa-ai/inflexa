@@ -14,6 +14,10 @@ import { join, relative } from "node:path";
 import { inferArtifactType, type ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { IGNORED_DIRS } from "../sandbox/ignored-dirs.js";
+import { z } from "zod";
+
+/** The `code` field of a Node fs error, the one field the ENOENT refusal reads. */
+const ErrnoCodeSchema = z.object({ code: z.string() });
 
 /**
  * Walk a step's writable artifact directory and produce a fully-hashed
@@ -33,8 +37,8 @@ export async function walkStepArtifacts(args: {
         try {
             entries = await readdir(dir, { withFileTypes: true });
         } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === "ENOENT") return;
+            const errno = ErrnoCodeSchema.safeParse(err);
+            if (errno.success && errno.data.code === "ENOENT") return;
             throw err;
         }
         for (const entry of entries) {

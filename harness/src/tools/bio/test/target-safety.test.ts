@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { targetSafetyTool } from "../target-safety.js";
+
+const GqlVariablesSchema = z.object({ variables: z.record(z.string(), z.unknown()) });
 
 const realFetch = globalThis.fetch;
 
@@ -16,11 +24,10 @@ function gqlResponse(data: unknown): Response {
 /** Record every Open Targets GraphQL call so a test can assert what was queried. */
 function stubOpenTargets(responder: () => Response): Record<string, unknown>[] {
     const seen: Record<string, unknown>[] = [];
-    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { variables: Record<string, unknown> };
-        seen.push(body.variables);
+    globalThis.fetch = fetchDouble(async (_url: unknown, init?: RequestInit) => {
+        seen.push(GqlVariablesSchema.parse(JSON.parse(String(init?.body ?? "{}"))).variables);
         return responder();
-    }) as unknown as typeof fetch;
+    });
     return seen;
 }
 
@@ -107,14 +114,14 @@ describe("targetSafety — Open Targets liabilities", () => {
 
     it("resolves a gene symbol that is not on the panel", async () => {
         const seen: string[] = [];
-        globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+        globalThis.fetch = fetchDouble(async (url: unknown, init?: RequestInit) => {
             const u = String(url);
             seen.push(u);
             if (u.includes("ensembl")) return new Response(JSON.stringify({ id: "ENSG00000141510" }), { status: 200 });
-            const body = JSON.parse(String(init?.body ?? "{}")) as { variables: Record<string, unknown> };
+            const body = GqlVariablesSchema.parse(JSON.parse(String(init?.body ?? "{}")));
             expect(body.variables).toEqual({ ensemblId: "ENSG00000141510" });
             return gqlResponse({ target: { id: "ENSG00000141510", approvedSymbol: "TP53", safetyLiabilities: [] } });
-        }) as unknown as typeof fetch;
+        });
 
         const { ctx } = makeToolContext();
         const result = (await targetSafetyTool.execute({ identifiers: ["TP53"], sources: ["opentargets"] }, ctx))._unsafeUnwrap();
@@ -145,7 +152,7 @@ describe("targetSafety — Open Targets liabilities", () => {
     });
 
     it("keeps the panel half when Open Targets is unreachable", async () => {
-        globalThis.fetch = (async () => new Response("upstream down", { status: 500 })) as unknown as typeof fetch;
+        globalThis.fetch = fetchDouble(async () => new Response("upstream down", { status: 500 }));
 
         const { ctx } = makeToolContext();
         const result = (await targetSafetyTool.execute({ identifiers: [HTR2B.gene] }, ctx))._unsafeUnwrap();

@@ -20,7 +20,8 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
-import type { Cell, ChartRow, EchartOption } from "../chart.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import type { ChartRow, EchartOption } from "../chart.js";
 import { CHART_BODY_PX, SEQUENTIAL_RAMP } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
@@ -132,10 +133,8 @@ function formatSource(context: FigureContext, channel: ChartChannel): [string, C
 /** The members of one item: the array form, or the value of the object form. */
 function itemValue(item: unknown): unknown[] | undefined {
     if (isUnknownArray(item)) return item;
-    if (typeof item === "object" && item !== null) {
-        const carried: unknown = (item as EchartOption).value;
-        if (isUnknownArray(carried)) return carried;
-    }
+    const carried = parseUnknownRecord(item)?.value;
+    if (isUnknownArray(carried)) return carried;
     return undefined;
 }
 
@@ -144,7 +143,7 @@ function placedItem(item: unknown, place: number): unknown {
     const value = itemValue(item);
     if (value === undefined) return item;
     const moved = [value[0], place, ...value.slice(2)];
-    return Array.isArray(item) ? moved : { ...(item as EchartOption), value: moved };
+    return Array.isArray(item) ? moved : { ...parseUnknownRecord(item), value: moved };
 }
 
 function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -186,13 +185,16 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const option = composed.value;
 
     const places = new Map(categories.value.map((category, place) => [String(category), place]));
-    const series = (Array.isArray(option.series) ? (option.series as EchartOption[]) : []).map((entry) => ({
-        ...entry,
-        data: (Array.isArray(entry.data) ? entry.data : []).flatMap((item) => {
-            const place = places.get(String(itemValue(item)?.[1] as Cell));
-            return place === undefined ? [] : [placedItem(item, place)];
-        }),
-    }));
+    const series = (isUnknownArray(option.series) ? option.series : []).map((entry) => {
+        const fields = parseUnknownRecord(entry) ?? {};
+        return {
+            ...fields,
+            data: (isUnknownArray(fields.data) ? fields.data : []).flatMap((item) => {
+                const place = places.get(String(itemValue(item)?.[1]));
+                return place === undefined ? [] : [placedItem(item, place)];
+            }),
+        };
+    });
 
     const wraps = categories.value.some((category) => String(category).length > DOTPLOT_WRAP_CHARACTERS);
     // The series place each dot by the index of its term, thus the axis can show the wrapped text of a term.
@@ -204,7 +206,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const lines = terms === undefined ? 1 : highestOf(terms.map((term) => term.split("\n").length));
     const body = (categories.value.length * (lines * DOTPLOT_LINE_PX + DOTPLOT_ROW_GAP_PX)) / DOTPLOT_PLOT_SHARE;
 
-    const maps = Array.isArray(option.visualMap) ? (option.visualMap as EchartOption[]) : [];
+    const maps = isUnknownArray(option.visualMap) ? option.visualMap.map((entry) => parseUnknownRecord(entry) ?? {}) : [];
     const keys: EchartOption[] = [];
     const graphic: EchartOption[] = [];
     const colorMap = maps.find((entry) => entry.show !== false);
@@ -218,14 +220,14 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     keys.push(...sizeMaps);
     const sizeMap = sizeMaps[0];
     if (size !== undefined && sizeMap !== undefined) {
-        const range = { min: toNumber(sizeMap.min as Cell) ?? 0, max: toNumber(sizeMap.max as Cell) ?? 0 };
+        const range = { min: toNumber(sizeMap.min) ?? 0, max: toNumber(sizeMap.max) ?? 0 };
         graphic.push(sizeLegend(range, scaleTitle(context.labels, size), formatSource(context, size)[0], DOTPLOT_SIZE_PLACE, formatSource(context, size)[1]));
     }
 
-    const composedX = typeof option.xAxis === "object" && option.xAxis !== null ? (option.xAxis as EchartOption) : {};
+    const composedX = parseUnknownRecord(option.xAxis) ?? {};
     const xAxis =
         composedX.type === "value"
-            ? { ...composedX, boundaryGap: [...DOTPLOT_VALUE_ROOM], axisLabel: { ...(composedX.axisLabel as EchartOption | undefined), hideOverlap: true } }
+            ? { ...composedX, boundaryGap: [...DOTPLOT_VALUE_ROOM], axisLabel: { ...parseUnknownRecord(composedX.axisLabel), hideOverlap: true } }
             : composedX;
     const drawn: EchartOption = {
         ...option,
@@ -246,7 +248,7 @@ function drawnMembers(series: readonly EchartOption[], dimension: number): numbe
     const members: number[] = [];
     for (const entry of series) {
         for (const item of Array.isArray(entry.data) ? entry.data : []) {
-            const member = toNumber(itemValue(item)?.[dimension] as Cell | undefined);
+            const member = toNumber(itemValue(item)?.[dimension]);
             if (member !== null) members.push(member);
         }
     }

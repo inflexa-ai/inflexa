@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ModelMessage, ToolResultPart } from "ai";
+import type { ModelMessage } from "ai";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import type { ResultAsync } from "neverthrow";
@@ -67,7 +67,7 @@ function assertValidSequence(messages: readonly ModelMessage[]): void {
         for (const b of m.content) {
             if (b.type === "tool-call") seenToolUse.add(b.toolCallId);
             if (b.type === "tool-result") {
-                expect(seenToolUse.has((b as ToolResultPart).toolCallId)).toBe(true);
+                expect(seenToolUse.has(b.toolCallId)).toBe(true);
             }
         }
     }
@@ -90,6 +90,15 @@ async function collectMetrics(): Promise<MetricData[]> {
         .getMetrics()
         .flatMap((rm) => rm.scopeMetrics)
         .flatMap((sm) => sm.metrics);
+}
+
+/** The histogram sum of the first data point, or a failed test when the point is not a histogram. */
+function sumOf(point: MetricData["dataPoints"][number]): number {
+    const value = point.value;
+    if (typeof value !== "object" || value === null || !("sum" in value) || typeof value.sum !== "number") {
+        throw new Error("expected a histogram data point with a numeric sum");
+    }
+    return value.sum;
 }
 
 // --- fixtures ---------------------------------------------------------------
@@ -528,12 +537,12 @@ describe("loadRecent overflow metric", () => {
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
         expect(evicted).toBeDefined();
         const evictedPoint = evicted!.dataPoints[0]!;
-        expect((evictedPoint.value as { sum: number }).sum).toBe(0);
+        expect(sumOf(evictedPoint)).toBe(0);
         expect(evictedPoint.attributes.eviction).toBe(false);
 
         const total = collected.find((m) => m.descriptor.name === "cortex.harness.thread.total_tokens");
         expect(total).toBeDefined();
-        expect((total!.dataPoints[0]!.value as { sum: number }).sum).toBeGreaterThan(0);
+        expect(sumOf(total!.dataPoints[0]!)).toBeGreaterThan(0);
     });
 
     it("reports the turns before a summary marker in the sixth of eight turns", async () => {
@@ -552,7 +561,7 @@ describe("loadRecent overflow metric", () => {
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
         expect(evicted).toBeDefined();
         const evictedPoint = evicted!.dataPoints[0]!;
-        expect((evictedPoint.value as { sum: number }).sum).toBe(5);
+        expect(sumOf(evictedPoint)).toBe(5);
         expect(evictedPoint.attributes.eviction).toBe(true);
     });
 });
@@ -1723,10 +1732,9 @@ describe("loadPage", () => {
 
     it("sends one statement for each page", async () => {
         await appendLabeled(6);
-        // The wrapper forwards `query` to the pool, and the page read only calls `query`. The cast
-        // gives the factory the `Pool` type that the wrapper stands in for.
+        // The wrapper forwards `query` to the pool, and the page read only calls `query`.
         const counted = countingQuerier(pool);
-        const counting = createThreadHistory(counted.querier as unknown as Pool);
+        const counting = createThreadHistory({ ...counted.querier, connect: () => pool.connect() });
 
         const newest = (await counting.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
         expect(counted.calls()).toBe(1);

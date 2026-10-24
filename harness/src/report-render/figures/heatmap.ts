@@ -152,14 +152,18 @@ function cellKey(cell: Cell | undefined): string {
 
 function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const encoding = block.encoding ?? {};
-    for (const member of ["x", "y", "value"] as const) {
-        if (encoding[member] === undefined) {
-            return err(chartProblem(block.id, `The heatmap chart needs a column for the "${member}" channel.`));
-        }
+    const xChannel = encoding.x;
+    const yChannel = encoding.y;
+    const valueChannel = encoding.value;
+    if (xChannel === undefined) {
+        return err(chartProblem(block.id, 'The heatmap chart needs a column for the "x" channel.'));
     }
-    const xChannel = encoding.x as ChartChannel;
-    const yChannel = encoding.y as ChartChannel;
-    const valueChannel = encoding.value as ChartChannel;
+    if (yChannel === undefined) {
+        return err(chartProblem(block.id, 'The heatmap chart needs a column for the "y" channel.'));
+    }
+    if (valueChannel === undefined) {
+        return err(chartProblem(block.id, 'The heatmap chart needs a column for the "value" channel.'));
+    }
     if (channelOrder(valueChannel) !== undefined) {
         return err(chartProblem(block.id, 'The "value" channel draws no category axis, thus it takes no "orderBy".'));
     }

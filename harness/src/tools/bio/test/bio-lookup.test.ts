@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchGeneTool } from "../search-gene.js";
 
@@ -14,7 +19,7 @@ function json(body: unknown): Response {
 }
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = (async () => response()) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async () => response());
 }
 
 describe("searchGene (bio-lookup family)", () => {
@@ -80,7 +85,7 @@ describe("searchGene (bio-lookup family)", () => {
 
     it("resolves an Ensembl gene ID to its approved symbol before it reaches Ensembl", async () => {
         const seen: string[] = [];
-        globalThis.fetch = (async (input: unknown) => {
+        globalThis.fetch = fetchDouble(async (input) => {
             const url = String(input);
             seen.push(url);
             const { hostname, pathname } = new URL(url);
@@ -104,7 +109,7 @@ describe("searchGene (bio-lookup family)", () => {
             }
             if (hostname === "www.ebi.ac.uk" && pathname.startsWith("/chembl")) return json({ targets: [] });
             return json({ id: "ENSG00000141510", display_name: "TP53", biotype: "protein_coding" });
-        }) as unknown as typeof fetch;
+        });
 
         const { ctx } = makeToolContext();
         const result = (await searchGeneTool.execute({ identifiers: ["ENSG00000141510"], species: "homo_sapiens" }, ctx))._unsafeUnwrap();
@@ -115,11 +120,11 @@ describe("searchGene (bio-lookup family)", () => {
     });
 
     it("reports an identifier that anchors on no human gene as notFound, not an error", async () => {
-        globalThis.fetch = (async (input: unknown) => {
+        globalThis.fetch = fetchDouble(async (input) => {
             const url = String(input);
             if (new URL(url).hostname === "rest.ensembl.org") return json({ id: "", display_name: "" });
             return json({});
-        }) as unknown as typeof fetch;
+        });
 
         const { ctx } = makeToolContext();
         const result = (await searchGeneTool.execute({ identifiers: ["CHEMBL99999999"], species: "homo_sapiens" }, ctx))._unsafeUnwrap();

@@ -62,7 +62,7 @@ export type FigurePresetType = (typeof FIGURE_PRESET_TYPES)[number];
 
 /** True when the chart type exists as a figure module alone. */
 export function isFigurePresetType(chartType: ChartType): chartType is FigurePresetType {
-    return (FIGURE_PRESET_TYPES as readonly string[]).includes(chartType);
+    return FIGURE_PRESET_TYPES_SET.has(chartType);
 }
 
 /**
@@ -73,12 +73,15 @@ export function isFigurePresetType(chartType: ChartType): chartType is FigurePre
  */
 export const MODULE_ONLY_TYPES = [...FIGURE_PRESET_TYPES, "heatmap", "volcano", "ma", "manhattan", "km"] as const;
 
+const MODULE_ONLY_TYPES_SET: ReadonlySet<string> = new Set(MODULE_ONLY_TYPES);
+const FIGURE_PRESET_TYPES_SET: ReadonlySet<string> = new Set(FIGURE_PRESET_TYPES);
+
 /** One chart type that draws through a figure module alone. */
 export type ModuleOnlyType = (typeof MODULE_ONLY_TYPES)[number];
 
 /** True when the chart type draws through a figure module alone. */
 export function isModuleOnlyType(chartType: ChartType): chartType is ModuleOnlyType {
-    return (MODULE_ONLY_TYPES as readonly string[]).includes(chartType);
+    return MODULE_ONLY_TYPES_SET.has(chartType);
 }
 
 /**

@@ -19,7 +19,7 @@ import { CompactionBlock } from "../components/compaction_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
-import { readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
+import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
 import type { ResolvedArtifact } from "../../api/artifacts.ts";
 import { resolveArtifacts } from "../../client/artifacts.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
@@ -204,27 +204,38 @@ export function MessageBlock(props: MessageBlockProps) {
     const parts = (): JSX.Element => (
         <For each={props.parts}>
             {(part): JSX.Element => {
-                switch (part.type) {
-                    case "text": {
-                        // The content switches source: the live `streamText` while the part streams, and
-                        // the stored `part.text` once it is flushed.
-                        const isStreaming = (): boolean => props.streamPartId() === part.key;
-                        return <MarkdownBody content={isStreaming() ? props.streamText() : part.text} paddingLeft={bodyPadLeft()} />;
+                // The parts the part registry does not hold — the core text and tool-call parts, the mock
+                // parts, and a newer emitter's `data-*` record. The registry guard runs BEFORE the
+                // discriminant switch, because every known part is also assignable to the passthrough record
+                // and only the guard narrows past it. Each part here renders by its local shape; an unknown
+                // record renders the mention.
+                if (!isKnownPart(part)) {
+                    switch (part.type) {
+                        case "text": {
+                            // The content switches source: the live `streamText` while the part streams, and
+                            // the stored `part.text` once it is flushed.
+                            const isStreaming = (): boolean => props.streamPartId() === part.key;
+                            return <MarkdownBody content={isStreaming() ? props.streamText() : part.text} paddingLeft={bodyPadLeft()} />;
+                        }
+                        case "thinking":
+                            return <ThinkingBlock text={part.text} durationMs={part.durationMs} />;
+                        case "tool-call":
+                            return (
+                                <ToolBlock
+                                    name={part.toolName}
+                                    detail={part.detail}
+                                    status={toolStatus(part.outcome)}
+                                    durationMs={part.durationMs}
+                                    activity={part.activity}
+                                />
+                            );
+                        case "file-edit":
+                            return <DiffBlock path={part.path} diff={part.diff} added={part.added} removed={part.removed} />;
+                        default:
+                            return <MarkdownBody content={mention(part.type)} paddingLeft={bodyPadLeft()} />;
                     }
-                    case "thinking":
-                        return <ThinkingBlock text={part.text} durationMs={part.durationMs} />;
-                    case "tool-call":
-                        return (
-                            <ToolBlock
-                                name={part.toolName}
-                                detail={part.detail}
-                                status={toolStatus(part.outcome)}
-                                durationMs={part.durationMs}
-                                activity={part.activity}
-                            />
-                        );
-                    case "file-edit":
-                        return <DiffBlock path={part.path} diff={part.diff} added={part.added} removed={part.removed} />;
+                }
+                switch (part.type) {
                     case "data-plan": {
                         const plan = readPlanCard(part);
                         return <PlanCardBlock planId={plan.planId} title={plan.title} steps={plan.steps} />;
@@ -283,12 +294,11 @@ export function MessageBlock(props: MessageBlockProps) {
                     case "data-run-failed":
                         return <MarkdownBody content={mention(part.type)} paddingLeft={bodyPadLeft()} />;
                     default: {
-                        // Exhaustive: a new Part kind without a case fails the build here. A frame keeps a
-                        // `data-*` type that this build does not know, thus a part can still reach here at
-                        // run time, and it renders the mention. The cast only reads the discriminant that
-                        // every part carries.
+                        // Exhaustive: a new part kind without a case fails the build here. The registry guard
+                        // above already routed every type this build does not know to its own rendering, thus
+                        // this arm is unreachable at run time and only the `never` assignment does work.
                         const unknownPart: never = part;
-                        return <MarkdownBody content={mention((unknownPart as { type: string }).type)} paddingLeft={bodyPadLeft()} />;
+                        return <MarkdownBody content={mention(String(unknownPart))} paddingLeft={bodyPadLeft()} />;
                     }
                 }
             }}

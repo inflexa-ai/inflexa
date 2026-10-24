@@ -6,7 +6,10 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type ColumnDisplay, type TablePayload } from "../table-data.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import type { ChartRow } from "../chart.js";
+import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type ColumnDisplay } from "../table-data.js";
+import { optionList, optionOf, optionStrings } from "./options.js";
 
 /**
  * The display of a plain column list. The encode never reads a display entry, thus a test that states
@@ -114,11 +117,33 @@ describe("encodeTablePayload", () => {
 describe("tableDataAsset", () => {
     const payload = encodeTablePayload(["gene"], [{ gene: "TP53" }], displayOf(["gene"]));
 
+    /** One record that the page staged: checked without a copy, so an own `__proto__` key survives. */
+    function isRecord(value: unknown): value is Record<string, unknown> {
+        try {
+            return parseUnknownRecord(value) !== undefined;
+        } catch {
+            return false;
+        }
+    }
+
+    /** The bound row that one parsed fixture row carries: a record of text and number cells. The cells ride
+     * through `Object.fromEntries`, so an own `__proto__` key of the fixture stays an own key of the row. */
+    function cellRow(value: unknown): ChartRow {
+        if (!isRecord(value)) throw new Error("a fixture row holds no record");
+        const pairs = Object.entries(value).map(([key, cell]): [string, string | number] => {
+            if (typeof cell !== "string" && typeof cell !== "number") throw new Error(`the fixture row holds the cell ${String(cell)} under ${key}`);
+            return [key, cell];
+        });
+        return Object.fromEntries(pairs);
+    }
+
     /** Run one asset as the page runs it, and give back the registry that it wrote. */
-    function registryOf(bytes: string): Record<string, TablePayload> {
+    function registryOf(bytes: string): Record<string, unknown> {
         const window: Record<string, unknown> = {};
         new Function("window", bytes).call(undefined, window);
-        return window[TABLE_DATA_GLOBAL] as Record<string, TablePayload>;
+        const registry = parseUnknownRecord(window[TABLE_DATA_GLOBAL]);
+        if (registry === undefined) throw new Error("the asset registered no table registry");
+        return registry;
     }
 
     it("registers the payload under the global map, keyed by the block id", () => {
@@ -126,20 +151,23 @@ describe("tableDataAsset", () => {
 
         expect(asset.bytes).toContain(`window.${TABLE_DATA_GLOBAL}`);
         expect(asset.bytes).toContain(`[${JSON.stringify("tbl-1")}]=`);
-        expect(registryOf(asset.bytes)["tbl-1"]).toEqual(payload);
+        const registered = registryOf(asset.bytes)["tbl-1"];
+        if (registered === undefined) throw new Error("the registry holds no tbl-1 entry");
+        expect(registered).toEqual(payload);
     });
 
     it("parses the payload instead of writing an object literal, thus a prototype key stays a column", () => {
         const columns = ["__proto__", "constructor"];
-        const rows = JSON.parse('[{"__proto__":"a","constructor":"b"}]') as Record<string, string | number>[];
+        const rows: ChartRow[] = optionList(JSON.parse('[{"__proto__":"a","constructor":"b"}]')).map((row) => cellRow(row));
         const asset = tableDataAsset(["tbl-1"], encodeTablePayload(columns, rows, displayOf(columns)));
 
         // An object literal with a `__proto__` key sets the prototype of the object. The parse defines an
         // own property for every key, thus the payload reaches the page with the columns that it declares.
         const registered = registryOf(asset.bytes)["tbl-1"];
         if (registered === undefined) throw new Error("the registry holds no tbl-1 entry");
-        expect(registered.columns).toEqual(columns);
-        expect(registered.rows).toEqual([["a", "b"]]);
+        const payload = optionOf(registered);
+        expect(optionStrings(payload.columns)).toEqual(columns);
+        expect(JSON.stringify(optionList(payload.rows))).toBe(JSON.stringify([["a", "b"]]));
     });
 
     it("names the file by the content hash of its bytes", () => {

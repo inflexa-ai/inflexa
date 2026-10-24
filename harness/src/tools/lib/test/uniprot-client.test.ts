@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { getUniProtRecord } from "../uniprot-client.js";
@@ -10,8 +16,7 @@ afterEach(() => {
 });
 
 function stubFetch(body: unknown): void {
-    globalThis.fetch = (async () =>
-        new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
 }
 
 // `UniProtRecordSchema` is private to the client, thus this table drives the
@@ -56,9 +61,19 @@ describe("the UniProtKB oracle", () => {
         // The published OpenAPI document is the evidence that the all-optional
         // record schema is contract-correct, and not a widening without a
         // reason.
-        const oracle = readFixture("uniprot", "uniprotkb_openapi.json") as {
-            components: { schemas: Record<string, { required?: string[]; properties?: Record<string, unknown> }> };
-        };
+        const oracle = z
+            .object({
+                components: z.object({
+                    schemas: z.record(
+                        z.string(),
+                        z.object({
+                            required: z.array(z.string()).optional(),
+                            properties: z.record(z.string(), z.unknown()).optional(),
+                        }),
+                    ),
+                }),
+            })
+            .parse(readFixture("uniprot", "uniprotkb_openapi.json"));
         const entry = oracle.components.schemas["UniProtKBEntry"]!;
 
         expect(entry.required).toBeUndefined();

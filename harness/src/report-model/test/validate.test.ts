@@ -6,6 +6,7 @@ import { valuesMatch } from "../assert-rules.js";
 import { createFixtureResolver } from "../fixture-resolver.js";
 import type { ReferenceResolver, ReportSnapshot } from "../reference-resolver.js";
 import { resolveDocumentReferences, validateReport, type ReportValidation } from "../validate.js";
+import { snapshotRows } from "../reference-resolver.js";
 
 const TABLE_A_PATH = "runs/run-1/step-a/output/de.csv";
 const TABLE_B_PATH = "runs/run-1/step-b/output/counts.csv";
@@ -37,16 +38,16 @@ const WRONG_HASH = `sha256:${"c".repeat(64)}`;
 const resolver = createFixtureResolver();
 
 /**
- * A row promises a value for each key that it holds. A real parser gives back an empty cell as an absent
- * key, as `undefined`, or as `null`, thus the cast is the only way to build the rows that the resolver
- * must reject.
+ * The rows carry the three absence shapes a real parser gives back for an empty cell: an absent key,
+ * `undefined`, and `null`. The row type admits each of the three, and the resolver's parse reads them
+ * as one absence before the scalar read refuses.
  */
 const sparseRows = [
     { label: "blank", value: "" },
     { label: "undefined-cell", value: undefined },
     { label: "null-cell", value: null },
     { label: "absent-cell" },
-] as unknown as Array<Record<string, string | number>>;
+];
 
 const snapshot: ReportSnapshot = {
     artifacts: {
@@ -849,9 +850,9 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         const { resolvedByBlock, resolvedBySlot, failures } = await resolveDocumentReferences(reportWith(slottedChart()).sections, snapshot, resolver);
         expect(failures).toEqual([]);
         // The binding keeps its place in the block map, thus every reader of a binding value reads the table.
-        expect(resolvedByBlock.get("chart-slots")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_B_PATH]?.rows ?? [] });
+        expect(resolvedByBlock.get("chart-slots")).toEqual({ type: "table", rows: snapshotRows(snapshot.artifacts[TABLE_B_PATH])._unsafeUnwrap() });
         const slots = resolvedBySlot.get("chart-slots");
-        expect(slots?.get("track")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH]?.rows ?? [] });
+        expect(slots?.get("track")).toEqual({ type: "table", rows: snapshotRows(snapshot.artifacts[TABLE_A_PATH])._unsafeUnwrap() });
         expect(slots?.get("statistic:0")).toEqual({ type: "scalar", value: 10 });
         expect(slots?.get("statistic:1")).toEqual({ type: "scalar", value: 1.05 });
     });
@@ -903,8 +904,8 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         const { resolvedBySlot, failures } = await resolveDocumentReferences(reportWith(treeChart()).sections, snapshot, resolver);
         expect(failures).toEqual([]);
         const slots = resolvedBySlot.get("chart-trees");
-        expect(slots?.get("tree:x")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH]?.rows ?? [] });
-        expect(slots?.get("tree:y")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH]?.rows ?? [] });
+        expect(slots?.get("tree:x")).toEqual({ type: "table", rows: snapshotRows(snapshot.artifacts[TABLE_A_PATH])._unsafeUnwrap() });
+        expect(slots?.get("tree:y")).toEqual({ type: "table", rows: snapshotRows(snapshot.artifacts[TABLE_A_PATH])._unsafeUnwrap() });
     });
 
     it("names the block and the slot of a tree column that the tree table does not hold", async () => {
@@ -1683,5 +1684,86 @@ describe("assert-rules — one semantics for each realization", () => {
         const throughFixture = (await validateReport(reportWith(deltaMetric("metric-agree", { value: expected, tolerance })), snapshot, resolver)).valid;
         expect(shared).toBe(true);
         expect(throughFixture).toBe(shared);
+    });
+});
+
+describe("snapshotRows", () => {
+    const PROTO_PATH = "runs/run-1/step-f/output/proto.csv";
+    const MALFORMED_PATH = "runs/run-1/step-g/output/bad.csv";
+    const PROTO_HASH = `sha256:${"7".repeat(64)}`;
+    const MALFORMED_HASH = `sha256:${"8".repeat(64)}`;
+
+    it("refuses a cell that is neither a string nor a number through the Err channel, not a throw", () => {
+        // The cell shape of a row admits a string and a number alone. The definition writes the boolean
+        // that the declared shape forbids, so the parse reads a lying row that a stored snapshot can hold.
+        const row: Record<string, string | number> = { gene: "TP53" };
+        Object.defineProperty(row, "value", { value: true, enumerable: true, writable: true, configurable: true });
+        const result = snapshotRows({ hash: MALFORMED_HASH, rows: [row] });
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error).toContain("value");
+    });
+
+    it("refuses an entry of the rows list that is not a record", () => {
+        // The definitions write the flat entry that the declared shape forbids, with no cast: the value
+        // rides in the descriptor, and the length makes the list hold it.
+        const rows: Array<Record<string, string | number>> = [];
+        Object.defineProperty(rows, 0, { value: "a flat row", enumerable: true, writable: true, configurable: true });
+        Object.defineProperty(rows, "length", { value: 1 });
+        const result = snapshotRows({ hash: MALFORMED_HASH, rows });
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error).toContain("row 0");
+    });
+
+    it("holds a column that an own prototype-named key carries", () => {
+        // An object literal at the key `__proto__` sets the prototype. The definition writes an own key,
+        // the shape a stored payload carries, and the row holds the column that the key names.
+        const row: Record<string, string | number> = { gene: "TP53" };
+        Object.defineProperty(row, "__proto__", { value: 6, enumerable: true, writable: true, configurable: true });
+        const read = snapshotRows({ hash: PROTO_HASH, rows: [row] })._unsafeUnwrap();
+        const parsed = read[0];
+        if (parsed === undefined) throw new Error("the parse gives one row");
+        expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+        expect(parsed["__proto__"]).toBe(6);
+    });
+
+    it("refuses a reference into a malformed artifact instead of throwing out of the resolver", async () => {
+        const row: Record<string, string | number> = { gene: "TP53" };
+        Object.defineProperty(row, "value", { value: true, enumerable: true, writable: true, configurable: true });
+        const malformed: ReportSnapshot = { artifacts: { [MALFORMED_PATH]: { hash: MALFORMED_HASH, rows: [row] } } };
+        const result = await resolver.resolve(
+            { kind: "artifact-value", run: "run-1", path: MALFORMED_PATH, hash: MALFORMED_HASH, locator: { column: "value", row: 0 } },
+            malformed,
+        );
+        const failure = result._unsafeUnwrapErr();
+        expect(failure.reason).toBe("unreadable-artifact");
+        expect(failure.detail).toContain("value");
+    });
+
+    it("resolves a value reference whose column is an own prototype-named key", async () => {
+        const row: Record<string, string | number> = { gene: "TP53" };
+        Object.defineProperty(row, "__proto__", { value: 6, enumerable: true, writable: true, configurable: true });
+        const protoSnapshot: ReportSnapshot = { artifacts: { [PROTO_PATH]: { hash: PROTO_HASH, rows: [row] } } };
+        const result = await resolver.resolve(
+            { kind: "artifact-value", run: "run-1", path: PROTO_PATH, hash: PROTO_HASH, locator: { column: "__proto__", row: 0 } },
+            protoSnapshot,
+        );
+        expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: 6 });
+    });
+
+    it("resolves a table reference whose projected column is an own prototype-named key", async () => {
+        const row: Record<string, string | number> = { gene: "TP53" };
+        Object.defineProperty(row, "__proto__", { value: 6, enumerable: true, writable: true, configurable: true });
+        const protoSnapshot: ReportSnapshot = { artifacts: { [PROTO_PATH]: { hash: PROTO_HASH, rows: [row] } } };
+        const result = await resolver.resolve(
+            { kind: "artifact-table", run: "run-1", path: PROTO_PATH, hash: PROTO_HASH, columns: ["__proto__"] },
+            protoSnapshot,
+        );
+        const resolved = result._unsafeUnwrap();
+        if (resolved.type !== "table") throw new Error("the resolution gives a table");
+        const projected = resolved.rows[0];
+        if (projected === undefined) throw new Error("the projection gives one row");
+        // A plain assignment at this key reaches the prototype setter, thus the projection would lose the cell.
+        expect(Object.hasOwn(projected, "__proto__")).toBe(true);
+        expect(projected["__proto__"]).toBe(6);
     });
 });

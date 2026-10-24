@@ -45,10 +45,10 @@
  */
 
 import { type ResultAsync, errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
 
-import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import { type DbError, type Connectable, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import type { DomainError } from "../lib/result.js";
+import type { Querier } from "../state/db.js";
 
 /**
  * The kind of session a thread holds. `conversation` is the analysis
@@ -109,8 +109,8 @@ export type CreateThreadInput = {
     readonly threadId: string;
     readonly analysisId: string;
     readonly title?: string | null;
-    /** Omitted is `conversation` — what a thread is when nothing says otherwise. */
-    readonly type?: ThreadType;
+    /** Omitted is `conversation` — what a thread is when nothing says otherwise. The store refuses a value outside the closed set at runtime: an untyped caller (a JSON body across a package boundary) can hand in any string, and `unknown_thread_type` is the declared refusal for it. */
+    readonly type?: ThreadType | string;
     /**
      * The thread this one is spawned from. It must belong to the same analysis
      * as the child; whether it exists at all is the foreign key's verdict, not
@@ -359,7 +359,10 @@ const MAX_PER_PAGE = 200;
  * capturing `pool` (dependency injection per the harness-durable-runtime spec). The
  * `cortex_analysis_threads` table is provisioned by the state-init DDL.
  */
-export function createThreadStore(pool: Pool): ThreadStore {
+/** What this module reads of the pool: the direct `query` plus the transactional `connect`. */
+type ThreadStorePool = Querier & Connectable;
+
+export function createThreadStore(pool: ThreadStorePool): ThreadStore {
     /**
      * The parent's own analysis scope, or `null` when no such row exists.
      *
