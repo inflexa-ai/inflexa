@@ -25,14 +25,14 @@ import type { ProvenanceRecord, InputRef, InputSource, Producer } from "./types.
  * and stable (e.g., `recordFileToolWrite` for in-process agent tool
  * writes) may pass a non-empty hash directly.
  */
-export interface ObservedWrite {
+export type ObservedWrite = {
     /** Analysis-relative path (e.g., "runs/run-001/step-de/output/results.csv") */
     path: string;
     /** SHA-256 hash of the file content. Empty string when deferred to reconcile. */
     hash: string;
     /** File size in bytes. */
     size: number;
-}
+};
 
 // ── Script path inference ───────────────────────────────────────────
 
@@ -62,11 +62,11 @@ function inferScriptPath(command: string, args?: string[]): string | null {
 /** Explicit classification context for a file read. Callers build this
  *  from the step's own coordinates (stepId/runId/dependsOn) instead of the
  *  collector parsing paths. */
-export interface InputClassificationContext {
+export type InputClassificationContext = {
     source: InputSource;
     stepId?: string;
     runId?: string;
-}
+};
 
 /**
  * The outcome of classifying one read: an input edge the step may assert, or
@@ -159,12 +159,12 @@ export function classifyReadPath(relativePath: string, ownStepId: string, ownRun
 
 // ── Collector ───────────────────────────────────────────────────────
 
-export interface ProvenanceCollectorOptions {
+export type ProvenanceCollectorOptions = {
     stepId: string;
     runId: string;
     /** Step IDs this step depends on (for upstream mount enumeration). */
     dependsOn?: string[];
-}
+};
 
 export class ProvenanceCollector {
     readonly stepId: string;

@@ -51,11 +51,11 @@ import type { FigureContext, FigureMember, FigureModule, FigureTrack } from "./i
 import { COLUMN_PLOT_FRAME, textWidthPx } from "./label-room.js";
 
 /** One LD bin: the r² range, lower end included, and its color. The highest bin includes 1. */
-export interface LdBin {
+export type LdBin = {
     readonly low: number;
     readonly high: number;
     readonly color: string;
-}
+};
 
 /** The five r² bins of LocusZoom, in ascending order, with its colors: navy, sky blue, green, orange, and red. */
 export const LD_BINS: readonly LdBin[] = [
@@ -173,13 +173,13 @@ type LocusColumns = {
 };
 
 /** One gene of the window: its clipped span, its name, the center of its name, and its lane. */
-interface Gene {
+type Gene = {
     readonly start: number;
     readonly end: number;
     readonly name: string;
     readonly center: number;
     readonly lane: number;
-}
+};
 
 function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const columns = locusColumns(block, rows, context);
@@ -400,7 +400,7 @@ function ratesInOrder(rows: readonly ChartRow[], xs: readonly (number | null)[],
 }
 
 /** The marks that the name of the genome-wide line keeps clear of, and the frame of the plot. */
-interface GuideRoom {
+type GuideRoom = {
     readonly xs: readonly (number | null)[];
     readonly ys: readonly (number | null)[];
     readonly rated: ReadonlyArray<readonly [number, number]>;
@@ -408,7 +408,7 @@ interface GuideRoom {
     readonly rateTop: number;
     readonly window: PositionWindow;
     readonly layout: BandLayout;
-}
+};
 
 /**
  * The position where the name of the genome-wide line starts: the first spot from the left end where the box
@@ -539,11 +539,11 @@ function guideSeries(text: string, line: number, room: GuideRoom): EchartOption 
 }
 
 /** The window of the position axis: the ends of the rows, and the round tick step. */
-interface PositionWindow {
+type PositionWindow = {
     readonly min: number;
     readonly max: number;
     readonly step: number;
-}
+};
 
 /**
  * The window of the positions: the smallest and the largest position, and the smallest round step that draws
@@ -768,14 +768,14 @@ function geneSeries(genes: readonly Gene[], yAxisIndex: number): EchartOption {
 }
 
 /** The bands of the chart in percent of its body, and the body in pixels. */
-interface BandLayout {
+type BandLayout = {
     readonly top: number;
     readonly plotBottom: number;
     readonly trackBottom: number;
     readonly band: number;
     readonly right: number;
     readonly bodyPx: number;
-}
+};
 
 /**
  * The bands of one chart. A band past `LANES_IN_BODY` lanes grows the body by one lane of the default body for

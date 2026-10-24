@@ -26,7 +26,7 @@ import type { ResultAsync } from "neverthrow";
 
 import type { DbError } from "../lib/db-result.js";
 
-export interface WorkflowPurger {
+export type WorkflowPurger = {
     /** Workflow ids in a given id namespace (e.g. `dataprofile:{analysisId}:`). Empty when the ledger has no schema yet. */
     findByIdPrefix(prefix: string): ResultAsync<string[], DbError>;
     /** Cancel the given workflows so no executor keeps writing behind a purge. Unknown ids are ignored. */
@@ -38,4 +38,4 @@ export interface WorkflowPurger {
      * reports no count of its own.
      */
     deleteWorkflows(workflowIds: readonly string[], includeDescendants?: boolean): ResultAsync<number, DbError>;
-}
+};

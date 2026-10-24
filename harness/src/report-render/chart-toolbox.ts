@@ -177,10 +177,10 @@ export const GENOME_POSITION_FUNCTION = "reportGenomePosition";
 export const GENOME_MEMBER = "genome";
 
 /** The genome member of an axis: the series that names the chromosomes, and the start and the label of each chromosome in position order. */
-export interface GenomeAxis {
+export type GenomeAxis = {
     readonly names: string;
     readonly starts: ReadonlyArray<readonly [number, string]>;
-}
+};
 
 /** The bases in one megabase, the unit of a position on a genome axis. */
 const BASES_PER_MEGABASE = 1e6;

@@ -24,20 +24,20 @@ import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
  * The minimum shape the scheduler needs from a plan step. Larger workflow-state
  * schemas are a superset of this, keeping the scheduler decoupled.
  */
-export interface PlanStep {
+export type PlanStep = {
     readonly id: string;
     readonly depends_on: readonly string[];
-}
+};
 
 /** Budget-admission inputs — the snapshotted machine budget from the workflow
  *  input plus each step's plan-declared resources. */
-export interface BudgetAdmission {
+export type BudgetAdmission = {
     readonly budget: MachineBudget;
     readonly resourcesByStepId: Readonly<Record<string, ResourceSpec>>;
-}
+};
 
 /** Partition of the dependency-satisfied steps under budget admission. */
-export interface ScheduledSteps {
+export type ScheduledSteps = {
     /** Steps to start now — they fit the remaining budget capacity. */
     readonly admit: readonly string[];
     /** Dependency-satisfied steps held until in-flight steps free capacity. */
@@ -45,7 +45,7 @@ export interface ScheduledSteps {
     /** Steps whose declared resources exceed the budget outright — they could
      *  never be admitted even against an empty budget. */
     readonly neverFits: readonly string[];
-}
+};
 
 // ── Errors ───────────────────────────────────────────────────────────
 

@@ -61,22 +61,22 @@ const DEFAULT_ANALYSIS_ID = "analysis-001";
  * to model a durable round trip. The found load carries the stored analysis and the prior document as the
  * concurrency token. A fault flag forces the failure outcome.
  */
-interface FakeGateway extends ReportSessionStateGateway {
+type FakeGateway = ReportSessionStateGateway & {
     seed(threadId: string, state: ReportSessionState, analysisId?: string): void;
     /** Seed the derivation ledger of a thread. A thread with no seed carries an empty ledger. */
     seedDerivations(threadId: string, derivations: readonly DerivationRecord[]): void;
     setFault(fault: boolean): void;
     /** The hash that the last `stampRendered` wrote for the thread, or `null` when no stamp landed. */
     renderedHash(threadId: string): string | null;
-}
+};
 
-interface FakeRow {
+type FakeRow = {
     state: ReportSessionState;
     analysisId: string;
     rendered: string | null;
     seen: string | null;
     derivations: readonly DerivationRecord[];
-}
+};
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, FakeRow>();

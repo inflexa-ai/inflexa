@@ -56,7 +56,7 @@ const MonarchAssociationPageSchema = z.object({
 });
 
 /** A curated human phenotype attributed to variation in the gene. */
-export interface MonarchPhenotypeAssociation {
+export type MonarchPhenotypeAssociation = {
     /** HPO term id, e.g. `HP:0001392`. */
     readonly hpoId: string;
     readonly label: string;
@@ -69,13 +69,13 @@ export interface MonarchPhenotypeAssociation {
     /** Share of affected individuals showing the phenotype, when annotated. */
     readonly frequencyPercent: number | null;
     readonly primaryKnowledgeSource: string | null;
-}
+};
 
-export interface MonarchGeneProfile {
+export type MonarchGeneProfile = {
     /** The curie the gene was queried by, e.g. `HGNC:1097`. */
     readonly geneCurie: string;
     readonly phenotypes: MonarchPhenotypeAssociation[];
-}
+};
 
 async function fetchAssociations(geneCurie: string, category: string): Promise<MonarchAssociation[]> {
     const params = new URLSearchParams({

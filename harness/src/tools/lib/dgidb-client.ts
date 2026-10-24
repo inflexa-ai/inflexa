@@ -50,7 +50,7 @@ const DRUG_INTERACTIONS_QUERY = `query($drugs: [String!]!) {
   }
 }`;
 
-export interface DgidbInteraction {
+export type DgidbInteraction = {
     geneName: string;
     drugName: string;
     drugConceptId?: string;
@@ -61,15 +61,15 @@ export interface DgidbInteraction {
     publicationCount: number;
     pmids: string[];
     attributes?: { name: string; value: string }[];
-}
+};
 
-export interface DgidbResult {
+export type DgidbResult = {
     input: string;
     found: boolean;
     interactions: DgidbInteraction[];
     /** Interactions this input had before `limit` trimmed them. */
     totalInteractions: number;
-}
+};
 
 // Shape of the DGIdb GraphQL payload as it arrives on the wire. Validated at
 // the fetch boundary; `mapInteraction` normalizes each record. GraphQL always
@@ -113,13 +113,13 @@ const MAX_PMIDS = 5;
 const MAX_ATTRIBUTES = 10;
 const MAX_ATTRIBUTE_CHARS = 160;
 
-export interface DgidbFilters {
+export type DgidbFilters = {
     interactionTypes?: string[];
     sourceDbs?: string[];
     minSources?: number;
     includeAttributes?: boolean;
     limit?: number;
-}
+};
 
 function mapInteraction(
     raw: RawInteraction,

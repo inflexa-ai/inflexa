@@ -16,17 +16,17 @@ import type { StoredMessage, StoredTurnRecord } from "../thread-history.js";
 type TurnEvent = Parameters<EmitFn>[0];
 
 /** One model call of the loop: the events that it emits, and the messages that the round sink gets. */
-interface Round {
+type Round = {
     readonly events: readonly TurnEvent[];
     readonly model: readonly ModelMessage[];
-}
+};
 
 /** The facts that only a stored row holds. */
-interface RowFacts {
+type RowFacts = {
     readonly turn?: StoredTurnRecord;
     readonly author?: string;
     readonly createdAt?: Date;
-}
+};
 
 const ROOT = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
 const SUB = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"], invocationId: "t2" };

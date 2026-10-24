@@ -20,9 +20,9 @@ import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../works
 
 import { generateStepSummary, type GenerateStepSummaryOptions } from "../step-summary.js";
 
-interface RecordedCall {
+type RecordedCall = {
     readonly req: ChatRequest;
-}
+};
 
 function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provider: ChatProvider; calls: RecordedCall[] } {
     const calls: RecordedCall[] = [];

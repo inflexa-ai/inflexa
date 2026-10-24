@@ -44,10 +44,10 @@ export function quarantineReason(path: string): QuarantineReason | undefined {
     return undefined;
 }
 
-export interface QuarantineResult {
+export type QuarantineResult = {
     readonly kept: readonly ScannedFile[];
     readonly summary: QuarantineSummary;
-}
+};
 
 export function quarantine(files: readonly ScannedFile[]): QuarantineResult {
     const kept: ScannedFile[] = [];

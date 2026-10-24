@@ -76,7 +76,7 @@ export type ReadBytesResult = { readonly kind: "ok"; readonly bytes: Buffer } | 
 
 // ── Seam interface ────────────────────────────────────────────────────────
 
-export interface WorkspaceFilesystem {
+export type WorkspaceFilesystem = {
     /**
      * Read a workspace file. `headLines` / `tailLines` (mutually exclusive,
      * enforced by the caller) constrain the read to the first N / last N
@@ -115,23 +115,23 @@ export interface WorkspaceFilesystem {
     }): ResultAsync<ReadBytesResult, FsError>;
     list(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): ResultAsync<ListResult, FsError>;
     stat(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): ResultAsync<StatResult, FsError>;
-}
+};
 
 /**
  * Adapter for fetching files that aren't present locally. The managed
  * realization downloads via object-store presigned URLs; the OSS build omits
  * the fallback (files are local) and tests pass a fake.
  */
-export interface PresignedFallback {
+export type PresignedFallback = {
     fetch(args: { readonly session: AgentSession; readonly relativePath: string }): Promise<Buffer | null>;
-}
+};
 
-export interface WorkspaceFilesystemDeps {
+export type WorkspaceFilesystemDeps = {
     /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Optional fallback for files not present locally. */
     readonly presignedFallback?: PresignedFallback;
-}
+};
 
 // ── Constructor ───────────────────────────────────────────────────────────
 

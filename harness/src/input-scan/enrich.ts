@@ -55,13 +55,13 @@ export const SANDBOX_CONTAINER_FORMATS: ReadonlySet<string> = new Set(["parquet"
 const CONTAINER_DECODER = new URL("./decoder/container_readout.py", import.meta.url);
 
 /** One file to read a header from, and what the scan already knows about its bytes. */
-export interface ReadoutTargetSpec {
+export type ReadoutTargetSpec = {
     readonly path: string;
     readonly format: string;
     readonly wrapper?: string;
-}
+};
 
-export interface ReadHeadersArgs {
+export type ReadHeadersArgs = {
     readonly targets: readonly ReadoutTargetSpec[];
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
@@ -72,9 +72,9 @@ export interface ReadHeadersArgs {
     readonly mountRoot: string;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
-}
+};
 
-export interface EnrichShapesArgs {
+export type EnrichShapesArgs = {
     readonly shapes: readonly FileShape[];
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
@@ -85,7 +85,7 @@ export interface EnrichShapesArgs {
     readonly mountRoot: string;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
-}
+};
 
 /**
  * Read a header from each named file, keyed by path.

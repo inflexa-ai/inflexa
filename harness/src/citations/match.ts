@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 import { authorNamesMatch, normalizeAuthor, normalizeComparable } from "./normalize.js";
 import type { CitationCandidateCluster, CitationIdentifiers, CitationInput, CitationRecord, NormalizedCitation } from "./types.js";
 
-export interface CitationMatchConfig {
+export type CitationMatchConfig = {
     readonly minimumScore: number;
     readonly separationMargin: number;
     readonly clusterSimilarity: number;
     readonly relatedVersionSimilarity: number;
-}
+};
 
 export const DEFAULT_MATCH_CONFIG: CitationMatchConfig = {
     minimumScore: 0.72,

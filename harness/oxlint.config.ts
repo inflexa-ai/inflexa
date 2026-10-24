@@ -137,8 +137,6 @@ export default typescript({
             // rules whose few reports the harness keeps deliberately.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #704 rewrites each `interface` as a `type` alias.
-                "@inflexa-ai/no-interface": "off",
                 // #707 turns the assertion-safety set back on.
                 "@inflexa-ai/no-double-cast": "off",
                 "@inflexa-ai/require-assertion-safety": "off",

@@ -29,13 +29,13 @@ const MAX_FILENAME_LEN = 64;
 /** Fallback download filename when no heading is available to derive one from. */
 const DEFAULT_FILENAME = "chart";
 
-export interface NormalizeEchartSpecOptions {
+export type NormalizeEchartSpecOptions = {
     /**
      * The `show_user` `title` param — the card heading rendered above the chart canvas. Seeds the
      * `saveAsImage` download filename when the author supplied none.
      */
     title?: string;
-}
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);

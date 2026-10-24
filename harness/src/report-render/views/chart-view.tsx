@@ -42,11 +42,11 @@ import { scriptJson } from "../script-json.js";
  * `bodyPx` is the height of the body, and `widthPx` is the width of a figure that draws a block of a fixed
  * size.
  */
-export interface ChartCard {
+export type ChartCard = {
     readonly svg?: { readonly single: string; readonly double: string };
     readonly bodyPx: number;
     readonly widthPx?: number;
-}
+};
 
 /** The card of a chart with the default body and no SVG file. */
 const PLAIN_CARD: ChartCard = { bodyPx: CHART_BODY_PX };

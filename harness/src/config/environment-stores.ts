@@ -30,7 +30,7 @@ import type { Track } from "../sandbox/package-identity.js";
  * location the container mountpoint does not describe; absence must never be
  * reported as a failure.
  */
-export interface EnvironmentStorePaths {
+export type EnvironmentStorePaths = {
     /**
      * Host path of the reference store — the same bytes sandboxes mount at
      * `/mnt/refs`. Omit when the host's own process sees the store at that same
@@ -75,7 +75,7 @@ export interface EnvironmentStorePaths {
      * transient.
      */
     readonly readPoolInventory?: () => Promise<PoolInventoryRead>;
-}
+};
 
 /**
  * What one pool-scope inventory read produced: the sections, or the reason
@@ -86,7 +86,7 @@ export type PoolInventoryRead =
     { readonly kind: "sections"; readonly sections: readonly PoolInventorySection[] } | { readonly kind: "unavailable"; readonly reason: string };
 
 /** One package entry of an inventory section, with the store identity where the source records it. */
-export interface PoolInventoryPackage {
+export type PoolInventoryPackage = {
     readonly name: string;
     /** The pinned version, rendered as `name==version`. Absent where the source pins none. */
     readonly version?: string;
@@ -94,10 +94,10 @@ export interface PoolInventoryPackage {
     readonly storeDir?: string;
     /** The full sha256 of the sorted store tree. */
     readonly hash?: string;
-}
+};
 
 /** One language-track section of an inventory, as `list_available_packages` renders it. */
-export interface PoolInventorySection {
+export type PoolInventorySection = {
     readonly title: string;
     /**
      * The ecosystem that holds the packages of this section. It carries the
@@ -109,4 +109,4 @@ export interface PoolInventorySection {
      */
     readonly track?: Track;
     readonly packages: readonly PoolInventoryPackage[];
-}
+};

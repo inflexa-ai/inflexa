@@ -116,10 +116,10 @@ function vectorId(analysisId: string, rel: string): string {
     return `/${analysisId}/runs/${RUN_ID}/${STEP_ID}/${rel}`;
 }
 
-interface IndexedRow {
+type IndexedRow = {
     id: string;
     metadata: Record<string, unknown>;
-}
+};
 
 /** What actually landed in the per-analysis index, or `[]` if the table was never created. */
 async function readIndex(pool: Pool, analysisId: string): Promise<IndexedRow[]> {

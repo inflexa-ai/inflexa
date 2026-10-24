@@ -84,7 +84,7 @@ import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawn
  * Input the parent hands the child. Must be JSON-serialisable — DBOS
  * persists this as the workflow's input row.
  */
-export interface SandboxStepInput {
+export type SandboxStepInput = {
     readonly analysisId: string;
     readonly runId: string;
     readonly stepId: string;
@@ -145,7 +145,7 @@ export interface SandboxStepInput {
      * from `cortex_runs`.
      */
     readonly runSession: SpawnSession;
-}
+};
 
 /**
  * Fallback when the plan step omits `timeout`. Plans that need 3-hour runs
@@ -171,14 +171,14 @@ export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
  */
 export const CHILD_SUSPENDED_TOPIC = "child-suspended";
 
-export interface ChildSuspended {
+export type ChildSuspended = {
     readonly kind: "suspended";
     readonly childWorkflowId: string;
     readonly stepId: string;
     readonly reason: string;
-}
+};
 
-export interface SandboxStepResult {
+export type SandboxStepResult = {
     readonly status: SandboxStepStatus;
     readonly durationMs: number;
     readonly finishReason: string | null;
@@ -194,18 +194,18 @@ export interface SandboxStepResult {
      * result shape recovers without it.
      */
     readonly usage?: TokenUsageRollup;
-}
+};
 
 // ── Step detail emit shapes ───────────────────────────────────────────
 
 /** One file in the step's terminal file tree / output listing. */
-export interface StepFileEntry {
+export type StepFileEntry = {
     readonly path: string;
     readonly size: number;
     /** Schema-conformant `StepOutputFile.fileType`. */
     readonly fileType: "script" | "output" | "figure" | "log" | "notebook" | "summary";
     readonly description: string;
-}
+};
 
 /**
  * Post-step detail the body emits to the run stream once the bookkeeping
@@ -213,12 +213,12 @@ export interface StepFileEntry {
  * summary, and the reconciled artifact manifest. `collectStepOutputs`
  * assembles it from the same stash the vector-index step consumes.
  */
-export interface StepOutputs {
+export type StepOutputs = {
     /** Reconciled artifact files with category + description + size. */
     readonly files: readonly StepFileEntry[];
     /** Generated step summary markdown (empty when none produced). */
     readonly summaryMarkdown: string;
-}
+};
 
 /**
  * The typed post-step products threaded through the workflow body: file
@@ -228,11 +228,11 @@ export interface StepOutputs {
  * composition, so the producer→consumer ordering is a type constraint rather
  * than an implicit contract over shared mutable state.
  */
-export interface PostStepArtifacts {
+export type PostStepArtifacts = {
     readonly metadataEntries: readonly FileMetadataEntry[];
     readonly summary: StepSummary | undefined;
     readonly reconciledManifest: readonly ArtifactManifestEntry[];
-}
+};
 
 // ── Dep injection ─────────────────────────────────────────────────────
 
@@ -241,7 +241,7 @@ export interface PostStepArtifacts {
  * deps factory. The parent supplies the durable inputs; the factory
  * supplies the live sandbox ref and the deadline.
  */
-export interface SandboxAgentBuildContext {
+export type SandboxAgentBuildContext = {
     readonly input: SandboxStepInput;
     readonly session: RunSession;
     readonly sandbox: SandboxRef;
@@ -268,7 +268,7 @@ export interface SandboxAgentBuildContext {
     readonly citationResolver: CitationResolver;
     /** Give it to `SandboxAgentDeps.toolOutputStore`: each loop of the step keeps its texts in it. */
     readonly toolOutputStore?: ToolOutputStore;
-}
+};
 
 /**
  * Inversion of control: the parent supplies the live agent, the parent's
@@ -276,7 +276,7 @@ export interface SandboxAgentBuildContext {
  * free of per-agent imports means it can drive every agent in the catalog
  * without becoming a switch on agentId.
  */
-export interface SandboxStepDeps {
+export type SandboxStepDeps = {
     readonly pool: Pool;
     /**
      * Operational logging seam. Omit it and the body falls back to a no-op —
@@ -326,7 +326,7 @@ export interface SandboxStepDeps {
      * workspace mutate tools enforce write confinement against this path.
      */
     resolveWritePrefix(input: SandboxStepInput): Promise<string>;
-}
+};
 
 /**
  * Per-step context passed to every post-step dep. Carries the durable input
@@ -336,7 +336,7 @@ export interface SandboxStepDeps {
  * `lineageCollector` carries the runtime-observed input/script edges the
  * step loop accumulated, which registration translates into managed-root parents.
  */
-export interface PostStepContext {
+export type PostStepContext = {
     readonly input: SandboxStepInput;
     readonly session: RunSession;
     readonly transcript: readonly LoopMessage[];
@@ -350,7 +350,7 @@ export interface PostStepContext {
     readonly sandboxId: string;
     /** Same step-scoped collector the agent loop fed each exec frame into. */
     readonly lineageCollector: ProvenanceCollector;
-}
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────
 

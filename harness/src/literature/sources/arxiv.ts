@@ -2,7 +2,7 @@ import { requestText, type SourceHttpOptions, type SourceHttpResult } from "./ht
 
 const BASE_URL = "https://export.arxiv.org/api/query";
 
-export interface ArxivPaper {
+export type ArxivPaper = {
     id: string;
     title: string;
     abstract: string;
@@ -11,18 +11,18 @@ export interface ArxivPaper {
     categories: string[];
     url: string;
     pdfUrl?: string;
-}
+};
 
-export interface ArxivSearchInput {
+export type ArxivSearchInput = {
     readonly query: string;
     readonly categories?: readonly string[];
     readonly limit: number;
-}
+};
 
-export interface ArxivSource {
+export type ArxivSource = {
     search(input: ArxivSearchInput, signal?: AbortSignal): Promise<SourceHttpResult<ArxivPaper[]>>;
     lookupExact(id: string, limit: number, signal?: AbortSignal): Promise<SourceHttpResult<ArxivPaper[]>>;
-}
+};
 
 const stripCdata = (value: string): string => value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
 

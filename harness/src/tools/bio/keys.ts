@@ -15,7 +15,7 @@ import { createSearchRegulatoryApprovalsTool } from "./search-regulatory-approva
  * may be empty when its source is unconfigured — the tool surfaces the
  * resulting auth failure as a normal tool error.
  */
-export interface BioToolKeys {
+export type BioToolKeys = {
     readonly drugbank: string;
     readonly disgenet: string;
     readonly epaCcte: string;
@@ -23,7 +23,7 @@ export interface BioToolKeys {
     readonly github?: string;
     readonly semanticScholar?: string;
     readonly amass?: string;
-}
+};
 
 /**
  * The NCBI-backed literature tool, built from the shared key slice.

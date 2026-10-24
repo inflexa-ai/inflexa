@@ -226,11 +226,11 @@ export function orderQuickCategories(
 export type ColumnChannel = Exclude<keyof ChartEncoding, "label" | "tracks">;
 
 /** The table that a figure reads a channel from: the block, the rows, and the declared column order. */
-export interface ChannelSource {
+export type ChannelSource = {
     readonly blockId: string;
     readonly rows: readonly ChartRow[];
     readonly columns?: readonly string[];
-}
+};
 
 /**
  * The column of one channel that a figure reads as a plain column, or `undefined` where the block names no
@@ -473,11 +473,11 @@ export function guideMarkLine(lines: readonly EchartOption[]): EchartOption {
  * One statistic that a figure prints: the label of the block, the resolved value, and the shown text of the
  * value.
  */
-export interface FigureStatistic {
+export type FigureStatistic = {
     readonly label: string;
     readonly value: string | number;
     readonly text: string;
-}
+};
 
 /**
  * The shown text of one statistic, in the number format of its column, with the power of ten of a figure, and
@@ -580,11 +580,11 @@ export function statisticsSeries(statistics: readonly FigureStatistic[], point: 
 // ── The continuous color ────────────────────────────────────────────────────
 
 /** The range and the ramp of one continuous color. */
-export interface ContinuousScale {
+export type ContinuousScale = {
     readonly min: number;
     readonly max: number;
     readonly ramp: readonly string[];
-}
+};
 
 /**
  * The scale of one continuous color over its values.

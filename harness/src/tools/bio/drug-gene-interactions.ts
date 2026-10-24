@@ -36,26 +36,26 @@ const MAX_INPUTS = 25;
 /** Prose kept per DrugBank field when the full record is not requested. */
 const PROSE_PREVIEW_CHARS = 200;
 
-interface SourceOutcome {
+type SourceOutcome = {
     source: Source;
     status: "ok" | "no_data" | "unavailable";
     returned: number;
     detail?: string;
-}
+};
 
 /**
  * A DrugBank record projected for context. `includeDrugRecord` decides whether
  * the description arrives whole or as a preview — a 500-character field across
  * ten records is narrative that a drug-vs-gene question rarely needs.
  */
-interface ProjectedDrug {
+type ProjectedDrug = {
     drugbankId: string;
     name: string;
     type: string;
     groups: string[];
     description: string;
     proseTruncated: boolean;
-}
+};
 
 const inputSchema = z.object({
     query: z
@@ -109,13 +109,13 @@ const inputSchema = z.object({
         ),
 });
 
-interface DrugGeneOutput {
+type DrugGeneOutput = {
     direction: "gene_to_drugs" | "drug_to_genes";
     perSource: SourceOutcome[];
     dgidb?: DgidbResult[];
     drugbank?: ProjectedDrug[];
     pharmgkb?: PharmgkbAnnotation[];
-}
+};
 
 function projectDrug(drug: DrugResult, includeFullProse: boolean): ProjectedDrug {
     return {

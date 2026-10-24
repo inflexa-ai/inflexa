@@ -90,11 +90,11 @@ function validSynthesisPayload(): unknown {
 }
 
 /** One record captured by the test logger — the emitted diagnostic, as state. */
-interface LoggedRecord {
+type LoggedRecord = {
     readonly level: LogLevel;
     readonly msg: string;
     readonly fields: LogFields;
-}
+};
 
 /**
  * A `Logger` that appends every record to `sink`, so a test asserts on the
@@ -117,12 +117,12 @@ function makeCapturingLogger(sink: LoggedRecord[], bindings: LogFields = {}): Lo
     };
 }
 
-interface Harness {
+type Harness = {
     deps: SynthesizeRunDeps;
     embedderCalls: number;
     logs: LoggedRecord[];
     cleanup: () => Promise<void>;
-}
+};
 
 async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { withSummary: boolean }): Promise<Harness> {
     const base = await mkdtemp(join(tmpdir(), "cortex-synthrun-"));

@@ -103,23 +103,23 @@ const ESTIMATE_SCIENTIFIC_FLOOR = 1e-3;
 const CHART_EDGE = "2%";
 
 /** The columns that the channels of one forest block name. */
-interface ForestColumns {
+type ForestColumns = {
     readonly term: string;
     readonly estimate: string;
     readonly low?: string;
     readonly high?: string;
     readonly p?: string;
     readonly size?: string;
-}
+};
 
 /** One row of the figure: its term, its cells read as numbers, and the row of the table. */
-interface ForestRow {
+type ForestRow = {
     readonly term: Cell;
     readonly estimate: number;
     readonly low: number | null;
     readonly high: number | null;
     readonly row: ChartRow;
-}
+};
 
 /** Derive the figure of one forest block. */
 function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
@@ -254,10 +254,10 @@ function forestRows(rows: readonly ChartRow[], columns: ForestColumns, blockId: 
 }
 
 /** The two ends of one axis. */
-interface AxisRange {
+type AxisRange = {
     readonly min: number;
     readonly max: number;
-}
+};
 
 /**
  * The ends of the log axis: the largest nice ratio at or under the smallest value, and the smallest nice ratio

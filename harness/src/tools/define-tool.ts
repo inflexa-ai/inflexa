@@ -34,11 +34,11 @@ export type { EmitFn };
  * builds one by hand — most failures stay thrown and the loop's backstop
  * derives the same shape via `classifyProviderError`.
  */
-export interface ToolError {
+export type ToolError = {
     readonly error: string;
     readonly retryable: boolean;
     readonly cause?: unknown;
-}
+};
 
 /**
  * How the loop runs a tool call. `step` (the default) wraps the whole call in
@@ -60,10 +60,10 @@ export function isToolError(value: unknown): value is ToolError {
  * an image content block. Thus the model sees the picture, and the JSON text
  * holds no bytes.
  */
-export interface ToolResultImage {
+export type ToolResultImage = {
     readonly base64: string;
     readonly mediaType: string;
-}
+};
 
 /**
  * The reserved key that carries the pictures on a tool ok value. It is a symbol,
@@ -151,7 +151,7 @@ export function readToolCallRecord(value: unknown): unknown {
  * `session`, `signal`, `emit`, the `ask` user-approval seam, and the turn's
  * usage accumulator a sub-agent-running tool hands to its child loop.
  */
-export interface ToolContext {
+export type ToolContext = {
     /** Stable identity of this AI SDK tool call. Redelivery preserves it; a new
      * model-issued call receives a new value. */
     readonly invocationId: string;
@@ -174,13 +174,13 @@ export interface ToolContext {
      * no child agent ignores it.
      */
     readonly turnUsage?: AgentRunUsage;
-}
+};
 
 /**
  * A packaged tool: identity, the Zod input contract, the emitted AI SDK input
  * schema, execution mode, the optional hooks, and the executor.
  */
-export interface Tool<Input = unknown, Output = unknown> {
+export type Tool<Input = unknown, Output = unknown> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: z.ZodType;
@@ -196,9 +196,9 @@ export interface Tool<Input = unknown, Output = unknown> {
      */
     foldCallRecord?(record: unknown): void;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
-}
+};
 
-export interface ToolDefinition<Schema extends z.ZodType, Output> {
+export type ToolDefinition<Schema extends z.ZodType, Output> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
@@ -280,7 +280,7 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
      */
     readonly foldCallRecord?: (record: ToolCallRecordOf<Output>) => void;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
-}
+};
 
 /**
  * Package a `Tool`. The emitted JSON Schema must have a top-level

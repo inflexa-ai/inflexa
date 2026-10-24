@@ -26,21 +26,21 @@ import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
  * carrier of credential/org behind a session, downcast only by managed
  * realizations.
  */
-export interface RevokeByJtiRef {
+export type RevokeByJtiRef = {
     readonly jti: string;
     readonly auth: AuthContext;
-}
+};
 
 /** What an async edge knows when it authorizes a run: the opaque caller auth,
  * the scope + provenance to stamp on the run, and the run frame to mint for. */
-export interface AuthorizeRunInput {
+export type AuthorizeRunInput = {
     readonly auth: AuthContext;
     readonly scope: Scope;
     readonly provenance: Provenance;
     readonly frame: RunFrame;
-}
+};
 
-export interface RunAuthorization {
+export type RunAuthorization = {
     readonly runSession: RunSession;
     /**
      * True when this authorizer minted the run credential and therefore owns its
@@ -48,14 +48,14 @@ export interface RunAuthorization {
      * run credential was reused (the caller owns it; `revoke` is a no-op).
      */
     readonly ownsMandate: boolean; // oss-core-managed-ok
-}
+};
 
 /**
  * Authorize durable work at the async edge. `authorize` produces the durable
  * `RunSession`; `revoke` releases a self-minted run credential on the terminal
  * path (a no-op for reused or local authorizations).
  */
-export interface RunAuthorizer {
+export type RunAuthorizer = {
     authorize(input: AuthorizeRunInput): ResultAsync<RunAuthorization, GateFailure>;
     revoke(authorization: RunAuthorization, reason: string): ResultAsync<void, NoticeFailure>;
     /**
@@ -66,4 +66,4 @@ export interface RunAuthorizer {
      * `cortex_runs`. Local/OSS authorizers no-op — they mint no jti.
      */
     revokeByJti(ref: RevokeByJtiRef, reason: string): ResultAsync<void, NoticeFailure>;
-}
+};

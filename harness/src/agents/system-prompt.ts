@@ -32,7 +32,7 @@
 
 import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../prompts/SOUL.js";
 
-export interface ComposeSystemPromptOptions {
+export type ComposeSystemPromptOptions = {
     /**
      * Include the SOUL identity layer (name, scope, refusal of harmful
      * requests, impersonation and external-action guardrails). Default `false`
@@ -44,7 +44,7 @@ export interface ComposeSystemPromptOptions {
      * Default `false` — opt in only for the conversation agent.
      */
     readonly conversational?: boolean;
-}
+};
 
 /**
  * Compose an agent's full system prompt: the always-on SOUL execution core, the

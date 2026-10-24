@@ -15,7 +15,7 @@
 import type { DataProfileDimension, DataProfileFile, DataProfileGroup, DataProfileResult } from "../contracts/data-profile.js";
 
 /** A group as consumers read it, whether it was authored as a group or as a kind. */
-export interface ProfileGroupView {
+export type ProfileGroupView = {
     readonly id: string;
     readonly name: string;
     readonly memberRepresents: string;
@@ -28,19 +28,19 @@ export interface ProfileGroupView {
     /** The scanner slots this group carries, on a groups-era row. */
     readonly slotIds?: readonly string[];
     readonly unclassified?: boolean;
-}
+};
 
 /**
  * A dimension as consumers read it. `cardinalities` carries every number the
  * observations reported, side by side: there is no canonical count, and a single field
  * would be a silent judgement between disagreeing sources.
  */
-export interface ProfileDimensionView {
+export type ProfileDimensionView = {
     readonly label: string;
     readonly cardinalities: readonly number[];
     readonly exampleValues: readonly string[];
     readonly description?: string;
-}
+};
 
 /**
  * Every number the observations reported, side by side and de-duplicated.

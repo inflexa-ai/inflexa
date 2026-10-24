@@ -76,9 +76,9 @@ export type ConversationUIData = {
     };
 };
 
-export interface ConversationDisplayMetadata {
+export type ConversationDisplayMetadata = {
     interrupted?: boolean;
-}
+};
 
 export type ConversationUIMessage = UIMessage<ConversationDisplayMetadata, ConversationUIData>;
 
@@ -141,12 +141,12 @@ const dataSchemas = {
     }),
 };
 
-export interface StoredDisplayEnvelope {
+export type StoredDisplayEnvelope = {
     readonly kind: "ai-sdk-ui-messages";
     readonly aiSdkMajor: 7;
     readonly schemaVersion: typeof SUPPORTED_DISPLAY_SCHEMA_VERSION;
     readonly messages: ConversationUIMessage[];
-}
+};
 
 export function envelopeDisplayMessages(messages: readonly ConversationUIMessage[]): StoredDisplayEnvelope {
     if (messages.length === 0) throw new Error("A conversation display envelope must contain at least one UI message");

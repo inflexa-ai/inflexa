@@ -29,14 +29,14 @@ function features(toolbox: Record<string, unknown>): Record<string, Record<strin
     return toolbox.feature as Record<string, Record<string, unknown>>;
 }
 
-interface DataView {
+type DataView = {
     columns: string[];
     rows: string[][];
     total: number;
-}
+};
 
 /** A node of the stub document: its tag, its class, its text, its children, and its attributes. */
-interface StubNode {
+type StubNode = {
     tag: string;
     className: string;
     textContent: string;
@@ -51,7 +51,7 @@ interface StubNode {
     closest(selector: string): StubNode | null;
     querySelector(selector: string): StubNode | null;
     querySelectorAll(selector: string): StubNode[];
-}
+};
 
 /** The page functions of the fragment, over one stub document. */
 function pageFunctions(document: unknown): {
@@ -201,12 +201,12 @@ describe("the band of the toolbox", () => {
     const HASH = `sha256:${"a".repeat(64)}`;
 
     /** One box in the pixels of a chart body, with y down. */
-    interface Box {
+    type Box = {
         readonly left: number;
         readonly top: number;
         readonly right: number;
         readonly bottom: number;
-    }
+    };
 
     /** One element that the runtime draws. */
     type Drawn = ReturnType<ReturnType<echarts.ECharts["getZr"]>["storage"]["getDisplayList"]>[number];

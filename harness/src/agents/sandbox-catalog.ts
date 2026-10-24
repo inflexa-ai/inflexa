@@ -11,11 +11,11 @@
 import { SANDBOX_AGENT_META } from "./sandbox/index.js";
 
 /** Planner-facing metadata for one sandbox agent. */
-export interface PlannerAgentMeta {
+export type PlannerAgentMeta = {
     readonly id: string;
     readonly capabilities: readonly string[];
     readonly suitableFor: readonly string[];
-}
+};
 
 /** The sandbox agents the planner may assign to analysis-plan steps. */
 export const PLANNABLE_AGENT_CATALOG: readonly PlannerAgentMeta[] = Object.values(SANDBOX_AGENT_META)

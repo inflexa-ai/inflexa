@@ -74,22 +74,22 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * `executeAnalysis` bag omits `workingMemory`, because the step seeds must read
  * the same memory that the conversation agent writes.
  */
-export interface CoreWorkflowDeps {
+export type CoreWorkflowDeps = {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
     readonly buildExecuteAnalysis: (
         sandboxStep: SandboxStepCallable,
     ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "workingMemory">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
-}
+};
 
 /** The registered, callable workflow handles. */
-export interface RegisteredWorkflows {
+export type RegisteredWorkflows = {
     readonly executeAnalysis: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     readonly sandboxStep: SandboxStepCallable;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
     readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>>;
     readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
-}
+};
 
 /**
  * Conversation-agent deps minus the workflow callable, the resource policy, the
@@ -117,10 +117,10 @@ export type ConversationAssemblyDeps = Omit<
  * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the auth of the tool
  * call that reads them. A resolver serves one analysis, thus the report tools build one for each call.
  */
-export interface ReportResolverScope {
+export type ReportResolverScope = {
     readonly analysisId: string;
     readonly auth: AuthContext;
-}
+};
 
 /**
  * The factory that gives the reference resolver of one report tool call. The harness wires the production
@@ -128,7 +128,7 @@ export interface ReportResolverScope {
  */
 export type MakeReportReferenceResolver = (scope: ReportResolverScope) => Promise<ReferenceResolver>;
 
-export interface CoreRuntimeDeps {
+export type CoreRuntimeDeps = {
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
     /**
@@ -214,7 +214,7 @@ export interface CoreRuntimeDeps {
      * which an embedder calls on its own. Thus that composition binds the seam there as well.
      */
     readonly provenance?: ProvenanceSeam;
-}
+};
 
 /**
  * The refusal a thread type carries no agent yet. `report` is a valid
@@ -224,10 +224,10 @@ export interface CoreRuntimeDeps {
  * life, and a bare-`AgentDefinition` return would force every future member to
  * register an agent in the same commit that adds the member.
  */
-export interface UnregisteredThreadType {
+export type UnregisteredThreadType = {
     readonly type: "unregistered_thread_type";
     readonly threadType: ThreadType;
-}
+};
 
 // `UnregisteredThreadType` is a `DomainError` (string `type`) — the compile-time
 // check keeps its refusal inside the cross-subsystem error vocabulary.
@@ -240,9 +240,9 @@ const _assertDomainError: _AssertDomainError = true;
  * `ResultAsync`: a registered type resolves to its assembled singleton, an
  * unregistered one refuses on the error channel.
  */
-export interface ThreadAgentResolver {
+export type ThreadAgentResolver = {
     forThread(type: ThreadType): Result<AgentDefinition, UnregisteredThreadType>;
-}
+};
 
 /**
  * Wrap a type→agent registry as the resolution surface. Held apart from
@@ -268,7 +268,7 @@ export function createThreadAgentResolver(registry: Partial<Record<ThreadType, A
     };
 }
 
-export interface CoreRuntime {
+export type CoreRuntime = {
     /**
      * Thread→agent resolution — the only way to reach an assembled agent by
      * thread type. Holds the singletons this call built; `conversation` resolves
@@ -291,7 +291,7 @@ export interface CoreRuntime {
      * a plan the same way.
      */
     readonly approvePlan: (input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
-}
+};
 
 /**
  * The eyes of the composition, or none.

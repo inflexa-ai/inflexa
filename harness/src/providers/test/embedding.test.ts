@@ -10,11 +10,11 @@ const hostHeaders: Record<string, string> = {
     "X-Attribution-Key": "key-emb",
 };
 
-interface FakeEmbedding {
+type FakeEmbedding = {
     object: "embedding";
     index: number;
     embedding: number[];
-}
+};
 
 /** A `fetch` that records request headers and replays a canned embedding response. */
 function fakeEmbeddingFetch(data: FakeEmbedding[]): {

@@ -29,20 +29,20 @@ const DEFAULT_TOP_K = 10;
 const MAX_TOP_K = 25;
 const TEXT_EXT = /\.(md|markdown|txt|py|r|R|json|ya?ml|csv|tsv)$/;
 
-export interface SkillToolsDeps {
+export type SkillToolsDeps = {
     /** Absolute path to the skills tree (one subdirectory per skill). */
     readonly skillsDir: string;
     /** The agent's declared skills (`meta.skills`) — the access allowlist. */
     readonly skills: readonly string[];
-}
+};
 
-interface SkillMatch {
+type SkillMatch = {
     readonly skill: string;
     readonly path: string;
     readonly line: number;
     readonly snippet: string;
     readonly score: number;
-}
+};
 
 type SkillSearchOutput = { status: "no_skills" } | { status: "no_matches"; query: string } | { status: "ok"; query: string; matches: SkillMatch[] };
 

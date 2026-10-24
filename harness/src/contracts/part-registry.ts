@@ -5,7 +5,7 @@ export type ChatPartType = ChatPart["type"];
 export type PartEmitter = "workflow" | "conversation";
 export type PartConsumer = "sidebar" | "conversation";
 
-export interface PartDescriptor {
+export type PartDescriptor = {
     /** Which layer emits this part. */
     emitter: PartEmitter;
     /** Which UI surface consumes this part. */
@@ -14,7 +14,7 @@ export interface PartDescriptor {
     transient: boolean;
     /** If true, multiple emissions share the same id — latest wins. */
     reconciling: boolean;
-}
+};
 
 export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
     "data-presentation": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },

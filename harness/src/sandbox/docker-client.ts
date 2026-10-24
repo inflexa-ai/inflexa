@@ -77,7 +77,7 @@ const OWNER_WORKFLOW_LABEL = OWNER_WORKFLOW_KEY;
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
 const CPU_FILES_DIR = ".cpu";
 
-export interface DockerClientConfig {
+export type DockerClientConfig = {
     image: string;
     /** Workspace-root resolution seam; each analysis's resolved root is the bind source for its tree mounts. */
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -142,7 +142,7 @@ export interface DockerClientConfig {
     logger?: Logger;
     /** Hook called after the registry row is written. */
     registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
-}
+};
 
 /**
  * Whether `refStorePath` is, right now, a real directory fit to be a bind authority.

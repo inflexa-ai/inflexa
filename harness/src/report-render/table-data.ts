@@ -42,12 +42,12 @@ export type ColumnFilter = "number" | "text";
  * The server resolves each of the four, and the page reads them. Thus the declaration, the token guess, and
  * the read of a whole column stay on the server, and the page formats and filters alone.
  */
-export interface ColumnDisplay {
+export type ColumnDisplay = {
     label: string;
     kind: NumberKind;
     filter: ColumnFilter;
     bound?: number;
-}
+};
 
 /**
  * One encoded table.
@@ -62,19 +62,19 @@ export interface ColumnDisplay {
  * `total` is the row count of the artifact before a row bound cut it. The page states the shown count
  * against it, thus a reader of a cut table never reads the cut as the whole artifact.
  */
-export interface TablePayload {
+export type TablePayload = {
     columns: string[];
     rows: EncodedCell[][];
     dict: Record<string, string[]>;
     display: ColumnDisplay[];
     total: number;
-}
+};
 
 /** One data asset that the caller writes beside the page: the staged file name, and the source text of it. */
-export interface DataAsset {
+export type DataAsset = {
     name: string;
     bytes: string;
-}
+};
 
 /** The count of hash characters in an asset name. It matches the sidecar of an artifact, thus one form reads across the directory. */
 const HASH_CHARS = 12;

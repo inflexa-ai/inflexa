@@ -29,10 +29,10 @@ export function notRunResult(call: Pick<ToolCallPart, "toolCallId" | "toolName">
 }
 
 /** One tool call that {@link answerUnansweredToolCalls} answered, identified for the caller's diagnostic record. */
-export interface AnsweredToolCall {
+export type AnsweredToolCall = {
     readonly toolCallId: string;
     readonly toolName: string;
-}
+};
 
 /**
  * Whether this tool call needs a client-supplied result. A provider-executed

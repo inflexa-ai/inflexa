@@ -272,12 +272,12 @@ export function compactionMarkerOf(message: ModelMessage): CompactionMarker | un
 
 type LegacyContent = string | Array<Record<string, unknown>>;
 
-export interface LegacyMessageRow {
+export type LegacyMessageRow = {
     readonly threadId: string;
     readonly seq: number;
     readonly role: string;
     readonly content: LegacyContent;
-}
+};
 
 function providerOptionsFromLegacy(block: Record<string, unknown>): ProviderOptions | undefined {
     // A block may carry both a signed thinking signature and cache_control;

@@ -36,7 +36,7 @@ fields `id`, `capabilities`, `suitableFor`, `skills`, `tools`, optional
 
 #### Scenario: AgentMeta carries no tier or languages field
 
-- **WHEN** the `AgentMeta` interface is inspected
+- **WHEN** the `AgentMeta` type is inspected
 - **THEN** its fields are `id`, `capabilities`, `suitableFor`, `skills`, `tools`, `defaultMaxSteps?`, and `plannable?`
 - **AND** neither a `tier` nor a `languages` field is present
 

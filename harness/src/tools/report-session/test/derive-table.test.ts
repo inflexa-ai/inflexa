@@ -83,9 +83,9 @@ const TABLE = "group,yield\na,3\nb,5\n";
 const emptyDraft = { title: "", sections: [] };
 
 /** An in-memory gateway. It holds one state and one analysis for each thread. */
-interface FakeGateway extends ReportSessionStateGateway {
+type FakeGateway = ReportSessionStateGateway & {
     seed(threadId: string, snapshot: ReportSnapshot): void;
-}
+};
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, ReportSessionState>();
@@ -121,10 +121,10 @@ function makeFakeGateway(): FakeGateway {
 }
 
 /** An in-memory derivation ledger with the name rule of the store. */
-interface FakeLedger {
+type FakeLedger = {
     appendDerivation(threadId: string, record: DerivationRecord): ResultAsync<AppendDerivationOutcome, DbError>;
     readonly records: DerivationRecord[];
-}
+};
 
 function makeLedger(outcome?: AppendDerivationOutcome, fault?: DbError): FakeLedger {
     const records: DerivationRecord[] = [];
@@ -147,12 +147,12 @@ function makeLedger(outcome?: AppendDerivationOutcome, fault?: DbError): FakeLed
 }
 
 /** A stubbed sandbox client. It records what the tool asked for, and it gives back one exec result. */
-interface FakeSandbox {
+type FakeSandbox = {
     readonly client: SandboxClient;
     readonly creates: TestSpawn[];
     readonly submits: ExecRequest[];
     readonly teardowns: string[];
-}
+};
 
 /**
  * The host side of a container path. The tree mounts at `/{analysisId}`, thus the stub strips that mount
@@ -218,11 +218,11 @@ function writesTable(table = TABLE): (outputHostPath: string) => Promise<void> {
 }
 
 /** A run authorizer over the local realization, with the revoke reasons recorded. */
-interface FakeAuthorizer {
+type FakeAuthorizer = {
     readonly authorizer: RunAuthorizer;
     readonly frames: string[];
     readonly revoked: string[];
-}
+};
 
 function makeAuthorizer(): FakeAuthorizer {
     const local = createLocalRunAuthorizer();

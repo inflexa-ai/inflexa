@@ -5,7 +5,7 @@
  * `execution/` and `provenance/`.
  */
 
-export interface ArtifactRecord {
+export type ArtifactRecord = {
     path: string;
     hash: string;
     size: number;
@@ -21,4 +21,4 @@ export interface ArtifactRecord {
      * deterministic call-activity identifier on it.
      */
     invocationId: string;
-}
+};

@@ -552,12 +552,12 @@ export type AtomBlock = z.infer<(typeof ATOM_BLOCK_SCHEMAS)[number]>;
  * The section shape as a plain type. TypeScript cannot infer the block tree through the union cycle,
  * thus the recursive members carry an explicit type. `SectionBlock` and `Block` break the cycle.
  */
-export interface SectionBlock {
+export type SectionBlock = {
     kind: "section";
     id: string;
     title: string;
     blocks: Block[];
-}
+};
 
 /** One block of any of the eight kinds. An unknown kind fails validation by construction. */
 export type Block = AtomBlock | SectionBlock;
@@ -605,10 +605,10 @@ export function channelTransform(channel: ChartChannel): ChartTransform | undefi
 }
 
 /** The category order of one channel: the column that sorts the categories, and the direction of the sort. */
-export interface ChannelOrder {
+export type ChannelOrder = {
     readonly by: string;
     readonly order: "asc" | "desc";
-}
+};
 
 /** The category order of one channel, or `undefined` when the channel declares none. */
 export function channelOrder(channel: ChartChannel): ChannelOrder | undefined {

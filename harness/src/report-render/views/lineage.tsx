@@ -32,9 +32,9 @@ import type { Reference } from "../../contracts/report-reference.js";
  * `lineage` states that the page carries a provenance document. Each grounded block then stamps its keys
  * and shows its control, and a page with no document carries neither.
  */
-export interface ViewOptions {
+export type ViewOptions = {
     readonly lineage: boolean;
-}
+};
 
 /**
  * The options that a view takes when the caller gives none. Each truth is off, thus the view renders its
@@ -85,16 +85,16 @@ function LineageGlyph() {
 }
 
 /** The pin of one artifact: the analysis-relative path, and the content hash of the bytes. */
-export interface LineagePin {
+export type LineagePin = {
     readonly path: string;
     readonly hash: string;
-}
+};
 
 /** The identity of one external record: the identifier space, and the identifier inside it. */
-export interface LineageRecord {
+export type LineageRecord = {
     readonly idKind: string;
     readonly id: string;
-}
+};
 
 /** One key of a stamp. A reference that pins no single file gives `null` in place of a key. */
 export type LineageKey = LineagePin | LineageRecord;

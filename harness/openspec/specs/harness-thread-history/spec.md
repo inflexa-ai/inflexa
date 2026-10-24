@@ -27,7 +27,7 @@ The `messages` table and `ThreadHistory` SHALL serve conversation threads only. 
 
 #### Scenario: The interface offers no generic message insert
 
-- **GIVEN** the `ThreadHistory` interface
+- **GIVEN** the `ThreadHistory` type
 - **WHEN** a caller inspects it
 - **THEN** it exposes only conversation-turn operations (for example `appendTurn`, `writeTurn`, `loadRecent`, `loadAll`, and `retractLastTurn`), not a generic row insert or row delete
 

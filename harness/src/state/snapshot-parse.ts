@@ -19,10 +19,10 @@ import { z } from "zod";
 import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
 
 /** One reduced schema issue -- the dotted path and the message, without the rest. */
-export interface SchemaIssue {
+export type SchemaIssue = {
     readonly path: string;
     readonly message: string;
-}
+};
 
 /**
  * One pinned artifact of a stored snapshot. The value carries the content hash, an

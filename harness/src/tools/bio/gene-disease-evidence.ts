@@ -50,13 +50,13 @@ const MAX_LIMIT = 100;
  * normal states the caller must be able to tell apart from genuine no-data —
  * otherwise an unkeyed DisGeNET reads as "no genetic support".
  */
-interface SourceOutcome {
+type SourceOutcome = {
     source: Source;
     status: "ok" | "no_data" | "unavailable" | "not_applicable";
     returned: number;
     totalFound?: number;
     detail?: string;
-}
+};
 
 /** Which query types each corpus can read. An accession is readable by one corpus only. */
 const SOURCE_QUERY_TYPES: Record<Source, readonly QueryType[]> = {
@@ -159,7 +159,7 @@ const inputSchema = z.object({
         .describe("'clinvar' only. Default TRUE — drop variants classified 'not provided', 'not specified' or 'reclassified', which carry no clinical signal."),
 });
 
-interface GeneDiseaseEvidenceOutput {
+type GeneDiseaseEvidenceOutput = {
     query: string;
     queryType: QueryType;
     perSource: SourceOutcome[];
@@ -167,7 +167,7 @@ interface GeneDiseaseEvidenceOutput {
     disgenet?: Gda[];
     clinvar?: ClinvarVariant[];
     cbioportal?: MutationFrequency[];
-}
+};
 
 /**
  * Run one corpus, folding its failure into an `unavailable` outcome. A source

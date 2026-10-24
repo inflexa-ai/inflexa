@@ -12,9 +12,9 @@
 
 import { type Counter, metrics } from "@opentelemetry/api";
 
-interface Instruments {
+type Instruments = {
     readonly cancelledChildren: Counter;
-}
+};
 
 let instruments: Instruments | undefined;
 

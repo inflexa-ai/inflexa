@@ -55,7 +55,7 @@ export function farmContainerPath(toolchainSource: ToolchainSource | undefined):
     return toolchainSource === "image" ? `${LIBS_CONTAINER_PATH}/farm` : `${LIBS_CONTAINER_PATH}/current`;
 }
 
-export interface MountPlanCoords {
+export type MountPlanCoords = {
     analysisId: string;
     runId: string;
     stepId: string;
@@ -73,7 +73,7 @@ export interface MountPlanCoords {
      * contradiction, and the builders refuse it.
      */
     writableTail?: string;
-}
+};
 
 export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "readOnly" | "writableTail">): MountPlanCoords {
     return {
@@ -85,7 +85,7 @@ export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "re
     };
 }
 
-export interface MountPlanStores {
+export type MountPlanStores = {
     /** Lib store is mounted at `/mnt/libs`, with the farm nested inside it, and its env is emitted. */
     libs: boolean;
     /** Ref store is mounted at `/mnt/refs`. */
@@ -98,9 +98,9 @@ export interface MountPlanStores {
     toolchainSource?: ToolchainSource;
     /** The farm resolution carries a cache location, mounted read-write at `/mnt/libs/cache`. */
     cache?: boolean;
-}
+};
 
-export interface MountPlan {
+export type MountPlan = {
     /** Flat read-only mount of the whole analysis tree. */
     readonlyTreePath: string;
     /**
@@ -126,15 +126,15 @@ export interface MountPlan {
     stepSubdirs: readonly string[];
     /** Env merged into the sandbox container: provenance + lib-store vars. */
     env: Record<string, string>;
-}
+};
 
 /** K8s `subPath` strings into the session PVC. No leading or trailing slash. */
-export interface SessionSubPaths {
+export type SessionSubPaths = {
     /** Read-only mount of the whole analysis tree. */
     readonly ro: string;
     /** Read-write mount of the step's artifact dir, or of the declared tail; absent when read-only. */
     readonly rw?: string;
-}
+};
 
 /**
  * The step tail beneath an analysis's workspace root, in both container and
@@ -150,12 +150,12 @@ function stepTail(runId: string, stepId: string): string {
 }
 
 /** The one writable mount of a sandbox: its workspace-relative tail, and what the host pre-makes under it. */
-export interface SandboxWriteTail {
+export type SandboxWriteTail = {
     /** The tail beneath the workspace root, in both container and PVC-relative space. */
     readonly tail: string;
     /** The subdirectories the host pre-creates under the tail. A declared tail is one directory, thus none. */
     readonly subdirs: readonly string[];
-}
+};
 
 /**
  * The write tail of a sandbox, or `undefined` when the sandbox holds no write mount.

@@ -103,33 +103,33 @@ const PLAIN_CHANNELS = ["x", "y", "group", "hit", "metric"] as const;
 export const GSEA_FIGURE: FigureModule = { reads: GSEA_READS, derive: deriveGsea };
 
 /** The columns that the channels of one block name. */
-interface GseaColumns {
+type GseaColumns = {
     readonly rank: string;
     readonly score: string;
     readonly hit: string;
     readonly metric: string;
     readonly set?: string;
-}
+};
 
 /** One point of a curve: a rank and the value of the curve at that rank. */
-interface Vertex {
+type Vertex = {
     readonly rank: number;
     readonly value: number;
-}
+};
 
 /** One gene set: its value in the set column, its running score in rank order, and the ranks of its hits. */
-interface GseaSet {
+type GseaSet = {
     readonly key: string;
     readonly name: string;
     readonly score: Vertex[];
     readonly hits: number[];
-}
+};
 
 /** The sets of one table in the order of their first row, and the ranked metric that they share. */
-interface GseaTable {
+type GseaTable = {
     readonly sets: GseaSet[];
     readonly metric: Vertex[];
-}
+};
 
 /** Derive the three panels of one gsea block. */
 function deriveGsea(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {

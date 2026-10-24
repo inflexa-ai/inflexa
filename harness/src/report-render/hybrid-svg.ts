@@ -13,21 +13,21 @@
  */
 
 /** The box of one export in CSS pixels, and in millimeters for a column export. */
-export interface SvgRootSize {
+export type SvgRootSize = {
     readonly widthPx: number;
     readonly heightPx: number;
     readonly widthMm?: number;
     readonly heightMm?: number;
-}
+};
 
 /** The raster image of the point layer and its rectangle in the pixel space of the SVG. */
-export interface PointLayerImage {
+export type PointLayerImage = {
     readonly href: string;
     readonly x: number;
     readonly y: number;
     readonly width: number;
     readonly height: number;
-}
+};
 
 /**
  * True when one series draws a point for each row: a `scatter` whose symbol draws and which shows no series

@@ -37,7 +37,7 @@ export type LogFields = Record<string, unknown>;
  * this contract to match one of them would model the published surface on a
  * single consumer's choice.
  */
-export interface Logger {
+export type Logger = {
     debug(msg: string, fields?: LogFields): void;
     info(msg: string, fields?: LogFields): void;
     warn(msg: string, fields?: LogFields): void;
@@ -77,7 +77,7 @@ export interface Logger {
      * implementation — a realization with no opinion just references it.
      */
     errorFields(err: unknown): LogFields;
-}
+};
 
 /**
  * The default `Logger.errorFields`: `err` carries the message, `stack` rides as

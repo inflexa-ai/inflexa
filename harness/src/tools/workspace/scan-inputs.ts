@@ -22,14 +22,14 @@ import type { SandboxRef } from "../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 
-export interface ScanInputsDeps {
+export type ScanInputsDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
     readonly analysisId: string;
     /** Omit to skip the container readouts; the prefix readouts run regardless. */
     readonly sandboxClient?: SandboxClient;
     readonly sandbox?: SandboxRef;
     readonly deadlineMs: () => number;
-}
+};
 
 type ScanInputsOutput = {
     readonly path: string;

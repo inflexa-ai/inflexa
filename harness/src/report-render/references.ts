@@ -27,10 +27,10 @@ export function citationKeyOf(reference: CitationReference): string {
 }
 
 /** One source of a derivation: the pinned path that the script read, and the content hash of those bytes. */
-export interface DerivationChainSource {
+export type DerivationChainSource = {
     readonly path: string;
     readonly hash: string;
-}
+};
 
 /**
  * The chain of one derived path: the sources that the script read, and the hash of the script itself.
@@ -44,13 +44,13 @@ export interface DerivationChainSource {
  * stages the script and it knows where the derived file sits, thus the caller states both and the renderer
  * reads no disk. A chain that carries neither renders its hashes alone.
  */
-export interface DerivationChain {
+export type DerivationChain = {
     readonly outputPath: string;
     readonly sources: readonly DerivationChainSource[];
     readonly scriptHash: string;
     readonly scriptSource?: string;
     readonly outputSource?: string;
-}
+};
 
 /** The chain of each derived path of one render, keyed by the output path that the bindings name. */
 export type DerivationChains = ReadonlyMap<string, DerivationChain>;

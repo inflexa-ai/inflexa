@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { KeptToolOutput, ToolOutputStore } from "../loop/tool-output.js";
 
-interface ToolOutputRow {
+type ToolOutputRow = {
     readonly analysis_id: string;
     readonly ref: string;
     readonly tool_name: string;
@@ -13,7 +13,7 @@ interface ToolOutputRow {
     readonly thread_id: string | null;
     readonly content: string;
     readonly total_length: number;
-}
+};
 
 function toKeptToolOutput(row: ToolOutputRow): KeptToolOutput {
     const threadIdField = row.thread_id === null ? undefined : { threadId: row.thread_id };

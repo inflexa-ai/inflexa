@@ -13,11 +13,11 @@ import { readFileSync } from "node:fs";
 
 import { buildReportSessionUrl, reportSessionResourceId } from "../content-url.js";
 
-interface ReportSessionVector {
+type ReportSessionVector = {
     analysisId: string;
     threadId: string;
     expectedRes: string;
-}
+};
 
 function readFixture<T>(name: string): { vectors: T[] } {
     return JSON.parse(readFileSync(new URL(`../../__tests__/fixtures/${name}`, import.meta.url), "utf8")) as { vectors: T[] };

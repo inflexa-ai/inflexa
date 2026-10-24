@@ -11,10 +11,10 @@ import type { Browser } from "puppeteer-core";
 import { getBrowser, setBrowserConnector, withPage } from "../chrome.js";
 
 /** A browser that no process backs, plus the control that fires the disconnect event of that browser. */
-interface FakeBrowser {
+type FakeBrowser = {
     readonly browser: Browser;
     emitDisconnected(): void;
-}
+};
 
 function makeFakeBrowser(id: string): FakeBrowser {
     const listeners: Array<() => void> = [];

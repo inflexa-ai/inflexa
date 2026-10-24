@@ -26,22 +26,22 @@ import { catchAll, describeGroup, describeSlot, mineContext, slotToken } from ".
 import type { FormatCount, ScannedFile, UnstructuredEntry } from "./types.js";
 import { IDENTITY_CROSS_CHECK_RATIO, MAX_EXAMPLE_PATHS, MAX_LEFTOVER_SAMPLE, MAX_SETS_PER_CONTEXT, MIN_IDENTITY_TOKEN_LENGTH } from "./tuning.js";
 
-export interface DetectSetsOptions {
+export type DetectSetsOptions = {
     /** Read-based agreement between candidate clusters, when the caller has header readouts. */
     readonly contentSimilarity?: ContentSimilarity;
-}
+};
 
 /** One position of a directory path template: fixed text, or a segment that varies. */
 type PathSegment = { readonly kind: "literal"; readonly name: string } | { readonly kind: "variable"; readonly index: number };
 
-interface DraftSet {
+type DraftSet = {
     readonly origin: SetOrigin;
     readonly marker?: string;
     readonly pathTemplate: string;
     readonly segments: readonly DraftSegment[];
     readonly slots: readonly DraftSlot[];
     readonly members: readonly MemberFile[];
-}
+};
 
 function fileCountOf(members: readonly MemberFile[]): number {
     return members.reduce((total, member) => total + 1 + member.companions.length, 0);

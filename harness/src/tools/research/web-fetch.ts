@@ -46,7 +46,7 @@ const MAX_TEXT_CHARS = 30_000;
 const RESULT_BUDGET = TOOL_RESULT_CAP - 512;
 
 /** The response head and body stream of one hop, narrowed to what the tool reads. */
-export interface WebFetchHopResponse {
+export type WebFetchHopResponse = {
     readonly statusCode?: number;
     readonly headers: Record<string, string | string[] | undefined>;
     on(event: "data", listener: (chunk: Buffer) => void): void;
@@ -56,22 +56,22 @@ export interface WebFetchHopResponse {
     /** A real response holds these; the decode path pauses the encoded side while the decoder drains. */
     pause?(): void;
     resume?(): void;
-}
+};
 
 /** One hop request, narrowed to what the tool drives. */
-export interface WebFetchHopRequestHandle {
+export type WebFetchHopRequestHandle = {
     on(event: "response", listener: (response: WebFetchHopResponse) => void): void;
     on(event: "error", listener: (error: Error) => void): void;
     on(event: "timeout", listener: () => void): void;
     end(): void;
     destroy(error?: Error): void;
-}
+};
 
-export interface WebFetchHopRequestOptions {
+export type WebFetchHopRequestOptions = {
     readonly headers: Record<string, string>;
     readonly lookup?: LookupFunction;
     readonly timeoutMs: number;
-}
+};
 
 /** One HTTP hop. The default is the real `node:http`/`node:https` request; a test can substitute a recorded hop. */
 export type WebFetchHopRequest = (url: URL, options: WebFetchHopRequestOptions) => WebFetchHopRequestHandle;
@@ -89,17 +89,17 @@ const defaultHopRequest: WebFetchHopRequest = (url, options) => {
     return send(url, { agent: false, headers: options.headers, lookup: options.lookup, timeout: options.timeoutMs });
 };
 
-export interface WebFetchKept {
+export type WebFetchKept = {
     readonly ref: string;
     readonly keptLength: number;
-}
+};
 
-export interface WebFetchPdfCut {
+export type WebFetchPdfCut = {
     readonly totalPages: number;
     readonly pagesRead: number;
-}
+};
 
-export interface WebFetchOk {
+export type WebFetchOk = {
     readonly status: "ok";
     readonly finalUrl: string;
     readonly contentType: string;
@@ -109,7 +109,7 @@ export interface WebFetchOk {
     readonly pdfCut?: WebFetchPdfCut;
     readonly kept?: WebFetchKept;
     readonly remainderNotKept?: boolean;
-}
+};
 
 export type WebFetchOutput =
     | WebFetchOk
@@ -122,13 +122,13 @@ export type WebFetchOutput =
     | { readonly status: "unextractable"; readonly contentType: string; readonly text: string; readonly detail?: string }
     | { readonly status: "request_failed"; readonly text: string; readonly detail?: string };
 
-export interface WebFetchToolDeps {
+export type WebFetchToolDeps = {
     readonly toolOutputStore?: ToolOutputStore;
     /** Substitutes the name resolution, so a test answers a controlled address set. The default is `dns.lookup`. */
     readonly lookup?: WebFetchLookup;
     /** Substitutes one HTTP hop, so a test serves recorded bodies offline. The default is the real node hop. */
     readonly hopRequest?: WebFetchHopRequest;
-}
+};
 
 const markdownConverter = new TurndownService();
 
@@ -225,12 +225,12 @@ async function askForOrigin(url: URL, origin: string, ctx: ToolContext): Promise
 
 type HopOutcome = { kind: "response"; response: WebFetchHopResponse; dispose: () => void } | { kind: "guarded" } | { kind: "failed"; output: WebFetchOutput };
 
-interface HopState {
+type HopState = {
     readonly lookup: WebFetchLookup;
     readonly hopRequest: WebFetchHopRequest;
     readonly approvedOrigins: ReadonlySet<string>;
     readonly ctx: ToolContext;
-}
+};
 
 /**
  * Send one hop. The `lookup` hook classifies every address of each resolution

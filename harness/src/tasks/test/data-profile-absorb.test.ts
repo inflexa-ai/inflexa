@@ -41,17 +41,17 @@ function submission(operations: MenuOperation[], dimensions?: ProfileDimension[]
 }
 
 /** What a fixture's author names their operations and dimensions against: the fresh scan's own ids. */
-interface Authoring {
+type Authoring = {
     readonly setId: (fragment: string) => string;
     readonly slotId: (fragment: string, index?: number) => string;
-}
+};
 
-interface ProfileFixture {
+type ProfileFixture = {
     readonly operations: MenuOperation[];
     readonly dimensions?: ProfileDimension[];
     /** Some fixtures leave files unclaimed on purpose — that residue is what a replay must re-sweep. */
     readonly residue?: boolean;
-}
+};
 
 /**
  * Profile a tree the way the workflow does, and persist the result the way it does —

@@ -10,13 +10,13 @@ import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import type { PersistedSandboxRef, StepExecutionRow } from "./schema.js";
 
-export interface SeedStepExecutionRow {
+export type SeedStepExecutionRow = {
     runId: string;
     stepId: string;
     analysisId: string;
     wave: number;
     agentId: string;
-}
+};
 
 /**
  * Seed one `pending` row per plan step at run start (`started_at` NULL — no
@@ -47,7 +47,7 @@ export function seedStepExecutions(pool: Querier, rows: readonly SeedStepExecuti
     });
 }
 
-export interface InsertStepExecutionInput {
+export type InsertStepExecutionInput = {
     runId: string;
     stepId: string;
     analysisId: string;
@@ -55,7 +55,7 @@ export interface InsertStepExecutionInput {
     agentId: string;
     /** DBOS child workflow id (`"${parent}-${N}"`). Optional for legacy callers. */
     childWorkflowId?: string | null;
-}
+};
 
 export function insertStepExecution(pool: Querier, input: InsertStepExecutionInput): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
@@ -89,7 +89,7 @@ export function insertStepExecution(pool: Querier, input: InsertStepExecutionInp
  * scheduler uses this to find the step row corresponding to a CANCELLED
  * child without holding the runId/stepId map in memory across recovery.
  */
-export interface UpdateStepExecutionInput {
+export type UpdateStepExecutionInput = {
     /** Step status — `running` is allowed for mid-flight telemetry updates (retries). */
     status: "running" | "completed" | "failed" | "skipped" | "canceled" | "blocked";
     durationMs?: number | null;
@@ -104,7 +104,7 @@ export interface UpdateStepExecutionInput {
     finishReason?: string | null;
     /** True when `stepsUsed === maxSteps`. Stored as 0/1 in SQLite. */
     hitMaxSteps?: boolean | null;
-}
+};
 
 /**
  * Update a step execution row. Columns are written conditionally so callers

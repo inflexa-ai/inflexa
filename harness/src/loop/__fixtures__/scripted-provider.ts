@@ -70,10 +70,10 @@ function textDeltas(response: ChatResponse): string[] {
     return content.filter((part) => part.type === "text").map((part) => part.text);
 }
 
-export interface ScriptedProvider extends ChatProvider {
+export type ScriptedProvider = ChatProvider & {
     readonly calls: ChatRequest[];
     readonly sessions: Session[];
-}
+};
 
 export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, request: ChatRequest) => ChatResponse)): ScriptedProvider {
     const calls: ChatRequest[] = [];

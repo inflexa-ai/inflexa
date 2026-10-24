@@ -14,25 +14,25 @@
 
 import { ResultAsync, ok, type Result } from "neverthrow";
 
-export interface CachedResolverMetrics {
+export type CachedResolverMetrics = {
     onHit(): void;
     /** Recorded once per upstream fetch — coalesced callers do not count. */
     onMiss(): void;
-}
+};
 
-export interface CachedResolverConfig<In, Out, E> {
+export type CachedResolverConfig<In, Out, E> = {
     readonly ttlMs: number;
     readonly maxEntries: number;
     readonly keyFn: (input: In) => string;
     readonly fetch: (input: In) => ResultAsync<Out, E>;
     readonly metrics?: CachedResolverMetrics;
-}
+};
 
 export function createCachedResolver<In, Out, E>(cfg: CachedResolverConfig<In, Out, E>): (input: In) => ResultAsync<Out, E> {
-    interface Entry {
+    type Entry = {
         readonly value: Out;
         readonly expiresAt: number;
-    }
+    };
     // Map insertion order doubles as LRU recency: a hit re-inserts the key at
     // the tail; eviction drops the head (oldest).
     const cache = new Map<string, Entry>();

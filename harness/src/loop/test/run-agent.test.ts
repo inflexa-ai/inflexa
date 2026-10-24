@@ -2396,12 +2396,12 @@ describe("runAgent — compaction", () => {
         return request.messages.some((message) => message.role === "user" && message.content === COMPACT);
     }
 
-    interface SentRequest {
+    type SentRequest = {
         readonly exchange: boolean;
         readonly messages: ModelMessage[];
         readonly toolNames: string[];
         readonly system: unknown;
-    }
+    };
 
     /** A provider that answers the task requests from `task` and the requests of an exchange from `exchange`, and copies each request. */
     function compactingProvider(task: readonly ChatResponse[], exchange: readonly ChatResponse[]): { provider: ScriptedProvider; sent: SentRequest[] } {

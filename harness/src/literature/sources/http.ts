@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export interface SourceHttpOptions {
+export type SourceHttpOptions = {
     readonly fetch?: typeof globalThis.fetch;
     /**
      * Admission gate wrapped around each network attempt — a rate limiter, a
@@ -14,7 +14,7 @@ export interface SourceHttpOptions {
     /** Ceiling on any single retry wait, including one a server asks for via `Retry-After`. */
     readonly maxRetryDelayMs?: number;
     readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
-}
+};
 
 export type SourceHttpResult<T> =
     | { readonly status: "ok"; readonly value: T }

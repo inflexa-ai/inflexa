@@ -88,10 +88,10 @@ function registeredResourceAttributes(): Record<string, unknown> {
 }
 
 /** OTLP JSON key/value list, flattened to the attribute record it encodes. */
-interface OtlpKeyValue {
+type OtlpKeyValue = {
     readonly key: string;
     readonly value: { readonly stringValue?: string };
-}
+};
 
 /** The resource attributes on the metrics the exporter posted to the collector. */
 function exportedMetricResourceAttributes(): Record<string, unknown> {

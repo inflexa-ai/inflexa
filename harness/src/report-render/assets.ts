@@ -29,10 +29,10 @@ export const DEPS_DIR = "deps";
  * One staged asset. `file` is the path under the assets directory, and `specifier` is the module
  * specifier of the source file inside the installed package.
  */
-export interface PageAsset {
+export type PageAsset = {
     readonly file: string;
     readonly specifier: string;
-}
+};
 
 /** The relative source of a staged asset. The page directory is self-contained, thus the source is `assets/<file>`. */
 export function assetSource(asset: PageAsset): string {

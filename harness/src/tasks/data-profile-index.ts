@@ -51,19 +51,19 @@ export const PROFILE_INDEX_TYPES = ["input-group", "input-dimension", "input", "
 /** Group names named in one legacy entity entry's text. */
 const MAX_GROUPS_IN_ENTITY_TEXT = 6;
 
-export interface ProfileIndexEntry {
+export type ProfileIndexEntry = {
     readonly id: string;
     readonly text: string;
     readonly metadata: Record<string, unknown>;
-}
+};
 
-export interface BuildProfileIndexArgs {
+export type BuildProfileIndexArgs = {
     readonly analysisId: string;
     /** The profile as persisted. Whichever era wrote it, the entries are derived from it alone. */
     readonly result: DataProfileResult;
     /** The scan the profile was taken against — the source of a legacy profile's entity value set. */
     readonly scan?: InputScan;
-}
+};
 
 function slug(value: string): string {
     return (

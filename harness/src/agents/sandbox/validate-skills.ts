@@ -14,10 +14,10 @@ import { join } from "node:path";
  * for the per-agent skill list. Declared structurally so `AgentMeta` types
  * with `readonly` arrays work without a cast at the call site.
  */
-interface AgentMetaLike {
+type AgentMetaLike = {
     readonly id: string;
     readonly skills: readonly string[];
-}
+};
 
 export function validateAgentSkills(skillsDir: string, catalog: Readonly<Record<string, AgentMetaLike>>): void {
     try {

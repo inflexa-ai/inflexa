@@ -19,29 +19,29 @@ import type { SlotTokenClass } from "./tokens.js";
 /** Why a file never reached the menu. */
 export type QuarantineReason = "os-junk" | "editor-temp" | "partial-download" | "atomic-write-temp";
 
-export interface QuarantineReasonCount {
+export type QuarantineReasonCount = {
     readonly reason: QuarantineReason;
     readonly count: number;
-}
+};
 
 /**
  * Quarantine is visible, never silent: a wrongly excluded file has to be discoverable
  * by the agent and the user, so the counts and a bounded path sample are reported.
  */
-export interface QuarantineSummary {
+export type QuarantineSummary = {
     readonly count: number;
     readonly totalBytes: number;
     readonly reasons: readonly QuarantineReasonCount[];
     readonly sample: readonly string[];
-}
+};
 
 /** A helper file that carries no meaning apart from the data file it serves. */
-export interface CompanionFile {
+export type CompanionFile = {
     readonly path: string;
     /** The suffix that identified it — `.tbi`, `.bai`, `.md5`. */
     readonly suffix: string;
     readonly size: number;
-}
+};
 
 /**
  * A data file plus its companions — the logical unit the pipeline mines and counts.
@@ -49,37 +49,37 @@ export interface CompanionFile {
  * Membership counts logical units, so a variant file and its index are one member, and
  * "N files, M indexed" becomes a computed completeness rather than a claim.
  */
-export interface MemberFile {
+export type MemberFile = {
     readonly path: string;
     readonly name: string;
     readonly size: number;
     readonly format: string;
     readonly wrapper?: string;
     readonly companions: readonly CompanionFile[];
-}
+};
 
-export interface SetMember extends MemberFile {
+export type SetMember = MemberFile & {
     /** Companion suffixes the rest of the set carries and this member does not. */
     readonly missingCompanions: readonly string[];
-}
+};
 
-export interface IncompleteMember {
+export type IncompleteMember = {
     readonly path: string;
     readonly missingCompanions: readonly string[];
-}
+};
 
 /**
  * Companion coverage across a set, reported per member rather than averaged: an
  * average hides the one member whose index is missing, which is exactly the fact a
  * downstream step will fail on.
  */
-export interface SetCompleteness {
+export type SetCompleteness = {
     /** Suffixes enough of the set carries that their absence is a gap, not a variation. */
     readonly expectedCompanions: readonly string[];
     readonly completeMembers: number;
     readonly incompleteMembers: number;
     readonly incompleteSample: readonly IncompleteMember[];
-}
+};
 
 export type SlotLocation = "directory" | "name";
 
@@ -90,7 +90,7 @@ export type SlotLocation = "directory" | "name";
  * rests on. The complete value set stays on {@link DetectedSets.slotValues},
  * host-side, for arithmetic a bounded sample cannot do.
  */
-export interface SetSlot {
+export type SetSlot = {
     /** Unique within one scan, so a cross-check can name the slot it links to. */
     readonly id: string;
     readonly location: SlotLocation;
@@ -110,7 +110,7 @@ export interface SetSlot {
     readonly sameAsSlot?: string;
     /** Members whose two positions disagreed, when the link was made despite them. */
     readonly crossCheckMismatches?: number;
-}
+};
 
 /** A template rendered as a sequence: concatenating it reproduces {@link DetectedSet.pathTemplate}. */
 export type TemplateSegment = { readonly kind: "literal"; readonly text: string } | { readonly kind: "slot"; readonly slotId: string };
@@ -125,12 +125,12 @@ export type TemplateSegment = { readonly kind: "literal"; readonly text: string 
 export type SetOrigin = "marker" | "mined" | "prefix" | "family" | "catch-all";
 
 /** Compression wrappers observed across a set's members. `none` names the uncompressed. */
-export interface WrapperCount {
+export type WrapperCount = {
     readonly wrapper: string;
     readonly count: number;
-}
+};
 
-export interface DetectedSet {
+export type DetectedSet = {
     /** Stable within one scan (`set-1`, `set-2`, …). */
     readonly id: string;
     readonly origin: SetOrigin;
@@ -154,7 +154,7 @@ export interface DetectedSet {
     readonly examplePaths: readonly string[];
     /** Complete membership. Host-side: the bounded projection is everything above. */
     readonly members: readonly SetMember[];
-}
+};
 
 /**
  * Files no set speaks for, in aggregate.
@@ -163,18 +163,18 @@ export interface DetectedSet {
  * set count proportional to the file count. Whether these are notable singletons worth
  * describing or an unclassified remainder is the agent's determination.
  */
-export interface LeftoverFiles {
+export type LeftoverFiles = {
     readonly memberCount: number;
     /** Members plus the companions riding on them, so it adds up against `keptFileCount`. */
     readonly fileCount: number;
     readonly totalBytes: number;
     readonly sample: readonly UnstructuredEntry[];
-}
+};
 
-export interface SetRepresentative {
+export type SetRepresentative = {
     readonly setId: string;
     readonly path: string;
-}
+};
 
 /**
  * Which files a header readout should open.
@@ -183,7 +183,7 @@ export interface SetRepresentative {
  * by construction, so a readout per file buys nothing and costs the enrichment budget
  * this pipeline exists to bound.
  */
-export interface ReadoutSelection {
+export type ReadoutSelection = {
     readonly representatives: readonly SetRepresentative[];
     /** Leftover paths — the files no set speaks for, each read on its own. Bounded. */
     readonly individual: readonly string[];
@@ -193,9 +193,9 @@ export interface ReadoutSelection {
      * header for some leftovers and not others has to be told which.
      */
     readonly individualElided: number;
-}
+};
 
-export interface DetectedSets {
+export type DetectedSets = {
     readonly fileCount: number;
     /** Files that survived quarantine — the denominator coverage is measured against. */
     readonly keptFileCount: number;
@@ -219,4 +219,4 @@ export interface DetectedSets {
      * re-tokenisation of the member's name.
      */
     readonly memberSlotValues: ReadonlyMap<string, readonly string[]>;
-}
+};

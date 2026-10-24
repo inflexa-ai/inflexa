@@ -30,7 +30,7 @@ export * from "./recommend.js";
 export * from "./situation.js";
 export * from "./template.js";
 
-export interface KnowledgeToolsDeps {
+export type KnowledgeToolsDeps = {
     readonly client?: KnowledgeClient;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis, for the environment join of the recommend answer. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
@@ -40,7 +40,7 @@ export interface KnowledgeToolsDeps {
     readonly refStorePath?: string;
     /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
     readonly onRecommend?: KnowledgeRecommendDeps["onAnswer"];
-}
+};
 
 /**
  * The planner tools: `knowledge_recommend` and `knowledge_check`, or an empty

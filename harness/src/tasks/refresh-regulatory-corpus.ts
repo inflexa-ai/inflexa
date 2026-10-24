@@ -25,12 +25,12 @@ export const REGULATORY_CORPUS_SOURCES: RegulatoryCorpusSource[] = ["FDA-CDER", 
 // chunks, so we batch.
 const EMBED_CONCURRENCY = 20;
 
-export interface RefreshResult {
+export type RefreshResult = {
     ok: number;
     fail: number;
-}
+};
 
-export interface RefreshOptions {
+export type RefreshOptions = {
     pool: Pool;
     sources?: RegulatoryCorpusSource[];
     /**
@@ -44,7 +44,7 @@ export interface RefreshOptions {
     embedder: (text: string) => Promise<number[]>;
     /** Logger used for per-doc progress. Defaults to `console`. */
     log?: Pick<Console, "log" | "error">;
-}
+};
 
 /**
  * Build an embedder that talks directly to api.openai.com using the given

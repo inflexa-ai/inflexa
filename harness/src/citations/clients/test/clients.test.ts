@@ -307,13 +307,13 @@ describe("Semantic Scholar citation client", () => {
     });
 });
 
-interface FailureCase {
+type FailureCase = {
     readonly name: string;
     readonly create: (fetcher: typeof fetch, timeoutMs?: number) => CitationSourceClient;
     readonly request: CitationSourceRequest;
     readonly noData: () => Response;
     readonly malformed: () => Response;
-}
+};
 
 const failureCases: readonly FailureCase[] = [
     {

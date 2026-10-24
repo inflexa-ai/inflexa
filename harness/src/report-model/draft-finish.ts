@@ -34,28 +34,28 @@ import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
 
 /** A schema conformance gap, reduced to a path and a message. */
-export interface SchemaGap {
+export type SchemaGap = {
     kind: "schema";
     path: string;
     message: string;
-}
+};
 
 /** A duplicate id gap. More than one block holds the id. */
-export interface DuplicateIdGap {
+export type DuplicateIdGap = {
     kind: "duplicate-id";
     id: string;
-}
+};
 
 /**
  * An unresolved reference gap. It ties the block that carries the reference to the reason it did not resolve.
  * `slot` names the place of the reference inside a chart block: the binding, the track, a tree, or one statistic.
  */
-export interface UnresolvedReferenceGap {
+export type UnresolvedReferenceGap = {
     kind: "unresolved-reference";
     blockId: string;
     slot?: ChartSlot;
     failure: UnresolvedReference;
-}
+};
 
 /** One completeness gap of a draft. The kind set is closed. */
 export type FinishGap = SchemaGap | DuplicateIdGap | UnresolvedReferenceGap;
@@ -71,9 +71,9 @@ export type FinishResult =
  * One derivation of the session, as the finish reads it. The finish needs the output path alone, because
  * the used set is the paths that the bindings name.
  */
-export interface SessionDerivation {
+export type SessionDerivation = {
     readonly outputPath: string;
-}
+};
 
 /**
  * Warn for each derivation that no binding of the draft names.
