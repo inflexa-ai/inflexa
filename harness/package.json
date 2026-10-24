@@ -108,6 +108,7 @@
         "@inflexa-ai/oxlint-plugin": "0.8.0",
         "@inflexa-ai/typecheck": "0.8.0",
         "@types/bun": "latest",
+        "@types/json-schema": "^7.0.15",
         "@types/node": "^24.13.3",
         "@types/pdf-parse": "^1.1.5",
         "@typescript/native": "npm:typescript@7.0.2",
