@@ -18,14 +18,14 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError, zWireNumber } from "./api-utils.js";
 import { PUBCHEM_BASE, PUBCHEM_HEADERS } from "./pubchem-config.js";
 
-export interface PubChemCompoundProperties {
+export type PubChemCompoundProperties = {
     cid: number;
     molecularWeight: number | null;
     inchiKey: string | null;
     canonicalSmiles: string | null;
     hBondDonorCount: number | null;
     hBondAcceptorCount: number | null;
-}
+};
 
 const PROPERTY_FIELDS = [
     "MolecularWeight",

@@ -10,10 +10,10 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
-interface SeenRequest {
+type SeenRequest = {
     readonly url: URL;
     readonly body: unknown;
-}
+};
 
 function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

@@ -38,10 +38,10 @@ function pollResponse(body: Record<string, unknown>): Response {
     return new Response(JSON.stringify(body), { status: 200 });
 }
 
-interface SeenRequest {
+type SeenRequest = {
     readonly url: string;
     readonly init?: RequestInit;
-}
+};
 
 /**
  * A sandbox: a POST to `/exec` gets a 202, and each poll gets the next item,

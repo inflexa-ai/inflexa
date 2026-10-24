@@ -18,14 +18,14 @@ import {
 
 import { __resetMetricsForTest } from "../../lib/metrics.js";
 
-export interface MetricsCapture {
+export type MetricsCapture = {
     /** `[attributes, value]` of each data point of a counter; `[]` when the instrument exported nothing. */
     sums(name: string): Promise<Array<[Attributes, number]>>;
     /** `[attributes, {count, sum}]` of each data point of a histogram; `[]` when the instrument exported nothing. */
     histograms(name: string): Promise<Array<[Attributes, { count: number; sum: number | undefined }]>>;
     /** Shut the provider down and unbind the global meter provider. */
     dispose(): Promise<void>;
-}
+};
 
 export function captureMetrics(): MetricsCapture {
     __resetMetricsForTest();

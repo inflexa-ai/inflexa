@@ -109,7 +109,7 @@ export type StartReportSessionResult =
  * a page. A composition that binds a capture seam straight to the spawn still
  * opens the gate of that spawn.
  */
-export interface StartReportSessionToolDeps {
+export type StartReportSessionToolDeps = {
     readonly pool: Pool;
     readonly chrome: ChromeConfig;
     /**
@@ -131,7 +131,7 @@ export interface StartReportSessionToolDeps {
      */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
-}
+};
 
 /** The line that a call reads when the scope names no conversation thread. */
 const NO_THREAD_SCOPE_DETAIL = "the scope of the call names no conversation thread, thus the tool cannot start a child session";

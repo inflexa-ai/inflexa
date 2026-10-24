@@ -85,7 +85,7 @@ function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): string | null 
     return metadata?.annotations?.[OWNER_WORKFLOW_ANNOTATION] ?? null;
 }
 
-export interface K8sClientConfig {
+export type K8sClientConfig = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     image: string;
@@ -144,7 +144,7 @@ export interface K8sClientConfig {
     batchApi?: BatchV1Api;
     coreApi?: CoreV1Api;
     registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
-}
+};
 
 function deleteJobIgnoreMissing(batchApi: BatchV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
     return trySandbox(
@@ -395,13 +395,13 @@ async function buildJobSpec(
     };
 }
 
-interface PodStatusSnapshot {
+type PodStatusSnapshot = {
     phase?: string;
     podIP?: string;
     podName?: string;
     /** Why the pod is not there yet — `Unschedulable`, `ContainersNotReady`, and the rest. */
     reason?: string;
-}
+};
 
 /**
  * The reason of the first condition the pod does not meet. `PodScheduled` and
@@ -413,11 +413,11 @@ function pendingConditionReason(pod: V1Pod | undefined): string | undefined {
 }
 
 /** Clock and sleep seams, so a test can drive the slow-pod warning without waiting a minute. */
-export interface WaitForPodReadyDeps {
+export type WaitForPodReadyDeps = {
     readonly logger?: Logger;
     readonly now?: () => number;
     readonly sleep?: (ms: number) => Promise<void>;
-}
+};
 
 export function waitForPodReady(
     coreApi: CoreV1Api,

@@ -66,28 +66,28 @@ const ImpcSolrResponseSchema = z.object({
 });
 type ImpcSolrResponse = z.infer<typeof ImpcSolrResponseSchema>;
 
-export interface MpTerm {
+export type MpTerm = {
     id: string;
     term: string;
     bestPValue: number | null;
-}
+};
 
-export interface PhenotypeProfile {
+export type PhenotypeProfile = {
     mpTerms: MpTerm[];
     organSystems: string[];
     sexDimorphic: boolean;
     phenotypeCount: number;
-}
+};
 
-export interface ViabilityCall {
+export type ViabilityCall = {
     zygosity: string;
     parameterStableId: string;
     mpTerm: { id: string; name: string } | null;
-}
+};
 
 export type ViabilityCategory = "lethal_pre_weaning" | "subviable" | "viable" | null;
 
-export interface KoPhenotypeProfile {
+export type KoPhenotypeProfile = {
     geneSymbol: string;
     mouseMarkerSymbol: string | null;
     mgiAccessionId: string | null;
@@ -99,7 +99,7 @@ export interface KoPhenotypeProfile {
     phenotypeCount: number;
     phenotypeDocsTotal: number;
     phenotypesTruncated: boolean;
-}
+};
 
 function escapeSolrValue(value: string): string {
     return value.replace(/([+\-&|!(){}[\]^"~*?:\\/\s])/g, "\\$1");

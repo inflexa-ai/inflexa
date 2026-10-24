@@ -42,14 +42,14 @@ export const IupharTargetSchema = z.object({
 });
 export type IupharTarget = z.infer<typeof IupharTargetSchema>;
 
-export interface IupharHeterodimer {
+export type IupharHeterodimer = {
     /** Complex target record (e.g., the AMY1 receptor). */
     complex: IupharTarget;
     /** All subunits of the complex, including the primary protein and accessory(ies). */
     subunits: IupharTarget[];
     /** Accessory-protein subunits only (type === "AccessoryProtein"). */
     accessories: IupharTarget[];
-}
+};
 
 const UNIPROT_ACCESSION_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
 

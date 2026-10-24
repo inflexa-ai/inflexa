@@ -3,16 +3,16 @@ import type { QueryResultRow } from "pg";
 import { envelopeMessage, legacyAnthropicToModelMessage } from "./ai-sdk-message-storage.js";
 
 /** The query method of a `pg` client, which the migration transaction also supplies. */
-export interface BackfillClient {
+export type BackfillClient = {
     query<R extends QueryResultRow>(text: string, values?: unknown[]): Promise<{ rows: R[] }>;
-}
+};
 
-interface LegacyRow {
+type LegacyRow = {
     readonly thread_id: string;
     readonly seq: string;
     readonly role: string;
     readonly content_jsonb: string | Array<Record<string, unknown>>;
-}
+};
 
 export async function backfillAiSdkMessageEnvelopes(client: BackfillClient): Promise<void> {
     // Legacy Anthropic columns (`role`, `content_jsonb`) are temporary and

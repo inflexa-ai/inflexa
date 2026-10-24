@@ -22,9 +22,9 @@
  */
 
 /** Who the request is. Always complete. */
-export interface Identity {
+export type Identity = {
     readonly user: string;
-}
+};
 
 /**
  * What the request operates on. It owns its resource coordinates
@@ -47,32 +47,32 @@ declare const CRED_BRAND: unique symbol;
  * off it while still letting a concrete managed credential satisfy it
  * structurally.
  */
-export interface Credential {
+export type Credential = {
     readonly [CRED_BRAND]?: never;
-}
+};
 
 /**
  * The agent call chain at the point of a call. Read-only provenance —
  * events, logs, and OTel spans read it; control flow MUST NOT branch on it.
  */
-export interface Provenance {
+export type Provenance = {
     readonly agentId: string;
     readonly callPath: readonly string[];
-}
+};
 
 /** Present only inside a workflow run. */
-export interface RunFrame {
+export type RunFrame = {
     readonly runId: string;
     readonly stepId?: string;
-}
+};
 
 // ── Scope coordinate derivation ─────────────────────────────────────
 
 /** Canonical resource coordinates a `Scope` resolves to. */
-export interface ResourceCoordinates {
+export type ResourceCoordinates = {
     readonly resourceType: "analysis";
     readonly resourceId: string;
-}
+};
 
 /** Derive the `{ resourceType, resourceId }` a scope resolves through: `{ "analysis", analysisId }`. */
 export function scopeResource(scope: Scope): ResourceCoordinates {
@@ -98,9 +98,9 @@ declare const AUTH_BRAND: unique symbol;
  * off it while still letting a managed `{ credential, orgId }` literal satisfy
  * it structurally.
  */
-export interface AuthContext {
+export type AuthContext = {
     readonly [AUTH_BRAND]?: never;
-}
+};
 
 // ── Session bundles ─────────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ export interface AuthContext {
  * `RunSession` (with RunFrame) are each structurally assignable, so the
  * same agent loop runs under a live request and inside a durable workflow.
  */
-export interface AgentSession {
+export type AgentSession = {
     readonly identity: Identity;
     readonly scope: Scope;
     readonly provenance: Provenance;
@@ -129,60 +129,60 @@ export interface AgentSession {
      * `getAuth`. The sole source of credential/org behind a session.
      */
     readonly auth: AuthContext;
-}
+};
 
 /**
  * The live HTTP door. No `RunFrame` — `runId`/`stepId` are unrepresentable
  * until async work is authorized. SHALL NOT be JSON-serialized into durable
  * state.
  */
-export interface RequestSession {
+export type RequestSession = {
     readonly identity: Identity;
     readonly scope: Scope;
     readonly provenance: Provenance;
     readonly auth: AuthContext;
-}
+};
 
 /**
  * The durable, JSON-serializable bundle. Carries a `RunFrame`. Constructed
  * solely at the run-authorization seam.
  */
-export interface RunSession {
+export type RunSession = {
     readonly identity: Identity;
     readonly scope: Scope;
     readonly provenance: Provenance;
     readonly runFrame: RunFrame;
     readonly auth: AuthContext;
-}
+};
 
 /**
  * The session of a sandbox spawn. A sandbox takes its analysis id, its run id,
  * and its step id from this session.
  */
-export interface SpawnSession extends RunSession {
+export type SpawnSession = RunSession & {
     readonly runFrame: RunFrame & { readonly stepId: string };
-}
+};
 
 /**
  * The minimal session view that a host hook reads. Both bundles satisfy it;
  * `runFrame` is present only on a `RunSession`, so a hook that gets a
  * `RequestSession` sees no run or step.
  */
-export interface HookSessionView {
+export type HookSessionView = {
     readonly identity: Identity;
     readonly scope: Scope;
     readonly provenance: Provenance;
     readonly runFrame?: RunFrame;
-}
+};
 
 /**
  * The session that the request headers hook gets: the hook view plus the
  * opaque `auth`, which a host realization downcasts to reach its credential.
  * `AgentSession` structurally satisfies it.
  */
-export interface ResolvableSession extends HookSessionView {
+export type ResolvableSession = HookSessionView & {
     readonly auth: AuthContext;
-}
+};
 
 /**
  * Derive a child session for a sub-agent call — provenance only. Sets the

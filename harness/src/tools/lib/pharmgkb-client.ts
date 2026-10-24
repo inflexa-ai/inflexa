@@ -38,11 +38,11 @@ export const PharmgkbResponseSchema = z.object({
  * phenotype, guideline source and summary live on other PharmGKB resources, so
  * they are absent here rather than present-and-null.
  */
-export interface PharmgkbAnnotation {
+export type PharmgkbAnnotation = {
     gene: string;
     drug: string;
     levelOfEvidence: string;
-}
+};
 
 export async function searchPharmgkb(
     query: string,

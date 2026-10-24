@@ -32,7 +32,7 @@ const WirePaperSchema = z
 export const ExactPaperSchema = WirePaperSchema.extend({ paperId: z.string() });
 export const SearchResponseSchema = z.object({ data: z.array(WirePaperSchema).optional() });
 
-export interface SemanticScholarPaper {
+export type SemanticScholarPaper = {
     id: string;
     title?: string;
     abstract?: string;
@@ -42,20 +42,20 @@ export interface SemanticScholarPaper {
     url?: string;
     authors: string[];
     externalIds?: Record<string, string>;
-}
+};
 
-export interface SemanticScholarSearchPaper extends SemanticScholarPaper {
+export type SemanticScholarSearchPaper = SemanticScholarPaper & {
     title: string;
-}
+};
 
-export interface SemanticScholarSourceOptions extends SourceHttpOptions {
+export type SemanticScholarSourceOptions = SourceHttpOptions & {
     readonly apiKey?: string;
-}
+};
 
-export interface SemanticScholarSource {
+export type SemanticScholarSource = {
     search(query: string, limit: number, signal?: AbortSignal): Promise<SourceHttpResult<SemanticScholarSearchPaper[]>>;
     lookupIdentifier(identifier: string, signal?: AbortSignal): Promise<SourceHttpResult<SemanticScholarPaper>>;
-}
+};
 
 /** Give one text form to each external id, thus a numeric `CorpusId` reaches a caller that keys on a string. */
 function stringExternalIds(value: Record<string, string | number> | null | undefined): Record<string, string> | undefined {

@@ -52,10 +52,10 @@ const ROC_MARGINS = { top: 16, bottom: 56, left: 64, right: 12 } as const;
 const CURVE_WIDTH_PX = 1.5;
 
 /** One curve: the name of its group, and its points in drawing order. */
-interface RocCurve {
+type RocCurve = {
     readonly name: string;
     readonly points: number[][];
-}
+};
 
 /** Derive the figure of one roc block. */
 function deriveRoc(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {

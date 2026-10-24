@@ -58,10 +58,10 @@ export function loadChartRuntime(): Promise<ChartRuntime> {
 }
 
 /** The two SVG files of one chart: the single journal column and the double journal column. */
-export interface ChartSvgs {
+export type ChartSvgs = {
     readonly single: DataAsset;
     readonly double: DataAsset;
-}
+};
 
 /**
  * Render one option to SVG text at one column size.

@@ -56,9 +56,9 @@ const DEFAULT_ANALYSIS_ID = "analysis-001";
 const emptyDraft = { title: "", sections: [] };
 
 /** An in-memory gateway. It holds one state and one analysis for each thread. */
-interface FakeGateway extends ReportSessionStateGateway {
+type FakeGateway = ReportSessionStateGateway & {
     seed(threadId: string, snapshot: ReportSnapshot, analysisId?: string): void;
-}
+};
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();

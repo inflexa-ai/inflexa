@@ -110,10 +110,10 @@ export function describeSearchFailure(error: ApiError): WebSearchEngineError {
     }
 }
 
-export interface SearxngEngineDeps {
+export type SearxngEngineDeps = {
     /** The base URL of the SearXNG instance the embedder runs. */
     readonly baseUrl: string;
-}
+};
 
 export function createSearxngEngine(deps: SearxngEngineDeps): WebSearchEngine {
     const baseUrl = normalizeSearxngBaseUrl(deps.baseUrl);

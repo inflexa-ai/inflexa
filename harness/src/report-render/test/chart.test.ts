@@ -1860,11 +1860,11 @@ describe("the dense chart reads the shared payload", () => {
  */
 describe("the channel transform", () => {
     /** One entry of the vector: the cells of one column, the transform, and the values that it gives. */
-    interface Entry {
+    type Entry = {
         readonly cells: (string | number)[];
         readonly transform: ChartTransform;
         readonly expected: (number | null)[];
-    }
+    };
 
     const VECTOR: readonly Entry[] = [
         // `log10` and `neg_log10` give no value for a cell that is not positive, thus such a point drops.

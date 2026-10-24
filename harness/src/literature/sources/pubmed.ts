@@ -13,34 +13,34 @@ const IdConvResponseSchema = z.object({
     records: z.array(z.object({ pmid: z.string().optional(), pmcid: z.string().optional() })).optional(),
 });
 
-export interface PubmedSourceOptions extends SourceHttpOptions {
+export type PubmedSourceOptions = SourceHttpOptions & {
     readonly apiKey?: string;
-}
+};
 
-export interface PubmedSearchOptions {
+export type PubmedSearchOptions = {
     readonly maxResults?: number;
     readonly sort?: "relevance" | "date";
     readonly dateRange?: { readonly from: string; readonly to: string };
-}
+};
 
-export interface PubmedCitationFields {
+export type PubmedCitationFields = {
     readonly venue?: string;
     readonly year?: string | number;
     readonly volume?: string;
     readonly firstPage?: string;
     readonly firstAuthor?: string;
     readonly key: string;
-}
+};
 
-export interface PubMedSummary {
+export type PubMedSummary = {
     pmid: string;
     title: string;
     journal: string;
     year: string;
     authors: string;
-}
+};
 
-export interface ArticleDetail {
+export type ArticleDetail = {
     pmid: string;
     title: string;
     abstract: string;
@@ -50,26 +50,26 @@ export interface ArticleDetail {
     doi: string;
     meshTerms: string[];
     pmcId: string | null;
-}
+};
 
-export interface ArticleSection {
+export type ArticleSection = {
     heading: string;
     text: string;
-}
+};
 
-export interface FullTextResult {
+export type FullTextResult = {
     fullText: string;
     sections: ArticleSection[];
-}
+};
 
-export interface PubmedSource {
+export type PubmedSource = {
     search(query: string, options?: PubmedSearchOptions, signal?: AbortSignal): Promise<SourceHttpResult<{ totalFound: number; results: PubMedSummary[] }>>;
     searchIds(query: string, maxResults: number, signal?: AbortSignal): Promise<SourceHttpResult<string[]>>;
     matchCitation(fields: PubmedCitationFields, signal?: AbortSignal): Promise<SourceHttpResult<string[]>>;
     fetchArticles(pmids: readonly string[], signal?: AbortSignal): Promise<SourceHttpResult<ArticleDetail[]>>;
     articleDetails(pmids: readonly string[], signal?: AbortSignal): Promise<SourceHttpResult<{ articles: ArticleDetail[]; notFound: string[] }>>;
     fetchFullText(pmcId: string, signal?: AbortSignal): Promise<SourceHttpResult<FullTextResult | null>>;
-}
+};
 
 export function ncbiUrl(apiKey: string | undefined, base: string, params: Record<string, string | number | undefined>): string {
     const url = new URL(base);
@@ -111,11 +111,11 @@ function recordList(value: unknown): Record<string, unknown>[] {
     return isRecord(value) ? [value] : [];
 }
 
-interface DocSumItem {
+type DocSumItem = {
     "@_Name"?: string;
     "#text"?: string;
     Item?: DocSumItem | DocSumItem[];
-}
+};
 
 function isDocSumItem(value: unknown): value is DocSumItem {
     return typeof value === "object" && value !== null;
@@ -157,16 +157,16 @@ export function parseEsummary(xml: string): PubMedSummary[] {
     });
 }
 
-interface MedlineAuthor {
+type MedlineAuthor = {
     LastName?: string;
     ForeName?: string;
     Initials?: string;
     CollectiveName?: string;
-}
+};
 
-interface MeshHeadingItem {
+type MeshHeadingItem = {
     DescriptorName?: { "#text"?: string } | string;
-}
+};
 
 export function parseEfetch(xml: string): ArticleDetail[] {
     const articleSet = childRecord(parseXmlRecord(xml), "PubmedArticleSet");

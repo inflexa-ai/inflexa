@@ -30,15 +30,15 @@ function makeSandboxRef(over: Partial<SandboxRef> = {}): SandboxRef {
     };
 }
 
-interface FakeOpts {
+type FakeOpts = {
     result?: ExecResult;
     intermediateEvents?: readonly unknown[];
     execError?: Error;
-}
+};
 
-interface FakeSandboxClient extends SandboxClient {
+type FakeSandboxClient = SandboxClient & {
     readonly execs: { ref: SandboxRef; request: ExecRequest; deadlineMs: number }[];
-}
+};
 
 function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
     const execs: { ref: SandboxRef; request: ExecRequest; deadlineMs: number }[] = [];

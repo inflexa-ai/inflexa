@@ -159,13 +159,13 @@ function modelAuthored(fields: Record<string, string | undefined>): LogFields {
  * attempts is a planner stuck, moving paths is a planner making progress and
  * merely running out of budget.
  */
-interface RejectionRecord {
+type RejectionRecord = {
     readonly attempt: number;
     readonly issueCount: number;
     readonly codes: { readonly schema: number; readonly semantic: number };
     readonly paths: readonly string[];
     readonly messages: readonly string[];
-}
+};
 
 function toRejectionRecord(attempt: number, issues: readonly ValidationIssue[]): RejectionRecord {
     const kept = issues.slice(0, MAX_LOGGED_ISSUES);
@@ -191,7 +191,7 @@ function toRejectionRecord(attempt: number, issues: readonly ValidationIssue[]):
  * ending as a planner that stopped on prose after one turn, and the opposite
  * problem.
  */
-interface PlannerTrace {
+type PlannerTrace = {
     submitAttempts: number;
     /**
      * True count of rejected attempts — NOT `rejections.length`, which stops at
@@ -203,7 +203,7 @@ interface PlannerTrace {
     rejections: RejectionRecord[];
     /** Terminal calls made after an outcome was already recorded — a planner ignoring "stop after this". */
     duplicateTerminalCalls: number;
-}
+};
 
 function createPlannerTrace(): PlannerTrace {
     return { submitAttempts: 0, rejectedAttempts: 0, rejections: [], duplicateTerminalCalls: 0 };
@@ -230,21 +230,21 @@ type PlannerOutcome =
     | { kind: "blocker"; reason: string }
     | { kind: "persist_error"; message: string };
 
-interface OutcomeHolder {
+type OutcomeHolder = {
     outcome: PlannerOutcome | null;
-}
+};
 
-interface PersistContext {
+type PersistContext = {
     analysisId: string;
     parentPlanId: string | null;
-}
+};
 
-interface ValidationIssue {
+type ValidationIssue = {
     path: string;
     code: "schema" | "semantic";
     message: string;
     hint?: string;
-}
+};
 
 type SubmitPlanOutput = { accepted: false; issues: ValidationIssue[] } | { accepted: true; planId: string };
 
@@ -458,12 +458,12 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
  * alternatives, their disputed rules, the claim views, and the flags, and
  * the snapshot digest the answer came from.
  */
-interface RecommendMemory {
+type RecommendMemory = {
     readonly steps: Map<string, SkeletonStep>;
     readonly claims: Set<string>;
     /** The digest of the last answer; `undefined` before the first. */
     digest?: string;
-}
+};
 
 function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
     memory.steps.clear();
@@ -498,11 +498,11 @@ function claimsByRule(claims: ReadonlySet<string>): ReadonlyMap<string, string> 
 }
 
 /** A claim id the model repaired on one step: the id it wrote and the id of the answer. */
-interface RepairedClaim {
+type RepairedClaim = {
     readonly step: string;
     readonly from: string;
     readonly to: string;
-}
+};
 
 /**
  * Restore the grounding fields the host owns on each candidate step, from the
@@ -657,9 +657,9 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
  * inventories are read before the loop and injected into its seed message.
  * The ids of the terminal list make the mask of the salvage, if one is needed.
  */
-interface InnerTools {
+type InnerTools = {
     readonly terminal: Tool[];
-}
+};
 
 /**
  * Build the planner's inner tools for one invocation. They close over the
@@ -936,12 +936,12 @@ const PROSE_EXPLAINS_OUTCOME: ReadonlySet<OutcomeKind> = new Set<OutcomeKind>(["
 
 // ── Outcome shaping ─────────────────────────────────────────────────
 
-interface ShapeOutcomeArgs {
+type ShapeOutcomeArgs = {
     holder: OutcomeHolder;
     runError: unknown;
     timedOut: boolean;
     outerAborted: boolean;
-}
+};
 
 /**
  * How the invocation ended, at the granularity a diagnostic reader needs.
@@ -966,10 +966,10 @@ type OutcomeKind =
     /** Rejected before the planner ran — the parent plan could not be read. */
     | "parent_plan_load_failed";
 
-interface ShapedOutcome {
+type ShapedOutcome = {
     readonly output: PlanningAgentOutput;
     readonly kind: OutcomeKind;
-}
+};
 
 /**
  * Translate the captured `PlannerOutcome` (plus any loop error) into the
@@ -1052,7 +1052,7 @@ const OUTCOME_LEVEL: Record<OutcomeKind, "info" | "warn" | "error"> = {
 
 // ── Outer tool ──────────────────────────────────────────────────────
 
-export interface GeneratePlanDeps extends EnvironmentStorePaths {
+export type GeneratePlanDeps = EnvironmentStorePaths & {
     /**
      * The conversation-role backend the planner is pinned to. Keeping the
      * provider and its model label in one value prevents composition roots from
@@ -1085,7 +1085,7 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
      * the open-source host.
      */
     readonly knowledge?: KnowledgeClient;
-}
+};
 
 /**
  * The search tools of the planner — built one time, not per invocation.

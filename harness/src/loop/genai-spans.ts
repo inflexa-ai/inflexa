@@ -21,9 +21,9 @@ import type { ToolCallPart } from "ai";
 import type { AgentSession } from "../auth/types.js";
 import type { ToolOutcome } from "./tool-outcome.js";
 
-interface AgentRun {
+type AgentRun = {
     readonly finish: { readonly reason: string; readonly cappedOut: boolean };
-}
+};
 
 /**
  * Run one agent loop under an `invoke_agent` span. A turn root starts a new

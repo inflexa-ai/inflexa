@@ -31,7 +31,7 @@ gain a scoped `read_file` to ground every claim in the actual persisted outputs.
 The harness SHALL define every sandbox agent under `harness/src/agents/sandbox/`.
 The directory SHALL contain `shared.ts` (the composition root: tool registry,
 `BASE_SANDBOX_TOOLS`, `createSandboxAgent`, `resolveSandboxTools`), `types.ts`
-(the `AgentMeta` interface, the `SandboxToolName` union, and
+(the `AgentMeta` type, the `SandboxToolName` union, and
 `SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS`), `index.ts` (the `SANDBOX_AGENT_META`
 record and the `createSandboxAgents(deps)` builder), and one file per agent. The
 agent set SHALL cover the data-profiler, the omics specialists,

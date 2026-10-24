@@ -80,11 +80,11 @@ function pendingRow(stepId: string): Row {
     return { ...stepRow(stepId, null), status: "pending", started_at: null };
 }
 
-interface FakeDb {
+type FakeDb = {
     pool: Pool;
     /** `ledger` is the step table the two step writes act on; it starts as a copy of the last read batch. */
     state: { run: Row | null; swept: number; ledger: Row[] };
-}
+};
 
 /** Successive `queryStepsByRun` reads consume `stepBatches`; the last repeats. */
 function fakeDb(

@@ -238,19 +238,19 @@ export function renderMemory(memory: StepMemory): string {
 // ── (1c) Template contract ────────────────────────────────────────────
 
 /** A file the script of the template reads. `path` names the slot that gives it, for example `{{counts_path}}`. */
-export interface TemplateBriefInput {
+export type TemplateBriefInput = {
     readonly name: string;
     readonly path: string;
     readonly description?: string;
-}
+};
 
 /** One plan setting bound to an adaptable slot of the template. */
-export interface TemplateBoundSetting {
+export type TemplateBoundSetting = {
     readonly name: string;
     readonly value: TemplateBindingValue;
     /** The source of the value (a doi or a document), or `plan` when the procedure names none. */
     readonly source: string;
-}
+};
 
 /**
  * The contract of the template a step renders, projected for the seed. The
@@ -258,7 +258,7 @@ export interface TemplateBoundSetting {
  * section is what lets an agent that has never seen the template make one
  * valid render call.
  */
-export interface TemplateBrief {
+export type TemplateBrief = {
     /** The template reference of the plan step, with its version when the plan names one. */
     readonly ref: string;
     /** The version the service serves. Differs from the version of `ref` when the snapshot moved on. */
@@ -270,7 +270,7 @@ export interface TemplateBrief {
     readonly bound: readonly TemplateBoundSetting[];
     /** The plan settings no bound slot carries, one line each with the reason. */
     readonly unbound_settings: readonly string[];
-}
+};
 
 /** A value as the render request carries it: JSON, thus `"apeglm"` and `10` cannot be confused. */
 function slotValue(value: unknown): string {
@@ -372,12 +372,12 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
  * every other path in the briefing is rooted with, thus one field serves the
  * workspace section and the orientation alike.
  */
-export interface WorkspaceFrame {
+export type WorkspaceFrame = {
     /** The analysis id. The sandbox mounts the read-only analysis tree at `/{analysisId}`. */
     readonly analysisId: string;
     /** In-sandbox working directory — this step's writable artifact directory, and its cwd. */
     readonly workingDir: string;
-}
+};
 
 /** The in-sandbox analysis root of a frame — the read-only mount of the whole tree. */
 export function analysisRootOf(frame: WorkspaceFrame): string {
@@ -440,7 +440,7 @@ export function renderOrientation(profile: DataProfileResult | null | undefined,
  * to the rest — an agent that needs more than the excerpt reads the summary at
  * `summaryPath` rather than having the whole document pushed into its context.
  */
-export interface UpstreamHandoff {
+export type UpstreamHandoff = {
     readonly stepId: string;
     readonly agentId: string;
     /** The dependency's step summary. Clamped to {@link UPSTREAM_SUMMARY_MAX_CHARS} here, not by the caller. */
@@ -451,7 +451,7 @@ export interface UpstreamHandoff {
     readonly outputDir: string;
     /** In-sandbox absolute paths of the artifacts the dependency registered. */
     readonly artifacts: readonly string[];
-}
+};
 
 export function renderUpstream(handoffs: readonly UpstreamHandoff[]): string {
     if (handoffs.length === 0) return "";
@@ -488,7 +488,7 @@ function renderHandoff(handoff: UpstreamHandoff): string {
 // ── Composition ───────────────────────────────────────────────────────
 
 /** Everything one step's seed is composed from — all of it known at dispatch time. */
-export interface StepBriefing {
+export type StepBriefing = {
     readonly step: AnalysisStep;
     readonly workspace: WorkspaceFrame;
     /** The analysis's persisted data profile; `null` when never profiled or still pending. */
@@ -505,7 +505,7 @@ export interface StepBriefing {
      * service does not hold the template. Read only when `template` is absent.
      */
     readonly templateNotRetrieved?: string;
-}
+};
 
 /**
  * Compose the seed. Absent sections collapse out entirely — an independent step

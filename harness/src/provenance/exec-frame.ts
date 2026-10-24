@@ -40,7 +40,7 @@ export function stripMountPrefix(mountRoot: string, absPath: string): string {
     return absPath.startsWith(prefix) ? absPath.slice(prefix.length).replace(/^\/+/, "") : absPath;
 }
 
-export interface FeedExecFrameArgs {
+export type FeedExecFrameArgs = {
     readonly collector: ProvenanceCollector;
     /** Analysis resource mount root, e.g. `/{resourceId}`. */
     readonly mountRoot: string;
@@ -52,7 +52,7 @@ export interface FeedExecFrameArgs {
     readonly provenance?: ProvenanceFrame;
     /** Diagnostics seam. Left unwired, refusals still happen but go unnarrated. */
     readonly logger?: Logger;
-}
+};
 
 /**
  * Translate one exec's frame into a collector record. Per-command input

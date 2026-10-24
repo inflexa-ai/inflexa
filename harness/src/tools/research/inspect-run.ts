@@ -24,7 +24,7 @@ const POLL_INTERVAL_MS = 1_000;
 
 type FormattedRun = ReturnType<typeof formatRun>;
 
-interface FormattedStep {
+type FormattedStep = {
     stepId: string;
     agentId: string;
     wave: number;
@@ -36,12 +36,12 @@ interface FormattedStep {
     lastErrorClass?: string | null;
     finishReason?: string | null;
     hitMaxSteps?: boolean | null;
-}
+};
 
-interface WaitMetadata {
+type WaitMetadata = {
     readonly requestedSeconds: number;
     readonly cutoffReached: boolean;
-}
+};
 
 type InspectRunOutput =
     | { runs: FormattedRun[]; total: number; page: number; pageSize: number; hasMore: boolean }
@@ -56,10 +56,10 @@ type InspectRunOutput =
           selfWaitPrevented?: boolean;
       };
 
-interface InspectRunClock {
+type InspectRunClock = {
     now(): number;
     wait(ms: number, signal: AbortSignal): Promise<void>;
-}
+};
 
 const systemClock: InspectRunClock = {
     now: Date.now,

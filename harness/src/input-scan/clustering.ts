@@ -18,26 +18,26 @@ import type { MemberFile } from "./set-types.js";
 import { DATE_SYMBOL, DIGIT_SYMBOL, ID_SYMBOL, maskSegment, skeletonOf, tokenizeName } from "./tokens.js";
 import { COARSE_SIMILARITY, CONTAINMENT_SIMILARITY, FINE_SIMILARITY, MAX_SIGNATURE_KEYS } from "./tuning.js";
 
-export interface DirectoryNode {
+export type DirectoryNode = {
     readonly name: string;
     readonly children: Map<string, DirectoryNode>;
     readonly files: MemberFile[];
     readonly fineSignature: Set<string>;
     readonly coarseSignature: Set<string>;
     readonly childNames: Set<string>;
-}
+};
 
 /** One concrete directory, carrying the values of the template positions above it. */
-export interface DirectoryEntry {
+export type DirectoryEntry = {
     readonly node: DirectoryNode;
     readonly varValues: readonly string[];
-}
+};
 
 /** What a content-schema comparison would be given to judge two candidate clusters by. */
-export interface ClusterEvidence {
+export type ClusterEvidence = {
     readonly names: readonly string[];
     readonly files: readonly MemberFile[];
-}
+};
 
 /**
  * Similarity from file contents — header fields, delimiters, column names.
@@ -128,14 +128,14 @@ function skeletonKin(a: string, b: string): boolean {
     return head === b.split(/[_\-.]/)[0]! && hasMask(head);
 }
 
-interface Candidate {
+type Candidate = {
     readonly names: string[];
     readonly entries: DirectoryEntry[];
     skeleton: string;
     readonly fine: Set<string>;
     readonly coarse: Set<string>;
     readonly subdirs: Set<string>;
-}
+};
 
 function filesUnder(node: DirectoryNode, out: MemberFile[] = []): MemberFile[] {
     out.push(...node.files);

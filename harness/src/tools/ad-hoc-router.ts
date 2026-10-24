@@ -53,12 +53,12 @@ const routeSchema = z.object({
  * - `absent` — the bound resolution answered that the pool holds no such
  *   package, and it offered no other spelling.
  */
-export interface DroppedPackage {
+export type DroppedPackage = {
     readonly entry: string;
     readonly reason: "unparsable" | "absent";
-}
+};
 
-export interface AdHocRoute {
+export type AdHocRoute = {
     readonly agentId: string;
     readonly resources: ResourceSpec;
     readonly rationale: string;
@@ -69,9 +69,9 @@ export interface AdHocRoute {
     /** Every entry that the validation removed, with the reason for the caveat. */
     readonly droppedPackages: readonly DroppedPackage[];
     readonly fallbackClass?: "timeout" | "provider_error" | "malformed" | "no_match" | "invalid_agent" | "invalid_resources";
-}
+};
 
-export interface AdHocRouterDeps {
+export type AdHocRouterDeps = {
     readonly provider: ChatProvider;
     readonly model: string;
     readonly pool: Pool;
@@ -93,7 +93,7 @@ export interface AdHocRouterDeps {
     readonly resolvePackages?: (names: readonly string[]) => Promise<readonly CheckedPackage[] | null>;
     /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
-}
+};
 
 export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
     return policy ? { cpu: Math.min(4, policy.perStep.maxCpu), memoryGb: Math.min(8, policy.perStep.maxMemoryGb) } : { cpu: 4, memoryGb: 8 };

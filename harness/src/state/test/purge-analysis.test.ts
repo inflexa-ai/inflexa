@@ -98,14 +98,14 @@ const FULLY_SEEDED: Record<string, number> = {
 
 const SEEDED_MESSAGES = 4;
 
-interface SeededAnalysis {
+type SeededAnalysis = {
     readonly analysisId: string;
     readonly threadIds: readonly string[];
     /** The `cortex_runs.run_id` values, which are the parent workflow ids directly. */
     readonly runIds: readonly string[];
     /** Every workflow the analysis is traceable to: both runs, the child step, the data profile. */
     readonly workflowIds: readonly string[];
-}
+};
 
 describe("createAnalysisPurge", () => {
     let rig: DbosTestRig;

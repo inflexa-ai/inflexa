@@ -24,7 +24,7 @@ export type AskStatus = "pending" | "resolved" | "rejected" | "aborted" | "expir
 export type AnswerOutcome = "applied" | "not_found" | "already_terminal";
 
 /** An unresolved ask, as enumerated by `pending()`. */
-export interface PendingAsk {
+export type PendingAsk = {
     readonly id: string;
     readonly analysisId: string;
     readonly userId: string;
@@ -33,16 +33,16 @@ export interface PendingAsk {
     readonly command: string;
     readonly detail: string | null;
     readonly createdAt: string;
-}
+};
 
 /** The status + recorded reply a poll reads to observe a decision. */
-export interface AskResolution {
+export type AskResolution = {
     readonly status: AskStatus;
     readonly reply: AskReply | null;
-}
+};
 
 /** Column payload shared by the pending insert and the grant short-circuit insert. */
-export interface AskRow {
+export type AskRow = {
     readonly id: string;
     readonly analysisId: string;
     readonly userId: string;
@@ -53,7 +53,7 @@ export interface AskRow {
     /** Grant key an `always` keys its standing grant under; `null` falls back to `command`. */
     readonly grantKey: string | null;
     readonly createdAt: string;
-}
+};
 
 /** Insert a fresh `pending` ask before its decision is awaited. */
 export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<void, DbError> {

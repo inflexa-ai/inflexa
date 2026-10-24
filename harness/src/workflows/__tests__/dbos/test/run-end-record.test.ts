@@ -53,10 +53,10 @@ const recordsNothing = DBOS.registerWorkflow(
     { name: "run-end-record-sets-nothing" },
 );
 
-interface ObservedAttempt {
+type ObservedAttempt = {
     readonly currentAttempt: number | undefined;
     readonly maxAttempts: number | undefined;
-}
+};
 const observedAttempts: ObservedAttempt[] = [];
 
 const retriesAStep = DBOS.registerWorkflow(

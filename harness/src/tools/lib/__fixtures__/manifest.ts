@@ -16,7 +16,7 @@ import { z } from "zod";
 const CAPTURED_AT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The capture record of one fixture file. */
-export interface FixtureManifestEntry {
+export type FixtureManifestEntry = {
     /** The request URL, with no query string when `params` carries the query. */
     url: string;
     /**
@@ -64,7 +64,7 @@ export interface FixtureManifestEntry {
      * YAML or XSD and a JSON diff does not apply to it.
      */
     oracle?: true;
-}
+};
 
 /** The `manifest.json` of one fixture directory: a file name maps to its capture record. */
 export type FixtureManifest = Record<string, FixtureManifestEntry>;

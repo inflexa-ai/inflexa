@@ -42,10 +42,10 @@ export type ResolvedFile = Extract<ResolvedValue, { type: "file" }>;
 export type FigureSourcePolicy = (file: ResolvedFile) => string;
 
 /** One resolved statistic of a chart: the label of the block, and the resolved value of its cell. */
-export interface StatisticResolution {
+export type StatisticResolution = {
     label: string;
     resolved: ResolvedValue;
-}
+};
 
 /**
  * The resolution result of one block: the block id, the block kind, and the resolved value of its binding.
@@ -72,13 +72,13 @@ export type BlockResolution =
  * needs, and `actual` names the resolved type that arrived. `slot` names the track or the statistic of a
  * chart whose value has the wrong type.
  */
-export interface BridgeMismatch {
+export type BridgeMismatch = {
     blockId: string;
     blockKind: ValueBearingKind;
     slot?: ChartSlot;
     expected: ResolvedValue["type"];
     actual: ResolvedValue["type"];
-}
+};
 
 /**
  * Map the resolved values of the blocks onto a `RenderValues` map.

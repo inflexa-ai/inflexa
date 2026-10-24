@@ -32,11 +32,11 @@ const SUBTREE_MARKERS: readonly { readonly label: string; readonly name: string;
     { label: "dataset-descriptor", name: "dataset_description.json", corroborate: /^sub-/ },
 ];
 
-export interface MarkerUnit {
+export type MarkerUnit = {
     readonly label: string;
     readonly root: string;
     readonly members: readonly MemberFile[];
-}
+};
 
 function hasCorroboratingChild(files: readonly MemberFile[], root: string, pattern: RegExp): boolean {
     const prefix = root === "" ? "" : `${root}/`;

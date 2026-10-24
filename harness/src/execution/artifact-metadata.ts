@@ -30,16 +30,16 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 
-export interface ArtifactForMetadata {
+export type ArtifactForMetadata = {
     /** Path used to update `cortex_artifacts` after metadata generation. */
     readonly dbPath: string;
     /** Path shown to the model and used as the per-file key. */
     readonly displayPath: string;
     /** File size in bytes — surfaced in the deterministic fallback description. */
     readonly sizeBytes?: number;
-}
+};
 
-export interface GenerateFileMetadataOptions {
+export type GenerateFileMetadataOptions = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the continuation; omitted falls back to the no-op recorder. */
@@ -63,22 +63,22 @@ export interface GenerateFileMetadataOptions {
      */
     readonly transcript: readonly LoopMessage[];
     readonly signal?: AbortSignal;
-}
+};
 
-export interface FileMetadataEntry {
+export type FileMetadataEntry = {
     readonly dbPath: string;
     readonly description: string;
     readonly metadata: Record<string, unknown>;
-}
+};
 
-export interface FileMetadataResult {
+export type FileMetadataResult = {
     /** Number of files the model described — excludes deterministic fallbacks. */
     readonly indexed: number;
     /** One entry per input artifact (described or fallback), input order. */
     readonly entries: readonly FileMetadataEntry[];
     /** The continuation's new messages: the request, then its replies. Empty when no continuation ran. */
     readonly messages: readonly LoopMessage[];
-}
+};
 
 const DESCRIBER_AGENT_ID = "file-metadata-describer";
 

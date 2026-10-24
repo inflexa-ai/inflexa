@@ -102,10 +102,10 @@ export function emptyWorkingMemory(): WorkingMemory {
  * written for the model and says what to do next (shorten this, retire that).
  * The tool surfaces it as an `is_error` tool result; the row is untouched.
  */
-export interface WorkingMemoryRejection {
+export type WorkingMemoryRejection = {
     readonly type: "working_memory_rejected";
     readonly message: string;
-}
+};
 
 /** `updateSection`'s error channel: a storage failure, or a refused write. */
 export type WorkingMemoryError = DbError | WorkingMemoryRejection;
@@ -142,12 +142,12 @@ export type FindingOp =
     | { readonly op: "retire"; readonly id: string };
 
 /** The `value` argument of `updateSection`, keyed by the `section` name. */
-export interface SectionValue {
+export type SectionValue = {
     readonly goal: { readonly text: string };
     readonly constraint: ConstraintOp;
     readonly hypothesis: ListOp;
     readonly finding: FindingOp;
-}
+};
 export type Section = keyof SectionValue;
 
 /**
@@ -155,7 +155,7 @@ export type Section = keyof SectionValue;
  * shape, `updateSection` amends one section, `render` serializes to the
  * Markdown the chat route injects.
  */
-export interface WorkingMemoryStore {
+export type WorkingMemoryStore = {
     /** Read the row; return the empty shape if absent (no lazy insert). */
     load(analysisId: string): ResultAsync<WorkingMemory, DbError>;
     /**
@@ -167,7 +167,7 @@ export interface WorkingMemoryStore {
     updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): ResultAsync<void, WorkingMemoryError>;
     /** Serialize working memory to a Markdown document for injection. */
     render(analysisId: string): ResultAsync<string, DbError>;
-}
+};
 
 /** A short, render-friendly entry id. */
 function newId(): string {
@@ -315,9 +315,9 @@ function applySectionUpdate<S extends Section>(wm: WorkingMemory, section: S, va
 }
 
 /** A finding lifted out of its run bucket, carrying the run it references. */
-interface FlatFinding extends Finding {
+type FlatFinding = Finding & {
     readonly runId: string;
-}
+};
 
 /** Every finding, in insertion order, each carrying its run reference. */
 function flattenFindings(findings: Findings): FlatFinding[] {

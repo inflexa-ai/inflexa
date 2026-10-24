@@ -18,7 +18,7 @@ const HEADERS = {
     Accept: "application/json",
 };
 
-export interface GeneInfo {
+export type GeneInfo = {
     symbol: string;
     id: string;
     displayName: string;
@@ -29,7 +29,7 @@ export interface GeneInfo {
     strand: number;
     assemblyName: string;
     seqRegionName: string;
-}
+};
 
 // Raw Ensembl gene wire shape (snake_case), validated at the fetch boundary.
 // Every field is optional because the API omits absent values; `mapGene`
@@ -62,9 +62,9 @@ function mapGene(symbol: string, raw: RawGene): GeneInfo {
     };
 }
 
-export interface LookupOptions {
+export type LookupOptions = {
     species?: string;
-}
+};
 
 /**
  * Look up genes by symbol. Gene-level only: `RawGeneSchema`/`mapGene` model the

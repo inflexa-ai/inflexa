@@ -221,10 +221,10 @@ export function innerExtensions(extensions: readonly string[]): string[] {
     return inner;
 }
 
-export interface DetectedFormat {
+export type DetectedFormat = {
     readonly format: string;
     readonly wrapper?: string;
-}
+};
 
 /**
  * Identify a file's format from a bounded prefix of its bytes, falling back to the

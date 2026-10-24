@@ -329,11 +329,11 @@ describe("createSandboxClient — a spawn failure is a value", () => {
 });
 
 describe("createSandboxClient — the label hook", () => {
-    interface BackendCall {
+    type BackendCall = {
         readonly session: SpawnSession;
         readonly spec: SandboxSpec;
         readonly hostLabels: SandboxLabels;
-    }
+    };
 
     const SPAWN = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } };
     const REF = { sandboxId: "sbx-1", host: "127.0.0.1", port: 8765, backend: "docker" as const };

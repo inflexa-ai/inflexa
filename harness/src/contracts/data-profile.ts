@@ -47,14 +47,14 @@ export const DATA_PROFILE_RUN_LITERAL = "data-profile" as const;
 export type DataProfileSubjectSource = "metadata" | "document" | "filename" | "user-context" | "inferred";
 
 /** The subject organism, with its provenance and the profiler's confidence in it. */
-export interface DataProfileOrganism {
+export type DataProfileOrganism = {
     scientificName: string;
     /** NCBI Taxonomy ID as a string, e.g. `"9606"`. */
     taxonId: string;
     source: DataProfileSubjectSource;
     confidence: "high" | "medium" | "low";
     notes?: string;
-}
+};
 
 /**
  * One profiled file's persisted record.
@@ -63,7 +63,7 @@ export interface DataProfileOrganism {
  * them is optional on read, because a snapshot written before the record was widened
  * carries only the pair.
  */
-export interface DataProfileFile {
+export type DataProfileFile = {
     path: string;
     description: string;
     /** Semantic data type (count-matrix, variants, clinical-metadata, document, …). */
@@ -78,15 +78,15 @@ export interface DataProfileFile {
     warnings?: string[];
     /** Flat, identity-establishing facts (sparsity, delimiter, normalizationState, …). */
     metrics?: Record<string, string | number | boolean>;
-}
+};
 
 /**
  * Dataset-wide quality findings, on rows of the era that recorded them. Superseded by
  * `caveats`, which is agent-authored prose and nothing else.
  */
-export interface DataProfileQualityAssessment {
+export type DataProfileQualityAssessment = {
     concerns: string[];
-}
+};
 
 /**
  * One repeating set of files — the dataset's structure, as opposed to its contents.
@@ -96,7 +96,7 @@ export interface DataProfileQualityAssessment {
  * the files are the same sort of thing. A singleton is a kind of `count` 1, so a
  * two-file analysis is two kinds and needs no special case.
  */
-export interface DataProfileKind {
+export type DataProfileKind = {
     name: string;
     /** What ONE member represents. The grouping decision, stated apart from the description. */
     memberRepresents: string;
@@ -107,19 +107,19 @@ export interface DataProfileKind {
     format?: string;
     /** Labels of the `axes` that vary across this set's members. */
     axisLabels?: string[];
-}
+};
 
 /**
  * What varies across a kind's members — the experimental design, as far as it is
  * observable. The scan reports that a filename position varies and which values it
  * takes; what the variation IS is the agent's label.
  */
-export interface DataProfileAxis {
+export type DataProfileAxis = {
     label: string;
     cardinality: number;
     exampleValues?: string[];
     description?: string;
-}
+};
 
 // ── The resolved profile ───────────────────────────────────────────────────
 //
@@ -136,7 +136,7 @@ export interface DataProfileAxis {
  * it. The id is scan-scoped — it names the slot within the scan that produced this
  * profile, and a dimension's slot observation refers to it.
  */
-export interface DataProfileGroupSlot {
+export type DataProfileGroupSlot = {
     id: string;
     location: "directory" | "name";
     index: number;
@@ -145,13 +145,13 @@ export interface DataProfileGroupSlot {
     sampleValues: string[];
     /** The slot this one repeats — one token in both a directory segment and the stem is ONE identity. */
     sameAsSlot?: string;
-}
+};
 
 /** A member the agent wrote about individually. Never exhaustive — that is the filesystem's job. */
-export interface DataProfileMemberAnnotation {
+export type DataProfileMemberAnnotation = {
     path: string;
     note: string;
-}
+};
 
 /**
  * Companion coverage across a group, computed per member.
@@ -160,12 +160,12 @@ export interface DataProfileMemberAnnotation {
  * average hides the one member whose index is missing, and that is the member a
  * downstream step fails on.
  */
-export interface DataProfileCompanionCompleteness {
+export type DataProfileCompanionCompleteness = {
     expectedCompanions: string[];
     completeMembers: number;
     incompleteMembers: number;
     incompleteSample: { path: string; missingCompanions: string[] }[];
-}
+};
 
 /**
  * One declared group — a claim about MEANING, resolved to a membership.
@@ -175,7 +175,7 @@ export interface DataProfileCompanionCompleteness {
  * `displayPattern` is the scanner's own template and is display-only: no agent authored
  * it, and nothing computes membership from it.
  */
-export interface DataProfileGroup {
+export type DataProfileGroup = {
     /** Stable within the profile, derived from the group's name. */
     id: string;
     name: string;
@@ -202,13 +202,13 @@ export interface DataProfileGroup {
     completeness?: DataProfileCompanionCompleteness;
     /** True for the swept residue — files no operation claimed. Visible by construction. */
     unclassified?: boolean;
-}
+};
 
 /** A measurement that was actually performed. Absent means unchecked, never "no overlap". */
-export interface DataProfileChecked {
+export type DataProfileChecked = {
     matched: number;
     of: number;
-}
+};
 
 /**
  * Where a slot observation points, in terms that survive the scan that produced it.
@@ -219,10 +219,10 @@ export interface DataProfileChecked {
  * resolves strands the profile rather than rebinding to whatever now sits at that
  * position.
  */
-export interface DataProfileSlotBinding {
+export type DataProfileSlotBinding = {
     template: string;
     slotIndex: number;
-}
+};
 
 /**
  * One evidenced sighting of a dimension.
@@ -281,7 +281,7 @@ export type DataProfileObservation =
  * There is no canonical cardinality: observations that disagree both stand, and
  * `reconciliations` carries the delta. A renderer shows the numbers side by side.
  */
-export interface DataProfileDimension {
+export type DataProfileDimension = {
     label: string;
     category: string;
     categoryLabel?: string;
@@ -293,10 +293,10 @@ export interface DataProfileDimension {
     nestsUnder?: { dimension: string; evidence: string };
     /** Why the dataset deviates from the category's default treatment. */
     treatmentReason?: string;
-}
+};
 
 /** What the agent found when it looked for one of the standard dimensions. */
-export interface DataProfileProbeReport {
+export type DataProfileProbeReport = {
     probe: string;
     outcome: "found" | "not-found" | "found-but-constant" | "attested";
     dimension?: string;
@@ -306,15 +306,15 @@ export interface DataProfileProbeReport {
     evidence?: string;
     citation?: string;
     path?: string;
-}
+};
 
 /** Files the scan removed before structure was observed, with why. */
-export interface DataProfileQuarantine {
+export type DataProfileQuarantine = {
     count: number;
     totalBytes: number;
     reasons: { reason: string; count: number }[];
     sample: string[];
-}
+};
 
 /**
  * The census, derived rather than declared.
@@ -323,7 +323,7 @@ export interface DataProfileQuarantine {
  * Quarantined files are accounted separately, with their reasons. That the numbers sum
  * is what turns "how much did the profile cover" from a question into a fact.
  */
-export interface DataProfilePartition {
+export type DataProfilePartition = {
     scannedFiles: number;
     keptFiles: number;
     keptMembers: number;
@@ -339,7 +339,7 @@ export interface DataProfilePartition {
     contested?: { members: number; sample: string[] };
     /** True when the walk stopped at its file ceiling, so the census covers part of the tree. */
     scanTruncated?: boolean;
-}
+};
 
 /**
  * One operation, keyed to the scanner TEMPLATES it addressed rather than the menu ids.
@@ -353,7 +353,7 @@ export interface DataProfilePartition {
  * an unchanged tree re-absorbs as partial and wakes the agent to re-judge what it already
  * judged.
  */
-export interface DataProfileRecipeStep {
+export type DataProfileRecipeStep = {
     op: "use" | "split" | "merge" | "group" | "unclassified";
     /** The templates this step addressed. Empty for an explicit path grouping. */
     templates: string[];
@@ -365,7 +365,7 @@ export interface DataProfileRecipeStep {
     /** True when `paths` holds a prefix of the step's membership rather than all of it. */
     pathsTruncated?: boolean;
     groupIds: string[];
-}
+};
 
 /**
  * The record of WHICH files a profile covered and of the bytes behind them.
@@ -375,10 +375,10 @@ export interface DataProfileRecipeStep {
  * content hashes deliberately: a content hash means a full read of every input. Two
  * inputs with the same byte length and mtime therefore give the same digest.
  */
-export interface DataProfileInputSignature {
+export type DataProfileInputSignature = {
     count: number;
     digest: string;
-}
+};
 
 /**
  * How much of the scanned tree the profile's kinds describe.
@@ -389,12 +389,12 @@ export interface DataProfileInputSignature {
  * one that classified all of them, so it read as complete and fresh. Coverage does NOT by
  * itself drive a re-profile, because some input sets legitimately resist classification.
  */
-export interface DataProfileCoverage {
+export type DataProfileCoverage = {
     matched: number;
     unmatched: number;
     total: number;
     unmatchedSample?: string[];
-}
+};
 
 /**
  * The profile snapshot stored in `cortex_analysis_state.data_profile_result`.
@@ -416,7 +416,7 @@ export interface DataProfileCoverage {
  * field: optionality is the compatibility mechanism, and a discriminator would be a
  * second mechanism answering the same question.
  */
-export interface DataProfileResult {
+export type DataProfileResult = {
     summary: string;
     /** The resolved groups the tree partitions into, `unclassified` included. */
     groups?: DataProfileGroup[];
@@ -462,7 +462,7 @@ export interface DataProfileResult {
     experimentalDesign?: string;
     /** Dataset-wide findings, on a snapshot of the era that recorded them. Superseded by `caveats`. */
     qualityAssessment?: DataProfileQualityAssessment;
-}
+};
 
 /** The profile's lifecycle, as the ledger records it. */
 export type DataProfileLifecycleStatus = "pending" | "running" | "completed" | "failed";

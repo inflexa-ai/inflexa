@@ -107,7 +107,7 @@ export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = [
 ];
 
 /** Per-step coordinates the composition root threads through every mutate tool. */
-export interface SandboxStepCoords {
+export type SandboxStepCoords = {
     readonly sandbox: SandboxRef;
     /** Absolute host root of this analysis's workspace tree (resolved at the workflow body). */
     readonly workspaceRoot: string;
@@ -122,10 +122,10 @@ export interface SandboxStepCoords {
      * grounds on no template, or when the host bound nothing.
      */
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /** The shared dependency graph every sandbox agent draws from. */
-export interface SandboxAgentDeps extends EnvironmentStorePaths {
+export type SandboxAgentDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -177,10 +177,10 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * of the open-source host and never an error.
      */
     readonly knowledge?: KnowledgeClient;
-}
+};
 
 /** Per-agent override for the prompt composition and tool surface. */
-export interface SandboxAgentPromptOptions {
+export type SandboxAgentPromptOptions = {
     /** Append `sandboxAnalysisStepStandardsPrompt`. Defaults to true. */
     readonly appendAnalysisStepStandards?: boolean;
     /**
@@ -190,7 +190,7 @@ export interface SandboxAgentPromptOptions {
      * exists outside container-local `/tmp`. Defaults to false.
      */
     readonly readOnly?: boolean;
-}
+};
 
 /**
  * Resolve `meta.tools` into the bio/research tools record. The workspace

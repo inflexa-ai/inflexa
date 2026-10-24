@@ -53,27 +53,27 @@ export function groupTurns<T>(rows: readonly T[], isStart: (row: T) => boolean):
     return turns;
 }
 
-export interface ConversationViewOptions {
+export type ConversationViewOptions = {
     /** Keep the first turn in front of the view: the seed of a report thread. */
     readonly keepFirstTurn?: boolean;
-}
+};
 
-export interface ConversationView {
+export type ConversationView = {
     readonly messages: ModelMessage[];
     /** `sources[i]` is the index of the input message that gives `messages[i]`. */
     readonly sources: number[];
-}
+};
 
-interface ViewEntry {
+type ViewEntry = {
     readonly message: ModelMessage;
     readonly source: number;
-}
+};
 
-interface ViewParts {
+type ViewParts = {
     readonly head: readonly ViewEntry[];
     readonly front: ViewEntry | undefined;
     readonly body: readonly ViewEntry[];
-}
+};
 
 function isCompactionMessage(message: ModelMessage): boolean {
     return compactionMarkerOf(message) !== undefined || compactionExchangeOf(message) !== undefined;

@@ -9,10 +9,10 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
-interface GqlRequest {
+type GqlRequest = {
     readonly operation: string;
     readonly variables: Record<string, unknown>;
-}
+};
 
 /**
  * Route the single Open Targets GraphQL endpoint by the operation the client

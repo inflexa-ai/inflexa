@@ -20,17 +20,17 @@ import { errAsync, type ResultAsync } from "neverthrow";
 import type { AuthContext } from "../../auth/types.js";
 
 /** The grant of one session page: the content-server base, the token, and its expiry. */
-export interface SessionPageGrant {
+export type SessionPageGrant = {
     readonly baseUrl: string;
     readonly token: string;
     readonly expiresAt: string;
-}
+};
 
 /** What a failed mint is allowed to carry. */
-export interface SessionPageMintFailure {
+export type SessionPageMintFailure = {
     readonly status?: number;
     readonly error: { readonly message?: string };
-}
+};
 
 /**
  * Renders a failed mint as the line an agent reads back from the preview tool.
@@ -48,7 +48,7 @@ export function describeSessionPageMintFailure(failure: SessionPageMintFailure):
     return detail.length > 0 ? `session-page-access mint failed: ${detail.join(" ")}` : "session-page-access mint failed";
 }
 
-export interface SessionPagePublisher {
+export type SessionPagePublisher = {
     /**
      * Mint the access grant of one session page. The publisher binds the analysis, thus the mint takes
      * the thread id alone. `baseUrl` is the base URL of the content server, with no res path — the
@@ -56,7 +56,7 @@ export interface SessionPagePublisher {
      * contract and never in a realization.
      */
     mintSessionPageAccess(threadId: string): ResultAsync<SessionPageGrant, SessionPageMintFailure>;
-}
+};
 
 /**
  * The per-call construction of the publisher. The factory binds one analysis and the auth of the tool

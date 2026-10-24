@@ -89,7 +89,7 @@ const ListAvailableRefsInputSchema = z.object({
 
 export type ListAvailableRefsDeps = Pick<EnvironmentStorePaths, "refStorePath">;
 
-export interface ReferenceInventoryMetadata {
+export type ReferenceInventoryMetadata = {
     readonly datasetId?: string;
     readonly version?: string;
     readonly title?: string;
@@ -105,16 +105,16 @@ export interface ReferenceInventoryMetadata {
     readonly contents?: string;
     readonly rows?: number;
     readonly endpoint?: string;
-}
+};
 
 type ReferenceInventoryMetadataBuilder = {
     -readonly [K in keyof ReferenceInventoryMetadata]?: ReferenceInventoryMetadata[K];
 };
 
-interface ReferenceInventoryEntryBase {
+type ReferenceInventoryEntryBase = {
     readonly path: string;
     readonly metadata?: ReferenceInventoryMetadata;
-}
+};
 
 /** A bounded, no-follow observation of the reference store. */
 export type ReferenceInventoryEntry =
@@ -133,7 +133,7 @@ export type ReferenceInventoryEntry =
  * is explicit: `returned`/`total`/`hasMore` describe how much of the match set
  * this response carries, and `categories` is the drill-in index.
  */
-export interface ReferenceInventoryResult {
+export type ReferenceInventoryResult = {
     readonly available: boolean;
     readonly state: RawScan["state"] | "out_of_scope";
     readonly path: string;
@@ -145,16 +145,16 @@ export interface ReferenceInventoryResult {
     readonly hasMore: boolean;
     readonly categories: readonly string[];
     readonly content: string;
-}
+};
 
-interface RawScan {
+type RawScan = {
     readonly state: "unavailable" | "empty" | "populated" | "not_found" | "not_a_directory" | "symlink";
     readonly entries: ReferenceInventoryEntry[];
     readonly scannedEntries: number;
     readonly truncated: boolean;
     readonly receipts?: unknown[];
     readonly legacyEntries?: unknown[];
-}
+};
 
 function resolveRequestedPath(input: string | undefined): { ok: true; path: string } | { ok: false; reason: string } {
     if (input === undefined || input === "" || input === REFS_ROOT) return { ok: true, path: REFS_ROOT };
@@ -175,11 +175,11 @@ function resolveRequestedPath(input: string | undefined): { ok: true; path: stri
     return { ok: true, path: normalized };
 }
 
-interface ScannedName {
+type ScannedName = {
     readonly name: string;
     readonly kind: "file" | "directory" | "symlink" | "other";
     readonly bytes: number;
-}
+};
 
 /**
  * Inspect at most `limit` names in one directory, sorted by name.

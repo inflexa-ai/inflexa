@@ -52,7 +52,7 @@ export type ActivityWrite = (part: unknown) => Promise<void>;
  * manifest, a fallback file description) are logged because neither warrants
  * interrupting the activity line.
  */
-export interface ProfileActivityEmitter {
+export type ProfileActivityEmitter = {
     /** Reported before the sandbox is created — the longest wait in a profile, and the one that precedes the agent entirely. */
     sandboxInit(): Promise<void>;
     /**
@@ -84,10 +84,10 @@ export interface ProfileActivityEmitter {
     complete(): Promise<void>;
     /** The failure terminal, carrying the same user-safe reason the ledger receives. */
     failed(reason: string): Promise<void>;
-}
+};
 
 /** Identity the emitted parts carry — the workflow's synthetic frame, not a real run. */
-export interface ProfileActivityFrame {
+export type ProfileActivityFrame = {
     /**
      * The constant literal the data-profile workflow uses as its run id. It is the
      * same string for every analysis, so it identifies nothing; consumers are
@@ -98,7 +98,7 @@ export interface ProfileActivityFrame {
     readonly runId: string;
     /** The constant literal step id of the profile's single synthetic step. */
     readonly stepId: string;
-}
+};
 
 /**
  * Build the profile's activity channel over `write`.

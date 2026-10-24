@@ -33,11 +33,11 @@ const BINARY_SNIFF_BYTES = 4096;
 
 export type ReadoutFields = Record<string, string | number | boolean>;
 
-export interface PrefixReadout {
+export type PrefixReadout = {
     readonly fields: ReadoutFields;
     /** Why the fields are thin or empty. Present alongside whatever WAS read. */
     readonly unavailable?: string;
-}
+};
 
 /**
  * Read what a bounded prefix can say about a file.

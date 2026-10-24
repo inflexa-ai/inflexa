@@ -35,10 +35,10 @@ function isSymbol(identifier: string): boolean {
 }
 
 /** One input that was not a symbol, beside the approved symbol it became. */
-interface ResolvedIdentifier {
+type ResolvedIdentifier = {
     input: string;
     symbol: string;
-}
+};
 
 export const searchGeneTool = defineTool({
     id: "search_gene",

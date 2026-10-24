@@ -38,11 +38,11 @@ const GrepInputSchema = z.object({
     ignoreCase: z.boolean().optional().describe("Case-insensitive match. Defaults to false."),
 });
 
-interface Match {
+type Match = {
     readonly file: string;
     readonly line: number;
     readonly preview: string;
-}
+};
 
 type GrepOutput =
     | { status: "invalid_pattern"; pattern: string; error: string }

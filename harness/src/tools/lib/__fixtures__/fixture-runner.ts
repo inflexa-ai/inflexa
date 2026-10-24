@@ -26,7 +26,7 @@ export type { FixtureManifest, FixtureManifestEntry } from "./manifest.js";
 const FIXTURES_DIR = fileURLToPath(new URL(".", import.meta.url));
 
 /** One row of a fixture table. `S` is the schema under test. */
-export interface FixtureCase<S extends z.ZodType> {
+export type FixtureCase<S extends z.ZodType> = {
     /** The name of the schema under test, as the test output shows it. */
     name: string;
     /** The fixture directory of the provider, under `src/tools/lib/__fixtures__/`. */
@@ -42,7 +42,7 @@ export interface FixtureCase<S extends z.ZodType> {
      * its own mapper here and asserts the mapped record.
      */
     assertOutput?: (output: z.infer<S>) => void;
-}
+};
 
 /**
  * A fixture case whose schema type is erased.

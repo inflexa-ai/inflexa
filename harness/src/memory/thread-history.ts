@@ -57,14 +57,14 @@ function okVoid<E = DbError>(): ResultAsync<void, E> {
     return new ResultAsync(Promise.resolve(ok<void, E>(undefined)));
 }
 
-interface MessageRow {
+type MessageRow = {
     readonly seq: string;
     readonly message_envelope: unknown;
     readonly tokens: number;
-}
+};
 
 /** One stored message, as returned by the display reads (`loadAll` and `loadPage`). */
-export interface StoredMessage {
+export type StoredMessage = {
     readonly seq: number;
     readonly envelope: StoredMessageEnvelope;
     readonly message: ModelMessage;
@@ -103,7 +103,7 @@ export interface StoredMessage {
      * behind it.
      */
     readonly createdAt?: Date;
-}
+};
 
 /**
  * One atomic group of rows: the exact provider-facing history, and the display
@@ -114,7 +114,7 @@ export interface StoredMessage {
  * what the transcript replays. Neither is derived from the other, and a failed
  * write commits neither.
  */
-export interface ConversationTurn {
+export type ConversationTurn = {
     /** Exact provider-facing history; token accounting and model reads use only this projection. */
     readonly modelMessages: readonly ModelMessage[];
     /** Complete ordered AI SDK UI messages recorded from the live display event stream. */
@@ -129,7 +129,7 @@ export interface ConversationTurn {
      * envelope, because a `text` parameter carrying 0x00 fails the statement.
      */
     readonly author?: string;
-}
+};
 
 /**
  * The append a host uses to record out-of-band work in a thread — an analysis
@@ -164,7 +164,7 @@ export function conversationRecordTurn(text: string, displayParts?: readonly Exc
 export type TurnStatus = "open" | "done" | "aborted" | "failed";
 
 /** The close of a chat turn. It sets the outcome on the turn record, one time. */
-export interface TurnClose {
+export type TurnClose = {
     readonly status: Exclude<TurnStatus, "open">;
     /** The reason of a failure. */
     readonly reason?: string;
@@ -173,7 +173,7 @@ export interface TurnClose {
     readonly turnDurationMs?: number;
     /** The note of a failure or of an abort, stored after the rounds. */
     readonly note?: ConversationTurn;
-}
+};
 
 /**
  * One write of a chat turn. The opening adds the turn record, and a later write names the turn by
@@ -183,18 +183,18 @@ export type TurnWrite =
     | { readonly opening: ConversationTurn; readonly startSeq?: never; readonly rounds: readonly ConversationTurn[]; readonly close?: TurnClose }
     | { readonly startSeq: number; readonly opening?: never; readonly rounds: readonly ConversationTurn[]; readonly close?: TurnClose };
 
-export interface TurnWriteResult {
+export type TurnWriteResult = {
     /** The `seq` of the user row that opens the turn, which keys its turn record. */
     readonly startSeq: number;
-}
+};
 
 /** The turn record of a chat turn, as the display read gives it. */
-export interface StoredTurnRecord {
+export type StoredTurnRecord = {
     readonly status: TurnStatus;
     readonly reason?: string;
     readonly usage?: TokenUsageRollup;
     readonly durationMs?: number;
-}
+};
 
 /**
  * The result of `retractLastTurn`. `retracted` carries `messages` — the number
@@ -206,32 +206,32 @@ export interface StoredTurnRecord {
 export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "empty-thread" } | { kind: "no-user-turn" };
 
 /** The read options of {@link ThreadHistory.loadRecent}. */
-export interface LoadRecentOptions {
+export type LoadRecentOptions = {
     /** Keep the first turn of the thread, the seed of a report thread, in front of the latest summary. */
     readonly keepFirstTurn?: boolean;
-}
+};
 
 /** The options of {@link ThreadHistory.loadPage}. */
-export interface LoadPageOptions {
+export type LoadPageOptions = {
     /** The cursor that the previous page gave. Absent for the newest page. */
     readonly before?: number;
     /** The maximum count of turns in the page. */
     readonly limit: number;
-}
+};
 
 /** One page of the display read, as {@link ThreadHistory.loadPage} gives it. */
-export interface TurnPage {
+export type TurnPage = {
     /** The whole turns of the page, oldest-first. */
     readonly turns: StoredMessage[][];
     /** The cursor of the next older page, or `null` when the page holds the oldest row of the thread. */
     readonly before: number | null;
-}
+};
 
 /**
  * The conversation message store. Two methods, by design — no generic row
  * insert (see the harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
  */
-export interface ThreadHistory {
+export type ThreadHistory = {
     /**
      * Append one group, for example a record of a host — every message written in a
      * single transaction with a `seq` monotonically increasing per thread.
@@ -327,7 +327,7 @@ export interface ThreadHistory {
      * one adds to the count.
      */
     countUserTurnsAfter(threadId: string, seq: number): ResultAsync<number, DbError>;
-}
+};
 
 /**
  * {@link isGenuineUserStart} (`conversation-view.ts`) expressed over a stored
@@ -360,10 +360,10 @@ function serializeEnvelope(message: ModelMessage): string {
     return JSON.stringify(envelopeMessage(message), (_key, value: unknown) => (typeof value === "string" ? stripNulCharacters(value) : value));
 }
 
-interface ThreadInstruments {
+type ThreadInstruments = {
     readonly totalTokens: Histogram;
     readonly turnsEvicted: Histogram;
-}
+};
 
 let instruments: ThreadInstruments | undefined;
 
@@ -546,7 +546,7 @@ function storedRowFrom(turnJoinBounds = ""): string {
          LEFT JOIN cortex_thread_turns turns ON turns.thread_id = messages.thread_id AND turns.start_seq = messages.seq${turnJoinBounds}`;
 }
 
-interface StoredRow {
+type StoredRow = {
     seq: string;
     message_envelope: unknown;
     display_envelope: unknown;
@@ -568,7 +568,7 @@ interface StoredRow {
     turn_reason: string | null;
     turn_usage: TokenUsageRollup | null;
     turn_record_duration_ms: string | null;
-}
+};
 
 /** The largest `bigint`, the bound of a cursor that the caller did not give. */
 const MAX_SEQ = "9223372036854775807";

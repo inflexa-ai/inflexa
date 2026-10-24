@@ -18,10 +18,10 @@ const MATCH_CHARS_AFTER = 250;
 /** The loop JSON-escapes the text of a result, and an escape can make a text two to six times longer. */
 const RESULT_BUDGET = TOOL_RESULT_CAP - 512;
 
-interface Match {
+type Match = {
     readonly offset: number;
     readonly text: string;
-}
+};
 
 type ReadToolOutputResult =
     | { status: "ok"; ref: string; offset: number; end: number; keptLength: number; more: boolean; text: string }

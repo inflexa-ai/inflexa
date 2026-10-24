@@ -16,7 +16,7 @@
 
 export type StructureFormat = "pdb" | "mmcif";
 
-export interface StructureSource {
+export type StructureSource = {
     readonly provider: "alphafold";
     /** The UniProt accession the model is keyed by, isoform suffix included (`P38398-2`). */
     readonly accession: string;
@@ -25,7 +25,7 @@ export interface StructureSource {
     readonly format: StructureFormat;
     /** The normalized file URL — what a host fetches and what the transcript attests to. */
     readonly url: string;
-}
+};
 
 const ALPHAFOLD_ORIGIN = "https://alphafold.ebi.ac.uk";
 

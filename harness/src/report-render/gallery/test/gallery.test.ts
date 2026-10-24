@@ -41,7 +41,7 @@ const NO_DATA = NEEDS_DATA !== "";
 const DATA_BOUND_BYTES = 4 * 1024 * 1024;
 
 /** One entry of the gallery manifest. */
-interface ManifestEntry {
+type ManifestEntry = {
     field: string;
     table: string;
     path: string;
@@ -54,7 +54,7 @@ interface ManifestEntry {
     script: string;
     derivation: string;
     thinning: string;
-}
+};
 
 /** Every block of a tree, in document order. A section contributes itself and then its children. */
 function everyBlock(blocks: readonly Block[]): Block[] {

@@ -36,28 +36,28 @@ const ENSEMBL_HEADERS = {
 
 export type ExpressionRank = "absent" | "low" | "medium" | "high";
 
-export interface TissueRow {
+export type TissueRow = {
     tissue: string;
     cellType: string | null;
     expressionScore: number | null;
     confidence: "gold" | "silver" | null;
     expressionState: "expressed" | "not expressed";
     rank: ExpressionRank;
-}
+};
 
-export interface SpeciesEntry {
+export type SpeciesEntry = {
     species: SupportedSpecies;
     taxonId: number;
     ensemblId: string;
     tissues: TissueRow[];
-}
+};
 
-export interface MultiSpeciesExpression {
+export type MultiSpeciesExpression = {
     geneSymbol: string;
     humanEnsemblId: string | null;
     bySpecies: SpeciesEntry[];
     notFound: string[];
-}
+};
 
 export function bucketRank(expressionState: string, score: number | null): ExpressionRank {
     if (expressionState === "not expressed") return "absent";

@@ -125,7 +125,7 @@ export type ResolvePageAsset = (specifier: string) => string;
  * lands, and attaches the URL beside the path. A refused mint rides the `rendered` arm as data, and it
  * never fails the render.
  */
-export interface PreviewReportToolDeps {
+export type PreviewReportToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -140,7 +140,7 @@ export interface PreviewReportToolDeps {
     /** Names the report thread after the rendered document. Omitted, the thread keeps its title. */
     readonly threads?: Pick<ThreadStore, "setAutoTitle">;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The staged file name of one bound image: its content hash with the original extension.
@@ -163,11 +163,11 @@ function figureSourcePolicy(file: ResolvedFile): string {
  * One staged copy of the raw bytes of a table: the staged name, the analysis-relative path of the pinned
  * artifact, and the block whose card links it.
  */
-interface TableSidecar {
+type TableSidecar = {
     readonly blockId: string;
     readonly name: string;
     readonly path: string;
-}
+};
 
 /**
  * The sidecar of each table block of the document, in document order.

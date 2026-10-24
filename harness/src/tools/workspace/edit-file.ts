@@ -24,7 +24,7 @@ import { noteScriptChange, scriptSha256 } from "./decision-record.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** The `ok` outcome of an `edit_file` call. */
-interface EditFileOk {
+type EditFileOk = {
     readonly status: "ok";
     readonly path: string;
     readonly replacements: number;
@@ -33,7 +33,7 @@ interface EditFileOk {
     lines?: readonly number[];
     /** True when the file is a rendered script and its decision record now lists this edit. */
     decision_record_noted?: true;
-}
+};
 
 /** Outcome of an `edit_file` call — expected outcomes are data variants, never throws. */
 export type EditFileResult =
@@ -97,7 +97,7 @@ const EditFileInputSchema = z.object({
         ),
 });
 
-export interface EditFileDeps {
+export type EditFileDeps = {
     readonly mutator: WorkspaceMutator;
     /** Read seam used to fetch current file content for search/replace. */
     readonly workspaceFilesystem: WorkspaceFilesystem;
@@ -107,7 +107,7 @@ export interface EditFileDeps {
      * root, matching the session-scoped mutator's write prefix.
      */
     readonly workingDir?: string;
-}
+};
 
 function replaceString(
     content: string,

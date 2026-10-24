@@ -308,10 +308,10 @@ function caveatsSection(caveats: readonly string[], budget: number): string | un
 }
 
 /** The body's lines, and whether the budget — rather than a per-section cap — cost anything. */
-interface BodyDraft {
+type BodyDraft = {
     readonly lines: readonly string[];
     readonly elided: boolean;
-}
+};
 
 /**
  * Fit the body sections into `budget`, in order, each one whole or absent.

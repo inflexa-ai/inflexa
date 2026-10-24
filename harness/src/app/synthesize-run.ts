@@ -44,7 +44,7 @@ import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 
-export interface SynthesizeRunDeps {
+export type SynthesizeRunDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
@@ -63,16 +63,16 @@ export interface SynthesizeRunDeps {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer and reviewer loops and of their read tools. */
     readonly toolOutputStore?: ToolOutputStore;
-}
+};
 
 /** Optional fields for a progress update, mirroring the wire part. */
-export interface SynthesisProgressExtra {
+export type SynthesisProgressExtra = {
     readonly delegationCount?: number;
     readonly reason?: string;
     readonly error?: string;
-}
+};
 
-export interface SynthesizeRunParams {
+export type SynthesizeRunParams = {
     readonly analysisId: string;
     readonly runId: string;
     readonly completedSteps: readonly string[];
@@ -81,16 +81,16 @@ export interface SynthesizeRunParams {
     readonly emit: EmitFn;
     /** Domain progress callback — the phases the run-completed UI renders. */
     readonly onProgress: (phase: SynthesisPhase, activity: string, extra?: SynthesisProgressExtra) => void | Promise<void>;
-}
+};
 
-export interface SynthesizeRunResult {
+export type SynthesizeRunResult = {
     readonly findings: readonly RunFinding[];
     // Only the non-failed outcomes are ever returned — a genuine failure re-throws
     // and the workflow body records "failed" itself. `synthesisReason` carries the
     // skip detail; it is null for the "produced" case.
     readonly synthesisStatus: Exclude<SynthesisStatus, "failed">;
     readonly synthesisReason: string | null;
-}
+};
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
     const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, bioKeys, citationResolver, usageRecorder } = deps;

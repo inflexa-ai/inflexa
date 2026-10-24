@@ -46,10 +46,10 @@ import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 import { parseSnapshot, reduceIssues, type SchemaIssue } from "./snapshot-parse.js";
 
 /** One source of a derivation: the pinned path that the script read, and the hash of that path. */
-export interface DerivationSource {
+export type DerivationSource = {
     readonly path: string;
     readonly hash: string;
-}
+};
 
 /**
  * One derivation of a session.
@@ -61,13 +61,13 @@ export interface DerivationSource {
  * `outputPath` is the workspace-root-relative path of the derived file, and it is the key that the served
  * membership holds. A record is immutable, thus a new derivation takes a new output path.
  */
-export interface DerivationRecord {
+export type DerivationRecord = {
     readonly outputPath: string;
     readonly outputHash: string;
     readonly sources: readonly DerivationSource[];
     readonly scriptHash: string;
     readonly script: string;
-}
+};
 
 const DerivationSourceSchema = z.object({ path: z.string(), hash: z.string() });
 
@@ -88,7 +88,7 @@ const DerivationListSchema = z.array(DerivationRecordSchema);
 export type AppendDerivationOutcome = "appended" | "duplicate" | "absent";
 
 /** The state of one report session, as the store gives it back. */
-export interface ReportSessionState {
+export type ReportSessionState = {
     readonly threadId: string;
     readonly analysisId: string;
     /** The in-progress draft document, or `null` before the first document lands. */
@@ -102,18 +102,18 @@ export interface ReportSessionState {
     /** The hash that the last eyes capture saw, or `null` before the first look. */
     readonly seenDocumentHash: string | null;
     readonly createdAt: Date;
-}
+};
 
 /** The snapshot and the anchor of a row to create. */
-export interface WriteSnapshotInput {
+export type WriteSnapshotInput = {
     readonly threadId: string;
     readonly analysisId: string;
     /** The pinned snapshot, stored as given. */
     readonly snapshot: ReportSnapshot;
-}
+};
 
 /** The document to persist against an existing row, and the prior document that the load read. */
-export interface PersistDocumentInput {
+export type PersistDocumentInput = {
     readonly threadId: string;
     /** The draft document, stored as given. */
     readonly document: DraftDocument;
@@ -123,7 +123,7 @@ export interface PersistDocumentInput {
      * landed first turns this persist into a conflict.
      */
     readonly expected: DraftDocument | null;
-}
+};
 
 /**
  * The outcome of a persist. `persisted` landed the document. `conflict` means the row
@@ -162,7 +162,7 @@ export type SessionStateReadError = {
 type _AssertReadError = SessionStateReadError extends DomainError ? true : never;
 const _assertReadError: _AssertReadError = true;
 
-export interface ReportSessionStateStore {
+export type ReportSessionStateStore = {
     /**
      * The state of a thread, or `null` when no row holds it. A parse failure on a
      * stored column reads as a typed error, and an absent row reads as a normal
@@ -200,17 +200,17 @@ export interface ReportSessionStateStore {
      * that no row holds the thread.
      */
     appendDerivation(threadId: string, record: DerivationRecord): ResultAsync<AppendDerivationOutcome, DbError>;
-}
+};
 
-export interface ReportSessionStateStoreDeps {
+export type ReportSessionStateStoreDeps = {
     readonly pool: Pool;
     readonly logger?: Logger;
-}
+};
 
 /** The full row projection every read shares. */
 const STATE_COLUMNS = "thread_id, analysis_id, document, snapshot, derivations, rendered_document_hash, seen_document_hash, created_at";
 
-interface SessionStateRow {
+type SessionStateRow = {
     readonly thread_id: string;
     readonly analysis_id: string;
     readonly document: unknown;
@@ -219,7 +219,7 @@ interface SessionStateRow {
     readonly rendered_document_hash: string | null;
     readonly seen_document_hash: string | null;
     readonly created_at: Date;
-}
+};
 
 /**
  * The insert. The row carries the snapshot at creation, and the document lands later
