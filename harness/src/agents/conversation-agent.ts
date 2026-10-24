@@ -117,7 +117,7 @@ const CONVERSATION_COMPACTION: CompactionRules = { turnStartBudget: 150_000, bud
  * what is importable that a sandbox agent has — read host-side, so answering
  * "does this environment have X?" costs a lookup rather than a container.
  */
-export interface ConversationAgentDeps extends EnvironmentStorePaths {
+export type ConversationAgentDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /**
@@ -220,7 +220,7 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * it, the link pass returns at once.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
-}
+};
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
 export function createConversationAgent(deps: ConversationAgentDeps): AgentDefinition {

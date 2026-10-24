@@ -126,10 +126,10 @@ function toFindingOp(input: Input): FindingOp {
     return base.op === "add" ? { ...base, runId: input.runId! } : base;
 }
 
-interface UpdateOutput {
+type UpdateOutput = {
     readonly ok: true;
     readonly section: Input["section"];
-}
+};
 
 export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore, pool: Pool) {
     /** Write one amendment, mapping a refused write to a model-visible error. */

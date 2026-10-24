@@ -12,7 +12,7 @@ import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecResult, SandboxRef } from "../../sandbox/types.js";
 import type { EmitFn } from "../define-tool.js";
 
-export interface RunExecArgs {
+export type RunExecArgs = {
     readonly sandboxClient: SandboxClient;
     readonly sandbox: SandboxRef;
     readonly command: readonly string[];
@@ -21,7 +21,7 @@ export interface RunExecArgs {
     readonly timeoutSeconds?: number;
     readonly deadlineMs: number;
     readonly emit: EmitFn;
-}
+};
 
 export function runSandboxExec(args: RunExecArgs): Promise<ExecResult> {
     return args.sandboxClient.exec(

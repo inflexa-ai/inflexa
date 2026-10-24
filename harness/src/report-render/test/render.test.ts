@@ -2254,7 +2254,7 @@ describe("the table grid", () => {
 
 describe("the grid boot", () => {
     /** One column definition, in the shape that the boot builds. */
-    interface FakeColumn {
+    type FakeColumn = {
         colId: string;
         headerName: string;
         headerTooltip?: string;
@@ -2263,10 +2263,10 @@ describe("the grid boot", () => {
         filterValueGetter?: (params: { data?: Record<string, string | number> }) => number | null;
         valueFormatter: (params: { value: unknown }) => string;
         tooltipValueGetter: (params: { value: unknown }) => string;
-    }
+    };
 
     /** The grid options that the boot passes to `createGrid`. */
-    interface FakeOptions {
+    type FakeOptions = {
         theme: unknown;
         columnDefs: FakeColumn[];
         rowData: Record<string, string | number>[];
@@ -2274,28 +2274,28 @@ describe("the grid boot", () => {
         rowModelType?: string;
         onFirstDataRendered?: () => void;
         onModelUpdated?: (params: { api: { getDisplayedRowCount: () => number } }) => void;
-    }
+    };
 
     /** One element of the card that the boot writes into: the print note, and the row count of the status. */
-    interface FakeText {
+    type FakeText = {
         textContent: string;
-    }
+    };
 
     /**
      * One mount, in the shape that the boot reads: the block attribute, the inline style, the note beside it,
      * and the descendants that it measures for a scroll bar.
      */
-    interface FakeMount {
+    type FakeMount = {
         style: { height: string };
         getAttribute: (name: string) => string | null;
         querySelector: (selector: string) => FakeStrip | null;
         parentNode: { querySelector: (selector: string) => FakeText | null };
-    }
+    };
 
     /** The strip that the grid lays its horizontal bar in, in the shape that the fit reads. */
-    interface FakeStrip {
+    type FakeStrip = {
         offsetHeight: number;
-    }
+    };
 
     /** One payload, in the shape that the decoder leaves under the block id. */
     function payloadOf(columns: string[], display: unknown[], rows: Record<string, string | number>[]) {
@@ -2706,12 +2706,12 @@ describe("renderReportPage readiness signal", () => {
 
 describe("the chart bootstrap waits for each chart to finish", () => {
     /** One fake chart of the runtime: it keeps its listeners, and a test fires the `finished` event itself. */
-    interface FakeChart {
+    type FakeChart = {
         readonly listeners: Map<string, () => void>;
         width: number;
         height: number;
         resized: number;
-    }
+    };
 
     /**
      * Run the emitted bootstrap over fake containers of the given CSS sizes. Give the readiness flag, each

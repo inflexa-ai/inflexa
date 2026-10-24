@@ -2,9 +2,9 @@ import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, Citat
 import { createSemanticScholarSource, type SemanticScholarPaper, type SemanticScholarSourceOptions } from "../../literature/sources/semantic-scholar.js";
 import { firstNonEmpty, sourceOutcome } from "./common.js";
 
-export interface SemanticScholarCitationClientOptions extends SemanticScholarSourceOptions {
+export type SemanticScholarCitationClientOptions = SemanticScholarSourceOptions & {
     readonly maxCandidates?: number;
-}
+};
 
 function externalId(value: Record<string, string> | undefined, key: string): string | undefined {
     const found = value?.[key];

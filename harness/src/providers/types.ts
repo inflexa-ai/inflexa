@@ -17,7 +17,7 @@ import type { ProviderError } from "./errors.js";
 
 export type { FinishReason, LanguageModel, ModelMessage, ProviderOptions, ToolSet };
 
-export interface ProviderCapabilities {
+export type ProviderCapabilities = {
     readonly toolCalling: boolean;
     /**
      * Whether the wire can carry a picture inside a tool result. The loop moves a
@@ -42,13 +42,13 @@ export interface ProviderCapabilities {
      * least the compaction budget of the agent", thus the budget stays as declared.
      */
     readonly contextWindow?: number;
-}
+};
 
 /**
  * The request carries no free-form provider options. That would let a caller
  * set a vendor key that bypasses the provider's per-model table.
  */
-export interface ChatRequest {
+export type ChatRequest = {
     /**
      * The system prompt: a plain string, or a system message that carries the
      * cache marker at its end (`withSystemPromptBreakpoint`).
@@ -70,7 +70,7 @@ export interface ChatRequest {
      * configuration's `reasoning`, then `DEFAULT_REASONING`.
      */
     readonly reasoning?: ReasoningPolicy;
-}
+};
 
 /**
  * Vendor-neutral prompt-cache policy — a harness concept, not a vendor one.
@@ -123,13 +123,13 @@ export type ReasoningPolicy = NonNullable<LanguageModelV4CallOptions["reasoning"
  * totals without a cache breakdown, is legitimate. Absent means "not reported",
  * never "zero".
  */
-export interface ChatUsage {
+export type ChatUsage = {
     readonly inputTokens?: number;
     readonly outputTokens?: number;
     readonly cacheCreationInputTokens?: number;
     readonly cacheReadInputTokens?: number;
     readonly reasoningTokens?: number;
-}
+};
 
 // Every count reported here is folded by the loop and published on the wire as
 // `TokenUsageRollup`, whose fields `TOKEN_USAGE_FIELDS` enumerates. The rollup
@@ -140,7 +140,7 @@ export interface ChatUsage {
 type _AssertChatUsageFields = Exclude<keyof ChatUsage, TokenUsageField> | Exclude<TokenUsageField, keyof ChatUsage> extends never ? true : never;
 const _assertChatUsageFields: _AssertChatUsageFields = true;
 
-export interface ChatResponse {
+export type ChatResponse = {
     readonly message: Extract<ModelMessage, { role: "assistant" }>;
     /**
      * The terminal reason for this reply. `"aborted"` is produced ONLY by the
@@ -176,16 +176,16 @@ export interface ChatResponse {
      * Absent for a bare model-id string, which names no provider.
      */
     readonly provider?: string;
-}
+};
 
 export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };
 
-export interface AgentChat {
+export type AgentChat = {
     readonly capabilities: ProviderCapabilities;
     chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError>;
-}
+};
 
-export interface ChatProvider extends AgentChat {
+export type ChatProvider = AgentChat & {
     chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent>;
     /**
      * The request-timeout limit that this provider enforces, in milliseconds, or
@@ -195,7 +195,7 @@ export interface ChatProvider extends AgentChat {
      * value from the provider instance, not from a harness constant.
      */
     readonly requestTimeoutMs?: number;
-}
+};
 
 /**
  * The effective deadline in milliseconds for a provider-bound operation.
@@ -208,7 +208,7 @@ export function effectiveDeadlineMs(provider: Pick<ChatProvider, "requestTimeout
     return explicitMs ?? Math.max(floorMs, provider.requestTimeoutMs ?? 0);
 }
 
-export interface EmbeddingProvider {
+export type EmbeddingProvider = {
     /**
      * Width of every vector `embed` returns. The write-side index paths create
      * each per-analysis pgvector index at exactly this width (`ensureSearchIndex`),
@@ -218,6 +218,6 @@ export interface EmbeddingProvider {
      */
     readonly dimensions: number;
     embed(texts: readonly string[], session: AgentSession): ResultAsync<number[][], ProviderError>;
-}
+};
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;

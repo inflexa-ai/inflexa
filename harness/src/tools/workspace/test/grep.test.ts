@@ -8,12 +8,12 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { GREP_LIMITS, createGrepTool } from "../grep.js";
 
-interface FakeTree {
+type FakeTree = {
     /** path → file content (utf8). Path is workspace-relative. */
     readonly files: Record<string, string>;
     /** path → directory entries. */
     readonly dirs: Record<string, readonly { name: string; type: "file" | "directory" }[]>;
-}
+};
 
 function fakeFs(tree: FakeTree): WorkspaceFilesystem {
     return {

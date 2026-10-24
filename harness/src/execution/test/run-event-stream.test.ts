@@ -27,12 +27,12 @@ if (DBOS.isInitialized()) {
     await DBOS.shutdown();
 }
 
-interface EmitInput {
+type EmitInput = {
     readonly before: unknown[];
     readonly after: unknown[];
     /** Park between the two batches until the test sends `release`. */
     readonly gate: boolean;
-}
+};
 
 const emitRunEvents = DBOS.registerWorkflow(
     async (input: EmitInput): Promise<number> => {

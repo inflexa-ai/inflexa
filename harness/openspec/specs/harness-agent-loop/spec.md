@@ -927,7 +927,7 @@ The excerpt MUST be a function of the text, the reference, and the decision to k
 
 ### Requirement: The loop keeps the text of a cut result in an optional store
 
-`RunAgentOptions` MUST accept an optional `toolOutputStore`, the same way as `usageRecorder`. The store is an interface of the loop layer. `put` keeps one text, and `get` gives the kept text of one reference in one analysis. The error type of each method MUST be `DomainError`. The loop MUST NOT know the realization of the store.
+`RunAgentOptions` MUST accept an optional `toolOutputStore`, the same way as `usageRecorder`. The store is a type of the loop layer. `put` keeps one text, and `get` gives the kept text of one reference in one analysis. The error type of each method MUST be `DomainError`. The loop MUST NOT know the realization of the store.
 
 The loop MUST keep a text only when two conditions are true: the run has a store, and the agent declares `read_tool_output`. Then the loop MUST put a record before the result joins the transcript. The record holds these values:
 

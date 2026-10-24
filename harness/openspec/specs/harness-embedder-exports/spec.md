@@ -12,8 +12,8 @@ without that name. Two conditions make a name necessary:
 
 - The name types a field of a dependency object that the barrel exports already.
   An embedder that cannot name the field cannot build the object.
-- The name types a value that an exported function gives back. An embedder that
-  cannot name the value cannot hold it or pass it on.
+- The name types a value that an exported function gives back. An embedder
+  that cannot name the value cannot hold it or pass it on.
 
 Each deep subpath MUST stay importable. The barrel is additive, and it is not a
 wall. But an embedder MUST reach every name above through the package root, and
@@ -21,8 +21,8 @@ it MUST take no deep import to do so.
 
 #### Scenario: A field type of an exported dependency object is on the front door
 
-- **GIVEN** a dependency interface that the root barrel exports
-- **WHEN** an embedder writes a literal of that interface
+- **GIVEN** a dependency type that the root barrel exports
+- **WHEN** an embedder writes a literal of that type
 - **THEN** it names the type of every field through the package root
 
 #### Scenario: A return type of an exported function is on the front door

@@ -87,7 +87,7 @@ const CASCADE_INSERTS: Record<WorkflowCascadeTable, (workflowId: string, label: 
     }),
 };
 
-export interface DbosLedgerSeederDeps {
+export type DbosLedgerSeederDeps = {
     /** The rig pool; its `search_path` is irrelevant here, since every statement names `dbos` explicitly. */
     readonly pool: Pool;
     /**
@@ -104,9 +104,9 @@ export interface DbosLedgerSeederDeps {
      * Narrow it when the assertions read back only some.
      */
     readonly cascadeTables?: readonly WorkflowCascadeTable[];
-}
+};
 
-export interface DbosLedgerSeeder {
+export type DbosLedgerSeeder = {
     /** One `workflow_status` row, optionally parented, plus a row in each cascading table this seeder covers. */
     seedWorkflow(workflowId: string, parentId?: string): Promise<void>;
     /** Rows in one system table keyed to any of the given workflows. */
@@ -117,7 +117,7 @@ export interface DbosLedgerSeeder {
     countCascadeRows(workflowIds: readonly string[]): Promise<Record<string, number>>;
     /** Every seeded table set to the same count, for comparing a whole cascade at once. */
     cascadeRows(each: number): Record<string, number>;
-}
+};
 
 /**
  * Bind seeding and counting to one file's pool and `executor_id` literal. Rows

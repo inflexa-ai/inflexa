@@ -19,20 +19,20 @@ import type { NameToken, SlotTokenClass, TokenKind } from "./tokens.js";
 import { MAX_SLOT_SAMPLE_VALUES, MIN_AFFIX_LENGTH, MIN_CATCH_ALL_MEMBERS, MIN_FAMILY_SET_MEMBERS, MIN_PREFIX_SET_MEMBERS } from "./tuning.js";
 
 /** A member with the directory-slot values of the context it was found in. */
-export interface ContextFile extends MemberFile {
+export type ContextFile = MemberFile & {
     readonly varValues: readonly string[];
-}
+};
 
-export interface MinedItem {
+export type MinedItem = {
     readonly file: ContextFile;
     readonly tokens: readonly NameToken[];
     readonly suffix: string;
     readonly skeleton: string;
-}
+};
 
 export type MinedKind = "tokens" | "prefix" | "family" | "catch-all";
 
-export interface MinedGroup {
+export type MinedGroup = {
     readonly kind: MinedKind;
     readonly tokenKinds: readonly TokenKind[];
     /** The shared literal head, when the group was claimed by prefix mining. */
@@ -42,10 +42,10 @@ export interface MinedGroup {
     readonly suffixes: Map<string, number>;
     items: MinedItem[];
     distinct?: number[];
-}
+};
 
 /** A slot before the assembly stamps it with an id. */
-export interface DraftSlot {
+export type DraftSlot = {
     readonly location: SlotLocation;
     readonly index: number;
     readonly tokenClass: SlotTokenClass;
@@ -63,7 +63,7 @@ export interface DraftSlot {
     readonly memberValues: readonly string[];
     sameAs?: number;
     crossCheckMismatches?: number;
-}
+};
 
 export type DraftSegment = { readonly kind: "literal"; readonly text: string } | { readonly kind: "slot"; readonly slot: number };
 
@@ -198,11 +198,11 @@ function symbolOf(token: NameToken): string {
  * cheaper than the singletons it replaces.
  */
 function minePrefixes(residue: readonly MinedItem[]): { sets: MinedGroup[]; rest: MinedItem[] } {
-    interface TrieNode {
+    type TrieNode = {
         readonly children: Map<string, TrieNode>;
         readonly items: MinedItem[];
         readonly token?: NameToken;
-    }
+    };
 
     const bySuffix = new Map<string, MinedItem[]>();
     for (const item of residue) {

@@ -15,11 +15,11 @@ import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeSnapsh
 import type { SnapshotPin } from "./pin.js";
 import { SituationFieldsSchema, toSituation } from "./situation.js";
 
-export interface KnowledgeCheckDeps {
+export type KnowledgeCheckDeps = {
     readonly client: KnowledgeClient;
     /** The release the plan pinned on its first recommend answer. The check sends it, thus another release refuses the call. */
     readonly pin?: SnapshotPin;
-}
+};
 
 export type KnowledgeCheckOutput = CheckResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 

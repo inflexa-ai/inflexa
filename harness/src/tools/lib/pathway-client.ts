@@ -45,7 +45,7 @@ const ORGANISM_MAP: Record<string, string> = {
 
 export type PathwaySource = "kegg" | "reactome";
 
-export interface Pathway {
+export type Pathway = {
     id: string;
     name: string;
     source: PathwaySource;
@@ -53,7 +53,7 @@ export interface Pathway {
     genes?: string[];
     entity_uniprots?: string[]; // Reactome only — UniProt accessions of physical entities in the pathway
     url?: string;
-}
+};
 
 // Reactome ContentService raw wire shapes, validated at the fetch boundary.
 // Every field is optional because the API omits absent values.
@@ -86,12 +86,12 @@ export const ReactomeParticipantEntitiesSchema = z.array(
     }),
 );
 
-export interface PathwaySearchOptions {
+export type PathwaySearchOptions = {
     source?: "kegg" | "reactome" | "both";
     organism?: string;
     includeGenes?: boolean;
     maxResults?: number;
-}
+};
 
 export async function searchKegg(query: string, organism: string, maxResults: number, includeGenes: boolean): Promise<Pathway[]> {
     const searchRes = await apiFetch<string>(`${KEGG_BASE}/find/pathway/${encodeURIComponent(query)}`, { parseAs: "text" });

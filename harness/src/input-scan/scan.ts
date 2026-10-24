@@ -33,7 +33,7 @@ import type { FormatCount, InputScan, InputScanManifest, ScannedFile } from "./t
  */
 export const MAX_SCANNED_FILES = 100_000;
 
-export interface ScanInputTreeArgs {
+export type ScanInputTreeArgs = {
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
     /** Directory to scan, relative to the analysis root (e.g. `data/inputs`). */
@@ -41,7 +41,7 @@ export interface ScanInputTreeArgs {
     /** Walk ceiling; defaults to {@link MAX_SCANNED_FILES}. */
     readonly limit?: number;
     readonly signal?: AbortSignal;
-}
+};
 
 /** Walk the tree breadth-first, reading a bounded prefix of each file for format detection. */
 async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; truncated: boolean }> {

@@ -92,11 +92,11 @@ export function activityForTool(name: string, input?: unknown, resolveDetail?: T
 
 /** On-change working-tree delta the sandbox executor posts per exec (paths
  *  only; the executor skips directories). */
-export interface SandboxTreeDelta {
+export type SandboxTreeDelta = {
     added?: string[];
     modified?: string[];
     removed?: string[];
-}
+};
 
 /** Extract the tree delta from a `data-sandbox-event` part, or null when the
  *  part is some other sandbox event. The wrapper shape is set by

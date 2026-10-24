@@ -75,7 +75,7 @@ function isThreadType(value: string): value is ThreadType {
 }
 
 /** One conversation thread's metadata, as returned by the store. */
-export interface Thread {
+export type Thread = {
     readonly threadId: string;
     readonly analysisId: string;
     readonly title: string | null;
@@ -103,9 +103,9 @@ export interface Thread {
      * fall through and render a tombstoned conversation as live.
      */
     readonly deletedAt: Date | null;
-}
+};
 
-export interface CreateThreadInput {
+export type CreateThreadInput = {
     readonly threadId: string;
     readonly analysisId: string;
     readonly title?: string | null;
@@ -123,7 +123,7 @@ export interface CreateThreadInput {
      * and either half alone describes no place.
      */
     readonly parentSeq?: number;
-}
+};
 
 /**
  * A create the store refuses on its own, before any row is written. Distinct
@@ -164,7 +164,7 @@ export type ThreadInputError =
 type _AssertDomainError = ThreadInputError extends DomainError ? true : never;
 const _assertDomainError: _AssertDomainError = true;
 
-export interface ListThreadsInput {
+export type ListThreadsInput = {
     readonly analysisId: string;
     readonly page?: number;
     readonly perPage?: number;
@@ -189,24 +189,24 @@ export interface ListThreadsInput {
     readonly type?: ThreadType;
     /** Narrow to one thread's direct children, exact match. Same polarity as `type`: omitting it narrows nothing. */
     readonly parentThreadId?: string;
-}
+};
 
-export interface ListRecentThreadsInput {
+export type ListRecentThreadsInput = {
     /** The most threads to give. It clamps to 1 to 200, the bounds of a page of `listThreads`. */
     readonly limit: number;
     /** Narrow to one kind of session, exact match. Omitting it narrows nothing. */
     readonly type?: ThreadType;
-}
+};
 
-export interface ThreadPage {
+export type ThreadPage = {
     readonly threads: Thread[];
     readonly total: number;
     readonly page: number;
     readonly perPage: number;
     readonly hasMore: boolean;
-}
+};
 
-export interface ThreadStore {
+export type ThreadStore = {
     /**
      * Create a thread row. Idempotent on `thread_id` — a second create for an
      * existing id is a no-op that preserves the existing row (including its
@@ -284,9 +284,9 @@ export interface ThreadStore {
      * archived thread is never in it.
      */
     listRecentThreads(input: ListRecentThreadsInput): ResultAsync<Thread[], DbError>;
-}
+};
 
-interface ThreadRow {
+type ThreadRow = {
     readonly thread_id: string;
     readonly analysis_id: string;
     readonly title: string | null;
@@ -308,7 +308,7 @@ interface ThreadRow {
     readonly created_at: Date;
     readonly updated_at: Date;
     readonly deleted_at: Date | null;
-}
+};
 
 /**
  * The projection every read of a thread row shares. Fixed text, never caller

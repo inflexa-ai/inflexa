@@ -29,7 +29,7 @@ import type { Logger } from "../lib/logger.js";
 import { classifyWithinRoot, computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
 import { recordArtifactReconcileDropped, recordLineageInputDropped } from "../lib/metrics.js";
 
-export interface ReconcileManifestInput {
+export type ReconcileManifestInput = {
     /** Absolute host root of the analysis's workspace tree. */
     workspaceRoot: string;
     /** Analysis (resource) ID. */
@@ -50,14 +50,14 @@ export interface ReconcileManifestInput {
      * the sole account of why lineage changed or a step died.
      */
     logger?: Logger;
-}
+};
 
-export interface ReconcileManifestResult {
+export type ReconcileManifestResult = {
     /** Reconciled manifest — phantoms removed, every entry rehashed from disk. */
     manifest: ArtifactManifestEntry[];
     /** Number of entries dropped because their file was missing. */
     droppedCount: number;
-}
+};
 
 export async function reconcileManifestWithDisk(input: ReconcileManifestInput): Promise<ReconcileManifestResult> {
     const { workspaceRoot, resourceId, runId, stepId, agentId, manifest, collector } = input;

@@ -4,9 +4,9 @@ import { createArxivSource, type ArxivPaper } from "../../literature/sources/arx
 import type { SourceHttpOptions } from "../../literature/sources/http.js";
 import { parseYear, sourceOutcome } from "./common.js";
 
-export interface ArxivCitationClientOptions extends SourceHttpOptions {
+export type ArxivCitationClientOptions = SourceHttpOptions & {
     readonly maxCandidates?: number;
-}
+};
 
 function arxivRecord(paper: ArxivPaper): CitationRecord {
     const year = parseYear(paper.published);

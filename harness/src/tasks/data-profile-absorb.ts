@@ -85,11 +85,11 @@ function annotationOf(group: DataProfileGroup, kept: ReadonlySet<string>): Group
     return annotation;
 }
 
-interface ReplayContext {
+type ReplayContext = {
     readonly setsByTemplate: ReadonlyMap<string, DetectedSet>;
     readonly groupsById: ReadonlyMap<string, DataProfileGroup>;
     readonly kept: ReadonlySet<string>;
-}
+};
 
 class StrandedRecipe extends Error {}
 

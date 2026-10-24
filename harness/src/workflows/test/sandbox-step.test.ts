@@ -90,7 +90,7 @@ describe("createLineageCollector", () => {
 const FAKE_CLOCK_BASE_MS = 2_000_000;
 const FAKE_CLOCK_STEP_MS = 1_000;
 
-interface FakeDbosState {
+type FakeDbosState = {
     /** Parts captured from `DBOS.writeStream("events", …)`, in emission order. */
     emittedParts: Array<Record<string, unknown>>;
     /** Monotonic fake clock (ms); `DBOS.now()` reads it then advances. */
@@ -99,7 +99,7 @@ interface FakeDbosState {
     sent: Array<{ destination: string; message: unknown; topic: string | undefined }>;
     /** Workflow ids captured from `DBOS.cancelWorkflow`. */
     cancelled: Array<string | undefined>;
-}
+};
 
 let dbosState: FakeDbosState;
 
@@ -868,13 +868,13 @@ describe("sandbox-step lineage attestation", () => {
         await writeFile(join(dir, "result.csv"), "gene,count\nTP53,7\n");
     }
 
-    interface AttestationProbe {
+    type AttestationProbe = {
         readonly deps: SandboxStepDeps;
         /** Every `sync` call, in order. */
         readonly syncCalls: ArtifactSyncInput[];
         /** `"register"` / `"sync"` in invocation order. */
         readonly order: string[];
-    }
+    };
 
     function attestationDeps(args: {
         logger?: SandboxStepDeps["logger"];

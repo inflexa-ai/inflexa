@@ -18,20 +18,20 @@ import { apiFetchValidated, describeApiError } from "./api-utils.js";
 const CBIOPORTAL_BASE = "https://www.cbioportal.org/api";
 const HEADERS = { Accept: "application/json" } as const;
 
-export interface CancerStudy {
+export type CancerStudy = {
     studyId: string;
     cancerType: string;
     cancerTypeName: string;
-}
+};
 
-export interface MutationFrequency {
+export type MutationFrequency = {
     cancerTypeId: string;
     cancerTypeName: string;
     totalSamples: number;
     mutatedSamples: number;
     frequency: number;
     studies: string[];
-}
+};
 
 // Raw cBioPortal wire shapes, validated at the fetch boundary. Fields the code
 // reads as map keys or feeds into `string[]` params stay required — a missing

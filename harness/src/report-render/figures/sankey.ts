@@ -90,16 +90,16 @@ const LEGEND_GAP_PX = 8;
 export const SANKEY_FIGURE: FigureModule = { reads: new Set(["x", "y", "value", "group"]), derive: deriveSankey };
 
 /** One flow of the table: its two nodes. */
-export interface SankeyEdge {
+export type SankeyEdge = {
     readonly source: string;
     readonly target: string;
-}
+};
 
 /** One flow of the table: its two nodes, its value, and its group. */
-interface SankeyFlow extends SankeyEdge {
+type SankeyFlow = SankeyEdge & {
     readonly value: number;
     readonly group?: string;
-}
+};
 
 /** The text of one node cell, or `undefined` for an empty cell. */
 function nodeName(cell: Cell | undefined): string | undefined {
@@ -215,11 +215,11 @@ function readFlows(rows: readonly ChartRow[], source: string, target: string, va
 }
 
 /** The size of one chart box and its text: the page, or one export. */
-interface ChartBox {
+type ChartBox = {
     readonly widthPx: number;
     readonly heightPx: number;
     readonly textPx: number;
-}
+};
 
 const PAGE_BOX: ChartBox = { widthPx: CHART_PAGE_WIDTH_PX, heightPx: CHART_BODY_PX, textPx: CHART_PAGE_TEXT_PX };
 const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;

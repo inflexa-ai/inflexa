@@ -49,10 +49,10 @@ import { Err, Ok, type Result } from "neverthrow";
  * `SandboxError`), and ship a `describe*Error` formatter that turns one into
  * a user-facing line. A step body's error channel is some `DomainError`.
  */
-export interface DomainError {
+export type DomainError = {
     readonly type: string;
     readonly cause?: unknown;
-}
+};
 
 /**
  * A thrown wrapper for a structured error value that is not already an

@@ -23,7 +23,7 @@ import type { ArtifactRegistry, ArtifactRegistrationInput } from "./artifact-reg
 
 export type { ArtifactRegistrationInput };
 
-export interface ArtifactRegistrationResult {
+export type ArtifactRegistrationResult = {
     /** Number of artifacts written to the local ledger. */
     localCount: number;
     /** Number of artifacts registered externally and given external IDs. */
@@ -32,7 +32,7 @@ export interface ArtifactRegistrationResult {
     externalFailed: number;
     /** Per-artifact failure details from the registry (if any). */
     failureDetails: Array<{ path: string; error: string }>;
-}
+};
 
 /** Why a registration stopped: the `register` gate refused it, or a write of the local ledger failed. */
 export type ArtifactRegistrationFailure =

@@ -337,24 +337,24 @@ type DocumentSection = z.infer<typeof DocumentSectionSchema>;
 type MatchedSection = z.infer<typeof MatchedSectionSchema>;
 
 /** The sections of one source document. The document fields appear once, not on every section. */
-export interface SectionGroup<S> {
+export type SectionGroup<S> = {
     readonly docType: string;
     readonly sourceUrl: string | null;
     readonly sourceDate: string | null;
     readonly sections: S[];
-}
+};
 
 /** One entry of a table of contents. */
-export interface SectionEntry {
+export type SectionEntry = {
     readonly documentSectionId: string;
     readonly path: string | null;
     readonly title: string | null;
-}
+};
 
 /** One matched section of a search, with the excerpt that drove the match. */
-export interface MatchedSectionEntry extends SectionEntry {
+export type MatchedSectionEntry = SectionEntry & {
     readonly matchedText: string | null;
-}
+};
 
 /**
  * Group sections by their source document, in the order of first appearance. An
@@ -376,7 +376,7 @@ function groupSections<T extends DocumentSection, S>(sections: readonly T[], ent
 }
 
 /** The fields of an authorization that both the search and the details answer carry. */
-export interface AuthorizationSummary {
+export type AuthorizationSummary = {
     readonly amassId: string;
     readonly agency: string;
     readonly name: string | null;
@@ -392,7 +392,7 @@ export interface AuthorizationSummary {
     readonly designations: RegulatoryBase["designations"];
     readonly otherAuthorizations: RegulatoryBase["authorizationsByAgency"];
     readonly sourceUrl: string | null;
-}
+};
 
 function summaryOf(record: RegulatoryBase): AuthorizationSummary {
     return {
@@ -417,10 +417,10 @@ function summaryOf(record: RegulatoryBase): AuthorizationSummary {
 /** The matched sections that a search row keeps. The count still reports all of them. */
 export const MAX_MATCHED_SECTIONS = 5;
 
-export interface AuthorizationSearchRow extends AuthorizationSummary {
+export type AuthorizationSearchRow = AuthorizationSummary & {
     readonly matchedSectionCount: number;
     readonly matchedDocuments: SectionGroup<MatchedSectionEntry>[];
-}
+};
 
 export function mapRegulatorySearchRow(record: z.infer<typeof RegulatorySearchResponseSchema>["data"][number]): AuthorizationSearchRow {
     return {
@@ -435,12 +435,12 @@ export function mapRegulatorySearchRow(record: z.infer<typeof RegulatorySearchRe
     };
 }
 
-export interface AuthorizationRecord extends AuthorizationSummary {
+export type AuthorizationRecord = AuthorizationSummary & {
     readonly fdaDetails: z.infer<typeof FdaDetailsSchema> | null;
     readonly emaDetails: z.infer<typeof EmaDetailsSchema> | null;
     readonly sectionCount: number;
     readonly documents: SectionGroup<SectionEntry>[];
-}
+};
 
 export function mapRegulatoryRecord(record: z.infer<typeof RegulatoryRecordResponseSchema>["data"]): AuthorizationRecord {
     return {
@@ -456,7 +456,7 @@ export function mapRegulatoryRecord(record: z.infer<typeof RegulatoryRecordRespo
     };
 }
 
-export interface RegulatorySection {
+export type RegulatorySection = {
     readonly amassId: string;
     readonly documentSectionId: string;
     readonly docType: string;
@@ -465,9 +465,9 @@ export interface RegulatorySection {
     readonly sourceUrl: string | null;
     readonly sourceDate: string | null;
     readonly content: string | null;
-}
+};
 
-export interface RegulatorySearchParams {
+export type RegulatorySearchParams = {
     readonly query: string;
     readonly limit: number;
     readonly agency?: readonly string[];
@@ -478,7 +478,7 @@ export interface RegulatorySearchParams {
     readonly minAuthorizationDate?: string;
     readonly maxAuthorizationDate?: string;
     readonly amassId?: string;
-}
+};
 
 export function searchRegulatoryRecords(params: RegulatorySearchParams, headers: Record<string, string>): ResultAsync<AuthorizationSearchRow[], AmassError> {
     const url = urlOf("/cores/regulatorycore/records", { ...params });
@@ -506,12 +506,12 @@ export function getRegulatorySection(
 }
 
 /** The identifiers that the RegulatoryCore lookup accepts. Exactly one is set. */
-export interface RegulatoryIdentifier {
+export type RegulatoryIdentifier = {
     readonly fdaApplicationNumber?: string;
     readonly emaProductNumber?: string;
     readonly ndc?: string;
     readonly splSetId?: string;
-}
+};
 
 export function regulatoryLookupItems(id: RegulatoryIdentifier): LookupItem[] {
     if (id.fdaApplicationNumber !== undefined) return fdaApplicationForms(id.fdaApplicationNumber).map((form) => ({ fdaApplicationNumber: form }));
@@ -564,7 +564,7 @@ export const PatentRecordResponseSchema = z.object({ data: PatentBaseSchema });
 type PatentBase = z.infer<typeof PatentBaseSchema>;
 
 /** A patent with its citation counts. The citation lists stay out: a cited patent can carry thousands. */
-export interface PatentSummary {
+export type PatentSummary = {
     readonly amassId: string;
     readonly publicationNumber: string | null;
     readonly applicationNumber: string | null;
@@ -587,7 +587,7 @@ export interface PatentSummary {
     readonly hasClaims: boolean | null;
     readonly hasDescription: boolean | null;
     readonly url: string | null;
-}
+};
 
 export function mapPatentSummary(record: PatentBase): PatentSummary {
     return {
@@ -616,13 +616,13 @@ export function mapPatentSummary(record: PatentBase): PatentSummary {
     };
 }
 
-export interface PatentRecord extends PatentSummary {
+export type PatentRecord = PatentSummary & {
     readonly familyMembers: string[];
     readonly language: string | null;
     readonly nonEnglishFallback: boolean | null;
     claims?: string | null;
     description?: string | null;
-}
+};
 
 export function mapPatentRecord(record: PatentBase): PatentRecord {
     const patent: PatentRecord = {
@@ -636,7 +636,7 @@ export function mapPatentRecord(record: PatentBase): PatentRecord {
     return patent;
 }
 
-export interface PatentSearchParams {
+export type PatentSearchParams = {
     readonly query: string;
     readonly limit: number;
     readonly assignee?: readonly string[];
@@ -651,7 +651,7 @@ export interface PatentSearchParams {
     readonly maxPriorityDate?: string;
     readonly minGrantDate?: string;
     readonly maxGrantDate?: string;
-}
+};
 
 /** PatentCore reads a list filter as one comma-separated value, not as a repeated parameter. */
 function commaList(values: readonly string[] | undefined): string | undefined {
@@ -679,10 +679,10 @@ export function getPatentRecord(
 }
 
 /** The identifiers that the PatentCore lookup accepts. Exactly one is set. */
-export interface PatentIdentifier {
+export type PatentIdentifier = {
     readonly publicationNumber?: string;
     readonly applicationNumber?: string;
-}
+};
 
 export function lookupPatentIds(id: PatentIdentifier, headers: Record<string, string>): ResultAsync<string[], AmassError> {
     const items: LookupItem[] =

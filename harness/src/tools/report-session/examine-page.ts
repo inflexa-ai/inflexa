@@ -92,11 +92,11 @@ const examinePageInput = z.object({
 export type ExaminePageInput = z.infer<typeof examinePageInput>;
 
 /** The document range of one slice of a tiled look, in the order that the pictures ride. */
-export interface ExaminedTile {
+export type ExaminedTile = {
     index: number;
     fromY: number;
     toY: number;
-}
+};
 
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
@@ -139,7 +139,7 @@ export type ExaminePageResult =
  * tree names a served URL instead. `capture` is optional and it replaces the whole transport, thus a test
  * injects a seam that reads no browser.
  */
-export interface ExaminePageToolDeps {
+export type ExaminePageToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly chrome: ChromeConfig;
@@ -153,7 +153,7 @@ export interface ExaminePageToolDeps {
      * {@link RELEASE_DEADLINE_MS}, which no composition tunes.
      */
     readonly deadlines?: { readonly acquireMs?: number; readonly releaseMs?: number };
-}
+};
 
 /**
  * The transport of one look, fixed at construction.
@@ -193,10 +193,10 @@ function resolveEyes(deps: ExaminePageToolDeps): EyesTransport {
 type LookStage = "acquire" | "capture";
 
 /** A fault of one look: the stage that raised it, and the cause that it raised. */
-interface LookFault {
+type LookFault = {
     readonly stage: LookStage;
     readonly cause: unknown;
-}
+};
 
 /** The log line of each stage. The outcome of the tool is one arm, thus the stage rides in the log alone. */
 const LOOK_FAULT_MESSAGE: Record<LookStage, string> = {

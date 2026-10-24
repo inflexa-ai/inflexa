@@ -253,12 +253,12 @@ const registrationRejectionMirror = DBOS.registerWorkflow(
 // ── 10.13 — a replayed sync moves no bytes ──────────────────────────────
 
 /** One `cortex_artifacts` row, cut down to the columns the sync selection reads. */
-interface LedgerRow {
+type LedgerRow = {
     path: string;
     role: string;
     artifactId: string | null;
     fileId: string | null;
-}
+};
 
 let syncLedger: LedgerRow[] = [];
 let syncCalls = 0;

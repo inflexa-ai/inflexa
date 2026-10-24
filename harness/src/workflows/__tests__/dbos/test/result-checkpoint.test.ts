@@ -23,10 +23,10 @@ if (DBOS.isInitialized()) {
     await DBOS.shutdown();
 }
 
-interface Refusal {
+type Refusal = {
     readonly reason: string;
     readonly suspend: boolean;
-}
+};
 
 let stepCalls = 0;
 

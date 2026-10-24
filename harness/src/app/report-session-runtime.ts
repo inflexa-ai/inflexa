@@ -77,7 +77,7 @@ export type EnsureFailureKind = "absent-thread" | "wrong-thread-type" | "unavail
  */
 export type EnsureSessionStateResult = { outcome: "ready"; state: StoredSessionState } | { outcome: "failed"; kind: EnsureFailureKind; detail: string };
 
-export interface ReportSessionRuntimeDeps {
+export type ReportSessionRuntimeDeps = {
     readonly pool: Pool;
     /**
      * The workspace-root seam of the pin. The citation evidence of an analysis sits on disk under the
@@ -85,7 +85,7 @@ export interface ReportSessionRuntimeDeps {
      */
     readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The report session-state runtime. The gateway serves the authoring tools, and
@@ -94,7 +94,7 @@ export interface ReportSessionRuntimeDeps {
  * turn runs it at the turn start, and the gateway `load` runs it too. Thus a tool
  * call cannot arrive before the state exists.
  */
-export interface ReportSessionRuntime {
+export type ReportSessionRuntime = {
     readonly gateway: ReportSessionStateGateway;
     /**
      * The derivation ledger of the session state. The derivation tool appends one record for each
@@ -102,7 +102,7 @@ export interface ReportSessionRuntime {
      */
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     ensureSessionState(threadId: string): Promise<EnsureSessionStateResult>;
-}
+};
 
 /**
  * The served membership: the stored pin, with one entry for each derivation of the session.

@@ -36,14 +36,14 @@ import {
     type WebFetchToolDeps,
 } from "../web-fetch.js";
 
-interface RecordedHop {
+type RecordedHop = {
     readonly status: number;
     readonly headers?: Record<string, string | string[] | undefined>;
     readonly body?: string | Buffer;
     readonly hang?: boolean;
     /** The request never answers, so only an abort or a timeout can end the hop. */
     readonly silent?: boolean;
-}
+};
 
 class RecordedResponse extends EventEmitter implements WebFetchHopResponse {
     readonly statusCode: number | undefined;
@@ -104,11 +104,11 @@ class RecordedRequest extends EventEmitter implements WebFetchHopRequestHandle {
     }
 }
 
-interface HopLog {
+type HopLog = {
     readonly urls: string[];
     readonly options: WebFetchHopRequestOptions[];
     readonly events: string[];
-}
+};
 
 /** One recorded hop per URL string; `*` answers every URL that holds no entry. */
 function recordedHopRequest(byUrl: Record<string, RecordedHop>, log: HopLog): WebFetchHopRequest {
@@ -138,10 +138,10 @@ function lookupAnswering(perCall: ReadonlyArray<readonly { address: string; fami
 const PUBLIC = [{ address: "93.184.216.34", family: 4 }] as const;
 const PRIVATE = [{ address: "10.0.0.7", family: 4 }] as const;
 
-interface AskLog {
+type AskLog = {
     readonly requests: AskRequest[];
     readonly events: string[];
-}
+};
 
 function askApproving(log: AskLog, reply: "once" | "always" = "once") {
     return async (request: AskRequest): Promise<AskApproval> => {
@@ -206,11 +206,11 @@ function buildPdf(pageCount: number): Buffer {
     return Buffer.from(`%PDF-1.4\n${objects.join("\n")}\ntrailer<</Size ${3 + pageCount * 2}/Root 1 0 R>>`, "latin1");
 }
 
-interface LocalServer {
+type LocalServer = {
     readonly server: Server;
     readonly port: number;
     close(): Promise<void>;
-}
+};
 
 async function startLocalServer(host: "127.0.0.1" | "localhost" | "::1"): Promise<LocalServer> {
     const server = createServer((request, response) => {

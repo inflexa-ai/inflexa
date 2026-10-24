@@ -47,17 +47,17 @@ const DBOS_TEST_APP_NAME = "cortex-test";
 const DBOS_TEST_APPLICATION_VERSION = "test-1";
 const DBOS_TEST_EXECUTOR_ID = "test";
 
-interface SharedDbosState {
+type SharedDbosState = {
     launchPromise: Promise<void> | null;
     shutdownRegistered: boolean;
-}
+};
 
 const shared: SharedDbosState = {
     launchPromise: null,
     shutdownRegistered: false,
 };
 
-export interface DbosTestRig {
+export type DbosTestRig = {
     /** Per-test pool scoped to a fresh cortex schema via `search_path`. */
     pool: Pool;
     /** Per-test cortex schema name. */
@@ -74,7 +74,7 @@ export interface DbosTestRig {
      * process-exit hook handles those.
      */
     drop(): Promise<void>;
-}
+};
 
 /** Parse a libpq-style connection string into individual DB_PG_* fields. */
 function parseConnectionStringToEnv(url: string): {

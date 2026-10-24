@@ -72,19 +72,19 @@ optional `timeout` field (number, seconds).
 The system SHALL define the resource types as Zod schemas:
 
 ```typescript
-interface ResourceLimits {
+type ResourceLimits = {
   maxCpu: number;       // positive
   maxMemoryGb: number;  // positive; camelCase "Gb"
   maxGpuCount: number;  // non-negative integer
 }
 
-interface ResourceSpec {
+type ResourceSpec = {
   cpu: number;          // positive
   memoryGb: number;     // positive
   gpu?: GpuSpec;
 }
 
-interface GpuSpec {
+type GpuSpec = {
   count: number;        // positive integer; no "type" field
 }
 ```

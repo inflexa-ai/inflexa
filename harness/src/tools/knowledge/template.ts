@@ -48,7 +48,7 @@ export type TemplateBindingValue = string | number | boolean | readonly string[]
  * the plan step: its id, its claims, the release the plan pinned, and the
  * local slots of the contract that the tool binds on the machine.
  */
-export interface TemplateBinding {
+export type TemplateBinding = {
     /** The template reference of the plan step, with its version, for example `tpl-deseq2-two-group@1.0.0`. */
     readonly template: string;
     readonly slots: Readonly<Record<string, TemplateBindingValue>>;
@@ -63,9 +63,9 @@ export interface TemplateBinding {
     readonly local?: readonly TemplateParameter[];
     /** The names of every adaptable slot of the served contract, thus the tool refuses an unknown name before anything leaves the machine. */
     readonly adaptable?: readonly string[];
-}
+};
 
-export interface KnowledgeTemplateDeps {
+export type KnowledgeTemplateDeps = {
     readonly client: KnowledgeClient;
     readonly mutator: WorkspaceMutator;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent with no image record, the environment match reads as unknown. */
@@ -74,22 +74,22 @@ export interface KnowledgeTemplateDeps {
     readonly imagePackagesFile?: string;
     /** The plan settings bound to the template of the step. Absent, the model values ride alone. */
     readonly binding?: TemplateBinding;
-}
+};
 
 /** One bound slot as the decision record keeps it. */
-export interface BoundSlotRecord {
+export type BoundSlotRecord = {
     readonly slot: string;
     readonly value: TemplateBindingValue;
     readonly source: string;
-}
+};
 
 /** One change of a bound value that an `overrides` entry declared, as the decision record keeps it. */
-export interface SettingsOverrideRecord {
+export type SettingsOverrideRecord = {
     readonly slot: string;
     readonly plan_value: TemplateBindingValue;
     readonly new_value: unknown;
     readonly reason: string;
-}
+};
 
 export type KnowledgeTemplateOutput =
     | {
@@ -181,14 +181,14 @@ function isContractRefusal(answer: TemplateContract | KnowledgeUnavailable | Kno
 }
 
 /** One slot as the record and the answer report it: a service entry, or a local slot as bound here. */
-interface ReportedSlot {
+type ReportedSlot = {
     readonly name: string;
     readonly value?: unknown;
     readonly source: string;
     readonly adaptable: boolean;
     readonly lines: readonly number[];
     readonly read?: boolean;
-}
+};
 
 /** The slots of `slots` whose names are in `names`, and the rest, as two records. */
 function splitSlots(slots: Readonly<Record<string, unknown>>, names: ReadonlySet<string>): { local: Record<string, unknown>; remote: Record<string, unknown> } {

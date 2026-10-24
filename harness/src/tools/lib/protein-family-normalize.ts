@@ -8,10 +8,10 @@
  * exact match on the raw text misses one of the two spellings.
  */
 
-interface CanonicalFamily {
+type CanonicalFamily = {
     canonical: string;
     patterns: RegExp[];
-}
+};
 
 const FAMILIES: CanonicalFamily[] = [
     {

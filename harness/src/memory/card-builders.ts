@@ -32,7 +32,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export interface PlanCardData {
+export type PlanCardData = {
     id: string;
     planId: string;
     parentPlanId?: string;
@@ -41,21 +41,21 @@ export interface PlanCardData {
     analytical_narrative: unknown;
     omicsType: unknown;
     omicsSubtype: unknown;
-}
+};
 
-export interface PresentationCardData {
+export type PresentationCardData = {
     id: string;
     title?: string;
     content: Record<string, unknown>;
-}
+};
 
-export interface RunCardData {
+export type RunCardData = {
     id: string;
     runId: string;
     planId: string;
     title: string;
     stepCount: number;
-}
+};
 
 /** Deterministic presentation id — must match `show_user`'s. */
 function presentationId(input: Record<string, unknown>): string {
@@ -190,18 +190,18 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
 export const MAX_FILES = 10;
 
 /** One referenced file in a `data-file-reference` card. */
-export interface FileReferenceEntryData {
+export type FileReferenceEntryData = {
     path: string;
     runId?: string;
     caption?: string;
-}
+};
 
 /** The `data-file-reference` payload: a group of referenced analysis artifacts. */
-export interface FileReferenceCardData {
+export type FileReferenceCardData = {
     id: string;
     title?: string;
     files: FileReferenceEntryData[];
-}
+};
 
 /** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
 export function deriveRunId(path: string): string | undefined {

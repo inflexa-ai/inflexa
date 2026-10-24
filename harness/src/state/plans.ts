@@ -18,11 +18,11 @@ import type { Querier } from "./db.js";
  */
 const PLAN_ID_PATTERN = /^pln-[a-f0-9]{8}$/;
 
-export interface InsertPlanInput {
+export type InsertPlanInput = {
     analysisId: string;
     plan: unknown;
     parentPlanId?: string | null;
-}
+};
 
 /**
  * Enforce tenant scope for a `parentPlanId`: the parent row must exist AND belong
@@ -80,13 +80,13 @@ export function insertPlan(pool: Querier, input: InsertPlanInput): ResultAsync<s
     return checkParentScope(pool, input.parentPlanId, input.analysisId, "plans.insertPlan.parentScope").andThen(insert);
 }
 
-export interface UpsertPlanInput {
+export type UpsertPlanInput = {
     /** Caller-derived id — must match the `pln-<8hex>` contract. */
     planId: string;
     analysisId: string;
     plan: unknown;
     parentPlanId?: string | null;
-}
+};
 
 /**
  * Insert a plan under a caller-supplied id, or no-op if that id already exists
@@ -144,7 +144,7 @@ export function loadPlan(pool: Querier, planId: string, opts: { analysisId: stri
 }
 
 /** A stored plan with its lineage, as {@link loadPlanRecord} reads it. */
-export interface PlanRecord {
+export type PlanRecord = {
     planId: string;
     /** The stored document, as the store holds it. A reader parses it. */
     plan: unknown;
@@ -152,7 +152,7 @@ export interface PlanRecord {
     /** The newest plan of the same analysis that names this plan as its parent. */
     supersededBy: string | null;
     createdAt: string;
-}
+};
 
 /**
  * Analysis-scoped read of one plan with its parent and the newest plan that

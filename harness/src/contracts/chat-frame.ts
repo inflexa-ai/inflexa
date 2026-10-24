@@ -12,10 +12,10 @@ import type { TokenUsageRollup } from "./usage.js";
 
 export type TurnTerminal = null | "finish" | { error: ChatErrorEvent };
 
-export interface ApplyFrameResult {
+export type ApplyFrameResult = {
     messages: ChatMessage[];
     terminal: TurnTerminal;
-}
+};
 
 export type ChatPartCheck = { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
 

@@ -64,7 +64,7 @@ function panelLookup(id: string, type: ConcreteType): SafetyTarget | null {
     }
 }
 
-interface TargetRow {
+type TargetRow = {
     input: string;
     identifierType: ConcreteType;
     /** The Ensembl id Open Targets was queried with, when one could be obtained. */
@@ -75,15 +75,15 @@ interface TargetRow {
     liabilityCount?: number;
     /** Why the Open Targets half is absent for this identifier, when it is. */
     opentargetsNote?: string;
-}
+};
 
-interface SourceOutcome {
+type SourceOutcome = {
     source: Source;
     status: "ok" | "no_data" | "unavailable";
     /** Identifiers this source returned something for. */
     matched: number;
     detail?: string;
-}
+};
 
 const inputSchema = z
     .object({

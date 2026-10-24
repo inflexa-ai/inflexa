@@ -74,18 +74,18 @@ function scriptToken(command: readonly string[]): string | undefined {
 }
 
 /** What one exec leaves for the lineage collector of the step. */
-interface ExecCallRecord {
+type ExecCallRecord = {
     readonly command: readonly string[];
     readonly exitCode: number | null;
     readonly durationMs: number | null;
     provenance?: ProvenanceFrame;
     /** The decision-record writes of the script check before the exec, for the mutator. */
     recordWrites?: readonly WriteRecord[];
-}
+};
 
 type ExecuteCommandResult = { readonly status: "ok" } & BoundedExecResult;
 
-export interface ExecuteCommandDeps {
+export type ExecuteCommandDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
@@ -115,7 +115,7 @@ export interface ExecuteCommandDeps {
      */
     readonly workspaceFilesystem?: WorkspaceFilesystem;
     readonly mutator?: WorkspaceMutator;
-}
+};
 
 export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
     const { sandboxClient, sandbox, deadlineMs, defaultCwd, lineageCollector, mountRoot } = deps;

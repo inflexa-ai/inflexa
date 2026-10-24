@@ -418,11 +418,11 @@ function bandShare(band: number, body: number): string {
 }
 
 /** One annotation strip: its title, its categories in order, and the place of the category of each x category. */
-interface TrackStrip {
+type TrackStrip = {
     readonly title: string;
     readonly values: readonly Cell[];
     readonly codes: readonly (number | null)[];
-}
+};
 
 /**
  * The strip of each track column. The categories of a strip take the order in which the x axis meets them.

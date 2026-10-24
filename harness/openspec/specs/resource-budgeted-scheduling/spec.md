@@ -17,7 +17,7 @@ harness-sandbox-exec.
 The harness SHALL define `ResourcePolicy` in `config/resource-limits.ts`:
 
 ```typescript
-interface ResourcePolicy {
+type ResourcePolicy = {
   perStep: ResourceLimits;
   budget: { cpu: number; memoryGb: number };
 }

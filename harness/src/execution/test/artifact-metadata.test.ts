@@ -22,9 +22,9 @@ import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 import { generateFileMetadata, type ArtifactForMetadata, type GenerateFileMetadataOptions } from "../artifact-metadata.js";
 
-interface RecordedCall {
+type RecordedCall = {
     readonly req: ChatRequest;
-}
+};
 
 /**
  * Scripted `ChatProvider` that returns one Message per call, in order.

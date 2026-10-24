@@ -18,7 +18,7 @@ import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import type { CortexRunRow, SynthesisStatus } from "./schema.js";
 
-export interface InsertRunInput {
+export type InsertRunInput = {
     runId: string;
     analysisId: string;
     threadId?: string | null;
@@ -28,18 +28,18 @@ export interface InsertRunInput {
     mandateExpiresAt?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     /** The start time as an ISO string. Without it, the row gets the clock of the host. */
     startedAt?: string;
-}
+};
 
-export interface RunReservation {
+export type RunReservation = {
     readonly row: CortexRunRow;
     readonly inserted: boolean;
-}
+};
 
 /** Bounded run rows paired with the true count before limit/offset. */
-export interface RunPage {
+export type RunPage = {
     readonly runs: CortexRunRow[];
     readonly total: number;
-}
+};
 
 export class RunIdentityCollisionError extends Error {
     constructor(readonly runId: string) {
@@ -174,10 +174,10 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
 }
 
 /** The optional text filter of the run reads. */
-export interface RunTextFilter {
+export type RunTextFilter = {
     /** A part of the run id or of the plan title, with no regard to case. Each character matches only itself. */
     q?: string;
-}
+};
 
 /**
  * The SQL condition of the text filter `q` for the bound placeholder `placeholder`. A run matches when its id holds the

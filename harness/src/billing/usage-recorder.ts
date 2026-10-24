@@ -18,7 +18,7 @@ import type { NoticeFailure } from "../lib/hooks.js";
 import type { ChatUsage } from "../providers/types.js";
 
 /** One completed LLM call's token usage, with the attribution held at the call site. */
-export interface LlmUsageRecord {
+export type LlmUsageRecord = {
     /**
      * Idempotency key. Stable across every replay of the same call: under a
      * `RunFrame` it composes the `runId`, the frame's `stepId` when it carries
@@ -51,7 +51,7 @@ export interface LlmUsageRecord {
     readonly servedModelId?: string;
     /** What the provider reported. Unreported figures stay absent, never zeroed. */
     readonly usage: ChatUsage;
-}
+};
 
 /**
  * Records one `LlmUsageRecord` per completed LLM call.
@@ -63,6 +63,6 @@ export interface LlmUsageRecord {
  * make a run slower, but a realization that throws before it returns a
  * `ResultAsync` still fails the run it was only meant to observe.
  */
-export interface UsageRecorder {
+export type UsageRecorder = {
     record(record: LlmUsageRecord): ResultAsync<void, NoticeFailure>;
-}
+};

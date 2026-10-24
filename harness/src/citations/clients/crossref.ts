@@ -20,11 +20,11 @@ const CrossrefItemSchema = z
 const ExactSchema = z.object({ message: CrossrefItemSchema });
 const SearchSchema = z.object({ message: z.object({ items: z.array(CrossrefItemSchema) }).passthrough() });
 
-export interface CrossrefClientOptions extends SourceHttpOptions {
+export type CrossrefClientOptions = SourceHttpOptions & {
     readonly mailto?: string;
     readonly userAgent?: string;
     readonly maxCandidates?: number;
-}
+};
 
 function crossrefRecord(item: z.infer<typeof CrossrefItemSchema>, index: number): CitationRecord | undefined {
     const doi = item.DOI?.toLocaleLowerCase("en-US");

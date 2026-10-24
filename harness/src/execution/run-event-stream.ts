@@ -96,10 +96,10 @@ const TERMINAL_ROW_READ_ATTEMPTS = 4;
 const TERMINAL_ROW_READ_INTERVAL_MS = 500;
 
 /** The part of a run row that the terminal part is made from. */
-export interface RunEventRunRead {
+export type RunEventRunRead = {
     readonly status: RunStatus;
     readonly error: string | null;
-}
+};
 
 /**
  * Construction-time dependencies. The pool is the application pool the run
@@ -107,7 +107,7 @@ export interface RunEventRunRead {
  * defaults to silence so an embedder that wired none sees nothing rather than
  * having console forced on it.
  */
-export interface RunEventStreamDeps {
+export type RunEventStreamDeps = {
     readonly pool: Pool;
     readonly logger?: Logger;
     /** Reads the status and the error of the run row, `null` when no row exists. Defaults to `queryRun` on `pool`. */
@@ -119,7 +119,7 @@ export interface RunEventStreamDeps {
     readonly readWorkflowStatus?: (runId: string) => Promise<string | null>;
     /** The wait between two reads of the run row. Defaults to a timer. */
     readonly sleep?: (ms: number) => Promise<void>;
-}
+};
 
 /**
  * Receives one part. May be async — the subscription awaits it, so a handler is
@@ -129,21 +129,21 @@ export interface RunEventStreamDeps {
 export type RunEventPartHandler = (part: ChatPart) => void | Promise<void>;
 
 /** Call-time parameters of one subscription. */
-export interface RunEventSubscribeOptions {
+export type RunEventSubscribeOptions = {
     /** The run to observe. Also the parent workflow's id. */
     readonly runId: string;
     /** Where each delivered part goes. */
     readonly onPart: RunEventPartHandler;
     /** Aborting stops delivery and settles the returned promise. */
     readonly signal: AbortSignal;
-}
+};
 
 /**
  * The run-event read seam. One method, because a run-scoped subscription is the
  * whole capability: a general-purpose stream reader would leak the engine's model
  * back into the surface this exists to quarantine.
  */
-export interface RunEventStream {
+export type RunEventStream = {
     /**
      * Deliver every part the run produces — parent and children alike — to
      * `onPart`, resolving when the run is terminal, every stream opened has
@@ -166,7 +166,7 @@ export interface RunEventStream {
      * `runId`/`stepId` and the reconciling fold is per id.
      */
     subscribe(options: RunEventSubscribeOptions): Promise<void>;
-}
+};
 
 /**
  * Build the DBOS-backed realization of {@link RunEventStream}.

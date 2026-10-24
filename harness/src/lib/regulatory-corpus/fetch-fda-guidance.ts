@@ -3,21 +3,21 @@ import { PDFParse } from "pdf-parse";
 
 export type FdaCenter = "CDER" | "CBER";
 
-export interface FdaDocStub {
+export type FdaDocStub = {
     doc_id: string;
     doc_title: string;
     doc_url: string;
     center: FdaCenter;
     metadata?: { year?: string; category?: string };
-}
+};
 
-export interface FdaDoc {
+export type FdaDoc = {
     doc_id: string;
     doc_title: string;
     doc_url: string;
     text: string;
     metadata: { center: FdaCenter; year?: string; category?: string };
-}
+};
 
 /**
  * Curated catalog of FDA guidance documents to index into the corpus.

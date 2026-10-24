@@ -48,7 +48,7 @@ export class ExecTimeoutError extends Error {
 }
 
 /** The effects of one exec. Each member has a default, and a test replaces it. */
-export interface ExecDeps {
+export type ExecDeps = {
     /** Defaults to `globalThis.fetch`. */
     readonly fetch?: typeof fetch;
     /** The clock of the deadline and of the cancel reads. Defaults to `Date.now`. */
@@ -71,7 +71,7 @@ export interface ExecDeps {
     readonly isCancelled?: () => Promise<boolean>;
     /** Per-stream retention budget sent with the submit. Defaults to `EXEC_STREAM_BYTE_CAP`. */
     readonly execStreamByteCap?: number;
-}
+};
 
 /**
  * The id of the exec that runs in the current durable step: the workflow id

@@ -29,9 +29,9 @@ const WriteFileInputSchema = z.object({
     content: z.string().describe("UTF-8 file content."),
 });
 
-export interface WriteFileDeps {
+export type WriteFileDeps = {
     readonly mutator: WorkspaceMutator;
-}
+};
 
 export function createWriteFileTool(deps: WriteFileDeps) {
     return defineTool({

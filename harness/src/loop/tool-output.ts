@@ -24,7 +24,7 @@ export const TOOL_OUTPUT_KEEP_MAX = 1024 * 1024;
 
 export const READ_TOOL_OUTPUT_TOOL_ID = "read_tool_output";
 
-export interface KeptToolOutput {
+export type KeptToolOutput = {
     readonly analysisId: string;
     readonly ref: string;
     readonly toolName: string;
@@ -35,14 +35,14 @@ export interface KeptToolOutput {
     readonly content: string;
     /** The length of the whole text of the result. */
     readonly totalLength: number;
-}
+};
 
 /** Keeps the text of each cut tool result for `read_tool_output`. */
-export interface ToolOutputStore {
+export type ToolOutputStore = {
     /** A second put of the same analysis id and reference replaces the text. */
     put(output: KeptToolOutput): ResultAsync<void, DomainError>;
     get(analysisId: string, ref: string): ResultAsync<KeptToolOutput | null, DomainError>;
-}
+};
 
 /** The reference of one kept text. It is short, because the model copies it. */
 export function toolOutputRef(key: string): string {

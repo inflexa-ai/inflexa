@@ -15,12 +15,12 @@ import { isUnknownArray } from "../../lib/unknown-array.js";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { OPENFDA_BASE, OPENFDA_LABEL_BASE } from "./openfda-config.js";
 
-export interface AdverseEventCount {
+export type AdverseEventCount = {
     reaction: string;
     count: number;
-}
+};
 
-export interface DrugLabelAction {
+export type DrugLabelAction = {
     applicationNumber: string | null;
     brandName: string | null;
     genericName: string | null;
@@ -30,9 +30,9 @@ export interface DrugLabelAction {
     warningsAndCautions: string | null;
     hasRems: boolean;
     sourceUrl: string;
-}
+};
 
-export interface SeriousnessProfile {
+export type SeriousnessProfile = {
     totalReports: number;
     fatalCount: number;
     hospitalizationCount: number;
@@ -40,7 +40,7 @@ export interface SeriousnessProfile {
     disablingCount: number;
     congenitalAnomalyCount: number;
     otherSeriousCount: number;
-}
+};
 
 // FAERS count/meta wire shapes, validated at the fetch boundary. Every field is
 // optional — the API omits absent values, and graceful degradation relies on a

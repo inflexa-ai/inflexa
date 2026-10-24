@@ -470,7 +470,7 @@ The loop labels its token counters with `servedModelId` and `provider`, as the h
 
 ### Requirement: ChatProvider advertises an optional request-timeout limit
 
-The `ChatProvider` interface MUST carry an optional readonly `requestTimeoutMs` field. A provider that enforces a request timeout MUST advertise the enforced value there. A consumer that scales a deadline from the provider MUST read this field from the provider instance in its deps, not from a harness constant. An absent field means that the provider enforces no request timeout of its own.
+The `ChatProvider` type MUST carry an optional readonly `requestTimeoutMs` field. A provider that enforces a request timeout MUST advertise the enforced value there. A consumer that scales a deadline from the provider MUST read this field from the provider instance in its deps, not from a harness constant. An absent field means that the provider enforces no request timeout of its own.
 
 #### Scenario: A configured provider advertises its limit
 

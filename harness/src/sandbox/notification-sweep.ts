@@ -25,14 +25,14 @@ const SWEEP_CRON = "0 */5 * * * *";
 const SWEEP_WORKFLOW = "dbos-notifications-sweep";
 const DELETE_BATCH_LIMIT = 10_000;
 
-export interface SweepDeps {
+export type SweepDeps = {
     /**
      * Execute the bounded DELETE. Returns the row count cleared. Injected
      * for tests; production wires the app pool.
      */
     deleteStale: (limit: number) => Promise<number>;
     logger?: Logger;
-}
+};
 
 export async function sweepStaleNotifications(deps: SweepDeps): Promise<number> {
     const logger = (deps.logger ?? createNoopLogger()).named("notification-sweep");
@@ -76,12 +76,12 @@ export function makeDefaultDeleteStale(pool: Pool) {
     };
 }
 
-export interface RegisterNotificationSweepDeps {
+export type RegisterNotificationSweepDeps = {
     pool: Pool;
     logger?: Logger;
     /** Override the DELETE driver — production defaults to the app pool. */
     deleteStale?: (limit: number) => Promise<number>;
-}
+};
 
 export function registerNotificationSweep(deps: RegisterNotificationSweepDeps): void {
     const deleteStale = deps.deleteStale ?? makeDefaultDeleteStale(deps.pool);

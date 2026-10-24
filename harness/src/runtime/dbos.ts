@@ -24,7 +24,7 @@ import { errRecipe, okRecipe } from "./result-serialization.js";
  * Narrow config slice the DBOS bootstrap reads. Composition roots map their
  * validated `Env` onto this and pass the executor id in (the harness reads no env).
  */
-export interface DbosConfig {
+export type DbosConfig = {
     readonly dbHost: string;
     readonly dbPort: string;
     readonly dbName: string;
@@ -71,13 +71,13 @@ export interface DbosConfig {
      * new root trace, with no link to the trace of the original execution.
      */
     readonly tracingEnabled?: boolean;
-}
+};
 
 /** DBOS lifecycle facts a host's readiness probe reports on. */
-export interface DbosState {
+export type DbosState = {
     launched: boolean;
     recoveryStarted: boolean;
-}
+};
 
 const state: DbosState = {
     launched: false,

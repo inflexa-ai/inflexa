@@ -122,17 +122,17 @@ export const DISGENET_SOURCES = [
 ] as const;
 export type DisgenetSource = (typeof DISGENET_SOURCES)[number];
 
-export interface DisgenetSearchOptions {
+export type DisgenetSearchOptions = {
     minScore?: number;
     source?: DisgenetSource;
     limit?: number;
-}
+};
 
 /** The result of one GDA query: the records of the first page, and the count of the whole query. */
-export interface DisgenetSearchResult {
+export type DisgenetSearchResult = {
     records: Gda[];
     totalFound: number;
-}
+};
 
 /**
  * Gene-disease associations for a gene symbol or for a disease.

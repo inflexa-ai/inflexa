@@ -61,9 +61,9 @@ NOT use a `requestContext` object and SHALL NOT prefix log lines with
 
 ### Requirement: Operational logging goes through an injected host-agnostic Logger
 
-The harness SHALL define its own `Logger` interface and SHALL NOT depend on a
+The harness SHALL define its own `Logger` type and SHALL NOT depend on a
 concrete logging library — neither at runtime nor in its exported type surface.
-The interface SHALL expose `debug`/`info`/`warn`/`error` taking the message
+The type SHALL expose `debug`/`info`/`warn`/`error` taking the message
 first and optional structured fields second (`error(msg, fields?)`), plus
 `with(fields)` returning a `Logger` that carries those fields on every
 subsequent record. Message-first ordering is normative: it matches the

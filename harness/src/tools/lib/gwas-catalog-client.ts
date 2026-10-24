@@ -16,7 +16,7 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { GWAS_BASE, GWAS_HEADERS } from "./gwas-catalog-config.js";
 
-export interface GwasAssociation {
+export type GwasAssociation = {
     rsId: string;
     pValue: number;
     pValueMantissa: number;
@@ -30,7 +30,7 @@ export interface GwasAssociation {
     studyAccession: string;
     pubmedId: string;
     sampleSize: string;
-}
+};
 
 export type GwasSearchType = "gene" | "trait" | "variant" | "study";
 
@@ -128,10 +128,10 @@ export function mapAssociation(a: RawGwasAssociation): GwasAssociation {
     };
 }
 
-export interface GwasSearchOptions {
+export type GwasSearchOptions = {
     pValueThreshold?: number;
     limit?: number;
-}
+};
 
 /** Max SNPs whose associations the 'gene' path walks; each is one request. */
 const GENE_PATH_MAX_SNPS = 10;

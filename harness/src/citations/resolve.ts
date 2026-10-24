@@ -35,11 +35,11 @@ const DEFAULT_RATE_LIMITS: Record<CitationSource, RateLimitConfig> = {
     semantic_scholar: { maxConcurrency: 1, requestsPerSecond: 1, maxRetries: 2, maxRetryDelayMs: 10_000 },
 };
 
-export interface CitationResolverSourceConfig extends Partial<RateLimitConfig> {
+export type CitationResolverSourceConfig = Partial<RateLimitConfig> & {
     readonly enabled?: boolean;
-}
+};
 
-export interface CitationResolverConfig {
+export type CitationResolverConfig = {
     readonly maxBatchSize?: number;
     readonly timeoutMs?: number;
     readonly cache?: {
@@ -55,18 +55,18 @@ export interface CitationResolverConfig {
     };
     readonly ncbiApiKey?: string;
     readonly semanticScholarApiKey?: string;
-}
+};
 
-export interface CitationResolverDependencies extends RateLimitRuntime {
+export type CitationResolverDependencies = RateLimitRuntime & {
     readonly fetch?: typeof globalThis.fetch;
     readonly clients?: readonly CitationSourceClient[];
-}
+};
 
-interface PendingCitation {
+type PendingCitation = {
     readonly input: CitationInput;
     readonly normalized: ReturnType<typeof normalizeCitation>;
     readonly plans: ReturnType<typeof planCitationSources>;
-}
+};
 
 function mergedRateLimit(source: CitationSource, config: CitationResolverConfig): RateLimitConfig {
     return { ...DEFAULT_RATE_LIMITS[source], ...config.sources?.[source] };

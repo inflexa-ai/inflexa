@@ -21,7 +21,7 @@ import { buildMaintenanceEmbedder, refreshRegulatoryCorpus, type RefreshOptions 
 export const REFRESH_INTERVAL_DAYS = 90;
 const ADVISORY_LOCK_KEY = "cortex_regulatory_corpus_refresh";
 
-export interface BootRefreshDeps {
+export type BootRefreshDeps = {
     /** Shared `pg.Pool`. */
     pool: Pool;
     /** Forwarded to `refreshRegulatoryCorpus()` when the refresh fires. */
@@ -43,12 +43,12 @@ export interface BootRefreshDeps {
     embeddingModel?: string;
     /** Direct OpenAI key for the maintenance embedder (NOT a billing-gateway VK). */
     openaiApiKey?: string;
-}
+};
 
-interface FreshnessRow {
+type FreshnessRow = {
     last_indexed_at: Date | null;
     age_days: number | null;
-}
+};
 
 async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale: boolean; lastIndexedAt: Date | null; ageDays: number | null }> {
     const { rows } = await pool.query<FreshnessRow>(

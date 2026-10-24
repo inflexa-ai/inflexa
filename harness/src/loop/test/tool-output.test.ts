@@ -34,9 +34,9 @@ function opts(provider: ScriptedProvider, overrides: Partial<RunAgentOptions> = 
     return { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, ...overrides };
 }
 
-interface MemoryStore extends ToolOutputStore {
+type MemoryStore = ToolOutputStore & {
     readonly puts: KeptToolOutput[];
-}
+};
 
 function memoryStore(outcome: "ok" | "err" = "ok"): MemoryStore {
     const puts: KeptToolOutput[] = [];

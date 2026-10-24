@@ -116,18 +116,18 @@ const MAX_SUBMIT_ROUNDS = 2;
 const STAGED_INPUT_ROOT = "data/inputs";
 
 /** The settle of one profile claim: the ledger row left `running`, and the terminal write stamped it. */
-export interface DataProfileSettlement {
+export type DataProfileSettlement = {
     readonly analysisId: string;
     readonly status: "completed" | "failed";
     /** The `data_profile_completed_at` that the terminal write stamped, as an ISO 8601 string. */
     readonly completedAt: string;
-}
+};
 
 /** The notice of a profile settle. The workflow body calls it one time for each settled claim. */
 export type NotifyDataProfileSettled = (settlement: DataProfileSettlement) => ResultAsync<void, NoticeFailure>;
 
 /** The body's construction-time deps — closed over at registration. */
-export interface DataProfileDeps extends EnvironmentStorePaths {
+export type DataProfileDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -166,14 +166,14 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
      * body calls nothing. It is not a provenance hook.
      */
     readonly notifyDataProfileSettled?: NotifyDataProfileSettled;
-}
+};
 
 /**
  * Workflow input. JSON-serialisable — DBOS persists it as the workflow's
  * input row. The `RunSession` carries the run authorization; the body reads it
  * and never mints.
  */
-export interface DataProfileWorkflowInput {
+export type DataProfileWorkflowInput = {
     readonly analysisId: string;
     readonly runSession: RunSession;
     /**
@@ -195,7 +195,7 @@ export interface DataProfileWorkflowInput {
      * absent → true, matching the prior Cortex-owned behavior.
      */
     readonly ownsMandate?: boolean; // oss-core-managed-ok
-}
+};
 
 /** Build the canonical artifact path for a staged input file. */
 function inputArtifactPath(f: StagedInput): string {
@@ -942,13 +942,13 @@ export function describeDataProfileStartError(e: DataProfileStartError): string 
  * construction-time deps are closed over at registration
  * (`registerDataProfileWorkflow`); the route never holds them.
  */
-export interface DataProfileTriggerDeps {
+export type DataProfileTriggerDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
     readonly runAuthorizer: RunAuthorizer;
     readonly workflow: (input: DataProfileWorkflowInput) => Promise<void>;
-}
+};
 
 /**
  * Identity + staged inputs for a profile run. The caller (the managed route /
@@ -956,11 +956,11 @@ export interface DataProfileTriggerDeps {
  * resulting manifest here; this trigger never stages — it forwards the manifest
  * into the workflow input.
  */
-export interface DataProfileTriggerParams {
+export type DataProfileTriggerParams = {
     readonly auth: AuthContext;
     readonly analysisId: string;
     readonly stagedInputs: readonly StagedInput[];
-}
+};
 
 /**
  * Resolve the `RunSession` the workflow runs under. Whether the authorization

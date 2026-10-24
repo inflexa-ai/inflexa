@@ -34,10 +34,10 @@ import type { ColumnMeaning } from "../contracts/report-reference.js";
 export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier" | "below-resolution";
 
 /** One formatted cell. `full` holds the full digits, and it is present only when `text` hides one. */
-export interface FormattedNumber {
+export type FormattedNumber = {
     readonly text: string;
     readonly full?: string;
-}
+};
 
 /** The significant digits of the scientific coefficient, for example the two digits of `4.3e-5`. */
 const SCIENTIFIC_DIGITS = 2;

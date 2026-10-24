@@ -17,11 +17,11 @@ import { searchProteins, type UniProtProtein } from "../lib/uniprot-client.js";
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 
-export interface SearchProteinOutput {
+export type SearchProteinOutput = {
     readonly proteins: UniProtProtein[];
     /** True when UniProt held at least one row beyond `limit`. */
     readonly hasMore: boolean;
-}
+};
 
 export const searchProteinTool = defineTool({
     id: "search_protein",

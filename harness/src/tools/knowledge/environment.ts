@@ -25,27 +25,27 @@ import { readImagePackagesFile } from "../../sandbox/image-packages.js";
 import { readReferenceInventory, type ReferenceInventoryEntry } from "../sandbox/list-available-refs.js";
 import type { FarmPackage, RecommendResponse } from "./client.js";
 
-export interface EnvironmentPaths {
+export type EnvironmentPaths = {
     /** Host path of the farm `inflexa.lock`. Absent, the packages read as unknown. */
     readonly farmLockFile?: string;
     /** Host path of the `image-packages.json` of the store. Absent, the packages the image ships are unknown. */
     readonly imagePackagesFile?: string;
     /** Host path of the reference store. Absent, the collection reads as unknown. */
     readonly refStorePath?: string;
-}
+};
 
-export interface StepEnvironment {
+export type StepEnvironment = {
     readonly package?: { readonly name: string; readonly present: boolean; readonly version?: string };
     readonly collection?: { readonly name: string; readonly present: boolean; readonly path?: string; readonly title?: string };
-}
+};
 
 /** Where each fact of the environment came from: a record the host read, or nothing. */
-export interface EnvironmentSource {
+export type EnvironmentSource = {
     readonly farm: "lock" | "unknown";
     /** `record` when the store carries the `image-packages.json` of the sandbox image. */
     readonly image: "record" | "unknown";
     readonly references: "store" | "unknown";
-}
+};
 
 /** The recommend answer with an `environment` per step. */
 export type RecommendWithEnvironment = RecommendResponse & {

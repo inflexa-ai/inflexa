@@ -53,12 +53,12 @@ export type ListPinnedArtifactsInput = z.infer<typeof listPinnedArtifactsInput>;
  * only for a header that the read recovered, thus their absence says nothing about the content of the file.
  * The listing gives `columnCount`, and a call with a path gives `columns` as well.
  */
-export interface PinnedArtifact {
+export type PinnedArtifact = {
     path: string;
     fileType?: string;
     columnCount?: number;
     columns?: string[];
-}
+};
 
 /**
  * One pinned citation of the listing: the key, and the short citation of its pinned record.
@@ -67,10 +67,10 @@ export interface PinnedArtifact {
  * the pin recorded no citation for carries none, because absence is a normal condition. The description of
  * the record stays out, because the listing is an orientation surface.
  */
-export interface PinnedCitation {
+export type PinnedCitation = {
     key: string;
     citation?: string;
-}
+};
 
 /**
  * The typed outcome of the listing tool. Each arm is ok-channel data, thus the tool never throws for one
@@ -94,11 +94,11 @@ export type ListPinnedArtifactsResult =
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
  * serves every analysis and it resolves the root per call from the scope.
  */
-export interface ListPinnedArtifactsToolDeps {
+export type ListPinnedArtifactsToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The cap of the header read. A header line of an analysis output sits far under it, and a file with no
@@ -136,10 +136,10 @@ function delimiterOf(path: string): string | undefined {
  * `cut` is true when the window filled and it holds no line end. Then the bytes stop inside the header,
  * and the last name of the line is a fragment.
  */
-interface HeaderRead {
+type HeaderRead = {
     readonly line: string;
     readonly cut: boolean;
-}
+};
 
 /**
  * Read the first line of a file under the cap, or give `undefined` when the bytes do not come back.

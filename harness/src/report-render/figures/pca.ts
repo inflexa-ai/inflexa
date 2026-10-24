@@ -75,11 +75,11 @@ const PLAIN_POINT_TOOLTIP: EchartOption = { trigger: "item", formatter: "{a}: {c
 const POINT_LABEL_FIELDS: EchartOption = { label: { show: true, formatter: "{b}", position: "right", distance: NAME_GAP_PX, color: CHART_INK } };
 
 /** The two uses of the shape draw. */
-interface ShapeDraw {
+type ShapeDraw = {
     readonly figure: string;
     readonly equalUnits: boolean;
     readonly labelRows: number;
-}
+};
 
 const PCA_DRAW: ShapeDraw = { figure: "pca", equalUnits: true, labelRows: PCA_LABEL_ROWS };
 const SCATTER_DRAW: ShapeDraw = { figure: "scatter", equalUnits: false, labelRows: 0 };
@@ -117,10 +117,10 @@ export const SHAPED_SCATTER_FIGURE: FigureModule = {
 };
 
 /** One resolved channel of the shape draw: its axis name and its value in each row. */
-interface ShapeChannel {
+type ShapeChannel = {
     readonly name: string;
     readonly values: readonly (Cell | null)[];
-}
+};
 
 /**
  * Resolve one channel of the shape draw. A transform applies to a value channel. An order sorts no axis of
@@ -163,13 +163,13 @@ function resolve(
 }
 
 /** One point of the shape draw: its row, its pair, and its two categories. */
-interface ShapedPoint {
+type ShapedPoint = {
     readonly index: number;
     readonly x: number;
     readonly y: number;
     readonly group?: string;
     readonly shape?: string;
-}
+};
 
 /** Derive the shape draw of a PCA or of a plain scatter. */
 function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext, draw: ShapeDraw): Result<EchartOption, RenderProblem> {

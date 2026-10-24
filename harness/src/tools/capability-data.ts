@@ -25,19 +25,19 @@ import { readInstalledDatasetIds } from "./sandbox/list-available-refs.js";
 export type InspectCapabilityDataDeps = Pick<EnvironmentStorePaths, "refStorePath">;
 
 /** One capability, its declared datasets, and what the store holds of them. */
-export interface CapabilityDataRow {
+export type CapabilityDataRow = {
     readonly agentId: string;
     readonly capability: string;
     readonly installed: readonly string[];
     readonly absent: readonly string[];
-}
+};
 
-export interface CapabilityDataResult {
+export type CapabilityDataResult = {
     /** False when the store could not be answered for: every `absent` list is then unknown, not empty. */
     readonly storeReadable: boolean;
     readonly rows: readonly CapabilityDataRow[];
     readonly content: string;
-}
+};
 
 const NO_DECLARATIONS = "No capability of this install declares reference data that it cannot run without.";
 

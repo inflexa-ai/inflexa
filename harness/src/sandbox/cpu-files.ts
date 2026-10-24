@@ -31,7 +31,7 @@ export function readHostCpuinfoOnce(): Promise<string | undefined> {
     return hostCpuinfo;
 }
 
-export interface CpuFiles {
+export type CpuFiles = {
     /** Content of `/sys/devices/system/cpu/online`: `0` for one thread, else the range `0-<n-1>`. */
     readonly online: string;
     /**
@@ -39,7 +39,7 @@ export interface CpuFiles {
      * of the host. `undefined` when the host gives no `/proc/cpuinfo`.
      */
     readonly cpuinfo: string | undefined;
-}
+};
 
 /**
  * Split the text of `/proc/cpuinfo` into its `processor` blocks. A blank line

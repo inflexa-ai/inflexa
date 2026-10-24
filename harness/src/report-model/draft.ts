@@ -23,12 +23,12 @@ import { ATOM_BLOCK_SCHEMAS, type AtomBlock } from "../contracts/report-blocks.j
  * cycle, thus the recursive members carry an explicit type. `DraftSectionBlock` and `DraftBlock` break
  * the cycle.
  */
-export interface DraftSectionBlock {
+export type DraftSectionBlock = {
     kind: "section";
     id: string;
     title: string;
     blocks: DraftBlock[];
-}
+};
 
 /** One draft block of any of the eight kinds. The atoms keep the contract shape, and only the section relaxes. */
 export type DraftBlock = AtomBlock | DraftSectionBlock;

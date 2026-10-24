@@ -10,7 +10,7 @@ import type { EmitEvent, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
 
-export interface ConversationDisplayRecorder {
+export type ConversationDisplayRecorder = {
     readonly emit: EmitFn;
     /** The user message of the turn. */
     takeOpening(): ConversationUIMessage[];
@@ -18,16 +18,16 @@ export interface ConversationDisplayRecorder {
     takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[];
     /** The whole turn in one projection. `runChatTurn` stores each round with `takeOpening` and `takeRound` instead. */
     finish(options?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[];
-}
+};
 
-export interface ConversationDisplayRecorderOptions {
+export type ConversationDisplayRecorderOptions = {
     readonly userText: string;
     /** The root agent of the turn. Its call path is `[agentId]`, and an event with a longer path is from a sub-agent. */
     readonly agentId: string;
     readonly sink: EmitFn;
     /** The clock for the times of the sub-agent activity, in milliseconds. The default is the wall clock. */
     readonly now?: () => number;
-}
+};
 
 type DisplayPart = UIMessagePart<ConversationUIData, Record<string, never>>;
 

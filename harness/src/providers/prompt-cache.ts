@@ -130,9 +130,9 @@ export const CONVERSATION_PROMPT_CACHE: PromptCachePolicy = { ttl: "1h" };
  * wrong shape here reaches the wire unchecked, and this declaration is the only
  * guard. Refer to the CachePointBlock page of the Bedrock API reference.
  */
-interface BedrockCacheOptions {
+type BedrockCacheOptions = {
     readonly cachePoint: { readonly type: "default"; readonly ttl?: "5m" | "1h" };
-}
+};
 
 /**
  * Translate a neutral cache policy into provider wire options.

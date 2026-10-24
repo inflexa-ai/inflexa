@@ -35,32 +35,32 @@ import { uuidv7 } from "./uuidv7.js";
 export type { AnswerOutcome, PendingAsk } from "./queries.js";
 
 /** Construction deps: the harness application pool the ledger lives in. */
-export interface AskGatewayDeps {
+export type AskGatewayDeps = {
     readonly pool: Pool;
-}
+};
 
 /**
  * Per-turn context an embedder binds into the `Ask` seam. It scopes the ask to an
  * analysis/thread and to one user, carries the turn's abort `signal`, and supplies
  * the `emit` sink the `data-ask` part flows through.
  */
-export interface AskContext {
+export type AskContext = {
     readonly analysisId: string;
     /** The opaque identity of the person the ask goes to. The harness never reads it. */
     readonly userId: string;
     readonly threadId?: string;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
-}
+};
 
 /** The gateway surface: the per-turn seam plus the outward embedder-driven API. */
-export interface AskGateway {
+export type AskGateway = {
     ask(request: AskRequest, ctx: AskContext): Promise<AskApproval>;
     answer(id: string, reply: AskReply): Promise<AnswerOutcome>;
     pending(): Promise<PendingAsk[]>;
     /** Expire pending asks older than `maxAgeMs` (default {@link DEFAULT_SWEEP_MAX_AGE_MS}). */
     sweepExpired(maxAgeMs?: number): Promise<number>;
-}
+};
 
 /** Fixed poll cadence — imperceptible against human decision speed, low chatter. */
 const POLL_INTERVAL_MS = 200;

@@ -49,9 +49,9 @@ const ANALOGY_SALVAGE_NUDGE =
 
 type AnalogyOutcome = { readonly kind: "report"; readonly report: AnalogyReport } | BlockerOutcome;
 
-interface AnalogyOutcomeCell {
+type AnalogyOutcomeCell = {
     outcome: AnalogyOutcome | null;
-}
+};
 
 function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
     return defineTool({
@@ -155,7 +155,7 @@ export function buildResearchPrompt(input: GenerateAnalogyReportInput): string {
     return lines.join("\n");
 }
 
-export interface GenerateAnalogyReportDeps {
+export type GenerateAnalogyReportDeps = {
     /** The LLM seam the child loop runs on. */
     readonly provider: ChatProvider;
     /** Model id — provenance / metric label; the provider owns the wire model. */
@@ -168,7 +168,7 @@ export interface GenerateAnalogyReportDeps {
     readonly toolOutputStore?: ToolOutputStore;
     /** Logging seam; omitted falls back to no-op. Logs the salvage warning and an accounting error of the reasoner loop. */
     readonly logger?: Logger;
-}
+};
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {

@@ -12,7 +12,7 @@ import { withHost } from "../../lib/host-concurrency.js";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { CT_BASE, CT_HEADERS } from "./clinicaltrials-config.js";
 
-export interface ClinicalTrial {
+export type ClinicalTrial = {
     nctId: string;
     title: string;
     officialTitle: string | null;
@@ -30,53 +30,53 @@ export interface ClinicalTrial {
     briefSummary: string | null;
     detailedDescription: string | null;
     sponsor: string | null;
-}
+};
 
-export interface ClinicalTrialIntervention {
+export type ClinicalTrialIntervention = {
     name: string;
     type: string | null;
     description: string | null;
     otherNames: string[];
-}
+};
 
 export type OutcomeEffect =
     | { kind: "quantitative"; value: number; units: string; ci_low?: number; ci_high?: number }
     | { kind: "not_extracted"; reason: "ctgov_no_numeric_result" | "ctgov_no_result_groups" };
 
-export interface OutcomeMeasure {
+export type OutcomeMeasure = {
     type: "primary" | "secondary" | "other";
     measure: string;
     description: string | null;
     timeFrame: string | null;
     effect: OutcomeEffect;
-}
+};
 
-export interface AdverseEventGroup {
+export type AdverseEventGroup = {
     groupId: string;
     title: string;
     description: string | null;
-}
+};
 
-export interface AdverseEventCount {
+export type AdverseEventCount = {
     groupId: string;
     numAffected: number | null;
     numAtRisk: number | null;
-}
+};
 
-export interface AdverseEvent {
+export type AdverseEvent = {
     serious: boolean;
     term: string;
     organSystem: string | null;
     counts: AdverseEventCount[];
-}
+};
 
-export interface TrialDetails {
+export type TrialDetails = {
     trial: ClinicalTrial;
     whyStopped: string | null;
     outcomes: OutcomeMeasure[];
     adverseEventGroups: AdverseEventGroup[];
     adverseEvents: AdverseEvent[];
-}
+};
 
 /**
  * One phase token of `protocolSection.designModule.phases`. `NA` marks a study
@@ -84,11 +84,11 @@ export interface TrialDetails {
  */
 export type TrialPhase = "EARLY_PHASE1" | "PHASE1" | "PHASE2" | "PHASE3" | "PHASE4" | "NA";
 
-export interface SearchOptions {
+export type SearchOptions = {
     phase?: TrialPhase;
     status?: "RECRUITING" | "ACTIVE_NOT_RECRUITING" | "COMPLETED" | "NOT_YET_RECRUITING" | "TERMINATED" | "WITHDRAWN" | "SUSPENDED";
     limit?: number;
-}
+};
 
 // Raw shapes for the ClinicalTrials.gov v2 study JSON, validated at the fetch
 // boundary — only the fields the mappers below read are modelled; every field

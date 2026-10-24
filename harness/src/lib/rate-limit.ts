@@ -1,4 +1,4 @@
-export interface RateLimitConfig {
+export type RateLimitConfig = {
     readonly maxConcurrency: number;
     readonly requestsPerSecond: number;
     /**
@@ -8,12 +8,12 @@ export interface RateLimitConfig {
      */
     readonly maxRetries: number;
     readonly maxRetryDelayMs: number;
-}
+};
 
-export interface RateLimitRuntime {
+export type RateLimitRuntime = {
     readonly now?: () => number;
     readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
-}
+};
 
 function abortReason(signal: AbortSignal): Error {
     return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");

@@ -23,7 +23,7 @@ import type { AgentSession } from "../auth/types.js";
 import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
 /** High-level input for registering one step's artifacts. */
-export interface ArtifactRegistrationInput {
+export type ArtifactRegistrationInput = {
     /** Analysis resource ID. */
     resourceId: string;
     /** Workflow run ID. */
@@ -34,23 +34,23 @@ export interface ArtifactRegistrationInput {
     artifacts: ArtifactManifestEntry[];
     /** Provenance collector with tracked inputs/outputs. */
     collector: ProvenanceCollector;
-}
+};
 
 /** Step coordinates for a per-step artifact sync. */
-export interface ArtifactSyncInput {
+export type ArtifactSyncInput = {
     /** Analysis resource ID. */
     resourceId: string;
     /** Workflow run ID. */
     runId: string;
     /** Step ID whose registered artifacts are synced. */
     stepId: string;
-}
+};
 
 /**
  * Outcome of external registration. Flat per-path results — no provenance-model
  * vocabulary leaks across the seam.
  */
-export interface ExternalRegistrationResult {
+export type ExternalRegistrationResult = {
     /**
      * Artifacts the external registry accepted, with the external identity to
      * write back onto the local ledger row. `path` is the analysis-scoped path
@@ -76,9 +76,9 @@ export interface ExternalRegistrationResult {
      * external system actually said.
      */
     notCounted?: ReadonlyArray<{ path: string; error: string }>;
-}
+};
 
-export interface ArtifactRegistry {
+export type ArtifactRegistry = {
     /**
      * Register one step's artifacts with the external provenance system.
      * Implementations MUST NOT touch the local `cortex_artifacts` ledger — that
@@ -97,4 +97,4 @@ export interface ArtifactRegistry {
      * again.
      */
     sync(input: ArtifactSyncInput, session: AgentSession): ResultAsync<void, NoticeFailure>;
-}
+};

@@ -30,7 +30,7 @@ const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
  */
 const EMBEDDING_MAX_RETRIES = 2;
 
-export interface EmbeddingProviderDeps {
+export type EmbeddingProviderDeps = {
     /** Gateway base URL — all embedding traffic is routed through it. */
     readonly baseURL: string;
     /** API token presented to the gateway. */
@@ -54,7 +54,7 @@ export interface EmbeddingProviderDeps {
      * tests inject a fake to feed a recorded response.
      */
     readonly fetch?: FetchLike;
-}
+};
 
 export function createEmbeddingProvider(deps: EmbeddingProviderDeps): EmbeddingProvider {
     const client = new OpenAI({

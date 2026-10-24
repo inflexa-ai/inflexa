@@ -24,7 +24,7 @@ import { joinEnvironment, type EnvironmentPaths, type RecommendWithEnvironment }
 import { SITUATION_EXAMPLE, SituationFieldsSchema, toPreferences, toSituation } from "./situation.js";
 import { buildPlanSkeleton, type SkeletonStep } from "./skeleton.js";
 
-export interface KnowledgeRecommendDeps extends Omit<EnvironmentPaths, "farmLockFile"> {
+export type KnowledgeRecommendDeps = Omit<EnvironmentPaths, "farmLockFile"> & {
     readonly client: KnowledgeClient;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent, the packages read as unknown. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
@@ -40,13 +40,13 @@ export interface KnowledgeRecommendDeps extends Omit<EnvironmentPaths, "farmLock
      * to another release between two calls refuses instead of mixing releases.
      */
     readonly pin?: SnapshotPin;
-}
+};
 
 /**
  * The model-facing answer of the tool: the skeleton and the claims, with the
  * envelope of the service and the environment source. Never the procedure.
  */
-export interface KnowledgeRecommendAnswer {
+export type KnowledgeRecommendAnswer = {
     readonly match: RecommendResponse["match"];
     readonly snapshot: RecommendResponse["snapshot"];
     /** The situation as the service normalized it. */
@@ -62,7 +62,7 @@ export interface KnowledgeRecommendAnswer {
     readonly claims: RecommendResponse["claims"];
     nearest?: RecommendResponse["nearest"];
     reason?: string;
-}
+};
 
 export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 

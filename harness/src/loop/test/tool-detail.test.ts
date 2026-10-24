@@ -35,9 +35,9 @@ function toolWithHook(describeCall: (input: { path: string }) => string): Tool {
 }
 
 /** The ok value that a result-describing tool of these tests gives. */
-interface ReadOutcome {
+type ReadOutcome = {
     bytes: number;
-}
+};
 
 /** A tool over `{ path }` whose result hook is whatever the test supplies. */
 function toolWithResultHook(describeResult: (input: { path: string }, result: ReadOutcome) => string): Tool {

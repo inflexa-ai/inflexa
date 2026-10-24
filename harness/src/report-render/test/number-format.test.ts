@@ -433,12 +433,12 @@ describe("holdsADriftedExponent", () => {
  */
 describe("the table cell format", () => {
     /** One entry of the vector: the cell, the kind of its column, the bound of the column, and the text. */
-    interface Entry {
+    type Entry = {
         readonly cell: string | number;
         readonly kind: NumberKind;
         readonly bound?: number;
         readonly expected: string;
-    }
+    };
 
     const VECTOR: readonly Entry[] = [
         // The identifier kind gives the source text, with no grouping and no rounding.

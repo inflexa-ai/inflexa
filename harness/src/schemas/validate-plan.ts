@@ -32,12 +32,12 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
  */
 const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
 
-export interface ValidationResult {
+export type ValidationResult = {
     valid: boolean;
     errors: string[];
-}
+};
 
-export interface ValidatePlanOptions {
+export type ValidatePlanOptions = {
     /**
      * Host per-step resource ceilings. When present, a step whose declared
      * `resources` exceed them is an error — the planner gets actionable
@@ -47,7 +47,7 @@ export interface ValidatePlanOptions {
      * sandbox-creation clamp remains their backstop).
      */
     readonly perStepCeiling?: ResourceLimits;
-}
+};
 
 /**
  * One issue for one package entry that does not parse. Each message names the

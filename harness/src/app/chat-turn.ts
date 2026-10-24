@@ -37,7 +37,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { bindSessionEmit, type ProvenanceSeam } from "../provenance/seam.js";
 
-export interface PrepareChatTurnDeps {
+export type PrepareChatTurnDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
@@ -51,13 +51,13 @@ export interface PrepareChatTurnDeps {
      * of a report session.
      */
     readonly provenance?: ProvenanceSeam;
-}
+};
 
-export interface PrepareChatTurnParams {
+export type PrepareChatTurnParams = {
     readonly analysisId: string;
     readonly threadId: string;
     readonly userInput: string;
-}
+};
 
 export type PrepareChatTurnResult = ({ readonly kind: "ok"; readonly threadType: ThreadType } & AssembledMessages) | { readonly kind: "not_found" };
 
@@ -146,10 +146,10 @@ async function readTurnContext(pool: Pool, analysisId: string): Promise<{ readon
     return { analysisContext: analysisState?.context ?? null, runActivityContext };
 }
 
-export interface RunChatTurnDeps extends PrepareChatTurnDeps {
+export type RunChatTurnDeps = PrepareChatTurnDeps & {
     /** The agent of a turn comes from the thread type, which only the preparation knows. */
     readonly agents: ThreadAgentResolver;
-}
+};
 
 /**
  * The session of a turn without its provenance. The harness sets the provenance from the agent that
@@ -158,14 +158,14 @@ export interface RunChatTurnDeps extends PrepareChatTurnDeps {
 export type ChatTurnSession = Omit<RequestSession, "provenance">;
 
 /** What opens a turn: the thread and the user input. */
-export interface OpenChatTurnParams {
+export type OpenChatTurnParams = {
     readonly analysisId: string;
     readonly threadId: string;
     readonly userInput: string;
-}
+};
 
 /** The transport values of a turn that is open. */
-export interface RunOpenChatTurnParams {
+export type RunOpenChatTurnParams = {
     readonly session: ChatTurnSession;
     /** Makes the provider of the turn over the emit sink of the display recorder. */
     readonly chat: (emit: EmitFn) => AgentChat;
@@ -180,7 +180,7 @@ export interface RunOpenChatTurnParams {
     readonly startedAtMs?: number;
     /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
     readonly promptCache?: PromptCachePolicy;
-}
+};
 
 /** The values of one whole turn. */
 export type RunChatTurnParams = OpenChatTurnParams & RunOpenChatTurnParams;
@@ -196,7 +196,7 @@ export type ChatTurnRefusal =
     | { readonly kind: "not_found" }
     | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType };
 
-export interface ChatTurnRan {
+export type ChatTurnRan = {
     readonly kind: "ran";
     readonly outcome: ChatTurnOutcome;
     /** True when the opening of the turn landed. */
@@ -207,7 +207,7 @@ export interface ChatTurnRan {
     readonly turnUsage?: TokenUsageRollup;
     /** The final text of a run that returned. */
     readonly fallbackText?: string;
-}
+};
 
 export type ChatTurnResult = ChatTurnRefusal | ChatTurnRan;
 
@@ -215,12 +215,12 @@ export type ChatTurnResult = ChatTurnRefusal | ChatTurnRan;
  * A turn that is prepared, with its agent resolved. Call `run` one time: each call stores a new
  * opening of the same user message.
  */
-export interface OpenChatTurn {
+export type OpenChatTurn = {
     readonly kind: "ready";
     /** The agent that runs the turn. The harness stamps its provenance on the session of the run. */
     readonly agent: AgentDefinition;
     readonly run: (params: RunOpenChatTurnParams) => Promise<ChatTurnRan>;
-}
+};
 
 /**
  * Open one chat turn: prepare it and resolve its agent. A refusal comes back before any row of the

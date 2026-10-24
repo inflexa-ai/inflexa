@@ -7,24 +7,24 @@ import type { FailedRequest } from "../../lib/page-capture.js";
 import { capCodePoints } from "../../loop/tool-detail.js";
 
 /** One distinct console error of a look, and how many times the page logged it. */
-export interface ConsoleErrorEntry {
+export type ConsoleErrorEntry = {
     text: string;
     count: number;
-}
+};
 
 /** One distinct failed request of a look, and how many times the page made it. */
-export interface FailedRequestEntry {
+export type FailedRequestEntry = {
     url: string;
     reason: string;
     count: number;
-}
+};
 
 /** The digest of one look. `omittedFaults` counts the distinct entries that the cap left out, thus a cut is never silent. */
-export interface PageFaults {
+export type PageFaults = {
     consoleErrors: ConsoleErrorEntry[];
     failedRequests: FailedRequestEntry[];
     omittedFaults?: { consoleErrors: number; failedRequests: number };
-}
+};
 
 /** The most code points of one fault text, after the placeholders replace the inline data. */
 const MAX_FAULT_TEXT = 300;

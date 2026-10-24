@@ -15,7 +15,7 @@ import { APP_POOL_ACQUIRE_TIMEOUT_MS, resolveAppPoolSize } from "../runtime/pool
  * fields plus the optional pool-size override. Composition roots map their
  * validated `Env` onto this; the harness never reaches for an env loader.
  */
-export interface PoolConfig {
+export type PoolConfig = {
     readonly host: string;
     readonly port: string;
     readonly database: string;
@@ -23,7 +23,7 @@ export interface PoolConfig {
     readonly password: string;
     readonly sslMode: "disable" | "require" | "verify-ca" | "verify-full";
     readonly poolMax?: string;
-}
+};
 
 function poolOptions(config: PoolConfig) {
     return {

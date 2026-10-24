@@ -16,22 +16,22 @@ import { PDFParse } from "pdf-parse";
 
 export type IchSeries = "S" | "E" | "M" | "Q";
 
-export interface IchStub {
+export type IchStub = {
     doc_id: string;
     doc_title: string;
     doc_url: string;
     code: string;
     series: IchSeries;
     metadata?: { year?: string };
-}
+};
 
-export interface IchDoc {
+export type IchDoc = {
     doc_id: string;
     doc_title: string;
     doc_url: string;
     text: string;
     metadata: { code: string; series: IchSeries; year?: string };
-}
+};
 
 /**
  * Curated catalog of ICH guidelines to index into the corpus.

@@ -37,11 +37,11 @@ const DEFAULT_LIMITS: Record<string, number> = {
     default: DEFAULT_HOST_LIMIT,
 };
 
-interface HostBudget {
+type HostBudget = {
     limit: number;
     inUse: number;
     queue: Array<() => void>;
-}
+};
 
 const budgets = new Map<string, HostBudget>();
 

@@ -37,7 +37,7 @@ const UNIPROT_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/;
 const CHEMBL_RE = /^CHEMBL\d+$/;
 const HGNC_RE = /^HGNC:\d+$/;
 
-export interface ResolvedTarget {
+export type ResolvedTarget = {
     /** Canonical id used as the entity-resolution anchor — preferred order: HGNC, then Ensembl. */
     canonicalId: string;
     /** What ontology produced the canonical id ("hgnc" or "ensembl"). */
@@ -67,7 +67,7 @@ export interface ResolvedTarget {
         ensembl: boolean;
         chembl: boolean;
     };
-}
+};
 
 // HGNC search payload, validated at the fetch boundary. Every field is optional
 // because the API omits absent values; each read below is optional-chained /
@@ -322,7 +322,7 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
     };
 }
 
-export interface AutocompleteCandidate {
+export type AutocompleteCandidate = {
     /** Approved HGNC symbol when known, otherwise the input symbol. */
     symbol: string;
     /** Full gene/protein name. */
@@ -332,7 +332,7 @@ export interface AutocompleteCandidate {
     uniprotId: string | null;
     /** Sorted synonyms across HGNC + UniProt. */
     synonyms: string[];
-}
+};
 
 /**
  * Resolve a single gene-symbol query for the autocomplete UI by fanning
