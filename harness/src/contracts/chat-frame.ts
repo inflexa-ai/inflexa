@@ -162,14 +162,14 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
                 } satisfies ToolCallPart,
             ];
         case "tool-finished": {
-            const finished = {
+            const finished: ToolCallPart = {
                 type: "tool-call",
                 toolCallId: frame.toolUseId,
                 toolName: frame.name,
                 outcome: frame.outcome,
-                detail: frame.detail,
-                durationMs: frame.durationMs,
-            } satisfies ToolCallPart;
+            };
+            if (frame.detail !== undefined) finished.detail = frame.detail;
+            if (frame.durationMs !== undefined) finished.durationMs = frame.durationMs;
             let started = false;
             const next = parts.map((p) => {
                 if (p.type !== "tool-call" || p.toolCallId !== frame.toolUseId) return p;
