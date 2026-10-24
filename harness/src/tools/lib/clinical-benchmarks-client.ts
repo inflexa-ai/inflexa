@@ -30,7 +30,7 @@ interface BenchmarksFile {
     source: string;
     url: string;
     refresh_procedure: string;
-    phase_transitions: Record<string, PhaseTransitions>;
+    phase_transitions: Record<string, PhaseTransitions> & { all: PhaseTransitions };
     indication_to_therapeutic_area: { patterns: string[]; therapeutic_area: string }[];
 }
 
@@ -70,15 +70,15 @@ export function inferTherapeuticArea(indicationLabels: string[]): string | null 
  */
 export function getBenchmarks(therapeuticArea: string | null): BenchmarkResult {
     const dataset = loadDataset();
-    const useFallback = !therapeuticArea || !dataset.phase_transitions[therapeuticArea];
-    const ta = useFallback ? "all" : therapeuticArea!;
+    const requested = !therapeuticArea ? undefined : dataset.phase_transitions[therapeuticArea];
+    const ta = requested === undefined || therapeuticArea === null ? "all" : therapeuticArea;
     return {
         therapeutic_area: ta,
-        source: useFallback ? "fallback" : "available",
+        source: requested === undefined ? "fallback" : "available",
         data_version: dataset.data_version,
         data_window: dataset.data_window,
         attribution: dataset.source,
-        transitions: dataset.phase_transitions[ta],
+        transitions: requested ?? dataset.phase_transitions.all,
     };
 }
 

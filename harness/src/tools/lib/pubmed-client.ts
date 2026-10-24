@@ -25,7 +25,7 @@ export type SearchOptions = PubmedSearchOptions;
 
 function pubmedSource(ncbiApiKey: string | undefined) {
     return createPubmedSource({
-        ...(ncbiApiKey === undefined ? {} : { apiKey: ncbiApiKey }),
+        apiKey: ncbiApiKey,
         maxRetries: 3,
         retryDelayMs: 1_000,
         timeoutMs: 90_000,

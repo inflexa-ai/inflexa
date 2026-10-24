@@ -55,9 +55,9 @@ function openaiArm(fetch: FetchLike, opts: { store?: boolean; maxRetries?: numbe
         apiKey: "test-key",
         model: MODEL,
         fetch,
-        ...(opts.store !== undefined ? { store: opts.store } : {}),
-        ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
-        ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+        store: opts.store,
+        maxRetries: opts.maxRetries,
+        maxOutputTokens: opts.maxOutputTokens,
     };
 }
 

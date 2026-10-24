@@ -148,7 +148,7 @@ function narrowSlot(slot: SetSlot, values: readonly string[]): DataProfileGroupS
         tokenClass: slot.tokenClass,
         distinctValues: distinct.length,
         sampleValues: distinct.slice(0, MAX_SLOT_SAMPLE_VALUES),
-        ...(slot.sameAsSlot ? { sameAsSlot: slot.sameAsSlot } : {}),
+        sameAsSlot: slot.sameAsSlot,
     };
 }
 
@@ -176,39 +176,40 @@ function finalizeGroup(detected: DetectedSets, draft: DraftGroup, id: string, cl
     const { completeness } = assessCompleteness(members);
     const slots = groupSlots(detected, draft, claims);
 
-    return {
+    const group: ResolvedGroup = {
         id,
         name: draft.nameOverride ?? annotation.name,
         memberRepresents: annotation.memberRepresents,
         description: annotation.description,
         role: annotation.role,
         category: annotation.category,
-        ...(annotation.categoryLabel ? { categoryLabel: annotation.categoryLabel } : {}),
-        ...(annotation.subtype ? { subtype: annotation.subtype } : {}),
-        ...(annotation.categoryReason ? { categoryReason: annotation.categoryReason } : {}),
-        ...(draft.reason ? { reason: draft.reason } : {}),
+        categoryLabel: annotation.categoryLabel ? annotation.categoryLabel : undefined,
+        subtype: annotation.subtype ? annotation.subtype : undefined,
+        categoryReason: annotation.categoryReason ? annotation.categoryReason : undefined,
+        reason: draft.reason ? draft.reason : undefined,
         count: members.length,
         fileCount: fileCountOf(members),
         totalBytes: bytesOf(members),
         displayPattern: draft.displayPattern,
         formats: formatCensus(members),
-        ...(slots.length > 0 ? { slots } : {}),
-        ...(annotation.memberAnnotations && annotation.memberAnnotations.length > 0
-            ? { memberAnnotations: annotation.memberAnnotations.map((entry) => ({ path: entry.path, note: entry.note })) }
-            : {}),
-        ...(completeness.expectedCompanions.length > 0
-            ? {
-                  completeness: {
+        memberAnnotations:
+            annotation.memberAnnotations !== undefined && annotation.memberAnnotations.length > 0
+                ? annotation.memberAnnotations.map((entry) => ({ path: entry.path, note: entry.note }))
+                : undefined,
+        completeness:
+            completeness.expectedCompanions.length > 0
+                ? {
                       expectedCompanions: [...completeness.expectedCompanions],
                       completeMembers: completeness.completeMembers,
                       incompleteMembers: completeness.incompleteMembers,
                       incompleteSample: completeness.incompleteSample.map((entry) => ({ path: entry.path, missingCompanions: [...entry.missingCompanions] })),
-                  },
-              }
-            : {}),
-        ...(draft.unclassified ? { unclassified: true } : {}),
+                  }
+                : undefined,
         memberPaths: members.map((member) => member.path),
     };
+    if (slots.length > 0) group.slots = slots;
+    if (draft.unclassified) group.unclassified = true;
+    return group;
 }
 
 /** The residue group. Authored by nobody, which is exactly why it says so. */
@@ -456,7 +457,7 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         return undefined;
     }
     const values = ctx.detected.slotValues.get(slot.id) ?? [];
-    return {
+    const resolvedObservation: DataProfileObservation = {
         kind: "slot",
         groupIds: [...(ctx.groupsBySet.get(set.id) ?? [])],
         slotId: slot.id,
@@ -467,8 +468,9 @@ function resolveObservation(observation: Observation, ctx: ObservationContext): 
         tokenClass: slot.tokenClass,
         cardinality: slot.distinctValues,
         sampleValues: [...values].sort((a, b) => a.localeCompare(b, "en")).slice(0, MAX_SLOT_SAMPLE_VALUES),
-        ...(observation.note ? { note: observation.note } : {}),
     };
+    if (observation.note) resolvedObservation.note = observation.note;
+    return resolvedObservation;
 }
 
 /** Every slot of the scan, keyed by id — the scanner's own view of what a slot observation points at. */
@@ -506,7 +508,7 @@ function crossCheckSlots(detected: DetectedSets, observations: readonly DataProf
             return {
                 ...observation,
                 sameAsSlot: reference.slotId,
-                ...(linked?.crossCheckMismatches !== undefined ? { sameAsSlotMismatches: linked.crossCheckMismatches } : {}),
+                sameAsSlotMismatches: linked?.crossCheckMismatches,
             };
         }
         if (referenceValues.size === 0) return observation;
@@ -544,24 +546,25 @@ function resolveDimensions(
             continue;
         }
 
-        resolved.push({
+        const reconciliations =
+            dimension.reconciliations !== undefined && dimension.reconciliations.length > 0
+                ? dimension.reconciliations.map((entry) => ({
+                      note: entry.note,
+                      delta: entry.delta,
+                  }))
+                : undefined;
+        const resolvedDimension: DataProfileDimension = {
             label: dimension.label,
             category: dimension.category,
-            ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
             scope: dimensionScope(dimension.category, dimension.scope),
-            ...(dimension.description ? { description: dimension.description } : {}),
             observations: crossCheckSlots(detected, observations),
-            ...(dimension.reconciliations && dimension.reconciliations.length > 0
-                ? {
-                      reconciliations: dimension.reconciliations.map((entry) => ({
-                          note: entry.note,
-                          ...(entry.delta !== undefined ? { delta: entry.delta } : {}),
-                      })),
-                  }
-                : {}),
-            ...(dimension.nestsUnder ? { nestsUnder: { ...dimension.nestsUnder } } : {}),
-            ...(dimension.treatmentReason ? { treatmentReason: dimension.treatmentReason } : {}),
-        });
+            nestsUnder: dimension.nestsUnder === undefined ? undefined : { ...dimension.nestsUnder },
+        };
+        if (dimension.categoryLabel) resolvedDimension.categoryLabel = dimension.categoryLabel;
+        if (dimension.description) resolvedDimension.description = dimension.description;
+        if (dimension.treatmentReason) resolvedDimension.treatmentReason = dimension.treatmentReason;
+        if (reconciliations) resolvedDimension.reconciliations = reconciliations;
+        resolved.push(resolvedDimension);
     }
     return resolved;
 }
@@ -707,13 +710,14 @@ export function resolveProfileSubmission(
     const recipe: DataProfileRecipeStep[] = ctx.recipe.map((entry) => entry.step);
     if (unclaimed.length > 0) {
         const paths = unclaimed.slice(0, MAX_UNCLASSIFIED_RECIPE_PATHS);
-        recipe.push({
+        const sweep: DataProfileRecipeStep = {
             op: "unclassified",
             templates: [],
             paths,
-            ...(unclaimed.length > paths.length ? { pathsTruncated: true } : {}),
             groupIds: [UNCLASSIFIED_GROUP_ID],
-        });
+        };
+        if (unclaimed.length > paths.length) sweep.pathsTruncated = true;
+        recipe.push(sweep);
     }
 
     const groups = drafts.map((draft) => finalizeGroup(detected, draft, ids.get(draft)!, claimsByDraft.get(draft) ?? []));
@@ -732,9 +736,9 @@ export function resolveProfileSubmission(
             reasons: detected.quarantine.reasons.map((entry) => ({ reason: entry.reason, count: entry.count })),
             sample: [...detected.quarantine.sample],
         },
-        ...(contested.length > 0 ? { contested: { members: contested.length, sample: contested.slice(0, MAX_CONTESTED_SAMPLE) } } : {}),
-        ...(menu.truncated ? { scanTruncated: true } : {}),
+        contested: contested.length > 0 ? { members: contested.length, sample: contested.slice(0, MAX_CONTESTED_SAMPLE) } : undefined,
     };
+    if (menu.truncated) partition.scanTruncated = true;
 
     return {
         errors,

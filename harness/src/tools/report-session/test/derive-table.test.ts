@@ -36,7 +36,13 @@ import type { Logger } from "../../../lib/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import type { ProvenanceSeam, SessionProvenanceEvent } from "../../../provenance/seam.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../../report-authoring/authoring-tools.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
 import {
     buildDerivationExec,
     createDeriveTableTool,
@@ -266,7 +272,7 @@ function makeTool(args: {
     const gateway = makeFakeGateway();
     gateway.seed("t1", args.snapshot ?? pinnedSnapshot());
     // The default stub is a script that lands the table where the submit body declared it.
-    const sandbox = args.sandbox ?? makeSandbox({ root: args.root, ...(args.result ? { reply: args.result } : {}), write: writesTable() });
+    const sandbox = args.sandbox ?? makeSandbox({ root: args.root, reply: args.result, write: writesTable() });
     const ledger = args.ledger ?? makeLedger();
     const auth = makeAuthorizer();
     const tool = createDeriveTableTool({
@@ -277,8 +283,8 @@ function makeTool(args: {
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
         runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
         runAuthorizer: auth.authorizer,
-        ...(args.provenance ? { provenance: args.provenance } : {}),
-        ...(args.logger ? { logger: args.logger } : {}),
+        provenance: args.provenance,
+        logger: args.logger,
     });
     return { tool, gateway, sandbox, ledger, auth };
 }
@@ -405,7 +411,7 @@ describe("the derived table", () => {
         // The working directory is the write mount, thus the script writes beside where it stands.
         expect(body.cwd).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived`);
         // Each declared input rides as the path that the container reads, with the hash of the membership.
-        expect(JSON.parse(body.env![DERIVE_INPUT_ENV])).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
+        expect(JSON.parse(body.env![DERIVE_INPUT_ENV] ?? "")).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
         // The output path rides too, thus the script names no directory of its own.
         expect(body.env![DERIVE_OUTPUT_ENV]).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`);
     });
@@ -757,7 +763,7 @@ describe("buildDerivationExec", () => {
         expect(body.command).toEqual(["python3", "-c", "print(1)"]);
         expect(body.cwd).toBe("/an-1/report-sessions/t1/derived");
         expect(body.timeoutSeconds).toBe(300);
-        expect(JSON.parse(body.env![DERIVE_INPUT_ENV])).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
+        expect(JSON.parse(body.env![DERIVE_INPUT_ENV] ?? "")).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
         expect(body.env![DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
     });
 });

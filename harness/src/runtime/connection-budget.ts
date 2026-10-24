@@ -57,7 +57,7 @@ export async function assertConnectionBudget({ pool, logger, config }: AssertCon
     const podFootprint = appPoolSize + dbosPoolSize;
 
     const { rows } = await pool.query<{ max: string }>("SELECT current_setting('max_connections') AS max");
-    const maxConnections = parseInt(rows[0].max, 10);
+    const maxConnections = parseInt(rows[0]?.max ?? "0", 10);
 
     if (podFootprint + SAFETY_MARGIN > maxConnections) {
         throw new Error(

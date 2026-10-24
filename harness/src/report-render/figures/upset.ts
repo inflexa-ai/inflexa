@@ -158,7 +158,9 @@ export function upsetSummary(rows: readonly ChartRow[], element: string, set: st
 /** Compare two member lists of one degree by the set order: the list whose first different set comes first sorts first. */
 function compareMembers(a: readonly number[], b: readonly number[]): number {
     for (let place = 0; place < Math.min(a.length, b.length); place += 1) {
-        if (a[place] !== b[place]) return a[place] - b[place];
+        const left = a[place];
+        const right = b[place];
+        if (left !== right) return (left ?? 0) - (right ?? 0);
     }
     return a.length - b.length;
 }
@@ -232,7 +234,7 @@ function pct(value: number): string {
 }
 
 function deriveUpset(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
-    const source = { blockId: context.blockId, rows, ...(context.columns !== undefined ? { columns: context.columns } : {}) };
+    const source = { blockId: context.blockId, rows, columns: context.columns };
     const encoding = block.encoding ?? {};
     const element = demandedColumn("upset", encoding, "x", source);
     if (element.isErr()) return err(element.error);
@@ -247,6 +249,8 @@ function deriveUpset(block: ChartBlock, rows: readonly ChartRow[], context: Figu
     const { sets, intersections } = summary.value;
     const drawn = intersections.slice(0, UPSET_INTERSECTION_LIMIT);
     const hidden = intersections.length - drawn.length;
+    const shownName =
+        hidden > 0 ? { ...axisNameFields("x", `Intersections: ${drawn.length} of ${intersections.length} shown`), nameGap: NAME_GAP_PX } : undefined;
     const setNames = sets.map((entry) => entry.name);
     const columnNames = drawn.map((entry) => entry.members.map((place) => setNames[place]).join(MEMBER_SEPARATOR));
     const layout = upsetLayout(sets.length, Math.max(...setNames.map((name) => name.length)));
@@ -345,7 +349,7 @@ function deriveUpset(block: ChartBlock, rows: readonly ChartRow[], context: Figu
                 gridIndex: 1,
                 data: columnNames,
                 ...hiddenAxis,
-                ...(hidden > 0 ? { ...axisNameFields("x", `Intersections: ${drawn.length} of ${intersections.length} shown`), nameGap: NAME_GAP_PX } : {}),
+                ...shownName,
             },
             { ...valueAxis("x", SET_TITLE), gridIndex: 2, inverse: true, splitNumber: 2, minInterval: 1, axisLabel: { rotate: 0 } },
         ],

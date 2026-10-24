@@ -130,7 +130,10 @@ export function nameAnchors(
     plot: PlotRange,
 ): Array<{ readonly x: number; readonly y: number } | undefined> {
     const length = plot.x.max - plot.x.min;
-    const order = names.map((_name, index) => index).sort((a, b) => weights[b] - weights[a] || a - b);
+    const order = weights
+        .map((weight, index) => ({ weight, index }))
+        .sort((a, b) => b.weight - a.weight || a.index - b.index)
+        .map((entry) => entry.index);
     const line = nameSize("", length).height;
     const out: Array<{ x: number; y: number } | undefined> = names.map(() => undefined);
     // A box of no height covers nothing, and a grid of such cells has no key.
@@ -139,6 +142,7 @@ export function nameAnchors(
     const lines = Math.ceil((plot.y.max - plot.y.min) / line);
     for (const index of order) {
         const name = names[index];
+        if (name === undefined) continue;
         const { width, height } = nameSize(name.text, length);
         const boxAt = (y: number): Box => ({ left: name.x - width / 2, right: name.x + width / 2, bottom: y - height / 2, top: y + height / 2 });
         const free = (y: number, moved: boolean): boolean => {
@@ -288,7 +292,7 @@ export function placeLeaderNames(
     for (let index = 0; index < obstacles.xs.length; index += 1) {
         const x = obstacles.xs[index];
         const y = obstacles.ys[index];
-        if (x === null || y === null) continue;
+        if (x === null || x === undefined || y === null || y === undefined) continue;
         const point = { x: toX(x), y: toY(y) };
         const key = `${cellOf(point.x)}:${cellOf(point.y)}`;
         const cell = cells.get(key);

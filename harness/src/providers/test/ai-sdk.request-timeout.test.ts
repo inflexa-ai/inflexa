@@ -28,8 +28,8 @@ function openAiConfig(fetch: FetchLike, opts: { requestTimeoutMs?: number; maxRe
         apiKey: "test-key",
         model: "local-model",
         fetch,
-        ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
-        ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+        requestTimeoutMs: opts.requestTimeoutMs,
+        maxRetries: opts.maxRetries,
     };
 }
 

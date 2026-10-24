@@ -76,16 +76,17 @@ export function planCardOf(record: PlanRecord, title?: string): PlanCardData | n
     // Explicit `show_plan({ title })` overrides; otherwise default to the
     // planner-set plan title so both cards share one source.
     const heading = title ?? parsed.data.title;
-    return {
+    const card: PlanCardData = {
         id,
         planId: record.planId,
-        ...(record.parentPlanId !== null ? { parentPlanId: record.parentPlanId } : {}),
-        ...(heading !== undefined ? { title: heading } : {}),
+        title: heading,
         steps: parsed.data.steps,
         analytical_narrative: parsed.data.analytical_narrative,
         omicsType: parsed.data.omicsType,
         omicsSubtype: parsed.data.omicsSubtype,
     };
+    if (record.parentPlanId !== null) card.parentPlanId = record.parentPlanId;
+    return card;
 }
 
 /** The `data-plan` part of a stored plan record, with the title of the plan. The
@@ -180,7 +181,7 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
     }
     return {
         id: presentationId(input),
-        ...(cardTitle !== undefined ? { title: cardTitle } : {}),
+        title: cardTitle,
         content,
     };
 }
@@ -241,8 +242,8 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
         const caption = typeof file.caption === "string" ? file.caption : undefined;
         files.push({
             path,
-            ...(runId !== undefined ? { runId } : {}),
-            ...(caption !== undefined ? { caption } : {}),
+            runId,
+            caption,
         });
     }
 
@@ -250,5 +251,5 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
         files.map((f) => f.path),
         title,
     )}`;
-    return { id, ...(title !== undefined ? { title } : {}), files };
+    return { id, title, files };
 }

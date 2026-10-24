@@ -74,6 +74,6 @@ export function digestPageFaults(consoleErrors: readonly string[], failedRequest
     return {
         consoleErrors: errors.slice(0, MAX_FAULT_ENTRIES),
         failedRequests: requests.slice(0, MAX_FAULT_ENTRIES),
-        ...(omittedErrors + omittedRequests > 0 ? { omittedFaults: { consoleErrors: omittedErrors, failedRequests: omittedRequests } } : {}),
+        omittedFaults: omittedErrors + omittedRequests > 0 ? { consoleErrors: omittedErrors, failedRequests: omittedRequests } : undefined,
     };
 }

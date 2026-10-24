@@ -69,13 +69,14 @@ export function createSubAgentActivityTracker(): SubAgentActivityTracker {
                     record.dropped += 1;
                     calls.set(callKey(source.callPath, frame.toolUseId), { rootId: parent.rootId, startedMs: nowMs });
                 } else {
-                    record.entries.push({
+                    const entry: SubAgentActivityEntry = {
                         agentId: source.agentId,
                         callPath: [...source.callPath],
                         tool: frame.name,
-                        ...(frame.detail === undefined ? {} : { label: frame.detail }),
                         startedAt: new Date(nowMs).toISOString(),
-                    });
+                    };
+                    if (frame.detail !== undefined) entry.label = frame.detail;
+                    record.entries.push(entry);
                     calls.set(callKey(source.callPath, frame.toolUseId), {
                         rootId: parent.rootId,
                         entryIndex: record.entries.length - 1,

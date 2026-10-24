@@ -7,7 +7,15 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "../../chart-presets.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
+import {
+    CHART_SOURCE_MEMBER,
+    deriveChartOption,
+    deriveChartRender,
+    type ChartDataSource,
+    type ChartOpts,
+    type ChartRow,
+    type EchartOption,
+} from "../../chart.js";
 import { exportOption } from "../../chart-renderers.js";
 import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
@@ -66,6 +74,19 @@ function seriesOf(option: EchartOption): EchartOption[] {
     return option.series as EchartOption[];
 }
 
+function firstOf<T>(items: readonly T[], label: string): T {
+    const [first] = items;
+    if (first === undefined) throw new Error(`no ${label}`);
+    return first;
+}
+
+/** The item style of one side, with its members narrowed. */
+function styleOf(series: EchartOption): Record<string, unknown> {
+    const style = series.itemStyle;
+    if (typeof style !== "object" || style === null || Array.isArray(style)) throw new Error("the series holds no item style");
+    return { ...style };
+}
+
 /** The names of the points of one series that carry a shown label. */
 function labeled(series: EchartOption): string[] {
     return (series.data as unknown[])
@@ -80,9 +101,16 @@ describe("the volcano figure", () => {
 
     it("draws the null points under the two signal sides, gray and smaller", () => {
         const [down, up, ns] = seriesOf(derive());
-        expect(down.itemStyle).toEqual({ color: CHART_PALETTE[0], opacity: expect.any(Number) });
-        expect(up.itemStyle).toEqual({ color: CHART_PALETTE[1], opacity: expect.any(Number) });
-        expect(ns.itemStyle).toEqual({ color: MUTED_CHART_COLOR, opacity: expect.any(Number) });
+        if (down === undefined || up === undefined || ns === undefined) throw new Error("the option holds fewer than three sides");
+        const downStyle = styleOf(down);
+        expect(downStyle.color).toBe(CHART_PALETTE[0]);
+        expect(downStyle.opacity).toBeTypeOf("number");
+        const upStyle = styleOf(up);
+        expect(upStyle.color).toBe(CHART_PALETTE[1]);
+        expect(upStyle.opacity).toBeTypeOf("number");
+        const nsStyle = styleOf(ns);
+        expect(nsStyle.color).toBe(MUTED_CHART_COLOR);
+        expect(nsStyle.opacity).toBeTypeOf("number");
         expect(ns.z).toBe(DENSE_NULL_Z);
         // The runtime draws a scatter at the order 2 where the series names none, thus the null layer sits under.
         expect(down.z === undefined || (down.z as number) > DENSE_NULL_Z).toBe(true);
@@ -127,7 +155,7 @@ describe("the volcano figure", () => {
         const items = names.data as EchartOption[];
         const plot = { x: { min: -6, max: 6 }, y: { min: 0, max: 200 } };
         const boxes = items.map((item) => {
-            const [x, y] = item.value as number[];
+            const [x, y] = item.value as [number, number];
             const placed: LeaderName = { x, y, side: (item.label as EchartOption).position as LeaderName["side"] };
             return leaderNameBox(placed, String(item.name), plot, PAGE_PLOT_FRAME);
         });
@@ -140,10 +168,12 @@ describe("the volcano figure", () => {
                 expect(x > box.left && x < box.right && y > box.bottom && y < box.top).toBe(false);
             }
         }
-        const leaders = (names.markLine as EchartOption).data as Array<Array<{ coord: number[] }>>;
+        const leaders = (names.markLine as EchartOption).data as Array<[{ coord: number[] }, { coord: number[] }]>;
         expect(leaders).toHaveLength(10);
-        expect(leaders[0][0].coord).toEqual([-4.619, -Math.log10(1.7e-159)]);
-        expect(leaders[0][1].coord).toEqual(items[0].value as number[]);
+        const [firstLeader] = leaders;
+        if (firstLeader === undefined) throw new Error("the name series drew no leader line");
+        expect(firstLeader[0].coord).toEqual([-4.619, -Math.log10(1.7e-159)]);
+        expect(firstLeader[1].coord).toEqual(firstOf(items, "named point").value as number[]);
     });
 
     it("draws the effect axis symmetric around zero, and the p axis from zero", () => {
@@ -206,9 +236,11 @@ describe("the volcano figure", () => {
         expect(triangles.map((entry) => entry.name)).toEqual(["Down (10)", "Not significant (5)"]);
         // The largest finite transformed p of the table is the top of the plotted range.
         const top = -Math.log10(1.7e-159);
-        expect(triangles[0].data).toEqual([{ name: "Zero1", value: [-2.5, top] }]);
-        expect(triangles[0].itemStyle).toEqual(series[0].itemStyle);
-        expect(triangles[1].data).toEqual([{ name: "Zero2", value: [0.3, top] }]);
+        const [downTriangle, nullTriangle] = triangles;
+        if (downTriangle === undefined || nullTriangle === undefined) throw new Error("the two zero-p rows drew no triangle pair");
+        expect(downTriangle.data).toEqual([{ name: "Zero1", value: [-2.5, top] }]);
+        expect(downTriangle.itemStyle).toEqual(series[0]?.itemStyle);
+        expect(nullTriangle.data).toEqual([{ name: "Zero2", value: [0.3, top] }]);
         // The legend names the three sides alone.
         expect(((option.legend as EchartOption).data as EchartOption[]).map((entry) => entry.name)).toEqual(["Down (10)", "Up (4)", "Not significant (5)"]);
         // The zero is the most significant p, thus its gene takes the first name.
@@ -234,7 +266,7 @@ describe("the volcano figure", () => {
         ];
         const triangles = seriesOf(derive(block(), rows)).filter((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
         expect(triangles.map((entry) => entry.name)).toEqual(["Up (1)"]);
-        expect(triangles[0].data).toEqual([{ name: "z", value: [2, -Math.log10(VOLCANO_P_THRESHOLD) + 1] }]);
+        expect(firstOf(triangles, "triangle").data).toEqual([{ name: "z", value: [2, -Math.log10(VOLCANO_P_THRESHOLD) + 1] }]);
     });
 
     it("derives the same bytes two times", () => {
@@ -273,7 +305,7 @@ describe("the volcano names at each size", () => {
             const items = (seriesOf(render).find((entry) => entry.name === POINT_NAMES)?.data ?? []) as EchartOption[];
             expect(items.length).toBeGreaterThan(0);
             const boxes = items.map((item) => {
-                const [nameX, nameY] = item.value as number[];
+                const [nameX, nameY] = item.value as [number, number];
                 const placed: LeaderName = { x: nameX, y: nameY, side: (item.label as EchartOption).position as LeaderName["side"] };
                 return leaderNameBox(placed, String(item.name), plot, frame);
             });
@@ -301,7 +333,7 @@ describe("the dense volcano", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
+    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
         payload: { columns: string[]; rows: ChartRow[] },
         source: ChartDataSource["series"][number],
         rule: unknown,
@@ -318,7 +350,7 @@ describe("the dense volcano", () => {
         expect(seriesOf(render.option).map((series) => series.z)).toEqual(seriesOf(render.inline).map((series) => series.z));
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
-            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
+            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index]?.data));
         }
         // The names ride the page option after the points, thus the page draws them over the payload points.
         expect(source.series.flatMap((entry) => entry.flags ?? [])).toEqual([]);
@@ -337,7 +369,7 @@ describe("the dense volcano", () => {
         const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
-            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
+            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index]?.data));
             const pairs = (page as unknown[]).map((item) => (Array.isArray(item) ? item : (item as EchartOption).value) as unknown[]);
             expect(pairs.length).toBeGreaterThan(0);
             expect(pairs.every((pair) => typeof pair[0] === "number")).toBe(true);

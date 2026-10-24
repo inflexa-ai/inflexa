@@ -120,8 +120,13 @@ describe("execute_command and the decision record of a script", () => {
         return { tool, client };
     }
 
+    function asRecord(value: unknown): Record<string, unknown> {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("the decision record is no object");
+        return { ...value };
+    }
+
     async function record(): Promise<Record<string, unknown>> {
-        return JSON.parse(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8"));
+        return asRecord(JSON.parse(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8")));
     }
 
     it("notes a script that changed since its record before the command runs, and leaves an unchanged one alone", async () => {
@@ -163,7 +168,7 @@ describe("execute_command and the decision record of a script", () => {
         expect(out.status).toBe("ok");
         expect(client.execs).toHaveLength(1);
         // The record of another step is outside the writable prefix: the mutator refused the note, and the record is untouched.
-        expect(JSON.parse(await readFile(join(other, "output", "decision_record_de.json"), "utf8")).unvetted_edits).toEqual([]);
+        expect(asRecord(JSON.parse(await readFile(join(other, "output", "decision_record_de.json"), "utf8"))).unvetted_edits).toEqual([]);
     });
 
     it("runs a script without a record, and a command without a script, with no record read", async () => {

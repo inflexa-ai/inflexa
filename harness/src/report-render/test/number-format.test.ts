@@ -487,7 +487,7 @@ describe("the table cell format", () => {
      * The fragment is browser source text. A read of that text would state the serialization and not the
      * text that a reader sees, thus the test runs the fragment and calls its one entry point.
      */
-    const formatOnThePage = new Function(`${TABLE_CELL_FORMATTER}\nreturn formatCell;`)() as (
+    const formatOnThePage = new Function(`${TABLE_CELL_FORMATTER}\nreturn formatCell;`).call(undefined) as (
         cell: string | number,
         kind: NumberKind,
         bound?: number,

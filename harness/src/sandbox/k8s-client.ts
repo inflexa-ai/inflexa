@@ -243,7 +243,7 @@ async function buildJobSpec(
     const env = Object.entries({
         ...threadLimitEnv(spec),
         ...plan.env,
-        ...(sandboxSpec.extraEnv ?? {}),
+        ...sandboxSpec.extraEnv,
     }).map(([name, value]) => ({ name, value }));
 
     // requests == limits → Guaranteed QoS and a predictable OOM bound; also
@@ -292,7 +292,7 @@ async function buildJobSpec(
             // Volume-level readOnly only when nothing writes through the claim:
             // the cache mount needs write access, and the per-mount flags keep
             // the store and the farm read-only either way.
-            persistentVolumeClaim: { claimName: config.libStorePvc, ...(cacheSubPath === undefined ? { readOnly: true } : {}) },
+            persistentVolumeClaim: { claimName: config.libStorePvc, readOnly: cacheSubPath === undefined ? true : undefined },
         });
         volumeMounts.push({
             name: LIBS_VOLUME_NAME,
@@ -679,7 +679,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     // finishes) — the Job controller retries pod creation forever. Delete
                     // the Job on any startup failure so a failed create can't leak a
                     // zombie that floods k8s events indefinitely.
-                    const ready = await waitForPodReady(coreApi, config.namespace, sandboxId, { ...(config.logger ? { logger: config.logger } : {}) });
+                    const ready = await waitForPodReady(coreApi, config.namespace, sandboxId, { logger: config.logger });
                     if (ready.isOk()) {
                         const ref: SandboxRef = {
                             sandboxId,

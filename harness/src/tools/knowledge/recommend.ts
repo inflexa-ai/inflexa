@@ -53,15 +53,15 @@ export interface KnowledgeRecommendAnswer {
     readonly situation?: Readonly<Record<string, unknown>>;
     readonly flags: RecommendResponse["flags"];
     /** The step types a flag removed. Absent when none. */
-    readonly dropped?: readonly string[];
+    dropped?: readonly string[];
     readonly uncovered: readonly string[];
     /** The step types whose method has no eligible template: covered by the knowledge, not by a vetted script. Absent when none. */
-    readonly unrealized?: readonly string[];
+    unrealized?: readonly string[];
     readonly environment_source?: RecommendWithEnvironment["environment_source"];
     readonly plan_skeleton: readonly SkeletonStep[];
     readonly claims: RecommendResponse["claims"];
-    readonly nearest?: RecommendResponse["nearest"];
-    readonly reason?: string;
+    nearest?: RecommendResponse["nearest"];
+    reason?: string;
 }
 
 export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
@@ -76,22 +76,23 @@ function stringList(value: unknown): readonly string[] | undefined {
 
 /** The one representation: the envelope, the skeleton, and the claims. The procedure stays host-side. */
 export function toPlannerAnswer(joined: RecommendWithEnvironment): KnowledgeRecommendAnswer {
-    const dropped = stringList(joined.dropped);
-    const unrealized = stringList(joined.unrealized);
-    return {
+    const answer: KnowledgeRecommendAnswer = {
         match: joined.match,
         snapshot: joined.snapshot,
-        ...(isRecord(joined.situation) ? { situation: joined.situation } : {}),
+        situation: isRecord(joined.situation) ? joined.situation : undefined,
         flags: joined.flags,
-        ...(dropped ? { dropped } : {}),
         uncovered: joined.uncovered,
-        ...(unrealized && unrealized.length > 0 ? { unrealized } : {}),
-        ...(joined.environment_source ? { environment_source: joined.environment_source } : {}),
+        environment_source: joined.environment_source,
         plan_skeleton: buildPlanSkeleton(joined),
         claims: joined.claims,
-        ...(joined.nearest ? { nearest: joined.nearest } : {}),
-        ...(joined.reason !== undefined ? { reason: joined.reason } : {}),
     };
+    const dropped = stringList(joined.dropped);
+    const unrealized = stringList(joined.unrealized);
+    if (dropped) answer.dropped = dropped;
+    if (unrealized && unrealized.length > 0) answer.unrealized = unrealized;
+    if (joined.nearest) answer.nearest = joined.nearest;
+    if (joined.reason !== undefined) answer.reason = joined.reason;
+    return answer;
 }
 
 export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
@@ -138,9 +139,9 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             deps.pin?.set(answer.snapshot.digest);
             const farmLockFile = typeof deps.farmLockFile === "function" ? deps.farmLockFile(ctx.session.scope.analysisId) : deps.farmLockFile;
             const joined = await joinEnvironment(answer, {
-                ...(farmLockFile ? { farmLockFile } : {}),
-                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-                ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
+                farmLockFile,
+                imagePackagesFile: deps.imagePackagesFile,
+                refStorePath: deps.refStorePath,
             });
             const planner = toPlannerAnswer(joined);
             deps.onAnswer?.(planner);

@@ -202,7 +202,10 @@ describe("generatePlan loop-driving tool", () => {
         // to the planner into an unrelated failure in a test about blocker outcomes.
         expect(provider.sessions[0]!.provenance.agentId).toBe("planner");
         expect(provider.sessions[0]!.provenance.callPath).toEqual(["conversation-agent", "planner"]);
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker"]));
+        const offered = Object.keys(provider.calls[0]!.tools);
+        expect(offered).toContain("submit_plan");
+        expect(offered).toContain("request_clarification");
+        expect(offered).toContain("report_blocker");
     });
 
     // The planner has no sandbox, so reference discovery is only attachable because it
@@ -236,9 +239,11 @@ describe("generatePlan loop-driving tool", () => {
             toolContext(),
         );
 
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual(
-            expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker", "list_available_refs"]),
-        );
+        const offered = Object.keys(provider.calls[0]!.tools);
+        expect(offered).toContain("submit_plan");
+        expect(offered).toContain("request_clarification");
+        expect(offered).toContain("report_blocker");
+        expect(offered).toContain("list_available_refs");
         // The census still rides in the seed. The tool is for the narrow second
         // look, thus the planner never has to call one to learn what is staged.
         expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
@@ -957,7 +962,10 @@ describe("generatePlan loop-driving tool", () => {
             expect(record.fields.loop).toMatchObject({ finishReason: "stop", salvaged: true, firstFinishReason: "stop", toolCalls: [] });
             // The planner's last words — the single artifact that explains a run which stopped
             // talking instead of calling a terminal tool, and which nothing else preserves.
-            expect(record.fields.modelAuthored).toMatchObject({ plannerFinalProse: expect.stringContaining("think about this out loud") });
+            const authored = record.fields.modelAuthored;
+            if (typeof authored !== "object" || authored === null || Array.isArray(authored)) throw new Error("the outcome carries no model-authored record");
+            if (!("plannerFinalProse" in authored)) throw new Error("the model-authored record carries no planner prose");
+            expect(authored.plannerFinalProse).toContain("think about this out loud");
         });
 
         it("nests model prose under one key and omits it where something else explains the outcome", async () => {

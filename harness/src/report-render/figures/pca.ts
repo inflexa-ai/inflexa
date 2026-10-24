@@ -206,7 +206,13 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
         const pg = groups?.values[index] ?? null;
         const ps = shapes?.values[index] ?? null;
         if (px === null || py === null || (groups !== undefined && pg === null) || (shapes !== undefined && ps === null)) continue;
-        points.push({ index, x: px, y: py, ...(pg !== null ? { group: categoryName(pg) } : {}), ...(ps !== null ? { shape: categoryName(ps) } : {}) });
+        points.push({
+            index,
+            x: px,
+            y: py,
+            group: pg === null ? undefined : categoryName(pg),
+            shape: ps === null ? undefined : categoryName(ps),
+        });
     }
 
     const groupNames = firstAppearance(points.flatMap((point) => (point.group === undefined ? [] : [point.group])));
@@ -236,11 +242,14 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
     const sides = new Map<number, NameSide>();
     if (labeled && labelColumn !== undefined) {
         const placed = pointNameSides(
-            points.map((point) => ({ x: point.x, y: point.y, text: String(rows[point.index][labelColumn] ?? "") })),
+            points.map((point) => ({ x: point.x, y: point.y, text: String(rows[point.index]?.[labelColumn] ?? "") })),
             ranges,
             SHAPED_POINT_PX,
         );
-        for (const [place, point] of points.entries()) sides.set(point.index, placed[place]);
+        for (const [place, point] of points.entries()) {
+            const side = placed[place];
+            if (side !== undefined) sides.set(point.index, side);
+        }
     }
     const buckets = new Map<string, ShapedPoint[]>();
     for (const point of points) {
@@ -259,16 +268,20 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
             series.push({
                 type: "scatter",
                 name: groupKey ?? shapeKey ?? yTitle,
-                ...(shapeKey !== undefined ? { symbol: SHAPE_SYMBOLS[shapePlace] } : {}),
+                symbol: shapeKey !== undefined ? SHAPE_SYMBOLS[shapePlace] : undefined,
                 symbolSize: SHAPED_POINT_PX,
                 itemStyle: { color: groupKey !== undefined ? palette[groupPlace] : CHART_PALETTE[0] },
-                ...(labeled ? POINT_LABEL_FIELDS : {}),
+                label: labeled ? POINT_LABEL_FIELDS.label : undefined,
                 data: members.map((point) => {
                     const pair = [point.x, point.y];
-                    const name = labelColumn === undefined ? undefined : rows[point.index][labelColumn];
+                    const name = labelColumn === undefined ? undefined : rows[point.index]?.[labelColumn];
                     if (name === undefined) return pair;
                     const side = sides.get(point.index);
-                    return { value: pair, name: String(name), ...(side !== undefined && side !== "right" ? { label: { position: side } } : {}) };
+                    return {
+                        value: pair,
+                        name: String(name),
+                        label: side !== undefined && side !== "right" ? { position: side } : undefined,
+                    };
                 }),
             });
         }
@@ -290,7 +303,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
     const option: EchartOption = {
         tooltip: named ? { ...NAMED_POINT_TOOLTIP } : { ...PLAIN_POINT_TOOLTIP },
         series,
-        legend: keyed ? { orient: draw.equalUnits ? "vertical" : "horizontal", ...(draw.equalUnits ? {} : { bottom: 0 }), data: entries } : { show: false },
+        legend: keyed ? { orient: draw.equalUnits ? "vertical" : "horizontal", bottom: draw.equalUnits ? undefined : 0, data: entries } : { show: false },
     };
     if (!draw.equalUnits) {
         return ok({ ...option, xAxis: valueAxis("x", xTitle, { scale: true }), yAxis: valueAxis("y", yTitle, { scale: true }) });
@@ -302,7 +315,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
         grid: layout.grid,
         xAxis: { ...valueAxis("x", xTitle, ranges.x), ...interval },
         yAxis: { ...valueAxis("y", yTitle, ranges.y), ...interval },
-        ...(keyed && layout.legend !== undefined ? { legend: { ...(option.legend as EchartOption), ...layout.legend } } : {}),
+        legend: { ...(option.legend as EchartOption), ...layout.legend },
         media: layout.media,
     });
 }

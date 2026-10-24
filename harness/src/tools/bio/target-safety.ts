@@ -224,7 +224,7 @@ export const targetSafetyTool = defineTool({
                 source: "opentargets",
                 status: opentargetsError ? "unavailable" : withLiabilities > 0 ? "ok" : "no_data",
                 matched: withLiabilities,
-                ...(opentargetsError ? { detail: opentargetsError } : {}),
+                detail: opentargetsError,
             });
         }
 

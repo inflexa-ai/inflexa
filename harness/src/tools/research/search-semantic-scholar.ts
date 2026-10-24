@@ -17,7 +17,7 @@ export function createSearchSemanticScholarTool(options: { readonly apiKey?: str
         maxRetries: 3,
         retryDelayMs: 1_000,
         timeoutMs: 90_000,
-        ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+        apiKey: options.apiKey,
     });
     return defineTool({
         id: "search_semantic_scholar",

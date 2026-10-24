@@ -118,18 +118,18 @@ export function createSearchPatentsTool(deps: { apiKey: string }) {
                     {
                         query: input.query!,
                         limit: input.limit,
-                        ...(input.assignee ? { assignee: input.assignee } : {}),
-                        ...(input.inventor ? { inventor: input.inventor } : {}),
-                        ...(input.cpcCodes ? { cpcCodes: input.cpcCodes } : {}),
-                        ...(input.countryCode ? { countryCode: input.countryCode } : {}),
-                        ...(input.minPublicationDate ? { minPublicationDate: input.minPublicationDate } : {}),
-                        ...(input.maxPublicationDate ? { maxPublicationDate: input.maxPublicationDate } : {}),
-                        ...(input.minFilingDate ? { minFilingDate: input.minFilingDate } : {}),
-                        ...(input.maxFilingDate ? { maxFilingDate: input.maxFilingDate } : {}),
-                        ...(input.minPriorityDate ? { minPriorityDate: input.minPriorityDate } : {}),
-                        ...(input.maxPriorityDate ? { maxPriorityDate: input.maxPriorityDate } : {}),
-                        ...(input.minGrantDate ? { minGrantDate: input.minGrantDate } : {}),
-                        ...(input.maxGrantDate ? { maxGrantDate: input.maxGrantDate } : {}),
+                        assignee: input.assignee ? input.assignee : undefined,
+                        inventor: input.inventor ? input.inventor : undefined,
+                        cpcCodes: input.cpcCodes ? input.cpcCodes : undefined,
+                        countryCode: input.countryCode ? input.countryCode : undefined,
+                        minPublicationDate: input.minPublicationDate,
+                        maxPublicationDate: input.maxPublicationDate,
+                        minFilingDate: input.minFilingDate,
+                        maxFilingDate: input.maxFilingDate,
+                        minPriorityDate: input.minPriorityDate,
+                        maxPriorityDate: input.maxPriorityDate,
+                        minGrantDate: input.minGrantDate,
+                        maxGrantDate: input.maxGrantDate,
                     },
                     headers,
                 );
@@ -141,8 +141,8 @@ export function createSearchPatentsTool(deps: { apiKey: string }) {
             if (amassId === undefined) {
                 const ids = await lookupPatentIds(
                     {
-                        ...(input.publicationNumber === undefined ? {} : { publicationNumber: input.publicationNumber }),
-                        ...(input.applicationNumber === undefined ? {} : { applicationNumber: input.applicationNumber }),
+                        publicationNumber: input.publicationNumber,
+                        applicationNumber: input.applicationNumber,
                     },
                     headers,
                 );

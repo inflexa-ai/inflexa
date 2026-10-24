@@ -149,7 +149,7 @@ describe("defineTool", () => {
                 description: "Declares only `path`.",
                 inputSchema: z.object({ path: z.string() }),
                 // @ts-expect-error -- `query` is absent from this tool's inputSchema.
-                describeCall: (input) => input.query,
+                describeCall: (input: { path: string; query: string }) => input.query,
                 execute: async () => ok({}),
             });
 
@@ -249,7 +249,7 @@ describe("defineTool", () => {
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: "none",
                 // @ts-expect-error -- `versionId` is absent from this tool's output.
-                describeResult: (_input, result) => result.versionId,
+                describeResult: (_input, result) => String(result.versionId),
                 execute: async () => ok({ page: "index.html" }),
             });
 

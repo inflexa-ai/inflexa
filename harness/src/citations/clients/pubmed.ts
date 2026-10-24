@@ -11,11 +11,11 @@ function pubmedRecord(article: ArticleDetail): CitationRecord {
     return {
         source: "pubmed",
         sourceRecordId: article.pmid,
-        identifiers: { pmid: article.pmid, ...(article.doi ? { doi: article.doi.toLocaleLowerCase("en-US") } : {}) },
-        ...(article.title ? { title: article.title } : {}),
-        ...(article.authors.length === 0 ? {} : { authors: article.authors }),
-        ...(year === undefined ? {} : { year }),
-        ...(article.journal ? { venue: article.journal } : {}),
+        identifiers: { pmid: article.pmid, doi: article.doi ? article.doi.toLocaleLowerCase("en-US") : undefined },
+        title: article.title ? article.title : undefined,
+        authors: article.authors.length > 0 ? article.authors : undefined,
+        year,
+        venue: article.journal ? article.journal : undefined,
         url: `https://pubmed.ncbi.nlm.nih.gov/${article.pmid}/`,
     };
 }
@@ -34,11 +34,11 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
             requestCount += 1;
             const match = await source.matchCitation(
                 {
-                    ...(request.input.venue === undefined ? {} : { venue: request.input.venue }),
-                    ...(request.input.year === undefined ? {} : { year: request.input.year }),
-                    ...(request.input.volume === undefined ? {} : { volume: request.input.volume }),
-                    ...(request.input.firstPage === undefined ? {} : { firstPage: request.input.firstPage }),
-                    ...(request.input.authors?.[0] === undefined ? {} : { firstAuthor: request.input.authors[0] }),
+                    venue: request.input.venue,
+                    year: request.input.year,
+                    volume: request.input.volume,
+                    firstPage: request.input.firstPage,
+                    firstAuthor: request.input.authors?.[0],
                     key: "citation-0",
                 },
                 signal,

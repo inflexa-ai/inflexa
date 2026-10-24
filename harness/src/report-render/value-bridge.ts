@@ -199,16 +199,20 @@ export function collectResolutions(
                     const value = slots?.get(statisticSlot(index));
                     return value === undefined ? [] : [{ label: statistic.label, resolved: value }];
                 });
-                resolutions.push({
+                const resolution: Extract<BlockResolution, { kind: "chart" }> = {
                     blockId: block.id,
                     kind: "chart",
                     resolved,
-                    ...(track !== undefined ? { track } : {}),
-                    ...(treeX !== undefined || treeY !== undefined
-                        ? { trees: { ...(treeX !== undefined ? { x: treeX } : {}), ...(treeY !== undefined ? { y: treeY } : {}) } }
-                        : {}),
-                    ...(statistics.length > 0 ? { statistics } : {}),
-                });
+                };
+                if (track !== undefined) resolution.track = track;
+                if (treeX !== undefined || treeY !== undefined) {
+                    const trees: { x?: ResolvedValue; y?: ResolvedValue } = {};
+                    if (treeX !== undefined) trees.x = treeX;
+                    if (treeY !== undefined) trees.y = treeY;
+                    resolution.trees = trees;
+                }
+                if (statistics.length > 0) resolution.statistics = statistics;
+                resolutions.push(resolution);
                 return;
             }
         }
@@ -256,12 +260,11 @@ function chartValue(resolution: Extract<BlockResolution, { kind: "chart" }>): Re
     if (mismatches.length > 0 || binding.type !== "table") {
         return err(mismatches);
     }
-    return ok({
-        ...tableValue(binding),
-        ...(statistics.length > 0 ? { statistics } : {}),
-        ...(track !== undefined && track.type === "table" ? { track: secondTable(track) } : {}),
-        ...(trees.x !== undefined || trees.y !== undefined ? { trees } : {}),
-    });
+    const value: Extract<RenderValue, { type: "table" }> = { ...tableValue(binding) };
+    if (statistics.length > 0) value.statistics = statistics;
+    if (track !== undefined && track.type === "table") value.track = secondTable(track);
+    if (Object.keys(trees).length > 0) value.trees = trees;
+    return ok(value);
 }
 
 /** The rows of a second table of a chart, a track or a tree, with its column order where the resolution gives one. */
@@ -295,5 +298,7 @@ function mismatch(
     actual: ResolvedValue["type"],
     slot?: ChartSlot,
 ): BridgeMismatch {
-    return { blockId, blockKind, ...(slot !== undefined ? { slot } : {}), expected, actual };
+    const fault: BridgeMismatch = { blockId, blockKind, expected, actual };
+    if (slot !== undefined) fault.slot = slot;
+    return fault;
 }

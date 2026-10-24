@@ -37,7 +37,7 @@ function annotation(name: string, over: Partial<GroupAnnotation> = {}): GroupAnn
 }
 
 function submission(operations: MenuOperation[], dimensions?: ProfileDimension[]): ProfileSubmission {
-    return { operations, ...(dimensions ? { dimensions } : {}), analysisSummary: "A synthetic tree.", domain: "genomics", organism: null };
+    return { operations, dimensions, analysisSummary: "A synthetic tree.", domain: "genomics", organism: null };
 }
 
 /** What a fixture's author names their operations and dimensions against: the fresh scan's own ids. */

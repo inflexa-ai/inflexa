@@ -47,10 +47,10 @@ export function storedMessagesToChat(messages: readonly StoredMessage[]): ChatMe
             // spreads the message acquires one that overwrites a real value. `Date`
             // does not survive the JSON crossing typed, hence the ISO string here.
             const createdAt = row.createdAt === undefined ? {} : { createdAt: row.createdAt.toISOString() };
-            const author = row.author === undefined ? {} : { author: row.author };
             groupLast = undefined;
             for (const message of conversationUIToChatMessages(row.displayEnvelope.messages)) {
-                const stamped: ChatMessage = { ...message, ...createdAt, ...(message.role === "user" ? author : {}) };
+                const stamped: ChatMessage = { ...message, ...createdAt };
+                if (message.role === "user" && row.author !== undefined) stamped.author = row.author;
                 const previous = out.at(-1);
                 // The merged message keeps the creation time of its first round.
                 if (stamped.role === "assistant" && previous?.role === "assistant" && previous.id === stamped.id) mergeRound(previous, stamped);

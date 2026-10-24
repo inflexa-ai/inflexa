@@ -327,6 +327,7 @@ describe("validateReferenceStructure", () => {
             expect(failure?.detail).toContain("invented_length");
             // The binding of the chart reads its own table, thus the track columns never reach its match.
             const bound = walkBlocks([block]).references[0];
+            if (bound === undefined) throw new Error("the walk saw no chart reference");
             expect(validateReferenceStructure(bound.reference, withTrack, bound.encodingColumns).isOk()).toBe(true);
         });
 
@@ -356,6 +357,7 @@ describe("validateReferenceStructure", () => {
             expect(failure?.detail).toContain("invented_height");
             // The binding of the chart reads its own table, thus the tree columns never reach its match.
             const bound = walkBlocks([block]).references[0];
+            if (bound === undefined) throw new Error("the walk saw no chart reference");
             expect(validateReferenceStructure(bound.reference, withTree, bound.encodingColumns).isOk()).toBe(true);
         });
 

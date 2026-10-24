@@ -289,13 +289,13 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
 
             const farmLockFile = typeof deps.farmLockFile === "function" ? deps.farmLockFile(ctx.session.scope.analysisId) : deps.farmLockFile;
             const installed = installedPackages({
-                ...(farmLockFile ? { farmLockFile } : {}),
-                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+                farmLockFile,
+                imagePackagesFile: deps.imagePackagesFile,
             });
             const answer = await deps.client.render(template, merged, installed.packages, {
-                ...(binding?.step ? { step: binding.step } : {}),
-                ...(binding?.claims ? { claims: binding.claims } : {}),
-                ...(binding?.snapshot ? { expectedSnapshot: binding.snapshot } : {}),
+                step: binding?.step,
+                claims: binding?.claims,
+                expectedSnapshot: binding?.snapshot,
             });
             // A rendered answer carries `ok: true`; the refusals carry `match` and no `ok`.
             if (!("ok" in answer)) return ok(answer);
@@ -367,9 +367,10 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                             version: answer.template.version,
                             label: answer.template.label,
                             method: { id: answer.template.method.id, label: answer.template.method.label },
-                            ...(answer.template.substitute_for
-                                ? { substitute_for: { id: answer.template.substitute_for.id, label: answer.template.substitute_for.label } }
-                                : {}),
+                            substitute_for:
+                                answer.template.substitute_for === undefined
+                                    ? undefined
+                                    : { id: answer.template.substitute_for.id, label: answer.template.substitute_for.label },
                         },
                         snapshot: answer.snapshot,
                         slots: reportedSlots,

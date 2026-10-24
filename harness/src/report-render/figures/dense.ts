@@ -57,8 +57,8 @@ export const BELOW_RESOLUTION_TOOLTIP: EchartOption = { formatter: "{b}<br/>{a}:
  */
 export function belowResolutionRows(rows: readonly ChartRow[], pColumn: string, others: readonly (number | null)[]): number[] {
     const found: number[] = [];
-    for (let index = 0; index < rows.length; index += 1) {
-        if (toNumber(rows[index][pColumn]) === 0 && others[index] !== null) found.push(index);
+    for (const [index, row] of rows.entries()) {
+        if (toNumber(row[pColumn]) === 0 && others[index] !== null) found.push(index);
     }
     return found;
 }
@@ -223,7 +223,7 @@ export function axisOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOpti
 
 /** The fields of one layer of points: the fill, the opacity, the symbol size, and the drawing order. */
 export function pointLayer(color: string, size: number, opacity: number, z?: number): EchartOption {
-    return { itemStyle: { color, opacity }, symbolSize: size, ...(z !== undefined ? { z } : {}) };
+    return { itemStyle: { color, opacity }, symbolSize: size, z };
 }
 
 /** The shown text of a count in a legend name: a whole number with a thousands separator. */

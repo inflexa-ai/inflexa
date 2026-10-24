@@ -61,7 +61,7 @@ export function createEmbeddingProvider(deps: EmbeddingProviderDeps): EmbeddingP
         baseURL: deps.baseURL,
         apiKey: deps.token,
         maxRetries: 0,
-        ...(deps.fetch ? { fetch: deps.fetch } : {}),
+        fetch: deps.fetch,
     });
     const model = deps.model ?? DEFAULT_EMBEDDING_MODEL;
     const dimensions = deps.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;

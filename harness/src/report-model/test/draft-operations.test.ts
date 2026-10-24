@@ -25,6 +25,12 @@ function tableReference(path = OUTPUT_PATH, hash = OUTPUT_HASH): ArtifactTableRe
     return { kind: "artifact-table", path, hash };
 }
 
+function sectionBlocks(draft: DraftDocument, index: number): DraftBlock[] {
+    const section = draft.sections[index];
+    if (section === undefined) throw new Error(`the draft holds no section at ${index}`);
+    return section.blocks;
+}
+
 /** A draft with two sections. The first holds a text block and a metric, and the second is empty. */
 function baseDraft(): DraftDocument {
     return {
@@ -126,7 +132,7 @@ describe("addBlock", () => {
             snapshot,
         )._unsafeUnwrap();
 
-        expect(landed.sections[0].blocks.map((block) => block.id)).toEqual(["text-1", "metric-1", "text-2"]);
+        expect(sectionBlocks(landed, 0).map((block) => block.id)).toEqual(["text-1", "metric-1", "text-2"]);
         expect(draft).toEqual(before);
     });
 
@@ -159,7 +165,7 @@ describe("addBlock", () => {
             snapshot,
         )._unsafeUnwrap();
 
-        expect(landed.sections[0].blocks.map((block) => block.id)).toEqual(["text-0", "text-1", "metric-1"]);
+        expect(sectionBlocks(landed, 0).map((block) => block.id)).toEqual(["text-0", "text-1", "metric-1"]);
         expect(draft).toEqual(before);
     });
 
@@ -272,7 +278,7 @@ describe("addBlock", () => {
         expect(failure.reason).toBe("unresolved-reference");
         if (failure.reason === "unresolved-reference") {
             expect(failure.unresolved).toHaveLength(1);
-            expect(failure.unresolved[0].reason).toBe("artifact-missing");
+            expect(failure.unresolved[0]?.reason).toBe("artifact-missing");
         }
         expect(draft).toEqual(before);
     });
@@ -310,7 +316,7 @@ describe("addBlock", () => {
         const draft = baseDraft();
         const landed = addBlock(draft, { block: composedChart("chart-ok", "padj"), destination: { parentId: "sec-2" } }, rowSnapshot)._unsafeUnwrap();
 
-        expect(landed.sections[1].blocks.map((block) => block.id)).toEqual(["chart-ok"]);
+        expect(sectionBlocks(landed, 1).map((block) => block.id)).toEqual(["chart-ok"]);
     });
 
     it("refuses a composition whose series channel names a column outside the bound table", () => {
@@ -320,8 +326,8 @@ describe("addBlock", () => {
 
         expect(failure.reason).toBe("unresolved-reference");
         if (failure.reason === "unresolved-reference") {
-            expect(failure.unresolved[0].reason).toBe("locator-out-of-range");
-            expect(failure.unresolved[0].detail).toContain("invented");
+            expect(failure.unresolved[0]?.reason).toBe("locator-out-of-range");
+            expect(failure.unresolved[0]?.detail).toContain("invented");
         }
         expect(draft).toEqual(before);
     });
@@ -380,7 +386,7 @@ describe("addBlock", () => {
         expect(failure.reason).toBe("unresolved-reference");
         expect(failure.detail).toContain(ABSENT_PATH);
         if (failure.reason === "unresolved-reference") {
-            expect(failure.unresolved[0].reason).toBe("artifact-missing");
+            expect(failure.unresolved[0]?.reason).toBe("artifact-missing");
         }
         expect(draft).toEqual(before);
     });

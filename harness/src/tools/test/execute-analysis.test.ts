@@ -154,7 +154,7 @@ function routeProvider(agentId = "single-cell-agent", packages?: string[]): { pr
                                     agentId,
                                     resources: { cpu: 2, memoryGb: 4 },
                                     rationale: `route-${calls.count}`,
-                                    ...(packages === undefined ? {} : { packages }),
+                                    packages,
                                 },
                             },
                         ],
@@ -400,7 +400,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("mint refused"), retryable: false });
+        const refusal = result._unsafeUnwrapErr();
+        expect(refusal).toMatchObject({ retryable: false });
+        expect(refusal.error).toContain("mint refused");
         // The reserved row is released — marked failed with the reason — so the
         // partial-unique slot frees up and a retry can re-run.
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("mint refused"))).toBe(true);
@@ -428,7 +430,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("no_funds"), retryable: false });
+        const refusal = result._unsafeUnwrapErr();
+        expect(refusal).toMatchObject({ retryable: false });
+        expect(refusal.error).toContain("no_funds");
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
             true,
         );
@@ -1176,7 +1180,13 @@ describe("the launch of a stored plan, over a real database", () => {
     }
 
     async function runRows(): Promise<Array<{ run_id: string; plan_id: string | null; thread_id: string | null; status: string; error: string | null }>> {
-        const { rows } = await pool.query("SELECT run_id, plan_id, thread_id, status, error FROM cortex_runs ORDER BY started_at, run_id");
+        const { rows } = await pool.query<{
+            run_id: string;
+            plan_id: string | null;
+            thread_id: string | null;
+            status: string;
+            error: string | null;
+        }>("SELECT run_id, plan_id, thread_id, status, error FROM cortex_runs ORDER BY started_at, run_id");
         return rows;
     }
 
@@ -1248,7 +1258,7 @@ describe("the launch of a stored plan, over a real database", () => {
             function planDeclaring(capability?: string) {
                 return {
                     ...validPlan,
-                    steps: [{ ...makeStep("T1S1"), agent: SAFETY_AGENT, ...(capability ? { capability } : {}) }],
+                    steps: [{ ...makeStep("T1S1"), agent: SAFETY_AGENT, capability }],
                 };
             }
 
@@ -1519,7 +1529,7 @@ describe("the launch of a stored plan, over a real database", () => {
                         threadId: null,
                         workflowName: "executeAnalysis",
                         planId: PLAN_ID,
-                        ...(startedAt === undefined ? {} : { startedAt }),
+                        startedAt,
                     })
                 )._unsafeUnwrap();
                 (await updateRunStatus(pool, runId, "completed"))._unsafeUnwrap();

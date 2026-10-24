@@ -109,8 +109,8 @@ describe("the unknown path", () => {
         expect(refusal.detail).toContain(ABSENT_PATH);
         if (refusal.reason === "unresolved-reference") {
             expect(refusal.unresolved).toHaveLength(1);
-            expect(refusal.unresolved[0].reason).toBe("artifact-missing");
-            expect(refusal.unresolved[0].detail).toContain(ABSENT_PATH);
+            expect(refusal.unresolved[0]?.reason).toBe("artifact-missing");
+            expect(refusal.unresolved[0]?.detail).toContain(ABSENT_PATH);
         }
     });
 

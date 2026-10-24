@@ -111,6 +111,12 @@ function seriesOf(option: EchartOption): EchartOption[] {
     return option.series as EchartOption[];
 }
 
+function firstSeries(option: EchartOption): EchartOption {
+    const [points] = seriesOf(option);
+    if (points === undefined) throw new Error("the option holds no series");
+    return points;
+}
+
 /** One axis of an option: the only axis, or the axis at an index of a list. */
 function axisOf(option: EchartOption, key: "xAxis" | "yAxis", index = 0): EchartOption {
     const axis = option[key];
@@ -159,8 +165,12 @@ function treeSeries(option: EchartOption, axis: "x" | "y"): EchartOption {
  * that starts at height zero. The tree of y draws the height on x.
  */
 function leafPlaces(tree: EchartOption, axis: "x" | "y"): number[] {
-    const starts = (tree.data as EchartOption[]).map((edge) => (edge.coords as number[][])[0]);
-    return starts.flatMap(([a, b]) => ((axis === "x" ? b : a) === 0 ? [axis === "x" ? a : b] : []));
+    return (tree.data as EchartOption[]).flatMap((edge) => {
+        const start = (edge.coords as Array<[number, number]>)[0];
+        if (start === undefined) throw new Error("the tree drew an edge with no start");
+        const [a, b] = start;
+        return (axis === "x" ? b : a) === 0 ? [axis === "x" ? a : b] : [];
+    });
 }
 
 /** The leaf names of one tree table, in the depth-first order from its root, with the children in table order. */
@@ -329,6 +339,7 @@ describe("the gallery document", () => {
         for (const chart of CHARTS) expect({ id: chart.id, missing: missingLicenses(chart) }).toEqual({ id: chart.id, missing: [] });
         // The gate bites: a caption with no license fails it.
         const [first] = CHARTS;
+        if (first === undefined) throw new Error("the gallery holds no chart");
         expect(missingLicenses({ ...first, caption: "Data: a table." }).length).toBeGreaterThan(0);
     });
 });
@@ -346,7 +357,7 @@ describe.skipIf(NO_DATA)(`the gallery render${NEEDS_DATA}`, () => {
 });
 
 describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () => {
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
+    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
         payload: { columns: readonly string[]; rows: readonly ChartRow[] },
         source: ChartDataSource["series"][number],
         rule: unknown,
@@ -378,7 +389,7 @@ describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () =
                 expect({ chart: block.id, series: index, data: JSON.stringify(page) }).toEqual({
                     chart: block.id,
                     series: index,
-                    data: JSON.stringify(inline[index].data),
+                    data: JSON.stringify(inline[index]?.data),
                 });
             }
         }
@@ -402,10 +413,10 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     it("ma: draws the mean on a log axis, the significant genes apart, and a line at zero", () => {
         const option = optionOf("bulk-ma");
         expect(axisOf(option, "xAxis").type).toBe("log");
-        const significant = seriesOf(option)[0];
+        const significant = firstSeries(option);
         expect(significant.name).toBe("Adjusted p-value < 0.05");
         expect((significant.data as unknown[]).length).toBe(countRows("bulk-ma", (row) => numberOf(row.padj) < 0.05));
-        expect(((significant.markLine as EchartOption).data as EchartOption[])[0].yAxis).toBe(0);
+        expect(((significant.markLine as EchartOption).data as EchartOption[])[0]?.yAxis).toBe(0);
         expect(axisOf(option, "yAxis").min).toBe(-(axisOf(option, "yAxis").max as number));
     });
 
@@ -523,7 +534,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     it("forest: draws the ratio on a log axis around a solid line at one, with the estimate and the p columns", () => {
         const option = optionOf("clinical-forest");
         expect(axisOf(option, "xAxis").type).toBe("log");
-        expect((seriesOf(option)[0].markLine as EchartOption).data).toEqual([{ xAxis: 1 }]);
+        expect((firstSeries(option).markLine as EchartOption).data).toEqual([{ xAxis: 1 }]);
         expect(axisOf(option, "yAxis", 1).data).toContain("0.53 (0.38–0.75)");
         const sex = valueOf("clinical-forest").rows.find((row) => row.term === "Female vs male");
         expect(axisOf(option, "yAxis", 2).data).toContain(statisticText(sex?.pvalue ?? "", "pvalue"));
@@ -543,7 +554,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         const chromosomes = [...new Set(valueOf("gwas-manhattan").rows.map((row) => String(row.chrom)))];
         expect(series.slice(0, chromosomes.length).map((entry) => entry.name)).toEqual(chromosomes);
-        const lines = (series[0].markLine as EchartOption).data as EchartOption[];
+        const firstChromosome = series[0];
+        if (firstChromosome === undefined) throw new Error("the option holds no chromosome series");
+        const lines = (firstChromosome.markLine as EchartOption).data as EchartOption[];
         expect(lines.map((line) => line.yAxis)).toEqual([-Math.log10(5e-8), 5]);
         expect(series.some((entry) => entry.name === "Chromosome names")).toBe(true);
     });
@@ -553,7 +566,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         expect(series.filter((entry) => entry.name === "Null band").length).toBe(2);
         const largest = Math.max(...valueOf("gwas-qq").rows.map((row) => Number(row.expected_neg_log10_p)));
-        expect(JSON.stringify(series[0].markLine)).toContain(`[{"coord":[0,0]},{"coord":[${largest},${largest}]}]`);
+        expect(JSON.stringify(series[0]?.markLine)).toContain(`[{"coord":[0,0]},{"coord":[${largest},${largest}]}]`);
         expect(graphicTexts(option)).toEqual(["λ = 1.11"]);
         expect(statisticOf("gwas-qq", "λ")).toBe("1.11162");
     });
@@ -576,11 +589,13 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         const genes = new Set(valueOf("mutations-oncoprint").rows.map((row) => row.gene)).size;
         const samples = new Set(valueOf("mutations-oncoprint").rows.map((row) => row.sample)).size;
-        expect(series[0].renderItem).toBe("cell-glyph");
-        expect((series[0].data as unknown[]).length).toBe(genes * samples);
+        const glyphs = series[0];
+        if (glyphs === undefined) throw new Error("the option holds no glyph series");
+        expect(glyphs.renderItem).toBe("cell-glyph");
+        expect((glyphs.data as unknown[]).length).toBe(genes * samples);
         expect(series.some((entry) => entry.type === "bar" && entry.name === "Missense Mutation")).toBe(true);
         const share = series.at(-1) as EchartOption;
-        expect(((share.data as EchartOption[])[0].label as EchartOption).formatter).toBe("27%");
+        expect((share.data as EchartOption[])[0]?.label).toMatchObject({ formatter: "27%" });
     });
 
     it("lollipop: draws each mutation as a stem, ends the axis at the protein length, and labels the hotspot", () => {
@@ -615,8 +630,14 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(names.map((name) => combinations.get(name))).toEqual(sizes);
         // The intersections sort by size, then by degree.
         for (let place = 1; place < sizes.length; place += 1) {
-            const degree = (name: string): number => name.split(" & ").length;
-            expect(sizes[place] < sizes[place - 1] || (sizes[place] === sizes[place - 1] && degree(names[place]) >= degree(names[place - 1]))).toBe(true);
+            const size = sizes[place];
+            const priorSize = sizes[place - 1];
+            const name = names[place];
+            const priorName = names[place - 1];
+            if (size === undefined || priorSize === undefined || name === undefined || priorName === undefined)
+                throw new Error("the intersection lists disagree");
+            const degree = (label: string): number => label.split(" & ").length;
+            expect(size < priorSize || (size === priorSize && degree(name) >= degree(priorName))).toBe(true);
         }
         expect(names.slice(0, 5)).toEqual(["FLT3", "IDH2", "DNMT3A", "TET2", "FLT3 & NPM1"]);
         expect(sizes.slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
@@ -631,6 +652,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     it("sankey: keeps the node order of the table in three stages, and colors each stage from the start of the palette", () => {
         const option = optionOf("mutations-sankey");
         const [sankey] = seriesOf(option);
+        if (sankey === undefined) throw new Error("the option holds no sankey series");
         const rows = valueOf("mutations-sankey").rows;
         const nodes = sankey.data as EchartOption[];
         expect(nodes.map((node) => node.name)).toEqual(
@@ -662,7 +684,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const series = seriesOf(option);
         const rows = valueOf("gwas-locuszoom").rows;
         // The legend states the five LocusZoom bins, highest first, and the gray of a missing r².
-        const pieces = ((option.visualMap as EchartOption[])[0].pieces as EchartOption[]).map((piece) => [piece.label, piece.color]);
+        const legendMap = (option.visualMap as EchartOption[])[0];
+        if (legendMap === undefined) throw new Error("the option holds no visual map");
+        const pieces = (legendMap.pieces as EchartOption[]).map((piece) => [piece.label, piece.color]);
         expect(pieces).toEqual([...[...LD_BINS].reverse().map((bin) => [`${bin.low}–${bin.high}`, bin.color]), [LD_MISSING_NAME, LD_MISSING_COLOR]]);
         const missing = series.find((entry) => entry.name === LD_MISSING_NAME);
         const missingData = missing?.data as unknown[];
@@ -682,7 +706,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const genes = series.find((entry) => entry.name === GENE_NAMES) as EchartOption;
         const placed = (genes.data as EchartOption[]).map((gene) => ({ name: String(gene.name), lane: (gene.value as number[])[1] }));
         expect(placed.map((gene) => gene.name)).toEqual(["RBL2", "AKTIP", "RPGRIP1L", "FTO"]);
-        const spans = new Map((valueOf("gwas-locuszoom").track?.rows ?? []).map((row) => [String(row.gene), [Number(row.start), Number(row.end)]]));
+        const spans = new Map<string, [number, number]>(
+            (valueOf("gwas-locuszoom").track?.rows ?? []).map((row) => [String(row.gene), [Number(row.start), Number(row.end)]]),
+        );
         for (const [place, gene] of placed.entries()) {
             for (const other of placed.slice(place + 1).filter((entry) => entry.lane === gene.lane)) {
                 const [start, end] = spans.get(gene.name) ?? [0, 0];

@@ -77,14 +77,15 @@ function assistantText(messages: readonly ModelMessage[]): string {
 
 /** The divider of a compaction marker: a `system` message with the part at the final status of the compaction. */
 function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
-    const part = conversationDisplayPart({
+    const compaction: MessagePart & { type: "data-compaction" } = {
         type: "data-compaction",
         id: marker.id,
         status: marker.kind === "summary" ? "done" : "failed",
         tokensBefore: marker.tokensBefore,
         durationMs: marker.durationMs,
-        ...(marker.trigger === undefined ? {} : { trigger: marker.trigger }),
-    });
+    };
+    if (marker.trigger !== undefined) compaction.trigger = marker.trigger;
+    const part = conversationDisplayPart(compaction);
     return { id: marker.id, role: "system", parts: [part] };
 }
 
@@ -193,12 +194,13 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         const messages = takeOpening();
         const parts = displayParts(roundParts());
         if (parts.length > 0) {
-            messages.push({
+            const message: ConversationUIMessage = {
                 id: assistantMessageId,
                 role: "assistant",
-                ...(finishOptions?.interrupted ? { metadata: { interrupted: true } } : {}),
                 parts: jsonCopy(parts),
-            });
+            };
+            if (finishOptions?.interrupted) message.metadata = { interrupted: true };
+            messages.push(message);
         }
         return messages;
     }

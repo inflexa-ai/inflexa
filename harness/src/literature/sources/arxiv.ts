@@ -100,7 +100,7 @@ export function parseArxivAtom(xml: string): ArxivPaper[] {
                 published: collapseWhitespace(firstMatch(entry, "published") ?? ""),
                 categories: categoryTerms(entry),
                 url: htmlUrl ?? collapseWhitespace(rawId),
-                ...(pdfUrl === undefined ? {} : { pdfUrl }),
+                pdfUrl,
             },
         ];
     });

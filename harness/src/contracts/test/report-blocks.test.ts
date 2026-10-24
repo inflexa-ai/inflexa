@@ -539,7 +539,7 @@ describe("the canonical figures", () => {
     it("takes one to four statistics, and the statistics ride the parsed block", () => {
         const parsed = ChartBlockSchema.safeParse(chart({ chartType: "km", encoding: { x: "time", y: "survival" }, statistics: [statistic("Log-rank p")] }));
         expect(parsed.success).toBe(true);
-        expect(parsed.success && parsed.data.statistics?.[0].label).toBe("Log-rank p");
+        expect(parsed.success && parsed.data.statistics?.[0]?.label).toBe("Log-rank p");
         const four = [statistic("A"), statistic("B"), statistic("C"), statistic("D")];
         expect(parses({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: four })).toBe(true);
     });
@@ -548,7 +548,7 @@ describe("the canonical figures", () => {
         const five = [statistic("A"), statistic("B"), statistic("C"), statistic("D"), statistic("E")];
         const parsed = ChartBlockSchema.safeParse(chart({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: five }));
         expect(parsed.success).toBe(false);
-        expect(parsed.error?.issues[0]).toEqual(expect.objectContaining({ code: "too_big", path: ["statistics"] }));
+        expect(parsed.error?.issues[0]).toMatchObject({ code: "too_big", path: ["statistics"] });
         expect(parses({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: [] })).toBe(false);
     });
 

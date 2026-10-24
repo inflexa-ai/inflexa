@@ -65,7 +65,7 @@ export const searchProteinTool = defineTool({
     describeCall: ({ query }) => query,
     execute: async ({ query, organismId, reviewedOnly, limit }): Promise<Result<SearchProteinOutput, ToolError>> => {
         const result = await searchProteins(query, {
-            ...(organismId === null ? {} : { organismId }),
+            organismId: organismId ?? undefined,
             reviewedOnly,
             limit,
         });

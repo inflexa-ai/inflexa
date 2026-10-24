@@ -94,9 +94,7 @@ export type ScriptChangeNote = { readonly status: "noted"; readonly write: Write
 export async function noteScriptChange(args: NoteScriptChangeArgs): Promise<ScriptChangeNote> {
     const recordPath = decisionRecordPathFor(args.scriptPath);
     if (!recordPath) return { status: "no_record" };
-    const read = unwrapOrThrow(
-        await args.filesystem.readFile({ session: args.session, path: recordPath, ...(args.workingDir !== undefined ? { workingDir: args.workingDir } : {}) }),
-    );
+    const read = unwrapOrThrow(await args.filesystem.readFile({ session: args.session, path: recordPath, workingDir: args.workingDir }));
     if (read.kind !== "ok") return { status: "no_record" };
     let record: Record<string, unknown>;
     try {

@@ -21,6 +21,8 @@
  * shared by reference. `normalize(normalize(x))` deep-equals `normalize(x)`.
  */
 
+import { isUnknownArray } from "../../lib/unknown-array.js";
+
 /** Max length of a derived `saveAsImage` filename. */
 const MAX_FILENAME_LEN = 64;
 
@@ -179,7 +181,7 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         const axis = out[key];
         // A malformed entry is passed through rather than dropped — normalization rewrites layout,
         // never the shape of the spec it was handed.
-        if (Array.isArray(axis)) out[key] = axis.map((entry) => (isRecord(entry) ? normalizeAxis(entry, key === "xAxis") : entry));
+        if (isUnknownArray(axis)) out[key] = axis.map((entry) => (isRecord(entry) ? normalizeAxis(entry, key === "xAxis") : entry));
         else if (isRecord(axis)) out[key] = normalizeAxis(axis, key === "xAxis");
     }
 
@@ -193,13 +195,12 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         cartesian && !Array.isArray(grid) && (grid === undefined || (isRecord(grid) && grid.width === undefined && grid.height === undefined));
     if (gridNormalizable) {
         const authored = isRecord(grid) ? grid : {};
-        out.grid = {
-            ...authored,
-            ...(authored.top === undefined ? { top: out.graphic !== undefined ? "12%" : "8%" } : {}),
-            ...(authored.bottom === undefined ? { bottom: rotated ? (bottomLegend ? "30%" : "25%") : "20%" } : {}),
-            ...(authored.left === undefined ? { left: "10%" } : {}),
-            ...(authored.right === undefined ? { right: "5%" } : {}),
-        };
+        const filled: Record<string, unknown> = { ...authored };
+        if (authored.top === undefined) filled.top = out.graphic !== undefined ? "12%" : "8%";
+        if (authored.bottom === undefined) filled.bottom = rotated ? (bottomLegend ? "30%" : "25%") : "20%";
+        if (authored.left === undefined) filled.left = "10%";
+        if (authored.right === undefined) filled.right = "5%";
+        out.grid = filled;
     }
 
     // ── Toolbox ─────────────────────────────────────────────────────────
@@ -211,18 +212,19 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         // a better filename seed than the generic fallback when no card title was given.
         const specTitleText = isRecord(specTitle) && typeof specTitle.text === "string" ? specTitle.text : undefined;
 
-        out.toolbox = {
-            ...authored,
-            ...(hasPlacement(authored) ? {} : { right: 0, top: 0 }),
-            feature: {
-                ...feature,
-                saveAsImage: {
-                    ...saveAsImage,
-                    ...(saveAsImage.type === undefined ? { type: "png" } : {}),
-                    ...(saveAsImage.name === undefined ? { name: kebabFilename(opts.title ?? specTitleText) } : {}),
-                },
-            },
+        const placed: Record<string, unknown> = { ...authored };
+        if (!hasPlacement(authored)) {
+            placed.right = 0;
+            placed.top = 0;
+        }
+        const saved: Record<string, unknown> = { ...saveAsImage };
+        if (saveAsImage.type === undefined) saved.type = "png";
+        if (saveAsImage.name === undefined) saved.name = kebabFilename(opts.title ?? specTitleText);
+        placed.feature = {
+            ...feature,
+            saveAsImage: saved,
         };
+        out.toolbox = placed;
     }
 
     return out;

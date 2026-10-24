@@ -31,7 +31,7 @@ import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { tryFs } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { citationRecordOf, fileTypeHoldsNoCell } from "../../report-model/reference-resolver.js";
+import { citationRecordOf, fileTypeHoldsNoCell, snapshotEntry } from "../../report-model/reference-resolver.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
@@ -165,7 +165,7 @@ async function readHeaderLine(absolute: string): Promise<HeaderRead | undefined>
     if (head === undefined) {
         return undefined;
     }
-    const line = head.text.split(/\r?\n/, 1)[0];
+    const [line = ""] = head.text.split(/\r?\n/, 1);
     if (line.length === 0) {
         return undefined;
     }
@@ -264,8 +264,8 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
             }
 
             const describe = async (path: string): Promise<{ artifact: PinnedArtifact; columns?: string[] }> => {
-                const fileType = state.snapshot.artifacts[path].fileType;
-                const artifact: PinnedArtifact = { path, ...(typeof fileType === "string" ? { fileType } : {}) };
+                const fileType = snapshotEntry(state.snapshot, path)?.fileType ?? undefined;
+                const artifact: PinnedArtifact = { path, fileType };
                 if (root === undefined || fileTypeHoldsNoCell(fileType)) {
                     return { artifact };
                 }

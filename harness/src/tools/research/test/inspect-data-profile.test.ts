@@ -225,8 +225,8 @@ describe("lifecycle variants — every one is data, not an error", () => {
         (await tryRerunDataProfile(pool, ANALYSIS))._unsafeUnwrap();
 
         const out = await run();
-        expect(out.state).toBe("stale");
-        expect(out).toMatchObject({ staleReason: expect.stringContaining("re-profile is in progress") });
+        if (out.state !== "stale") throw new Error("expected a stale result");
+        expect(out.staleReason).toContain("re-profile is in progress");
         expect(out).toMatchObject({ summary: "Bulk RNA-seq of rectal biopsies, 24 samples." });
     });
 
@@ -238,8 +238,8 @@ describe("lifecycle variants — every one is data, not an error", () => {
         (await failDataProfile(pool, ANALYSIS, "timeout"))._unsafeUnwrap();
 
         const out = await run();
-        expect(out.state).toBe("stale");
-        expect(out).toMatchObject({ staleReason: expect.stringContaining("timeout") });
+        if (out.state !== "stale") throw new Error("expected a stale result");
+        expect(out.staleReason).toContain("timeout");
         expect(out).toMatchObject({ describedFileCount: 2 });
         // A surviving result is served as `stale`, never as `failed` — which is why
         // the `failed` variant never has an input set to compare against.

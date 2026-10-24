@@ -111,7 +111,7 @@ import {
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import { flattenDataPart } from "../contracts/chat-frame.js";
-import type { SynthesisPhase } from "../contracts/chat-parts.js";
+import type { RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
 import {
@@ -446,8 +446,8 @@ function buildRunObservation(args: {
                 agent: input.agentByStepId[s.id] ?? "unknown",
                 // A step absent from the map has not been reached yet; `pending` is its honest state.
                 status: rt?.status ?? "pending",
-                ...(rt?.durationMs !== undefined ? { durationMs: rt.durationMs } : {}),
-                ...(rt?.error !== undefined ? { error: rt.error } : {}),
+                durationMs: rt?.durationMs,
+                error: rt?.error,
             };
         }),
     };
@@ -510,7 +510,7 @@ export function buildChildInput(args: {
         dependsOn: planStep.depends_on,
         // Composed beside the seed, thus the same checkpoint carries both and a
         // replay hands the child the binding its briefing describes.
-        ...(templateBinding ? { templateBinding } : {}),
+        templateBinding,
         level,
         prompt,
         parentWorkflowId: workflowId,
@@ -541,7 +541,7 @@ export function buildChildInput(args: {
  */
 export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<StepSeed> {
     const { briefing, templateBinding } = await gatherStepPackage(args);
-    return { prompt: composeStepBriefing(briefing), ...(templateBinding ? { templateBinding } : {}) };
+    return { prompt: composeStepBriefing(briefing), templateBinding };
 }
 
 /** What `gatherStepPackage` gives: the data of the seed, and the binding of the plan settings when one holds. */
@@ -621,7 +621,7 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
             memory: { goal: memory.goal, constraints: memory.constraints },
             ...contract.briefing,
         },
-        ...(contract.binding ? { templateBinding: contract.binding } : {}),
+        templateBinding: contract.binding,
     };
 }
 
@@ -670,7 +670,7 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
     return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], {
         stepId: step.id,
         claims: step.grounding?.claims ?? [],
-        ...(step.grounding?.snapshot && step.grounding.snapshot !== "none" ? { snapshot: step.grounding.snapshot } : {}),
+        snapshot: step.grounding?.snapshot && step.grounding.snapshot !== "none" ? step.grounding.snapshot : undefined,
     });
 }
 
@@ -779,28 +779,26 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 inputs: (contract.inputs ?? []).map((input) => ({
                     name: input.name,
                     path: input.path,
-                    ...(input.description ? { description: input.description } : {}),
+                    description: input.description,
                 })),
                 bound,
                 unbound_settings: unbound,
             },
         },
-        ...(versionMatches
+        binding: versionMatches
             ? {
-                  binding: {
-                      template: ref,
-                      slots,
-                      sources,
-                      step: grounding.stepId,
-                      claims: grounding.claims,
-                      ...(grounding.snapshot ? { snapshot: grounding.snapshot } : {}),
-                      // The local slots of the contract, thus the tool binds a path or a column name on the machine
-                      // without a second read of the contract.
-                      local: contract.parameters.filter((slot) => slot.local === true),
-                      adaptable: adaptable.map((slot) => slot.name),
-                  },
+                  template: ref,
+                  slots,
+                  sources,
+                  step: grounding.stepId,
+                  claims: grounding.claims,
+                  snapshot: grounding.snapshot,
+                  // The local slots of the contract, thus the tool binds a path or a column name on the machine
+                  // without a second read of the contract.
+                  local: contract.parameters.filter((slot) => slot.local === true),
+                  adaptable: adaptable.map((slot) => slot.name),
               }
-            : {}),
+            : undefined,
     };
 }
 
@@ -920,7 +918,7 @@ export function synthesizeFindings(args: {
             bioKeys: deps.bioKeys,
             citationResolver: deps.citationResolver,
             usageRecorder: deps.usageRecorder,
-            ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
+            toolOutputStore: deps.toolOutputStore,
         },
         {
             analysisId,
@@ -1190,7 +1188,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         failed: final.failed,
         canceled: final.canceled,
         suspension,
-        ...(final.usage ? { usage: final.usage } : {}),
+        usage: final.usage,
         failureReason: synthesisError
             ? synthesisError instanceof Error
                 ? `synthesis-failed: ${synthesisError.message}`
@@ -1500,7 +1498,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 runId,
                 workflowId,
                 prompt: seed.prompt,
-                ...(seed.templateBinding ? { templateBinding: seed.templateBinding } : {}),
+                templateBinding: seed.templateBinding,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,
@@ -1650,7 +1648,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 runId,
                 stepId: settled.stepId,
                 status: stepStatus,
-                ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
+                durationMs: stepDurationMs,
                 atMs: settledAtMs,
             },
             input.runSession,
@@ -1666,7 +1664,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         suspension,
         failureReason,
         stepStates: stepRuntime,
-        ...(hasReportedUsage(runUsage) ? { usage: { ...runUsage } } : {}),
+        usage: hasReportedUsage(runUsage) ? { ...runUsage } : undefined,
     };
 }
 
@@ -1923,7 +1921,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                     .unwrapOr(0),
             { name: "count-run-artifacts" },
         );
-        await emitStreamPart({
+        const runCompleted: RunCompletedPart = {
             type: "data-run-completed",
             runId,
             status,
@@ -1934,19 +1932,16 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 title: f.title,
                 confidence: f.confidence,
             })),
-            ...(status === "partial"
-                ? {
-                      note: `${completed.size} of ${input.steps.length} steps completed; results are partial.`,
-                  }
-                : {}),
-            ...(args.usage ? { usage: args.usage } : {}),
-        });
+        };
+        if (status === "partial") runCompleted.note = `${completed.size} of ${input.steps.length} steps completed; results are partial.`;
+        if (args.usage) runCompleted.usage = args.usage;
+        await emitStreamPart(runCompleted);
     } else {
         await emitStreamPart({
             type: "data-run-failed",
             runId,
             error: failureReason ?? (suspended !== null ? suspended.reason : "Run canceled before completion"),
-            ...(suspended !== null ? { reason: suspended.reason } : {}),
+            reason: suspended === null ? undefined : suspended.reason,
         });
     }
 

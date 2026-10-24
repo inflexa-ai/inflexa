@@ -76,8 +76,8 @@ export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOpt
         const byInput = new Map<string, number>();
         const guarded: Tool = {
             ...tool,
-            ...(tool.describeCall ? { describeCall: tool.describeCall.bind(tool) } : {}),
-            ...(tool.describeResult ? { describeResult: tool.describeResult.bind(tool) } : {}),
+            describeCall: tool.describeCall?.bind(tool),
+            describeResult: tool.describeResult?.bind(tool),
             async execute(input: unknown, ctx: ToolContext): Promise<Result<unknown, ToolError>> {
                 calls += 1;
                 const key = canonicalInputKey(input);

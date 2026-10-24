@@ -80,7 +80,10 @@ it("exports the loop and model-call spans as one trace, with no prompt or comple
     );
 
     const spans = exporter.getFinishedSpans();
-    expect(spans.map((span) => span.name)).toEqual(expect.arrayContaining(["invoke_agent test-agent", "chat mock-model-id", "execute_tool lookup"]));
+    const spanNames = spans.map((span) => span.name);
+    expect(spanNames).toContain("invoke_agent test-agent");
+    expect(spanNames).toContain("chat mock-model-id");
+    expect(spanNames).toContain("execute_tool lookup");
     expect(new Set(spans.map((span) => span.spanContext().traceId)).size).toBe(1);
     expect(JSON.stringify(spans.map((span) => [span.attributes, span.events, span.status]))).not.toContain("SECRET");
 });
@@ -295,9 +298,7 @@ it("records the shape of rejected input on the span and in one warn, with no val
     expect(span.attributes["error.type"]).toBe("validation");
     expect(span.attributes["inflexa.tool.validation.issues"]).toEqual(issues);
     const warns = logger.records.filter((record) => record.level === "warn");
-    expect(warns).toEqual([
-        { level: "warn", msg: "[loop] tool call rejected", fields: expect.objectContaining({ tool: "typed", toolCallId: "tc-shape", issues }) },
-    ]);
+    expect(warns).toMatchObject([{ level: "warn", msg: "[loop] tool call rejected", fields: { tool: "typed", toolCallId: "tc-shape", issues } }]);
     expect(JSON.stringify([span.attributes, span.events, span.status, logger.records])).not.toContain("SECRET");
 });
 

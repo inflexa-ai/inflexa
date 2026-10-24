@@ -130,7 +130,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         ...(await readTurnContext(pool, analysisId)),
         history: createThreadHistory(pool),
         workingMemory: createWorkingMemory(pool),
-        ...(deps.logger ? { logger: deps.logger } : {}),
+        logger: deps.logger,
     });
 
     return { kind: "ok", threadType, ...assembled };
@@ -333,9 +333,9 @@ async function runOpenTurn(
             toolOutputStore: createToolOutputStore(deps.pool),
             promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
             turnInput: [prepared.userMessage, ...prepared.contextRecords],
-            ...(compaction === undefined ? {} : { compaction }),
-            ...(deps.logger === undefined ? {} : { logger: deps.logger }),
-            ...(ask === undefined ? {} : { ask: (request: AskRequest) => ask(request, recorder.emit) }),
+            compaction,
+            logger: deps.logger,
+            ask: ask === undefined ? undefined : (request: AskRequest) => ask(request, recorder.emit),
             onRound: storeRound,
         });
         outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
@@ -352,20 +352,21 @@ async function runOpenTurn(
     const turnUsage = outcome.status === "failed" ? undefined : outcome.finish?.turnUsage;
     await flush({
         status: outcome.status,
-        ...(outcome.status === "failed" ? { reason: outcome.reason, note: conversationRecordTurn(failureNote(outcome.reason)) } : {}),
-        ...(outcome.status === "aborted" ? { note: interruptionNote() } : {}),
-        ...(turnUsage === undefined ? {} : { turnUsage }),
+        reason: outcome.status === "failed" ? outcome.reason : undefined,
+        note: outcome.status === "failed" ? conversationRecordTurn(failureNote(outcome.reason)) : outcome.status === "aborted" ? interruptionNote() : undefined,
+        turnUsage,
         turnDurationMs: durationMs,
     });
 
+    const storeErrorField = storeError === undefined ? undefined : { storeError };
     return {
         kind: "ran",
         outcome,
         opened: startSeq !== undefined,
-        ...(storeError === undefined ? {} : { storeError }),
         durationMs,
-        ...(turnUsage === undefined ? {} : { turnUsage: { ...turnUsage } }),
-        ...(fallbackText === undefined ? {} : { fallbackText }),
+        turnUsage: turnUsage === undefined ? undefined : { ...turnUsage },
+        fallbackText,
+        ...storeErrorField,
     };
 }
 

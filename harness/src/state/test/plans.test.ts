@@ -11,7 +11,9 @@ async function countPlans(pool: Pool, planId: string): Promise<number> {
         text: "SELECT count(*)::int AS n FROM cortex_plans WHERE plan_id = $1",
         values: [planId],
     });
-    return Number(r.rows[0].n);
+    const row = r.rows[0];
+    if (row === undefined) throw new Error("the count query returned no row");
+    return Number(row.n);
 }
 
 describe("upsertPlan", () => {

@@ -78,9 +78,9 @@ interface ExecCallRecord {
     readonly command: readonly string[];
     readonly exitCode: number | null;
     readonly durationMs: number | null;
-    readonly provenance?: ProvenanceFrame;
+    provenance?: ProvenanceFrame;
     /** The decision-record writes of the script check before the exec, for the mutator. */
-    readonly recordWrites?: readonly WriteRecord[];
+    recordWrites?: readonly WriteRecord[];
 }
 
 type ExecuteCommandResult = { readonly status: "ok" } & BoundedExecResult;
@@ -182,8 +182,8 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                 sandbox,
                 command,
                 cwd: effectiveCwd,
-                ...(env === undefined ? {} : { env }),
-                ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
+                env,
+                timeoutSeconds,
                 deadlineMs: deadlineMs(),
                 emit: ctx.emit,
             });
@@ -194,9 +194,9 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                 command,
                 exitCode: result.exitCode,
                 durationMs: result.durationMs,
-                ...(result.provenance ? { provenance: result.provenance } : {}),
-                ...(recordWrites.length > 0 ? { recordWrites } : {}),
             };
+            if (result.provenance) record.provenance = result.provenance;
+            if (recordWrites.length > 0) record.recordWrites = recordWrites;
             return ok(withToolCallRecord(bounded, record));
         },
         // Best-effort: a collector failure must never fail the exec.
@@ -210,8 +210,8 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                     command: record.command,
                     exitCode: record.exitCode,
                     durationMs: record.durationMs,
-                    ...(deps.logger ? { logger: deps.logger } : {}),
-                    ...(record.provenance ? { provenance: record.provenance } : {}),
+                    logger: deps.logger,
+                    provenance: record.provenance,
                 });
             } catch (err) {
                 const logger = (deps.logger ?? createNoopLogger()).named("execute_command");

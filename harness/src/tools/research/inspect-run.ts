@@ -71,7 +71,7 @@ function isTerminal(status: CortexRunRow["status"]): boolean {
 }
 
 function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)) {
-    return {
+    const run = {
         runId: r.runId,
         workflowName: r.workflowName,
         status: r.status,
@@ -80,31 +80,33 @@ function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r
         planId: r.planId,
         synthesisPath: exposePaths && r.synthesisStatus === "produced" ? `runs/${r.runId}/synthesis.json` : null,
         synthesisStatus: r.synthesisStatus,
-        ...(r.synthesisReason !== null ? { synthesisReason: r.synthesisReason } : {}),
-        ...(verbose ? { error: r.error } : {}),
+        error: verbose ? (r.error ?? null) : undefined,
     };
+    if (r.synthesisReason !== null) return { ...run, synthesisReason: r.synthesisReason };
+    return run;
 }
 
 function formatSteps(runId: string, stepRows: StepExecutionRow[], verbose: boolean, exposePaths: boolean): FormattedStep[] {
-    return stepRows.map((s) => ({
-        stepId: s.stepId,
-        agentId: s.agentId,
-        wave: s.wave,
-        status: s.status,
-        ...(exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID
-            ? { summaryPath: `runs/${runId}/${s.stepId}/output/summary.md` }
-            : {}),
-        ...(verbose
-            ? {
-                  durationMs: s.durationMs,
-                  error: s.error,
-                  attempts: s.attempts,
-                  lastErrorClass: s.lastErrorClass,
-                  finishReason: s.finishReason,
-                  hitMaxSteps: s.hitMaxSteps,
-              }
-            : {}),
-    }));
+    return stepRows.map((s) => {
+        const step: { -readonly [K in keyof FormattedStep]: FormattedStep[K] } = {
+            stepId: s.stepId,
+            agentId: s.agentId,
+            wave: s.wave,
+            status: s.status,
+        };
+        if (exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID) {
+            step.summaryPath = `runs/${runId}/${s.stepId}/output/summary.md`;
+        }
+        if (verbose) {
+            step.durationMs = s.durationMs;
+            step.error = s.error;
+            step.attempts = s.attempts;
+            step.lastErrorClass = s.lastErrorClass;
+            step.finishReason = s.finishReason;
+            step.hitMaxSteps = s.hitMaxSteps;
+        }
+        return step;
+    });
 }
 
 const inputSchema = z
@@ -188,7 +190,7 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
                 return ok({
                     inspectionState: "not_found",
                     message: `Run ${input.runId} was not found in this analysis.`,
-                    ...(waitSeconds === undefined ? {} : { wait: { requestedSeconds: waitSeconds, cutoffReached: false } }),
+                    wait: waitSeconds === undefined ? undefined : { requestedSeconds: waitSeconds, cutoffReached: false },
                 });
             }
 
@@ -232,7 +234,7 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
                     steps,
                     elapsedMs: Math.max(0, clock.now() - Date.parse(run.startedAt)),
                     ...wait,
-                    ...(selfWait ? { selfWaitPrevented: true } : {}),
+                    selfWaitPrevented: selfWait ? true : undefined,
                 });
             }
 

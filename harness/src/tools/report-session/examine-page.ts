@@ -499,7 +499,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                     {
                         outcome: "examined" as const,
                         coverage: captured.coverage,
-                        ...(tiles.length === 0 ? {} : { tiles }),
+                        tiles: tiles.length === 0 ? undefined : tiles,
                         ...digestPageFaults(captured.consoleErrors, captured.failedRequests),
                         pagePath: relativePagePath,
                     },

@@ -68,7 +68,7 @@ function metricDoc(assertValue?: number): DraftDocument {
                             path: "data/x.csv",
                             hash: "sha256:aaa",
                             locator: { column: "n", row: 0 },
-                            ...(assertValue !== undefined ? { assert: { value: assertValue } } : {}),
+                            assert: assertValue === undefined ? undefined : { value: assertValue },
                         },
                     },
                 ],
@@ -108,14 +108,18 @@ function snapshotWithDerived(paths: readonly string[]): ReportSnapshot {
 /** A valid draft with the metric of `metricDoc` and one table that binds the given derived path. */
 function docWithTable(path: string): DraftDocument {
     const draft = metricDoc();
-    draft.sections[0].blocks.push({ kind: "table", id: "tb1", binding: { kind: "artifact-table", path, hash: DERIVED_HASH } });
+    const section = draft.sections[0];
+    if (section === undefined) throw new Error("the metric draft holds no section");
+    section.blocks.push({ kind: "table", id: "tb1", binding: { kind: "artifact-table", path, hash: DERIVED_HASH } });
     return draft;
 }
 
 /** A valid draft with the metric of `metricDoc` and one chart that binds the given derived path. */
 function docWithChart(path: string): DraftDocument {
     const draft = metricDoc();
-    draft.sections[0].blocks.push({
+    const section = draft.sections[0];
+    if (section === undefined) throw new Error("the metric draft holds no section");
+    section.blocks.push({
         kind: "chart",
         id: "ch1",
         binding: { kind: "artifact-table", path, hash: DERIVED_HASH },
@@ -247,8 +251,8 @@ describe("createRecordVersionTool", () => {
             threads,
             resolveWorkspaceRoot: async () => root ?? suiteRoot,
             makeResolver: async () => createFixtureResolver(),
-            ...(logger ? { logger } : {}),
-            ...(emitSessionEvent ? { provenance: { emitSessionEvent } } : {}),
+            logger,
+            provenance: { emitSessionEvent },
         });
     }
 
@@ -639,7 +643,11 @@ describe("createRecordVersionTool", () => {
             expect(page).toContain("42");
         }
         const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
-        const block = stored!.document.sections[0].blocks[0];
+        if (stored === null) throw new Error("the thread holds no recorded version");
+        const section = stored.document.sections[0];
+        if (section === undefined) throw new Error("the recorded version holds no section");
+        const block = section.blocks[0];
+        if (block === undefined) throw new Error("the recorded section holds no block");
         expect(block.kind).toBe("metric");
         if (block.kind === "metric") {
             const resolved = (await resolver.resolve(block.value, metricSnapshot))._unsafeUnwrap();

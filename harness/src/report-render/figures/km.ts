@@ -148,7 +148,7 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     if (curves.isErr()) return err(curves.error);
 
     const palette = categoricalPalette(curves.value.length);
-    const colorOf = (index: number): string => palette[index % palette.length];
+    const colorOf = (index: number): string => palette[index % palette.length] ?? CHART_INK;
     const end = timeEnd(curves.value);
     const step = timeStep(end);
     const ticks = timeTicks(end, step);
@@ -171,7 +171,7 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     const timeAxis = {
         ...valueAxis("x", valueAxisTitle(context.labels, columns.value.time), { min: 0, max: end }),
         interval: step,
-        ...(onTick(end, step) ? {} : { axisLabel: { showMaxLabel: false } }),
+        axisLabel: onTick(end, step) ? undefined : { showMaxLabel: false },
     };
     const survivalAxis = valueAxis("y", valueAxisTitle(context.labels, columns.value.survival), { min: 0, max: 1 });
     const plotGrid = { top: pct(layout.top), bottom: pct(layout.plotBottom), left: pct(left), right: pct(GRID_RIGHT) };
@@ -184,7 +184,7 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
         xAxis: table ? [timeAxis, tableTimeAxis(end, step)] : timeAxis,
         yAxis: table ? [survivalAxis, tableGroupAxis(curves.value, colorOf)] : survivalAxis,
         series,
-        ...(graphic.length > 0 ? { graphic } : {}),
+        graphic,
     };
     return ok(layout.bodyPx > CHART_BODY_PX ? withFigureBody(option, layout.bodyPx) : option);
 }
@@ -248,11 +248,11 @@ function kmColumns(block: ChartBlock, rows: readonly ChartRow[], context: Figure
     return ok({
         time: time.value,
         survival: survival.value,
-        ...(optional.group !== undefined ? { group: optional.group } : {}),
-        ...(optional.low !== undefined ? { low: optional.low } : {}),
-        ...(optional.high !== undefined ? { high: optional.high } : {}),
-        ...(optional.censor !== undefined ? { censor: optional.censor } : {}),
-        ...(optional.risk !== undefined ? { risk: optional.risk } : {}),
+        group: optional.group,
+        low: optional.low,
+        high: optional.high,
+        censor: optional.censor,
+        risk: optional.risk,
     });
 }
 
@@ -353,7 +353,8 @@ function curveSeries(curve: KmCurve, index: number, color: string, columns: KmCo
     const name = categoryName(curve.name);
     const points = curve.points;
     const line: number[][] = points.map((point) => [point.time, point.survival]);
-    if (points.length === 0 || points[0].time > 0) line.unshift([0, 1]);
+    const first = points[0];
+    if (first === undefined || first.time > 0) line.unshift([0, 1]);
     const series: EchartOption[] = [
         {
             type: "line",

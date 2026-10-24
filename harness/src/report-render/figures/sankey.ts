@@ -28,7 +28,7 @@ import { err, ok, type Result } from "neverthrow";
 import { declaredForColumn } from "../../contracts/report-reference.js";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_PAGE_TEXT_PX, CHART_PAGE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
+import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART_PAGE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
     AREA_LEGEND_ICON,
@@ -148,15 +148,14 @@ function findCycle(nodes: readonly string[], outgoing: ReadonlyMap<string, reado
         if (state.has(root)) continue;
         const path: Array<{ node: string; next: number }> = [{ node: root, next: 0 }];
         state.set(root, "open");
-        while (path.length > 0) {
-            const top = path[path.length - 1];
+        for (let top = path.at(-1); top !== undefined; top = path.at(-1)) {
             const targets = outgoing.get(top.node) ?? [];
-            if (top.next >= targets.length) {
+            const target = targets[top.next];
+            if (target === undefined) {
                 state.set(top.node, "done");
                 path.pop();
                 continue;
             }
-            const target = targets[top.next];
             top.next += 1;
             const seen = state.get(target);
             if (seen === "open") {
@@ -182,6 +181,7 @@ function topologicalOrder(nodes: readonly string[], outgoing: ReadonlyMap<string
     const ready = nodes.filter((node) => inflow.get(node) === 0);
     for (let next = 0; next < ready.length; next += 1) {
         const node = ready[next];
+        if (node === undefined) continue;
         order.push(node);
         for (const target of outgoing.get(node) ?? []) {
             const left = (inflow.get(target) ?? 0) - 1;
@@ -209,7 +209,7 @@ function readFlows(rows: readonly ChartRow[], source: string, target: string, va
         const key = JSON.stringify([from, to, groupName ?? null]);
         if (seen.has(key)) return err(`The table holds two flows from "${from}" to "${to}". It holds one row for each flow.`);
         seen.add(key);
-        flows.push({ source: from, target: to, value: amount, ...(groupName !== undefined ? { group: groupName } : {}) });
+        flows.push({ source: from, target: to, value: amount, group: groupName });
     }
     return ok(flows);
 }
@@ -273,7 +273,7 @@ function nodeColors(nodes: readonly string[], stages: ReadonlyMap<string, number
     const colors = new Map<string, string>();
     for (const members of byStage.values()) {
         const palette = categoricalPalette(members.length);
-        for (const [place, node] of members.entries()) colors.set(node, palette[place % palette.length]);
+        for (const [place, node] of members.entries()) colors.set(node, palette[place % palette.length] ?? CHART_INK);
     }
     return colors;
 }
@@ -295,7 +295,7 @@ function legendBandPct(names: readonly string[]): number {
 }
 
 function deriveSankey(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
-    const source = { blockId: context.blockId, rows, ...(context.columns !== undefined ? { columns: context.columns } : {}) };
+    const source = { blockId: context.blockId, rows, columns: context.columns };
     const encoding = block.encoding ?? {};
     const from = demandedColumn("sankey", encoding, "x", source);
     if (from.isErr()) return err(from.error);
@@ -321,7 +321,7 @@ function deriveSankey(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     const stageNodes = largest([...stageSizes.values()]) ?? 0;
     const groups = group.value === undefined ? [] : firstAppearance(flows.value.map((entry) => entry.group ?? ""));
     const groupPalette = categoricalPalette(groups.length);
-    const groupColors = new Map(groups.map((name, place) => [name, groupPalette[place % groupPalette.length]]));
+    const groupColors = new Map(groups.map((name, place) => [name, groupPalette[place % groupPalette.length] ?? CHART_INK]));
     const grouped = group.value !== undefined;
 
     const bottom = grouped ? legendBandPct(groups) + BOTTOM_PCT : BOTTOM_PCT;
@@ -354,7 +354,7 @@ function deriveSankey(block: ChartBlock, rows: readonly ChartRow[], context: Fig
                 source: entry.source,
                 target: entry.target,
                 value: entry.value,
-                ...(grouped ? { lineStyle: { color: groupColors.get(entry.group ?? "") } } : {}),
+                lineStyle: grouped ? { color: groupColors.get(entry.group ?? "") } : undefined,
             })),
         },
     ];

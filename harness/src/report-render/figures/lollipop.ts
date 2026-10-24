@@ -124,7 +124,7 @@ function deriveLollipop(block: ChartBlock, rows: readonly ChartRow[], context: F
             : classes.map((name, index) =>
                   stemSeries(
                       categoryName(name),
-                      colors[index],
+                      colors[index] ?? CHART_PALETTE[0],
                       stems.filter((stem) => classOf(stem.row, group) === name),
                       label,
                   ),

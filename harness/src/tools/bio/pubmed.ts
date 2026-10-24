@@ -186,8 +186,8 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                             input.query!,
                             {
                                 maxResults: input.maxResults ?? DEFAULTS.searchResults,
-                                ...(input.sort ? { sort: input.sort } : {}),
-                                ...(input.dateRange ? { dateRange: input.dateRange } : {}),
+                                sort: input.sort,
+                                dateRange: input.dateRange,
                             },
                             context.signal,
                         ),
@@ -207,7 +207,7 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                         deps.ncbiApiKey,
                         input.pmcId!,
                         {
-                            ...(input.sections ? { sections: input.sections } : {}),
+                            sections: input.sections ? input.sections : undefined,
                             maxChars: input.maxChars ?? DEFAULTS.maxChars,
                         },
                         context.signal,

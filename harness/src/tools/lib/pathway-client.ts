@@ -278,7 +278,7 @@ async function getKeggPathway(id: string): Promise<Pathway | null> {
         id,
         name,
         source: "kegg",
-        ...(description ? { description } : {}),
+        description: description ?? undefined,
         url: `https://www.kegg.jp/pathway/${id}`,
     };
 }
@@ -295,7 +295,7 @@ async function getReactomePathway(id: string): Promise<Pathway | null> {
         id: stId,
         name: stripHtmlAndCollapseWs(entry.displayName ?? ""),
         source: "reactome",
-        ...(description ? { description: stripHtmlAndCollapseWs(description) } : {}),
+        description: description === undefined ? undefined : stripHtmlAndCollapseWs(description),
         url: `https://reactome.org/content/detail/${stId}`,
     };
 }

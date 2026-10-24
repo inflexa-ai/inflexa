@@ -78,7 +78,7 @@ async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; tr
                 size: entry.size ?? 0,
                 extensions,
                 format,
-                ...(wrapper ? { wrapper } : {}),
+                wrapper,
             });
         }
     }
@@ -100,7 +100,7 @@ export function buildManifest(root: string, files: readonly ScannedFile[], trunc
         fileCount: files.length,
         totalBytes: files.reduce((sum, f) => sum + f.size, 0),
         truncated,
-        ...(truncated ? { scanLimit: limit } : {}),
+        scanLimit: limit,
         shapesTruncated: observed.shapesTruncated,
         formats: formatCensus(files),
         shapes: observed.shapes,

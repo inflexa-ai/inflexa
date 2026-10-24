@@ -26,7 +26,7 @@ export function rulesForContextWindow(rules: CompactionRules, contextWindow: num
     if (budget === rules.budget) return rules;
     return {
         budget,
-        ...(rules.turnStartBudget === undefined ? {} : { turnStartBudget: Math.floor((rules.turnStartBudget * budget) / rules.budget) }),
+        turnStartBudget: rules.turnStartBudget === undefined ? undefined : Math.floor((rules.turnStartBudget * budget) / rules.budget),
     };
 }
 

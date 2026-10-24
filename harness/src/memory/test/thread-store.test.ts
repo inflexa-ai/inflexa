@@ -738,15 +738,13 @@ describe("createThread integrity rules", () => {
 
     it("surfaces a parent that names no row as a constraint violation", async () => {
         const failed = (await store.createThread({ threadId: "child", analysisId: ANALYSIS_A, parentThreadId: "ghost", parentSeq: 1 }))._unsafeUnwrapErr();
+        if (failed.type !== "constraint_violation") throw new Error(`the insert refused as ${failed.type}`);
 
         // Absence is the foreign key's verdict, not a rule the store pre-empts
         // with a read — so the refusal arrives from the insert, naming the edge
         // that refused it rather than the primary key.
-        expect(failed).toMatchObject({
-            type: "constraint_violation",
-            op: "thread-store.createThread.insert",
-            constraint: expect.stringContaining("parent_thread_id"),
-        });
+        expect(failed).toMatchObject({ type: "constraint_violation", op: "thread-store.createThread.insert" });
+        expect(failed.constraint).toContain("parent_thread_id");
         expect(await threadRowCount("child")).toBe(0);
     });
 

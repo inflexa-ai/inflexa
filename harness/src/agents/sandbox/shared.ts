@@ -199,20 +199,20 @@ export interface SandboxAgentPromptOptions {
  */
 function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[], mutator: WorkspaceMutator | undefined): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
-    const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger });
     const amass = createAmassTools(deps.bioKeys);
     if (tools.includes("resolve_citation") && deps.citationResolver === undefined) {
         throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
     }
     const registry: Record<SandboxToolName, Tool | undefined> = {
         listAvailablePackages: createListAvailablePackagesTool({
-            ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
             // The bound seam adds `link_packages` below, and the description of
             // the listing must then stop at "absent", not at "missing".
             linkToolPresent: deps.extendAnalysisFarm !== undefined,
         }),
-        listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
+        listAvailableRefs: createListAvailableRefsTool({ refStorePath: deps.refStorePath }),
         scanInputs: createScanInputsTool({
             workspaceFs: deps.workspaceFs,
             analysisId: deps.step.analysisId,
@@ -245,9 +245,9 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
                 ? createKnowledgeTemplateTool({
                       client: deps.knowledge,
                       mutator,
-                      ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-                      ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-                      ...(deps.step.templateBinding ? { binding: deps.step.templateBinding } : {}),
+                      farmLockFile: deps.farmLockFile,
+                      imagePackagesFile: deps.imagePackagesFile,
+                      binding: deps.step.templateBinding,
                   })
                 : undefined,
     };
@@ -291,7 +291,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
               workspaceRoot: step.workspaceRoot,
               analysisId: step.analysisId,
               workingDir: hostWorkingDir,
-              ...(lineageCollector ? { lineageCollector } : {}),
+              lineageCollector,
           });
     const mutateTools = mutator
         ? [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })]
@@ -303,8 +303,10 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
             sandbox: step.sandbox,
             deadlineMs: step.deadlineMs,
             defaultCwd: sandboxWorkingDir,
-            ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}` } : {}),
-            ...(mutator ? { workspaceFilesystem: workspaceFs, mutator } : {}),
+            lineageCollector,
+            mountRoot: `/${step.analysisId}`,
+            workspaceFilesystem: workspaceFs,
+            mutator,
         }),
         ...mutateTools,
         createReadFileTool(workspaceFs, hostWorkingDir),

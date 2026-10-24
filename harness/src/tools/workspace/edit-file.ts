@@ -23,6 +23,18 @@ import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { noteScriptChange, scriptSha256 } from "./decision-record.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
+/** The `ok` outcome of an `edit_file` call. */
+interface EditFileOk {
+    readonly status: "ok";
+    readonly path: string;
+    readonly replacements: number;
+    readonly bytesWritten: number;
+    /** Regex mode only: 1-based line numbers where the matches started. */
+    lines?: readonly number[];
+    /** True when the file is a rendered script and its decision record now lists this edit. */
+    decision_record_noted?: true;
+}
+
 /** Outcome of an `edit_file` call — expected outcomes are data variants, never throws. */
 export type EditFileResult =
     | { readonly status: "file_not_found"; readonly path: string }
@@ -38,19 +50,7 @@ export type EditFileResult =
           readonly lines: readonly number[];
       }
     | Exclude<WriteFileResult, { status: "ok" }>
-    | WithToolCallRecord<
-          {
-              readonly status: "ok";
-              readonly path: string;
-              readonly replacements: number;
-              readonly bytesWritten: number;
-              /** Regex mode only: 1-based line numbers where the matches started. */
-              readonly lines?: readonly number[];
-              /** True when the file is a rendered script and its decision record now lists this edit. */
-              readonly decision_record_noted?: true;
-          },
-          readonly WriteRecord[]
-      >;
+    | WithToolCallRecord<EditFileOk, readonly WriteRecord[]>;
 
 const EditFileInputSchema = z.object({
     path: z
@@ -211,7 +211,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 await deps.workspaceFilesystem.readFile({
                     session: ctx.session,
                     path,
-                    ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
+                    workingDir: deps.workingDir,
                 }),
             );
             if (read.kind === "not_found") return ok({ status: "file_not_found" as const, path });
@@ -252,7 +252,7 @@ export function createEditFileTool(deps: EditFileDeps) {
                 filesystem: deps.workspaceFilesystem,
                 mutator: deps.mutator,
                 session: ctx.session,
-                ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
+                workingDir: deps.workingDir,
                 invocationId: ctx.invocationId,
                 toolName: "edit_file",
                 scriptPath: path,
@@ -260,19 +260,15 @@ export function createEditFileTool(deps: EditFileDeps) {
                 sha256: scriptSha256(replaced.content),
             });
             const lines: readonly number[] | undefined = replaced.lines;
-            return ok(
-                withToolCallRecord(
-                    {
-                        status: "ok" as const,
-                        path: write.path,
-                        replacements: replaced.replacements,
-                        bytesWritten: write.bytesWritten,
-                        ...(lines === undefined ? {} : { lines }),
-                        ...(noted.status === "noted" ? { decision_record_noted: true as const } : {}),
-                    },
-                    noted.status === "noted" ? [write.record, noted.write] : [write.record],
-                ),
-            );
+            const result: EditFileOk = {
+                status: "ok",
+                path: write.path,
+                replacements: replaced.replacements,
+                bytesWritten: write.bytesWritten,
+                lines,
+            };
+            if (noted.status === "noted") result.decision_record_noted = true;
+            return ok(withToolCallRecord(result, noted.status === "noted" ? [write.record, noted.write] : [write.record]));
         },
         foldCallRecord: (records) => {
             for (const record of records) deps.mutator.recordWrite(record);

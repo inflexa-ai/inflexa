@@ -211,7 +211,7 @@ async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol
     const docs = res.value?.response?.docs ?? [];
     if (!Array.isArray(docs) || docs.length === 0) return null;
     const doc = docs[0];
-    if (!doc.marker_symbol || !doc.mgi_accession_id) return null;
+    if (doc === undefined || !doc.marker_symbol || !doc.mgi_accession_id) return null;
     return {
         mouseMarkerSymbol: String(doc.marker_symbol),
         mgiAccessionId: String(doc.mgi_accession_id),

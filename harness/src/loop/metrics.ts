@@ -152,8 +152,8 @@ export function recordChatCall(call: { readonly agentId: string; readonly respon
     const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens } = getInstruments();
     const attributes: Attributes = {
         agent_id: call.agentId,
-        ...(servedModelId === undefined ? {} : { model: servedModelId }),
-        ...(provider === undefined ? {} : { provider }),
+        model: servedModelId,
+        provider,
     };
     if (usage.inputTokens !== undefined) inputTokens.add(usage.inputTokens, attributes);
     if (usage.outputTokens !== undefined) outputTokens.add(usage.outputTokens, attributes);

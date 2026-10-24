@@ -34,7 +34,8 @@ describe("placeLeaderNames", () => {
         ];
         const placed = placeLeaderNames(names, { xs: [50, 52], ys: [50, 51], pointPx: 4 }, PLOT, ["right", "left"], 100, FRAME);
         expect(placed.every((name) => name !== undefined)).toBe(true);
-        const [first, second] = placed.map((name, index) => leaderNameBox(name!, names[index].text, PLOT, FRAME));
+        const [first, second] = placed.map((name, index) => leaderNameBox(name!, names[index]?.text ?? "", PLOT, FRAME));
+        if (first === undefined || second === undefined) throw new Error("the two names hold no box");
         expect(overlaps(first, second)).toBe(false);
     });
 
@@ -77,7 +78,7 @@ describe("nameAnchors", () => {
     /** True when no two names of one x cover each other, and each name that moved stays inside the plot. */
     function clear(ys: readonly number[]): boolean {
         const sorted = [...ys].sort((a, b) => a - b);
-        const apart = sorted.every((y, place) => place === 0 || y - sorted[place - 1] >= LINE - 1e-9);
+        const apart = sorted.every((y, place) => place === 0 || y - (sorted[place - 1] ?? Number.NaN) >= LINE - 1e-9);
         return apart && ys.every((y) => y === 50 || (y - LINE / 2 >= 0 && y + LINE / 2 <= 100));
     }
 

@@ -13,6 +13,8 @@
  *   const result = await withHost("chembl", () => chembl.getMechanism(id));
  */
 
+const DEFAULT_HOST_LIMIT = 4;
+
 const DEFAULT_LIMITS: Record<string, number> = {
     chembl: 4,
     openfda: 4,
@@ -32,7 +34,7 @@ const DEFAULT_LIMITS: Record<string, number> = {
     ema: 2,
     pubchem: 4,
     "annotation-llm": 4,
-    default: 4,
+    default: DEFAULT_HOST_LIMIT,
 };
 
 interface HostBudget {
@@ -46,7 +48,7 @@ const budgets = new Map<string, HostBudget>();
 function getBudget(host: string): HostBudget {
     let b = budgets.get(host);
     if (!b) {
-        b = { limit: DEFAULT_LIMITS[host] ?? DEFAULT_LIMITS.default, inUse: 0, queue: [] };
+        b = { limit: DEFAULT_LIMITS[host] ?? DEFAULT_HOST_LIMIT, inUse: 0, queue: [] };
         budgets.set(host, b);
     }
     return b;

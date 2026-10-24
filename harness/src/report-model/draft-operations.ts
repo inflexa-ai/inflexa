@@ -136,8 +136,7 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
     if (target === undefined) {
         return err({ reason: "unknown-target", detail: `no block holds the id ${operation.targetId}` });
     }
-    const containerPath = target.path.slice(0, -1);
-    const index = target.path[target.path.length - 1];
+    const { containerPath, index } = target;
 
     if (target.block.kind === "section") {
         if (!("title" in operation)) {
@@ -183,8 +182,7 @@ export function removeBlock(draft: DraftDocument, operation: RemoveOperation, sn
     if (target === undefined) {
         return err({ reason: "unknown-target", detail: `no block holds the id ${operation.targetId}` });
     }
-    const containerPath = target.path.slice(0, -1);
-    const index = target.path[target.path.length - 1];
+    const { containerPath, index } = target;
     return commit(removeAt(draft, containerPath, index), undefined, snapshot);
 }
 
@@ -219,7 +217,7 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
         if (movedBlock.kind === "section" && isPrefix(movedPath, destination.containerPath)) {
             return err({ reason: "cycle", detail: `the section ${operation.targetId} cannot move into its own subtree` });
         }
-        const afterRemove = removeAt(draft, movedPath.slice(0, -1), movedPath[movedPath.length - 1]);
+        const afterRemove = removeAt(draft, target.containerPath, target.index);
         // The removal shifts the sibling indices of the old parent. Thus the destination resolves again
         // against the reduced tree, and the fresh path and index address the correct place.
         return resolveDestination(afterRemove, operation.destination).andThen((landing): Result<DraftDocument, DraftRefusal> => {
@@ -233,6 +231,10 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
 export interface Located {
     block: DraftBlock;
     path: number[];
+    /** The path of the container that holds the block, empty when the container is the root. */
+    containerPath: number[];
+    /** The index of the block inside its container. */
+    index: number;
     /** The section that holds the block, or `undefined` when the block sits at the root. */
     parent?: DraftSectionBlock;
 }
@@ -260,8 +262,8 @@ function resolveDestination(document: DraftDocument, destination: DraftDestinati
         if (anchor === undefined) {
             return err({ reason: "unknown-target", detail: `no block holds the anchor id ${anchorId}` });
         }
-        const containerPath = anchor.path.slice(0, -1);
-        const anchorIndex = anchor.path[anchor.path.length - 1];
+        const containerPath = anchor.containerPath;
+        const anchorIndex = anchor.index;
         const parentIsRoot = containerPath.length === 0;
         if (parentId !== undefined && idAtPath(document, containerPath) !== parentId) {
             return err({ reason: "unknown-target", detail: `the parent ${parentId} does not hold the anchor ${anchorId}` });
@@ -337,11 +339,11 @@ export function locate(document: DraftDocument, id: string): Located | undefined
 }
 
 function locateInBlocks(blocks: DraftBlock[], id: string, prefix: number[], parent: DraftSectionBlock | undefined): Located | undefined {
-    for (let index = 0; index < blocks.length; index++) {
-        const block = blocks[index];
+    for (const [index, block] of blocks.entries()) {
         const path = [...prefix, index];
         if (block.id === id) {
-            return parent === undefined ? { block, path } : { block, path, parent };
+            const located: Located = { block, path, containerPath: prefix, index };
+            return parent === undefined ? located : { ...located, parent };
         }
         if (block.kind === "section") {
             const found = locateInBlocks(block.blocks, id, path, block);
@@ -374,7 +376,7 @@ function getChildren(document: DraftDocument, containerPath: number[]): DraftBlo
     let blocks: DraftBlock[] = document.sections;
     for (const index of containerPath) {
         const node = blocks[index];
-        if (node.kind !== "section") {
+        if (node === undefined || node.kind !== "section") {
             // A container path names a section at each step, thus this branch never runs.
             return [];
         }
@@ -394,9 +396,13 @@ function setChildren(document: DraftDocument, containerPath: number[], children:
 
 function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[] {
     const head = containerPath[0];
+    if (head === undefined) {
+        // setChildren splits off the root before it calls here, thus the path carries an index.
+        return blocks;
+    }
     const rest = containerPath.slice(1);
     const target = blocks[head];
-    if (target.kind !== "section") {
+    if (target === undefined || target.kind !== "section") {
         // A container path names a section at each step, thus this branch never runs.
         return blocks;
     }
@@ -463,6 +469,10 @@ function isPrefix(prefix: number[], path: number[]): boolean {
 /** Reduce a parse failure to a `malformed-block` refusal that names the first fault. */
 function malformed(error: z.ZodError): DraftRefusal {
     const issue = error.issues[0];
+    if (issue === undefined) {
+        // A ZodError carries at least one issue, thus this branch never runs.
+        return { reason: "malformed-block", detail: "the block does not match the draft grammar" };
+    }
     const location = issue.path.map((segment) => String(segment)).join(".");
     const detail = location.length > 0 ? `${location}: ${issue.message}` : issue.message;
     return { reason: "malformed-block", detail };

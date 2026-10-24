@@ -17,7 +17,7 @@ function arxivRecord(paper: ArxivPaper): CitationRecord {
         identifiers: { arxiv: identifier },
         title: paper.title,
         authors: paper.authors,
-        ...(year === undefined ? {} : { year }),
+        year,
         venue: "arXiv",
         url: paper.url,
     };

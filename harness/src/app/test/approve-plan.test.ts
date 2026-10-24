@@ -101,13 +101,15 @@ const input = ({ newestRunId = null, ...over }: Partial<Parameters<typeof approv
 });
 
 async function runRows(): Promise<Array<{ run_id: string; thread_id: string | null; status: string }>> {
-    const { rows } = await pool.query("SELECT run_id, thread_id, status FROM cortex_runs ORDER BY started_at, run_id");
+    const { rows } = await pool.query<{ run_id: string; thread_id: string | null; status: string }>(
+        "SELECT run_id, thread_id, status FROM cortex_runs ORDER BY started_at, run_id",
+    );
     return rows;
 }
 
 async function threadRowCount(): Promise<number> {
-    const { rows } = await pool.query("SELECT count(*)::int AS n FROM messages WHERE thread_id = $1", [THREAD_ID]);
-    return rows[0].n;
+    const { rows } = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM messages WHERE thread_id = $1", [THREAD_ID]);
+    return rows[0]?.n ?? 0;
 }
 
 describe("approvePlan", () => {
@@ -285,7 +287,7 @@ describe("approvePlan", () => {
 
         const refusal = (await approvePlan(depsOf(d), input()))._unsafeUnwrapErr();
 
-        expect(refusal).toMatchObject({ type: "launch_failed", cause: expect.objectContaining({ message: "launch boom" }) });
+        expect(refusal).toMatchObject({ type: "launch_failed", cause: { message: "launch boom" } });
         expect(d.events).toEqual([]);
         expect(await threadRowCount()).toBe(0);
     });

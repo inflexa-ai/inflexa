@@ -10,7 +10,7 @@ function contextFile(path: string, options: { format?: string; wrapper?: string;
         name: basenameOf(path),
         size: 1024,
         format: options.format ?? "unknown",
-        ...(options.wrapper ? { wrapper: options.wrapper } : {}),
+        wrapper: options.wrapper,
         companions: [],
         varValues: options.varValues ?? [],
     };

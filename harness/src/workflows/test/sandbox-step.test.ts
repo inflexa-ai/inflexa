@@ -219,7 +219,7 @@ function makeProvider(usage: ChatUsage | undefined): AgentChat {
     const reply: ChatResponse = {
         message: { role: "assistant", content: "done" },
         finishReason: "stop",
-        ...(usage ? { usage } : {}),
+        usage,
         requestedModelId: STEP_MODEL_ID,
     };
     return {
@@ -902,7 +902,7 @@ describe("sandbox-step lineage attestation", () => {
             },
         };
         return {
-            deps: { ...usageStepDeps(undefined), ...(args.logger ? { logger: args.logger } : {}), artifactRegistry },
+            deps: { ...usageStepDeps(undefined), logger: args.logger, artifactRegistry },
             syncCalls,
             order,
         };

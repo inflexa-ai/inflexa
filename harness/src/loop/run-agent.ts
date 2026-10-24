@@ -5,6 +5,7 @@ import {
     tool as aiTool,
     type FilePart,
     type FinishReason,
+    type JSONValue,
     type ToolSet,
     type TextPart,
     type ToolCallPart,
@@ -15,9 +16,11 @@ import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
-import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { UsageRecorder, LlmUsageRecord } from "../billing/usage-recorder.js";
 import type { CompactionPart } from "../contracts/chat-parts.js";
+import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
+import { isUnknownArray } from "../lib/unknown-array.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
@@ -67,7 +70,7 @@ import {
     withExcerpt,
     type ToolOutputStore,
 } from "./tool-output.js";
-import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
+import type { AgentDefinition, EmitFn, LoopMessage, RunStep } from "./types.js";
 
 export interface AgentFinish {
     readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
@@ -357,11 +360,11 @@ export function openLoop(
         sinkPending = false;
         givenCount = messages.length;
     };
-    const source: EventSource = {
+    const source: { agentId: string; callPath: readonly string[]; invocationId?: string } = {
         agentId: session.provenance.agentId ?? agent.id,
         callPath: session.provenance.callPath,
-        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
     };
+    if (opts.invocationId !== undefined) source.invocationId = opts.invocationId;
     const policy = opts.compaction;
     const viewOptions = { keepFirstTurn: policy?.keepFirstTurn === true };
     const viewOf = (): LoopMessage[] => (policy === undefined ? messages : conversationView(messages, viewOptions).messages);
@@ -473,30 +476,32 @@ export function openLoop(
         session,
         agentId: source.agentId,
         callPath: source.callPath,
-        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
+        invocationId: opts.invocationId,
         usageRecorder,
         logger: log,
         rollups: [usage, turnUsage],
     };
 
     /** The rollups this loop stamps on its finish — each absent when nothing reported. */
-    const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => ({
-        ...(hasReportedUsage(usage) ? { usage: { ...usage } } : {}),
-        ...(turnRoot && hasReportedUsage(turnUsage) ? { turnUsage: { ...turnUsage } } : {}),
-    });
+    const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => {
+        const rollups: { usage?: TokenUsageRollup; turnUsage?: TokenUsageRollup } = {};
+        if (hasReportedUsage(usage)) rollups.usage = { ...usage };
+        if (turnRoot && hasReportedUsage(turnUsage)) rollups.turnUsage = { ...turnUsage };
+        return rollups;
+    };
 
     /**
      * One model request over the view of the transcript. Token counters grow inside
      * the step body, so a replayed step (a stored reply) does not double-count.
      */
     const callModel = async (stepName: string, endsOnRequestRefusal: boolean): Promise<ChatResponse | { readonly refusal: RequestRefusal }> => {
-        const request: ChatRequest = {
+        const request: { -readonly [K in keyof ChatRequest]: ChatRequest[K] } = {
             system,
             messages: withPromptCacheBreakpoint(viewOf(), promptCache),
             tools: toolDefs,
-            ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
             ...reasoningField,
         };
+        if (opts.toolChoice !== undefined) request.toolChoice = opts.toolChoice;
         const chat = () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
         if (!endsOnRequestRefusal) {
             const reply = await resultStep(callStep)(stepName, chat);
@@ -825,7 +830,7 @@ export function openLoop(
                     messages,
                     finish: {
                         reason: reply.finishReason,
-                        ...(reply.rawFinishReason === undefined ? {} : { rawFinishReason: reply.rawFinishReason }),
+                        rawFinishReason: reply.rawFinishReason,
                         cappedOut: false,
                         truncationRecoveries,
                         ...finishUsage(),
@@ -934,21 +939,18 @@ export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting
     const reported = reply.usage;
     if (reported === undefined || !hasReportedUsage(reported)) return;
     const { session } = call;
-    void deliverNotice(
-        call.logger,
-        "UsageRecorder.record",
-        call.usageRecorder.record({
-            recordKey: recordKeyFor(session, call.invocationId, call.stepName),
-            agentId: call.agentId,
-            callPath: call.callPath,
-            scope: session.scope,
-            ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
-            ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
-            ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
-            ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
-            usage: reported,
-        }),
-    );
+    const record: { -readonly [K in keyof LlmUsageRecord]: LlmUsageRecord[K] } = {
+        recordKey: recordKeyFor(session, call.invocationId, call.stepName),
+        agentId: call.agentId,
+        callPath: call.callPath,
+        scope: session.scope,
+        usage: reported,
+    };
+    if (session.runFrame?.runId !== undefined) record.runId = session.runFrame.runId;
+    if (session.runFrame?.stepId !== undefined) record.stepId = session.runFrame.stepId;
+    if (reply.requestedModelId !== undefined) record.requestedModelId = reply.requestedModelId;
+    if (reply.servedModelId !== undefined) record.servedModelId = reply.servedModelId;
+    void deliverNotice(call.logger, "UsageRecorder.record", call.usageRecorder.record(record));
 }
 
 /**
@@ -1288,16 +1290,25 @@ async function cutLongResult(result: ToolResultPart, cut: ResultCut, stepName: s
     const { session } = cut;
     const ref = toolOutputRef(recordKeyFor(session, cut.invocationId, stepName));
     const content = keptTextOf(text);
-    const put = await cut.store.put({
+    const kept: {
+        analysisId: string;
+        ref: string;
+        toolName: string;
+        toolCallId: string;
+        content: string;
+        totalLength: number;
+        threadId?: string;
+    } = {
         analysisId: session.scope.analysisId,
         ref,
         toolName: result.toolName,
         toolCallId: result.toolCallId,
-        // A run session carries the thread of the chat that started the run, but a run belongs to its analysis.
-        ...(session.runFrame === undefined && session.scope.threadId !== undefined ? { threadId: session.scope.threadId } : {}),
         content,
         totalLength: text.length,
-    });
+    };
+    // A run session carries the thread of the chat that started the run, but a run belongs to its analysis.
+    if (session.runFrame === undefined && session.scope.threadId !== undefined) kept.threadId = session.scope.threadId;
+    const put = await cut.store.put(kept);
     if (put.isErr()) {
         cut.log.warn("tool output not kept", { toolName: result.toolName, toolCallId: result.toolCallId, ref, errorType: put.error.type });
     }
@@ -1354,7 +1365,7 @@ async function execute(
         const detail = computeResultDetail(tool, input, output.value, encoding.log);
         const record = readToolCallRecord(output.value);
         const result = successResult(tu, output.value, encoding);
-        return { result, ...(detail === undefined ? {} : { detail }), ...(record === undefined ? {} : { record }) };
+        return { result, detail, record };
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
         if (isAskRejected(err)) return { result: deniedResult(tu, err.feedback) };
@@ -1393,8 +1404,19 @@ function modeledToolError(failure: unknown): ToolError | undefined {
  * NUL in an object KEY would still reach the row, but keys come from tool result
  * types rather than scanned bytes, so nothing produces one.
  */
-function jsonValue(value: unknown) {
-    return JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
+function jsonValue(value: unknown): JSONValue {
+    // The stringify/parse round trip holds only JSON values, so the guard never
+    // refuses; it moves the parser's `any` out of the tool-result field.
+    const serialized: unknown = JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
+    if (!isJsonValue(serialized)) throw new Error("the JSON round trip of a tool result produced a non-JSON value");
+    return serialized;
+}
+
+function isJsonValue(value: unknown): value is JSONValue {
+    if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+    if (isUnknownArray(value)) return value.every(isJsonValue);
+    if (typeof value === "object") return Object.values(value).every(isJsonValue);
+    return false;
 }
 
 /**

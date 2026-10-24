@@ -48,12 +48,17 @@ describe("knowledge_template with a binding", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S2" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient(answers);
-        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, ...(bound ? { binding: bound } : {}) });
+        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, binding: bound });
         return { tool, workingDir, calls: fake.calls };
     }
 
+    function asRecord(value: unknown): Record<string, unknown> {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("the decision record is no object");
+        return { ...value };
+    }
+
     async function recordOf(workingDir: string): Promise<Record<string, unknown>> {
-        return JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
+        return asRecord(JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8")));
     }
 
     it("rides the bound slots into the render request when the model sends no value for them", async () => {
@@ -181,7 +186,9 @@ describe("knowledge_template with a binding", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
         if (!("match" in out) || out.match !== "rejected") throw new Error("expected a refusal");
-        expect(out.issues).toEqual([{ field: "template", message: expect.stringContaining(TEMPLATE), permitted: [TEMPLATE] }]);
+        const issue = out.issues.find((candidate) => candidate.field === "template");
+        expect(issue?.message).toContain(TEMPLATE);
+        expect(issue?.permitted).toEqual([TEMPLATE]);
         expect(calls.render).toHaveLength(0);
     });
 

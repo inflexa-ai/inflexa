@@ -7,7 +7,15 @@ import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
+import {
+    CHART_SOURCE_MEMBER,
+    deriveChartOption,
+    deriveChartRender,
+    type ChartDataSource,
+    type ChartOpts,
+    type ChartRow,
+    type EchartOption,
+} from "../../chart.js";
 import { exportOption } from "../../chart-renderers.js";
 import { CHART_TOOLBOX_SOURCE, pageChartOption } from "../../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../../design.js";
@@ -59,6 +67,12 @@ function seriesOf(option: EchartOption): EchartOption[] {
     return option.series as EchartOption[];
 }
 
+function firstOf<T>(items: readonly T[], label: string): T {
+    const [first] = items;
+    if (first === undefined) throw new Error(`no ${label}`);
+    return first;
+}
+
 /** The upper end of the y axis of one option. */
 function asTop(option: EchartOption): number {
     return (option.yAxis as EchartOption).max as number;
@@ -80,6 +94,7 @@ describe("the Manhattan figure", () => {
     it("names each chromosome under the middle of its points, and hides the position ticks", () => {
         const option = derive();
         const names = seriesOf(option)[3];
+        if (names === undefined) throw new Error("the option holds no chromosome-name series");
         expect(names.silent).toBe(true);
         expect(names.symbolSize).toBe(0);
         // The runtime measures the names, thus a name that overlaps the one before it hides at a narrow width.
@@ -108,7 +123,9 @@ describe("the Manhattan figure", () => {
         ]);
         // The label sits over the line at its right end, inside the plot and clear of the chromosome names
         // under the axis.
-        expect((lines[0].label as EchartOption).position).toBe("insideEndTop");
+        const genomeLine = lines[0];
+        if (genomeLine === undefined) throw new Error("the genome-wide line drew no mark");
+        expect((genomeLine.label as EchartOption).position).toBe("insideEndTop");
     });
 
     it("keeps the name of a lead variant at the right end clear of the label of the genome-wide line", () => {
@@ -117,12 +134,11 @@ describe("the Manhattan figure", () => {
         const option = derive(block(), rows);
         const names = seriesOf(option).find((entry) => entry.name === POINT_NAMES);
         const lead = ((names?.data ?? []) as EchartOption[]).find((item) => item.name === "rs99");
-        expect(lead).toBeDefined();
+        if (lead === undefined) throw new Error("the lead rs99 drew no point");
         // The page frame reads a window 1280 pixels wide, thus the runtime hides a lead name that still overlaps
         // another on a narrower window.
         expect(names?.labelLayout).toEqual({ hideOverlap: true });
-        const leadValue = lead?.value as number[];
-        const [x, y] = leadValue;
+        const [x, y] = lead.value as [number, number];
         const box = guideLabelBox(-Math.log10(5e-8), { min: 1082207, max: high }, asTop(option), "p 5 × 10⁻⁸", PAGE_PLOT_FRAME);
         expect(x >= box.left && x <= box.right && y >= box.bottom && y <= box.top).toBe(false);
     });
@@ -186,7 +202,7 @@ describe("the Manhattan figure", () => {
         const names = seriesOf(derive(block(), rows)).find((entry) => entry.name === POINT_NAMES) as EchartOption;
         const items = names.data as EchartOption[];
         expect(items.map((item) => (item.label as EchartOption).position)).toEqual(["top", "top"]);
-        const leaders = (names.markLine as EchartOption).data as Array<Array<{ coord: number[] }>>;
+        const leaders = (names.markLine as EchartOption).data as Array<[{ coord: number[] }, { coord: number[] }]>;
         expect(leaders.map((pair) => pair[0].coord)).toEqual([
             [274000000, -Math.log10(4.4e-15)],
             [49124175, -Math.log10(2.123e-13)],
@@ -198,7 +214,9 @@ describe("the Manhattan figure", () => {
     it("places the name of a peak at the top of the axis beside the peak", () => {
         const names = seriesOf(derive()).find((entry) => entry.name === POINT_NAMES) as EchartOption;
         // The tallest peak reaches the end of the p axis, thus its name finds no room over it.
-        expect(((names.data as EchartOption[])[0].label as EchartOption).position).toBe("right");
+        const [tallest] = names.data as EchartOption[];
+        if (tallest === undefined) throw new Error("the option holds no lead name");
+        expect((tallest.label as EchartOption).position).toBe("right");
     });
 
     it("gives the same colors, chromosome names, and lead names to a table sorted by p as to the table sorted by position", () => {
@@ -212,7 +230,7 @@ describe("the Manhattan figure", () => {
             Object.fromEntries(
                 seriesOf(option)
                     .slice(0, 3)
-                    .map((entry) => [entry.name, (entry.itemStyle as EchartOption).color]),
+                    .map((entry): [string, unknown] => [String(entry.name), (entry.itemStyle as EchartOption).color]),
             );
         const dataOf = (option: EchartOption, name: string): unknown => seriesOf(option).find((entry) => entry.name === name)?.data;
         expect(colors(byP)).toEqual(colors(byPosition));
@@ -238,7 +256,7 @@ describe("the Manhattan figure", () => {
         const colors = Object.fromEntries(
             seriesOf(option)
                 .slice(0, 7)
-                .map((entry) => [entry.name, (entry.itemStyle as EchartOption).color]),
+                .map((entry): [string, unknown] => [String(entry.name), (entry.itemStyle as EchartOption).color]),
         );
         const [blue, gray] = MANHATTAN_COLORS;
         expect(colors).toEqual({ "1": blue, "2": gray, "10": blue, X: gray, Y: blue, MT: gray, Un: blue });
@@ -250,7 +268,7 @@ describe("the Manhattan figure", () => {
         const triangles = seriesOf(option).filter((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
         expect(triangles.length).toBe(1);
         const top = -Math.log10(4.4e-15);
-        expect(triangles[0].data).toEqual([{ name: "rsZero", value: [300000001, top], itemStyle: { color: MANHATTAN_COLORS[1] } }]);
+        expect(firstOf(triangles, "triangle").data).toEqual([{ name: "rsZero", value: [300000001, top], itemStyle: { color: MANHATTAN_COLORS[1] } }]);
         expect((option.yAxis as EchartOption).max as number).toBeGreaterThanOrEqual(top);
         expect(shownLabels(option)).toEqual(["rsZero", "rs657452"]);
     });
@@ -343,7 +361,7 @@ describe("the Manhattan text at each size", () => {
     for (const [kind, render, frame] of renders) {
         it(`prints no lead name over another lead name at the ${kind} size`, () => {
             const boxes = dataOf(render, POINT_NAMES).map((item) => {
-                const [nameX, nameY] = item.value as number[];
+                const [nameX, nameY] = item.value as [number, number];
                 const placed: LeaderName = { x: nameX, y: nameY, side: (item.label as EchartOption).position as LeaderName["side"] };
                 return leaderNameBox(placed, String(item.name), plot, frame);
             });
@@ -356,13 +374,17 @@ describe("the Manhattan text at each size", () => {
         it(`prints no chromosome name over another chromosome name at the ${kind} size`, () => {
             const toPx = (value: number): number => ((value - plot.x.min) / (plot.x.max - plot.x.min)) * frame.widthPx;
             const spans = dataOf(render, "Chromosome names").map((item) => {
-                const middle = toPx((item.value as number[])[0]);
+                const middle = toPx((item.value as [number, number])[0]);
                 const half = textWidthPx(String(item.name), frame.textPx) / 2;
                 return [middle - half, middle + half] as const;
             });
             expect(spans.length).toBeGreaterThan(0);
             for (const [index, [start]] of spans.entries()) {
-                if (index > 0) expect(start - spans[index - 1][1]).toBeGreaterThanOrEqual(MANHATTAN_NAME_GAP_SHARE * frame.textPx);
+                if (index > 0) {
+                    const previous = spans[index - 1];
+                    if (previous === undefined) throw new Error("the spans list lost an entry");
+                    expect(start - previous[1]).toBeGreaterThanOrEqual(MANHATTAN_NAME_GAP_SHARE * frame.textPx);
+                }
             }
         });
     }
@@ -391,7 +413,7 @@ describe("the dense Manhattan plot", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
+    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
         payload: { columns: string[]; rows: ChartRow[] },
         source: ChartDataSource["series"][number],
         rule: unknown,
@@ -406,10 +428,11 @@ describe("the dense Manhattan plot", () => {
         expect(source.series.length).toBe(22);
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
-            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
+            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index]?.data));
         }
         // The chromosome names ride the page option after the points, thus the page draws them over the payload points.
         const names = seriesOf(render.option)[22];
+        if (names === undefined) throw new Error("the option holds no chromosome-name series");
         expect((names.data as unknown[]).length).toBe(22);
     });
 });
@@ -419,7 +442,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     const ZOOM_IDS = { x: "\0_ec_\0toolbox-dataZoom_xAxis0", y: "\0_ec_\0toolbox-dataZoom_yAxis0" } as const;
 
     /** The page functions of the bootstrap: the binding of each named page function, and the zoom handler that the bootstrap attaches after the init. */
-    const page = new Function(`${CHART_TOOLBOX_SOURCE}\nreturn { bind: reportBindToolbox, watch: reportWatchZoom };`)() as {
+    const page = new Function(`${CHART_TOOLBOX_SOURCE}\nreturn { bind: reportBindToolbox, watch: reportWatchZoom };`).call(undefined) as {
         readonly bind: (option: EchartOption) => void;
         readonly watch: (chart: echarts.ECharts, option: EchartOption) => void;
     };
@@ -483,6 +506,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
             }
             const [left, bottom] = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [window.x[0], window.y[0]]);
             const [right, top] = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [window.x[1], window.y[1]]);
+            if (left === undefined || bottom === undefined || right === undefined || top === undefined) throw new Error("the chart gave no pixel window");
             const texts: PlotTexts = { under: [], left: [] };
             for (const element of chart.getZr().storage.getDisplayList(true)) {
                 const text: unknown = Reflect.get(element.style, "text");
@@ -507,7 +531,9 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
 
     it("draws the chromosome names under the plot before a zoom", () => {
         const { under } = textsAfter([]);
-        expect(under).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        expect(under).toContain("1");
+        expect(under).toContain("2");
+        expect(under).toContain("3");
         expect(under.filter((text) => POSITION.test(text))).toEqual([]);
     });
 
@@ -521,7 +547,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     ];
     for (const [description, window] of windows) {
         it(`names chromosome 2 under the plot after a zoom to ${description}`, () => {
-            expect(textsAfter([window]).under).toEqual(expect.arrayContaining([expect.stringMatching(CHROMOSOME_TWO)]));
+            expect(textsAfter([window]).under.filter((text) => CHROMOSOME_TWO.test(text)).length).toBeGreaterThan(0);
         });
     }
 
@@ -529,19 +555,23 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
         // Chromosome 2 starts at the last drawn position of chromosome 1, 248.9 Mb, and chromosome 3 starts at 491 Mb.
         const { under } = textsAfter([{ x: [100e6, 600e6], y: [0, 15] }]);
         expect(under.filter((text) => POSITION.test(text))).toEqual(["chr1: 200 Mb", "chr2: 51.1 Mb", "chr2: 151.1 Mb", "chr3: 9 Mb"]);
-        expect(under).not.toEqual(expect.arrayContaining([expect.stringMatching(/^\d$/)]));
+        expect(under.filter((text) => /^\d$/.test(text))).toEqual([]);
     });
 
     it("draws the chromosome names again and hides the positions after the undo of the zoom", () => {
         const { under } = textsAfter([{ x: [255e6, 300e6], y: [5, 15] }, "undo"]);
-        expect(under).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        expect(under).toContain("1");
+        expect(under).toContain("2");
+        expect(under).toContain("3");
         expect(under.filter((text) => POSITION.test(text))).toEqual([]);
     });
 
     it("draws the chromosome names after the restore of the toolbox, and prints the positions again at the next zoom", () => {
         const zoom: ZoomWindow = { x: [255e6, 300e6], y: [5, 15] };
         const restored = textsAfter([zoom, "restore"]).under;
-        expect(restored).toEqual(expect.arrayContaining(["1", "2", "3"]));
+        expect(restored).toContain("1");
+        expect(restored).toContain("2");
+        expect(restored).toContain("3");
         expect(restored.filter((text) => POSITION.test(text))).toEqual([]);
         expect(textsAfter([zoom, "restore", zoom]).under.filter((text) => POSITION.test(text)).length).toBeGreaterThan(0);
     });
@@ -553,6 +583,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
         expect(zoomed).not.toContain("5.3");
         expect(zoomed).not.toContain("12.7");
         const full = textsAfter([{ x: [100e6, 600e6], y: [5.3, 12.7] }, "undo"]).left;
-        expect(full).toEqual(expect.arrayContaining(["0", String(asTop(derive()))]));
+        expect(full).toContain("0");
+        expect(full).toContain(String(asTop(derive())));
     });
 });

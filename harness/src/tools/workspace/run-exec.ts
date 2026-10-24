@@ -28,9 +28,9 @@ export function runSandboxExec(args: RunExecArgs): Promise<ExecResult> {
         args.sandbox,
         {
             command: args.command,
-            ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
-            ...(args.env === undefined ? {} : { env: args.env }),
-            ...(args.timeoutSeconds === undefined ? {} : { timeoutSeconds: args.timeoutSeconds }),
+            cwd: args.cwd,
+            env: args.env,
+            timeoutSeconds: args.timeoutSeconds,
         },
         (event) => args.emit({ type: "data-sandbox-event", data: { event } }),
         args.deadlineMs,

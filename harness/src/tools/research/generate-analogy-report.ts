@@ -175,7 +175,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
     const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
     const ncbi = createNcbiTools(deps.bioKeys);
     const searchTools: readonly Tool[] = [
-        createSearchSemanticScholarTool({ ...(deps.bioKeys.semanticScholar === undefined ? {} : { apiKey: deps.bioKeys.semanticScholar }) }),
+        createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
         searchArxivTool,
         createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
         ncbi.pubmed,

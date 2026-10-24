@@ -452,12 +452,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
-                        ...(spec.extraEnv ?? {}),
+                        ...spec.extraEnv,
                     }).map(([k, v]) => `${k}=${v}`);
 
                     const createOpts: Docker.ContainerCreateOptions = {
                         name: sandboxId,
-                        ...(config.platform !== undefined && { platform: config.platform }),
                         Image: image,
                         Env: env,
                         User: SANDBOX_ROOT_USER,
@@ -490,6 +489,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             AutoRemove: false,
                         },
                     };
+                    if (config.platform !== undefined) createOpts.platform = config.platform;
 
                     const sandbox = await createOrAdopt(docker, createOpts, sandboxId, spec.childWorkflowId, createFailed, logger);
                     if (sandbox.isErr()) return err(sandbox.error);

@@ -16,14 +16,15 @@ interface ToolOutputRow {
 }
 
 function toKeptToolOutput(row: ToolOutputRow): KeptToolOutput {
+    const threadIdField = row.thread_id === null ? undefined : { threadId: row.thread_id };
     return {
         analysisId: row.analysis_id,
         ref: row.ref,
         toolName: row.tool_name,
         toolCallId: row.tool_call_id,
-        ...(row.thread_id === null ? {} : { threadId: row.thread_id }),
         content: row.content,
         totalLength: row.total_length,
+        ...threadIdField,
     };
 }
 

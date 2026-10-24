@@ -39,14 +39,14 @@ function crossrefRecord(item: z.infer<typeof CrossrefItemSchema>, index: number)
     return {
         source: "crossref",
         sourceRecordId,
-        identifiers: { ...(doi === undefined ? {} : { doi }) },
-        ...(title === undefined ? {} : { title }),
-        ...(authors === undefined || authors.length === 0 ? {} : { authors }),
-        ...(dateParts?.[0] === undefined ? {} : { year: parseYear(dateParts[0])! }),
-        ...(venue === undefined ? {} : { venue }),
-        ...(item.volume === undefined ? {} : { volume: item.volume }),
-        ...(item.page === undefined ? {} : { firstPage: item.page.split(/[-–]/)[0] }),
-        ...(item.URL === undefined ? {} : { url: item.URL }),
+        identifiers: { doi },
+        title,
+        authors: authors !== undefined && authors.length > 0 ? authors : undefined,
+        year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0])!,
+        venue,
+        volume: item.volume,
+        firstPage: item.page?.split(/[-–]/)[0],
+        url: item.URL,
     };
 }
 

@@ -152,14 +152,14 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
                     {
                         query: input.query!,
                         limit: input.limit,
-                        ...(input.agency ? { agency: input.agency } : {}),
-                        ...(input.authorizationStatus ? { authorizationStatus: input.authorizationStatus } : {}),
-                        ...(input.moleculeType ? { moleculeType: input.moleculeType } : {}),
-                        ...(input.hasDesignation ? { hasDesignation: input.hasDesignation } : {}),
-                        ...(input.isOrphan === undefined ? {} : { isOrphan: input.isOrphan }),
-                        ...(input.minAuthorizationDate ? { minAuthorizationDate: input.minAuthorizationDate } : {}),
-                        ...(input.maxAuthorizationDate ? { maxAuthorizationDate: input.maxAuthorizationDate } : {}),
-                        ...(input.amassId ? { amassId: input.amassId } : {}),
+                        agency: input.agency ? input.agency : undefined,
+                        authorizationStatus: input.authorizationStatus ? input.authorizationStatus : undefined,
+                        moleculeType: input.moleculeType ? input.moleculeType : undefined,
+                        hasDesignation: input.hasDesignation ? input.hasDesignation : undefined,
+                        isOrphan: input.isOrphan,
+                        minAuthorizationDate: input.minAuthorizationDate,
+                        maxAuthorizationDate: input.maxAuthorizationDate,
+                        amassId: input.amassId ? input.amassId : undefined,
                     },
                     headers,
                 );
@@ -177,10 +177,10 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             if (amassId === undefined) {
                 const ids = await lookupRegulatoryIds(
                     {
-                        ...(input.fdaApplicationNumber === undefined ? {} : { fdaApplicationNumber: input.fdaApplicationNumber }),
-                        ...(input.emaProductNumber === undefined ? {} : { emaProductNumber: input.emaProductNumber }),
-                        ...(input.ndc === undefined ? {} : { ndc: input.ndc }),
-                        ...(input.splSetId === undefined ? {} : { splSetId: input.splSetId }),
+                        fdaApplicationNumber: input.fdaApplicationNumber,
+                        emaProductNumber: input.emaProductNumber,
+                        ndc: input.ndc,
+                        splSetId: input.splSetId,
                     },
                     headers,
                 );

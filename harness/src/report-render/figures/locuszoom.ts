@@ -163,14 +163,14 @@ const GENE_GAP_CHARACTERS = 1;
 const POSITION_UNIT = /\s*\((bp|base pairs|kb|Mb)\)\s*$/i;
 
 /** The columns of one locuszoom block. */
-interface LocusColumns {
+type LocusColumns = {
     readonly position: string;
     readonly p: string;
     readonly r2: string;
     readonly label?: string;
     readonly rate?: string;
     readonly chromosome?: string;
-}
+};
 
 /** One gene of the window: its clipped span, its name, the center of its name, and its lane. */
 interface Gene {
@@ -191,7 +191,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
         return err(
             chartProblem(
                 context.blockId,
-                `The locuszoom reads the "${position}" column as a position in base pairs, and row ${faulty + 1} holds "${String(rows[faulty][position] ?? "")}", which is not a number.`,
+                `The locuszoom reads the "${position}" column as a position in base pairs, and row ${faulty + 1} holds "${String(rows[faulty]?.[position] ?? "")}", which is not a number.`,
             ),
         );
     }
@@ -231,7 +231,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
 
     const composition: ChartComposition = {
         series: [
-            { form: "scatter", encoding: { x: position, y: { column: p, transform: "neg_log10" }, color: r2, ...(label !== undefined ? { label } : {}) } },
+            { form: "scatter", encoding: { x: position, y: { column: p, transform: "neg_log10" }, color: r2, label } },
             ...(rate !== undefined ? [{ form: "line" as const, name: RECOMBINATION_NAME, encoding: { x: position, y: rate } }] : []),
         ],
         annotations: [{ kind: "reference-line", axis: "y", value: line }],
@@ -243,17 +243,17 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
     const [points, recombination] = seriesOf(option);
 
     const nameOf = (index: number): string | undefined => {
-        const cell = label === undefined ? undefined : rows[index][label];
+        const cell = label === undefined ? undefined : rows[index]?.[label];
         return cell === undefined || cell === null || String(cell).trim() === "" ? undefined : String(cell);
     };
     const item = (index: number, y: number): EchartOption => {
         const name = nameOf(index);
-        return { ...(name !== undefined ? { name } : {}), value: [xs[index] ?? 0, y] };
+        return { name, value: [xs[index] ?? 0, y] };
     };
     const missing: EchartOption[] = [];
     for (let index = 0; index < rows.length; index += 1) {
         const y = finite[index];
-        if (r2s[index] === null && y !== null) missing.push(item(index, y));
+        if (r2s[index] === null && y !== null && y !== undefined) missing.push(item(index, y));
     }
     const rated = rate === undefined ? [] : ratesInOrder(rows, xs, rate);
     const rateTop = niceCeiling(largest(rated.map(([, value]) => value)) ?? 0);
@@ -294,7 +294,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
               ]
             : []),
         ...(missing.length > 0 ? [missingSeries(missing)] : []),
-        ...(zeroRows.length > 0 ? [zeroSeries(zeroRows.map((index) => ({ ...item(index, zeroY), itemStyle: { color: binColor(r2s[index]) } })))] : []),
+        ...(zeroRows.length > 0 ? [zeroSeries(zeroRows.map((index) => ({ ...item(index, zeroY), itemStyle: { color: binColor(r2s[index] ?? null) } })))] : []),
         tickSeries(window),
         guideSeries(guideText(MANHATTAN_P_THRESHOLD), line, { ys, xs, rated, top, rateTop, window, layout }),
         ...(lead !== undefined ? [leadSeries(item(lead, ys[lead] ?? 0))] : []),
@@ -332,16 +332,19 @@ function locusColumns(block: ChartBlock, rows: readonly ChartRow[], context: Fig
             );
         }
     }
+    const metric = encoding.metric;
+    const group = encoding.group;
     const found: LocusColumns = {
         position: channelColumn(x.value),
         // The figure applies the transform of the p column itself, as the Manhattan figure does.
         p: channelColumn(y.value),
         r2: channelColumn(encoding.color),
-        ...(encoding.label !== undefined ? { label: encoding.label } : {}),
-        ...(encoding.metric !== undefined ? { rate: channelColumn(encoding.metric) } : {}),
-        ...(encoding.group !== undefined ? { chromosome: channelColumn(encoding.group) } : {}),
+        label: encoding.label,
+        rate: metric === undefined ? undefined : channelColumn(metric),
+        chromosome: group === undefined ? undefined : channelColumn(group),
     };
     for (const column of Object.values(found)) {
+        if (column === undefined) continue;
         if (rows.length > 0 && !columnPresent(column, rows, context.columns)) {
             return err(chartProblem(context.blockId, `The column "${column}" is absent from every row.`));
         }
@@ -371,7 +374,7 @@ function leadRow(xs: readonly (number | null)[], finite: readonly (number | null
     let best = Number.NEGATIVE_INFINITY;
     for (let index = 0; index < finite.length; index += 1) {
         const rank = zeros.has(index) ? Number.POSITIVE_INFINITY : finite[index];
-        if (rank === null) continue;
+        if (rank === null || rank === undefined) continue;
         if (lead === undefined || rank > best || (rank === best && (xs[index] ?? 0) < (xs[lead] ?? 0))) {
             lead = index;
             best = rank;
@@ -391,7 +394,7 @@ function ratesInOrder(rows: readonly ChartRow[], xs: readonly (number | null)[],
     for (const [index, row] of rows.entries()) {
         const x = xs[index];
         const value = toNumber(row[rate]);
-        if (x !== null && value !== null) pairs.push([x, value]);
+        if (x !== null && x !== undefined && value !== null) pairs.push([x, value]);
     }
     return pairs.sort((a, b) => a[0] - b[0]);
 }
@@ -433,15 +436,19 @@ function guideStart(text: string, line: number, room: GuideRoom): number {
     const blocked: Array<[number, number]> = [];
     for (const [index, x] of room.xs.entries()) {
         const y = room.ys[index];
-        if (x !== null && y !== null && y + reach >= low && y - reach <= high) blocked.push([x - half, x + half]);
+        if (x !== null && x !== undefined && y !== null && y !== undefined && y + reach >= low && y - reach <= high) blocked.push([x - half, x + half]);
     }
     if (room.rateTop > 0) {
         const rateLow = (low / room.top) * room.rateTop;
         const rateHigh = (high / room.top) * room.rateTop;
-        for (let index = 1; index < room.rated.length; index += 1) {
-            const [x1, r1] = room.rated[index - 1];
-            const [x2, r2] = room.rated[index];
-            if (Math.max(r1, r2) >= rateLow && Math.min(r1, r2) <= rateHigh) blocked.push([x1, x2]);
+        let previous: readonly [number, number] | undefined;
+        for (const pair of room.rated) {
+            if (previous !== undefined) {
+                const [x1, r1] = previous;
+                const [x2, r2] = pair;
+                if (Math.max(r1, r2) >= rateLow && Math.min(r1, r2) <= rateHigh) blocked.push([x1, x2]);
+            }
+            previous = pair;
         }
     }
     const marks = union(blocked);
@@ -477,13 +484,15 @@ function union(intervals: Array<[number, number]>): Array<[number, number]> {
 /** The length that some disjoint intervals in ascending order cover inside a span, read with two binary searches. */
 function coverage(marks: ReadonlyArray<readonly [number, number]>): (from: number, to: number) => number {
     const before = [0];
-    for (const [start, end] of marks) before.push(before[before.length - 1] + end - start);
+    for (const [start, end] of marks) before.push((before[before.length - 1] ?? 0) + end - start);
     const firstEndingAfter = (x: number): number => {
         let low = 0;
         let high = marks.length;
         while (low < high) {
             const middle = (low + high) >> 1;
-            if (marks[middle][1] > x) high = middle;
+            const mark = marks[middle];
+            if (mark === undefined) break;
+            if (mark[1] > x) high = middle;
             else low = middle + 1;
         }
         return low;
@@ -491,9 +500,15 @@ function coverage(marks: ReadonlyArray<readonly [number, number]>): (from: numbe
     return (from, to) => {
         const first = firstEndingAfter(from);
         let last = firstEndingAfter(to);
-        if (last < marks.length && marks[last][0] < to) last += 1;
+        const next = marks[last];
+        if (next !== undefined && next[0] < to) last += 1;
         if (first >= last) return 0;
-        return before[last] - before[first] - Math.max(0, from - marks[first][0]) - Math.max(0, marks[last - 1][1] - to);
+        const startMark = marks[first];
+        const endMark = marks[last - 1];
+        const startSum = before[first];
+        const endSum = before[last];
+        if (startMark === undefined || endMark === undefined || startSum === undefined || endSum === undefined) return 0;
+        return endSum - startSum - Math.max(0, from - startMark[0]) - Math.max(0, endMark[1] - to);
     };
 }
 
@@ -545,8 +560,13 @@ function positionWindow(xs: readonly (number | null)[]): PositionWindow {
     }
     const from = low ?? 0;
     const to = high ?? 0;
-    const span = Math.max(to - from, POSITION_STEPS[0]);
-    const step = POSITION_STEPS.find((candidate) => span / candidate <= POSITION_TICK_COUNT) ?? POSITION_STEPS[POSITION_STEPS.length - 1];
+    const smallest = POSITION_STEPS[0];
+    const widest = POSITION_STEPS[POSITION_STEPS.length - 1];
+    if (smallest === undefined || widest === undefined) {
+        return { min: from, max: Math.max(to, from + 1), step: 1 };
+    }
+    const span = Math.max(to - from, smallest);
+    const step = POSITION_STEPS.find((candidate) => span / candidate <= POSITION_TICK_COUNT) ?? widest;
     return { min: from, max: Math.max(to, from + 1), step };
 }
 
@@ -599,7 +619,9 @@ function decimalsOf(step: number): number {
 /** The color of the bin of one r², or the gray of a missing r². */
 function binColor(r2: number | null): string {
     if (r2 === null) return LD_MISSING_COLOR;
-    return (LD_BINS.find((bin, place) => r2 >= bin.low && (r2 < bin.high || place === LD_BINS.length - 1)) ?? LD_BINS[0]).color;
+    const first = LD_BINS[0];
+    if (first === undefined) return LD_MISSING_COLOR;
+    return (LD_BINS.find((bin, place) => r2 >= bin.low && (r2 < bin.high || place === LD_BINS.length - 1)) ?? first).color;
 }
 
 /**
@@ -613,7 +635,8 @@ function binColor(r2: number | null): string {
 function ldLegend(): EchartOption {
     const bins = [...LD_BINS].reverse().map((bin, place) => ({
         gte: bin.low,
-        ...(place === 0 ? { lte: bin.high } : { lt: bin.high }),
+        lte: place === 0 ? bin.high : undefined,
+        lt: place === 0 ? undefined : bin.high,
         label: `${bin.low}–${bin.high}`,
         color: bin.color,
     }));

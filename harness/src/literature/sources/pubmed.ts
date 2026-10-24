@@ -90,38 +90,62 @@ const xmlParser = new XMLParser({
     parseTagValue: false,
 });
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function parseXmlRecord(xml: string): Record<string, unknown> | undefined {
+    const parsed: unknown = xmlParser.parse(xml);
+    return isRecord(parsed) ? parsed : undefined;
+}
+
+function childRecord(value: unknown, key: string): Record<string, unknown> | undefined {
+    if (!isRecord(value)) return undefined;
+    const child = value[key];
+    return isRecord(child) ? child : undefined;
+}
+
+function recordList(value: unknown): Record<string, unknown>[] {
+    if (value === undefined) return [];
+    if (Array.isArray(value)) return value.filter(isRecord);
+    return isRecord(value) ? [value] : [];
+}
+
 interface DocSumItem {
     "@_Name"?: string;
     "#text"?: string;
     Item?: DocSumItem | DocSumItem[];
 }
 
-interface DocSum {
-    Id?: string;
-    Item?: DocSumItem | DocSumItem[];
+function isDocSumItem(value: unknown): value is DocSumItem {
+    return typeof value === "object" && value !== null;
 }
 
-function getItemValue(items: DocSumItem | DocSumItem[] | undefined, name: string): string {
-    if (items === undefined) return "";
-    const item = (Array.isArray(items) ? items : [items]).find((candidate) => candidate["@_Name"] === name);
+function itemOf(value: unknown): DocSumItem[] {
+    if (value === undefined) return [];
+    return (Array.isArray(value) ? value : [value]).filter(isDocSumItem);
+}
+
+function getItemValue(items: unknown, name: string): string {
+    const item = itemOf(items).find((candidate) => candidate["@_Name"] === name);
     return item?.["#text"] ?? "";
 }
 
-function getAuthorsFromDocSum(items: DocSumItem | DocSumItem[] | undefined): string {
-    if (items === undefined) return "";
-    const authorList = (Array.isArray(items) ? items : [items]).find((item) => item["@_Name"] === "AuthorList");
+function getAuthorsFromDocSum(items: unknown): string {
+    const authorList = itemOf(items).find((item) => item["@_Name"] === "AuthorList");
     if (authorList?.Item === undefined) return "";
-    const names = (Array.isArray(authorList.Item) ? authorList.Item : [authorList.Item]).map((author) => author["#text"] ?? "").filter(Boolean);
+    const names = itemOf(authorList.Item)
+        .map((author) => author["#text"] ?? "")
+        .filter(Boolean);
     if (names.length <= 3) return names.join(", ");
     return `${names[0]} et al.`;
 }
 
 export function parseEsummary(xml: string): PubMedSummary[] {
-    const parsed = xmlParser.parse(xml);
-    const docSums = (parsed?.eSummaryResult ?? parsed)?.DocSum;
+    const parsed = parseXmlRecord(xml);
+    const docSums = (childRecord(parsed, "eSummaryResult") ?? parsed)?.DocSum;
     if (docSums === undefined) return [];
-    const documents: DocSum[] = Array.isArray(docSums) ? docSums : [docSums];
-    return documents.map((document) => {
+    return recordList(docSums).map((document) => {
         const publicationDate = getItemValue(document.Item, "PubDate");
         return {
             pmid: String(document.Id ?? ""),
@@ -145,16 +169,12 @@ interface MeshHeadingItem {
 }
 
 export function parseEfetch(xml: string): ArticleDetail[] {
-    const articleSet = xmlParser.parse(xml)?.PubmedArticleSet;
+    const articleSet = childRecord(parseXmlRecord(xml), "PubmedArticleSet");
     if (articleSet === undefined) return [];
-    const entries: unknown[] = Array.isArray(articleSet.PubmedArticle)
-        ? articleSet.PubmedArticle
-        : articleSet.PubmedArticle === undefined
-          ? []
-          : [articleSet.PubmedArticle];
+    const entries = recordList(articleSet.PubmedArticle);
 
     return entries.map((entry) => {
-        const article = entry as Record<string, unknown>;
+        const article = entry;
         const citation = article.MedlineCitation as Record<string, unknown> | undefined;
         const articleData = citation?.Article as Record<string, unknown> | undefined;
         const pmidValue = citation?.PMID;
@@ -243,11 +263,11 @@ function extractSection(section: unknown, output: ArticleSection[]): void {
 }
 
 export function parsePmcFullText(xml: string): FullTextResult | null {
-    const article = xmlParser.parse(xml)?.["pmc-articleset"]?.article;
-    const body = article?.body;
+    const article = childRecord(parseXmlRecord(xml), "pmc-articleset")?.article;
+    const body = childRecord(article, "body");
     if (body === undefined) return null;
     const sections: ArticleSection[] = [];
-    for (const section of body.sec === undefined ? [] : Array.isArray(body.sec) ? body.sec : [body.sec]) extractSection(section, sections);
+    for (const section of recordList(body.sec)) extractSection(section, sections);
     if (sections.length === 0) {
         const text = extractParagraphs(body);
         if (text) sections.push({ heading: "", text });

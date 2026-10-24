@@ -20,6 +20,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { readSynthesisText } from "../execution/run-synthesis.js";
+import { nullProtoRecord } from "../lib/null-proto.js";
 import { queryAnalysisArtifacts } from "../state/artifacts.js";
 import type { Querier } from "../state/db.js";
 import { queryRunsByAnalysis } from "../state/runs.js";
@@ -216,9 +217,7 @@ export async function pinReportSnapshot(
     const ledgerRows = await queryAnalysisArtifacts(pool, analysisId);
     if (ledgerRows.isErr()) return err({ kind: "ledger-read-failed", cause: ledgerRows.error.cause });
 
-    // The ledger accepts any path. A null-prototype map keeps a key such as `__proto__` an ordinary
-    // entry, thus no path collides with a prototype slot.
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts = nullProtoRecord<ArtifactSnapshot>();
     for (const row of ledgerRows.value) {
         artifacts[row.path] = { hash: row.hash, fileType: row.fileType };
     }
