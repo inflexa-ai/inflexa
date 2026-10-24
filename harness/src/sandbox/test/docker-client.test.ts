@@ -53,7 +53,7 @@ afterEach(async () => {
     await rm(wsRoot, { recursive: true, force: true });
 });
 
-interface CreatedContainer {
+type CreatedContainer = {
     name: string;
     image?: string;
     env: string[];
@@ -70,9 +70,9 @@ interface CreatedContainer {
     portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
     memory?: number;
     memorySwap?: number;
-}
+};
 
-interface CreateOpts {
+type CreateOpts = {
     name: string;
     Image?: string;
     Env: string[];
@@ -89,7 +89,7 @@ interface CreateOpts {
         Memory?: number;
         MemorySwap?: number;
     };
-}
+};
 
 function notFound(): Error & { statusCode: number } {
     const err = new Error("no such container") as Error & { statusCode: number };

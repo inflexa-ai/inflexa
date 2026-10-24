@@ -194,12 +194,12 @@ function genomeAxis(found: readonly Chromosome[]): GenomeAxis {
 const LEAD_NAME_SIDES = ["top", "right", "left"] as const;
 
 /** One chromosome of the table: its key, the extent of its drawn positions, and its lead row. */
-interface Chromosome {
+type Chromosome = {
     readonly name: Cell;
     low: number;
     high: number;
     lead?: number;
-}
+};
 
 /** The place of the three named chromosomes after the numbered ones, in genome order. */
 const NAMED_CHROMOSOMES: Readonly<Record<string, number>> = { X: 0, Y: 1, MT: 2, M: 2 };

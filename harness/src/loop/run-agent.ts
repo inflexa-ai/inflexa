@@ -72,7 +72,7 @@ import {
 } from "./tool-output.js";
 import type { AgentDefinition, EmitFn, LoopMessage, RunStep } from "./types.js";
 
-export interface AgentFinish {
+export type AgentFinish = {
     readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
     /**
      * The endpoint's own word for the stop, when the provider captured one —
@@ -92,45 +92,45 @@ export interface AgentFinish {
      * carried none, which is by construction the turn's root.
      */
     readonly turnUsage?: AgentRunUsage;
-}
+};
 
-export interface RunAgentResult {
+export type RunAgentResult = {
     readonly messages: LoopMessage[];
     readonly finish: AgentFinish;
-}
+};
 
 /** A request that the provider refused for its content: the HTTP status and the text of the provider error. */
-export interface RequestRefusal {
+export type RequestRefusal = {
     readonly status: number;
     readonly message: string;
-}
+};
 
 /** The result of a segment. A segment that ends on a refusal of its request carries the refusal. */
-export interface SegmentResult extends RunAgentResult {
+export type SegmentResult = RunAgentResult & {
     readonly refusal?: RequestRefusal;
-}
+};
 
 /** The messages that the loop appended after the last call of the round sink. */
-export interface AgentRound {
+export type AgentRound = {
     readonly messages: readonly LoopMessage[];
-}
+};
 
 const TRUNCATED_PROSE_STEER = "Your previous reply was cut off at the output-token limit; continue concisely, or finish via your terminal tool.";
 
 const TRUNCATED_TOOL_USE_ERROR =
     "Your previous tool call was cut off at the output-token limit and was not executed. Retry with a smaller payload, writing in incremental pieces.";
 
-export interface StepNameFormatter {
+export type StepNameFormatter = {
     llm(iteration: number): string;
     tool(toolName: string, toolUseId: string): string;
-}
+};
 
 export const DEFAULT_STEP_NAME_FORMATTER: StepNameFormatter = {
     llm: (i) => `llm-${i}`,
     tool: (name, id) => `tool-${name}-${id}`,
 };
 
-export interface RunAgentOptions {
+export type RunAgentOptions = {
     readonly provider: AgentChat;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
@@ -246,7 +246,7 @@ export interface RunAgentOptions {
      * root, a workflow step body, a background task).
      */
     readonly invocationId?: string;
-}
+};
 
 /** A run that receives no turn accumulator is the turn's root. See `RunAgentOptions.turnUsage`. */
 export const isTurnRoot = (opts: RunAgentOptions): boolean => opts.turnUsage === undefined;
@@ -286,7 +286,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 }
 
 /** One stretch of model requests of a conversation, under one mask. */
-export interface LoopSegment {
+export type LoopSegment = {
     /** The tools that can run for each request of the segment. Absent lets each declared tool run. */
     readonly mask: ToolMask | undefined;
     readonly maxRequests: number;
@@ -304,13 +304,13 @@ export interface LoopSegment {
     readonly checksBudget?: boolean;
     /** A refusal of a request, a `provider` error with the status `400` or `413`, ends the segment with no new message. */
     readonly endsOnRequestRefusal?: boolean;
-}
+};
 
 /**
  * One conversation, open for its segments. Each segment extends the same
  * prefix (system prompt, tools, tool choice) as the one before it.
  */
-export interface OpenLoop {
+export type OpenLoop = {
     /**
      * Compact the conversation when the last request passed the turn-start budget, and then append the input of the
      * turn. The result of the run when an abort ends the compaction, or `undefined` when the run continues.
@@ -320,7 +320,7 @@ export interface OpenLoop {
     runSegment(segment: LoopSegment): Promise<SegmentResult | "capped">;
     /** End a run after its last segment used its cap. */
     endCapped(): Promise<RunAgentResult>;
-}
+};
 
 /**
  * Open the loop over one conversation. `metricAgentId` is the id that usage
@@ -908,7 +908,7 @@ function withRequestAnchor(reply: ChatResponse): ChatResponse {
 }
 
 /** What one completed LLM call is accounted under. */
-export interface ChatCallAccounting {
+export type ChatCallAccounting = {
     readonly session: AgentSession;
     readonly agentId: string;
     readonly callPath: readonly string[];
@@ -924,7 +924,7 @@ export interface ChatCallAccounting {
     readonly logger: Logger;
     /** The accumulators that the usage of the call folds into, for example the run total and the turn total. */
     readonly rollups: readonly AgentRunUsage[];
-}
+};
 
 /**
  * Called at the fold point, before any run-ending branch, so an aborted or
@@ -1051,11 +1051,11 @@ function imagePlacementFor(capabilities: ProviderCapabilities): ImagePlacement {
 }
 
 /** The pictures that a tool result cannot carry, with the tool call that produced them. */
-interface DeferredImages {
+type DeferredImages = {
     readonly toolCallId: string;
     readonly toolName: string;
     readonly images: readonly ToolResultImage[];
-}
+};
 
 /**
  * How a completed tool result is encoded onto the provider message. `placement`
@@ -1075,11 +1075,11 @@ interface DeferredImages {
  * changes the contract of the durable step and the specs, thus it waits for
  * its own change.
  */
-interface ResultEncoding {
+type ResultEncoding = {
     readonly placement: ImagePlacement;
     readonly log: Logger;
     readonly deferredImages: DeferredImages[];
-}
+};
 
 /**
  * The text part that names one deferred picture. The wire holds no structural
@@ -1239,11 +1239,11 @@ function elapsedMs(startedAt: number): number {
  * `tool_result` part, which drops a symbol key and flattens every class, thus a
  * hook that ran later would read a shape its tool never produced.
  */
-interface DispatchedCall {
+type DispatchedCall = {
     readonly result: ToolResultPart;
     readonly detail?: ToolCallDetail;
     readonly record?: unknown;
-}
+};
 
 /**
  * Read one settled step-mode dispatch, tolerating the bare result beside the pair.
@@ -1259,13 +1259,13 @@ function readDispatchedStep(settled: DispatchedCall | ToolResultPart): Dispatche
     return "result" in settled ? settled : { result: settled };
 }
 
-interface ResultCut {
+type ResultCut = {
     /** Absent when the run keeps nothing. */
     readonly store: ToolOutputStore | undefined;
     readonly session: AgentSession;
     readonly invocationId: string | undefined;
     readonly log: Logger;
-}
+};
 
 /** For a step-mode tool this runs inside the durable step of the call, thus a replay gives the stored excerpt. */
 async function dispatchTool(

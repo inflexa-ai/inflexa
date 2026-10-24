@@ -85,7 +85,7 @@ declare a non-empty `tools` array.
 
 #### Scenario: AgentMeta type requires tools
 
-- **WHEN** the `AgentMeta` interface is inspected
+- **WHEN** the `AgentMeta` type is inspected
 - **THEN** `tools: readonly SandboxToolName[]` is present and non-optional
 
 #### Scenario: Every agent meta declares tools

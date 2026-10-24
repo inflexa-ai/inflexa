@@ -41,7 +41,7 @@ const GeoDatasetSummarySchema = z.object({
 type GeoDatasetSummary = z.infer<typeof GeoDatasetSummarySchema>;
 
 /** One dataset row, as the tool returns it. */
-export interface GeoDataset {
+export type GeoDataset = {
     accession: string;
     title: string;
     summary: string;
@@ -49,7 +49,7 @@ export interface GeoDataset {
     sampleCount: number | null;
     organism: string | null;
     pubmedIds: (string | number)[];
-}
+};
 
 // The esummary `result` object mixes a `uids` string array in with the
 // numeric-keyed dataset summaries; `.catch(undefined)` on the record value lets

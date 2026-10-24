@@ -224,7 +224,7 @@ return count SHALL reflect only the rows it swept.
 
 ### Requirement: A pending ask is surfaced as a harness-defined chat part
 
-The harness SHALL define a `data-ask` chat part in its part contracts (interface,
+The harness SHALL define a `data-ask` chat part in its part contracts (type,
 schema, and part-registry entry) and `ctx.ask` SHALL emit it when a request
 pauses. The part SHALL carry the ask id, the request content — including the
 exact command or operation being approved — and the current status; the id is

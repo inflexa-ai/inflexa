@@ -367,12 +367,12 @@ function presentEntry(requested: string, row: { entry: SectionPackage; section: 
 }
 
 /** The tool's input, as parsed from `inputSchema`. */
-export interface PackagesQuery {
+export type PackagesQuery = {
     readonly names?: readonly string[];
     readonly query?: string;
     readonly language?: "r" | "python" | "cli" | "node";
     readonly limit?: number;
-}
+};
 
 /**
  * Answer a packages query against a parsed catalog. Pure — the tool's `execute`

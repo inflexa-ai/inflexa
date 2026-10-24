@@ -15,8 +15,8 @@ permission that is necessary before the harness can continue an operation. A not
 operation.
 
 ```ts
-interface GateFailure { readonly reason: string; readonly suspend: boolean }
-interface NoticeFailure { readonly reason: string }
+type GateFailure = { readonly reason: string; readonly suspend: boolean }
+type NoticeFailure = { readonly reason: string }
 
 // A gate.
 (input) => ResultAsync<T, GateFailure>

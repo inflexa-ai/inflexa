@@ -120,12 +120,12 @@ const AUTHORING_ATOM_SCHEMAS = [
  * The section shape as a plain type. TypeScript cannot infer the block tree through the union cycle, thus
  * the recursive members carry an explicit type.
  */
-export interface AuthoringSectionBlock {
+export type AuthoringSectionBlock = {
     kind: "section";
     id: string;
     title: string;
     blocks: AuthoringBlock[];
-}
+};
 
 /** One block of any kind except a section, as an agent writes it and reads it. */
 export type AuthoringAtomBlock = z.infer<(typeof AUTHORING_ATOM_SCHEMAS)[number]>;

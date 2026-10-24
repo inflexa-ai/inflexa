@@ -4,12 +4,12 @@ import type { PoolClient } from "pg";
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "../ai-sdk-message-storage.js";
 import { backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
 
-interface LegacyRow {
+type LegacyRow = {
     readonly thread_id: string;
     readonly seq: string;
     readonly role: string;
     readonly content_jsonb: string | Array<Record<string, unknown>>;
-}
+};
 
 class FakeBackfillClient {
     legacyRows: LegacyRow[];

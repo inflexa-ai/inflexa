@@ -19,19 +19,19 @@ import type { TokenUsageRollup } from "./usage.js";
  * call chain that reached it (e.g. `["conversation-agent"]`, or
  * `["conversation-agent", "literature-reviewer"]` for a sub-agent).
  */
-export interface EventSource {
+export type EventSource = {
     agentId: string;
     callPath: string[];
     /** The id of the tool call that runs this loop. For a data profile, the workflow id of its attempt. */
     invocationId?: string;
-}
+};
 
 /** A run of assistant text. Deltas accumulate into the turn's reply. */
-export interface TextDeltaEvent {
+export type TextDeltaEvent = {
     type: "text-delta";
     text: string;
     source: EventSource;
-}
+};
 
 /**
  * How a tool call ended.
@@ -78,13 +78,13 @@ export type ToolCallDetail = string;
  * A sub-agent loop started a request to its model. Only a sub-agent gives this frame, thus a consumer that
  * keeps the root frames only (`isRootFrame`) never sees it. A host reads it as "the sub-agent thinks".
  */
-export interface IterationEvent {
+export type IterationEvent = {
     type: "iteration";
     source: EventSource;
-}
+};
 
 /** A tool call has been dispatched. */
-export interface ToolStartedEvent {
+export type ToolStartedEvent = {
     type: "tool-started";
     /** The Anthropic `tool_use` block id — pairs with `tool-finished`. */
     toolUseId: string;
@@ -93,10 +93,10 @@ export interface ToolStartedEvent {
     /** See {@link ToolCallDetail}. Absent — never empty — when none was produced. */
     detail?: ToolCallDetail;
     source: EventSource;
-}
+};
 
 /** A tool call has resolved. */
-export interface ToolFinishedEvent {
+export type ToolFinishedEvent = {
     type: "tool-finished";
     toolUseId: string;
     name: string;
@@ -119,7 +119,7 @@ export interface ToolFinishedEvent {
      */
     durationMs?: number;
     source: EventSource;
-}
+};
 
 /**
  * The agent loop produced its terminal reply — the turn is complete.
@@ -129,7 +129,7 @@ export interface ToolFinishedEvent {
  * `ChatErrorEvent` and therefore no rollup at all — the usage-record ledger,
  * not this event, is the complete account of what a turn spent.
  */
-export interface FinishEvent {
+export type FinishEvent = {
     type: "finish";
     source: EventSource;
     /** What this loop's own LLM calls used, the forced wrap-up included. */
@@ -139,10 +139,10 @@ export interface FinishEvent {
      * (sub-agent tools included). Present only on the turn's root loop.
      */
     turnUsage?: TokenUsageRollup;
-}
+};
 
 /** The turn failed. `reason` is a machine-readable code when one applies. */
-export interface ChatErrorEvent {
+export type ChatErrorEvent = {
     type: "error";
     /** Human-readable, scrubbed error message. */
     message: string;
@@ -152,18 +152,18 @@ export interface ChatErrorEvent {
      */
     reason?: string;
     source: EventSource;
-}
+};
 
 /**
  * The id that the stored display gives a message of the turn. The frames after it belong to that message, up to
  * the next `message-start` of the same role.
  */
-export interface MessageStartEvent {
+export type MessageStartEvent = {
     type: "message-start";
     messageId: string;
     role: "user" | "assistant";
     source: EventSource;
-}
+};
 
 /** The discriminated union of all chat-stream events. */
 export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent | MessageStartEvent;

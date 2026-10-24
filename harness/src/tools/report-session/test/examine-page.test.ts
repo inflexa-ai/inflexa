@@ -63,17 +63,17 @@ async function writePage(root: string, threadId: string): Promise<void> {
     await writeFile(join(dir, "index.html"), "<html><body>report</body></html>", "utf8");
 }
 
-interface FakeRow {
+type FakeRow = {
     state: ReportSessionState;
     analysisId: string;
     rendered: string | null;
     seen: string | null;
-}
+};
 
-interface FakeGateway extends ReportSessionStateGateway {
+type FakeGateway = ReportSessionStateGateway & {
     seed(threadId: string, rendered: string | null): void;
     seenOf(threadId: string): string | null;
-}
+};
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, FakeRow>();
@@ -133,13 +133,13 @@ function ctxForThread(threadId: string): ToolContext {
 }
 
 /** A fake eyes seam, plus the record of what the tool asked of it. */
-interface FakeEyes {
+type FakeEyes = {
     readonly acquire: AcquireEyes;
     /** The scope of each acquire, in call order. */
     readonly acquired: EyesScope[];
     /** The endpoint of each released lease, in call order. */
     readonly released: string[];
-}
+};
 
 /**
  * Make a fake eyes seam over one endpoint.

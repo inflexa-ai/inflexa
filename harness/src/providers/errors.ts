@@ -250,7 +250,7 @@ const CONNECTION_ERROR_CODES = new Set([
 const CONNECTION_ERROR_PATTERN =
     /fetch failed|socket hang up|network error|connection (?:refused|reset|error|closed)|econnrefused|enotfound|etimedout|terminated/i;
 
-interface MaybeErrorChain {
+type MaybeErrorChain = {
     status?: unknown;
     statusCode?: unknown;
     code?: unknown;
@@ -259,7 +259,7 @@ interface MaybeErrorChain {
     /** The AI SDK's `APICallError` carries the raw response body under this name. */
     responseBody?: unknown;
     cause?: unknown;
-}
+};
 
 /**
  * Walk the `cause` chain up to {@link MAX_CAUSE_HOPS} links, and return the first

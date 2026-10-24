@@ -91,7 +91,7 @@ export type FigureMember = keyof ChartEncoding | "statistics" | "track" | "trees
  * The resolved track of a figure: the rows of the second table, its declared column order, and the columns
  * that the block names in it. The labels and the meanings are the declarations of the track binding.
  */
-export interface FigureTrack {
+export type FigureTrack = {
     readonly rows: readonly ChartRow[];
     readonly columns?: readonly string[];
     readonly start: string;
@@ -100,14 +100,14 @@ export interface FigureTrack {
     readonly length?: string;
     readonly labels: ColumnLabels;
     readonly meanings: ColumnMeanings;
-}
+};
 
 /**
  * The resolved tree of one category axis: the edge rows of the tree table, its declared column order, and the
  * three columns that the block names in it. The labels and the meanings are the declarations of the tree
  * binding.
  */
-export interface FigureTree {
+export type FigureTree = {
     readonly rows: readonly ChartRow[];
     readonly columns?: readonly string[];
     readonly parent: string;
@@ -115,7 +115,7 @@ export interface FigureTree {
     readonly height: string;
     readonly labels: ColumnLabels;
     readonly meanings: ColumnMeanings;
-}
+};
 
 /**
  * The parts of a preset that a figure hands to the composition machinery: the semantic axis titles, and the
@@ -127,12 +127,12 @@ export interface FigureTree {
  * items of the composition output states it, because the page builds each item from the cells and never
  * from the rewrite.
  */
-export interface FigureComposeExtras {
+export type FigureComposeExtras = {
     readonly preset?: PresetAxisTitles;
     readonly classification?: PresetClassification;
     readonly colorOnTop?: boolean;
     readonly keepsRowsInline?: boolean;
-}
+};
 
 /**
  * What one figure reads beside its block and its rows.
@@ -150,7 +150,7 @@ export interface FigureComposeExtras {
  *   figure that puts a series before the result keeps the whole chart inline, because the page fills the
  *   leading series from the descriptors of the composition.
  */
-export interface FigureContext {
+export type FigureContext = {
     readonly blockId: string;
     readonly labels: ColumnLabels;
     readonly meanings: ColumnMeanings;
@@ -160,16 +160,16 @@ export interface FigureContext {
     readonly trees?: { readonly x?: FigureTree; readonly y?: FigureTree };
     readonly textPx: number;
     readonly compose: (composition: ChartComposition, extras?: FigureComposeExtras) => Result<EchartOption, RenderProblem>;
-}
+};
 
 /** The derivation of one figure: the raw option, before the layout discipline and the figure rules. */
 export type FigureDerivation = (block: ChartBlock, rows: readonly ChartRow[], context: FigureContext) => Result<EchartOption, RenderProblem>;
 
 /** One figure module: the members of the block that it reads, and its derivation. */
-export interface FigureModule {
+export type FigureModule = {
     readonly reads: ReadonlySet<FigureMember>;
     readonly derive: FigureDerivation;
-}
+};
 
 /** The figure module of each chart type that has one. */
 export type FigureRegistry = Readonly<Partial<Record<ChartType, FigureModule>>>;

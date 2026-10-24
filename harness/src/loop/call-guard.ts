@@ -20,14 +20,14 @@ import { err, type Result } from "neverthrow";
 
 import type { Tool, ToolContext, ToolError } from "../tools/define-tool.js";
 
-export interface CallGuardPolicy {
+export type CallGuardPolicy = {
     /** The calls with one identical input that a run may make to one tool. The next one is refused. */
     readonly identicalLimit: number;
     /** The calls, with any input, that a run may make to one tool. The next one is refused. */
     readonly perToolLimit: number;
     /** The calls, with any input, that a run may make across every guarded tool. The next one is refused by every tool. */
     readonly totalLimit: number;
-}
+};
 
 /**
  * Two identical calls let a model confirm an answer once. Twelve calls of one
@@ -55,17 +55,17 @@ function sortKeys(value: unknown): unknown {
     return value;
 }
 
-export interface GuardedCallRefusal {
+export type GuardedCallRefusal = {
     readonly tool: string;
     readonly kind: "identical" | "budget" | "total";
     readonly calls: number;
-}
+};
 
-export interface CallGuardOptions {
+export type CallGuardOptions = {
     readonly policy?: CallGuardPolicy;
     /** Called on each refusal, for the log of the host. */
     readonly onRefusal?: (refusal: GuardedCallRefusal) => void;
-}
+};
 
 /** Wrap each tool so its `execute` obeys the policy for the life of the returned list. */
 export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOptions = {}): Tool[] {

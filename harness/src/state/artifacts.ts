@@ -9,7 +9,7 @@ import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import type { ArtifactRole, ArtifactRow } from "./schema.js";
 
-export interface RegisterArtifactInput {
+export type RegisterArtifactInput = {
     resourceId: string;
     path: string;
     hash: string;
@@ -24,7 +24,7 @@ export interface RegisterArtifactInput {
      * `step_output` rows (their `file_id` is assigned after upload-sync).
      */
     fileId?: string | null;
-}
+};
 
 export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
@@ -123,12 +123,12 @@ export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[])
 }
 
 /** Result type for input artifact metadata lookups. */
-export interface InputArtifactMeta {
+export type InputArtifactMeta = {
     path: string;
     hash: string;
     size: number;
     fileId: string | null;
-}
+};
 
 /**
  * Query cortex_artifacts for input-role rows matching the given paths.
@@ -174,11 +174,11 @@ export function queryUnsyncedStepArtifacts(pool: Querier, resourceId: string, ru
 }
 
 /** One registered step output, as a downstream consumer needs to name it. */
-export interface StepArtifactRef {
+export type StepArtifactRef = {
     /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
     path: string;
     fileType: string | null;
-}
+};
 
 /**
  * The artifacts a completed step registered, most consequential first. Ordered
@@ -216,12 +216,12 @@ export function queryStepArtifactPaths(
 }
 
 /** One registered artifact of an analysis, as a reader of the full artifact set names it. */
-export interface AnalysisArtifactRef {
+export type AnalysisArtifactRef = {
     /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
     path: string;
     hash: string;
     fileType: string | null;
-}
+};
 
 /**
  * Every artifact of one analysis, ordered by path so the same call gives the same rows.
@@ -255,7 +255,7 @@ export type ArtifactPageSort = "path" | "recent";
 const EXTENSION_SQL = `lower(substring(regexp_replace(path, '^.*/', '') from '^.+\\.([^.]+)$'))`;
 
 /** The filters, the sort, and the window of {@link queryArtifactPage}. A filter that is absent selects each row. */
-export interface ArtifactPageQuery {
+export type ArtifactPageQuery = {
     runId?: string;
     stepId?: string;
     fileType?: string;
@@ -271,10 +271,10 @@ export interface ArtifactPageQuery {
     sort: ArtifactPageSort;
     limit: number;
     offset: number;
-}
+};
 
 /** One ledger row of {@link queryArtifactPage}. */
-export interface ArtifactPageEntry {
+export type ArtifactPageEntry = {
     /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
     path: string;
     /** Bytes. */
@@ -284,22 +284,22 @@ export interface ArtifactPageEntry {
     runId: string | null;
     stepId: string | null;
     createdAt: string;
-}
+};
 
 /** The count of the selected rows that have one extension. */
-export interface ArtifactExtensionCount {
+export type ArtifactExtensionCount = {
     /** The extension in lower case with no dot, or `null` for the rows that have no extension. */
     extension: string | null;
     count: number;
-}
+};
 
 /** One page of the ledger, and the count of the rows that the filters select. */
-export interface ArtifactPage {
+export type ArtifactPage = {
     entries: ArtifactPageEntry[];
     total: number;
     /** The selected rows by extension, in the order of the extension with `null` last. The counts sum to `total`. */
     extensionCounts: ArtifactExtensionCount[];
-}
+};
 
 /**
  * One page of the artifact ledger of an analysis, in two statements: the count of the rows that the filters
@@ -372,10 +372,10 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
 }
 
 /** The step-output count of one run, from {@link countArtifactsByRuns}. */
-export interface RunArtifactCount {
+export type RunArtifactCount = {
     runId: string;
     count: number;
-}
+};
 
 /**
  * The step-output count of each run of a list, in one statement. A run with no step output has no entry,

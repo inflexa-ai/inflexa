@@ -56,10 +56,10 @@ import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../lo
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
 
-interface FakeWorkflowHandle {
+type FakeWorkflowHandle = {
     readonly workflowID: string;
     getResult(): Promise<SandboxStepResult>;
-}
+};
 
 /**
  * Fake checkpointed clock. `DBOS.now()` returns the current value then advances
@@ -72,7 +72,7 @@ interface FakeWorkflowHandle {
 const FAKE_CLOCK_BASE_MS = 1_000_000;
 const FAKE_CLOCK_STEP_MS = 1_000;
 
-interface FakeDbosState {
+type FakeDbosState = {
     cancelled: Set<string>;
     pendingHandles: Map<string, FakeWorkflowHandle>;
     /** Per-step child results the `DBOS.startWorkflow` mock hands back. */
@@ -106,7 +106,7 @@ interface FakeDbosState {
     setEventError: Error | null;
     /** Order of the acts that a test marks, with the `setEvent` calls: a test pushes its own marks. */
     timeline: string[];
-}
+};
 
 let dbosState: FakeDbosState;
 
@@ -262,11 +262,11 @@ beforeEach(async () => {
 
 // ── Fake pool ────────────────────────────────────────────────────────
 
-interface FakePool {
+type FakePool = {
     readonly queries: Array<{ text: string; values?: readonly unknown[] }>;
     query: Pool["query"];
     connect: Pool["connect"];
-}
+};
 
 /** The status write of `persist-final-status`. The fake pool answers an unmatched query with no changed row, so a test of the won path answers this prefix with one row. */
 const RUN_STATUS_WRITE = "UPDATE cortex_runs SET status = $1";
@@ -351,13 +351,13 @@ function handleFor(workflowID: string, result: SandboxStepResult | Error): FakeW
 
 // ── Deps factory ─────────────────────────────────────────────────────
 
-interface FakeDepsRecord {
+type FakeDepsRecord = {
     /** Reference to `dbosState.emittedParts` — the parts written via writeStream. */
     readonly emittedParts: Array<Record<string, unknown>>;
     readonly chargeCloseCalls: Array<{ outcome: RunChargeOutcome }>;
     readonly mandateRevokeCalls: Array<{ reason: string }>;
     readonly threadWrites: Array<{ kind: string }>;
-}
+};
 
 function makeDeps(opts: {
     childResults: Map<string, SandboxStepResult | Error>;

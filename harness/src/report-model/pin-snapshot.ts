@@ -39,22 +39,22 @@ export type PinSnapshotError = {
 };
 
 /** The construction options of the pin. */
-export interface PinReportSnapshotOptions {
+export type PinReportSnapshotOptions = {
     /**
      * The workspace-root seam of the caller. The citation evidence sits on disk, thus a composition
      * that binds no seam pins the artifact map alone.
      */
     readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
-}
+};
 
 /** The page size of the run listing. The listing walks the pages until a short page ends the walk. */
 const RUN_PAGE_SIZE = 200;
 
 /** One citation of a synthesis record: the key, and the bibliography record when the entry carries one. */
-interface CitationEntry {
+type CitationEntry = {
     readonly key: string;
     readonly record?: CitationRecord;
-}
+};
 
 /** The trimmed text of a field, or `undefined` when the field is not a non-empty string. */
 function trimmedText(value: unknown): string | undefined {
@@ -144,10 +144,10 @@ function citationsOf(text: string): CitationEntry[] {
 }
 
 /** The citation evidence of one analysis: the sorted key list, and the record of each key that carries one. */
-interface CollectedCitations {
+type CollectedCitations = {
     readonly keys: string[];
     readonly records: Map<string, CitationRecord>;
-}
+};
 
 /**
  * Collect the citation evidence of one analysis from the synthesis record of each of its runs.

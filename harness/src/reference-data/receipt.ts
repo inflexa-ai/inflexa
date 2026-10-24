@@ -20,11 +20,11 @@ const ReferenceReceiptArtifactSchema = z.object({
 });
 
 /** The fields of a receipt that identify the installed content. */
-export interface ReferenceReceiptContent {
+export type ReferenceReceiptContent = {
     readonly datasetId: string;
     readonly datasetVersion: string;
     readonly artifacts: readonly ReferenceReceiptArtifact[];
-}
+};
 
 /**
  * The identity of the installed bytes, independent of the install time. Consumers outside the

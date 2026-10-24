@@ -46,12 +46,12 @@ export function scriptSha256(content: string | Uint8Array): string {
 }
 
 /** One change of a script after its render, as the record keeps it. */
-export interface UnvettedEdit {
+export type UnvettedEdit = {
     readonly path: string;
     readonly note: string;
     /** The digest of the script after the change. */
     readonly sha256: string;
-}
+};
 
 /** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
 export function expectedScriptSha256(record: Readonly<Record<string, unknown>>): string | undefined {
@@ -61,7 +61,7 @@ export function expectedScriptSha256(record: Readonly<Record<string, unknown>>):
     return typeof record.written_sha256 === "string" ? record.written_sha256 : undefined;
 }
 
-export interface NoteScriptChangeArgs {
+export type NoteScriptChangeArgs = {
     readonly filesystem: WorkspaceFilesystem;
     readonly mutator: WorkspaceMutator;
     readonly session: AgentSession;
@@ -75,7 +75,7 @@ export interface NoteScriptChangeArgs {
     readonly note: string;
     /** The digest of the script after the change. */
     readonly sha256: string;
-}
+};
 
 /**
  * The outcome of a change note. `noted` carries the record of the write,

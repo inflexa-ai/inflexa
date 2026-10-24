@@ -80,7 +80,7 @@ const REPORT_SESSION_COMPACTION: CompactionRules = { budget: 250_000 };
  * gateway. The resolver factory is optional, because a resolver realization can be
  * absent, and the preview tool and the record tool degrade as data when it is.
  */
-export interface ReportSessionAgentDeps {
+export type ReportSessionAgentDeps = {
     /** Model id -- the provenance and metric label. The provider owns the wire model. */
     readonly model: string;
     /** Postgres pool -- workspace index, run inspection, and data-profile inspection. */
@@ -156,7 +156,7 @@ export interface ReportSessionAgentDeps {
     readonly logger?: Logger;
     /** Adds `read_tool_output`. The loop of a report turn must keep its texts in the same store. */
     readonly toolOutputStore?: ToolOutputStore;
-}
+};
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {

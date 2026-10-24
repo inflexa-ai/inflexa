@@ -52,12 +52,12 @@ export const MAX_UNCLASSIFIED_RECIPE_PATHS = 1000;
 export const MAX_CONTESTED_SAMPLE = 10;
 
 /** A resolved group plus the membership the record deliberately does not carry. */
-export interface ResolvedGroup extends DataProfileGroup {
+export type ResolvedGroup = DataProfileGroup & {
     /** Member paths — what the index projects from. The persisted record holds counts only. */
     readonly memberPaths: readonly string[];
-}
+};
 
-export interface ProfileResolution {
+export type ProfileResolution = {
     /** Repairable faults. A submission carrying any of these is handed back to the agent whole. */
     readonly errors: readonly string[];
     /** Kept members no operation claimed. Already swept into the `unclassified` group below. */
@@ -69,15 +69,15 @@ export interface ProfileResolution {
     readonly probes: readonly DataProfileProbeReport[];
     readonly partition: DataProfilePartition;
     readonly recipe: readonly DataProfileRecipeStep[];
-}
+};
 
-interface Claim {
+type Claim = {
     readonly member: MemberFile;
     readonly set?: DetectedSet;
     readonly memberIndex?: number;
-}
+};
 
-interface DraftGroup {
+type DraftGroup = {
     readonly annotation: GroupAnnotation;
     readonly nameOverride?: string;
     readonly reason?: string;
@@ -87,13 +87,13 @@ interface DraftGroup {
     /** Slot values this draft claimed, for the recipe's value mapping. */
     readonly splitValues?: readonly string[];
     readonly unclassified?: boolean;
-}
+};
 
 /** One operation and the groups it produced, paired so the recipe can name them by id. */
-interface RecipeEntry {
+type RecipeEntry = {
     readonly step: DataProfileRecipeStep;
     readonly drafts: DraftGroup[];
-}
+};
 
 function slug(value: string): string {
     return (
@@ -230,14 +230,14 @@ function unclassifiedDraft(claims: readonly Claim[]): DraftGroup {
     };
 }
 
-interface OperationContext {
+type OperationContext = {
     readonly detected: DetectedSets;
     readonly menuSets: ReadonlyMap<string, DetectedSet>;
     readonly errors: string[];
     readonly drafts: DraftGroup[];
     readonly recipe: RecipeEntry[];
     readonly byPath: ReadonlyMap<string, Claim>;
-}
+};
 
 function openStep(ctx: OperationContext, step: DataProfileRecipeStep): RecipeEntry {
     const entry: RecipeEntry = { step, drafts: [] };
@@ -434,13 +434,13 @@ function keptMembers(detected: DetectedSets): Map<string, Claim> {
     return byPath;
 }
 
-interface ObservationContext {
+type ObservationContext = {
     readonly detected: DetectedSets;
     readonly menuSets: ReadonlyMap<string, DetectedSet>;
     readonly groupsBySet: ReadonlyMap<string, readonly string[]>;
     readonly label: string;
     readonly errors: string[];
-}
+};
 
 function resolveObservation(observation: Observation, ctx: ObservationContext): DataProfileObservation | undefined {
     if (observation.kind !== "slot") return { ...observation };
@@ -569,14 +569,14 @@ function resolveDimensions(
     return resolved;
 }
 
-export interface ResolveOptions {
+export type ResolveOptions = {
     /**
      * True when no repair round follows. A contested file is then swept rather than
      * reported: there is nobody left to hand the error to, and leaving it with whichever
      * operation ran first would be the precedence the partition forbids.
      */
     readonly finalRound?: boolean;
-}
+};
 
 /**
  * Resolve a submission against the scan it was authored over.

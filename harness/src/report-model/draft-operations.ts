@@ -57,16 +57,16 @@ export type DraftRefusal =
 export type DraftPlace = "start" | "end" | { before: string } | { after: string };
 
 /** The destination of an add or a move. `parentId` names a section, or the root when it is absent. */
-export interface DraftDestination {
+export type DraftDestination = {
     parentId?: string;
     place?: DraftPlace;
-}
+};
 
 /** The add operation value. The payload can be an atom, or a section that carries children. */
-export interface AddOperation {
+export type AddOperation = {
     block: unknown;
     destination?: DraftDestination;
-}
+};
 
 /**
  * The change operation value. A `title` retitles a section target. A `block` replaces an atom target.
@@ -77,15 +77,15 @@ export type ChangeOperation = {
 } & ({ title: string } | { block: unknown });
 
 /** The remove operation value. It names one block by its id. */
-export interface RemoveOperation {
+export type RemoveOperation = {
     targetId: string;
-}
+};
 
 /** The move operation value. It names one block, and a destination with the shape of the add destination. */
-export interface MoveOperation {
+export type MoveOperation = {
     targetId: string;
     destination?: DraftDestination;
-}
+};
 
 /**
  * Set the title of the document.
@@ -228,7 +228,7 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
 }
 
 /** One block, the path of child indices from the root to the block, and the section that holds it. */
-export interface Located {
+export type Located = {
     block: DraftBlock;
     path: number[];
     /** The path of the container that holds the block, empty when the container is the root. */
@@ -237,14 +237,14 @@ export interface Located {
     index: number;
     /** The section that holds the block, or `undefined` when the block sits at the root. */
     parent?: DraftSectionBlock;
-}
+};
 
 /** A resolved destination: the container path, the insert index, and whether the container is the root. */
-interface ResolvedDestination {
+type ResolvedDestination = {
     containerPath: number[];
     index: number;
     parentIsRoot: boolean;
-}
+};
 
 /**
  * Resolve a destination to a container path and an insert index.

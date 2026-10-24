@@ -40,21 +40,21 @@ const DEFAULT_LIMIT = 10;
  */
 const ANNOTATION_INCLUDE_FIELDS = "goName";
 
-interface GoTerm {
+type GoTerm = {
     id: string;
     name: string;
     definition?: string;
     aspect?: string;
-}
+};
 
-interface GoAnnotation {
+type GoAnnotation = {
     geneProductId: string;
     goId: string;
     goName: string;
     aspect?: string;
     evidenceCode?: string;
     qualifier?: string;
-}
+};
 
 // QuickGO term response, validated at the fetch boundary. The `.transform`
 // carries the (context-free) rename from the raw wire fields to the `GoTerm[]`

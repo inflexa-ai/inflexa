@@ -118,13 +118,13 @@ function channelName(channel: ChartChannel): string {
 }
 
 /** One drawn cell: its pair, its panel, its category, and its continuous value. */
-interface EmbeddedCell {
+type EmbeddedCell = {
     readonly x: number;
     readonly y: number;
     readonly panel: number;
     readonly group?: string;
     readonly color?: number;
-}
+};
 
 function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: FigureContext): Result<EchartOption, RenderProblem> {
     const encoding = block.encoding ?? {};

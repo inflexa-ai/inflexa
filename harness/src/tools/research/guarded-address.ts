@@ -63,16 +63,16 @@ function ipv6ToBigInt(ip: string): bigint | null {
 }
 
 /** One pinned IPv4 range as an inclusive numeric span. */
-interface Ipv4Range {
+type Ipv4Range = {
     readonly first: number;
     readonly last: number;
-}
+};
 
 /** One pinned IPv6 range as an inclusive 128-bit span. */
-interface Ipv6Range {
+type Ipv6Range = {
     readonly first: bigint;
     readonly last: bigint;
-}
+};
 
 const ipv4Span = (first: string, last: string): Ipv4Range => {
     const low = ipv4ToNumber(first);

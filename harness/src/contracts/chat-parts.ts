@@ -20,7 +20,7 @@ import type { TokenUsageRollup } from "./usage.js";
 
 // ── Presentation (agent-synthesized content) ────────────────────────
 
-export interface PlanStep {
+export type PlanStep = {
     id: string;
     name: string;
     agent: string;
@@ -33,7 +33,7 @@ export interface PlanStep {
     acceptance_criteria?: string[];
     constraints?: string[];
     caveats?: string[];
-}
+};
 
 export type PresentationContent =
     /** `dataPath` (optional): an analysis-rooted CSV artifact path the host loads and injects as the
@@ -49,16 +49,16 @@ export type PresentationContent =
      *  rewrites the card. The host fetches `url` directly; the coordinates never ride the wire. */
     | { kind: "structure"; format: "pdb" | "mmcif"; url: string; provider: "alphafold"; accession: string; version: number };
 
-export interface PresentationPart {
+export type PresentationPart = {
     type: "data-presentation";
     id: string;
     title?: string;
     content: PresentationContent;
-}
+};
 
 // ── Plan reference (DB-backed) ──────────────────────────────────────
 
-export interface PlanPart {
+export type PlanPart = {
     type: "data-plan";
     id: string;
     planId: string;
@@ -69,44 +69,44 @@ export interface PlanPart {
     analytical_narrative?: string;
     omicsType?: string;
     omicsSubtype?: string;
-}
+};
 
 // ── Run card (chat-rendered, reconstructed on read) ─────────────────
 
-export interface RunCardPart {
+export type RunCardPart = {
     type: "data-run-card";
     id: string;
     runId: string;
     planId: string;
     title: string;
     stepCount: number;
-}
+};
 
 // ── Plan approval (conversation record) ─────────────────────────────
 
-export interface PlanApprovalPart {
+export type PlanApprovalPart = {
     type: "data-plan-approval";
     planId: string;
     /** The run that the approval started. */
     runId: string;
     /** ISO 8601. The instant of the approval, equal to the time of the `approve-plan` provenance event. */
     approvedAt: string;
-}
+};
 
 // ── File reference (artifact-store-backed, resolved at render time) ──────────
 
-export interface FileReferenceEntry {
+export type FileReferenceEntry = {
     path: string;
     runId?: string;
     caption?: string;
-}
+};
 
-export interface FileReferencePart {
+export type FileReferencePart = {
     type: "data-file-reference";
     id: string;
     title?: string;
     files: FileReferenceEntry[];
-}
+};
 
 // ── Ask (user approval, reconciling) ────────────────────────────────
 
@@ -115,7 +115,7 @@ export interface FileReferencePart {
  * same `id` when the ask reaches a terminal status, so reconciling readers fold
  * pending → outcome latest-wins.
  */
-export interface AskPart {
+export type AskPart = {
     type: "data-ask";
     /** The ask's ledger uuidv7 id — what a surface passes back to `answer`. */
     id: string;
@@ -128,16 +128,16 @@ export interface AskPart {
     status: "pending" | "resolved" | "rejected" | "aborted" | "expired";
     /** The kind of the ledger reply. Only a `resolved` or `rejected` part carries it, and never the rejection feedback. */
     reply?: "once" | "always" | "reject";
-}
+};
 
 // ── Run Started ─────────────────────────────────────────────────────
 
-export interface RunStartedPart {
+export type RunStartedPart = {
     type: "data-run-started";
     runId: string;
     planSummary: string;
     stepCount: number;
-}
+};
 
 // ── DAG State (reconciliating) ──────────────────────────────────────
 
@@ -147,7 +147,7 @@ export interface RunStartedPart {
  *  never be dispatched. */
 export type StepStatus = "pending" | "queued" | "running" | "completed" | "failed" | "skipped";
 
-export interface DagStepState {
+export type DagStepState = {
     id: string;
     name: string;
     agent: string;
@@ -167,18 +167,18 @@ export interface DagStepState {
     summary?: string;
     /** Error message (set on failure). */
     error?: string;
-}
+};
 
 /** One step of the stored plan graph: the fields of {@link DagStepState} that the plan alone fixes. */
 export type PlanGraphStep = Pick<DagStepState, "id" | "name" | "agent" | "dependsOn" | "level">;
 
-export interface DagStatePart {
+export type DagStatePart = {
     type: "data-dag-state";
     /** Stable ID for reconciliation — same across all updates for a run. */
     id: string;
     runId: string;
     steps: DagStepState[];
-}
+};
 
 // ── Step Activity (reconciliating per-step) ─────────────────────────
 
@@ -197,7 +197,7 @@ export type StepPhase =
     /** Non-fatal warning emitted during step execution (e.g., maxSteps hit). */
     | "warning";
 
-export interface StepActivityPart {
+export type StepActivityPart = {
     type: "data-step-activity";
     /** Stable ID for reconciliation — unique per step within a run. */
     id: string;
@@ -209,13 +209,13 @@ export interface StepActivityPart {
     activity: string;
     /** ISO 8601 time of the emission. Absent on a part that an older harness wrote. */
     at?: string;
-}
+};
 
 /**
  * One activity emission of a step or a data profile, kept in the run stream with no reconciliation. The fold
  * delivers each entry in write order.
  */
-export interface ActivityEntryPart {
+export type ActivityEntryPart = {
     type: "data-activity-entry";
     /** Unique per emission within a stream. */
     id: string;
@@ -226,17 +226,17 @@ export interface ActivityEntryPart {
     activity: string;
     /** ISO 8601 time of the emission. */
     at: string;
-}
+};
 
 // ── Step File Tree (reconciliating per-step) ────────────────────────
 
-export interface FileTreeEntry {
+export type FileTreeEntry = {
     path: string;
     size?: number;
     type: "file" | "directory";
-}
+};
 
-export interface StepFileTreePart {
+export type StepFileTreePart = {
     type: "data-step-file-tree";
     /** Stable ID for reconciliation — unique per step within a run. */
     id: string;
@@ -244,20 +244,20 @@ export interface StepFileTreePart {
     stepId: string;
     /** Current file tree snapshot. May be empty if sandbox hasn't written to disk yet. */
     files: FileTreeEntry[];
-}
+};
 
 // ── Step Output (persistent, once per step) ─────────────────────────
 
-export interface StepOutputFile {
+export type StepOutputFile = {
     path: string;
     size: number;
     /** File category for grouping/icons. */
     fileType: "script" | "output" | "figure" | "log" | "notebook" | "summary";
     /** LLM-generated description of the file contents. */
     description: string;
-}
+};
 
-export interface StepOutputPart {
+export type StepOutputPart = {
     type: "data-step-output";
     id: string;
     runId: string;
@@ -270,12 +270,12 @@ export interface StepOutputPart {
     finishReason?: string;
     /** True when the agent exhausted its maxSteps turn budget. */
     hitMaxSteps?: boolean;
-}
+};
 
 // ── Step Summary (persistent, once per step) ────────────────────────
 
 /** Step summary — free-form markdown body, rendered verbatim by the UI. */
-export interface StepSummaryPart {
+export type StepSummaryPart = {
     type: "data-step-summary";
     id: string;
     runId: string;
@@ -283,7 +283,7 @@ export interface StepSummaryPart {
     agentId: string;
     /** Free-form markdown body. Render with a markdown renderer. */
     markdown: string;
-}
+};
 
 // ── Step Usage (persistent, once per step) ──────────────────────────
 
@@ -299,7 +299,7 @@ export interface StepSummaryPart {
  * Scoped to analysis runs. Workflows without step parts (ephemeral runs, data
  * profiling) reach the ledger through the recorder seam and carry no usage part.
  */
-export interface StepUsagePart {
+export type StepUsagePart = {
     type: "data-step-usage";
     /** Stable ID for reconciliation — unique per step within a run. */
     id: string;
@@ -315,7 +315,7 @@ export interface StepUsagePart {
     modelId: string;
     /** Summed token usage across this step loop's LLM calls. */
     usage: TokenUsageRollup;
-}
+};
 
 // ── Step Blocked (persistent, once per step) ────────────────────────
 
@@ -324,7 +324,7 @@ export interface StepUsagePart {
  * `report_blocker` (see the harness-sandbox-agents spec). A blocked step has no deliverables; the
  * reason surfaces in the run side panel.
  */
-export interface StepBlockedPart {
+export type StepBlockedPart = {
     type: "data-step-blocked";
     id: string;
     runId: string;
@@ -332,16 +332,16 @@ export interface StepBlockedPart {
     agentId: string;
     /** Agent-declared reason the step could not be fulfilled. */
     reason: string;
-}
+};
 
 // ── Run Completed ───────────────────────────────────────────────────
 
-export interface RunCompletedFinding {
+export type RunCompletedFinding = {
     title: string;
     confidence: "high" | "medium" | "low";
-}
+};
 
-export interface RunCompletedPart {
+export type RunCompletedPart = {
     type: "data-run-completed";
     runId: string;
     status: "completed" | "partial";
@@ -360,18 +360,18 @@ export interface RunCompletedPart {
      * Absent when no step reported any, never an all-zero figure.
      */
     usage?: TokenUsageRollup;
-}
+};
 
 // ── Run Synthesis (persistent, once per run) ────────────────────────
 
-export interface FindingReference {
+export type FindingReference = {
     pmid: string;
     citation: string;
     relevance: string;
     concordance: "supports" | "contradicts" | "extends" | "contextualizes";
-}
+};
 
-export interface SynthesizedFinding {
+export type SynthesizedFinding = {
     stepId: string;
     title: string;
     description: string;
@@ -379,15 +379,15 @@ export interface SynthesizedFinding {
     noveltyStatus: "novel" | "confirmed" | "partially_confirmed" | "contradicted" | "expected";
     literatureInterpretation: string;
     references: FindingReference[];
-}
+};
 
-export interface BiologicalTheme {
+export type BiologicalTheme = {
     name: string;
     findings: { stepId: string; title: string }[];
     narrative: string;
-}
+};
 
-export interface RunSynthesisPart {
+export type RunSynthesisPart = {
     type: "data-run-synthesis";
     id: string;
     runId: string;
@@ -397,7 +397,7 @@ export interface RunSynthesisPart {
     themes: BiologicalTheme[];
     limitations?: string[];
     keyReferences: { pmid: string; citation: string; description: string }[];
-}
+};
 
 // ── Synthesis Progress (reconciling per-run) ────────────────────────
 
@@ -418,7 +418,7 @@ export type SynthesisPhase =
     | "skipped"
     | "failed";
 
-export interface SynthesisProgressPart {
+export type SynthesisProgressPart = {
     type: "data-synthesis-progress";
     /** Stable ID for reconciliation — `synthesis-progress-{runId}`. */
     id: string;
@@ -434,11 +434,11 @@ export interface SynthesisProgressPart {
     reason?: string;
     /** Error message — set when phase === "failed". */
     error?: string;
-}
+};
 
 // ── Run Failed ──────────────────────────────────────────────────────
 
-export interface RunFailedPart {
+export type RunFailedPart = {
     type: "data-run-failed";
     runId: string;
     /** Scrubbed error message (no internal details). */
@@ -448,7 +448,7 @@ export interface RunFailedPart {
      * `canceled` when an external cancel ended the run. Absent for a failure.
      */
     reason?: string;
-}
+};
 
 // ── Child Session Started (parent→child session spawn) ─────────────
 
@@ -461,7 +461,7 @@ export interface RunFailedPart {
  * archived state. When the thread of the part is archived or absent, a
  * consumer renders nothing for it.
  */
-export interface ChildSessionStartedPart {
+export type ChildSessionStartedPart = {
     type: "data-child-session-started";
     /** The id of the child thread that the spawn made. */
     threadId: string;
@@ -472,7 +472,7 @@ export interface ChildSessionStartedPart {
      * Known values today: `"report"`.
      */
     threadType: string;
-}
+};
 
 // ── Report Rendered (report session preview) ───────────────────────
 
@@ -486,7 +486,7 @@ export interface ChildSessionStartedPart {
  * the part carries no path, no format, and no URL. A consumer that wants the
  * page reads those surfaces.
  */
-export interface ReportRenderedPart {
+export type ReportRenderedPart = {
     type: "data-report-rendered";
     /** Unique per emission. */
     id: string;
@@ -494,12 +494,12 @@ export interface ReportRenderedPart {
     renderedAt: string;
     /** The title of the rendered document. */
     title?: string;
-}
+};
 
 // ── Compaction (reconciling) ────────────────────────────────────────
 
 /** One compaction of the thread: `running`, then `done` or `failed` under the same id. A reload shows it as a divider. */
-export interface CompactionPart {
+export type CompactionPart = {
     type: "data-compaction";
     id: string;
     status: "running" | "done" | "failed";
@@ -510,12 +510,12 @@ export interface CompactionPart {
     durationMs?: number;
     /** Before the user message of a turn, or before a later request. */
     trigger?: "turn-start" | "mid-turn";
-}
+};
 
 // ── Sub-agent activity (reconciling) ────────────────────────────────
 
 /** One tool call of a sub-agent. It holds no input, no output, and no text of the sub-agent. */
-export interface SubAgentActivityEntry {
+export type SubAgentActivityEntry = {
     agentId: string;
     callPath: string[];
     tool: string;
@@ -527,13 +527,13 @@ export interface SubAgentActivityEntry {
     endedAt?: string;
     /** Absent while the call is in flight. A stored entry always has it. */
     outcome?: ToolCallOutcome;
-}
+};
 
 /**
  * The tool calls of the sub-agents below one root tool call. Re-emitted under the same `id` after each change,
  * so reconciling readers keep the latest list.
  */
-export interface SubAgentActivityPart {
+export type SubAgentActivityPart = {
     type: "data-subagent-activity";
     id: string;
     /** The id of the root tool call. */
@@ -541,7 +541,7 @@ export interface SubAgentActivityPart {
     entries: SubAgentActivityEntry[];
     /** The count of calls past the cap of the entries. */
     dropped: number;
-}
+};
 
 // ── Union ───────────────────────────────────────────────────────────
 

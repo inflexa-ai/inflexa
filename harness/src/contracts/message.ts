@@ -12,10 +12,10 @@ import type { ChatPart } from "./chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
 
 /** A plain assistant/user text run. */
-export interface TextPart {
+export type TextPart = {
     type: "text";
     text: string;
-}
+};
 
 /**
  * A tool call observed during the turn (or replayed from history).
@@ -30,7 +30,7 @@ export interface TextPart {
  * switch on this single field and be told by the compiler when it misses a case,
  * rather than each host inventing what "no outcome" means and disagreeing.
  */
-export interface ToolCallPart {
+export type ToolCallPart = {
     type: "tool-call";
     toolCallId: string;
     toolName: string;
@@ -43,13 +43,13 @@ export interface ToolCallPart {
     detail?: ToolCallDetail;
     /** The time in milliseconds around the dispatch of the call, from `tool-finished`. Absent when no measurement was taken. */
     durationMs?: number;
-}
+};
 
 /** The discriminated union of every part the chat path can carry. */
 export type MessagePart = TextPart | ToolCallPart | ChatPart;
 
 /** A single chat message — user, assistant, or system. */
-export interface ChatMessage {
+export type ChatMessage = {
     id: string;
     role: "user" | "assistant" | "system";
     parts: MessagePart[];
@@ -96,4 +96,4 @@ export interface ChatMessage {
      * backs the message — a live surface builds one before anything is written.
      */
     createdAt?: string;
-}
+};

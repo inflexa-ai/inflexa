@@ -21,15 +21,15 @@ import { defineTool, type ToolError } from "../define-tool.js";
 import { parseQuery, type PackageQuery, type ParseQueryError } from "../../sandbox/package-identity.js";
 import type { ExtendAnalysisFarm, PackageRequestOutcome } from "../../sandbox/types.js";
 
-export interface LinkPackagesDeps {
+export type LinkPackagesDeps = {
     readonly extendAnalysisFarm: ExtendAnalysisFarm;
     readonly analysisId: string;
-}
+};
 
 /** The tool result: one outcome per requested query, index-aligned. */
-export interface LinkPackagesResult {
+export type LinkPackagesResult = {
     readonly outcomes: readonly PackageRequestOutcome[];
-}
+};
 
 /**
  * The refusal of one entry that is not a query. The text names the entry and

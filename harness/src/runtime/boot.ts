@@ -58,7 +58,7 @@ const noopAsync = (): Promise<void> => Promise.resolve();
 /** Every agent whose declared packs must resolve before the first run. */
 const SKILL_DECLARING_AGENTS = SANDBOX_AGENT_META;
 
-export interface BootHarnessDeps {
+export type BootHarnessDeps = {
     /** Everything `assembleCoreRuntime` needs (workflow + conversation deps, resource policy). */
     readonly core: CoreRuntimeDeps;
     /** App `pg.Pool` — used for state init, the connection-budget guard, and closed on shutdown. */
@@ -87,13 +87,13 @@ export interface BootHarnessDeps {
     readonly flushLogger?: () => Promise<void>;
     /** Process exit at shutdown. Default no-op — the embedder owns process lifecycle. */
     readonly exit?: (code: number) => void;
-}
+};
 
-export interface BootedHarness {
+export type BootedHarness = {
     readonly runtime: CoreRuntime;
     /** Runs the graceful-shutdown sequence in durability order. Wire to SIGTERM/SIGINT. */
     readonly shutdown: (signal: string) => Promise<void>;
-}
+};
 
 export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness> {
     const { core, pool, skillsDir, logger } = deps;

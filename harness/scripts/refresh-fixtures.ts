@@ -48,11 +48,11 @@ const MAX_REPORTED_DIFFERENCES = 20;
 const MAX_RENDERED_VALUE = 80;
 
 /** One difference between the stored fixture and the live answer. */
-interface Difference {
+type Difference = {
     path: string;
     stored: string;
     live: string;
-}
+};
 
 /** The outcome of one replayed fixture. */
 type Outcome =

@@ -23,10 +23,10 @@ import { findSuspendError } from "../providers/errors.js";
 import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 
 /** Plain data, thus it crosses a DBOS checkpoint as it is. */
-export interface Suspension {
+export type Suspension = {
     readonly kind: "suspended";
     readonly reason: string;
-}
+};
 
 export function suspensionOfFailure(err: unknown): Suspension | undefined {
     const found = findSuspendError(err);

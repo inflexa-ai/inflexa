@@ -19,16 +19,16 @@ import type { Pool } from "pg";
 
 import { tryMutation, tryQuery, withTransaction, type DbError } from "./db-result.js";
 
-export interface ChunkOptions {
+export type ChunkOptions = {
     maxTokens?: number; // default 1000
     overlapTokens?: number; // default 200
-}
+};
 
-export interface RawChunk {
+export type RawChunk = {
     section: string | null;
     index: number;
     text: string;
-}
+};
 
 /**
  * Split `text` into overlapping chunks bounded by `maxTokens` (word-count
@@ -89,14 +89,14 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     return out;
 }
 
-export interface ChunkRow {
+export type ChunkRow = {
     source: "FDA-CDER" | "FDA-CBER" | "ICH";
     doc_id: string;
     doc_title: string;
     doc_url: string;
     chunks: Array<RawChunk & { embedding: number[] }>;
     metadata: Record<string, unknown>;
-}
+};
 
 /**
  * Replace-by-(source, doc_id): delete all existing chunks for the document
@@ -129,12 +129,12 @@ export function upsertChunks(pool: Pool, row: ChunkRow): ResultAsync<void, DbErr
     );
 }
 
-export interface SearchFilters {
+export type SearchFilters = {
     source?: "FDA-CDER" | "FDA-CBER" | "ICH";
     topK?: number;
-}
+};
 
-export interface SearchHit {
+export type SearchHit = {
     source: string;
     doc_id: string;
     doc_title: string;
@@ -142,7 +142,7 @@ export interface SearchHit {
     section: string | null;
     excerpt: string;
     score: number;
-}
+};
 
 /**
  * Top-K cosine similarity search over cortex_regulatory_chunks.

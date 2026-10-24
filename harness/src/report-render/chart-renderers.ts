@@ -75,25 +75,25 @@ const INNER_POINT_FILL = "#ffffff";
 const OUTLINE_OPACITY = 0.75;
 
 /** The first argument of a renderer: the JSON parameters that the series carries in `itemPayload`. */
-export interface RenderParams {
+export type RenderParams = {
     readonly itemPayload?: Readonly<Record<string, unknown>>;
-}
+};
 
 /** The part of the chart runtime that a renderer reads. `coord` and `size` give one number for each dimension. */
-export interface RenderApi {
+export type RenderApi = {
     value(dimension: number): number;
     coord(point: number[]): [number, number];
     size(delta: number[]): [number, number];
     visual(name: "color"): string;
-}
+};
 
 /** One graphic element that a renderer gives back to the chart runtime. */
-export interface RenderedElement {
+export type RenderedElement = {
     type: string;
     shape?: Record<string, unknown>;
     style?: Record<string, unknown>;
     children?: RenderedElement[];
-}
+};
 
 /** One straight segment in the ink of the chart. */
 function segment(x1: number, y1: number, x2: number, y2: number, width: number): RenderedElement {
@@ -258,11 +258,11 @@ export type ChartRenderer = (params: RenderParams, api: RenderApi) => RenderedEl
  * One registered renderer: the name that a derived series states, the TypeScript function that the export
  * registers, and the name of the page twin in `CHART_RENDERERS_SOURCE` that the bootstrap registers.
  */
-export interface ChartRendererEntry {
+export type ChartRendererEntry = {
     readonly name: string;
     readonly render: ChartRenderer;
     readonly pageFunction: string;
-}
+};
 
 /**
  * The registered renderers. A renderer joins by one entry here, beside its TypeScript function and its page
@@ -276,9 +276,9 @@ export const CHART_RENDERERS: readonly ChartRendererEntry[] = [
 ];
 
 /** The part of the chart runtime that holds the registry of the named renderers. */
-export interface RendererRegistry {
+export type RendererRegistry = {
     registerCustomSeries(name: string, render: ChartRenderer): void;
-}
+};
 
 /**
  * Register each renderer with the chart runtime. A second registration of one name replaces the first with
@@ -302,10 +302,10 @@ export function registerChartRenderers(runtime: RendererRegistry): void {
 export const SIZED_SERIES_MEMBER = "sizedSeries";
 
 /** The series of each export width: the names of the page series that they replace, and the series of each width. */
-export interface SizedSeries {
+export type SizedSeries = {
     readonly names: readonly string[];
     readonly widths: Readonly<Record<string, readonly unknown[]>>;
-}
+};
 
 /**
  * The series of an option with the page series of the sized names replaced by the series of one export width.

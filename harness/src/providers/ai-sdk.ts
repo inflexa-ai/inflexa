@@ -93,18 +93,18 @@ function routeSdkWarningsTo(logger: Logger): void {
 }
 
 /** With no `suspendOn`, a provider uses {@link DEFAULT_SUSPEND_ON}. */
-export interface ProviderHostPolicy {
+export type ProviderHostPolicy = {
     readonly resolveRequestHeaders?: ResolveRequestHeaders;
     readonly suspendOn?: SuspendOn;
-}
+};
 
 /** The call facts that `providerOptionsFor` uses to build provider options. */
-export interface ProviderCall {
+export type ProviderCall = {
     readonly session: AgentSession;
     readonly reasoning: ReasoningPolicy;
-}
+};
 
-export interface AiSdkProviderDeps extends ProviderHostPolicy {
+export type AiSdkProviderDeps = ProviderHostPolicy & {
     readonly model: LanguageModel;
     readonly capabilities?: Partial<ProviderCapabilities>;
     readonly logger?: Logger;
@@ -133,7 +133,7 @@ export interface AiSdkProviderDeps extends ProviderHostPolicy {
      * every attempt reuses the same options.
      */
     readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined;
-}
+};
 
 /**
  * Connection + model configuration for one `ChatProvider`, discriminated by
@@ -289,10 +289,10 @@ export type AiSdkProviderConfig =
           readonly reasoning?: ReasoningPolicy;
       };
 
-export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
+export type ConfiguredAiSdkProviderDeps = ProviderHostPolicy & {
     readonly config: AiSdkProviderConfig;
     readonly logger?: Logger;
-}
+};
 
 function workloadOf(session: AgentSession): string {
     return `${session.scope.kind}:${scopeWorkloadId(session.scope)}`;
@@ -331,11 +331,11 @@ function thinkingWithBinding(reasoning: ReasoningPolicy, mode: "drop_block" | "e
 }
 
 /** One input transformation that the Anthropic API reports. */
-interface InputTransformation {
+type InputTransformation = {
     readonly type?: string;
     readonly path?: string;
     readonly reason?: string;
-}
+};
 
 /**
  * The model that answered after a server-side fallback hop, `""` when the hop is
@@ -488,9 +488,9 @@ class HeadersRefused extends Error {
  * this flag marks the rejection: it stays set when the hook call of the attempt
  * did not settle as a value.
  */
-export interface HookCall {
+export type HookCall = {
     unsettled: boolean;
-}
+};
 
 /** A refusal of the hook throws `HeadersRefused`. */
 export async function headersForAttempt(hook: ResolveRequestHeaders | undefined, session: AgentSession, call: HookCall): Promise<Record<string, string>> {
@@ -592,12 +592,12 @@ function providerIdOf(model: LanguageModel): string | undefined {
  * A per-call view of the model that also records the model id the endpoint
  * itself reported, if any.
  */
-interface ServedModelCapture {
+type ServedModelCapture = {
     /** The model to hand to the SDK for this one call. */
     readonly model: LanguageModel;
     /** The id the endpoint reported, or `undefined` when it reported none. */
     servedModelId(): string | undefined;
-}
+};
 
 /**
  * Capture the served model id at the raw model boundary, because that is the

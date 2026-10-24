@@ -97,7 +97,7 @@ export type DeriveTableResult =
  * binds neither leaves the session with no derivation at all. `resolveWorkspaceRoot` maps the analysis of
  * the call onto its workspace root, thus one singleton tool serves every analysis.
  */
-export interface DeriveTableToolDeps {
+export type DeriveTableToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
@@ -106,7 +106,7 @@ export interface DeriveTableToolDeps {
     /** The provenance seam; an unbound session emit emits nothing and the derivation runs the same. */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
-}
+};
 
 /** The synthetic run id and step id of one derivation. Both are constants, and neither names a run row. */
 export const DERIVE_RUN_LITERAL = "derive-table" as const;
@@ -143,10 +143,10 @@ const STDERR_TAIL_CAP = 2_000;
 const NO_SANDBOX_DETAIL = "the composition gives no sandbox, thus this session cannot derive a table";
 
 /** One declared input, as the container reads it: the mounted path of the file, and its pinned hash. */
-export interface DerivationInputMount {
+export type DerivationInputMount = {
     readonly path: string;
     readonly hash: string;
-}
+};
 
 /**
  * Build the sandbox exec of one derivation. The command runs the script of the agent through `python3 -c`.
@@ -204,7 +204,7 @@ export function describeExecFailure(result: ExecResult): string | undefined {
  * Each field is plain data, thus the value crosses the workflow boundary and it survives a replay. The
  * paths are container paths already: the host maps them one time, before the start.
  */
-export interface DeriveTableExecInput {
+export type DeriveTableExecInput = {
     readonly analysisId: string;
     readonly runSession: RunSession;
     readonly executionId: string;
@@ -213,7 +213,7 @@ export interface DeriveTableExecInput {
     readonly workingDir: string;
     readonly inputs: readonly DerivationInputMount[];
     readonly output: string;
-}
+};
 
 /**
  * Run one derivation exec and give the terminal result back.

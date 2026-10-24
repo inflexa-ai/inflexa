@@ -45,12 +45,12 @@ import type { FarmSource, ResolveSandboxLabels, SandboxLabels, SandboxRef, Sandb
  * default and the K8s namespace fallback. Composition roots map their
  * validated `Env` onto this.
  */
-export interface SandboxBackendConfig {
+export type SandboxBackendConfig = {
     readonly backend: "docker" | "k8s";
     readonly namespace: string;
-}
+};
 
-export interface CreateSandboxClientConfig {
+export type CreateSandboxClientConfig = {
     /** App pool — used for registry writes inside the create/teardown steps. */
     pool: Pool;
     /** Backend default + namespace fallback source. */
@@ -170,7 +170,7 @@ export interface CreateSandboxClientConfig {
      * An `isAlive` here wins over the backend inspect that the client wires.
      */
     execDeps?: ExecDeps;
-}
+};
 
 /**
  * Backend-agnostic pre-creation of the writable tree under the analysis's

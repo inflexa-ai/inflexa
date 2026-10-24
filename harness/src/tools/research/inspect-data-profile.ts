@@ -54,14 +54,14 @@ const MAX_PAGE_SIZE = 100;
  */
 type Freshness = "ready" | "stale";
 
-interface ProfileEnvelope {
+type ProfileEnvelope = {
     readonly state: Freshness;
     /** Why the profile may not describe the current inputs. Present only when `state` is `"stale"`. */
     readonly staleReason?: string;
     readonly profiledAt: string;
-}
+};
 
-interface OverviewOutput extends ProfileEnvelope {
+type OverviewOutput = ProfileEnvelope & {
     readonly scope: "overview";
     readonly summary: string;
     readonly domain?: string;
@@ -94,7 +94,7 @@ interface OverviewOutput extends ProfileEnvelope {
      */
     readonly partition?: DataProfileResult["partition"];
     readonly coverage?: DataProfileResult["coverage"];
-}
+};
 
 /**
  * The dataset's structure. A snapshot carrying none reports `available: false` rather
@@ -104,7 +104,7 @@ interface OverviewOutput extends ProfileEnvelope {
  * A snapshot written under the previous model is served through `kinds`/`axes`, labelled
  * — the structure exists, and an agent must not be told the dataset has none.
  */
-interface GroupsOutput extends ProfileEnvelope {
+type GroupsOutput = ProfileEnvelope & {
     readonly scope: "groups";
     readonly available: boolean;
     /** Authored under the previous model — `kinds`/`axes` rather than resolved groups. */
@@ -118,14 +118,14 @@ interface GroupsOutput extends ProfileEnvelope {
     readonly axes?: DataProfileResult["axes"];
     readonly coverage?: DataProfileResult["coverage"];
     readonly message?: string;
-}
+};
 
 /**
  * The members the profile describes individually — annotated members on a resolved
  * snapshot, the notable-file records on an older one. Never the dataset: `datasetFileCount`
  * on the overview is what says how big that is.
  */
-interface FilesOutput extends ProfileEnvelope {
+type FilesOutput = ProfileEnvelope & {
     readonly scope: "files";
     readonly page: number;
     readonly pageSize: number;
@@ -136,7 +136,7 @@ interface FilesOutput extends ProfileEnvelope {
     /** How many files the dataset holds, so a page of 20 never reads as the whole of it. */
     readonly datasetFileCount: number | null;
     readonly files: DataProfileFile[];
-}
+};
 
 /**
  * No profile to serve — the honest lifecycle states, in the ok channel.
@@ -149,16 +149,16 @@ interface FilesOutput extends ProfileEnvelope {
  * constant here, and a constant field carries no information while implying
  * that it does. `FailedOutput` omits one for the same reason — see its note.
  */
-interface AbsentOutput {
+type AbsentOutput = {
     readonly state: "absent";
     readonly message: string;
-}
+};
 
-interface PendingOutput {
+type PendingOutput = {
     readonly state: "pending";
     readonly status: "pending" | "running";
     readonly message: string;
-}
+};
 
 /**
  * A recorded failure with no profile to fall back on.
@@ -175,13 +175,13 @@ interface PendingOutput {
  * `failedAt` is reported instead: a fact the row actually holds, and one an agent
  * that knows when the input set last changed can act on.
  */
-interface FailedOutput {
+type FailedOutput = {
     readonly state: "failed";
     readonly error: string | null;
     /** When the failure was recorded; `null` when the row holds no time. */
     readonly failedAt: string | null;
     readonly message: string;
-}
+};
 
 export type InspectDataProfileOutput = OverviewOutput | GroupsOutput | FilesOutput | AbsentOutput | PendingOutput | FailedOutput;
 

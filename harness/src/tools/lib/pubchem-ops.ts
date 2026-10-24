@@ -80,11 +80,11 @@ export const PubChemPropertyResponseSchema = z.object({
     PropertyTable: z.object({ Properties: z.array(PugPropertyRowSchema).optional() }).optional(),
 });
 
-export interface PubChemCrossRef {
+export type PubChemCrossRef = {
     /** The registry that the identifier pattern names, or `null` when no pattern matches. */
     source: string | null;
     id: string;
-}
+};
 
 // The PUG-REST xrefs wire shape, validated at the fetch boundary: one
 // `Information` entry per CID with its `RegistryID[]` list. Every field is
@@ -137,13 +137,13 @@ export function classifyRegistryId(id: string): string | null {
     return null;
 }
 
-export interface PubChemAssay {
+export type PubChemAssay = {
     aid: number;
     assayName: string | null;
     targetName: string | null;
     activityOutcome: string | null;
     activityValue: number | null;
-}
+};
 
 // The PUG-REST assay-summary wire shape, validated at the fetch boundary: one
 // `Column` list of plain heading strings, and one `Cell` list of plain strings

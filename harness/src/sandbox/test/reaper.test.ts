@@ -66,10 +66,10 @@ describe("terminalStepStatus", () => {
     });
 });
 
-interface FakePool {
+type FakePool = {
     pool: Pool;
     reconciled: string[];
-}
+};
 
 /** Minimal pool that records `reconcileReapedSandbox` UPDATEs by sandboxId. */
 function fakePool(): FakePool {

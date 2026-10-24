@@ -1,7 +1,7 @@
-interface CacheEntry<Value> {
+type CacheEntry<Value> = {
     readonly value: Value;
     readonly expiresAt: number;
-}
+};
 
 export class BoundedTtlCache<Value> {
     private readonly entries = new Map<string, CacheEntry<Value>>();

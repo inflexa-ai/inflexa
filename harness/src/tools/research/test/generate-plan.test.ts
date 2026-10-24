@@ -38,12 +38,12 @@ function toolContext(analysisId = "analysis-001"): ToolContext {
     };
 }
 
-interface PlanResult {
+type PlanResult = {
     event: string;
     error?: string;
     question?: string;
     planId?: string;
-}
+};
 
 /**
  * Everything the caller supplies. There is no dataset field here — the dataset's
@@ -136,13 +136,13 @@ const RICH_PROFILE: DataProfileResult = {
 
 const SEED_FILE_IDS = ["file-aaa", "file-bbb"];
 
-interface SeedOptions {
+type SeedOptions = {
     /** `data_profile_status`. NULL is the honest "no profile" state. */
     readonly dpStatus?: string | null;
     readonly result?: DataProfileResult | null;
     /** `seed_input_file_ids` — the CURRENT input set, which a stale profile no longer covers. */
     readonly seed?: string[] | null;
-}
+};
 
 async function seedAnalysis(pool: Pool, analysisId: string, opts: SeedOptions = {}): Promise<void> {
     const now = new Date().toISOString();

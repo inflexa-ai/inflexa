@@ -15,13 +15,13 @@ import { capturePage } from "../page-capture.js";
  * The steps that the capture drove, in order, the arguments that it gave to each of the three setters, and
  * the arguments of each block measure.
  */
-interface Recorder {
+type Recorder = {
     readonly steps: string[];
     readonly features: MediaFeature[][];
     readonly viewports: Viewport[];
     readonly shots: ScreenshotOptions[];
     readonly blockMeasures: unknown[][];
-}
+};
 
 /** A recorder with each list empty, for one test. */
 function makeRecorder(): Recorder {
@@ -36,13 +36,13 @@ function makeRecorder(): Recorder {
  * the cause that a call raises. Absent, the call gives its picture. Each arm carries a different picture,
  * thus a test reads which call the result came from.
  */
-interface ShotPlan {
+type ShotPlan = {
     readonly scrollHeight?: number;
     readonly blockArea?: { x: number; width: number; fromY: number; toY: number };
     readonly failFullPage?: Error;
     readonly failViewport?: Error;
     readonly failTile?: Error;
-}
+};
 
 /** The picture of the full-page call, and the picture of the viewport call. */
 const FULL_PAGE_SHOT = "c2hvdA==";

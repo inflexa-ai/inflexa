@@ -19,20 +19,20 @@ const request: ChatRequest = {
 const MODEL = "gpt-5.1";
 
 /** One entry of the `input` array of a Responses request. */
-interface ResponsesInputItem {
+type ResponsesInputItem = {
     readonly type?: string;
     readonly id?: string;
     readonly encrypted_content?: string;
-}
+};
 
 /** The fields of a Responses request body that these tests read. */
-interface ResponsesRequestBody {
+type ResponsesRequestBody = {
     readonly model?: string;
     readonly store?: boolean;
     readonly prompt_cache_key?: string;
     readonly max_output_tokens?: number;
     readonly input?: readonly ResponsesInputItem[];
-}
+};
 
 /**
  * Record each outbound request body, then answer with `respond`. The body holds

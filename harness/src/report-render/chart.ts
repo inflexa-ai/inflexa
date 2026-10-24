@@ -197,7 +197,7 @@ function isHorizontalBar(series: ChartSeries): boolean {
  * A transform channel derives its own column into the rows under a name that carries the transform. Thus
  * each base rule reads one plain column name, and no base rule knows about a transform.
  */
-interface ResolvedChartBlock {
+type ResolvedChartBlock = {
     id: string;
     chartType: BaseChartType;
     encoding: Partial<Record<Channel, string>>;
@@ -207,7 +207,7 @@ interface ResolvedChartBlock {
     orientation: ChartOrientation;
     focus?: readonly string[];
     facet?: string;
-}
+};
 
 /**
  * The label position of a vertical guide band.
@@ -283,16 +283,16 @@ export function deriveChartOption(
  * the rows of the track, and the rows of the tree of each axis. A block that declares none of them takes no
  * input.
  */
-export interface ChartInputs {
+export type ChartInputs = {
     readonly statistics?: readonly RenderStatistic[];
     readonly track?: RenderTrack;
     readonly trees?: RenderTrees;
-}
+};
 
 /** The options of the chart derivation: the figure modules that the dispatch asks first. */
-export interface ChartOpts {
+export type ChartOpts = {
     readonly figures: FigureRegistry;
-}
+};
 
 /** The options of every render: the registered figure modules. */
 export const DEFAULT_CHART_OPTS: ChartOpts = { figures: FIGURE_MODULES };
@@ -415,13 +415,13 @@ function chartRender(pass: ChartPass): ChartRender {
  * One derivation pass: the option, the same option with its rows inline, whether it reads the payload,
  * whether the inline form passed the bound, and the height of the page chart body.
  */
-interface ChartPass {
+type ChartPass = {
     readonly option: EchartOption;
     readonly inline: EchartOption;
     readonly readsPayload: boolean;
     readonly overBound: boolean;
     readonly bodyPx: number;
-}
+};
 
 /**
  * Run one derivation, normalize it, and route it onto the payload where the inline form passes the bound.
@@ -1543,10 +1543,10 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 const BOX_MIN_VALUES = 5;
 
 /** The center and the width of one group slot inside a category band, as fractions of the band. */
-interface Slot {
+type Slot = {
     readonly center: number;
     readonly width: number;
-}
+};
 
 /** The share of each box slot that the chart runtime leaves as the gap between two boxes. */
 const BOX_GAP_SHARE = 0.3;
@@ -1990,7 +1990,7 @@ export const POINT_LABEL: EchartOption = { show: true, formatter: "{b}" };
  *
  * `retyped` states that the channel gives the text of a number, which the page build cannot give.
  */
-interface ResolvedChannel {
+type ResolvedChannel = {
     name: string;
     values: readonly (Cell | null)[];
     transformed: boolean;
@@ -1999,13 +1999,13 @@ interface ResolvedChannel {
     order?: ChannelOrder;
     numeric?: true;
     retyped?: true;
-}
+};
 
 /**
  * One resolved series: the declared series, and the channels that it reads. `low` and `high` are both
  * present or both absent, because an interval has two bounds.
  */
-interface ResolvedSeries {
+type ResolvedSeries = {
     declared: ChartSeries;
     x: ResolvedChannel;
     y: ResolvedChannel;
@@ -2016,7 +2016,7 @@ interface ResolvedSeries {
     size?: ResolvedChannel;
     low?: ResolvedChannel;
     high?: ResolvedChannel;
-}
+};
 
 /**
  * One split of one declared series: the category name, the rows that it holds, and the muted flag.
@@ -2030,22 +2030,22 @@ interface ResolvedSeries {
  * `category` is the place of the category in the classification, and it is present under the same
  * condition. A page-side build reads the place and never the name, thus the two sides compare numbers.
  */
-interface SeriesSplit {
+type SeriesSplit = {
     name: Cell | undefined;
     indices: readonly number[];
     muted?: boolean;
     category?: number;
-}
+};
 
 /**
  * One column that a page-side series build reads: the place of the column in the payload, the per-row
  * transform of the channel, and whether the page reads each cell as its number.
  */
-export interface ChartColumnSource {
+export type ChartColumnSource = {
     readonly column: number;
     readonly transform?: ChartTransform;
     readonly numeric?: true;
-}
+};
 
 /**
  * One runtime series, as the page builds it from the columnar payload.
@@ -2063,7 +2063,7 @@ export interface ChartColumnSource {
  * `color` and `size` name the columns of a continuous color and of a symbol size. Each one adds one member
  * to the item after the pair, in that order, and a row whose cell is not numeric draws no point.
  */
-export interface ChartSeriesSource {
+export type ChartSeriesSource = {
     readonly x: ChartColumnSource;
     readonly y: ChartColumnSource;
     readonly color?: ChartColumnSource;
@@ -2076,17 +2076,17 @@ export interface ChartSeriesSource {
     readonly sort?: boolean;
     readonly rise?: boolean;
     readonly swap?: boolean;
-}
+};
 
 /**
  * The data source of one chart: the payload that it reads, the classification rule where a preset splits
  * the rows, and one descriptor for each runtime series in series order.
  */
-export interface ChartDataSource {
+export type ChartDataSource = {
     readonly payload: string;
     readonly rule?: PresetRule;
     readonly series: readonly ChartSeriesSource[];
-}
+};
 
 /**
  * The member of the option that carries the data source.
@@ -2103,19 +2103,19 @@ export const CHART_SOURCE_MEMBER = "__reportData";
  * describes no page-side build, for example a band that draws two series from one row set. A collector
  * whose entries do not match the series of the option describes nothing, thus the chart stays inline.
  */
-interface SourceCollector {
+type SourceCollector = {
     readonly columns: readonly string[];
     readonly series: ChartSeriesSource[];
     rule?: PresetRule;
     failed: boolean;
     composed?: readonly string[];
-}
+};
 
 /** The payload that a dense chart reads: the key of the registry, and the columns of the payload. */
-export interface ChartPayloadTarget {
+export type ChartPayloadTarget = {
     readonly key: string;
     readonly columns: readonly string[];
-}
+};
 
 /**
  * The option of one chart, whether it reads the registered payload of its artifact, the same chart with
@@ -2126,19 +2126,19 @@ export interface ChartPayloadTarget {
  * own. `widthPx` is the width of a figure that draws a block of a fixed size, for example the square of a PCA.
  * The card narrows the body to that width and centers it, and a chart with no such width fills the card.
  */
-export interface ChartRender {
+export type ChartRender = {
     readonly option: EchartOption;
     readonly readsPayload: boolean;
     readonly inline: EchartOption;
     readonly bodyPx: number;
     readonly widthPx?: number;
-}
+};
 
 /**
  * One plotted point. `index` names the row that it came from, thus a rank rule can find it again. The
  * members of the wide channels are numbers, because a row whose cell is not numeric draws no point.
  */
-interface Point {
+type Point = {
     index: number;
     x: Cell;
     y: Cell;
@@ -2147,7 +2147,7 @@ interface Point {
     size?: number;
     low?: number;
     high?: number;
-}
+};
 
 /**
  * One runtime series, whether it can carry the mark members of the annotations, whether it draws in the
@@ -2160,14 +2160,14 @@ interface Point {
  * and no legend entry. `entry` names the declared series of a drawn series, thus the visual maps and the
  * value labels find the channels that it reads.
  */
-interface EmittedSeries {
+type EmittedSeries = {
     option: EchartOption;
     carriesMarks: boolean;
     muted: boolean;
     empty: boolean;
     auxiliary: boolean;
     entry?: ResolvedSeries;
-}
+};
 
 /**
  * Derive one option from a composition.
@@ -2186,21 +2186,21 @@ interface EmittedSeries {
  * `collector` is present when the caller can send the rows to the page as a payload. Each series then
  * states its own page-side build beside its option.
  */
-interface CompositionExtras {
+type CompositionExtras = {
     readonly preset?: PresetAxisTitles;
     readonly classification?: PresetClassification;
     readonly collector?: SourceCollector;
     readonly focus?: readonly string[];
     readonly meanings?: ColumnMeanings;
     readonly colorOnTop?: boolean;
-}
+};
 
 /**
  * What each series of one composition reads beside its own channels: the rows, the declarations of the
  * bound table, the preset parts, the collector, the checked focus, the rows that carry a point label, the
  * density tier, the annotations, and whether the shared x axis sorts its categories.
  */
-interface CompositionContext {
+type CompositionContext = {
     readonly blockId: string;
     readonly rows: readonly ChartRow[];
     readonly labels: ColumnLabels;
@@ -2214,13 +2214,13 @@ interface CompositionContext {
     readonly annotations: readonly ChartAnnotation[];
     readonly orderedX: boolean;
     readonly colorOnTop: boolean;
-}
+};
 
 /** The two axes of one grid. */
-interface AxisPair {
+type AxisPair = {
     readonly xAxis: EchartOption;
     readonly yAxis: EchartOption;
-}
+};
 
 function deriveComposition(
     blockId: string,
@@ -2726,13 +2726,13 @@ function deriveFacets(
 }
 
 /** The layout members of a facet: one grid and one axis pair for each panel, the panel labels and the axis titles, and the legend. */
-interface FacetLayout {
+type FacetLayout = {
     readonly grid: EchartOption[];
     readonly xAxis: EchartOption[];
     readonly yAxis: EchartOption[];
     readonly graphic: EchartOption[];
     readonly legend: EchartOption;
-}
+};
 
 /**
  * The layout of the panels of a facet, one panel for each name in order.
@@ -4025,10 +4025,10 @@ const BAR_CATEGORY_GAP = "20%";
  * The two titles of one axis: the title that a value axis shows, and the title that a category axis shows
  * where the block declares one.
  */
-interface AxisTitles {
+type AxisTitles = {
     readonly value: string;
     readonly category?: string;
-}
+};
 
 /** The two titles of the axis of one quick-path column: its value title, and its declared label alone. */
 function axisTitles(labels: ColumnLabels, column: string): AxisTitles {
@@ -4235,13 +4235,13 @@ const VIOLIN_HALF_WIDTH = 0.4;
 const VIOLIN_MIN_VALUES = 5;
 
 /** The shape of one violin: the grid, the density at each grid point, and the three quartiles. */
-interface ViolinShape {
+type ViolinShape = {
     readonly grid: readonly number[];
     readonly densities: readonly number[];
     readonly q1: number;
     readonly median: number;
     readonly q3: number;
-}
+};
 
 /**
  * The Gaussian kernel density of one category on the fixed grid, or `undefined` for a category that draws

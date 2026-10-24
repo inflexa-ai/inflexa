@@ -1014,14 +1014,14 @@ describe("writeTurn", () => {
         };
     }
 
-    interface TurnRecordRow {
+    type TurnRecordRow = {
         readonly start_seq: string;
         readonly status: string;
         readonly reason: string | null;
         readonly reported_usage: TokenUsageRollup | null;
         readonly turn_duration_ms: string | null;
         readonly closed: boolean;
-    }
+    };
 
     async function turnRecords(threadId = THREAD): Promise<TurnRecordRow[]> {
         const { rows } = await pool.query<TurnRecordRow>(

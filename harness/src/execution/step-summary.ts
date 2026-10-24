@@ -57,7 +57,7 @@ function summaryRequest(artifactPaths: readonly string[]): string {
     return `${SYSTEM_PROMPT}\n\n${stepSummaryPrompt(artifactPaths.join("\n"))}`;
 }
 
-export interface GenerateStepSummaryOptions {
+export type GenerateStepSummaryOptions = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the continuation; omitted falls back to the no-op recorder. */
@@ -76,7 +76,7 @@ export interface GenerateStepSummaryOptions {
     readonly agentId: string;
     readonly runId: string;
     readonly signal?: AbortSignal;
-}
+};
 
 /** Returns `undefined` on non-fatal failure instead of throwing. */
 export async function generateStepSummary(opts: GenerateStepSummaryOptions): Promise<StepSummary | undefined> {

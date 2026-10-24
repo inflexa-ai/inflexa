@@ -71,10 +71,10 @@ function responsesSse(text: string, model: string): Response {
 }
 
 /** Header names are folded to lowercase. */
-interface CapturedRequest {
+type CapturedRequest = {
     readonly body: Record<string, unknown>;
     readonly headers: Record<string, string>;
-}
+};
 
 /** Captures each request so a test can assert on the wire model, since the request itself carries no model field. */
 function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; requests: CapturedRequest[] } {

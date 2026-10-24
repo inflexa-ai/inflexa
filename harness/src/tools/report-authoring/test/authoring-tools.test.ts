@@ -59,12 +59,12 @@ const DEFAULT_ANALYSIS_ID = "analysis-001";
  * the load and the persist. The persist-only fault fails the persist but keeps the load, thus a test can
  * isolate a land-time persist failure. The store clones each value to model a durable round trip.
  */
-interface FakeGateway extends ReportSessionStateGateway {
+type FakeGateway = ReportSessionStateGateway & {
     seed(threadId: string, state: ReportSessionState, analysisId?: string): void;
     peek(threadId: string): ReportSessionState | undefined;
     setFault(fault: boolean): void;
     setPersistFault(fault: boolean): void;
-}
+};
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();

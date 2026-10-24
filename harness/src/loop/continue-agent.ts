@@ -20,7 +20,7 @@ import {
 import type { ToolMask } from "./tool-mask.js";
 import type { AgentDefinition, LoopMessage } from "./types.js";
 
-export interface ContinuationRequest {
+export type ContinuationRequest = {
     /** Appended as a synthetic user message. */
     readonly text: string;
     /** The requests still declare every tool of the agent, even when masked. */
@@ -36,15 +36,15 @@ export interface ContinuationRequest {
     readonly accountingAgentId?: string;
     /** A `provider` error with the status `400` or `413` ends the continuation with the finish reason `error`, and no throw. */
     readonly endOnRequestRefusal?: boolean;
-}
+};
 
-export interface ContinuationResult {
+export type ContinuationResult = {
     /** The new messages only, starting with the synthetic request. */
     readonly messages: LoopMessage[];
     readonly finish: AgentFinish;
     /** The refusal that ended a continuation with `endOnRequestRefusal`. */
     readonly refusal?: RequestRefusal;
-}
+};
 
 export function namespacedStepNames(base: StepNameFormatter, namespace: string): StepNameFormatter {
     return {

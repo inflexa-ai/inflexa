@@ -28,11 +28,11 @@ import { isUnknownArray } from "../../lib/unknown-array.js";
 import { apiFetchValidated, describeApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
 
-export interface CtxResolved {
+export type CtxResolved = {
     dtxsid: string;
     preferredName: string;
     casrn: string | null;
-}
+};
 
 // A row of the chemical-search endpoint. `dtxsid` is nullable, because a search
 // that matches a DTXCID or a Markush record answers with a row that carries no
@@ -88,7 +88,7 @@ export async function resolveDtxsid(query: string, headers: Record<string, strin
 
 /* ---------------------------------- toxcast --------------------------------- */
 
-export interface ToxcastAssayResult {
+export type ToxcastAssayResult = {
     aeid: number;
     assayEndpoint: string;
     ac50: number | null;
@@ -96,14 +96,14 @@ export interface ToxcastAssayResult {
     maxMean: number | null;
     model: string;
     flags: string[];
-}
+};
 
-export interface ToxcastBioactivity {
+export type ToxcastBioactivity = {
     totalAssays: number;
     activeAssays: number;
     activeHitRate: number;
     results: ToxcastAssayResult[];
-}
+};
 
 // Raw CTX Bioactivity API wire shapes, validated at the fetch boundary. Fields
 // are optional because the API omits absent values.
@@ -327,11 +327,11 @@ export type CancerSummary = z.infer<typeof CancerSchema>;
 
 export type CtxHazardDataType = "toxval" | "genetox" | "cancer" | "all";
 
-export interface CtxHazardData {
+export type CtxHazardData = {
     toxval?: ToxValEntry[];
     genetox?: GenetoxSummary[];
     cancer?: CancerSummary[];
-}
+};
 
 /**
  * In-vivo hazard data for a chemical. `limit` caps toxval and genetox only —
@@ -398,7 +398,7 @@ async function fetchCancer(dtxsid: string, headers: Record<string, string>): Pro
 
 /* --------------------------------- chemical --------------------------------- */
 
-export interface ChemicalDetail {
+export type ChemicalDetail = {
     dtxsid: string;
     dtxcid: string;
     casrn: string | null;
@@ -415,9 +415,9 @@ export interface ChemicalDetail {
     pubchemCid: number | null;
     pubmedCount: number | null;
     sourcesCount: number | null;
-}
+};
 
-export interface PropertySummary {
+export type PropertySummary = {
     propName: string;
     unit: string;
     experimentalCount: number | null;
@@ -428,7 +428,7 @@ export interface PropertySummary {
     predictedMedian: number | null;
     predictedMin: number | null;
     predictedMax: number | null;
-}
+};
 
 // Raw CTX chemical-detail wire shape, validated at the fetch boundary. Every
 // field is optional (the API omits absent values); the mapper below normalizes
@@ -518,7 +518,7 @@ export async function fetchCtxChemicalProperties(dtxsid: string, headers: Record
 
 /* --------------------------------- exposure --------------------------------- */
 
-export interface SeemPrediction {
+export type SeemPrediction = {
     dtxsid: string;
     productionVolume: number | null;
     units: string;
@@ -526,9 +526,9 @@ export interface SeemPrediction {
     probabilityResidential: number | null;
     probabilityPesticide: number | null;
     probabilityIndustrial: number | null;
-}
+};
 
-export interface HttkParameter {
+export type HttkParameter = {
     parameter: string;
     measured: number | null;
     predicted: number | null;
@@ -536,22 +536,22 @@ export interface HttkParameter {
     model: string;
     species: string;
     reference: string;
-}
+};
 
-export interface FunctionalUse {
+export type FunctionalUse = {
     functionCategory: string;
     reportedFunction: string;
     docTitle: string;
-}
+};
 
-export interface ProductData {
+export type ProductData = {
     productName: string;
     generalCategory: string;
     productFamily: string;
     productType: string;
     centralWeightFraction: number | null;
     weightFractionType: string;
-}
+};
 
 // SEEM exposure-prediction wire shape. The endpoint answers with an array.
 // `probabilityPesticde` is the wire name, and it is the own misspelling of the
@@ -594,12 +594,12 @@ const RawProductDataRowSchema = z.object({
 
 export type CtxExposureDataType = "seem" | "httk" | "functional-use" | "product-data" | "all";
 
-export interface CtxExposureData {
+export type CtxExposureData = {
     seem?: SeemPrediction;
     httk?: HttkParameter[];
     functionalUse?: FunctionalUse[];
     productData?: ProductData[];
-}
+};
 
 /**
  * Human-exposure data for a chemical. `limit` caps functional-use and

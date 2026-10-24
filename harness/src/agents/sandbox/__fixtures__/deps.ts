@@ -83,11 +83,11 @@ export function makeFakePool(): Pool {
     return {} as Pool;
 }
 
-export interface MakeDepsOverrides {
+export type MakeDepsOverrides = {
     readonly model?: string;
     readonly analysisId?: string;
     readonly allowedWritePrefix?: string;
-}
+};
 
 export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxAgentDeps {
     return {

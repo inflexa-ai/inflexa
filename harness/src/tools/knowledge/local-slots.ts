@@ -18,14 +18,14 @@ import type { TemplateParameter } from "./client.js";
 export type LocalSlotValue = string | number | boolean | readonly string[];
 
 /** One refusal of a local value, in the shape of a render rejection issue. */
-export interface LocalSlotIssue {
+export type LocalSlotIssue = {
     readonly slot: string;
     readonly reason: string;
     readonly permitted?: readonly string[];
-}
+};
 
 /** One bound slot as the decision record keeps it: the value, its source, and the lines that carried its marker. */
-export interface BoundLocalSlot {
+export type BoundLocalSlot = {
     readonly name: string;
     readonly value: LocalSlotValue;
     readonly source: "caller" | "default";
@@ -34,7 +34,7 @@ export interface BoundLocalSlot {
     readonly lines: readonly number[];
     /** The `read` flag the service computed for the slot on the marked render, when it has a `when` condition. */
     readonly read?: boolean;
-}
+};
 
 export type BindLocalSlotsResult =
     | { readonly ok: false; readonly issues: readonly LocalSlotIssue[] }

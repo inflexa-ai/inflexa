@@ -21,18 +21,18 @@ function pageTwin(document?: unknown): {
     ).call(undefined, document) as ReturnType<typeof pageTwin>;
 }
 
-interface Box {
+type Box = {
     x: number;
     y: number;
     width: number;
     height: number;
-}
+};
 
-interface LayerBox {
+type LayerBox = {
     boxes: Record<string, Box>;
     extents: { xAxis: ({ min: number; max: number } | undefined)[]; yAxis: ({ min: number; max: number } | undefined)[] };
     box: Box;
-}
+};
 
 const SINGLE: SvgRootSize = { widthPx: 336, heightPx: 253, widthMm: 89, heightMm: 67 };
 const SLIDE: SvgRootSize = { widthPx: 1920, heightPx: 1080 };

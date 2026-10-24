@@ -53,14 +53,14 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic
 /** The SDK's own default when neither the host nor the environment says otherwise. */
 export const DEFAULT_METRIC_EXPORT_INTERVAL_MS = 60_000;
 
-export interface InitOtelOptions {
+export type InitOtelOptions = {
     /** Diagnostics sink; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** `service.name` when `OTEL_SERVICE_NAME` is unset. Default `cortex`. */
     readonly serviceName?: string;
     /** `service.version` — the host's package version. Omitted leaves the attribute unset. */
     readonly serviceVersion?: string;
-}
+};
 
 let initialized = false;
 let registeredTracerProvider: HarnessTracerProvider | undefined;

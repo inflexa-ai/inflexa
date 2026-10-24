@@ -60,12 +60,12 @@ function sankeySeries(option: EchartOption): EchartOption {
     return found;
 }
 
-interface Node {
+type Node = {
     name: string;
     depth: number;
     itemStyle: { color: string };
     label: { position: string };
-}
+};
 
 describe("the sankey stages", () => {
     it("gives each node the longest chain of flows from a node with no inflow, and the last stage to each node with no outflow", () => {

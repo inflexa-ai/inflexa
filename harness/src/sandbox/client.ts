@@ -24,7 +24,7 @@ import type { SpawnSession } from "../auth/types.js";
 import type { SandboxError } from "./sandbox-error.js";
 import type { ExecEmit, ExecRequest, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
 
-export interface SandboxClient {
+export type SandboxClient = {
     /**
      * The declared owner of the sandbox toolchain, as the client was composed
      * with it: `"image"` when the config declared it, `"store"` when the config
@@ -109,4 +109,4 @@ export interface SandboxClient {
      * ref the caller already holds; this one finds machines Cortex has forgotten.
      */
     listManagedSandboxes(): Promise<ManagedSandbox[]>;
-}
+};

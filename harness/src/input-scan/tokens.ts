@@ -26,10 +26,10 @@ import {
 
 export type TokenKind = "alpha" | "digit" | "delim" | "id" | "date";
 
-export interface NameToken {
+export type NameToken = {
     readonly kind: TokenKind;
     readonly value: string;
-}
+};
 
 export const ID_SYMBOL = "ID";
 export const DIGIT_SYMBOL = "#";
@@ -205,7 +205,7 @@ export function maskSegment(segment: string): string {
 
 export type SlotTokenClass = "constant" | "date" | "digits-fixed" | "digits" | "hex" | "opaque-id" | "word" | "pattern" | "any";
 
-export interface ValueClass {
+export type ValueClass = {
     readonly tokenClass: SlotTokenClass;
     /** Digit width, when every value is a fixed-width number. */
     readonly width?: number;
@@ -213,7 +213,7 @@ export interface ValueClass {
     readonly maxLength?: number;
     /** The shared masked form, when the class is `pattern`. */
     readonly skeleton?: string;
-}
+};
 
 /** Place a set of observed values on the lattice, most specific class first. */
 export function classifyValues(values: readonly string[]): ValueClass {

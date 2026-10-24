@@ -11,7 +11,7 @@ import { ncbiUrl } from "./ncbi-utils.js";
 
 export type ClinicalSignificance = "pathogenic" | "likely-pathogenic" | "benign" | "likely-benign" | "uncertain";
 
-export interface ClinvarVariant {
+export type ClinvarVariant = {
     variationId: string;
     title: string;
     clinicalSignificance: string;
@@ -20,7 +20,7 @@ export interface ClinvarVariant {
     molecularConsequence: string;
     conditions: string[];
     accession: string;
-}
+};
 
 // NCBI esummary wire shapes, validated at the fetch boundary. Every field is
 // optional — esummary omits absent values, and the record mapping below tolerates

@@ -28,15 +28,15 @@ import { CHART_EXPORT_SIZES, CHART_PAGE_TEXT_PX, FACET_COLUMNS } from "../design
 import { legendLineCount, legendLinePx } from "./common.js";
 
 /** The margins around the squares, in pixels at the page text size. */
-export interface SquareMargins {
+export type SquareMargins = {
     readonly top: number;
     readonly bottom: number;
     readonly left: number;
     readonly right: number;
-}
+};
 
 /** What one square layout places: the panels, their margins, and the members of the band at their right. */
-export interface SquareLayoutFields {
+export type SquareLayoutFields = {
     readonly panels: number;
     readonly margins: SquareMargins;
     /** The width in pixels of the band at the right of the squares, or 0 for no band. */
@@ -58,15 +58,15 @@ export interface SquareLayoutFields {
      * an axis of a small square.
      */
     readonly squareLabel?: { readonly series: number; readonly insetPx: number };
-}
+};
 
 /** The grids of a square layout, the places of the band members, and the media rules that resize them. */
-export interface SquareLayout {
+export type SquareLayout = {
     readonly grid: EchartOption[];
     readonly legend?: EchartOption;
     readonly visualMap?: EchartOption[];
     readonly media: EchartOption[];
-}
+};
 
 /** The smallest square side, in pixels. A container smaller than its rule still draws this square. */
 const SQUARE_MIN_PX = 120;
@@ -105,14 +105,14 @@ const POINT_SCALE_FROM_PX = 330;
 const POINT_MIN_PX = 1;
 
 /** One place of the layout at one square side: the grids, the band members, and the smallest container that holds them. */
-interface Placement {
+type Placement = {
     readonly series?: EchartOption[];
     readonly grid: EchartOption[];
     readonly legend?: EchartOption;
     readonly visualMap?: EchartOption[];
     readonly minWidth: number;
     readonly minHeight: number;
-}
+};
 
 /**
  * The layout of some square panels, and of the band at their right.
@@ -231,17 +231,17 @@ function placement(side: number, fields: SquareLayoutFields, scale: number, leas
 }
 
 /** The range of one axis. */
-export interface AxisRange {
+export type AxisRange = {
     readonly min: number;
     readonly max: number;
-}
+};
 
 /** The ranges of the two axes of one unit, and the tick step of a rounded pair. */
-export interface EqualRanges {
+export type EqualRanges = {
     readonly x: AxisRange;
     readonly y: AxisRange;
     readonly step?: number;
-}
+};
 
 /**
  * The ranges of two axes that share one unit: each axis spans one length, around its own data.

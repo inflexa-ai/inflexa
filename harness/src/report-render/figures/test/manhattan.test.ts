@@ -448,10 +448,10 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     };
 
     /** A zoom window in data units, as a box select of the toolbox gives it. */
-    interface ZoomWindow {
+    type ZoomWindow = {
         readonly x: readonly [number, number];
         readonly y: readonly [number, number];
-    }
+    };
 
     /**
      * One act of the reader on the toolbox: a box select, the undo of the zoom to the full range, as the last undo of
@@ -460,10 +460,10 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     type Step = ZoomWindow | "undo" | "restore";
 
     /** The texts that the page chart draws under its plot and to the left of its plot, inside the window. */
-    interface PlotTexts {
+    type PlotTexts = {
         readonly under: string[];
         readonly left: string[];
-    }
+    };
 
     /**
      * The texts that the page chart draws after the steps of the reader. The chart reads the page option as the

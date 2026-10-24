@@ -2,9 +2,9 @@ import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, Citat
 import { createPubmedSource, type ArticleDetail, type PubmedSourceOptions } from "../../literature/sources/pubmed.js";
 import { parseYear, sourceOutcome } from "./common.js";
 
-export interface PubmedCitationClientOptions extends PubmedSourceOptions {
+export type PubmedCitationClientOptions = PubmedSourceOptions & {
     readonly maxCandidates?: number;
-}
+};
 
 function pubmedRecord(article: ArticleDetail): CitationRecord {
     const year = parseYear(article.year);

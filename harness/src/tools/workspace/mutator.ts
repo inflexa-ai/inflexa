@@ -56,7 +56,7 @@ export type WriteFileResult =
  * exact bytes on disk, computed at the landing. Plain JSON, because the step
  * cache of the tool call holds it.
  */
-export interface WriteRecord {
+export type WriteRecord = {
     readonly analysisId: string;
     /** The thread of a session write; absent under a run. */
     threadId?: string;
@@ -66,7 +66,7 @@ export interface WriteRecord {
     readonly size: number;
     readonly toolName: MutateToolName;
     readonly invocationId: string;
-}
+};
 
 /** `writeFile` gives back the result, and on success the record of the write for `recordWrite`. */
 export type WriteOutcome =
@@ -80,7 +80,7 @@ export type WriteOutcome =
  */
 export type MutateToolName = "write_file" | "edit_file" | "knowledge_template" | "execute_command";
 
-export interface WorkspaceMutatorDeps {
+export type WorkspaceMutatorDeps = {
     /** Absolute host root of this analysis's workspace tree — used by the resolver. */
     readonly workspaceRoot: string;
     readonly analysisId: string;
@@ -93,9 +93,9 @@ export interface WorkspaceMutatorDeps {
      * write itself proceeds unchanged.
      */
     readonly lineageCollector?: ProvenanceCollector;
-}
+};
 
-export interface WorkspaceMutator {
+export type WorkspaceMutator = {
     /**
      * Resolve `path` against the working directory (relative) or analysis root
      * (absolute `/{analysisId}/...`), confine the result to the working
@@ -122,7 +122,7 @@ export interface WorkspaceMutator {
      * fold, thus the record reaches process-local state on each replay too.
      */
     recordWrite(record: WriteRecord): void;
-}
+};
 
 /** Outcome of the hardened landing — the disk-touching half of a confined write. */
 type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied";
@@ -288,7 +288,7 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
 }
 
 /** Construction deps of the session-scoped realization — see {@link createSessionWorkspaceMutator}. */
-export interface SessionWorkspaceMutatorDeps {
+export type SessionWorkspaceMutatorDeps = {
     /** Workspace-root resolution seam — the write coordinates resolve per call from the session's analysis scope. */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
@@ -300,7 +300,7 @@ export interface SessionWorkspaceMutatorDeps {
      */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
-}
+};
 
 /**
  * The session-scoped `WorkspaceMutator` realization — the conversation agent's

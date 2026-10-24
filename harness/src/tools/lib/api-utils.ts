@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import { sleep } from "../../lib/async-utils.js";
 
-export interface ApiFetchOptions {
+export type ApiFetchOptions = {
     method?: "GET" | "POST";
     headers?: Record<string, string>;
     body?: string;
@@ -35,7 +35,7 @@ export interface ApiFetchOptions {
     sleep?: (ms: number) => Promise<void>;
     timeoutMs?: number;
     parseAs?: "json" | "text";
-}
+};
 
 /** The error channel of `apiFetch`. A `DomainError` (string `type` discriminant). */
 export type ApiError =

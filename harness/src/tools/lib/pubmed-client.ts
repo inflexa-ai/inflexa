@@ -47,12 +47,12 @@ export async function searchPubmed(
     return unwrap(await pubmedSource(ncbiApiKey).search(query, options, signal));
 }
 
-export interface DetailOptions {
+export type DetailOptions = {
     /** Authors kept per article before collapsing the rest into `authorCount`. */
     maxAuthors?: number;
     /** MeSH terms kept per article; 0 drops the list entirely. */
     maxMeshTerms?: number;
-}
+};
 
 /**
  * One article as the tool returns it: `ArticleDetail` with the two unbounded
@@ -60,10 +60,10 @@ export interface DetailOptions {
  * dozens of MeSH headings — neither is worth the context, so the counts travel
  * instead of the tails.
  */
-export interface BoundedArticleDetail extends ArticleDetail {
+export type BoundedArticleDetail = ArticleDetail & {
     authorCount: number;
     meshTermCount: number;
-}
+};
 
 /** Fetch full PubMed article details (efetch + ID Converter for PMC). */
 export async function getArticleDetails(
@@ -87,12 +87,12 @@ export function boundArticleDetails(articles: ArticleDetail[], options: DetailOp
     }));
 }
 
-export interface FullTextOptions {
+export type FullTextOptions = {
     /** Case-insensitive substring match against section headings. */
     sections?: string[];
     /** Character budget across the returned section bodies. */
     maxChars?: number;
-}
+};
 
 /**
  * A full text trimmed to a character budget. `outline` always lists EVERY
@@ -100,14 +100,14 @@ export interface FullTextOptions {
  * call is enough to decide which sections a follow-up should request — the
  * alternative is the agent guessing headings it has not seen.
  */
-export interface BoundedFullText {
+export type BoundedFullText = {
     fullText: string;
     sections: ArticleSection[];
     outline: { heading: string; chars: number; included: boolean }[];
     totalChars: number;
     returnedChars: number;
     truncated: boolean;
-}
+};
 
 /**
  * Fetch open-access full text from PMC, trimmed to a section filter and a

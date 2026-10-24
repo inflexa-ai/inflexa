@@ -46,7 +46,7 @@ async function writeStepSummary(workspaceRoot: string, stepId: string, markdown:
     await writeFile(join(dir, "summary.md"), markdown, "utf8");
 }
 
-interface FakeState {
+type FakeState = {
     /** `cortex_analysis_state.data_profile_result` for this analysis. */
     readonly profile?: DataProfileResult;
     /** `cortex_artifacts` step-output rows, keyed by step id. */
@@ -55,7 +55,7 @@ interface FakeState {
     readonly memory?: { current: WorkingMemory | undefined };
     /** Make the working-memory read fail at the driver. */
     readonly memoryReadFails?: boolean;
-}
+};
 
 function fakePool(state: FakeState): Pool {
     // The state queries pass a config object; the working-memory store passes the text and the values apart.

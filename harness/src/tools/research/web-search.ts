@@ -14,16 +14,16 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 
-export interface WebSearchAnswer {
+export type WebSearchAnswer = {
     readonly answer?: string;
     readonly url?: string;
-}
+};
 
-export interface WebSearchResult {
+export type WebSearchResult = {
     readonly title: string;
     readonly url: string;
     readonly snippet?: string;
-}
+};
 
 export type WebSearchOutput =
     | { readonly status: "ok"; readonly answers: readonly WebSearchAnswer[]; readonly results: readonly WebSearchResult[] }
@@ -33,11 +33,11 @@ export type WebSearchOutput =
     | { readonly status: "not_json"; readonly text: string; readonly detail?: string };
 
 /** One query with its terms already composed: the engine adds transport, not semantics. */
-export interface WebSearchRequest {
+export type WebSearchRequest = {
     /** The final query text, `site:` / `-site:` terms included. */
     readonly query: string;
     readonly recencyFilter?: "day" | "week" | "month" | "year";
-}
+};
 
 /** What one query returned: the mapped answers and the mapped result rows. */
 export type WebSearchPage = {
@@ -54,14 +54,14 @@ export type WebSearchEngineError = Exclude<WebSearchOutput, { readonly status: "
  * query terms and the optional recency filter, and resolves to the page or to
  * the error variant that names the failure.
  */
-export interface WebSearchEngine {
+export type WebSearchEngine = {
     search(request: WebSearchRequest): Promise<Result<WebSearchPage, WebSearchEngineError>>;
-}
+};
 
-interface DomainFilter {
+type DomainFilter = {
     readonly include: boolean;
     readonly domain: string;
-}
+};
 
 function parseDomainFilter(raw: string | undefined): DomainFilter | null {
     const trimmed = (raw ?? "").trim().toLowerCase();
@@ -102,10 +102,10 @@ function applyDomainFilter(results: readonly WebSearchResult[], filter: DomainFi
     });
 }
 
-export interface WebSearchToolDeps {
+export type WebSearchToolDeps = {
     /** The web-search engine the embedder injected. */
     readonly engine: WebSearchEngine;
-}
+};
 
 export function createWebSearchTool(deps: WebSearchToolDeps) {
     return defineTool({

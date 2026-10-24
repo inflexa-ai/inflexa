@@ -32,14 +32,14 @@
 import type { GroundingSetting } from "../../schemas/workflow-state.js";
 import type { RecommendWithEnvironment, StepEnvironment } from "./environment.js";
 
-export interface SkeletonAlternative {
+export type SkeletonAlternative = {
     readonly method: string;
     readonly label: string;
     readonly when: string;
     readonly rules: readonly string[];
-}
+};
 
-export interface SkeletonStep {
+export type SkeletonStep = {
     readonly id: string;
     readonly name: string;
     readonly track: string;
@@ -65,7 +65,7 @@ export interface SkeletonStep {
         readonly settings: readonly GroundingSetting[];
         readonly reason: string;
     };
-}
+};
 
 type ProcedureStep = RecommendWithEnvironment["procedure"][number];
 

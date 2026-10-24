@@ -38,7 +38,7 @@ import { type Attributes, type Counter, type Histogram, metrics } from "@opentel
 import { TOKEN_USAGE_FIELDS, type TokenUsageField, type TokenUsageRollup } from "../contracts/usage.js";
 import type { ChatResponse, ChatUsage } from "../providers/types.js";
 
-interface Instruments {
+type Instruments = {
     readonly iterations: Histogram;
     readonly capHits: Counter;
     readonly inputTokens: Counter;
@@ -46,7 +46,7 @@ interface Instruments {
     readonly cacheReadTokens: Counter;
     readonly cacheWriteTokens: Counter;
     readonly reasoningTokens: Counter;
-}
+};
 
 let instruments: Instruments | undefined;
 
@@ -91,13 +91,13 @@ function getInstruments(): Instruments {
  * turn. A field stays `undefined` until a call reports it, so an unreported
  * field never masquerades as a measured zero.
  */
-export interface AgentRunUsage {
+export type AgentRunUsage = {
     inputTokens?: number;
     outputTokens?: number;
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
-}
+};
 
 // This module is where the three declarations of the usage shape meet: it folds
 // a `ChatUsage` into an `AgentRunUsage` by iterating `TOKEN_USAGE_FIELDS`, the

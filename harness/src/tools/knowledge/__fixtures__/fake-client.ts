@@ -286,12 +286,12 @@ export function contractAnswer(): TemplateContract {
     };
 }
 
-export interface FakeCalls {
+export type FakeCalls = {
     readonly recommend: { situation: KnowledgeSituation; preferences?: KnowledgePreferences; expected_snapshot?: string }[];
     readonly check: { situation: KnowledgeSituation; steps: readonly DraftedStep[]; expected_snapshot?: string }[];
     readonly render: { template: string; slots: Readonly<Record<string, unknown>>; farm?: readonly FarmPackage[]; options?: RenderCallOptions }[];
     readonly contract: { template: string }[];
-}
+};
 
 export function fakeKnowledgeClient(
     answers: Partial<{

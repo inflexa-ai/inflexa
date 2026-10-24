@@ -46,7 +46,7 @@ it reconciles the step row.
 
 ### Requirement: SandboxClient exposes seven backend-selected operations
 
-The harness MUST expose a `SandboxClient` interface with exactly seven
+The harness MUST expose a `SandboxClient` type with exactly seven
 operations: `createSandbox(session, spec, identity) → ResultAsync<SandboxRef, SandboxError>`,
 `exec(ref, request, emit, deadline) → ExecResult`, `isAlive(ref) → SandboxLiveness`,
 `isAliveById(sandboxId) → SandboxLiveness`, `teardown(ref) → void`,
@@ -54,7 +54,7 @@ operations: `createSandbox(session, spec, identity) → ResultAsync<SandboxRef, 
 A `createSandboxClient()` factory MUST select the Docker (dev) or K8s (prod)
 implementation from the `SANDBOX_BACKEND` value. The client MUST be injected at
 the composition root as a construction-time dependency. A caller MUST NOT import
-a backend implementation directly, and the interface MUST NOT leak a
+a backend implementation directly, and the client type MUST NOT leak a
 backend-specific type.
 
 `createSandbox` MUST take the `SpawnSession` of the work, a `RunSession` whose

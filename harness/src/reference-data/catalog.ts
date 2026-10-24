@@ -2330,10 +2330,10 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
 export type ReferenceInstallPlanDataset = ReferenceDataset & { readonly installPath: string };
 
 /** Deterministic plan; every artifact carries the upstream URL it is fetched from. */
-export interface ReferenceInstallPlan {
+export type ReferenceInstallPlan = {
     readonly catalogVersion: typeof REFERENCE_DATA_CATALOG_VERSION;
     readonly datasets: readonly ReferenceInstallPlanDataset[];
-}
+};
 
 /** A requested dataset id was not present in the selected catalog. */
 export class UnknownReferenceDatasetError extends Error {

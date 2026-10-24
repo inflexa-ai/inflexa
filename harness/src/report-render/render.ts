@@ -40,12 +40,12 @@ import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTab
  * three optional inputs made a caller of the last one pad the two before it, thus the inputs ride one bag.
  * An absent `chart` member derives each chart with the registered figure modules.
  */
-export interface RenderOptions {
+export type RenderOptions = {
     readonly records?: CitationRecords;
     readonly derivations?: readonly DerivationChain[];
     readonly provenance?: ProvenanceExport;
     readonly chart?: ChartOpts;
-}
+};
 
 /**
  * Render a report document, its value map, and the pinned citation records to one page and its data assets.
@@ -122,10 +122,10 @@ export async function renderReportPage(
  * A table block and a chart block over one artifact read one payload, thus the page holds one copy of the
  * rows and each block finds it under its own id.
  */
-interface PayloadRegistration {
+type PayloadRegistration = {
     readonly ids: string[];
     readonly payload: TablePayload;
-}
+};
 
 /**
  * The page-level state of one walk: the payload of each bound artifact, the count of the grid mounts, and
@@ -143,14 +143,14 @@ interface PayloadRegistration {
  * each block of one page decides it alike. `chart` holds the options of the chart derivation, constant in
  * the same way. `chartRuntime` draws the SVG files of each chart.
  */
-interface PageData {
+type PageData = {
     readonly payloads: Map<string, PayloadRegistration>;
     mounts: number;
     readonly svgs: DataAsset[];
     readonly view: ViewOptions;
     readonly chart: ChartOpts;
     readonly chartRuntime: ChartRuntime;
-}
+};
 
 /**
  * Register the payload of one bound artifact, and name this block as a reader of it.

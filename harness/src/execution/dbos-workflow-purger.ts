@@ -74,11 +74,11 @@ function asEngineLogger(logger: Logger): DLogger {
     };
 }
 
-export interface DbosWorkflowPurgerDeps {
+export type DbosWorkflowPurgerDeps = {
     /** Pool onto the engine's system database — the same database the application pool holds. */
     readonly pool: Pool;
     readonly logger?: Logger;
-}
+};
 
 /**
  * One client for each pool, shared by every purger and by the run canceler. A client registers

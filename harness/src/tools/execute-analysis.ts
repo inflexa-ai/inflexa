@@ -73,7 +73,7 @@ const inputSchema = z
 
 type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
 
-export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory" | "refStorePath"> {
+export type ExecuteAnalysisToolDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory" | "refStorePath"> & {
     readonly pool: Pool;
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
@@ -90,7 +90,7 @@ export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "fa
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
     /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
-}
+};
 
 export class PlanNotFoundError extends Error {
     constructor(planId: string) {

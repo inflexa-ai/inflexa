@@ -44,10 +44,10 @@ const HASH_CHARS = 12;
  * Both are opaque strings. The renderer moves them into the page and never into a parse, thus a document of
  * any format rides unchanged and the page-side reader owns the format.
  */
-export interface ProvenanceExport {
+export type ProvenanceExport = {
     readonly document: string;
     readonly attestation?: string;
-}
+};
 
 /**
  * The source text of one member of the global.

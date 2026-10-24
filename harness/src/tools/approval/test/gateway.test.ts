@@ -10,20 +10,20 @@ import { uuidv7 } from "../uuidv7.js";
 
 // The `data-ask` payload the gateway emits inside a `ChatDataPart` — the flat
 // fields without the part-envelope `type`, as a surface would read them.
-interface AskPartData {
+type AskPartData = {
     readonly id: string;
     readonly title: string;
     readonly command: string;
     readonly detail?: string;
     readonly status: string;
     readonly reply?: string;
-}
+};
 
-interface StartedAsk {
+type StartedAsk = {
     readonly promise: Promise<{ kind: "once" | "always" }>;
     readonly parts: AskPartData[];
     readonly controller: AbortController;
-}
+};
 
 // A fresh schema per test isolates the whole-ledger reads (`pending`,
 // `sweepExpired`) so their assertions can be exact.

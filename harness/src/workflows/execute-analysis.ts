@@ -146,12 +146,12 @@ type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResul
 // ── Workflow input/output shapes ─────────────────────────────────────
 
 /** Quick-display finding on the run-completed card. Mirrors the wire schema's RunCompletedFinding. */
-export interface RunFinding {
+export type RunFinding = {
     readonly title: string;
     readonly confidence: "high" | "medium" | "low";
-}
+};
 
-export interface ExecuteAnalysisInput {
+export type ExecuteAnalysisInput = {
     readonly analysisId: string;
     /** Plan id — the dedup key for the partial-unique index on cortex_runs. */
     readonly planId: string;
@@ -210,7 +210,7 @@ export interface ExecuteAnalysisInput {
      * absent → true, matching the prior Cortex-owned behavior.
      */
     readonly ownsMandate?: boolean; // oss-core-managed-ok
-}
+};
 
 /**
  * Outcome of the trigger. `running` is what the dedup-collision recovery
@@ -219,14 +219,14 @@ export interface ExecuteAnalysisInput {
  */
 export type ExecuteAnalysisFinalStatus = "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
 
-export interface ExecuteAnalysisResult {
+export type ExecuteAnalysisResult = {
     readonly runId: string;
     readonly workflowId: string;
     readonly status: ExecuteAnalysisFinalStatus;
     readonly completedSteps: readonly string[];
     readonly failedSteps: readonly string[];
     readonly canceledSteps: readonly string[];
-}
+};
 
 // ── Dep injection ─────────────────────────────────────────────────────
 
@@ -244,14 +244,14 @@ export type StepRuntimeStatus = "pending" | "queued" | "running" | "completed" |
  * that says what the step is FOR. `durationMs` and `error` appear only once the step has settled
  * in a way that produced them.
  */
-export interface RunStepObservation {
+export type RunStepObservation = {
     readonly id: string;
     readonly name: string;
     readonly agent: string;
     readonly status: StepRuntimeStatus;
     readonly durationMs?: number;
     readonly error?: string;
-}
+};
 
 /**
  * A whole-run snapshot handed to {@link ExecuteAnalysisDeps.observeRun}.
@@ -267,14 +267,14 @@ export interface RunStepObservation {
  * computable from `steps` and recorded authoritatively on the run's ledger row; carrying them here
  * would mint a second source that can disagree with the ledger a host also reads.
  */
-export interface RunObservation {
+export type RunObservation = {
     readonly runId: string;
     readonly analysisId: string;
     /** `running` for every mid-flight snapshot; the derived terminal status on the last one. */
     readonly status: ExecuteAnalysisFinalStatus;
     /** Every plan step, including ones that have not started — never a delta. */
     readonly steps: readonly RunStepObservation[];
-}
+};
 
 /**
  * Construction-time deps for the parent workflow. The order-of-operations is
@@ -284,7 +284,7 @@ export interface RunObservation {
  * registered sandbox-step callable — plus the construction inputs (provider,
  * embedder, model, keys, roots) the in-body synthesis needs.
  */
-export interface ExecuteAnalysisDeps {
+export type ExecuteAnalysisDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly pool: Pool;
@@ -368,7 +368,7 @@ export interface ExecuteAnalysisDeps {
      * throwing observer never fails the run.
      */
     readonly observeRun?: (observation: RunObservation) => void;
-}
+};
 
 // ── In-body orchestration helpers ────────────────────────────────────
 
@@ -545,10 +545,10 @@ export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepI
 }
 
 /** What `gatherStepPackage` gives: the data of the seed, and the binding of the plan settings when one holds. */
-export interface StepPackage {
+export type StepPackage = {
     readonly briefing: StepBriefing;
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /**
  * Do every read of one step's package and give the data its seed is rendered
@@ -631,16 +631,16 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
  * its served version is the version the plan names. JSON-serialisable, as a
  * durable step result must be.
  */
-export interface StepSeed {
+export type StepSeed = {
     readonly prompt: string;
     readonly templateBinding?: TemplateBinding;
-}
+};
 
 /** The template part of a seed: the brief or the reason for its absence, and the binding when one holds. */
-interface TemplateSeedPart {
+type TemplateSeedPart = {
     readonly briefing: Pick<StepBriefing, "template" | "templateNotRetrieved">;
     readonly binding?: TemplateBinding;
-}
+};
 
 /** A served contract carries no `match`; the two refusals do. */
 function isTemplateContract(answer: TemplateContract | KnowledgeUnavailable | KnowledgeRejected): answer is TemplateContract {
@@ -717,11 +717,11 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  * as unbound lines under the caveat the section renders.
  */
 /** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
-interface StepGroundingRef {
+type StepGroundingRef = {
     readonly stepId: string;
     readonly claims: readonly string[];
     readonly snapshot?: string;
-}
+};
 
 function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
     const refVersion = versionOfRef(ref);
@@ -1221,19 +1221,19 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
 
 // ── (1) validateAndInit ───────────────────────────────────────────────
 
-interface ValidateAndInitFresh {
+type ValidateAndInitFresh = {
     readonly kind: "fresh";
-}
+};
 
-interface ValidateAndInitJoinedExisting {
+type ValidateAndInitJoinedExisting = {
     readonly kind: "joined-existing";
     readonly runId: string;
-}
+};
 
-interface ValidateAndInitChargeRefused {
+type ValidateAndInitChargeRefused = {
     readonly kind: "charge-refused";
     readonly refusal: GateRefusal;
-}
+};
 
 type ValidateAndInitResult = ValidateAndInitFresh | ValidateAndInitJoinedExisting | ValidateAndInitChargeRefused;
 
@@ -1278,15 +1278,15 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
 
 // ── (2-4) Scheduler loop ──────────────────────────────────────────────
 
-interface SchedulerLoopArgs {
+type SchedulerLoopArgs = {
     readonly input: ExecuteAnalysisInput;
     readonly runId: string;
     readonly workflowId: string;
     readonly levels: ReadonlyMap<string, number>;
     readonly deps: ExecuteAnalysisDeps;
-}
+};
 
-interface SchedulerLoopOutcome {
+type SchedulerLoopOutcome = {
     readonly completed: Set<string>;
     readonly failed: Set<string>;
     readonly canceled: Set<string>;
@@ -1304,7 +1304,7 @@ interface SchedulerLoopOutcome {
      * rollup. Absent when no step reported one.
      */
     readonly usage?: TokenUsageRollup;
-}
+};
 
 async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopOutcome> {
     const { input, runId, workflowId, levels, deps } = args;
@@ -1696,7 +1696,7 @@ async function cancelInFlight(
 /** The waits between the attempts are 1, 2, 4, and 8 seconds. */
 const FINAL_STATUS_WRITE_RETRY = { retriesAllowed: true, maxAttempts: 5, intervalSeconds: 1, backoffRate: 2 } as const;
 
-interface CollectAndCompleteArgs {
+type CollectAndCompleteArgs = {
     readonly input: ExecuteAnalysisInput;
     readonly runId: string;
     readonly workflowId: string;
@@ -1722,7 +1722,7 @@ interface CollectAndCompleteArgs {
      */
     readonly synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null;
     readonly deps: ExecuteAnalysisDeps;
-}
+};
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
     const { input, runId, workflowId, startedAtMs, completed, failed, canceled, suspension, failureReason, forceFailed, deps } = args;

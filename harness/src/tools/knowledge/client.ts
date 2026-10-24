@@ -32,7 +32,7 @@ export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "other";
 export type PredictorRole = "dose" | "time" | "age" | "score" | "other";
 
 /** The typed description of one analysis situation. Never a sample row, never an identifier, and never a column name. */
-export interface KnowledgeSituation {
+export type KnowledgeSituation = {
     readonly question: "differential_expression" | "enrichment" | "qc" | "full_plan";
     readonly modality: "bulk_rna_seq";
     readonly data_state: "fastq" | "counts" | "tpm_or_fpkm" | "log_normalized";
@@ -68,7 +68,7 @@ export interface KnowledgeSituation {
     /** True for a classifier of the samples into classes; absent for a per-sample score. */
     readonly classifier?: boolean;
     readonly quality_flags?: readonly ("low_depth_sample" | "outlier_sample" | "sample_identity_doubt" | "high_duplication" | "degraded_rna")[];
-}
+};
 
 // ── The answers, as the harness reads them ──────────────────────────
 
@@ -267,12 +267,12 @@ const ValidationFailureSchema = z.looseObject({
 });
 
 /** The preferences of the caller: the language of the template the answer names. */
-export interface KnowledgePreferences {
+export type KnowledgePreferences = {
     readonly language?: "R" | "python";
-}
+};
 
 /** What a drafted step carries into the check. */
-export interface DraftedStep {
+export type DraftedStep = {
     readonly step_type: string;
     readonly method: string;
     /** The catalog id of the method (`M-dddd`), copied from the recommendation. An exact match wins over the wording. */
@@ -281,33 +281,33 @@ export interface DraftedStep {
     readonly parameters?: readonly { readonly name: string; readonly value: string | number | boolean }[];
     /** The outcome the step states when the design forbids inference, for example `descriptive_only`. */
     readonly outcome?: string;
-}
+};
 
-export interface FarmPackage {
+export type FarmPackage = {
     readonly name: string;
     readonly version: string;
-}
+};
 
 /** The service could not answer after the retry policy. The run continues from the prose skills. */
-export interface KnowledgeUnavailable {
+export type KnowledgeUnavailable = {
     readonly match: "unavailable";
     readonly reason: string;
-}
+};
 
 /**
  * The service serves another release than the one the plan pinned, and it
  * did no work. A plan is not moved to a new release in silence: the caller
  * proceeds as with an unavailable service, and it states the two digests.
  */
-export interface KnowledgeSnapshotMismatch {
+export type KnowledgeSnapshotMismatch = {
     readonly match: "snapshot_mismatch";
     readonly message: string;
     readonly expected: string;
     readonly served: { readonly date: string; readonly digest: string };
-}
+};
 
 /** The service refused the request and named the field or the slot and the permitted values. */
-export interface KnowledgeRejected {
+export type KnowledgeRejected = {
     readonly match: "rejected";
     readonly message: string;
     readonly issues: readonly {
@@ -317,19 +317,19 @@ export interface KnowledgeRejected {
         readonly reason?: string;
         readonly permitted?: readonly string[];
     }[];
-}
+};
 
 /** What a render call carries beside the template and the slots. */
-export interface RenderCallOptions {
+export type RenderCallOptions = {
     /** The id of the plan step that runs the script. */
     readonly step?: string;
     /** The claims of the plan step that selected the template. Each must resolve in the served snapshot. */
     readonly claims?: readonly string[];
     /** The release digest the plan pinned. The service refuses another release with `snapshot_mismatch`. */
     readonly expectedSnapshot?: string;
-}
+};
 
-export interface KnowledgeClient {
+export type KnowledgeClient = {
     /** `expectedSnapshot` pins the release of an earlier answer of the same plan; the first call of a plan has none. */
     recommend(
         situation: KnowledgeSituation,
@@ -356,16 +356,16 @@ export interface KnowledgeClient {
      * unknown template is `rejected` with the field `template`.
      */
     contract(template: string): Promise<TemplateContract | KnowledgeUnavailable | KnowledgeRejected>;
-}
+};
 
-export interface HttpKnowledgeClientConfig {
+export type HttpKnowledgeClientConfig = {
     /** The service origin, for example `https://knowledge.inflexa.ai`. */
     readonly baseUrl: string;
     /** The bearer key. The license of the service. */
     readonly apiKey: string;
     readonly timeoutMs?: number;
     readonly maxRetries?: number;
-}
+};
 
 /** The `message` of an error envelope, or the body itself when it is not one. */
 function messageOf(body: string): string | undefined {

@@ -28,12 +28,12 @@ export function normalizeAuthor(value: string): string {
         .trim();
 }
 
-interface AuthorEvidence {
+type AuthorEvidence = {
     /** Spelled-out name parts, in no particular order. */
     readonly words: readonly string[];
     /** Standalone initials, which say nothing about which part of the name they abbreviate. */
     readonly initials: readonly string[];
-}
+};
 
 function authorEvidence(value: string): AuthorEvidence {
     const tokens = normalizeAuthor(value).split(" ").filter(Boolean);
