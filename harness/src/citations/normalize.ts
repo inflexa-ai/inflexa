@@ -131,12 +131,12 @@ function classifyUnsupportedWork(value: string): UnsupportedWorkKind | undefined
 
 function normalizedSupplied(input: CitationInput): NormalizedCitationMetadata {
     return {
-        ...(input.title === undefined ? {} : { title: normalizeComparable(input.title) }),
-        ...(input.authors === undefined ? {} : { authors: input.authors.map(normalizeAuthor).filter(Boolean) }),
-        ...(input.year === undefined ? {} : { year: input.year }),
-        ...(input.venue === undefined ? {} : { venue: normalizeComparable(input.venue) }),
-        ...(input.volume === undefined ? {} : { volume: normalizeComparable(input.volume) }),
-        ...(input.firstPage === undefined ? {} : { firstPage: normalizeComparable(input.firstPage) }),
+        title: input.title === undefined ? undefined : normalizeComparable(input.title),
+        authors: input.authors?.map(normalizeAuthor).filter(Boolean),
+        year: input.year,
+        venue: input.venue === undefined ? undefined : normalizeComparable(input.venue),
+        volume: input.volume === undefined ? undefined : normalizeComparable(input.volume),
+        firstPage: input.firstPage === undefined ? undefined : normalizeComparable(input.firstPage),
     };
 }
 
@@ -167,12 +167,12 @@ export function normalizeCitation(unparsed: CitationInput): NormalizedCitation {
         query: normalizeComparable(citation),
         kind,
         identifiers: {
-            ...(doi === undefined || !identified ? {} : { doi }),
-            ...(pmid === undefined || !identified ? {} : { pmid }),
-            ...(arxiv === undefined || !identified ? {} : { arxiv }),
+            doi: doi === undefined || !identified ? undefined : doi,
+            pmid: pmid === undefined || !identified ? undefined : pmid,
+            arxiv: arxiv === undefined || !identified ? undefined : arxiv,
         },
         supplied: normalizedSupplied(input),
-        ...(unsupportedWorkKind === undefined ? {} : { unsupportedWorkKind }),
+        unsupportedWorkKind,
     };
 }
 

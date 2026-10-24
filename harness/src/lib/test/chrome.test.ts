@@ -100,7 +100,9 @@ describe("the connection cache", () => {
         // The connected flag of the fake stays true. Thus a second connect can come from the eviction alone,
         // and the test pins the eviction to the event. A real browser drops the flag, and the two signals
         // then agree.
-        fakes[0].emitDisconnected();
+        const fake = fakes[0];
+        if (fake === undefined) throw new Error("the eviction test saw no browser");
+        fake.emitDisconnected();
 
         expect(await getBrowser("http://dead.test:9222")).not.toBe(dead);
         expect(await getBrowser("http://live.test:9222")).toBe(live);

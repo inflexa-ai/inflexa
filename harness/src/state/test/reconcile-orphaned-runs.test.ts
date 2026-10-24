@@ -34,8 +34,13 @@ describe("reconcileOrphanedRuns", () => {
     }
 
     async function statusOf(runId: string): Promise<{ status: string; error: string | null; completed_at: string | null }> {
-        const { rows } = await rig.pool.query({ text: "SELECT status, error, completed_at FROM cortex_runs WHERE run_id = $1", values: [runId] });
-        return rows[0];
+        const { rows } = await rig.pool.query<{ status: string; error: string | null; completed_at: string | null }>({
+            text: "SELECT status, error, completed_at FROM cortex_runs WHERE run_id = $1",
+            values: [runId],
+        });
+        const row = rows[0];
+        if (row === undefined) throw new Error(`the status read holds no row for ${runId}`);
+        return row;
     }
 
     it("fails a running run that started before the grace and has no workflow", async () => {

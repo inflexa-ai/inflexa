@@ -67,6 +67,24 @@ function onGrid(option: EchartOption, grid: number): EchartOption[] {
     return seriesOf(option).filter((series) => (series.xAxisIndex ?? 0) === grid);
 }
 
+function firstSeries(option: EchartOption): EchartOption {
+    const [points] = seriesOf(option);
+    if (points === undefined) throw new Error("the option holds no series");
+    return points;
+}
+
+function firstAxis(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
+    const [axis] = option[key] as EchartOption[];
+    if (axis === undefined) throw new Error(`the option holds no ${key}`);
+    return axis;
+}
+
+function firstOf<T>(items: readonly T[], label: string): T {
+    const [first] = items;
+    if (first === undefined) throw new Error(`no ${label}`);
+    return first;
+}
+
 describe("the km figure", () => {
     it("registers for the km chart type", () => {
         expect(FIGURE_MODULES.km).toBe(KM_FIGURE);
@@ -78,7 +96,7 @@ describe("the km figure", () => {
             (series) => series.type === "line" && series.step === "end" && series.areaStyle === undefined && series.silent !== true,
         );
         expect(lines.map((series) => series.name)).toEqual(["Female", "Male"]);
-        expect(lines[0].data).toEqual([
+        expect(firstOf(lines, "step line").data).toEqual([
             [0, 1],
             [5, 0.989],
             [60, 0.978],
@@ -94,7 +112,7 @@ describe("the km figure", () => {
             { time: 5, surv: 0.9 },
             { time: 9, surv: 0.7 },
         ]);
-        expect(seriesOf(option)[0].data).toEqual([
+        expect(firstSeries(option).data).toEqual([
             [0, 1],
             [5, 0.9],
             [9, 0.7],
@@ -106,19 +124,21 @@ describe("the km figure", () => {
         const band = seriesOf(option).filter((series) => series.stack === "km-band-1");
         expect(band).toHaveLength(2);
         expect(band.every((series) => series.step === "end" && series.silent === true && series.name === "Male")).toBe(true);
-        expect(band[0].data).toEqual([
+        const [lowerBand, upperBand] = band;
+        if (lowerBand === undefined || upperBand === undefined) throw new Error("the band drew fewer than two series");
+        expect(lowerBand.data).toEqual([
             [0, 1],
             [11, 0.924],
             [270, 0.406],
             [883, 0.009],
         ]);
-        expect((band[1].data as number[][]).map(([time, span]) => [time, Number(span.toFixed(3))])).toEqual([
+        expect((upperBand.data as number[][]).map(([time, span]) => [time, Number(span?.toFixed(3))])).toEqual([
             [0, 0],
             [11, 0.065],
             [270, 0.17],
             [883, 0.088],
         ]);
-        expect(band[1].areaStyle).toEqual({ color: CHART_PALETTE[1], opacity: 0.2 });
+        expect(upperBand.areaStyle).toEqual({ color: CHART_PALETTE[1], opacity: 0.2 });
     });
 
     it("carries a tick on the curve at each row whose censor count is above zero", () => {
@@ -141,12 +161,15 @@ describe("the km figure", () => {
     it("prints the number at risk under the plot at each tick of the time axis", () => {
         const option = derive(kmBlock());
         const xAxes = option.xAxis as EchartOption[];
-        expect([xAxes[0].min, xAxes[0].max, xAxes[0].interval]).toEqual([0, 883, 200]);
-        expect([xAxes[1].min, xAxes[1].max, xAxes[1].interval]).toEqual([0, 883, 200]);
+        const [timeAxis, riskAxis] = xAxes;
+        if (timeAxis === undefined || riskAxis === undefined) throw new Error("the option holds fewer than two x axes");
+        expect([timeAxis.min, timeAxis.max, timeAxis.interval]).toEqual([0, 883, 200]);
+        expect([riskAxis.min, riskAxis.max, riskAxis.interval]).toEqual([0, 883, 200]);
         // The axis ends at the last time, and a label there would crowd the tick at 800.
-        expect(xAxes[0].axisLabel).toEqual({ showMaxLabel: false, interval: 0 });
+        expect(timeAxis.axisLabel).toEqual({ showMaxLabel: false, interval: 0 });
         expect((option.graphic as EchartOption[]).map((element) => (element.style as EchartOption).text)).toEqual(["Number at risk"]);
         const table = (option.yAxis as EchartOption[])[1];
+        if (table === undefined) throw new Error("the option holds no risk table axis");
         expect(table.inverse).toBe(true);
         expect(table.data).toEqual([
             { value: "Female", textStyle: { color: CHART_PALETTE[0] } },
@@ -179,7 +202,7 @@ describe("the km figure", () => {
             { arm: "A", time: 0.6, surv: 0.6, n_risk: 5 },
         ];
         const option = derive(kmBlock({ x: "time", y: "surv", group: "arm", risk: "n_risk" }), rows);
-        const time = (option.xAxis as EchartOption[])[0];
+        const time = firstAxis(option, "xAxis");
         expect([time.max, time.interval, (time.axisLabel as EchartOption | undefined)?.showMaxLabel]).toEqual([0.6, 0.2, undefined]);
         const counts = onGrid(option, 1).map((series) => (series.data as EchartOption[]).map((item) => [item.value, item.name]));
         expect(counts).toEqual([
@@ -201,6 +224,7 @@ describe("the km figure", () => {
             const block = kmBlock({ x: "time", y: "surv", group: "arm", risk: "n_risk" });
             const render = deriveChartRender(block, rows, undefined, { key: "km1", columns: [] }, {}, { figures: { km: KM_FIGURE } })._unsafeUnwrap();
             const plot = (render.option.grid as EchartOption[])[0];
+            if (plot === undefined) throw new Error("the render holds no plot grid");
             const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
         };
@@ -244,13 +268,14 @@ describe("the km figure", () => {
     it("prints the statistics at the top right of the plot", () => {
         const option = derive(kmBlock(ENCODING, { statistics: LOGRANK }), ROWS, { statistics: [{ label: "Log-rank p", value: 0.00131116452035549 }] });
         const [text, title] = option.graphic as EchartOption[];
+        if (text === undefined || title === undefined) throw new Error("the option holds fewer than two graphic elements");
         expect([text.right, text.top, (text.style as EchartOption).text]).toEqual(["7%", "12%", "Log-rank p = 1.3 × 10⁻³"]);
         expect((title.style as EchartOption).text).toBe("Number at risk");
     });
 
     it("holds the survival axis from 0 to 1", () => {
         const option = derive(kmBlock());
-        const survival = (option.yAxis as EchartOption[])[0];
+        const survival = firstAxis(option, "yAxis");
         expect([survival.type, survival.min, survival.max, survival.name]).toEqual(["value", 0, 1, "surv"]);
     });
 
@@ -258,7 +283,9 @@ describe("the km figure", () => {
         expect((derive(kmBlock()).legend as EchartOption).top).toBe(0);
         const single = derive(kmBlock({ x: "time", y: "surv", risk: "n_risk" }), ROWS.slice(0, 6));
         expect(single.legend).toEqual({ show: false });
-        expect((single.yAxis as EchartOption[])[1].data).toEqual([{ value: "", textStyle: { color: CHART_PALETTE[0] } }]);
+        const riskAxis = (single.yAxis as EchartOption[])[1];
+        if (riskAxis === undefined) throw new Error("the option holds no risk table axis");
+        expect(riskAxis.data).toEqual([{ value: "", textStyle: { color: CHART_PALETTE[0] } }]);
     });
 });
 

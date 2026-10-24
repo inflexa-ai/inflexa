@@ -159,7 +159,7 @@ describe("a raw script sink stays hardened", () => {
         if (match === null) {
             throw new Error("The page holds no application/json script element.");
         }
-        const parsed = JSON.parse(match[1]) as { xAxis: { data: unknown[] } };
+        const parsed = JSON.parse(match[1] ?? "") as { xAxis: { data: unknown[] } };
         expect(parsed.xAxis.data).toContain(hostileCell);
         expect(JSON.stringify(parsed)).toContain(hostileCell);
     });

@@ -403,7 +403,9 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
         const result = await tool.execute({ files: [{ path: "output/a.csv", description: "d", dataType: "table", format: "csv" }] }, makeToolContext().ctx);
 
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr()).toMatchObject({ retryable: false, error: expect.stringContaining("after the task") });
+        const refusal = result._unsafeUnwrapErr();
+        expect(refusal).toMatchObject({ retryable: false });
+        expect(refusal.error).toContain("after the task");
     });
 });
 

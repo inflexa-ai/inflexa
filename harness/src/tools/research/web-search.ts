@@ -143,7 +143,7 @@ export function createWebSearchTool(deps: WebSearchToolDeps) {
             // The input refine guarantees exactly one of `query` and `queries`.
             const queryList = queries ?? [query!];
 
-            const requests = queryList.map((raw) => deps.engine.search({ query: queryTerms(raw, filter), ...(recencyFilter ? { recencyFilter } : {}) }));
+            const requests = queryList.map((raw) => deps.engine.search({ query: queryTerms(raw, filter), recencyFilter }));
 
             const responses: WebSearchPage[] = [];
             for (const response of await Promise.all(requests)) {

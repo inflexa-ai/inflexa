@@ -67,7 +67,7 @@ function pageFunctions(document: unknown): {
     return new Function(
         "document",
         `${CHART_TOOLBOX_SOURCE}\nreturn { rows: reportDataViewRows, content: reportDataViewContent, bind: reportBindToolbox, open: reportOpenExportMenu, click: reportMenuClick, key: reportMenuKey, fault: reportMenuFault, named: reportToolboxFunctions };`,
-    )(document) as ReturnType<typeof pageFunctions>;
+    ).call(undefined, document) as ReturnType<typeof pageFunctions>;
 }
 
 /** A stub document that builds nodes, holds a focus, and finds one element by its id. */
@@ -120,10 +120,11 @@ describe("the toolbox of a page chart", () => {
     it("gives each chart the data view and the download control, with the download control last", () => {
         const toolbox = chartToolbox("bar");
         expect(Object.keys(features(toolbox))).toEqual(["dataView", "myExport"]);
-        expect(features(toolbox).myExport).toEqual(expect.objectContaining({ show: true, onclick: EXPORT_MENU_FUNCTION }));
-        expect(String(features(toolbox).myExport.icon).startsWith("path://")).toBe(true);
-        expect(features(toolbox).dataView).toEqual(expect.objectContaining({ readOnly: true, optionToContent: DATA_VIEW_FUNCTION }));
-        expect(toolbox).toEqual(expect.objectContaining({ show: true, right: expect.any(Number), top: 0 }));
+        expect(features(toolbox).myExport).toMatchObject({ show: true, onclick: EXPORT_MENU_FUNCTION });
+        expect(String(features(toolbox).myExport?.icon).startsWith("path://")).toBe(true);
+        expect(features(toolbox).dataView).toMatchObject({ readOnly: true, optionToContent: DATA_VIEW_FUNCTION });
+        expect(toolbox).toMatchObject({ show: true, top: 0 });
+        expect(toolbox.right).toBeTypeOf("number");
     });
 
     it("adds the zoom and the restore controls to each dense cartesian chart type alone", () => {
@@ -230,7 +231,9 @@ describe("the band of the toolbox", () => {
      * the bottom edge of the toolbox is clear of it.
      */
     function underToolbox(block: ChartBlock, rows: readonly ChartRow[], inputs: ChartInputs = {}): string[] {
-        const columns = Object.keys(rows[0]);
+        const first = rows[0];
+        if (first === undefined) throw new Error("the chart rows are empty");
+        const columns = Object.keys(first);
         const render = deriveChartRender(block, rows, columns, { key: block.id, columns }, inputs)._unsafeUnwrap();
         const width = render.widthPx ?? CHART_PAGE_WIDTH_PX;
         const option = pageChartOption(render.option, block.chartType);
@@ -425,12 +428,14 @@ describe("the bootstrap binding of the toolbox", () => {
         const { document } = stubDocument();
         const page = pageFunctions(document);
         const option = pageChartOption({ series: [] }, "scatter");
-        features(option.toolbox as Record<string, unknown>).restore.onclick = "constructor";
+        const restore = features(option.toolbox as Record<string, unknown>).restore;
+        if (restore === undefined) throw new Error("the toolbox holds no restore control");
+        restore.onclick = "constructor";
         page.bind(option);
         const bound = features(option.toolbox as Record<string, unknown>);
-        expect(bound.myExport.onclick).toBe(page.named[EXPORT_MENU_FUNCTION]);
-        expect(bound.dataView.optionToContent).toBe(page.named[DATA_VIEW_FUNCTION]);
-        expect("onclick" in bound.restore).toBe(false);
+        expect(bound.myExport?.onclick).toBe(page.named[EXPORT_MENU_FUNCTION]);
+        expect(bound.dataView?.optionToContent).toBe(page.named[DATA_VIEW_FUNCTION]);
+        expect("onclick" in restore).toBe(false);
     });
 
     it("leaves an option with no toolbox as it is", () => {
@@ -524,11 +529,13 @@ describe("the data view", () => {
         const root = page.content({ xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "scatter", name: "<b>x</b>", data }] });
         expect(root.className).toBe("report-data-view");
         const [note, table] = root.children;
+        if (note === undefined || table === undefined) throw new Error("the data view holds no note and table");
         expect(note.textContent).toBe("The view shows the first 1,000 of 1,005 rows.");
         const [head, body] = table.children;
-        expect(head.children[0].children.map((cell) => cell.textContent)).toEqual(["Series", "x", "y"]);
+        if (head === undefined || body === undefined) throw new Error("the table holds no head and body");
+        expect(head.children[0]?.children.map((cell) => cell.textContent)).toEqual(["Series", "x", "y"]);
         expect(body.children.length).toBe(DATA_VIEW_ROW_LIMIT);
-        expect(body.children[0].children[0].textContent).toBe("<b>x</b>");
+        expect(body.children[0]?.children[0]?.textContent).toBe("<b>x</b>");
     });
 });
 
@@ -637,7 +644,9 @@ describe("the download control of the card", () => {
         Object.assign(menu, { offsetWidth: 140 });
         const items = [node("a", { role: "menuitem" }), node("button", { role: "menuitem" }), node("button", { role: "menuitem" })];
         const fault = node("span", { role: "menuitem", "aria-disabled": "true", class: MENU_FAULT_CLASS });
-        for (const item of [items[0], items[1], fault, items[2]]) menu.appendChild(item);
+        const [first, second, third] = items;
+        if (first === undefined || second === undefined || third === undefined) throw new Error("the menu holds three entries");
+        for (const item of [first, second, fault, third]) menu.appendChild(item);
         const control = node("button", { [MENU_CONTROL_ATTRIBUTE]: "chart-gwas", "aria-expanded": "false" });
         const container = node("div", { id: "chart-gwas" });
         Object.assign(container, { id: "chart-gwas", offsetLeft: 16, offsetTop: 16, clientWidth: 600 });

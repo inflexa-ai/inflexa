@@ -106,7 +106,7 @@ function deriveRoc(block: ChartBlock, rows: readonly ChartRow[], context: Figure
         side: 0,
         legend: keyed,
         legendBand: { place: "bottom", entries: names },
-        ...(squareLabel !== undefined ? { squareLabel } : {}),
+        squareLabel,
     });
     return ok({
         grid: layout.grid,
@@ -126,7 +126,7 @@ function deriveRoc(block: ChartBlock, rows: readonly ChartRow[], context: Figure
 function rocCurves(rows: readonly ChartRow[], fpr: string, tpr: string, group: string | undefined, blockId: string): Result<RocCurve[], RenderProblem> {
     const groupOf = (row: ChartRow): Cell => (group === undefined ? "" : (row[group] ?? ""));
     const names = firstAppearance(rows.map((row) => String(groupOf(row))));
-    const byName = new Map<string, number[][]>(names.map((name) => [name, []]));
+    const byName = new Map<string, Array<[number, number]>>(names.map((name) => [name, []]));
     for (const [index, row] of rows.entries()) {
         const x = toNumber(row[fpr]);
         const y = toNumber(row[tpr]);

@@ -20,16 +20,16 @@ function semanticRecord(paper: SemanticScholarPaper): CitationRecord {
         source: "semantic_scholar",
         sourceRecordId: paper.id,
         identifiers: {
-            ...(doi === undefined ? {} : { doi }),
-            ...(pmid === undefined ? {} : { pmid }),
-            ...(arxiv === undefined ? {} : { arxiv }),
-            ...(corpusId === undefined ? {} : { corpusId }),
+            doi,
+            pmid,
+            arxiv,
+            corpusId,
         },
-        ...(paper.title === undefined ? {} : { title: paper.title }),
-        ...(paper.authors.length === 0 ? {} : { authors: paper.authors }),
-        ...(paper.year === undefined ? {} : { year: paper.year }),
-        ...(paper.venue === undefined ? {} : { venue: paper.venue }),
-        ...(paper.url === undefined ? {} : { url: paper.url }),
+        title: paper.title,
+        authors: paper.authors.length > 0 ? paper.authors : undefined,
+        year: paper.year,
+        venue: paper.venue,
+        url: paper.url,
     };
 }
 

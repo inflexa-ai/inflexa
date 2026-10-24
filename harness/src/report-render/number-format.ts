@@ -123,7 +123,7 @@ const WHITESPACE = /\s/;
  * below-resolution kind alone, and the caller reads the column one time to get it. Thus this function stays
  * a pure function of its arguments, and it never reads a column.
  */
-export function formatNumberCell(cell: string | number, kind: NumberKind, bound?: number): FormattedNumber {
+export function formatNumberCell(cell: string | number | undefined, kind: NumberKind, bound?: number): FormattedNumber {
     if (kind === "identifier") {
         // An identifier is a name that is written with digits. A group comma and a rounded digit both break
         // the name, thus each character of the source reaches the page.
@@ -162,7 +162,7 @@ export function formatNumberCell(cell: string | number, kind: NumberKind, bound?
  * that holds no finite number selects the compact-scientific kind too, because the format passes such a
  * cell through unchanged.
  */
-export function selectNumberKind(column: string, cell: string | number, meaning?: ColumnMeaning): NumberKind {
+export function selectNumberKind(column: string, cell: string | number | undefined, meaning?: ColumnMeaning): NumberKind {
     if (holdsAName(column, meaning)) {
         return "identifier";
     }
@@ -403,7 +403,7 @@ export function typographicExponent(text: string): string {
  * notation. Thus `<0.02` stands beside `0.04`, and no bound gives an exponent of zero.
  */
 function boundForm(bound: number): string {
-    const [mantissa, exponent] = bound.toExponential().split("e");
+    const [mantissa = "", exponent = ""] = bound.toExponential().split("e");
     const digits = mantissa.replace(".", "");
     const raised = Number(digits[0]) + (digits.length > 1 ? 1 : 0);
     const carries = raised === 10;
@@ -416,10 +416,13 @@ function boundForm(bound: number): string {
     return power >= 0 ? `${digit}${"0".repeat(power)}` : `0.${"0".repeat(-power - 1)}${digit}`;
 }
 
-/** The finite number of one cell, or `null` when the cell holds no finite number. */
-function finiteValue(cell: string | number): number | null {
+/** The finite number of one cell, or `null` when the cell is absent or holds no finite number. */
+function finiteValue(cell: string | number | undefined): number | null {
     if (typeof cell === "number") {
         return Number.isFinite(cell) ? cell : null;
+    }
+    if (cell === undefined) {
+        return null;
     }
     const trimmed = cell.trim();
     if (trimmed === "") {

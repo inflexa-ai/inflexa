@@ -75,7 +75,7 @@ const READS: ReadonlySet<FigureMember> = new Set(["x", "y", "label"]);
 function countedClassification(base: PresetClassification, xs: readonly (number | null)[], ys: readonly (number | null)[]): PresetClassification {
     const counts = new Map<string, number>(base.categories.map((category) => [category.name, 0]));
     for (let index = 0; index < xs.length; index += 1) {
-        const category = base.categoryOf(xs[index], ys[index], index);
+        const category = base.categoryOf(xs[index] ?? null, ys[index] ?? null, index);
         if (category !== undefined) counts.set(category, (counts.get(category) ?? 0) + 1);
     }
     const names = new Map(base.categories.map((category) => [category.name, `${category.name} (${countText(counts.get(category.name) ?? 0)})`]));
@@ -106,8 +106,8 @@ function labeledRows(
     const signal = new Set(base.categories.filter((category) => !category.muted).map((category) => category.name));
     const candidates: number[] = [];
     for (let index = 0; index < rows.length; index += 1) {
-        const category = base.categoryOf(xs[index], ys[index], index);
-        const name = rows[index][labelColumn];
+        const category = base.categoryOf(xs[index] ?? null, ys[index] ?? null, index);
+        const name = rows[index]?.[labelColumn];
         if (category !== undefined && signal.has(category) && name !== undefined && String(name).trim() !== "") candidates.push(index);
     }
     const rank = (index: number): number => (zeros.has(index) ? Number.POSITIVE_INFINITY : (ys[index] ?? 0));
@@ -148,7 +148,7 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
             : labeledRows(rows, labelColumn, base, xs, ys, zeros).map((index) => ({
                   x: xs[index] ?? 0,
                   y: ys[index] ?? 0,
-                  text: String(rows[index][labelColumn]),
+                  text: String(rows[index]?.[labelColumn]),
               }));
     const top = zeroRows.length > 0 ? Math.max(peak, zeroY) : peak;
     // The runtime ends the p axis at its own round number at or past the peak. The round number of the figure
@@ -167,7 +167,7 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         yAxis: { ...axisOf(option, "yAxis"), min: 0 },
         series: [
             ...seriesOf(option).map((series, place) => ({ ...series, ...sideLayer(place, DENSE_SIGNAL_SYMBOL_PX, DENSE_NULL_SYMBOL_PX) })),
-            ...zeroSeries(counted, zeroRows, xs, zeroY, labelColumn === undefined ? undefined : (index) => String(rows[index][labelColumn])),
+            ...zeroSeries(counted, zeroRows, xs, zeroY, labelColumn === undefined ? undefined : (index) => String(rows[index]?.[labelColumn])),
             ...text.page,
         ],
     });
@@ -175,9 +175,9 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
 
 /** The style of the points of one side, by the place of the side: the two signal sides, then the null side. */
 function sideLayer(place: number, signalPx: number, nullPx: number): EchartOption {
-    return place < SIDE_COLORS.length
-        ? pointLayer(SIDE_COLORS[place], signalPx, DENSE_SIGNAL_OPACITY)
-        : pointLayer(MUTED_CHART_COLOR, nullPx, DENSE_NULL_OPACITY, DENSE_NULL_Z);
+    const signal = SIDE_COLORS[place];
+    if (signal !== undefined) return pointLayer(signal, signalPx, DENSE_SIGNAL_OPACITY);
+    return pointLayer(MUTED_CHART_COLOR, nullPx, DENSE_NULL_OPACITY, DENSE_NULL_Z);
 }
 
 /**
@@ -194,7 +194,7 @@ function zeroSeries(
 ): EchartOption[] {
     return classification.categories.flatMap((category, place) => {
         const data = zeroRows
-            .filter((index) => classification.categoryOf(xs[index], zeroY, index) === category.name)
+            .filter((index) => classification.categoryOf(xs[index] ?? null, zeroY, index) === category.name)
             .map((index) => (nameOf === undefined ? [xs[index] ?? 0, zeroY] : { name: nameOf(index), value: [xs[index] ?? 0, zeroY] }));
         if (data.length === 0) return [];
         return [

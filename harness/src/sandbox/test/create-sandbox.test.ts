@@ -340,7 +340,7 @@ describe("createSandboxClient — the label hook", () => {
 
     let root: string;
     let calls: BackendCall[];
-    let spy: ReturnType<typeof spyOn>;
+    let spy: ReturnType<typeof spyOn<typeof dockerClient, "createDockerSandboxOps">>;
     beforeEach(async () => {
         root = await mkdtemp(join(tmpdir(), "harness-labels-"));
         calls = [];
@@ -367,7 +367,7 @@ describe("createSandboxClient — the label hook", () => {
             resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
             resolveWorkspaceRoot: async () => root,
             farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
-            ...(resolveSandboxLabels ? { resolveSandboxLabels } : {}),
+            resolveSandboxLabels,
         });
 
     test("a client with no hook gives the backend no host labels", async () => {

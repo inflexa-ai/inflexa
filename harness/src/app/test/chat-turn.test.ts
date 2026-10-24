@@ -20,6 +20,7 @@ import { conversationRecordTurn, createThreadHistory, type StoredMessage } from 
 import { NOT_RUN_TOOL_RESULT } from "../../memory/tool-call-integrity.js";
 import { deriveThreadTitle } from "../../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../../memory/working-memory.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ProviderError } from "../../providers/errors.js";
 import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../../prompts/compaction.js";
@@ -60,7 +61,7 @@ function announcedIds(events: readonly TurnEvent[]): { user: string[]; assistant
 /** Flatten a message's content to a searchable string. */
 function contentText(content: unknown): string {
     if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
+    if (isUnknownArray(content)) {
         return content.map((b) => (typeof b === "object" && b && "text" in b ? String(b.text) : "")).join("\n");
     }
     return "";
@@ -446,10 +447,14 @@ describe("runChatTurn", () => {
         const replay = storedMessagesToChat(await storedRows());
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
-        expect(replay[1]!.parts).toEqual([
-            { type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: expect.any(Number) },
-            { type: "text", text: "the groups differ" },
-        ]);
+        expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(replay[1]!.parts).toHaveLength(2);
+        const [toolCallPart, textPart] = replay[1]!.parts;
+        if (toolCallPart?.type !== "tool-call") throw new Error("the reply did not store the tool call");
+        const { durationMs, ...call } = toolCallPart;
+        expect(call).toEqual({ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok" });
+        expect(durationMs).toBeTypeOf("number");
+        expect(textPart).toEqual({ type: "text", text: "the groups differ" });
     });
 
     it("announces the id of the user message and of the assistant message, and stores the turn under those ids", async () => {
@@ -462,8 +467,8 @@ describe("runChatTurn", () => {
         expect(forwarded.slice(0, 2).map((event) => event.type)).toEqual(["message-start", "message-start"]);
         expect(forwarded.filter((event) => event.type === "message-start")).toHaveLength(2);
         expect(storedMessagesToChat(await storedRows()).map((message) => [message.role, message.id])).toEqual([
-            ["user", announced.user[0]],
-            ["assistant", announced.assistant[0]],
+            ["user", announced.user[0] ?? ""],
+            ["assistant", announced.assistant[0] ?? ""],
         ]);
     });
 
@@ -716,7 +721,7 @@ describe("runChatTurn", () => {
                     signal: ctx.signal,
                     emit: ctx.emit,
                     runStep: passthroughStep,
-                    ...(ctx.turnUsage === undefined ? {} : { turnUsage: ctx.turnUsage }),
+                    turnUsage: ctx.turnUsage,
                 });
                 return ok({ answer: sub.finish.reason });
             },
@@ -737,22 +742,32 @@ describe("runChatTurn", () => {
             get(target, prop, receiver) {
                 if (prop !== "connect") {
                     const value: unknown = Reflect.get(target, prop, receiver);
-                    return typeof value === "function" ? value.bind(target) : value;
+                    if (typeof value === "function") {
+                        const fn: CallableFunction = value;
+                        return fn.bind(target);
+                    }
+                    return value;
                 }
                 return async () => {
                     const client = await target.connect();
                     return new Proxy(client, {
                         get(inner, key, innerReceiver) {
+                            if (key === "query") {
+                                return (text: string, values?: unknown[]) => {
+                                    // The first row of the first round takes seq 3, after the three rows of the opening.
+                                    if (!failed && text.includes("INSERT INTO messages") && values?.[1] === 3) {
+                                        failed = true;
+                                        return Promise.reject(new Error("simulated insert failure"));
+                                    }
+                                    return inner.query(text, values);
+                                };
+                            }
                             const value: unknown = Reflect.get(inner, key, innerReceiver);
-                            if (key !== "query" || typeof value !== "function") return typeof value === "function" ? value.bind(inner) : value;
-                            return (text: unknown, values?: unknown[]) => {
-                                // The first row of the first round takes seq 3, after the three rows of the opening.
-                                if (!failed && typeof text === "string" && text.includes("INSERT INTO messages") && values?.[1] === 3) {
-                                    failed = true;
-                                    return Promise.reject(new Error("simulated insert failure"));
-                                }
-                                return value.call(inner, text, values);
-                            };
+                            if (typeof value === "function") {
+                                const fn: CallableFunction = value;
+                                return fn.bind(inner);
+                            }
+                            return value;
                         },
                     });
                 };
@@ -927,16 +942,12 @@ describe("runChatTurn — compaction", () => {
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
         expect(replay[1]!.id).not.toBe(replay[3]!.id);
-        expect(replay[2]!.parts).toEqual([
-            {
-                type: "data-compaction",
-                id: replay[2]!.id,
-                status: "done",
-                tokensBefore: OVER,
-                durationMs: expect.any(Number),
-                trigger: "mid-turn",
-            },
-        ]);
+        expect(replay[2]!.parts).toHaveLength(1);
+        const [compactionPart] = replay[2]!.parts;
+        if (compactionPart?.type !== "data-compaction") throw new Error("the turn did not store the compaction part");
+        const { durationMs, ...storedPart } = compactionPart;
+        expect(storedPart).toEqual({ type: "data-compaction", id: replay[2]!.id, status: "done", tokensBefore: OVER, trigger: "mid-turn" });
+        expect(durationMs).toBeTypeOf("number");
         expect(JSON.stringify(replay)).not.toContain(SUMMARY);
         expect(replay[3]!.parts).toEqual([{ type: "text", text: "done" }]);
     });
@@ -1082,9 +1093,12 @@ describe("runChatTurn — compaction", () => {
         expect(rows.flatMap((row) => (row.author === undefined ? [] : [[row.seq, row.author]]))).toEqual([[rows[7]!.seq, "dr.chen@lab.example"]]);
         const replay = storedMessagesToChat(rows);
         expect(replay.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
-        expect(replay[0]!.parts).toEqual([
-            { type: "data-compaction", id: replay[0]!.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number), trigger: "turn-start" },
-        ]);
+        expect(replay[0]!.parts).toHaveLength(1);
+        const [compactionPart] = replay[0]!.parts;
+        if (compactionPart?.type !== "data-compaction") throw new Error("the turn did not store the compaction part");
+        const { durationMs, ...storedPart } = compactionPart;
+        expect(storedPart).toEqual({ type: "data-compaction", id: replay[0]!.id, status: "done", tokensBefore: OVER, trigger: "turn-start" });
+        expect(durationMs).toBeTypeOf("number");
     });
 
     /** The frames of the compaction before and after the `message-start` of `messageId`. */
@@ -1146,15 +1160,17 @@ describe("runChatTurn — compaction", () => {
         // The store holds the divider before the user message, and the reply under the second assistant id. The rounds
         // of the compaction keep no assistant part, thus the first assistant id has live frames only and no stored message.
         const replay = storedMessagesToChat(await storedRows());
-        expect(replay.map((message) => [message.role, message.id])).toEqual([
-            ["system", expect.any(String)],
-            ["user", announced.user[0]],
-            ["assistant", announced.assistant[1]],
-        ]);
+        expect(replay.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
+        expect(replay[1]?.id).toBe(announced.user[0]);
+        expect(replay[2]?.id).toBe(announced.assistant[1]);
+        expect(replay[0]?.id).toBeTypeOf("string");
         // The divider is no message of the turn, and the stream names its id as the id of the compaction part.
-        expect(forwarded).toContainEqual(
-            expect.objectContaining({ type: "data-compaction", data: expect.objectContaining({ id: replay[0]?.id, status: "done" }) }),
-        );
+        const donePart = forwarded.find((event) => {
+            if (event.type !== "data-compaction") return false;
+            const { data } = event;
+            return typeof data === "object" && data !== null && "status" in data && data.status === "done" && "id" in data && data.id === replay[0]?.id;
+        });
+        expect(donePart).toBeDefined();
         expect(await storedDisplay()).toEqual(TURN_START_DISPLAY);
     });
 

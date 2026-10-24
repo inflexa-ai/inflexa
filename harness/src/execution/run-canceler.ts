@@ -234,18 +234,16 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 const atMs = Date.now();
                 for (const step of cutSteps ?? []) {
                     const durationMs = elapsedSinceIso(step.startedAt, atMs);
-                    emitGuarded(
-                        {
-                            type: "step_completed",
-                            analysisId: row.analysisId,
-                            runId,
-                            stepId: step.stepId,
-                            status: "canceled",
-                            ...(durationMs !== undefined ? { durationMs } : {}),
-                            atMs,
-                        },
-                        session,
-                    );
+                    const event: RunProvenanceEvent = {
+                        type: "step_completed",
+                        analysisId: row.analysisId,
+                        runId,
+                        stepId: step.stepId,
+                        status: "canceled",
+                        atMs,
+                    };
+                    if (durationMs !== undefined) event.durationMs = durationMs;
+                    emitGuarded(event, session);
                 }
                 emitGuarded(
                     {

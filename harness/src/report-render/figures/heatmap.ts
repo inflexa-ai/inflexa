@@ -141,12 +141,12 @@ function present(blockId: string, rows: readonly ChartRow[], context: FigureCont
 }
 
 /** The key of one pair. The key carries the type of each cell, thus the number `1` and the text `"1"` stay two categories. */
-function pairKey(xCell: Cell, yCell: Cell): string {
+function pairKey(xCell: Cell | undefined, yCell: Cell | undefined): string {
     return `${cellKey(xCell)} ${cellKey(yCell)}`;
 }
 
 /** The key of one cell. */
-function cellKey(cell: Cell): string {
+function cellKey(cell: Cell | undefined): string {
     return `${typeof cell}:${String(cell)}`;
 }
 
@@ -197,7 +197,7 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         if (cells.has(key)) {
             return err(chartProblem(block.id, `The heatmap holds the pair (${String(row[x.value])}, ${String(row[y.value])}) more than one time.`));
         }
-        cells.set(key, values[index]);
+        cells.set(key, values[index] ?? null);
     }
     const data: (number | null)[][] = [];
     const finite: number[] = [];
@@ -218,7 +218,7 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         data: xCategories.map(String),
         ...axisNameFields("x", xTitle),
         ...LINELESS_AXIS,
-        ...(hidden ? { axisLabel: { show: false } } : {}),
+        axisLabel: hidden ? { show: false } : undefined,
     };
     const yAxis: EchartOption = {
         type: "category",
@@ -358,7 +358,7 @@ function axisOrder(
     axis: "x" | "y",
     column: string,
     channel: ChartChannel,
-): Result<{ order: readonly Cell[]; tree?: CheckedTree }, RenderProblem> {
+): Result<{ order: ReadonlyArray<Cell | undefined>; tree?: CheckedTree }, RenderProblem> {
     const tree = context.trees?.[axis];
     const declared = channelOrder(channel);
     if (tree !== undefined && declared !== undefined) {
@@ -376,12 +376,12 @@ function axisOrder(
  * beside its row. The tree of y reads down, as the matrix reads down.
  */
 function leafAxis(gridIndex: number, count: number, inverse: boolean): EchartOption {
-    return { type: "value", gridIndex, min: -0.5, max: count - 0.5, ...(inverse ? { inverse: true } : {}), show: false };
+    return { type: "value", gridIndex, min: -0.5, max: count - 0.5, inverse: inverse ? true : undefined, show: false };
 }
 
 /** The hidden value axis of the heights of a dendrogram. The tree of y turns it, thus the root sits at the left and the leaves face the row names. */
 function heightAxis(gridIndex: number, height: number, inverse: boolean): EchartOption {
-    return { type: "value", gridIndex, min: 0, max: height > 0 ? height : 1, ...(inverse ? { inverse: true } : {}), show: false };
+    return { type: "value", gridIndex, min: 0, max: height > 0 ? height : 1, inverse: inverse ? true : undefined, show: false };
 }
 
 /** The branches of one dendrogram: one elbow of lines for each edge, in the order of the tree table. */
@@ -403,7 +403,7 @@ function dendrogramSeries(gridIndex: number, tree: CheckedTree, axis: "x" | "y")
  * The band under the matrix of a taller body, in pixels: the axis title, and the x labels as the layout
  * discipline turns them. A hidden label takes no room.
  */
-function underBand(xCategories: readonly Cell[], hidden: boolean): number {
+function underBand(xCategories: ReadonlyArray<Cell | undefined>, hidden: boolean): number {
     if (hidden) return TITLE_BAND_PX;
     if (xCategories.length <= TURN_45_COUNT) return TITLE_BAND_PX + LEVEL_LABEL_PX;
     let longest = 0;
@@ -434,7 +434,7 @@ function trackStrips(
     rows: readonly ChartRow[],
     context: FigureContext,
     xColumn: string,
-    xCategories: readonly Cell[],
+    xCategories: ReadonlyArray<Cell | undefined>,
     tracks: readonly string[],
 ): Result<TrackStrip[], RenderProblem> {
     const strips: TrackStrip[] = [];

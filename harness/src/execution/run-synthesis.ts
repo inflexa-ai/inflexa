@@ -484,7 +484,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         bioKeys: input.bioKeys,
         citationResolver: input.citationResolver,
         usageRecorder: input.usageRecorder,
-        ...(input.toolOutputStore ? { toolOutputStore: input.toolOutputStore } : {}),
+        toolOutputStore: input.toolOutputStore,
     });
 
     const validateTool = buildValidateTool(innerCtx);

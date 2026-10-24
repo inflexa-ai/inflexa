@@ -64,13 +64,15 @@ function cellSeries(option: EchartOption): EchartOption {
 
 /** The class place of the cell of one sample and one gene, read through the axes of the matrix. */
 function cellClass(option: EchartOption, sample: string, gene: string): number {
-    const samples = axesOf(option, "xAxis")[0].data as string[];
-    const genes = axesOf(option, "yAxis")[0].data as string[];
+    const samples = (axesOf(option, "xAxis")[0]?.data ?? []) as string[];
+    const genes = (axesOf(option, "yAxis")[0]?.data ?? []) as string[];
     const item = (cellSeries(option).data as Array<number[] | { value: number[] }>)
         .map((entry) => (Array.isArray(entry) ? entry : entry.value))
         .find((value) => value[0] === samples.indexOf(sample) && value[1] === genes.indexOf(gene));
     if (item === undefined) throw new Error(`no cell for ${sample} ${gene}`);
-    return item[2];
+    const glyphClass = item[2];
+    if (glyphClass === undefined) throw new Error(`no class for the cell of ${sample} ${gene}`);
+    return glyphClass;
 }
 
 describe("the oncoprint figure", () => {
@@ -109,24 +111,24 @@ describe("the oncoprint figure", () => {
 
     it("orders the genes and the samples by their order columns, the first gene at the top", () => {
         const option = derive();
-        expect(axesOf(option, "yAxis")[0]).toEqual(expect.objectContaining({ type: "category", inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] }));
-        expect(axesOf(option, "xAxis")[0].data).toEqual(["TCGA-AB-2945", "TCGA-AB-2965", "TCGA-AB-2802", "TCGA-AB-2803"]);
+        expect(axesOf(option, "yAxis")[0]).toMatchObject({ type: "category", inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] });
+        expect(axesOf(option, "xAxis")[0]?.data).toEqual(["TCGA-AB-2945", "TCGA-AB-2965", "TCGA-AB-2802", "TCGA-AB-2803"]);
     });
 
     it("keeps the first appearance of each category where the channel names no order", () => {
         const option = derive({ x: "sample", y: "gene", value: "variant_classification" });
-        expect(axesOf(option, "yAxis")[0].data).toEqual(["NPM1", "FLT3", "DNMT3A"]);
+        expect(axesOf(option, "yAxis")[0]?.data).toEqual(["NPM1", "FLT3", "DNMT3A"]);
     });
 
     it("draws the alteration count of each sample over the matrix, stacked by class", () => {
         const option = derive();
         const bars = seriesOf(option).filter((entry) => entry.type === "bar" && entry.xAxisIndex === 1);
         expect(bars.map((entry) => entry.name)).toEqual(["Missense Mutation", "Frame Shift Ins", "In Frame Ins", "Silent"]);
-        for (const bar of bars) expect(bar.stack).toBe(bars[0].stack);
+        for (const bar of bars) expect(bar.stack).toBe(bars[0]?.stack);
         // Each sample sums the classes of its altered genes, and the unaltered sample counts zero.
         const totals = [0, 1, 2, 3].map((place) => bars.reduce((sum, bar) => sum + ((bar.data as number[])[place] ?? 0), 0));
         expect(totals).toEqual([3, 3, 2, 0]);
-        expect(axesOf(option, "xAxis")[1]).toEqual(expect.objectContaining({ gridIndex: 1, data: axesOf(option, "xAxis")[0].data }));
+        expect(axesOf(option, "xAxis")[1]).toMatchObject({ gridIndex: 1, data: axesOf(option, "xAxis")[0]?.data });
     });
 
     it("draws the share of altered samples of each gene at the right, with its percent text over every sample", () => {
@@ -137,14 +139,14 @@ describe("the oncoprint figure", () => {
         const data = share?.data as Array<{ value: number; label: { formatter: string } }>;
         expect(data.map((item) => item.value)).toEqual([0.5, 0.75, 0.75]);
         expect(data.map((item) => item.label.formatter)).toEqual(["50%", "75%", "75%"]);
-        expect(axesOf(option, "yAxis")[2]).toEqual(expect.objectContaining({ gridIndex: 2, inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] }));
+        expect(axesOf(option, "yAxis")[2]).toMatchObject({ gridIndex: 2, inverse: true, data: ["FLT3", "DNMT3A", "NPM1"] });
     });
 
     it("hides the sample names, and the axis title states the sample count", () => {
         const option = derive();
         const samples = axesOf(option, "xAxis")[0];
-        expect(samples.axisLabel).toEqual(expect.objectContaining({ show: false }));
-        expect(samples.name).toBe("sample (n = 4)");
+        expect(samples?.axisLabel).toMatchObject({ show: false });
+        expect(samples?.name).toBe("sample (n = 4)");
     });
 
     it("names the legend by the classes, and draws no legend entry for the cells or the share", () => {
@@ -196,7 +198,11 @@ describe("the oncoprint figure", () => {
 
     describe("the annotation tracks", () => {
         const SUBTYPE: Record<string, string> = { "TCGA-AB-2945": "M1", "TCGA-AB-2965": "M2", "TCGA-AB-2802": "M1", "TCGA-AB-2803": "M4" };
-        const rows = ROWS.map((row) => ({ ...row, subtype: SUBTYPE[String(row.sample)] }));
+        const rows = ROWS.map((row) => {
+            const subtype = SUBTYPE[String(row.sample)];
+            if (subtype === undefined) throw new Error(`the track table holds no subtype for ${String(row.sample)}`);
+            return { ...row, subtype };
+        });
 
         it("draws each track as one strip of category colors under the matrix, and the legend names each value", () => {
             const option = derive({ ...RANKED, tracks: ["subtype"] }, rows);
@@ -205,16 +211,18 @@ describe("the oncoprint figure", () => {
             expect(strips.map((entry) => entry.name)).toEqual(["M1", "M2", "M4"]);
             expect(strips.every((entry) => entry.renderItem === CELL_GLYPH_RENDERER)).toBe(true);
             // Each strip cell is the ground of its value color alone: the first and the third sample hold M1.
-            expect(strips[0].data).toEqual([
+            expect(strips[0]?.data).toEqual([
                 [0, 0, -1],
                 [2, 0, -1],
             ]);
             const grounds = strips.map((entry) => (entry.itemPayload as { ground: string }).ground);
             expect(new Set(grounds).size).toBe(3);
-            expect(axesOf(option, "yAxis")[3]).toEqual(expect.objectContaining({ gridIndex: 3, data: ["subtype"] }));
+            expect(axesOf(option, "yAxis")[3]).toMatchObject({ gridIndex: 3, data: ["subtype"] });
             // The sample title moves under the strips.
-            expect(axesOf(option, "xAxis")[0].name).toBeUndefined();
-            expect(axesOf(option, "xAxis")[3].name).toBe("sample (n = 4)");
+            const matrix = axesOf(option, "xAxis")[0];
+            if (matrix === undefined) throw new Error("the matrix holds no category axis");
+            expect(matrix.name).toBeUndefined();
+            expect(axesOf(option, "xAxis")[3]?.name).toBe("sample (n = 4)");
             const legend = (option.legend as { data: Array<{ name: string }> }).data.map((entry) => entry.name);
             expect(legend.slice(-3)).toEqual(["M1", "M2", "M4"]);
         });
@@ -250,6 +258,7 @@ describe("the height of an oncoprint of many genes", () => {
     function rowPx(encoding: Encoding, rows: ChartRow[]): number {
         const render = deriveChartRender(oncoprint(encoding), rows, undefined, { key: "onco", columns: [] })._unsafeUnwrap();
         const matrix = (render.option.grid as EchartOption[])[0];
+        if (matrix === undefined) throw new Error("the oncoprint holds no grid");
         const share = 100 - Number.parseFloat(String(matrix.top)) - Number.parseFloat(String(matrix.bottom));
         return (render.bodyPx * share) / 100 / 20;
     }

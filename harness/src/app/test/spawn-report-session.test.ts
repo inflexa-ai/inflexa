@@ -65,7 +65,7 @@ function appendRecord(threadId: string, text: string): ResultAsync<void, DbError
 
 /** A live conversation parent with a first turn — the shape a legal spawn needs. */
 async function seedConversation(threadId: string, analysisId: string, title: string | null): Promise<void> {
-    (await store.createThread({ threadId, analysisId, ...(title === null ? {} : { title }) }))._unsafeUnwrap();
+    (await store.createThread({ threadId, analysisId, title }))._unsafeUnwrap();
     (await appendTurn(threadId))._unsafeUnwrap();
 }
 

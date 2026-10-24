@@ -409,14 +409,15 @@ function makeDeps(opts: {
                 throw new Error("runAuthorizer.revokeByJti not exercised in body tests");
             },
         },
-        // Omitted entirely when absent so the "no run emit" tests exercise
-        // a genuinely undefined dep, not a present-but-undefined field.
-        ...(opts.emitRunEvent ? { provenance: { emitRunEvent: opts.emitRunEvent } } : {}),
-        ...(opts.observeRun ? { observeRun: opts.observeRun } : {}),
-        ...(opts.knowledge ? { knowledge: opts.knowledge } : {}),
+        observeRun: opts.observeRun,
+        knowledge: opts.knowledge,
     };
-
-    return { deps, record };
+    return {
+        // The spread copy carries the emit dep only when the caller gave one, so the
+        // "no run emit" tests exercise a genuinely absent member.
+        deps: opts.emitRunEvent ? { ...deps, provenance: { emitRunEvent: opts.emitRunEvent } } : deps,
+        record,
+    };
 }
 
 // ── Test inputs ──────────────────────────────────────────────────────
@@ -453,8 +454,8 @@ function input(
         planStepById: Object.fromEntries(steps.map((s) => [s.id, planStep(s.id, s.depends_on ?? [])])),
         agentByStepId: Object.fromEntries(ids.map((id) => [id, "agent-x"])),
         resourcesByStepId: Object.fromEntries(ids.map((id) => [id, { cpu: 2, memoryGb: 4 }])),
-        ...(budget && { budget }),
-        ...(synthesisEnabled !== undefined ? { synthesisEnabled } : {}),
+        budget,
+        synthesisEnabled,
         runSession: {
             identity: { user: "u-1" },
             scope: { kind: "analysis", analysisId: "a1" },

@@ -82,7 +82,7 @@ function slotSummary(slot: DataProfileGroupSlot): Record<string, unknown> {
 function groupEntry(analysisId: string, group: DataProfileGroup): ProfileIndexEntry {
     const category = group.categoryLabel ?? group.category;
     const facts = [`${group.count} members`, `${group.fileCount} files`, group.displayPattern].join(", ");
-    return {
+    const entry: ProfileIndexEntry = {
         id: `/${analysisId}/group/${group.id}`,
         text: `${group.name} — one member is ${group.memberRepresents}. ${group.description} ${category} held as ${group.role}. (${facts})`,
         metadata: {
@@ -91,14 +91,15 @@ function groupEntry(analysisId: string, group: DataProfileGroup): ProfileIndexEn
             name: group.name,
             role: group.role,
             category: group.category,
-            ...(group.categoryLabel ? { categoryLabel: group.categoryLabel } : {}),
+            categoryLabel: group.categoryLabel ? group.categoryLabel : undefined,
             pathPattern: group.displayPattern,
             count: group.count,
             fileCount: group.fileCount,
-            ...(group.slots && group.slots.length > 0 ? { slots: group.slots.map(slotSummary) } : {}),
-            ...(group.unclassified ? { unclassified: true } : {}),
+            slots: group.slots && group.slots.length > 0 ? group.slots.map(slotSummary) : undefined,
         },
     };
+    if (group.unclassified) entry.metadata.unclassified = true;
+    return entry;
 }
 
 /** One observation as a searchable clause — where the dimension was seen, and what was seen there. */
@@ -125,7 +126,7 @@ function dimensionEntry(analysisId: string, dimension: DataProfileDimension): Pr
             type: "input-dimension",
             dimension: dimension.label,
             category: dimension.category,
-            ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
+            categoryLabel: dimension.categoryLabel ? dimension.categoryLabel : undefined,
             scope: dimension.scope,
             cardinalities: dimensionCardinalities(dimension),
             groups: [...new Set(dimension.observations.flatMap((observation) => (observation.kind === "slot" ? observation.groupIds : [])))],
@@ -148,7 +149,7 @@ function memberEntry(analysisId: string, group: DataProfileGroup, annotation: Da
             group: group.id,
             groupName: group.name,
             category: group.category,
-            ...(format ? { format } : {}),
+            format: format ? format : undefined,
         },
     };
 }
@@ -198,7 +199,7 @@ function kindEntry(analysisId: string, group: ProfileGroupView): ProfileIndexEnt
             kind: group.name,
             pathPattern: group.pattern,
             count: group.count,
-            ...(group.format ? { format: group.format } : {}),
+            format: group.format ? group.format : undefined,
         },
     };
 }
@@ -226,9 +227,9 @@ function fileEntry(analysisId: string, file: DataProfileFile): ProfileIndexEntry
         metadata: {
             type: "input",
             path: file.path,
-            ...(file.dataType ? { dataType: file.dataType } : {}),
-            ...(file.format ? { format: file.format } : {}),
-            ...(file.tags ? { tags: file.tags } : {}),
+            dataType: file.dataType ? file.dataType : undefined,
+            format: file.format ? file.format : undefined,
+            tags: file.tags ? file.tags : undefined,
         },
     };
 }

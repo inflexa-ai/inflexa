@@ -132,7 +132,7 @@ function withSpan<T>(name: string, options: SpanOptions, run: (span: Span) => Pr
 
 function runFrameAttributes({ runFrame }: AgentSession): Attributes {
     if (runFrame === undefined) return {};
-    return { "inflexa.run_id": runFrame.runId, ...(runFrame.stepId === undefined ? {} : { "inflexa.step_id": runFrame.stepId }) };
+    return { "inflexa.run_id": runFrame.runId, "inflexa.step_id": runFrame.stepId };
 }
 
 /** The thread is the conversation. The analysis is not: it holds many threads. */

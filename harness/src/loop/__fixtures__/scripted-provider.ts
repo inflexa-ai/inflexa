@@ -37,7 +37,7 @@ export function makeMessage(
     return {
         message: { role: "assistant", content },
         finishReason: mapped,
-        ...(mapped === finishReason ? {} : { rawFinishReason: finishReason }),
+        rawFinishReason: finishReason,
         usage,
     };
 }

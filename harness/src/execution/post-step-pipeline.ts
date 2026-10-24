@@ -189,7 +189,7 @@ export async function reconcileAndRegisterStepArtifacts(
         agentId: input.agentId,
         manifest: [...manifest],
         collector: lineageCollector,
-        ...(deps.logger ? { logger: deps.logger } : {}),
+        logger: deps.logger,
     });
 
     if (reconciled.manifest.length === 0) return ok(reconciled.manifest);

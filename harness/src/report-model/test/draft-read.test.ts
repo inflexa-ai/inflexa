@@ -233,7 +233,7 @@ describe("buildOutline", () => {
             title: "Report",
             sections: [{ kind: "section", id: "s1", title: "z".repeat(80), blocks: [] }],
         };
-        expect(buildOutline(draft)[0].label).toBe("z".repeat(80));
+        expect(buildOutline(draft)[0]?.label).toBe("z".repeat(80));
     });
 
     it("carries no binding field on an outline entry", () => {

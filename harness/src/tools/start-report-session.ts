@@ -182,10 +182,10 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
     const spawnDeps: ReportSessionSpawnDeps = {
         pool: deps.pool,
         chrome: deps.chrome,
-        ...(deps.eyes ? { eyes: deps.eyes } : {}),
-        ...(deps.anchorSession ? { anchorSession: deps.anchorSession } : {}),
-        ...(deps.provenance ? { provenance: deps.provenance } : {}),
-        ...(deps.logger ? { logger: deps.logger } : {}),
+        eyes: deps.eyes,
+        anchorSession: deps.anchorSession,
+        provenance: deps.provenance,
+        logger: deps.logger,
     };
     const spawn = createReportSessionSpawn(spawnDeps);
     // The gate reads the routes of the very spawn below, thus the two answers

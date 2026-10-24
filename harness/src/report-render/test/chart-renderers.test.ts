@@ -36,11 +36,17 @@ const SERIES_COLOR = "#0072b2";
  */
 function stubApi(item: readonly number[]): RenderApi {
     return {
-        value: (dimension) => item[dimension],
-        coord: (point) => [point[0], point[1]],
+        value: (dimension) => item[dimension] ?? Number.NaN,
+        coord: (point) => [point[0] ?? Number.NaN, point[1] ?? Number.NaN],
         size: () => [BAND_X, BAND_Y],
         visual: () => SERIES_COLOR,
     };
+}
+
+function childAt(element: RenderedElement, index: number): RenderedElement {
+    const child = (element.children ?? [])[index];
+    if (child === undefined) throw new Error(`the element drew no child at ${index}`);
+    return child;
 }
 
 /** One outline item: the category, the extent, the offset, and 64 pairs of a half-width and a grid value. */
@@ -87,7 +93,7 @@ const STEM_ITEMS: readonly number[][] = [
 /** The page twin of the renderers and of the registration step, as the bootstrap runs them. */
 const onThePage = new Function(
     `${CHART_RENDERERS_SOURCE}\nreturn { interval: reportIntervalRenderer, outline: reportOutlineRenderer, glyph: reportCellGlyphRenderer, stem: reportStemRenderer, register: reportRegisterRenderers };`,
-)() as {
+).call(undefined) as {
     interval: (params: unknown, api: RenderApi) => RenderedElement;
     outline: (params: unknown, api: RenderApi) => RenderedElement;
     glyph: (params: unknown, api: RenderApi) => RenderedElement;
@@ -101,16 +107,16 @@ describe("the named renderers", () => {
         expect(element).toEqual({
             type: "group",
             children: [
-                { type: "line", shape: { x1: 2, y1: 4, x2: 2, y2: 7 }, style: expect.objectContaining({ lineWidth: 1.5 }) },
-                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 4, x2: 2 + INTERVAL_CAP_PX, y2: 4 }, style: expect.objectContaining({ lineWidth: 1.5 }) },
-                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 7, x2: 2 + INTERVAL_CAP_PX, y2: 7 }, style: expect.objectContaining({ lineWidth: 1.5 }) },
+                { type: "line", shape: { x1: 2, y1: 4, x2: 2, y2: 7 }, style: { stroke: CHART_INK, lineWidth: 1.5 } },
+                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 4, x2: 2 + INTERVAL_CAP_PX, y2: 4 }, style: { stroke: CHART_INK, lineWidth: 1.5 } },
+                { type: "line", shape: { x1: 2 - INTERVAL_CAP_PX, y1: 7, x2: 2 + INTERVAL_CAP_PX, y2: 7 }, style: { stroke: CHART_INK, lineWidth: 1.5 } },
             ],
         });
     });
 
     it("shifts an interval along x by its offset of the y band", () => {
         const element = intervalRenderer({}, stubApi([1.5, 3, 0.8, 2.2, 0, 0.2, 0]));
-        const line = (element.children ?? [])[0];
+        const line = childAt(element, 0);
         // The offset is a fraction of one band, thus 0.2 of a band of 16 pixels moves the line 3.2 pixels.
         expect(line.shape).toEqual({ x1: 0.8, y1: 3 + 0.2 * BAND_Y, x2: 2.2, y2: 3 + 0.2 * BAND_Y });
     });
@@ -118,7 +124,8 @@ describe("the named renderers", () => {
     it("draws an arrow in place of the cap at each clipped end of an interval", () => {
         // The low end is clipped and the high end is not.
         const element = intervalRenderer({}, stubApi([1.5, 3, 0.8, 2.2, 0, 0, 0, 1]));
-        const [line, ...ends] = element.children ?? [];
+        const line = childAt(element, 0);
+        const ends = (element.children ?? []).slice(1);
         expect(line.shape).toEqual({ x1: 0.8, y1: 3, x2: 2.2, y2: 3 });
         // The two strokes of the arrow meet at the low end and open toward the high end.
         expect(ends.map((end) => end.shape)).toEqual([
@@ -132,23 +139,26 @@ describe("the named renderers", () => {
         const element = intervalRenderer({}, stubApi([0, 10, 8, 12, 1, -0.2, 1]));
         const children = element.children ?? [];
         expect(children.map((child) => child.type)).toEqual(["line", "circle"]);
-        expect(children[1].shape).toEqual(expect.objectContaining({ cx: -0.2 * BAND_X, cy: 10 }));
+        const mark = children[1];
+        if (mark === undefined) throw new Error("the violin drew no median mark");
+        expect(mark.shape).toMatchObject({ cx: -0.2 * BAND_X, cy: 10 });
     });
 
     it("draws an outline as one closed polygon, symmetric about its center", () => {
         const element = outlineRenderer({}, stubApi(outlineItem(3, -0.2)));
         expect(element.type).toBe("polygon");
-        const points = (element.shape as { points: number[][] }).points;
+        const points = (element.shape as { points: Array<[number, number]> }).points;
         expect(points.length).toBe(2 * VIOLIN_GRID_POINTS);
         const center = 3 - 0.2 * BAND_X;
         // The right side runs up the grid and the left side runs down it, thus the two mirror each other.
         for (let index = 0; index < VIOLIN_GRID_POINTS; index += 1) {
             const right = points[index];
             const left = points[points.length - 1 - index];
+            if (right === undefined || left === undefined) throw new Error("the outline drew fewer points than the grid");
             expect(right[1]).toBe(left[1]);
             expect(right[0] - center).toBeCloseTo(center - left[0], 10);
         }
-        expect(element.style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
+        expect(element.style).toMatchObject({ fill: SERIES_COLOR });
     });
 
     it("draws a cell with no alteration as the gray ground alone, one gap inside its band", () => {
@@ -165,8 +175,8 @@ describe("the named renderers", () => {
         const element = cellGlyphRenderer(GLYPH_PARAMS, stubApi([7, 2, 1]));
         const children = element.children ?? [];
         expect(children.map((child) => child.style?.fill)).toEqual(["#e0e0e0", "#d55e00"]);
-        const ground = children[0].shape as { x: number; y: number; width: number; height: number };
-        const glyph = children[1].shape as { x: number; y: number; width: number; height: number };
+        const ground = childAt(element, 0).shape as { x: number; y: number; width: number; height: number };
+        const glyph = childAt(element, 1).shape as { x: number; y: number; width: number; height: number };
         // The glyph spans the width of the ground and a share of its height, thus the gray shows above and below it.
         expect(glyph.width).toBe(ground.width);
         expect(glyph.height).toBeCloseTo(ground.height * CELL_GLYPH_SHARE, 10);
@@ -178,9 +188,9 @@ describe("the named renderers", () => {
         const element = stemRenderer({}, stubApi([882, 27]));
         const children = element.children ?? [];
         expect(children.map((child) => child.type)).toEqual(["line", "circle"]);
-        expect(children[0].shape).toEqual({ x1: 882, y1: 0, x2: 882, y2: 27 });
-        expect(children[1].shape).toEqual({ cx: 882, cy: 27, r: STEM_HEAD_RADIUS_PX });
-        expect(children[1].style).toEqual(expect.objectContaining({ fill: SERIES_COLOR }));
+        expect(childAt(element, 0).shape).toEqual({ x1: 882, y1: 0, x2: 882, y2: 27 });
+        expect(childAt(element, 1).shape).toEqual({ cx: 882, cy: 27, r: STEM_HEAD_RADIUS_PX });
+        expect(childAt(element, 1).style).toMatchObject({ fill: SERIES_COLOR });
     });
 
     it("gives the same elements on the page as on the server, for every item", () => {
@@ -229,10 +239,10 @@ function ssrSvg(option: Record<string, unknown>): string {
 }
 
 /** The straight segments of each path whose stroke is the given color, as `[x1, y1, x2, y2]`. */
-function segmentsOf(svg: string, stroke: string): number[][] {
-    const segments: number[][] = [];
+function segmentsOf(svg: string, stroke: string): Array<[number, number, number, number]> {
+    const segments: Array<[number, number, number, number]> = [];
     for (const match of svg.matchAll(/<path d="M([\d.-]+) ([\d.-]+)L([\d.-]+) ([\d.-]+)"([^>]*)>/g)) {
-        if (match[5].includes(`stroke="${stroke}"`)) {
+        if ((match[5] ?? "").includes(`stroke="${stroke}"`)) {
             segments.push([Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])]);
         }
     }
@@ -269,6 +279,7 @@ describe("the named renderers through the server render", () => {
         expect(verticals.length).toBe(2);
         // Each vertical line sits at the center of its category band.
         const [first, second] = verticals;
+        if (first === undefined || second === undefined) throw new Error("the interval drew fewer than two verticals");
         expect(second[0] - first[0]).toBeGreaterThan(100);
         // The cap of the upper bound sits inside the plot, thus below the top edge of the canvas.
         expect(Math.min(second[1], second[3])).toBeGreaterThan(0);
@@ -337,7 +348,9 @@ describe("the named renderers through the server render", () => {
         const stems = segmentsOf(svg, GUIDE_LINE_COLOR).filter((segment) => segment[0] === segment[2]);
         expect(stems.length).toBe(2);
         // Each stem starts at the floor of the plot, thus both share their lower end.
-        expect(Math.max(stems[0][1], stems[0][3])).toBe(Math.max(stems[1][1], stems[1][3]));
+        const [firstStem, secondStem] = stems;
+        if (firstStem === undefined || secondStem === undefined) throw new Error("the stems did not draw");
+        expect(Math.max(firstStem[1], firstStem[3])).toBe(Math.max(secondStem[1], secondStem[3]));
         expect(svg.match(/fill="#ff00ff"/g)?.length).toBe(2);
     });
 });

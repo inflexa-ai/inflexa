@@ -13,7 +13,10 @@ function barSpec(n: number, series = 1): Record<string, unknown> {
 
 /** The normalized x-axis label options. */
 function axisLabel(spec: Record<string, unknown>): Record<string, unknown> {
-    return (spec.xAxis as Record<string, Record<string, unknown>>).axisLabel;
+    const xAxis = spec.xAxis as Record<string, Record<string, unknown>>;
+    const label = xAxis.axisLabel;
+    if (label === undefined) throw new Error("the spec holds no x-axis label");
+    return label;
 }
 
 /** The normalized grid. */

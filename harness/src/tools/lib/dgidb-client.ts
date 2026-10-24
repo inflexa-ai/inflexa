@@ -131,7 +131,7 @@ function mapInteraction(
     const pmids = (raw.publications ?? []).map((p) => (p.pmid != null ? String(p.pmid) : "")).filter(Boolean);
     const types = (raw.interactionTypes ?? []).map((t) => ({
         type: t.type ?? "",
-        ...(t.directionality ? { directionality: t.directionality } : {}),
+        directionality: t.directionality ?? undefined,
     }));
 
     const geneName = perspective === "gene" ? (inputSide.geneName ?? "") : (raw.gene?.name ?? "");
@@ -141,21 +141,19 @@ function mapInteraction(
     return {
         geneName,
         drugName,
-        ...(drugConceptId ? { drugConceptId } : {}),
+        drugConceptId,
         interactionTypes: types,
-        ...(raw.interactionScore != null ? { interactionScore: raw.interactionScore } : {}),
+        interactionScore: raw.interactionScore ?? undefined,
         sourceCount: sources.length,
         sources,
         publicationCount: pmids.length,
         pmids: pmids.slice(0, MAX_PMIDS),
-        ...(includeAttributes
-            ? {
-                  attributes: (raw.interactionAttributes ?? []).slice(0, MAX_ATTRIBUTES).map((a) => ({
-                      name: a.name ?? "",
-                      value: (a.value ?? "").slice(0, MAX_ATTRIBUTE_CHARS),
-                  })),
-              }
-            : {}),
+        attributes: includeAttributes
+            ? (raw.interactionAttributes ?? []).slice(0, MAX_ATTRIBUTES).map((a) => ({
+                  name: a.name ?? "",
+                  value: (a.value ?? "").slice(0, MAX_ATTRIBUTE_CHARS),
+              }))
+            : undefined,
     };
 }
 

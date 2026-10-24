@@ -62,13 +62,13 @@ function valueRef(
         path,
         hash,
         locator: { column, rowFilter: { column: filterColumn, op: "eq", value: filterValue } },
-        ...(assert ? { assert } : {}),
+        assert,
     };
 }
 
 /** Build a whole-table reference, or a projected-table reference when `columns` is present. */
 function tableRef(path: string, hash: string, columns?: string[]): ArtifactTableReference {
-    return { kind: "artifact-table", path, hash, ...(columns ? { columns } : {}) };
+    return { kind: "artifact-table", path, hash, columns };
 }
 
 /** Build a snapshot from the given entries. The fixture reads the `rows`, and the production reads the file. */
@@ -77,8 +77,8 @@ function snapshotOf(entries: Array<{ path: string; hash: string; fileType?: stri
     for (const entry of entries) {
         artifacts[entry.path] = {
             hash: entry.hash,
-            ...(entry.fileType !== undefined ? { fileType: entry.fileType } : {}),
-            ...(entry.rows !== undefined ? { rows: entry.rows } : {}),
+            fileType: entry.fileType,
+            rows: entry.rows,
         };
     }
     return { artifacts };
@@ -300,9 +300,9 @@ describe("production resolver, an absent arm beside under-cap successes", () => 
 
         const under = outcomes.slice(0, 9);
         for (let n = 0; n < 9; n += 1) {
-            expect(under[n]._unsafeUnwrap()).toEqual({ type: "scalar", value: `0.${n}` });
+            expect(under[n]?._unsafeUnwrap()).toEqual({ type: "scalar", value: `0.${n}` });
         }
-        expect(outcomes[9]._unsafeUnwrapErr().reason).toBe("extraction-unavailable");
+        expect(outcomes[9]?._unsafeUnwrapErr().reason).toBe("extraction-unavailable");
     });
 });
 
@@ -395,8 +395,8 @@ describe("production resolver, the row bound", () => {
         const resolved = result._unsafeUnwrap() as { type: "table"; rows: Row[]; total?: number };
         // The resolved table is the bounded table. Thus the card, the data asset, and the gate read one set.
         expect(resolved.rows.length).toBe(20);
-        expect(resolved.rows[0].gene).toBe("G0");
-        expect(resolved.rows[19].gene).toBe("G19");
+        expect(resolved.rows[0]?.gene).toBe("G0");
+        expect(resolved.rows[19]?.gene).toBe("G19");
         // This read is the one step that holds the whole artifact, thus it carries the pre-bound total out
         // and the page states the shown count against it.
         expect(resolved.total).toBe(14201);
@@ -588,12 +588,9 @@ describe("production resolver, the prepare batch of fall-throughs", () => {
         // One arm call covers the whole batch, and the batch holds each fall-through request.
         expect(batches.length).toBe(1);
         expect(batches[0]).toHaveLength(2);
-        expect(batches[0]).toEqual(
-            expect.arrayContaining([
-                { path: "fall-a.csv", hash: hashA, format: "csv" },
-                { path: "fall-b.csv", hash: hashB, format: "csv" },
-            ]),
-        );
+        const batch = batches[0] ?? [];
+        expect(batch.find((request) => request.path === "fall-a.csv")).toMatchObject({ hash: hashA, format: "csv" });
+        expect(batch.find((request) => request.path === "fall-b.csv")).toMatchObject({ hash: hashB, format: "csv" });
 
         // The later resolve reads the arm value from the cache, and it opens no new batch.
         const outA = await resolver.resolve(refA, snapshot);

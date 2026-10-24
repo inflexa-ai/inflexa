@@ -246,10 +246,9 @@ describe("CitationResolver cache policy", () => {
 
         const result = await resolver.resolveOne({ citation: "10.1000/example" });
 
-        expect(result.sourceOutcomes.find((outcome) => outcome.source === "crossref")).toMatchObject({
-            status: "unavailable",
-            detail: expect.stringContaining("registration agency undetermined"),
-        });
+        const crossrefOutcome = result.sourceOutcomes.find((outcome) => outcome.source === "crossref");
+        expect(crossrefOutcome).toMatchObject({ status: "unavailable" });
+        expect(crossrefOutcome?.detail).toContain("registration agency undetermined");
         expect(result).toMatchObject({ verdict: "inconclusive", coverage: "partial" });
     });
 

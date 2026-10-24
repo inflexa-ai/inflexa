@@ -15,7 +15,7 @@ describe("scriptJson", () => {
     it("keeps the JSON value identical", () => {
         // The browser reads `<` as `<`, thus the parsed value matches the source value.
         const value = { rows: [{ k: "a</script>b" }], count: 3 };
-        const parsed = JSON.parse(scriptJson(value));
+        const parsed: unknown = JSON.parse(scriptJson(value));
         expect(parsed).toEqual(value);
     });
 });

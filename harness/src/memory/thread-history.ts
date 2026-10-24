@@ -762,26 +762,34 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
         const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
         const displayEnvelope =
             r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`, logger);
-        const turn: StoredTurnRecord | undefined =
-            r.turn_status === null
-                ? undefined
-                : {
-                      status: r.turn_status,
-                      ...(r.turn_reason === null ? {} : { reason: r.turn_reason }),
-                      ...(r.turn_usage === null ? {} : { usage: r.turn_usage }),
-                      ...(r.turn_record_duration_ms === null ? {} : { durationMs: Number(r.turn_record_duration_ms) }),
-                  };
-        return {
+        const row: {
+            seq: number;
+            envelope: typeof envelope;
+            message: StoredMessage["message"];
+            displayEnvelope?: StoredMessage["displayEnvelope"];
+            createdAt: Date;
+            usage?: TokenUsageRollup;
+            durationMs?: number;
+            author?: string;
+            turn?: { status: TurnStatus; reason?: string; usage?: TokenUsageRollup; durationMs?: number };
+        } = {
             seq: Number(r.seq),
             envelope,
             message: envelope.message,
-            ...(displayEnvelope ? { displayEnvelope } : {}),
-            ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
-            ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
-            ...(turn === undefined ? {} : { turn }),
-            ...(r.author === null ? {} : { author: r.author }),
+            displayEnvelope,
             createdAt: r.created_at,
         };
+        if (r.reported_usage !== null) row.usage = r.reported_usage;
+        if (r.turn_duration_ms !== null) row.durationMs = Number(r.turn_duration_ms);
+        if (r.author !== null) row.author = r.author;
+        if (r.turn_status !== null) {
+            const turn: { status: TurnStatus; reason?: string; usage?: TokenUsageRollup; durationMs?: number } = { status: r.turn_status };
+            if (r.turn_reason !== null) turn.reason = r.turn_reason;
+            if (r.turn_usage !== null) turn.usage = r.turn_usage;
+            if (r.turn_record_duration_ms !== null) turn.durationMs = Number(r.turn_record_duration_ms);
+            row.turn = turn;
+        }
+        return row;
     }
 
     async function toTurns(threadId: string, rows: readonly StoredRow[]): Promise<StoredMessage[][]> {

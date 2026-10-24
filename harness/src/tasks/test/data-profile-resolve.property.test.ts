@@ -37,7 +37,7 @@ const pick = <T>(random: () => number, values: readonly T[]): T => values[Math.f
 const between = (random: () => number, low: number, high: number): number => low + Math.floor(random() * (high - low + 1));
 
 function file(path: string, format: string, extensions: string[] = [], wrapper?: string): ScannedFile {
-    return { path, size: 100, extensions, format, ...(wrapper ? { wrapper } : {}) };
+    return { path, size: 100, extensions, format, wrapper };
 }
 
 const id = (n: number) => `S${String(n).padStart(3, "0")}`;
@@ -351,7 +351,7 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
 
         expect(resolution.errors.some((error) => error.includes("past the menu's listed bound"))).toBe(true);
         expect(resolution.groups.some((group) => group.name === "unlisted")).toBe(false);
-        expect(resolution.unclaimed).toEqual(expect.arrayContaining(unlisted.members.map((member) => member.path)));
+        for (const member of unlisted.members) expect(resolution.unclaimed).toContain(member.path);
         expectPartitions(detected, resolution, 0);
     });
 

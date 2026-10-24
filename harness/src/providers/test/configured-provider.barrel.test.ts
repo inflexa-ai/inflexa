@@ -275,7 +275,7 @@ describe("the thinking binding on the wire", () => {
                 apiKey: "test-key",
                 model,
                 fetch: cap.fetch,
-                ...(thinkingBinding !== undefined ? { thinkingBinding } : {}),
+                thinkingBinding,
             },
         });
 
@@ -484,7 +484,7 @@ describe("output-token ceiling", () => {
             apiKey: "test-key",
             model,
             fetch,
-            ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+            maxOutputTokens,
         });
 
     it("sends the default ceiling for a model the SDK's capability table does not know", async () => {

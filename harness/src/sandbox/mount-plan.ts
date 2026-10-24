@@ -80,8 +80,8 @@ export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "re
         analysisId: session.scope.analysisId,
         runId: session.runFrame.runId,
         stepId: session.runFrame.stepId,
-        ...(spec.readOnly !== undefined ? { readOnly: spec.readOnly } : {}),
-        ...(spec.writableTail !== undefined ? { writableTail: spec.writableTail } : {}),
+        readOnly: spec.readOnly,
+        writableTail: spec.writableTail,
     };
 }
 
@@ -202,7 +202,7 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
     const write = sandboxWriteTail(coords);
     return {
         ro: workspaceSubPath,
-        ...(write === undefined ? {} : { rw: `${workspaceSubPath}/${write.tail}` }),
+        rw: write === undefined ? undefined : `${workspaceSubPath}/${write.tail}`,
     };
 }
 
@@ -228,17 +228,16 @@ function libStoreEnv(toolchainSource: ToolchainSource | undefined, cache: boolea
         };
     }
     const farm = farmContainerPath(toolchainSource);
-    return {
+    const env: Record<string, string> = {
         R_LIBS_SITE: `${farm}/r/github:${farm}/r/bioconductor:${farm}/r/cran`,
         NODE_PATH: "/opt/node/node_modules",
         PATH: `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin:${farm}/python/bin`,
-        ...(cache
-            ? {
-                  NUMBA_CACHE_DIR: `${FARM_CACHE_CONTAINER_PATH}/numba-cache`,
-                  MPLCONFIGDIR: `${FARM_CACHE_CONTAINER_PATH}/matplotlib_config`,
-              }
-            : {}),
     };
+    if (cache) {
+        env.NUMBA_CACHE_DIR = `${FARM_CACHE_CONTAINER_PATH}/numba-cache`;
+        env.MPLCONFIGDIR = `${FARM_CACHE_CONTAINER_PATH}/matplotlib_config`;
+    }
+    return env;
 }
 
 export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores): MountPlan {
@@ -250,6 +249,8 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
     const write = sandboxWriteTail(coords);
     const writableStepPath = write === undefined ? undefined : `${readonlyTreePath}/${write.tail}`;
     const cache = stores.libs && stores.cache === true;
+    const env: Record<string, string> = { PROVENANCE_WATCH_DIRS: readonlyTreePath };
+    if (stores.libs) Object.assign(env, libStoreEnv(stores.toolchainSource, cache));
 
     return {
         readonlyTreePath,
@@ -260,9 +261,6 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         cachePath: cache ? FARM_CACHE_CONTAINER_PATH : undefined,
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
         stepSubdirs: write?.subdirs ?? [],
-        env: {
-            PROVENANCE_WATCH_DIRS: readonlyTreePath,
-            ...(stores.libs ? libStoreEnv(stores.toolchainSource, cache) : {}),
-        },
+        env,
     };
 }

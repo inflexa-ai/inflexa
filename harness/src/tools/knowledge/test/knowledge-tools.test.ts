@@ -29,6 +29,12 @@ const SITUATION = {
     batch: "none" as const,
 };
 
+/** The JSON of a written decision record, narrowed to the object the tool wrote. */
+function asRecord(json: unknown): Record<string, unknown> {
+    if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error("the decision record stored no object");
+    return { ...json };
+}
+
 describe("createKnowledgeTools", () => {
     it("attaches nothing without a client, and the two planner tools with one", () => {
         expect(createKnowledgeTools({})).toEqual([]);
@@ -555,7 +561,7 @@ describe("knowledge_template", () => {
         expect(script).toBe('COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n');
         expect(out.local_slots).toEqual(["counts_path"]);
         expect(out.written_sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
-        const record = JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
+        const record = asRecord(JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8")));
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",
             version: "1.0.0",

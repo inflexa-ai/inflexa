@@ -75,10 +75,10 @@ export function continueAgent(
             stepNames: namespacedStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER, request.stepNamespace),
             firstIndex: 0,
             requestText: request.text,
-            ...(request.endOnRequestRefusal === true ? { endsOnRequestRefusal: true } : {}),
+            endsOnRequestRefusal: request.endOnRequestRefusal === true ? true : undefined,
         });
         const result = outcome === "capped" ? await loop.endCapped() : outcome;
         const refusal = outcome === "capped" ? undefined : outcome.refusal;
-        return { messages: result.messages.slice(conversation.length), finish: result.finish, ...(refusal === undefined ? {} : { refusal }) };
+        return { messages: result.messages.slice(conversation.length), finish: result.finish, refusal };
     });
 }

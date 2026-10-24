@@ -58,7 +58,7 @@ export interface BoundedExecResult {
     readonly stderrTotalLength: number;
     readonly durationMs: number | null;
     readonly timedOut: boolean;
-    readonly syntheticFailure?: { readonly reason: string };
+    syntheticFailure?: { readonly reason: string };
 }
 
 function boundStream(stream: string, cap: number = EXEC_STREAM_BYTE_CAP): BoundedStream {
@@ -122,7 +122,7 @@ export function capExecStreams(result: ExecResult, cap: number = EXEC_STREAM_BYT
 export function boundExecResult(result: ExecResult, cap: number = EXEC_STREAM_BYTE_CAP): BoundedExecResult {
     const outStream = boundStream(result.stdout, cap);
     const errStream = boundStream(result.stderr, cap);
-    return {
+    const bounded: BoundedExecResult = {
         execId: result.execId,
         exitCode: result.exitCode,
         stdout: outStream.content,
@@ -133,6 +133,7 @@ export function boundExecResult(result: ExecResult, cap: number = EXEC_STREAM_BY
         stderrTotalLength: result.stderrTotalBytes ?? errStream.totalLength,
         durationMs: result.durationMs,
         timedOut: result.timedOut,
-        ...(result.syntheticFailure ? { syntheticFailure: result.syntheticFailure } : {}),
     };
+    if (result.syntheticFailure) bounded.syntheticFailure = result.syntheticFailure;
+    return bounded;
 }

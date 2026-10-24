@@ -105,9 +105,9 @@ function table(path: PinnedPath, declarations: Declarations = {}, rowBound?: Art
         kind: "artifact-table",
         path,
         hash: PINS[path],
-        ...(rowBound !== undefined ? { rowBound } : {}),
-        ...(declarations.labels !== undefined ? { columnLabels: declarations.labels } : {}),
-        ...(declarations.meanings !== undefined ? { columnMeanings: declarations.meanings } : {}),
+        rowBound,
+        columnLabels: declarations.labels,
+        columnMeanings: declarations.meanings,
     };
 }
 

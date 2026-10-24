@@ -20,6 +20,7 @@
  * draws each PNG through it.
  */
 
+import { isUnknownArray } from "../lib/unknown-array.js";
 import { CHART_INK, CHART_PAGE_TEXT_PX, COLOR_SCALE_BAND_PCT, GUIDE_LINE_COLOR } from "./design.js";
 
 /** The renderer name of an interval: an error bar, a confidence interval, or the inner mark of a violin. */
@@ -78,11 +79,11 @@ export interface RenderParams {
     readonly itemPayload?: Readonly<Record<string, unknown>>;
 }
 
-/** The part of the chart runtime that a renderer reads. */
+/** The part of the chart runtime that a renderer reads. `coord` and `size` give one number for each dimension. */
 export interface RenderApi {
     value(dimension: number): number;
-    coord(point: number[]): number[];
-    size(delta: number[]): number[];
+    coord(point: number[]): [number, number];
+    size(delta: number[]): [number, number];
     visual(name: "color"): string;
 }
 
@@ -141,10 +142,11 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
         };
     }
     const children = [segment(fromX, fromY, toX, toY, INTERVAL_STROKE_PX)];
-    for (const [bit, endX, endY, otherX, otherY] of [
+    const ends: Array<readonly [number, number, number, number, number]> = [
         [1, fromX, fromY, toX, toY],
         [2, toX, toY, fromX, fromY],
-    ]) {
+    ];
+    for (const [bit, endX, endY, otherX, otherY] of ends) {
         if ((clipped & bit) !== 0) {
             children.push(...arrowHead(endX, endY, otherX, otherY));
             continue;
@@ -430,7 +432,7 @@ function gridWidth(grid: unknown, axis: unknown, widthPx: number): number {
         typeof axis === "object" && axis !== null && typeof (axis as Record<string, unknown>).gridIndex === "number"
             ? ((axis as Record<string, unknown>).gridIndex as number)
             : 0;
-    const entry = Array.isArray(grid) ? grid[place] : grid;
+    const entry = isUnknownArray(grid) ? grid[place] : grid;
     const width = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).width : undefined;
     if (typeof width === "string" && width.endsWith("%")) return (widthPx * Number.parseFloat(width)) / 100;
     if (typeof width === "number") return width;
@@ -510,7 +512,7 @@ function legendBand(lines: number, textPx: number): number {
 function legendLines(option: Record<string, unknown>, textPx: number, widthPx: number): number {
     const legend = option.legend as Record<string, unknown>;
     const names: string[] = [];
-    if (Array.isArray(legend.data)) {
+    if (isUnknownArray(legend.data)) {
         for (const entry of legend.data) {
             const name = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).name : entry;
             if (typeof name === "string") names.push(name);

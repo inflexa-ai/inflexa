@@ -137,13 +137,6 @@ export default typescript({
             // rules whose few reports the harness keeps deliberately.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #705 turns the `no-unsafe-*` family and the conditional-spread ban back on.
-                "@inflexa-ai/no-conditional-spread": "off",
-                "typescript/no-unsafe-argument": "off",
-                "typescript/no-unsafe-assignment": "off",
-                "typescript/no-unsafe-call": "off",
-                "typescript/no-unsafe-member-access": "off",
-                "typescript/no-unsafe-return": "off",
                 // #704 rewrites each `interface` as a `type` alias.
                 "@inflexa-ai/no-interface": "off",
                 // #707 turns the assertion-safety set back on.
@@ -188,6 +181,11 @@ export default typescript({
                 "typescript/restrict-template-expressions": "off",
                 "typescript/unbound-method": "off",
                 "typescript/use-unknown-in-catch-callback-variable": "off",
+                // #709 owns these two as well: their reports exist only under
+                // `noUncheckedIndexedAccess`, which widens an index read to
+                // `T | undefined`, so they stay off until #709 takes their fixes.
+                "typescript/restrict-plus-operands": "off",
+                "typescript/no-unsafe-unary-minus": "off",
             },
         },
         {

@@ -286,11 +286,9 @@ describe("web_fetch — the guard", () => {
 
         expect(output).toMatchObject({ status: "ok", text: "public body", finalUrl: "http://example.test/page" });
         expect(ask.requests).toHaveLength(0);
-        expect(hop.options[0]?.headers).toMatchObject({
-            "user-agent": HARNESS_USER_AGENT,
-            "Accept-Encoding": "identity",
-            Accept: expect.stringContaining("text/html"),
-        });
+        const headers = hop.options[0]?.headers ?? {};
+        expect(headers).toMatchObject({ "user-agent": HARNESS_USER_AGENT, "Accept-Encoding": "identity" });
+        expect(headers.Accept).toContain("text/html");
     });
 
     it("asks the name resolution for every address and answers the address shape the options request", async () => {
@@ -904,7 +902,7 @@ describe("web_fetch — the returned text and the kept remainder", () => {
                 emptyHopLog(),
             ),
             lookup: lookupAnswering([PUBLIC]),
-            ...(store !== undefined ? { toolOutputStore: store } : {}),
+            toolOutputStore: store,
         };
     }
 

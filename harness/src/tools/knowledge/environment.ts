@@ -118,7 +118,7 @@ export async function joinEnvironment(answer: RecommendResponse, paths: Environm
         const pkg = (step as { package?: { name: string } }).package;
         if (pkg && farm) {
             const version = farm.get(pkg.name.toLowerCase());
-            environment.package = { name: pkg.name, present: version !== undefined, ...(version !== undefined ? { version } : {}) };
+            environment.package = { name: pkg.name, present: version !== undefined, version };
         }
         const collection = step.parameters?.find((parameter) => parameter.name === "gene_set_collection");
         if (collection && typeof collection.value === "string" && entries) {
@@ -126,8 +126,8 @@ export async function joinEnvironment(answer: RecommendResponse, paths: Environm
             environment.collection = {
                 name: collection.value,
                 present: found !== undefined,
-                ...(found ? { path: found.path } : {}),
-                ...(found?.metadata?.title ? { title: found.metadata.title } : {}),
+                path: found?.path,
+                title: found?.metadata?.title,
             };
         }
         return Object.keys(environment).length > 0 ? { ...step, environment } : step;

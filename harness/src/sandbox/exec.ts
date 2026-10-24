@@ -104,15 +104,16 @@ export async function runExec(
 ): Promise<ExecResult> {
     const fetchImpl = deps.fetch ?? fetch;
     const cap = deps.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP;
-    await submitExec(fetchImpl, ref, {
+    const body: SubmitExecBody = {
         command: [...request.command],
         execId,
-        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-        ...(request.env === undefined ? {} : { env: { ...request.env } }),
-        ...(request.timeoutSeconds === undefined ? {} : { timeoutSeconds: request.timeoutSeconds }),
         stdoutByteCap: cap,
         stderrByteCap: cap,
-    });
+    };
+    if (request.cwd !== undefined) body.cwd = request.cwd;
+    if (request.env !== undefined) body.env = { ...request.env };
+    if (request.timeoutSeconds !== undefined) body.timeoutSeconds = request.timeoutSeconds;
+    await submitExec(fetchImpl, ref, body);
     return pollExec(ref, execId, emit, deadlineMs, deps);
 }
 

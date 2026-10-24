@@ -50,9 +50,9 @@ function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputSto
         skillsDir: "/skills",
         chrome: {},
         citationResolver: unusedCitationResolver,
-        ...(hostTools ? { hostTools } : {}),
-        ...(toolOutputStore ? { toolOutputStore } : {}),
-        ...(webSearch ? { webSearch } : {}),
+        hostTools,
+        toolOutputStore,
+        webSearch,
     });
 }
 

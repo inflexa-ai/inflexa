@@ -136,7 +136,7 @@ export async function enrichShapes(args: EnrichShapesArgs): Promise<FileShape[]>
 
     const readouts = await readHeaders({
         ...args,
-        targets: [...targets.entries()].map(([path, shape]) => ({ path, format: shape.format, ...(shape.wrapper ? { wrapper: shape.wrapper } : {}) })),
+        targets: [...targets.entries()].map(([path, shape]) => ({ path, format: shape.format, wrapper: shape.wrapper })),
     });
 
     const byShape = new Map<string, HeaderReadout>();
@@ -158,8 +158,8 @@ async function readFromPrefix(args: ReadHeadersArgs, target: ReadoutTargetSpec):
         .unwrapOr<ReadBytesResult | { readonly kind: "read_failed" }>({ kind: "read_failed" });
     if (read.kind !== "ok") return { path, fields: {}, unavailable: `prefix unreadable (${read.kind})` };
 
-    const readout = await readPrefix({ prefix: read.bytes, format: target.format, ...(target.wrapper ? { wrapper: target.wrapper } : {}) });
-    return { path, fields: readout.fields, ...(readout.unavailable ? { unavailable: readout.unavailable } : {}) };
+    const readout = await readPrefix({ prefix: read.bytes, format: target.format, wrapper: target.wrapper });
+    return { path, fields: readout.fields, unavailable: readout.unavailable };
 }
 
 async function decodeContainers(
@@ -200,7 +200,7 @@ async function decodeContainers(
         readouts.set(target.path, {
             path: target.path,
             fields: parsed.fields ?? {},
-            ...(parsed.unavailable ? { unavailable: parsed.unavailable } : {}),
+            unavailable: parsed.unavailable,
         });
     }
 

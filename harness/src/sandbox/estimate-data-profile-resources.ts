@@ -61,12 +61,8 @@ function factorFor(relativePath: string): number {
 export function estimateDataProfileResources(files: ReadonlyArray<{ relativePath: string; size: number }>): ResourceSpec {
     if (files.length === 0) return { cpu: 1, memoryGb: 2 };
 
-    let largest = files[0];
-    let totalBytes = 0;
-    for (const f of files) {
-        totalBytes += f.size;
-        if (f.size > largest.size) largest = f;
-    }
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    const largest = files.reduce((a, b) => (b.size > a.size ? b : a));
 
     const memoryGb = Math.max(2, Math.ceil(2 + (largest.size * factorFor(largest.relativePath)) / 1e9));
 

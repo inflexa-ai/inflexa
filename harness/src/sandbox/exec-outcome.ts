@@ -55,7 +55,7 @@ export function summarizeExec(result: ExecResult): ExecOutcomeSummary {
         exitCode: result.exitCode,
         timedOut: result.timedOut,
         stderrTotalBytes: result.stderrTotalBytes ?? Buffer.byteLength(result.stderr, "utf8"),
-        ...(result.syntheticFailure ? { syntheticFailureReason: result.syntheticFailure.reason } : {}),
+        syntheticFailureReason: result.syntheticFailure?.reason,
     };
 }
 

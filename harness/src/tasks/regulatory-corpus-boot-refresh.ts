@@ -176,7 +176,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     void (async () => {
         try {
             const result = await refresh({
-                ...(deps.refreshOptions ?? {}),
+                ...deps.refreshOptions,
                 pool,
                 embedder: dispatchEmbedder,
             });

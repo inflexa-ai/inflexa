@@ -172,12 +172,10 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
     const { failures: resolutionFailures } = await resolveDocumentReferences(parsed.data.sections, snapshot, resolver);
 
     if (repeatedIds.length > 0 || resolutionFailures.length > 0) {
-        return {
-            valid: false,
-            ...(repeatedIds.length > 0 ? { duplicateIds: repeatedIds } : {}),
-            ...(resolutionFailures.length > 0 ? { resolutionFailures } : {}),
-            warnings,
-        };
+        const failure: ReportValidation = { valid: false, warnings };
+        if (repeatedIds.length > 0) failure.duplicateIds = repeatedIds;
+        if (resolutionFailures.length > 0) failure.resolutionFailures = resolutionFailures;
+        return failure;
     }
     return { valid: true, warnings };
 }

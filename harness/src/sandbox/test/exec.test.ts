@@ -50,7 +50,7 @@ interface SeenRequest {
 function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenRequest[] = []): typeof fetch {
     let i = 0;
     return (async (input: RequestInfo | URL, init?: RequestInit) => {
-        seen.push({ url: String(input), ...(init ? { init } : {}) });
+        seen.push({ url: String(input), init });
         if (init?.method === "POST") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
         const item = i < polls.length ? polls[i++] : polls[polls.length - 1];
         return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item!);
@@ -111,7 +111,7 @@ describe("the submit", () => {
     test("a non-202 throws, and no poll follows", async () => {
         const seen: SeenRequest[] = [];
         const failing = (async (input: RequestInfo | URL, init?: RequestInit) => {
-            seen.push({ url: String(input), ...(init ? { init } : {}) });
+            seen.push({ url: String(input), init });
             return new Response("boom", { status: 503 });
         }) as typeof fetch;
         await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: failing })).rejects.toThrow(/503/);

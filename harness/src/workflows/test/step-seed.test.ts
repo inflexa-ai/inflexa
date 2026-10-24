@@ -100,7 +100,7 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
         pool,
         workingMemory: createWorkingMemory(pool),
         resolveWorkspaceRoot: () => workspaceRoot,
-        ...(knowledge ? { knowledge } : {}),
+        knowledge,
     } as unknown as ExecuteAnalysisDeps;
 }
 
@@ -130,7 +130,7 @@ function planStep(id: string, dependsOn: readonly string[] = [], grounding?: Ana
         resources: { cpu: 2, memoryGb: 4 },
         agent: "bulk-transcriptomics-agent",
         maxSteps: 10,
-        ...(grounding ? { grounding } : {}),
+        grounding,
     };
 }
 
@@ -154,7 +154,7 @@ function grounded(settings: NonNullable<AnalysisStep["grounding"]>["settings"], 
         status: "grounded",
         snapshot: "sha256:71ac",
         claims: ["R-0001@e7d0"],
-        ...(template ? { template } : {}),
+        template: template ?? undefined,
         settings,
         reason: "DESeq2 Wald per R-0001@e7d0",
     };

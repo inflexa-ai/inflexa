@@ -5,7 +5,7 @@ import { buildPresentationCardData, planCardOf, planPartOf } from "../card-build
 
 function planDocument(title?: string) {
     return {
-        ...(title !== undefined ? { title } : {}),
+        title,
         analytical_narrative: "why",
         created_at: "2026-10-01T00:00:00.000Z",
         steps: [

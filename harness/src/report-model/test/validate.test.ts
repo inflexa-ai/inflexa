@@ -110,6 +110,15 @@ function expectInvalid(result: ReportValidation): Extract<ReportValidation, { va
     return result;
 }
 
+/** The first resolution failure of an invalid report, which the staged block earns. */
+function firstFailure(
+    invalid: Extract<ReportValidation, { valid: false }>,
+): NonNullable<Extract<ReportValidation, { valid: false }>["resolutionFailures"]>[number] {
+    const failure = invalid.resolutionFailures?.[0];
+    if (failure === undefined) throw new Error("the validation holds no resolution failure");
+    return failure;
+}
+
 /** Wrap one block in a single-section report, the smallest valid document shape. */
 function reportWith(block: Block): ReportDocument {
     return { title: "Report", sections: [{ kind: "section", id: "sec", title: "Section", blocks: [block] }] };
@@ -205,8 +214,9 @@ describe("validateReport — resolution failures", () => {
         const invalid = expectInvalid(result);
         const failures = invalid.resolutionFailures ?? [];
         expect(failures).toHaveLength(1);
-        expect(failures[0].blockId).toBe("claim-absent");
-        expect(failures[0].failure.reason).toBe("artifact-missing");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("claim-absent");
+        expect(failure.failure.reason).toBe("artifact-missing");
     });
 
     it("reports assertion-failed for a wrong asserted value", async () => {
@@ -232,7 +242,8 @@ describe("validateReport — resolution failures", () => {
         const invalid = expectInvalid(result);
         const failures = invalid.resolutionFailures ?? [];
         expect(failures).toHaveLength(1);
-        expect(failures[0].failure.reason).toBe("assertion-failed");
+        const failure = firstFailure(invalid);
+        expect(failure.failure.reason).toBe("assertion-failed");
     });
 
     it("reports locator-out-of-range for a rowFilter that matches no row", async () => {
@@ -255,7 +266,7 @@ describe("validateReport — resolution failures", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
     });
 
     it("reports ambiguous-match for a rowFilter that matches two rows", async () => {
@@ -278,7 +289,7 @@ describe("validateReport — resolution failures", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("ambiguous-match");
+        expect(firstFailure(invalid).failure.reason).toBe("ambiguous-match");
     });
 
     it("reports hash-mismatch for a pinned hash that differs", async () => {
@@ -293,9 +304,9 @@ describe("validateReport — resolution failures", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("metric-hash");
-        expect(failures[0].failure.reason).toBe("hash-mismatch");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("metric-hash");
+        expect(failure.failure.reason).toBe("hash-mismatch");
     });
 });
 
@@ -468,8 +479,9 @@ describe("validateReport — the whole-file pin", () => {
         const invalid = expectInvalid(result);
         const failures = invalid.resolutionFailures ?? [];
         expect(failures).toHaveLength(1);
-        expect(failures[0].blockId).toBe("figure-absent");
-        expect(failures[0].failure.reason).toBe("artifact-missing");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("figure-absent");
+        expect(failure.failure.reason).toBe("artifact-missing");
     });
 
     it("reports hash-mismatch for a figure whose file hash differs", async () => {
@@ -483,9 +495,9 @@ describe("validateReport — the whole-file pin", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("figure-hash");
-        expect(failures[0].failure.reason).toBe("hash-mismatch");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("figure-hash");
+        expect(failure.failure.reason).toBe("hash-mismatch");
     });
 
     it("rejects a derivation given an artifact-file input, because a file addresses no scalar", async () => {
@@ -588,9 +600,9 @@ describe("validateReport — derivations", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("metric-broken-input");
-        expect(failures[0].failure.reason).toBe("artifact-missing");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("metric-broken-input");
+        expect(failure.failure.reason).toBe("artifact-missing");
     });
 
     it("reports locator-out-of-range for a division by zero", async () => {
@@ -624,7 +636,7 @@ describe("validateReport — derivations", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
     });
 
     it("validates a pctChange over two grounded cells", async () => {
@@ -694,7 +706,7 @@ describe("validateReport — derivations", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
     });
 });
 
@@ -727,10 +739,10 @@ describe("validateReport — an artifact-table with a column subset", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("table-invented");
-        expect(failures[0].failure.reason).toBe("locator-out-of-range");
-        expect(failures[0].failure.detail).toContain("pValueAdjusted");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("table-invented");
+        expect(failure.failure.reason).toBe("locator-out-of-range");
+        expect(failure.failure.detail).toContain("pValueAdjusted");
     });
 
     it("validates a column that only some rows hold, because a table tolerates a ragged row", async () => {
@@ -767,10 +779,10 @@ describe("validateReport — a chart encoding", () => {
 
     it("reports locator-out-of-range for a channel that names a column the table does not hold", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(chartWith("chart-invented", { x: "sample", y: "invented" })), snapshot, resolver));
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("chart-invented");
-        expect(failures[0].failure.reason).toBe("locator-out-of-range");
-        expect(failures[0].failure.detail).toContain("invented");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("chart-invented");
+        expect(failure.failure.reason).toBe("locator-out-of-range");
+        expect(failure.failure.detail).toContain("invented");
     });
 
     it("names each absent channel, across every encoding slot", async () => {
@@ -781,7 +793,7 @@ describe("validateReport — a chart encoding", () => {
                 resolver,
             ),
         );
-        const detail = (invalid.resolutionFailures ?? [])[0].failure.detail ?? "";
+        const detail = firstFailure(invalid).failure.detail ?? "";
         expect(detail).toContain("nope-x");
         expect(detail).toContain("nope-group");
         expect(detail).toContain("nope-value");
@@ -802,7 +814,7 @@ describe("validateReport — a chart encoding", () => {
                 resolver,
             ),
         );
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
     });
 
     it("validates an encoding with no channel at all", async () => {
@@ -837,9 +849,9 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         const { resolvedByBlock, resolvedBySlot, failures } = await resolveDocumentReferences(reportWith(slottedChart()).sections, snapshot, resolver);
         expect(failures).toEqual([]);
         // The binding keeps its place in the block map, thus every reader of a binding value reads the table.
-        expect(resolvedByBlock.get("chart-slots")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_B_PATH].rows ?? [] });
+        expect(resolvedByBlock.get("chart-slots")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_B_PATH]?.rows ?? [] });
         const slots = resolvedBySlot.get("chart-slots");
-        expect(slots?.get("track")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH].rows ?? [] });
+        expect(slots?.get("track")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH]?.rows ?? [] });
         expect(slots?.get("statistic:0")).toEqual({ type: "scalar", value: 10 });
         expect(slots?.get("statistic:1")).toEqual({ type: "scalar", value: 1.05 });
     });
@@ -865,8 +877,8 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         });
         const { failures } = await resolveDocumentReferences(reportWith(chart).sections, snapshot, resolver);
         expect(failures).toHaveLength(1);
-        expect(failures[0]).toEqual(expect.objectContaining({ blockId: "chart-slots", slot: "track" }));
-        expect(failures[0].failure.detail).toBe("the track names column invented_end, which the track table does not hold");
+        expect(failures[0]).toMatchObject({ blockId: "chart-slots", slot: "track" });
+        expect(failures[0]?.failure.detail).toBe("the track names column invented_end, which the track table does not hold");
     });
 
     /** A heatmap over table B whose axis trees read table A, with the given tree columns on the y axis. */
@@ -891,15 +903,15 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         const { resolvedBySlot, failures } = await resolveDocumentReferences(reportWith(treeChart()).sections, snapshot, resolver);
         expect(failures).toEqual([]);
         const slots = resolvedBySlot.get("chart-trees");
-        expect(slots?.get("tree:x")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH].rows ?? [] });
-        expect(slots?.get("tree:y")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH].rows ?? [] });
+        expect(slots?.get("tree:x")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH]?.rows ?? [] });
+        expect(slots?.get("tree:y")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH]?.rows ?? [] });
     });
 
     it("names the block and the slot of a tree column that the tree table does not hold", async () => {
         const { failures } = await resolveDocumentReferences(reportWith(treeChart("invented_height")).sections, snapshot, resolver);
         expect(failures).toHaveLength(1);
-        expect(failures[0]).toEqual(expect.objectContaining({ blockId: "chart-trees", slot: "tree:y" }));
-        expect(failures[0].failure.detail).toBe("the tree names column invented_height, which the tree table does not hold");
+        expect(failures[0]).toMatchObject({ blockId: "chart-trees", slot: "tree:y" });
+        expect(failures[0]?.failure.detail).toBe("the tree names column invented_height, which the tree table does not hold");
     });
 
     it("refuses a stale tree at the record gate, with its slot", async () => {
@@ -960,8 +972,8 @@ describe("validateReport — a chart composition", () => {
                 resolver,
             ),
         );
-        const detail = (invalid.resolutionFailures ?? [])[0].failure.detail ?? "";
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        const detail = firstFailure(invalid).failure.detail ?? "";
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
         for (const name of ["nope-x", "nope-transform", "nope-label", "nope-y0", "nope-rank"]) {
             expect(detail).toContain(name);
         }
@@ -1170,7 +1182,7 @@ describe("validateReport — a value match with no tolerance", () => {
         // The delta is 0.19999999999999998. A rounded 0.19 sits far above the float noise that the
         // epsilon absorbs, thus the author must state a tolerance to accept it.
         const rounded = expectInvalid(await validateReport(reportWith(deltaMetric("metric-delta-rounded", 0.19)), snapshot, resolver));
-        expect((rounded.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+        expect(firstFailure(rounded).failure.reason).toBe("assertion-failed");
     });
 
     it("reports assertion-failed for a real mismatch with no tolerance", async () => {
@@ -1192,9 +1204,9 @@ describe("validateReport — a value match with no tolerance", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("metric-wrong-value");
-        expect(failures[0].failure.reason).toBe("assertion-failed");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("metric-wrong-value");
+        expect(failure.failure.reason).toBe("assertion-failed");
     });
 });
 
@@ -1221,19 +1233,19 @@ describe("validateReport — a cell that holds no value", () => {
 
     it("reports locator-out-of-range for a cell that holds undefined", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-undefined", "undefined-cell")), snapshot, resolver));
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].failure.reason).toBe("locator-out-of-range");
-        expect(failures[0].failure.detail).toContain("value");
+        const failure = firstFailure(invalid);
+        expect(failure.failure.reason).toBe("locator-out-of-range");
+        expect(failure.failure.detail).toContain("value");
     });
 
     it("reports locator-out-of-range for a cell that holds null", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-null", "null-cell")), snapshot, resolver));
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
     });
 
     it("reports locator-out-of-range for a column that the row does not hold", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-absent", "absent-cell")), snapshot, resolver));
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
     });
 });
 
@@ -1328,7 +1340,7 @@ describe("validateReport — a text-backed artifact", () => {
                 path: TEXT_PATH,
                 hash: TEXT_HASH,
                 locator: { column, rowFilter: { column: "gene", op: "eq", value: gene } },
-                ...(assert !== undefined ? { assert } : {}),
+                assert,
             },
         };
     }
@@ -1347,19 +1359,19 @@ describe("validateReport — a text-backed artifact", () => {
 
     it("reports assertion-failed for a numeric assert that the string cell does not hold", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(textMetric("metric-text-wrong", "count", { value: 41 })), snapshot, resolver));
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+        expect(firstFailure(invalid).failure.reason).toBe("assertion-failed");
     });
 
     it("names the type of each side, thus a failed match never reads as two identical values", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(textMetric("metric-text-typed", "note", { value: 12 }, "EGFR")), snapshot, resolver));
-        const detail = (invalid.resolutionFailures ?? [])[0].failure.detail ?? "";
+        const detail = firstFailure(invalid).failure.detail ?? "";
         expect(detail).toContain("the number 12");
         expect(detail).toContain(`the string "12 genes"`);
     });
 
     it("reads a cell that holds text as text, thus a leading numeral never matches", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(textMetric("metric-text-prefix", "note", { value: "12" }, "EGFR")), snapshot, resolver));
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+        expect(firstFailure(invalid).failure.reason).toBe("assertion-failed");
     });
 
     it("runs the arithmetic of a derivation over two string cells", async () => {
@@ -1427,8 +1439,8 @@ describe("validateReport — a text-backed artifact", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
-        expect((invalid.resolutionFailures ?? [])[0].failure.detail).toContain("note");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.detail).toContain("note");
     });
 });
 
@@ -1438,7 +1450,7 @@ describe("validateReport — a citation assertion", () => {
         return {
             kind: "citation",
             id,
-            binding: { kind: "citation", idKind: "pmid", id: "12345", raw: "Author et al.", ...(assert !== undefined ? { assert } : {}) },
+            binding: { kind: "citation", idKind: "pmid", id: "12345", raw: "Author et al.", assert },
         };
     }
 
@@ -1448,12 +1460,12 @@ describe("validateReport — a citation assertion", () => {
 
     it("reports assertion-failed for an asserted key that names a different source", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(citationBlock("cite-wrong", { value: "pmid:99999" })), snapshot, resolver));
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+        expect(firstFailure(invalid).failure.reason).toBe("assertion-failed");
     });
 
     it("reports assertion-failed for a bare id, because the key carries its idKind prefix", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(citationBlock("cite-bare", { value: "12345" })), snapshot, resolver));
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+        expect(firstFailure(invalid).failure.reason).toBe("assertion-failed");
     });
 });
 
@@ -1470,8 +1482,8 @@ describe("validateReport — the remaining resolution outcomes", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
-        expect((invalid.resolutionFailures ?? [])[0].failure.detail).toContain("7");
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(invalid).failure.detail).toContain("7");
     });
 
     /** Bind to the `value` cell of the sparse row that holds an empty string. */
@@ -1490,7 +1502,7 @@ describe("validateReport — the remaining resolution outcomes", () => {
             snapshot,
             resolver,
         );
-        expect((expectInvalid(result).resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+        expect(firstFailure(expectInvalid(result)).failure.reason).toBe("assertion-failed");
     });
 
     it("reports locator-out-of-range for a derivation over a blank cell", async () => {
@@ -1511,7 +1523,7 @@ describe("validateReport — the remaining resolution outcomes", () => {
             snapshot,
             resolver,
         );
-        expect((expectInvalid(result).resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect(firstFailure(expectInvalid(result)).failure.reason).toBe("locator-out-of-range");
     });
 
     it("reports artifact-missing for a table bound to an absent path", async () => {
@@ -1525,7 +1537,7 @@ describe("validateReport — the remaining resolution outcomes", () => {
             resolver,
         );
         const invalid = expectInvalid(result);
-        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("artifact-missing");
+        expect(firstFailure(invalid).failure.reason).toBe("artifact-missing");
     });
 });
 
@@ -1544,8 +1556,9 @@ describe("validateReport — the file type of the pinned entry", () => {
         const invalid = expectInvalid(result);
         const failures = invalid.resolutionFailures ?? [];
         expect(failures).toHaveLength(1);
-        expect(failures[0].blockId).toBe("metric-figure-cell");
-        expect(failures[0].failure.reason).toBe("unreadable-artifact");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("metric-figure-cell");
+        expect(failure.failure.reason).toBe("unreadable-artifact");
     });
 
     it("reports unreadable-artifact for a table bound to a log", async () => {
@@ -1557,8 +1570,9 @@ describe("validateReport — the file type of the pinned entry", () => {
         const invalid = expectInvalid(result);
         const failures = invalid.resolutionFailures ?? [];
         expect(failures).toHaveLength(1);
-        expect(failures[0].blockId).toBe("table-log");
-        expect(failures[0].failure.reason).toBe("unreadable-artifact");
+        const failure = firstFailure(invalid);
+        expect(failure.blockId).toBe("table-log");
+        expect(failure.failure.reason).toBe("unreadable-artifact");
     });
 
     it("validates a figure bound to an artifact-file whose entry is a figure", async () => {

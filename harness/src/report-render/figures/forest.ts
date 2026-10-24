@@ -131,10 +131,10 @@ function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     const ordered = orderCategories(
         context.blockId,
         read.value.length,
-        (index) => read.value[index].term,
+        (index) => read.value[index]?.term,
         read.value.map((entry) => entry.term),
         order,
-        (index) => (order === undefined ? undefined : read.value[index].row[order.by]),
+        (index) => (order === undefined ? undefined : read.value[index]?.row[order.by]),
     );
     if (ordered.isErr()) return err(ordered.error);
     const byTerm = new Map(read.value.map((entry) => [String(entry.term), entry]));
@@ -212,10 +212,10 @@ function forestColumns(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     return ok({
         term: channelColumn(term),
         estimate: estimate.value,
-        ...(optional.low !== undefined ? { low: optional.low } : {}),
-        ...(optional.high !== undefined ? { high: optional.high } : {}),
-        ...(optional.p !== undefined ? { p: optional.p } : {}),
-        ...(optional.size !== undefined ? { size: optional.size } : {}),
+        low: optional.low,
+        high: optional.high,
+        p: optional.p,
+        size: optional.size,
     });
 }
 
@@ -379,8 +379,9 @@ export function termLines(term: string): string {
     if (line !== "") lines.push(line);
     if (lines.length <= TERM_LINES) return lines.join("\n");
     const kept = lines.slice(0, TERM_LINES);
-    const last = kept[TERM_LINES - 1];
-    kept[TERM_LINES - 1] = `${last.length < TERM_LINE_CHARACTERS ? last : last.slice(0, TERM_LINE_CHARACTERS - 1)}…`;
+    const last = kept[kept.length - 1];
+    if (last === undefined) return lines.join("\n");
+    kept[kept.length - 1] = `${last.length < TERM_LINE_CHARACTERS ? last : last.slice(0, TERM_LINE_CHARACTERS - 1)}…`;
     return kept.join("\n");
 }
 

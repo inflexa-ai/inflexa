@@ -2,7 +2,15 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition, ChartTransform } from "../../contracts/report-blocks.js";
 import { renderChart } from "../views/chart-view.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, transformColumn, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
+import {
+    CHART_SOURCE_MEMBER,
+    deriveChartOption,
+    deriveChartRender,
+    transformColumn,
+    type ChartDataSource,
+    type ChartRow,
+    type EchartOption,
+} from "../chart.js";
 import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "../chart-presets.js";
 import { CHART_RENDERERS_SOURCE, exportOption } from "../chart-renderers.js";
 import {
@@ -41,12 +49,12 @@ function chartBlock(
     return {
         kind: "chart",
         id: extra.id ?? "c1",
-        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", ...(extra.labels !== undefined ? { columnLabels: extra.labels } : {}) },
+        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", columnLabels: extra.labels },
         chartType,
         encoding,
-        ...(extra.orientation !== undefined ? { orientation: extra.orientation } : {}),
-        ...(extra.title !== undefined ? { title: extra.title } : {}),
-        ...(extra.caption !== undefined ? { caption: extra.caption } : {}),
+        orientation: extra.orientation,
+        title: extra.title,
+        caption: extra.caption,
     };
 }
 
@@ -55,9 +63,9 @@ function composedBlock(composition: ChartComposition, extra: { id?: string; titl
     return {
         kind: "chart",
         id: extra.id ?? "c1",
-        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", ...(extra.labels !== undefined ? { columnLabels: extra.labels } : {}) },
+        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", columnLabels: extra.labels },
         composition,
-        ...(extra.title !== undefined ? { title: extra.title } : {}),
+        title: extra.title,
     };
 }
 
@@ -636,7 +644,7 @@ describe("the axis name placement", () => {
 
     it("turns the y title of a composition upright, and a declared axes title takes the same place", () => {
         const option = derive(composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "v" } }], axes: { y: { title: "Signal" } } }), [{ t: 1, v: 2 }]);
-        expect(asObj(option.yAxis)).toEqual(expect.objectContaining({ name: "Signal", nameLocation: "middle", nameRotate: 90 }));
+        expect(asObj(option.yAxis)).toMatchObject({ name: "Signal", nameLocation: "middle", nameRotate: 90 });
     });
 
     it("shows no raw column name on a category axis, and shows a declared label or axes title there", () => {
@@ -1668,7 +1676,7 @@ describe("renderChart", () => {
 describe("the chart container style rule", () => {
     /** The declaration body of each `.chart-container` rule of a style sheet. */
     function chartContainerRules(css: string): string[] {
-        return [...css.matchAll(/\.chart-container\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        return [...css.matchAll(/\.chart-container\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
     }
 
     it("declares a height on the chart container", () => {
@@ -1677,7 +1685,7 @@ describe("the chart container style rule", () => {
 
         // The chart runtime measures the container at initialization. A rule with no height, or a height of
         // zero, gives a box that shows no chart even though every other gate stays green.
-        const heights = rules.flatMap((body) => [...body.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((match) => match[1].trim()));
+        const heights = rules.flatMap((body) => [...body.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((match) => (match[1] ?? "").trim()));
         expect(heights.length).toBeGreaterThan(0);
         expect(heights.some((height) => /^[1-9][\d.]*(?:px|rem|em|vh|%)$/.test(height))).toBe(true);
     });
@@ -1758,12 +1766,12 @@ describe("the dense chart reads the shared payload", () => {
         const source = sourceOf(deriveChartRender(composed, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
 
         expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
-        expect(source?.series[0].group).toEqual({ column: 3 });
+        expect(source?.series[0]?.group).toEqual({ column: 3 });
         // A line draws along the x axis, thus the page sorts its points as the derivation does.
-        expect(source?.series[0].sort).toBe(true);
+        expect(source?.series[0]?.sort).toBe(true);
         // The flags name the rows of the payload, thus each split carries the labels of the rows that it
         // holds and the two lists together hold the declared count.
-        expect([...(source?.series[0].flags ?? []), ...(source?.series[1].flags ?? [])].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+        expect([...(source?.series[0]?.flags ?? []), ...(source?.series[1]?.flags ?? [])].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
         expect(source?.rule).toBeUndefined();
     });
 
@@ -1801,8 +1809,8 @@ describe("the dense chart reads the shared payload", () => {
         const source = sourceOf(render.option);
         expect(source?.payload).toBe("c1");
         expect(source?.series.map((entry) => entry.value)).toEqual(["a", "b"]);
-        expect(source?.series[0].x).toEqual({ column: 1, numeric: true });
-        expect(source?.series[0].y).toEqual({ column: 2, numeric: true });
+        expect(source?.series[0]?.x).toEqual({ column: 1, numeric: true });
+        expect(source?.series[0]?.y).toEqual({ column: 2, numeric: true });
     });
 
     it("keeps a quick path under the bound on the bytes of its base rule", () => {
@@ -1878,7 +1886,7 @@ describe("the channel transform", () => {
      * The fragment is browser source text. A read of that text would state the serialization and not the
      * numbers that a chart plots, thus the test runs the fragment and calls its one entry point.
      */
-    const transformOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportTransform;`)() as (
+    const transformOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportTransform;`).call(undefined) as (
         cells: (string | number)[],
         transform: ChartTransform,
     ) => (number | null)[];
@@ -1917,7 +1925,7 @@ describe("a dense category axis", () => {
     }
 
     /** The page twin of the export option. */
-    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`)() as (
+    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as (
         option: EchartOption,
         textPx: number,
         widthPx: number,
@@ -1957,7 +1965,7 @@ describe("a dense category axis", () => {
         expect(axes.length).toBe(2);
         for (const axis of axes) {
             const label = asObj(axis.axisLabel);
-            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[axis.gridIndex as number].width))) / 100;
+            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[axis.gridIndex as number]?.width))) / 100;
             expect(label.rotate).toBe(90);
             expect(printedLabels(200, label)).toBeLessThanOrEqual(Math.floor(panelPx / (CHART_PAGE_TEXT_PX * LINE_SHARE)));
         }

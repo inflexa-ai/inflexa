@@ -620,19 +620,20 @@ export interface PatentRecord extends PatentSummary {
     readonly familyMembers: string[];
     readonly language: string | null;
     readonly nonEnglishFallback: boolean | null;
-    readonly claims?: string | null;
-    readonly description?: string | null;
+    claims?: string | null;
+    description?: string | null;
 }
 
 export function mapPatentRecord(record: PatentBase): PatentRecord {
-    return {
+    const patent: PatentRecord = {
         ...mapPatentSummary(record),
         familyMembers: record.familyMembers,
         language: record.language,
         nonEnglishFallback: record.nonEnglishFallback,
-        ...(record.claims === undefined ? {} : { claims: record.claims }),
-        ...(record.description === undefined ? {} : { description: record.description }),
     };
+    if (record.claims !== undefined) patent.claims = record.claims;
+    if (record.description !== undefined) patent.description = record.description;
+    return patent;
 }
 
 export interface PatentSearchParams {

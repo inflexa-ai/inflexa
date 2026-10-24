@@ -188,13 +188,13 @@ function volcanoClassification(significance: number, effect: number): PresetClas
  * `axes` field, where an agent title sits and where they would outrank the label.
  */
 export function volcanoAxisTitles(x: ChartChannel): PresetAxisTitles {
-    return { ...(channelTransform(x) === undefined ? { x: LOG2_EFFECT_TITLE } : {}), y: NEG_LOG10_P_TITLE };
+    return { x: channelTransform(x) === undefined ? LOG2_EFFECT_TITLE : undefined, y: NEG_LOG10_P_TITLE };
 }
 
 /** The two optional channels that the volcano carries through from the quick-path encoding. */
 function optionalChannels(encoding: ChartEncoding): { group?: ChartChannel; label?: string } {
     return {
-        ...(encoding.group !== undefined ? { group: encoding.group } : {}),
-        ...(encoding.label !== undefined ? { label: encoding.label } : {}),
+        group: encoding.group,
+        label: encoding.label,
     };
 }

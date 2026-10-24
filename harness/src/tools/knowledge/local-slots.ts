@@ -177,7 +177,7 @@ export function bindLocalSlots(
                 value,
                 source: "default",
                 adaptable: true,
-                ...(parameter.default_source ? { default_source: parameter.default_source } : {}),
+                default_source: parameter.default_source,
                 lines: [],
             });
         } else if (parameter.required !== false) {
@@ -196,7 +196,7 @@ export function bindLocalSlots(
     const located = slots.map((entry) => ({
         ...entry,
         lines: script.split("\n").flatMap((line, index) => (line.includes(slotMarker(entry.name)) && index < lines.length ? [index + 1] : [])),
-        ...(readByName.has(entry.name) ? { read: readByName.get(entry.name) } : {}),
+        read: readByName.get(entry.name),
     }));
     return { ok: true, script: bound, slots: located };
 }

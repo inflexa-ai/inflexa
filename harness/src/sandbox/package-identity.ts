@@ -216,7 +216,7 @@ export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError>
     if (rest === "") return err({ type: "empty" });
 
     const specifier = SPECIFIER.exec(rest);
-    if (specifier === null) return ok({ spelling: rest, ...(track === undefined ? {} : { track }) });
+    if (specifier === null) return ok({ spelling: rest, track });
     if (specifier[0] !== "==") {
         return err({ type: "unsupported_specifier", specifier: specifier[0], entry: trimmed });
     }
@@ -235,8 +235,8 @@ export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError>
     }
     return ok({
         spelling,
-        ...(track === undefined ? {} : { track }),
-        ...(version === "" ? {} : { version }),
+        track,
+        version: version === "" ? undefined : version,
     });
 }
 

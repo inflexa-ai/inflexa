@@ -24,6 +24,7 @@
 
 import { z } from "zod";
 
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import { apiFetchValidated, describeApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
 
@@ -139,6 +140,10 @@ const ToxcastAssayAnnotationSchema = z.object({
  */
 const ACTIVE_HIT_CALL = 0.9;
 
+function isString(value: unknown): value is string {
+    return typeof value === "string";
+}
+
 function isActive(row: ToxcastBioactivityRow): boolean {
     return (row.hitc ?? 0) >= ACTIVE_HIT_CALL;
 }
@@ -173,7 +178,7 @@ export async function fetchToxcastBioactivity(
     const results = page.map((r) => {
         const aeid = r.aeid ?? 0;
         const mc6: ToxcastMc6Param = r.mc6Param ?? {};
-        const flags: string[] = Array.isArray(mc6.flag) ? mc6.flag : [];
+        const flags = isUnknownArray(mc6.flag) ? mc6.flag.filter(isString) : [];
 
         return {
             aeid,

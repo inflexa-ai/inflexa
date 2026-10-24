@@ -62,12 +62,12 @@ export function createChemDbTools(
     return {
         geneDiseaseEvidence: createGeneDiseaseEvidenceTool({
             disgenetApiKey: keys.disgenet,
-            ...(keys.ncbi ? { ncbiApiKey: keys.ncbi } : {}),
-            ...(deps.logger ? { logger: deps.logger } : {}),
+            ncbiApiKey: keys.ncbi,
+            logger: deps.logger,
         }),
         drugGeneInteractions: createDrugGeneInteractionsTool({
             drugbankApiKey: keys.drugbank,
-            ...(deps.logger ? { logger: deps.logger } : {}),
+            logger: deps.logger,
         }),
         comptox: createComptoxTool({ apiKey: keys.epaCcte }),
     };

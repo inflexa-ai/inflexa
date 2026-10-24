@@ -375,9 +375,9 @@ export function createInspectDataProfileTool(pool: Pool) {
                     // nothing of carries `groups: []`, and "zero groups" is a finding — reading
                     // it as "no structure record" would report the analysis unprofiled.
                     groupCount: result.groups !== undefined || result.kinds !== undefined ? groups.length : null,
-                    ...(structureNote ? { structureNote } : {}),
-                    ...(result.partition ? { partition: result.partition } : {}),
-                    ...(result.coverage ? { coverage: result.coverage } : {}),
+                    structureNote,
+                    partition: result.partition,
+                    coverage: result.coverage,
                 });
             }
 
@@ -388,10 +388,10 @@ export function createInspectDataProfileTool(pool: Pool) {
                         scope: "groups",
                         available: true,
                         groups: rootGroupPatterns(result.groups, resourceId),
-                        ...(result.dimensions ? { dimensions: result.dimensions } : {}),
-                        ...(result.probes ? { probes: result.probes } : {}),
-                        ...(result.partition ? { partition: result.partition } : {}),
-                        ...(result.recipe ? { recipe: result.recipe } : {}),
+                        dimensions: result.dimensions,
+                        probes: result.probes,
+                        partition: result.partition,
+                        recipe: result.recipe,
                     });
                 }
                 if (result.kinds === undefined) {
@@ -414,8 +414,8 @@ export function createInspectDataProfileTool(pool: Pool) {
                     available: true,
                     legacy: true,
                     kinds: rootKindPatterns(result.kinds, resourceId),
-                    ...(result.axes ? { axes: result.axes } : {}),
-                    ...(result.coverage ? { coverage: result.coverage } : {}),
+                    axes: result.axes,
+                    coverage: result.coverage,
                     message:
                         "Authored under the previous model: these are kinds and axes, not resolved groups and dimensions. " +
                         "Counts and patterns were the profiler's own claims rather than a computed partition, and there is no " +

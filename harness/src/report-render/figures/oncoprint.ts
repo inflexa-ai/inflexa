@@ -220,13 +220,10 @@ function deriveOncoprint(block: ChartBlock, rows: readonly ChartRow[], context: 
         legend: {
             // A taller body holds the legend lines of the single column export, thus the page legend starts
             // under the sample title and the free part of the band sits under it.
-            ...(tall
-                ? {
-                      top: percentOf(
-                          100 - bottom + ((CHART_PAGE_TEXT_PX * (1 + TITLE_LINE_SHARE) + SAMPLE_TITLE_GAP) / Math.min(body, CHART_BODY_MAX_PX)) * 100,
-                      ),
-                  }
-                : { bottom: 0 }),
+            top: tall
+                ? percentOf(100 - bottom + ((CHART_PAGE_TEXT_PX * (1 + TITLE_LINE_SHARE) + SAMPLE_TITLE_GAP) / Math.min(body, CHART_BODY_MAX_PX)) * 100)
+                : undefined,
+            bottom: tall ? undefined : 0,
             itemWidth: LEGEND_ICON_PX,
             itemHeight: LEGEND_ICON_PX,
             itemGap: LEGEND_GAP_PX,
@@ -285,7 +282,7 @@ export function classOf(row: ChartRow, column: string): string | undefined {
 }
 
 /** The key of one cell of the matrix. Each cell keeps its type, thus the number `1` and the text `"1"` differ. */
-function cellKey(sample: Cell, gene: Cell): string {
+function cellKey(sample: Cell | undefined, gene: Cell | undefined): string {
     return JSON.stringify([typeof sample, String(sample), typeof gene, String(gene)]);
 }
 
@@ -345,7 +342,7 @@ function categoryAxisName(labels: ColumnLabels, column: string): string {
 /** The count bars over the matrix: one series for each class, stacked, with the count of the class in each sample. */
 function countSeries(
     rows: readonly ChartRow[],
-    samples: readonly Cell[],
+    samples: readonly (Cell | undefined)[],
     sample: string,
     klass: string,
     classes: readonly string[],
@@ -378,7 +375,14 @@ function countSeries(
  * The share bar at the right of the matrix: for each gene, the count of its altered samples over the count of
  * every sample of the table, with its percent text at the end of the bar.
  */
-function shareSeries(rows: readonly ChartRow[], samples: readonly Cell[], genes: readonly Cell[], sample: string, gene: string, klass: string): EchartOption {
+function shareSeries(
+    rows: readonly ChartRow[],
+    samples: readonly (Cell | undefined)[],
+    genes: readonly (Cell | undefined)[],
+    sample: string,
+    gene: string,
+    klass: string,
+): EchartOption {
     const altered = new Map<string, Set<string>>();
     for (const row of rows) {
         if (classOf(row, klass) === undefined) continue;
@@ -464,7 +468,7 @@ interface StripMembers {
  */
 function stripMembers(
     tracks: readonly SampleTrack[],
-    samples: readonly Cell[],
+    samples: readonly (Cell | undefined)[],
     values: readonly string[],
     colors: readonly string[],
     band: number,

@@ -23,8 +23,8 @@ function quick(chartType: ChartType, encoding: Encoding, extra: Partial<Pick<Cha
         binding: extra.binding ?? { kind: "artifact-table", path: "table.csv", hash: "sha256:00" },
         chartType,
         encoding,
-        ...(extra.orientation !== undefined ? { orientation: extra.orientation } : {}),
-        ...(extra.focus !== undefined ? { focus: extra.focus } : {}),
+        orientation: extra.orientation,
+        focus: extra.focus,
     };
 }
 
@@ -35,7 +35,7 @@ function composed(composition: ChartComposition, focus?: string[]): ChartBlock {
         id: "c1",
         binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00" },
         composition,
-        ...(focus !== undefined ? { focus } : {}),
+        focus,
     };
 }
 
@@ -67,6 +67,20 @@ function mapsOf(option: EchartOption): Record<string, unknown>[] {
     return Array.isArray(maps) ? maps.map(asObj) : [asObj(maps)];
 }
 
+/** The first series of one option. */
+function firstSeries(option: EchartOption): Record<string, unknown> {
+    const series = seriesOf(option)[0];
+    if (series === undefined) throw new Error("the option holds no series");
+    return series;
+}
+
+/** The first visual map of one option. */
+function firstMap(option: EchartOption): Record<string, unknown> {
+    const map = mapsOf(option)[0];
+    if (map === undefined) throw new Error("the option holds no visual map");
+    return map;
+}
+
 /** An embedding of `count` cells. The expression column holds no negative value, and the fold change column crosses zero. */
 function embedding(count: number): ChartRow[] {
     const rows: ChartRow[] = [];
@@ -90,18 +104,18 @@ describe("the continuous color and the size", () => {
         const maps = mapsOf(option);
 
         expect(maps.length).toBe(1);
-        expect(maps[0]).toEqual(expect.objectContaining({ type: "continuous", dimension: 2, min: 0, max: 6, inRange: { color: [...SEQUENTIAL_RAMP] } }));
+        expect(maps[0]).toMatchObject({ type: "continuous", dimension: 2, min: 0, max: 6, inRange: { color: [...SEQUENTIAL_RAMP] } });
         const series = seriesOf(option).filter((entry) => entry.type === "scatter");
         expect(series.length).toBe(1);
         // The large path draws one fill, thus a colored series never takes it.
-        expect(series[0].large).toBeUndefined();
-        expect(asArr(series[0].data)[1]).toEqual([0.1, 0.1, 0.5]);
-        expect(maps[0].seriesIndex).toEqual([0]);
+        expect(series[0]?.large).toBeUndefined();
+        expect(asArr(series[0]?.data)[1]).toEqual([0.1, 0.1, 0.5]);
+        expect(maps[0]?.seriesIndex).toEqual([0]);
     });
 
     it("colors a fold change on the diverging scale, with zero at its center", () => {
         const option = derive(quick("scatter", { x: "umap1", y: "umap2", color: "lfc" }), embedding(40));
-        const map = mapsOf(option)[0];
+        const map = firstMap(option);
         expect(map.inRange).toEqual({ color: [...DIVERGING_RAMP] });
         expect(map.min).toBe(-4);
         expect(map.max).toBe(4);
@@ -115,7 +129,7 @@ describe("the continuous color and the size", () => {
             { gene: "B", sample: "s2", z: -0.25 },
         ];
         const option = derive(quick("heatmap", { x: "sample", y: "gene", value: "z" }), rows);
-        const map = mapsOf(option)[0];
+        const map = firstMap(option);
         expect(map.inRange).toEqual({ color: [...DIVERGING_RAMP] });
         expect([map.min, map.max]).toEqual([-2, 2]);
         // The scale stands at the right edge, thus it never covers the name of the x axis. It shows no drag
@@ -130,7 +144,7 @@ describe("the continuous color and the size", () => {
             { gene: "A", sample: "s1", count: 1 },
             { gene: "B", sample: "s1", count: 5 },
         ];
-        const map = mapsOf(derive(quick("heatmap", { x: "sample", y: "gene", value: "count" }), rows))[0];
+        const map = firstMap(derive(quick("heatmap", { x: "sample", y: "gene", value: "count" }), rows));
         expect(map.inRange).toEqual({ color: [...SEQUENTIAL_RAMP] });
         expect([map.min, map.max]).toEqual([1, 5]);
     });
@@ -146,10 +160,10 @@ describe("the continuous color and the size", () => {
         const size = maps.find((map) => asObj(map.inRange).symbolSize !== undefined);
         const color = maps.find((map) => asObj(map.inRange).color !== undefined);
 
-        expect(size).toEqual(expect.objectContaining({ show: false, dimension: 3, min: 12, max: 40 }));
+        expect(size).toMatchObject({ show: false, dimension: 3, min: 12, max: 40 });
         // The number helper prints each end in the form of its column, thus a small p reads in the exponent form.
-        expect(color).toEqual(expect.objectContaining({ dimension: 2, min: 0.001, max: 0.04, calculable: false, text: ["padj\n0.04", "1 × 10⁻³"] }));
-        expect(asArr(seriesOf(option)[0].data)[0]).toEqual([0.3, "Hypoxia", 0.001, 40]);
+        expect(color).toMatchObject({ dimension: 2, min: 0.001, max: 0.04, calculable: false, text: ["padj\n0.04", "1 × 10⁻³"] });
+        expect(asArr(firstSeries(option).data)[0]).toEqual([0.3, "Hypoxia", 0.001, 40]);
     });
 
     it("colors a bar by a numeric column", () => {
@@ -158,8 +172,8 @@ describe("the continuous color and the size", () => {
             { pathway: "Apoptosis", nes: -1.4, padj: 0.03 },
         ];
         const option = derive(quick("bar", { x: "pathway", y: "nes", color: "padj" }), rows);
-        expect(mapsOf(option)[0]).toEqual(expect.objectContaining({ dimension: 2, seriesIndex: [0] }));
-        const first = asArr(seriesOf(option)[0].data)[0];
+        expect(mapsOf(option)[0]).toMatchObject({ dimension: 2, seriesIndex: [0] });
+        const first = asArr(firstSeries(option).data)[0];
         expect(asObj(first).value ?? first).toEqual(["Hypoxia", 2.4, 0.001]);
     });
 
@@ -169,7 +183,7 @@ describe("the continuous color and the size", () => {
             { a: 2, b: 3, c: "NA" },
             { a: 3, b: 4, c: 1.5 },
         ];
-        const data = asArr(seriesOf(derive(quick("scatter", { x: "a", y: "b", color: "c" }), rows))[0].data);
+        const data = asArr(firstSeries(derive(quick("scatter", { x: "a", y: "b", color: "c" }), rows)).data);
         expect(data).toEqual([
             [1, 2, 0.5],
             [3, 4, 1.5],
@@ -190,7 +204,7 @@ describe("the payload of a dense colored scatter", () => {
     const target = { key: "c1", columns: COLUMNS };
 
     /** The page twin of the series build. */
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
+    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
         payload: { columns: string[]; rows: ChartRow[] },
         source: ChartDataSource["series"][number],
         rule: unknown,
@@ -204,12 +218,14 @@ describe("the payload of a dense colored scatter", () => {
         expect(JSON.stringify(derive(block, rows, COLUMNS)).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
         const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
-        expect(source.series[0].color).toEqual({ column: 3 });
-        expect(source.series[0].size).toEqual({ column: 5 });
+        const firstSource = source.series[0];
+        if (firstSource === undefined) throw new Error("the render named no series source");
+        expect(firstSource.color).toEqual({ column: 3 });
+        expect(firstSource.size).toEqual({ column: 5 });
 
         // The page reads the decoded rows, and it builds the same items as the inline derivation.
-        const page = seriesDataOnThePage({ columns: COLUMNS, rows }, source.series[0], undefined);
-        const inline = asArr(seriesOf(derive(block, rows, COLUMNS))[0].data);
+        const page = seriesDataOnThePage({ columns: COLUMNS, rows }, firstSource, undefined);
+        const inline = asArr(firstSeries(derive(block, rows, COLUMNS)).data);
         expect(page.length).toBe(9000);
         expect(page[1]).toEqual([0.1, 0.1, 0.5, 11]);
         expect(JSON.stringify(page)).toBe(JSON.stringify(inline));
@@ -219,8 +235,10 @@ describe("the payload of a dense colored scatter", () => {
         const rows = embedding(9000).map((row, index) => (index === 1 ? { ...row, expr: "NA" } : row));
         const block = quick("scatter", { x: "umap1", y: "umap2", color: "expr" });
         const source = deriveChartRender(block, rows, COLUMNS, target)._unsafeUnwrap().option[CHART_SOURCE_MEMBER] as ChartDataSource;
-        const page = seriesDataOnThePage({ columns: COLUMNS, rows }, source.series[0], undefined);
-        expect(JSON.stringify(page)).toBe(JSON.stringify(asArr(seriesOf(derive(block, rows, COLUMNS))[0].data)));
+        const firstSource = source.series[0];
+        if (firstSource === undefined) throw new Error("the render named no series source");
+        const page = seriesDataOnThePage({ columns: COLUMNS, rows }, firstSource, undefined);
+        expect(JSON.stringify(page)).toBe(JSON.stringify(asArr(firstSeries(derive(block, rows, COLUMNS)).data)));
         expect(page.length).toBe(8999);
     });
 });
@@ -237,11 +255,19 @@ describe("the interval", () => {
         return seriesOf(option).filter((entry) => entry.renderItem === INTERVAL_RENDERER);
     }
 
+    /** The first interval series of one option. */
+    function firstInterval(option: EchartOption): Record<string, unknown> {
+        const interval = intervalsOf(option)[0];
+        if (interval === undefined) throw new Error("the option holds no interval series");
+        return interval;
+    }
+
     it("draws a forest plot: one custom series after the points, each item along x", () => {
         const option = derive(quick("scatter", { x: "hr", y: "study", low: "lo", high: "hi" }), forest);
         const series = seriesOf(option);
         expect(series.map((entry) => entry.type)).toEqual(["scatter", "custom"]);
         const interval = series[1];
+        if (interval === undefined) throw new Error("the option holds no interval series");
         expect(interval.renderItem).toBe(INTERVAL_RENDERER);
         expect(interval.silent).toBe(true);
         // The study axis draws categories, thus the interval lies along x and names its extent there.
@@ -260,14 +286,14 @@ describe("the interval", () => {
             { arm: "a", mean: 4, lo: 3, hi: 5 },
             { arm: "b", mean: 6, lo: 5, hi: 11 },
         ];
-        const vertical = intervalsOf(derive(quick("bar", { x: "arm", y: "mean", low: "lo", high: "hi" }), rows))[0];
+        const vertical = firstInterval(derive(quick("bar", { x: "arm", y: "mean", low: "lo", high: "hi" }), rows));
         expect(vertical.encode).toEqual({ x: 0, y: [1, 2, 3] });
         expect(vertical.data).toEqual([
             [0, 4, 3, 5, 1, 0, 0],
             [1, 6, 5, 11, 1, 0, 0],
         ]);
 
-        const horizontal = intervalsOf(derive(quick("bar", { x: "arm", y: "mean", low: "lo", high: "hi" }, { orientation: "horizontal" }), rows))[0];
+        const horizontal = firstInterval(derive(quick("bar", { x: "arm", y: "mean", low: "lo", high: "hi" }, { orientation: "horizontal" }), rows));
         expect(horizontal.encode).toEqual({ x: [0, 2, 3], y: 1 });
         expect(horizontal.data).toEqual([
             [4, 0, 3, 5, 0, 0, 0],
@@ -316,7 +342,7 @@ describe("the interval", () => {
         const render = deriveChartRender(block, rows, ["x", "y", "lo", "hi"], { key: "c1", columns: ["x", "y", "lo", "hi"] })._unsafeUnwrap();
         expect(JSON.stringify(render.option).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(false);
-        expect(asArr(intervalsOf(render.option)[0].data).length).toBe(5000);
+        expect(asArr(firstInterval(render.option).data).length).toBe(5000);
         // One drawn series, thus the legend shows nothing, and the interval shows no orphan entry.
         expect(render.option.legend).toEqual({ show: false });
     });
@@ -390,7 +416,7 @@ describe("the focus", () => {
     ];
 
     it("gives the two named bars the one focus color, and mutes each other bar", () => {
-        const data = asArr(seriesOf(derive(quick("bar", { x: "pathway", y: "nes" }, { focus: ["Hypoxia", "p53"] }), rows))[0].data).map(asObj);
+        const data = asArr(firstSeries(derive(quick("bar", { x: "pathway", y: "nes" }, { focus: ["Hypoxia", "p53"] }), rows)).data).map(asObj);
         expect(data.map((item) => asObj(item.itemStyle).color)).toEqual([FOCUS_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR, FOCUS_CHART_COLOR]);
     });
 
@@ -428,20 +454,20 @@ describe("the value labels of a small bar chart", () => {
 
     it("labels each of six bars with the shown form of its value, as a static string", () => {
         const option = derive(quick("bar", { x: "k", y: "v" }), bars(6));
-        const data = asArr(seriesOf(option)[0].data).map(asObj);
+        const data = asArr(firstSeries(option).data).map(asObj);
         expect(data.length).toBe(6);
         expect(data[0]).toEqual({ value: ["k0", 1234.5678], label: { show: true, position: "top", formatter: "1,235" } });
         expect(JSON.stringify(option)).not.toContain("function");
     });
 
     it("puts the label of a horizontal bar at its right end", () => {
-        const data = asArr(seriesOf(derive(quick("bar", { x: "k", y: "v" }, { orientation: "horizontal" }), bars(2)))[0].data).map(asObj);
-        expect(asObj(data[0].label).position).toBe("right");
-        expect(data[0].value).toEqual([1234.5678, "k0"]);
+        const data = asArr(firstSeries(derive(quick("bar", { x: "k", y: "v" }, { orientation: "horizontal" }), bars(2))).data).map(asObj);
+        expect(asObj(data[0]?.label).position).toBe("right");
+        expect(data[0]?.value).toEqual([1234.5678, "k0"]);
     });
 
     it("labels no bar of a chart of thirty bars", () => {
-        const data = asArr(seriesOf(derive(quick("bar", { x: "k", y: "v" }), bars(30)))[0].data);
+        const data = asArr(firstSeries(derive(quick("bar", { x: "k", y: "v" }), bars(30))).data);
         expect(data.every((item) => Array.isArray(item))).toBe(true);
     });
 
@@ -482,17 +508,25 @@ describe("the violin", () => {
         return seriesOf(option).filter((entry) => entry.renderItem === OUTLINE_RENDERER);
     }
 
+    /** The first outline series of one option. */
+    function firstOutline(option: EchartOption): Record<string, unknown> {
+        const outline = outlinesOf(option)[0];
+        if (outline === undefined) throw new Error("the option holds no outline series");
+        return outline;
+    }
+
     it("gives one deterministic outline for each category, symmetric about the category", () => {
         const block = quick("violin", { x: "cluster", y: "score" });
         const first = derive(block, violinRows());
         const second = derive(block, violinRows());
         expect(JSON.stringify(second)).toBe(JSON.stringify(first));
 
-        const outline = outlinesOf(first)[0];
+        const outline = firstOutline(first);
         expect(outline.encode).toEqual({ x: 0, y: [1, 2] });
         const items = asArr(outline.data).map((item) => asArr(item) as number[]);
         expect(items.length).toBe(2);
         const item = items[0];
+        if (item === undefined) throw new Error("the outline holds no first item");
         expect(item.length).toBe(4 + 2 * VIOLIN_GRID_POINTS);
         expect(item[0]).toBe(0);
         // The grid runs from the minimum to the maximum of the category.
@@ -507,21 +541,21 @@ describe("the violin", () => {
         const option = derive(quick("violin", { x: "cluster", y: "score" }), violinRows());
         const inner = seriesOf(option).filter((entry) => entry.renderItem === INTERVAL_RENDERER);
         expect(inner.length).toBe(1);
-        const item = asArr(asArr(inner[0].data)[1]) as number[];
+        const item = asArr(asArr(inner[0]?.data)[1]) as number[];
         // The second category holds 2, 2.5, 3, 3.5, and 4, four times each: the type-7 quartiles are 2.5 and 3.5.
         expect(item).toEqual([1, 3, 2.5, 3.5, 1, 0, 1]);
     });
 
     it("draws nothing for a category of four values, and draws the others", () => {
         const rows = [...violinRows(), ...[1, 2, 3, 4].map((score) => ({ cluster: "thin", score }))];
-        const items = asArr(outlinesOf(derive(quick("violin", { x: "cluster", y: "score" }), rows))[0].data).map((item) => asArr(item)[0]);
+        const items = asArr(firstOutline(derive(quick("violin", { x: "cluster", y: "score" }), rows)).data).map((item) => asArr(item)[0]);
         expect(items).toEqual([0, 1]);
     });
 
     it("falls to the standard deviation for a category whose quartiles are equal", () => {
         const rows: ChartRow[] = [];
         for (let index = 0; index < 20; index += 1) rows.push({ cluster: "tied", score: index === 0 ? 0 : index === 19 ? 10 : 5 });
-        const items = asArr(outlinesOf(derive(quick("violin", { x: "cluster", y: "score" }), rows))[0].data);
+        const items = asArr(firstOutline(derive(quick("violin", { x: "cluster", y: "score" }), rows)).data);
         expect(items.length).toBe(1);
     });
 
@@ -550,8 +584,8 @@ describe("the stacked forms and the radar", () => {
     it("names one stack on each group series of a stacked bar", () => {
         const series = seriesOf(derive(quick("stacked-bar", { x: "k", y: "v", group: "g" }), parts));
         expect(series.map((entry) => entry.stack)).toEqual(["total", "total", "total"]);
-        expect(series[0].data).toEqual([3, 0]);
-        expect(series[2].data).toEqual([4, null]);
+        expect(series[0]?.data).toEqual([3, 0]);
+        expect(series[2]?.data).toEqual([4, null]);
     });
 
     it("stacks the shares of a normalized bar, ends the value axis at one, and draws no bar for a zero total", () => {
@@ -577,9 +611,9 @@ describe("the stacked forms and the radar", () => {
         }
         const option = derive(quick("radar", { x: "k", y: "v", group: "g" }), rows);
         expect(asArr(asObj(option.radar).indicator)).toEqual(["a", "b", "c", "d", "e"].map((name) => ({ name, max: 10 })));
-        const data = asArr(seriesOf(option)[0].data).map(asObj);
+        const data = asArr(firstSeries(option).data).map(asObj);
         expect(data.map((item) => item.name)).toEqual(["tumor", "normal"]);
-        expect(data[0].value).toEqual([1, 2, 3, 4, 5]);
+        expect(data[0]?.value).toEqual([1, 2, 3, 4, 5]);
         expect(asObj(option.legend).data).toEqual(["tumor", "normal"]);
         expect(option.xAxis).toBeUndefined();
     });
@@ -610,7 +644,7 @@ describe("the facet", () => {
         expect(xAxes.length).toBe(4);
         expect(new Set(xAxes.map((axis) => `${String(axis.min)}:${String(axis.max)}`)).size).toBe(1);
         expect(new Set(yAxes.map((axis) => `${String(axis.min)}:${String(axis.max)}`)).size).toBe(1);
-        expect(yAxes[0].max).toBeGreaterThanOrEqual(16);
+        expect(yAxes[0]?.max).toBeGreaterThanOrEqual(16);
         const series = seriesOf(option);
         expect(series.map((entry) => entry.xAxisIndex)).toEqual([0, 1, 2, 3]);
         const graphic = asArr(option.graphic).map(asObj);
@@ -660,10 +694,10 @@ describe("the facet", () => {
         const grids = asArr(derive(quick("bar", { x: "sample", y: "y", facet: "sample" }), facetRows(1)).grid).map(asObj);
         expect(grids.length).toBe(1);
         // The band at the left holds the shared y title, and the panel takes the rest of the width.
-        expect(grids[0].left).toBe("5%");
-        expect(grids[0].width).toBe("95%");
+        expect(grids[0]?.left).toBe("5%");
+        expect(grids[0]?.width).toBe("95%");
         // The labels and the names of a panel stay inside the box of its grid.
-        expect(grids[0].outerBoundsMode).toBe("same");
+        expect(grids[0]?.outerBoundsMode).toBe("same");
     });
 
     it("refuses thirteen facets and names the count, and refuses a facet on a pie", () => {
@@ -680,7 +714,7 @@ describe("the facet", () => {
         })._unsafeUnwrap();
         expect(render.readsPayload).toBe(false);
         expect(render.bodyPx).toBe(CHART_BODY_PX);
-        expect(asArr(seriesOf(render.option)[0].data).length).toBe(4000);
+        expect(asArr(firstSeries(render.option).data).length).toBe(4000);
     });
 
     it("grows the chart body one row of height for each further row of facet panels", () => {
@@ -768,6 +802,7 @@ describe("the bar with a wide channel", () => {
     it("gives no value label to a bar with an interval, and draws the interval over the bars", () => {
         const option = derive(quick("bar", { x: "arm", y: "mean", low: "lo", high: "hi" }), rows);
         const [bar, interval] = seriesOf(option);
+        if (bar === undefined || interval === undefined) throw new Error("the option holds no bar and interval pair");
         expect(asArr(bar.data).every((item) => Array.isArray(item))).toBe(true);
         expect(interval.renderItem).toBe(INTERVAL_RENDERER);
         expect(interval.z).toBe(3);
@@ -778,8 +813,8 @@ describe("the bar with a wide channel", () => {
             { k: "up", v: 2.4 },
             { k: "down", v: -1.9 },
         ];
-        const vertical = asArr(seriesOf(derive(quick("bar", { x: "k", y: "v" }), signed))[0].data).map((item) => asObj(asObj(item).label).position);
-        const horizontal = asArr(seriesOf(derive(quick("bar", { x: "k", y: "v" }, { orientation: "horizontal" }), signed))[0].data).map(
+        const vertical = asArr(firstSeries(derive(quick("bar", { x: "k", y: "v" }), signed)).data).map((item) => asObj(asObj(item).label).position);
+        const horizontal = asArr(firstSeries(derive(quick("bar", { x: "k", y: "v" }, { orientation: "horizontal" }), signed)).data).map(
             (item) => asObj(asObj(item).label).position,
         );
         expect(vertical).toEqual(["top", "bottom"]);
@@ -869,18 +904,18 @@ describe("the number-like categories", () => {
             { cluster: "02", v: "3", rank: "1" },
         ];
         const plain = derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), rows);
-        expect(asObj(plain.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["01", "10", "02"] }));
-        expect(asArr(seriesOf(plain)[0].data).map((item) => asArr(item)[0])).toEqual(["01", "10", "02"]);
+        expect(asObj(plain.xAxis)).toMatchObject({ type: "category", data: ["01", "10", "02"] });
+        expect(asArr(firstSeries(plain).data).map((item) => asArr(item)[0])).toEqual(["01", "10", "02"]);
         const ordered = derive(quick("line", { x: { column: "cluster", orderBy: "rank" }, y: "v" }, { binding }), rows);
         expect(asObj(ordered.xAxis).data).toEqual(["02", "01", "10"]);
         const viaComposition = derive(
             { ...composed({ series: [{ form: "scatter", encoding: { x: { column: "cluster", orderBy: "rank" }, y: "v" } }] }), binding },
             rows,
         );
-        expect(asObj(viaComposition.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["02", "01", "10"] }));
+        expect(asObj(viaComposition.xAxis)).toMatchObject({ type: "category", data: ["02", "01", "10"] });
         // A table that types the cluster as a number still draws each point on its own category.
         const typed = rows.map((row) => ({ ...row, cluster: Number(row.cluster) }));
-        expect(asArr(seriesOf(derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), typed))[0].data).map((item) => asArr(item)[0])).toEqual([
+        expect(asArr(firstSeries(derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), typed)).data).map((item) => asArr(item)[0])).toEqual([
             "1",
             "10",
             "2",
@@ -981,7 +1016,7 @@ describe("the second review round", () => {
         const ends = grids.map((grid) => Number.parseFloat(String(grid.left)) + Number.parseFloat(String(grid.width)));
         // The scale stands at the right edge in a band of 18 percent, thus every panel ends before the band.
         expect(Math.max(...ends)).toBeLessThanOrEqual(82);
-        expect(mapsOf(option)[0].right).toBe(0);
+        expect(firstMap(option).right).toBe(0);
     });
 
     it("reads the color and the size scale from the drawn points, and never from a dropped row", () => {
@@ -1022,7 +1057,7 @@ describe("the second review round", () => {
             }),
             rows,
         );
-        const marked = asArr(seriesOf(option)[0].data)
+        const marked = asArr(firstSeries(option).data)
             .map(asObj)
             .filter((item) => item.label !== undefined)
             .map((item) => item.name);
@@ -1039,7 +1074,7 @@ describe("the third review round", () => {
 
     /** The x cells of one series, in data order. */
     function xOrder(option: EchartOption): unknown[] {
-        return asArr(seriesOf(option)[0].data).map((item) => asArr(Array.isArray(item) ? item : asObj(item).value)[0]);
+        return asArr(firstSeries(option).data).map((item) => asArr(Array.isArray(item) ? item : asObj(item).value)[0]);
     }
 
     it("draws a line along the order of its category axis, on the quick path and on a composition", () => {
@@ -1095,7 +1130,7 @@ describe("the slot bound of a heatmap", () => {
         const small = wide.slice(0, 20);
         const option = derive(quick("heatmap", { x: "sample", y: "gene", value: "z" }), small);
         expect(asArr(asObj(option.xAxis).data).length).toBe(20);
-        expect(asArr(seriesOf(option)[0].data).length).toBe(20 * 20);
+        expect(asArr(firstSeries(option).data).length).toBe(20 * 20);
     });
 });
 
@@ -1129,6 +1164,13 @@ describe("a line over the ordered axis of an earlier series", () => {
         return asArr(series.data).map((item) => asArr(Array.isArray(item) ? item : asObj(item).value)[0]);
     }
 
+    /** The second series of one option: the line over the axis that the first series ordered. */
+    function secondSeries(option: EchartOption): Record<string, unknown> {
+        const series = seriesOf(option)[1];
+        if (series === undefined) throw new Error("the option holds no second series");
+        return series;
+    }
+
     /** A composition whose first series, a bar, sorts the shared category axis, and whose second series is a line. */
     const block = composed({
         series: [
@@ -1145,7 +1187,7 @@ describe("a line over the ordered axis of an earlier series", () => {
         ];
         const option = derive(block, rows);
         expect(asObj(option.xAxis).data).toEqual(["B", "C", "A"]);
-        expect(xCells(seriesOf(option)[1])).toEqual(["B", "C", "A"]);
+        expect(xCells(secondSeries(option))).toEqual(["B", "C", "A"]);
     });
 
     it("keeps its rows inline past the bound, because the page build sorts a line by its cells", () => {
@@ -1155,6 +1197,6 @@ describe("a line over the ordered axis of an earlier series", () => {
         const render = deriveChartRender(block, rows, columns, { key: "c1", columns })._unsafeUnwrap();
         expect(JSON.stringify(render.option).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(false);
-        expect(xCells(seriesOf(render.option)[1]).slice(0, 3)).toEqual(["c5999", "c5998", "c5997"]);
+        expect(xCells(secondSeries(render.option)).slice(0, 3)).toEqual(["c5999", "c5998", "c5997"]);
     });
 });

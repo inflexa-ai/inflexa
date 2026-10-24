@@ -355,7 +355,7 @@ describe("replay of a turn stored in rounds", () => {
             seq,
             envelope: envelopeMessage(user),
             message: user,
-            ...(turn === undefined ? {} : { turn }),
+            turn,
             displayEnvelope: envelopeDisplayMessages([{ id: `u-${seq}`, role: "user", parts: [{ type: "text", text: "q" }] }]),
         };
     }

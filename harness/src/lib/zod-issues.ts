@@ -45,6 +45,8 @@
 
 import type { z } from "zod";
 
+import { isUnknownArray } from "./unknown-array.js";
+
 /**
  * Strings longer than this are neither parsed nor repaired. A real argument
  * payload is tens of kilobytes; the ceiling exists so a pathological input
@@ -274,7 +276,7 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
 
     const container = root as Record<PropertyKey, unknown>;
     const child = setAtPath(container[key!], rest, value);
-    if (Array.isArray(root)) {
+    if (isUnknownArray(root)) {
         const copy = [...root];
         copy[key as number] = child;
         return copy;

@@ -13,6 +13,8 @@
 import { constants as zlibConstants, createGunzip, createZstdDecompress } from "node:zlib";
 import type { Transform } from "node:stream";
 
+import { isUnknownArray } from "../lib/unknown-array.js";
+
 /** Bytes read from each file. The readout's whole per-file I/O budget. */
 export const READOUT_PREFIX_BYTES = 262_144;
 
@@ -257,15 +259,11 @@ function splitDelimited(line: string, delimiter: string): string[] {
 
 function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     const whole = parseJson(text.slice(0, READOUT_TEXT_BYTES));
-    if (Array.isArray(whole)) {
+    if (isUnknownArray(whole)) {
         const first = whole[0];
-        return {
-            fields: {
-                jsonType: "array",
-                elementCount: whole.length,
-                ...(isRecord(first) ? { firstElementKeys: joinKeys(Object.keys(first)) } : {}),
-            },
-        };
+        const fields: PrefixReadout["fields"] = { jsonType: "array", elementCount: whole.length };
+        if (isRecord(first)) fields.firstElementKeys = joinKeys(Object.keys(first));
+        return { fields };
     }
     if (isRecord(whole)) {
         const keys = Object.keys(whole);
@@ -292,14 +290,13 @@ function yamlFields(lines: readonly string[]): PrefixReadout {
         if (match) keys.push(match[1]!);
     }
     const documents = lines.filter((line) => line.trim() === "---").length;
-    return {
-        fields: {
-            topLevelKeyCount: keys.length,
-            topLevelKeys: joinKeys(keys),
-            linesInPrefix: lines.length,
-            ...(documents > 0 ? { documentSeparators: documents } : {}),
-        },
+    const fields: PrefixReadout["fields"] = {
+        topLevelKeyCount: keys.length,
+        topLevelKeys: joinKeys(keys),
+        linesInPrefix: lines.length,
     };
+    if (documents > 0) fields.documentSeparators = documents;
+    return { fields };
 }
 
 function markdownFields(lines: readonly string[]): PrefixReadout {

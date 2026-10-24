@@ -55,7 +55,7 @@ describe("WorkspaceMutator provenance recording", () => {
             workspaceRoot,
             analysisId: ANALYSIS,
             workingDir,
-            ...(opts.collector ? { lineageCollector: opts.collector } : {}),
+            lineageCollector: opts.collector,
         });
     }
 

@@ -13,6 +13,7 @@
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../../lib/result.js";
+import type { AskPart } from "../../contracts/chat-parts.js";
 import type { EmitFn } from "../../loop/types.js";
 import { AskRejectedError, type AskApproval, type AskReply, type AskRequest } from "./contract.js";
 import {
@@ -153,17 +154,16 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
 
 /** Emit (or reconcile, under the same id) the ask's `data-ask` chat part. */
 function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): void | Promise<void> {
-    return emit({
+    const part: AskPart = {
         type: "data-ask",
-        data: {
-            id,
-            title: request.title,
-            command: request.command,
-            ...(request.detail !== undefined ? { detail: request.detail } : {}),
-            status,
-            ...(reply !== undefined ? { reply } : {}),
-        },
-    });
+        id,
+        title: request.title,
+        command: request.command,
+        status,
+    };
+    if (request.detail !== undefined) part.detail = request.detail;
+    if (reply !== undefined) part.reply = reply;
+    return emit({ type: "data-ask", data: part });
 }
 
 /**

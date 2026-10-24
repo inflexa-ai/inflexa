@@ -64,7 +64,7 @@ export function readoutTargets(detected: DetectedSets): ReadoutTarget[] {
         const member = members.get(path);
         if (!member || seen.has(path)) continue;
         seen.add(path);
-        targets.push({ path, format: member.format, ...(member.wrapper ? { wrapper: member.wrapper } : {}) });
+        targets.push({ path, format: member.format, wrapper: member.wrapper });
     }
     return targets;
 }

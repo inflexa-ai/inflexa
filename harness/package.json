@@ -105,8 +105,8 @@
     },
     "devDependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.93",
-        "@inflexa-ai/oxlint-plugin": "0.7.0",
-        "@inflexa-ai/typecheck": "0.7.0",
+        "@inflexa-ai/oxlint-plugin": "0.8.0",
+        "@inflexa-ai/typecheck": "0.8.0",
         "@types/bun": "latest",
         "@types/node": "^24.13.3",
         "@types/pdf-parse": "^1.1.5",

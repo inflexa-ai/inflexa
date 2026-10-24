@@ -144,7 +144,7 @@ function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
             step: step.step,
             name: parameter.name,
             value: settingValue(parameter.value),
-            ...(parameter.default_source ? { source: parameter.default_source } : {}),
+            source: parameter.default_source,
         })),
     );
 }
@@ -238,14 +238,14 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
             depends_on: dependsOn(group.id, keptIds),
             caveats: hardFlag ? [hardFlag.message, ...caveats] : caveats,
             alternatives,
-            ...(disputed ? { disputed: { rule: disputed.rule, sides: disputed.sides } } : {}),
+            disputed: disputed === undefined ? undefined : { rule: disputed.rule, sides: disputed.sides },
             forbids,
-            ...(central?.environment ? { environment: central.environment } : {}),
+            environment: central?.environment,
             grounding: {
                 status,
                 snapshot: answer.snapshot.digest,
                 claims,
-                ...(central?.template ? { template: central.template } : {}),
+                template: central?.template,
                 settings: stepSettings(steps),
                 reason: hardFlag
                     ? `flagged by ${hardFlag.rule}`

@@ -20,11 +20,9 @@ export interface ApplyFrameResult {
 export type ChatPartCheck = { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
 
 function toSource(source: EmitEvent["source"]): EventSource {
-    return {
-        agentId: source.agentId,
-        callPath: [...source.callPath],
-        ...(source.invocationId === undefined ? {} : { invocationId: source.invocationId }),
-    };
+    const frame: EventSource = { agentId: source.agentId, callPath: [...source.callPath] };
+    if (source.invocationId !== undefined) frame.invocationId = source.invocationId;
+    return frame;
 }
 
 /**
@@ -59,7 +57,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 type: "tool-started",
                 toolUseId: event.toolUseId,
                 name: event.name,
-                ...(event.detail === undefined ? {} : { detail: event.detail }),
+                detail: event.detail,
                 source: toSource(event.source),
             };
 
@@ -69,8 +67,8 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 toolUseId: event.toolUseId,
                 name: event.name,
                 outcome: event.outcome,
-                ...(event.detail === undefined ? {} : { detail: event.detail }),
-                ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+                detail: event.detail,
+                durationMs: event.durationMs,
                 source: toSource(event.source),
             };
 
@@ -83,7 +81,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
         default: {
             // The cast names the frame that the type claims. `checkChatPart` is the check.
             const part = flattenDataPart(event);
-            return { ...part, ...(event.source === undefined ? {} : { source: toSource(event.source) }) } as ChatPartFrame;
+            return { ...part, source: event.source === undefined ? undefined : toSource(event.source) } as ChatPartFrame;
         }
     }
 }
@@ -160,7 +158,7 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
                     type: "tool-call",
                     toolCallId: frame.toolUseId,
                     toolName: frame.name,
-                    ...(frame.detail === undefined ? {} : { detail: frame.detail }),
+                    detail: frame.detail,
                 } satisfies ToolCallPart,
             ];
         case "tool-finished": {
@@ -169,8 +167,8 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
                 toolCallId: frame.toolUseId,
                 toolName: frame.name,
                 outcome: frame.outcome,
-                ...(frame.detail === undefined ? {} : { detail: frame.detail }),
-                ...(frame.durationMs === undefined ? {} : { durationMs: frame.durationMs }),
+                detail: frame.detail,
+                durationMs: frame.durationMs,
             } satisfies ToolCallPart;
             let started = false;
             const next = parts.map((p) => {

@@ -183,7 +183,7 @@ async function runSource<T>(source: Source, fetch: () => Promise<{ records: T[];
                 source,
                 status: records.length > 0 ? "ok" : "no_data",
                 returned: records.length,
-                ...(totalFound !== undefined ? { totalFound } : {}),
+                totalFound,
             },
             records,
         };
@@ -244,7 +244,7 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                           const searchType = GWAS_SEARCH_TYPES[input.queryType]!;
                           const res = await searchGwasCatalog(input.query, searchType, {
                               limit,
-                              ...(input.pValueThreshold !== undefined ? { pValueThreshold: input.pValueThreshold } : {}),
+                              pValueThreshold: input.pValueThreshold,
                           });
                           return { records: res.associations, totalFound: res.totalFound };
                       })
@@ -258,8 +258,8 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                               input.queryType === "gene" ? "gene" : "disease",
                               {
                                   limit,
-                                  ...(input.minScore !== undefined ? { minScore: input.minScore } : {}),
-                                  ...(input.disgenetSource !== undefined ? { source: input.disgenetSource } : {}),
+                                  minScore: input.minScore,
+                                  source: input.disgenetSource,
                               },
                               deps.logger,
                           );
@@ -269,7 +269,7 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
                     ? runSource<ClinvarVariant>("clinvar", async () => {
                           const res = await searchClinvar(deps.ncbiApiKey, input.query, {
                               limit,
-                              ...(input.clinicalSignificance !== undefined ? { clinicalSignificance: input.clinicalSignificance as ClinicalSignificance } : {}),
+                              clinicalSignificance: input.clinicalSignificance as ClinicalSignificance,
                           });
                           const variants = (input.informativeOnly ?? true) ? filterInformative(res.variants) : res.variants;
                           return { records: variants, totalFound: res.totalFound };

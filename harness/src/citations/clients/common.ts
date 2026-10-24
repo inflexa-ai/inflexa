@@ -25,7 +25,7 @@ export function sourceOutcome(
         status,
         requestCount,
         records,
-        ...(detail === undefined ? {} : { detail }),
+        detail,
     };
 }
 

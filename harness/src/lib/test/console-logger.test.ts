@@ -10,6 +10,11 @@ import type { Logger } from "../logger.js";
  */
 type Captured = { level: string; msg: string; fields: Record<string, unknown> };
 
+function asRecord(value: unknown): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("the sink received no record object");
+    return { ...value };
+}
+
 describe("createConsoleLogger", () => {
     let captured: Captured[];
     const real = { debug: console.debug, info: console.info, warn: console.warn, error: console.error };
@@ -123,8 +128,8 @@ describe("errorFields", () => {
         // JSON.stringify(new Error("boom")) is "{}" — the message would vanish.
         const fields = createConsoleLogger().errorFields(new Error("boom"));
 
-        expect(JSON.parse(JSON.stringify(fields)).err).toBe("boom");
-        expect(JSON.parse(JSON.stringify({ err: new Error("boom") })).err).toEqual({});
+        expect(asRecord(JSON.parse(JSON.stringify(fields))).err).toBe("boom");
+        expect(asRecord(JSON.parse(JSON.stringify({ err: new Error("boom") }))).err).toEqual({});
     });
 
     it("is a realization's to override — the reason it sits on the interface", () => {

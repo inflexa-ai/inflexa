@@ -65,7 +65,7 @@ export interface LiteratureReviewerDeps {
 /** Build the `literature_reviewer` delegation tool bound to its provider. */
 export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool {
     const ncbi = createNcbiTools(deps.bioKeys);
-    const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
+    const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger });
     const reviewerTools: readonly Tool[] = [
         searchGeneTool,
         searchProteinTool,

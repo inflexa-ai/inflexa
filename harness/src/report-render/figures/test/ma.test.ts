@@ -6,7 +6,15 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
+import {
+    CHART_SOURCE_MEMBER,
+    deriveChartOption,
+    deriveChartRender,
+    type ChartDataSource,
+    type ChartOpts,
+    type ChartRow,
+    type EchartOption,
+} from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { DENSE_NULL_Z } from "../dense.js";
@@ -52,8 +60,21 @@ function seriesOf(option: EchartOption): EchartOption[] {
     return option.series as EchartOption[];
 }
 
+function firstTwo(option: EchartOption): [EchartOption, EchartOption] {
+    const [significant, rest] = seriesOf(option);
+    if (significant === undefined || rest === undefined) throw new Error("the ma chart holds two series");
+    return [significant, rest];
+}
+
 function names(series: EchartOption): string[] {
     return (series.data as EchartOption[]).map((item) => String(item.name));
+}
+
+/** The item style of one series, with its members narrowed. */
+function styleOf(series: EchartOption): Record<string, unknown> {
+    const style = series.itemStyle;
+    if (typeof style !== "object" || style === null || Array.isArray(style)) throw new Error("the series holds no item style");
+    return { ...style };
 }
 
 describe("the MA figure", () => {
@@ -69,12 +90,16 @@ describe("the MA figure", () => {
     });
 
     it("draws the significant points in blue over the gray null points, split by the p column at the default cut", () => {
-        const [significant, rest] = seriesOf(derive());
+        const [significant, rest] = firstTwo(derive());
         expect(MA_P_THRESHOLD).toBe(0.1);
         expect(significant.name).toBe("padj < 0.1");
         expect(rest.name).toBe("Not significant");
-        expect(significant.itemStyle).toEqual({ color: CHART_PALETTE[0], opacity: expect.any(Number) });
-        expect(rest.itemStyle).toEqual({ color: MUTED_CHART_COLOR, opacity: expect.any(Number) });
+        const significantStyle = styleOf(significant);
+        expect(significantStyle.color).toBe(CHART_PALETTE[0]);
+        expect(significantStyle.opacity).toBeTypeOf("number");
+        const restStyle = styleOf(rest);
+        expect(restStyle.color).toBe(MUTED_CHART_COLOR);
+        expect(restStyle.opacity).toBeTypeOf("number");
         expect(rest.z).toBe(DENSE_NULL_Z);
         expect(names(significant)).toEqual(["Kal1", "Ant2", "CG1"]);
         // A gene with no adjusted p draws gray, as DESeq2 draws it. A mean of zero has no place on a log axis.
@@ -91,7 +116,7 @@ describe("the MA figure", () => {
     });
 
     it("moves the split with a declared significance cut", () => {
-        const [significant, rest] = seriesOf(derive(block(ENCODING, { thresholds: { significance: 0.05 } })));
+        const [significant, rest] = firstTwo(derive(block(ENCODING, { thresholds: { significance: 0.05 } })));
         expect(significant.name).toBe("padj < 0.05");
         expect(names(significant)).toEqual(["Kal1", "Ant2"]);
         expect(names(rest)).toEqual(["a", "abd-A", "CG1", "sesB"]);
@@ -110,7 +135,7 @@ describe("the MA figure", () => {
     it("draws one series in the palette when the block names no p column", () => {
         const series = seriesOf(derive(block({ x: "baseMean", y: "log2FoldChange" })));
         expect(series.length).toBe(1);
-        expect(series[0].name).toBe("log2FoldChange");
+        expect(series[0]?.name).toBe("log2FoldChange");
     });
 
     it("derives the same bytes two times", () => {
@@ -134,7 +159,7 @@ describe("the dense MA plot", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
+    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
         payload: { columns: string[]; rows: ChartRow[] },
         source: ChartDataSource["series"][number],
         rule: unknown,
@@ -149,7 +174,7 @@ describe("the dense MA plot", () => {
         expect(source.rule).toEqual({ kind: "ma", column: "padj", cut: MA_P_THRESHOLD });
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
-            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
+            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index]?.data));
         }
     });
 

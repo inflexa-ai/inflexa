@@ -792,9 +792,9 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         // Propagate a picture flag only when the caller states it. An absent
         // flag stays absent, thus the loop degrades to the next placement for a
         // wire that carries no picture there.
-        ...(deps.capabilities?.imageToolResults !== undefined ? { imageToolResults: deps.capabilities.imageToolResults } : {}),
-        ...(deps.capabilities?.imageUserMessages !== undefined ? { imageUserMessages: deps.capabilities.imageUserMessages } : {}),
-        ...(deps.capabilities?.contextWindow !== undefined ? { contextWindow: deps.capabilities.contextWindow } : {}),
+        imageToolResults: deps.capabilities?.imageToolResults,
+        imageUserMessages: deps.capabilities?.imageUserMessages,
+        contextWindow: deps.capabilities?.contextWindow,
     };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
@@ -875,12 +875,12 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         if (servedBy === undefined) return response;
         logger.warn("reply served by a fallback model, thus the harness drops the thinking of that turn", {
             workload: workloadOf(session),
-            ...(servedBy === "" ? {} : { servedBy }),
+            servedBy: servedBy === "" ? undefined : servedBy,
         });
         return {
             ...response,
             message: withoutThinking(response.message),
-            ...(servedBy === "" ? {} : { servedModelId: servedBy }),
+            servedModelId: servedBy === "" ? undefined : servedBy,
         };
     }
 
@@ -928,7 +928,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // and `chunkMs` bounds each later gap. Thus each silent interval
                         // carries the one configured bound, and a turn that writes
                         // steadily runs as long as it needs.
-                        ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
+                        timeout: requestTimeoutMs === undefined ? undefined : { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs },
                         providerOptions,
                         reasoning,
                     });
@@ -1018,7 +1018,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // the stream has the one configured bound. A chunk that carries
                     // no content, for example a keep-alive comment, produces no part,
                     // thus it feeds neither bound.
-                    ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
+                    timeout: requestTimeoutMs === undefined ? undefined : { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs },
                     providerOptions,
                     reasoning,
                 });
@@ -1115,7 +1115,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     // The provider advertises the guard limit on its own instance, thus a
     // consumer that scales a deadline reads it from the provider in its deps.
-    return { capabilities, chat, chatStream, ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}) };
+    return { capabilities, chat, chatStream, requestTimeoutMs };
 }
 
 /**
@@ -1200,8 +1200,8 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
 
 export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
     return {
-        ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),
-        ...(deps.suspendOn !== undefined ? { suspendOn: deps.suspendOn } : {}),
+        resolveRequestHeaders: deps.resolveRequestHeaders,
+        suspendOn: deps.suspendOn,
     };
 }
 
@@ -1246,16 +1246,16 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...hostPolicyOf(deps),
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
-            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            maxOutputTokens: config.maxOutputTokens,
+            maxRetries: config.maxRetries,
+            requestTimeoutMs,
+            reasoning: config.reasoning,
             // The package sends the key as `metadata.user_id`, and the binding as
             // `thinking.block_binding`.
             providerOptionsFor: ({ session, reasoning }) => ({
                 anthropic: {
                     metadata: { userId: sessionKeyDigestOf(session) },
-                    ...(binding !== undefined ? { thinking: thinkingWithBinding(reasoning, binding) } : {}),
+                    thinking: binding === undefined ? undefined : thinkingWithBinding(reasoning, binding),
                 } satisfies AnthropicLanguageModelOptions,
             }),
         });
@@ -1289,9 +1289,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             // unset config sends no ceiling, and the server holds the reply at the
             // cap of the model.
             maxOutputTokens: config.maxOutputTokens ?? "provider-maximum",
-            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            maxRetries: config.maxRetries,
+            requestTimeoutMs,
+            reasoning: config.reasoning,
             // The package sends the key as `prompt_cache_key`. The store
             // directive merges into the same namespace, and it keeps this key.
             providerOptionsFor: ({ session }) => ({ openai: { promptCacheKey: sessionKeyDigestOf(session) } }),
@@ -1316,9 +1316,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         ...hostPolicyOf(deps),
         capabilities: config.capabilities,
         logger: deps.logger,
-        ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-        ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-        ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-        ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+        maxOutputTokens: config.maxOutputTokens,
+        maxRetries: config.maxRetries,
+        requestTimeoutMs,
+        reasoning: config.reasoning,
     });
 }

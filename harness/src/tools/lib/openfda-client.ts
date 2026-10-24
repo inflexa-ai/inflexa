@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { OPENFDA_BASE, OPENFDA_LABEL_BASE } from "./openfda-config.js";
 
@@ -186,7 +187,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
 }
 
 function firstString(value: unknown): string | null {
-    if (Array.isArray(value)) {
+    if (isUnknownArray(value)) {
         const first = value.find((v) => typeof v === "string" && v.trim());
         return typeof first === "string" ? first : null;
     }

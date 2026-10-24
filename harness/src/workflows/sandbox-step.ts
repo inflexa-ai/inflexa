@@ -545,7 +545,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         blockerHolder,
         fileMetadata,
         citationResolver: deps.citationResolver,
-        ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
+        toolOutputStore: deps.toolOutputStore,
     });
     if (deps.toolOutputStore !== undefined && !agent.tools.some((tool) => tool.id === READ_TOOL_OUTPUT_TOOL_ID)) {
         logger.warn("the step agent declares no read_tool_output, thus its loops keep no text of a cut tool result");
@@ -618,7 +618,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             errorClass,
             durationMs,
             hitMaxSteps,
-            ...(lastExec ? { lastExec } : {}),
+            lastExec,
             ...logger.errorFields(err),
         });
         const safe = userFacingStepFailure(errorClass);
@@ -820,7 +820,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             durationMs,
             finishReason,
             error: blockedReason,
-            ...(stepUsage ? { usage: stepUsage } : {}),
+            usage: stepUsage,
         };
     }
 
@@ -1003,7 +1003,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         durationMs,
         finishReason,
         error: null,
-        ...(stepUsage ? { usage: stepUsage } : {}),
+        usage: stepUsage,
     };
 }
 

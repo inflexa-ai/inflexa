@@ -113,7 +113,7 @@ export function lockSections(lock: FarmLock): Section[] {
         .filter(([, packages]) => packages.length > 0)
         .map(([subtree, packages]) => {
             const track = trackOfLockSubtree(subtree);
-            return { title: TRACK_TITLES[subtree] ?? subtree, packages, ...(track === undefined ? {} : { track }) };
+            return { title: TRACK_TITLES[subtree] ?? subtree, packages, track };
         });
 }
 
@@ -175,7 +175,7 @@ function foldSections(sections: readonly Section[]): Section[] {
             open.packages.push(pkg);
         }
     }
-    return [...byTitle.values()].map(({ title, track, packages }) => ({ title, packages, ...(track === undefined ? {} : { track }) }));
+    return [...byTitle.values()].map(({ title, track, packages }) => ({ title, packages, track }));
 }
 
 /**
@@ -360,9 +360,9 @@ function presentEntry(requested: string, row: { entry: SectionPackage; section: 
         present: true,
         name: row.entry.name,
         section: row.section,
-        ...(row.entry.version === undefined ? {} : { version: row.entry.version }),
-        ...(row.entry.storeDir === undefined ? {} : { storeDir: row.entry.storeDir }),
-        ...(row.entry.hash === undefined ? {} : { hash: row.entry.hash }),
+        version: row.entry.version,
+        storeDir: row.entry.storeDir,
+        hash: row.entry.hash,
     };
 }
 
@@ -436,7 +436,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
             }
             if (hits.length > 0) return hits;
             const suggestion = resolution.kind === "unknown" ? resolution.suggestion : undefined;
-            return [{ requested, present: false, ...(suggestion === undefined ? {} : { suggestion: suggestion.name }) }];
+            return [{ requested, present: false, suggestion: suggestion?.name }];
         });
         return { available: true, checked };
     }
@@ -451,7 +451,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         .map((s) => ({
             title: s.title,
             packages: needle ? s.packages.filter((p) => p.name.toLowerCase().includes(needle)) : s.packages,
-            ...(s.track === undefined ? {} : { track: s.track }),
+            track: s.track,
         }))
         .filter((s) => s.packages.length > 0);
 

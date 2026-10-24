@@ -136,7 +136,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
         dimensions: 1536,
         embed: (texts) => {
             embedderCalls++;
-            return okAsync(texts.map(() => new Array(1536).fill(0.01)));
+            return okAsync(texts.map(() => new Array<number>(1536).fill(0.01)));
         },
     };
     const logs: LoggedRecord[] = [];

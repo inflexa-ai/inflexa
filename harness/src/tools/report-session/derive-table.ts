@@ -536,7 +536,7 @@ async function derive(args: {
         hash: outputHash,
         scriptHash: record.scriptHash,
         sources: [...args.sources],
-        ...(columns === undefined ? {} : { columns }),
+        columns,
     };
 }
 

@@ -15,7 +15,13 @@ import { dirname, join } from "node:path";
 
 import type { Scope } from "../../../auth/types.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../../report-authoring/authoring-tools.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult, type PinnedArtifact } from "../list-artifacts.js";
@@ -140,8 +146,8 @@ describe("the listing cap", () => {
             expect(result.total).toBe(250);
             expect(result.truncated).toBe(true);
             // The cap cuts the tail of the order, thus the listing is the prefix of the whole listing.
-            expect(result.artifacts[0].path).toBe("data/inputs/f000/raw.csv");
-            expect(result.artifacts[199].path).toBe("data/inputs/f199/raw.csv");
+            expect(result.artifacts[0]?.path).toBe("data/inputs/f000/raw.csv");
+            expect(result.artifacts[199]?.path).toBe("data/inputs/f199/raw.csv");
         }
     });
 

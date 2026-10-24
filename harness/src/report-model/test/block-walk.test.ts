@@ -172,8 +172,9 @@ describe("the references of a chart", () => {
 
     it("matches the track against its own columns, and each statistic against none", () => {
         const references = walkBlocks([block]).references;
-        expect(references[1].encodingColumns).toEqual(["start", "end", "domain", "aa_length"]);
-        expect(references[2].encodingColumns).toBeUndefined();
+        expect(references).toHaveLength(4);
+        expect(references[1]?.encodingColumns).toEqual(["start", "end", "domain", "aa_length"]);
+        expect(references[2]?.encodingColumns).toBeUndefined();
     });
 
     it("names the path of the track and of each statistic as a used path", () => {
@@ -207,9 +208,10 @@ describe("the trees of a chart", () => {
 
     it("matches each tree against its own three columns", () => {
         const references = walkBlocks([block]).references;
-        expect(references[1].encodingColumns).toEqual(["parent", "child", "height"]);
-        expect(references[2].encodingColumns).toEqual(["parent", "child", "height"]);
-        expect(references[0].encodingColumns).toEqual(["sample", "gene", "z"]);
+        expect(references).toHaveLength(3);
+        expect(references[1]?.encodingColumns).toEqual(["parent", "child", "height"]);
+        expect(references[2]?.encodingColumns).toEqual(["parent", "child", "height"]);
+        expect(references[0]?.encodingColumns).toEqual(["sample", "gene", "z"]);
     });
 
     it("puts the trees between the track and the statistics, and names each tree path as a used path", () => {

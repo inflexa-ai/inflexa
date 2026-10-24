@@ -23,7 +23,7 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartEncoding } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
-import { CHART_BODY_PX, GUIDE_LINE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
+import { CHART_BODY_PX, CHART_INK, GUIDE_LINE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
     categoricalPalette,
@@ -140,9 +140,10 @@ function deriveGsea(block: ChartBlock, rows: readonly ChartRow[], context: Figur
     const { sets, metric } = table.value;
 
     const palette = categoricalPalette(sets.length);
-    const colorOf = (index: number): string => palette[index % palette.length];
+    const colorOf = (index: number): string => palette[index % palette.length] ?? CHART_INK;
     const legendLines = sets.length > 1 ? sets.length : 0;
     const grids = panelGrids(legendLines);
+    const topPanel = grids[0];
     const range = rankRange(sets, metric);
     const metricTitle = valueAxisTitle(context.labels, columns.value.metric, METRIC_TITLE);
 
@@ -177,7 +178,7 @@ function deriveGsea(block: ChartBlock, rows: readonly ChartRow[], context: Figur
             { ...valueAxis("y", metricTitle), gridIndex: 2, splitNumber: 3 },
         ],
         series: [...top, ...middle, bottom],
-        graphic: statisticsText(context, grids[0], corner),
+        graphic: topPanel === undefined ? [] : statisticsText(context, topPanel, corner),
         legend:
             legendLines > 0
                 ? { data: sets.map((set) => set.name), orient: "vertical", left: percent(GRID_LEFT), bottom: 0, itemGap: LEGEND_GAP_PX }
@@ -217,7 +218,7 @@ function gseaColumns(encoding: ChartEncoding, rows: readonly ChartRow[], context
         score: column("y"),
         hit: column("hit"),
         metric: column("metric"),
-        ...(encoding.group !== undefined ? { set: channelColumn(encoding.group) } : {}),
+        set: encoding.group === undefined ? undefined : channelColumn(encoding.group),
     });
 }
 
@@ -340,15 +341,21 @@ function drawnVertices(curve: readonly Vertex[], kept: ReadonlySet<number>): Ver
 
 /** True when the curve turns at one inner vertex. */
 function turns(curve: readonly Vertex[], index: number): boolean {
-    const before = curve[index].value - curve[index - 1].value;
-    const after = curve[index + 1].value - curve[index].value;
-    return before * after < 0;
+    const at = curve[index];
+    const before = curve[index - 1];
+    const after = curve[index + 1];
+    if (at === undefined || before === undefined || after === undefined) return false;
+    return (at.value - before.value) * (after.value - at.value) < 0;
 }
 
 /** True when the sign of the curve changes between one inner vertex and a neighbor. */
 function crossesZero(curve: readonly Vertex[], index: number): boolean {
-    const sign = Math.sign(curve[index].value);
-    return sign !== Math.sign(curve[index - 1].value) || sign !== Math.sign(curve[index + 1].value);
+    const at = curve[index];
+    if (at === undefined) return false;
+    const sign = Math.sign(at.value);
+    const before = curve[index - 1];
+    const after = curve[index + 1];
+    return before === undefined || sign !== Math.sign(before.value) || after === undefined || sign !== Math.sign(after.value);
 }
 
 /**

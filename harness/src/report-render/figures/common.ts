@@ -73,7 +73,7 @@ export function toNumber(cell: Cell | null | undefined): number | null {
  * person. The replacement reads no locale, thus the same value gives the same text on every host. The raw
  * value stays in the data rows, thus the provenance loses nothing.
  */
-export function categoryName(value: Cell): string {
+export function categoryName(value: Cell | undefined): string {
     return String(value).replaceAll("_", " ");
 }
 
@@ -91,9 +91,10 @@ export function firstFreeLanes(count: number): (start: number, end: number) => n
     const least = new Array<number>(2 * leaves).fill(Number.NEGATIVE_INFINITY);
     return (start, end) => {
         let node = 1;
-        while (node < leaves) node = least[2 * node] < start ? 2 * node : 2 * node + 1;
+        while (node < leaves) node = (least[2 * node] ?? Number.NEGATIVE_INFINITY) < start ? 2 * node : 2 * node + 1;
         least[node] = end;
-        for (let parent = node >> 1; parent >= 1; parent >>= 1) least[parent] = Math.min(least[2 * parent], least[2 * parent + 1]);
+        for (let parent = node >> 1; parent >= 1; parent >>= 1)
+            least[parent] = Math.min(least[2 * parent] ?? Number.NEGATIVE_INFINITY, least[2 * parent + 1] ?? Number.NEGATIVE_INFINITY);
         return node - leaves;
     };
 }
@@ -129,7 +130,7 @@ export function columnPresent(column: string, rows: readonly Record<string, Cell
  *
  * The comparison never calls `localeCompare`, thus the order stays the same on every host.
  */
-export function compareCell(a: Cell, b: Cell): number {
+export function compareCell(a: Cell | undefined, b: Cell | undefined): number {
     const leftNumber = toNumber(a);
     const rightNumber = toNumber(b);
     if (leftNumber !== null && rightNumber !== null) {
@@ -156,7 +157,7 @@ export function compareCell(a: Cell, b: Cell): number {
  * of strings and a column of numbers still meet. A row that lacks the order cell gives its category no place,
  * thus it refuses.
  */
-export function orderCategories<T extends Cell>(
+export function orderCategories<T extends Cell | undefined>(
     blockId: string,
     rowCount: number,
     categoryAt: (index: number) => Cell | null | undefined,
@@ -210,14 +211,14 @@ export function orderQuickCategories(
     rows: readonly ChartRow[],
     column: string,
     order: ChannelOrder | undefined,
-): Result<Cell[], RenderProblem> {
+): Result<Array<Cell | undefined>, RenderProblem> {
     return orderCategories(
         blockId,
         rows.length,
-        (index) => rows[index][column],
+        (index) => rows[index]?.[column],
         firstAppearance(rows.map((row) => row[column])),
         order,
-        (index) => (order === undefined ? undefined : rows[index][order.by]),
+        (index) => (order === undefined ? undefined : rows[index]?.[order.by]),
     );
 }
 
@@ -410,13 +411,13 @@ export function categoryAxisTitle(labels: ColumnLabels, column: string, declared
  * the logarithmic axis type.
  */
 export function valueAxis(axis: "x" | "y", title: string, fields: { scale?: boolean; log?: boolean; min?: number; max?: number } = {}): EchartOption {
-    return {
+    const option: EchartOption = {
         type: fields.log === true ? "log" : "value",
-        ...(fields.scale === true ? { scale: true } : {}),
-        ...(fields.min !== undefined ? { min: fields.min } : {}),
-        ...(fields.max !== undefined ? { max: fields.max } : {}),
-        ...axisNameFields(axis, title),
     };
+    if (fields.scale === true) option.scale = true;
+    if (fields.min !== undefined) option.min = fields.min;
+    if (fields.max !== undefined) option.max = fields.max;
+    return { ...option, ...axisNameFields(axis, title) };
 }
 
 /**
@@ -425,13 +426,14 @@ export function valueAxis(axis: "x" | "y", title: string, fields: { scale?: bool
  * `topDown` inverts a y axis. The chart runtime draws the first category of a y axis at the origin, thus a
  * table that reads top-down needs the inverted axis to put its first row at the top.
  */
-export function categoryAxis(axis: "x" | "y", categories: readonly Cell[], fields: { title?: string; topDown?: boolean } = {}): EchartOption {
-    return {
+export function categoryAxis(axis: "x" | "y", categories: readonly (Cell | undefined)[], fields: { title?: string; topDown?: boolean } = {}): EchartOption {
+    const option: EchartOption = {
         type: "category",
-        ...(axis === "y" && fields.topDown === true ? { inverse: true } : {}),
         data: [...categories],
         ...axisNameFields(axis, fields.title),
     };
+    if (axis === "y" && fields.topDown === true) option.inverse = true;
+    return option;
 }
 
 // ── The guide lines ─────────────────────────────────────────────────────────
@@ -593,14 +595,14 @@ export interface ContinuousScale {
  * the call stack.
  */
 export function continuousScale(values: readonly number[]): ContinuousScale {
-    if (values.length === 0) {
-        return { min: 0, max: 1, ramp: SEQUENTIAL_RAMP };
-    }
-    let min = values[0];
-    let max = values[0];
+    let min: number | undefined;
+    let max: number | undefined;
     for (const value of values) {
-        if (value < min) min = value;
-        if (value > max) max = value;
+        if (min === undefined || value < min) min = value;
+        if (max === undefined || value > max) max = value;
+    }
+    if (min === undefined || max === undefined) {
+        return { min: 0, max: 1, ramp: SEQUENTIAL_RAMP };
     }
     if (min < 0 && max > 0) {
         const reach = Math.max(-min, max);

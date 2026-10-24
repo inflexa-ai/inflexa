@@ -14,7 +14,7 @@ function file(path: string, options: { format?: string; size?: number; wrapper?:
         size: options.size ?? 1024,
         extensions,
         format: options.format ?? extensions[0] ?? "unknown",
-        ...(options.wrapper ? { wrapper: options.wrapper } : {}),
+        wrapper: options.wrapper,
     };
 }
 

@@ -14,7 +14,7 @@ import { ProfileSubmissionSchema, type GroupAnnotation, type MenuOperation, type
 import { UNCLASSIFIED_GROUP_ID, formatResolutionErrors, resolveProfileSubmission } from "../data-profile-resolve.js";
 
 function file(path: string, format: string, extensions: string[] = [], wrapper?: string): ScannedFile {
-    return { path, size: 100, extensions, format, ...(wrapper ? { wrapper } : {}) };
+    return { path, size: 100, extensions, format, wrapper };
 }
 
 /**
@@ -533,6 +533,31 @@ describe("dimensions", () => {
         const dimension = resolution.dimensions[0]!;
         expect(dimension.reconciliations).toEqual([{ note: "The document states more subjects than files exist for.", delta: 2 }]);
         expect(dimension).not.toHaveProperty("cardinality");
+    });
+
+    it("leaves an empty note, categoryLabel, and reconciliations out of the resolution", () => {
+        const resolution = resolveProfileSubmission(
+            submission(base, {
+                dimensions: [
+                    {
+                        label: "subject",
+                        category: "subject",
+                        categoryLabel: "",
+                        observations: [{ kind: "slot", setId: calls.id, slotId: subjectSlot.id, note: "" }],
+                        reconciliations: [],
+                    },
+                ],
+            }),
+            detected,
+            menu,
+        );
+        const dimension = resolution.dimensions[0]!;
+        const observation = dimension.observations[0]!;
+
+        expect(resolution.errors).toEqual([]);
+        expect(dimension).not.toHaveProperty("categoryLabel");
+        expect(dimension).not.toHaveProperty("reconciliations");
+        expect(observation).not.toHaveProperty("note");
     });
 
     it("refuses a slot binding to a slot the named set does not have", () => {
