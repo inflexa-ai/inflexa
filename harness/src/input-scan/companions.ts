@@ -96,7 +96,7 @@ export function attachCompanions(files: readonly ScannedFile[]): MemberFile[] {
             name: basenameOf(file.path),
             size: file.size,
             format: file.format,
-            ...(file.wrapper ? { wrapper: file.wrapper } : {}),
+            wrapper: file.wrapper,
             companions,
         });
     }

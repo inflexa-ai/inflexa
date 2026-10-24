@@ -287,7 +287,7 @@ export async function routeAdHocRequest(
             agentId: AD_HOC_ROUTER_AGENT_ID,
             callPath: routerSession.provenance.callPath,
             stepName: AD_HOC_ROUTE_CALL_NAME,
-            ...(input.invocationId === undefined ? {} : { invocationId: input.invocationId }),
+            invocationId: input.invocationId,
             usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
             logger,
             rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
@@ -331,14 +331,14 @@ export async function routeAdHocRequest(
     // most requests use a capability that declares nothing.
     const requestedCapability = typeof candidate.capability === "string" ? candidate.capability.trim() : "";
     const capability = (SANDBOX_AGENT_META[agentId]?.capabilities ?? []).includes(requestedCapability) ? requestedCapability : undefined;
-    logger.info("ad hoc route selected", { agentId, resources, rationale, failure, packages, droppedPackages, ...(capability ? { capability } : {}) });
+    logger.info("ad hoc route selected", { agentId, resources, rationale, failure, packages, droppedPackages, capability });
     return {
         agentId,
         resources,
         rationale,
         packages,
         droppedPackages,
-        ...(capability ? { capability } : {}),
-        ...(failure ? { fallbackClass: failure } : {}),
+        capability,
+        fallbackClass: failure,
     };
 }

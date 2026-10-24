@@ -279,8 +279,8 @@ describe("pubmed — action 'details'", () => {
         const result = (await tool.execute({ action: "details", pmids: ["12345678"] }, ctx))._unsafeUnwrap();
         if (!("articles" in result)) throw new Error("expected the details variant");
 
-        expect(result).toEqual({
-            articles: [expect.objectContaining({ pmid: "12345678", pmcId: null })],
+        expect(result).toMatchObject({
+            articles: [{ pmid: "12345678", pmcId: null }],
             notFound: [],
         });
     });

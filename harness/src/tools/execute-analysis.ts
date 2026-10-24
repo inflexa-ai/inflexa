@@ -446,7 +446,7 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
                 status: "pending",
                 resources: route.resources,
                 agent: route.agentId,
-                ...(route.capability ? { capability: route.capability } : {}),
+                capability: route.capability,
                 maxSteps: meta?.defaultMaxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
             },
         ],
@@ -466,9 +466,9 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
 function adHocPackageResolver(deps: ExecuteAnalysisToolDeps, analysisId: string): AdHocRouterDeps["resolvePackages"] {
     if (!deps.farmLockFile && !deps.imagePackagesFile && !deps.readPoolInventory) return undefined;
     const inventory: ListAvailablePackagesDeps = {
-        ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-        ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-        ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+        farmLockFile: deps.farmLockFile,
+        imagePackagesFile: deps.imagePackagesFile,
+        readPoolInventory: deps.readPoolInventory,
     };
     return async (names) => {
         const read = await readInventorySections(inventory, analysisId);
@@ -495,15 +495,15 @@ async function persistedAdHocPlan(
             pool: deps.pool,
             resourcePolicy: deps.resourcePolicy,
             logger: deps.logger,
-            ...(resolvePackages ? { resolvePackages } : {}),
-            ...(deps.usageRecorder ? { usageRecorder: deps.usageRecorder } : {}),
+            resolvePackages,
+            usageRecorder: deps.usageRecorder,
         },
         {
             analysisId: args.analysisId,
             request: args.request,
             session: args.ctx.session,
             signal: args.ctx.signal,
-            ...(args.ctx.turnUsage ? { turnUsage: args.ctx.turnUsage } : {}),
+            turnUsage: args.ctx.turnUsage,
             invocationId: args.ctx.invocationId,
         },
     );
@@ -654,7 +654,7 @@ async function reservePlanRun(
                         threadId: args.threadId,
                         workflowName: "executeAnalysis",
                         planId: args.planId,
-                        ...(startedAt === undefined ? {} : { startedAt }),
+                        startedAt,
                     }).map((): PlanSlot => ({ type: "inserted" }));
                 }),
         );
@@ -723,7 +723,7 @@ async function launchStoredPlan(deps: LaunchPlanRunDeps, input: LaunchPlanRunInp
         planId,
         plan: plan.value,
         mode: "plan",
-        reserve: (frame) => reservePlanRun(deps, { ...frame, planId, ...(newestRunId === undefined ? {} : { newestRunId }) }),
+        reserve: (frame) => reservePlanRun(deps, { ...frame, planId, newestRunId }),
     });
 }
 

@@ -388,10 +388,10 @@ export function parseDelimited(text: string, delimiter: string): Row[] | undefin
     if (records === undefined) {
         return undefined;
     }
-    if (records.length === 0) {
+    const header = records[0];
+    if (header === undefined) {
         return [];
     }
-    const header = records[0];
     const seen = new Set<string>();
     for (const name of header) {
         if (seen.has(name)) {
@@ -400,8 +400,7 @@ export function parseDelimited(text: string, delimiter: string): Row[] | undefin
         seen.add(name);
     }
     const rows: Row[] = [];
-    for (let r = 1; r < records.length; r += 1) {
-        const fields = records[r];
+    for (const fields of records.slice(1)) {
         // A blank line parses as one empty field, thus the walk drops it and reads no dialect into it. A
         // record with more than one field, or one non-empty field, still obeys the count check, thus a
         // genuinely ragged record falls through.
@@ -412,8 +411,11 @@ export function parseDelimited(text: string, delimiter: string): Row[] | undefin
             return undefined;
         }
         const row: Row = {};
-        for (let c = 0; c < header.length; c += 1) {
-            row[header[c]] = fields[c];
+        for (const [c, name] of header.entries()) {
+            const value = fields[c];
+            if (value !== undefined) {
+                row[name] = value;
+            }
         }
         rows.push(row);
     }
@@ -778,20 +780,22 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         const locator = reference.locator;
         let selectedRow: Row;
         if (locator.row !== undefined) {
-            if (locator.row < 0 || locator.row >= rows.length) {
+            const row = rows[locator.row];
+            if (row === undefined) {
                 return fail(reference, "locator-out-of-range", `row ${locator.row} is outside the ${rows.length} rows`);
             }
-            selectedRow = rows[locator.row];
+            selectedRow = row;
         } else if (locator.rowFilter !== undefined) {
             const filter = locator.rowFilter;
             const matches = rows.filter((row) => cellMatchesFilterValue(row[filter.column], filter.value));
-            if (matches.length === 0) {
+            const match = matches[0];
+            if (match === undefined) {
                 return fail(reference, "locator-out-of-range", `no row where ${filter.column} equals ${String(filter.value)}`);
             }
             if (matches.length > 1) {
                 return fail(reference, "ambiguous-match", `${matches.length} rows where ${filter.column} equals ${String(filter.value)}`);
             }
-            selectedRow = matches[0];
+            selectedRow = match;
         } else {
             // The locator schema forbids a locator with neither selector. The resolver cannot depend on a
             // prior parse, thus it treats a row that no selector addresses as out of range.
@@ -847,8 +851,9 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         const projectedRows = rows.map((row) => {
             const projected: Row = {};
             for (const column of columns) {
-                if (column in row) {
-                    projected[column] = row[column];
+                const cell = row[column];
+                if (cell !== undefined) {
+                    projected[column] = cell;
                 }
             }
             return projected;
@@ -891,6 +896,9 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
 
         const a = numbers[0];
         const b = numbers[1];
+        if (a === undefined || b === undefined) {
+            return fail(reference, "locator-out-of-range", `operation ${reference.op} needs two inputs, and the derivation holds ${numbers.length}`);
+        }
         let result: number;
         switch (reference.op) {
             case "ratio":
@@ -959,16 +967,12 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
 
         // Compute the identity of each path, one read each, under the fan-out bound.
         const entries = [...byPath.entries()];
-        const identities = await allWithConcurrency(
-            entries.map(
-                ([path]) =>
-                    () =>
-                        computeIdentity(workspaceRoot, analysisId, path, snapshot, readCache),
-            ),
+        const identityPairs = await allWithConcurrency(
+            entries.map(([path]) => async () => ({ path, identity: await computeIdentity(workspaceRoot, analysisId, path, snapshot, readCache) })),
             PREPARE_CONCURRENCY,
         );
-        for (let e = 0; e < entries.length; e += 1) {
-            idCache.set(entries[e][0], identities[e]);
+        for (const { path, identity } of identityPairs) {
+            idCache.set(path, identity);
         }
 
         // Read cells for each cell-reading path whose on-disk hash matches an expected pin. A hash that no
@@ -992,7 +996,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             }
         }
         const reads = await allWithConcurrency(
-            pending.map((target) => () => hostReadCells(cap, target.path, target.identity)),
+            pending.map((target) => async () => ({ target, read: await hostReadCells(cap, target.path, target.identity) })),
             PREPARE_CONCURRENCY,
         );
 
@@ -1000,9 +1004,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         // unsupported format reaches no arm, because no reader is decided for it.
         const fallThrough: FallThrough[] = [];
         const identityByPath = new Map<string, ReadyIdentity>();
-        for (let t = 0; t < pending.length; t += 1) {
-            const target = pending[t];
-            const read = reads[t];
+        for (const { target, read } of reads) {
             if (read.kind === "rows") {
                 cellsCache.set(target.path, { kind: "rows", rows: read.rows });
                 shareRows(readCache, target.identity, read.rows);

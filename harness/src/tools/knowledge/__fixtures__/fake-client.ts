@@ -305,15 +305,15 @@ export function fakeKnowledgeClient(
     const checkAnswer: CheckResponse = { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [], not_assessed: [] };
     const client: KnowledgeClient = {
         async recommend(situation, _responseFormat, preferences, expectedSnapshot) {
-            calls.recommend.push({ situation, ...(preferences ? { preferences } : {}), ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) });
+            calls.recommend.push({ situation, preferences, expected_snapshot: expectedSnapshot });
             return answers.recommend ?? recommendAnswer();
         },
         async check(situation, steps, expectedSnapshot) {
-            calls.check.push({ situation, steps, ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) });
+            calls.check.push({ situation, steps, expected_snapshot: expectedSnapshot });
             return answers.check ?? checkAnswer;
         },
         async render(template, slots, farm, options) {
-            calls.render.push({ template, slots, ...(farm ? { farm } : {}), ...(options ? { options } : {}) });
+            calls.render.push({ template, slots, farm, options });
             return answers.render ?? renderAnswer();
         },
         async contract(template) {

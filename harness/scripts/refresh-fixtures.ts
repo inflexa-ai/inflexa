@@ -96,9 +96,8 @@ async function main(): Promise<void> {
             continue;
         }
 
-        const rewritten: string[] = [];
-        for (const file of Object.keys(manifest).sort()) {
-            const entry = manifest[file];
+        const rewritten: Array<[string, FixtureManifestEntry]> = [];
+        for (const [file, entry] of Object.entries(manifest).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
             const outcome = await replay(provider, file, entry);
 
             switch (outcome.kind) {
@@ -117,7 +116,7 @@ async function main(): Promise<void> {
                     console.log(`${provider}/${file}: the fixture file is absent`);
                     if (write) {
                         await writeFile(join(FIXTURES_DIR, provider, file), outcome.body, "utf8");
-                        rewritten.push(file);
+                        rewritten.push([file, entry]);
                     }
                     break;
                 case "drift":
@@ -125,7 +124,7 @@ async function main(): Promise<void> {
                     reportDrift(`${provider}/${file}`, outcome.differences);
                     if (write) {
                         await writeFile(join(FIXTURES_DIR, provider, file), outcome.body, "utf8");
-                        rewritten.push(file);
+                        rewritten.push([file, entry]);
                     }
                     break;
             }
@@ -133,7 +132,7 @@ async function main(): Promise<void> {
 
         if (write && rewritten.length > 0) {
             const today = new Date().toISOString().slice(0, 10);
-            for (const file of rewritten) manifest[file].capturedAt = today;
+            for (const [, entry] of rewritten) entry.capturedAt = today;
             await writeFile(manifestPath, `${JSON.stringify(manifest, null, 4)}\n`, "utf8");
             console.log(`${provider}/manifest.json: ${rewritten.length} entries rewritten, capturedAt ${today}`);
         }
@@ -253,8 +252,8 @@ async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Re
     const init: RequestInit = {
         method: entry.method ?? "GET",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        ...(entry.headers ? { headers: entry.headers } : {}),
-        ...(entry.body === undefined ? {} : { body: entry.body }),
+        headers: entry.headers,
+        body: entry.body,
     };
     try {
         return await fetch(url, init);

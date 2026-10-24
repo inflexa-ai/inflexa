@@ -120,6 +120,12 @@ export function chartMenuControlId(containerId: string): string {
  */
 export function chartToolbox(chartType: ChartType | undefined): EchartOption {
     const dense = chartType !== undefined && DENSE_CARTESIAN_CHARTS.includes(chartType);
+    const zoomFeatures = dense
+        ? {
+              dataZoom: { show: true, title: { zoom: "Zoom", back: "Undo zoom" }, filterMode: "none" },
+              restore: { show: true, title: "Restore" },
+          }
+        : undefined;
     return {
         show: true,
         zlevel: TOOLBOX_ZLEVEL,
@@ -138,12 +144,7 @@ export function chartToolbox(chartType: ChartType | undefined): EchartOption {
             },
         },
         feature: {
-            ...(dense
-                ? {
-                      dataZoom: { show: true, title: { zoom: "Zoom", back: "Undo zoom" }, filterMode: "none" },
-                      restore: { show: true, title: "Restore" },
-                  }
-                : {}),
+            ...zoomFeatures,
             dataView: {
                 show: true,
                 title: "Data",

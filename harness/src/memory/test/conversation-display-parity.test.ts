@@ -72,7 +72,7 @@ function live(forwarded: readonly TurnEvent[], turnUsage?: TokenUsageRollup): Ch
         const activity = tracker.track(frame, now());
         if (activity !== null) messages = applyChatFrame(messages, activity, assistantId).messages;
     }
-    return applyChatFrame(messages, { type: "finish", source: ROOT, ...(turnUsage === undefined ? {} : { turnUsage }) }, assistantId).messages;
+    return applyChatFrame(messages, { type: "finish", source: ROOT, turnUsage }, assistantId).messages;
 }
 
 /**
@@ -109,10 +109,10 @@ async function bothPaths(rounds: readonly Round[], options: { readonly turnUsage
                 seq: rows.length,
                 envelope: envelopeMessage(message),
                 message,
-                ...(index === 0 && displayEnvelope !== undefined ? { displayEnvelope } : {}),
-                ...(opening && facts.turn !== undefined ? { turn: facts.turn } : {}),
-                ...(opening && facts.author !== undefined ? { author: facts.author } : {}),
-                ...(facts.createdAt === undefined ? {} : { createdAt: facts.createdAt }),
+                displayEnvelope: index === 0 && displayEnvelope !== undefined ? displayEnvelope : undefined,
+                turn: opening && facts.turn !== undefined ? facts.turn : undefined,
+                author: opening && facts.author !== undefined ? facts.author : undefined,
+                createdAt: facts.createdAt,
             });
         }
     }

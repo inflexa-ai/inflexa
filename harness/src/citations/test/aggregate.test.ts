@@ -99,9 +99,7 @@ describe("metadata comparison, verdict, and coverage", () => {
             },
         ]);
 
-        expect(result.comparisons).toEqual([
-            expect.objectContaining({ field: "venue", status: "not_compared", supplied: "Example Journal", sourceValues: [] }),
-        ]);
+        expect(result.comparisons).toMatchObject([{ field: "venue", status: "not_compared", supplied: "Example Journal", sourceValues: [] }]);
         expect(result.verdict).toBe("inconclusive");
         expect(result.coverage).toBe("partial");
     });

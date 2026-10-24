@@ -45,7 +45,7 @@ function checkParentScope(pool: Querier, parentPlanId: string, analysisId: strin
         if ((parent.rowCount ?? 0) === 0) {
             throw new Error(`parent plan ${parentPlanId} not found`);
         }
-        if (parent.rows[0].analysis_id !== analysisId) {
+        if (parent.rows[0]?.analysis_id !== analysisId) {
             throw new Error(`parent plan ${parentPlanId} belongs to a different analysis`);
         }
     });

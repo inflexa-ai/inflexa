@@ -48,7 +48,7 @@ export function aggregateCitationResolution(
         normalized,
         sourceOutcomes: [...sourceOutcomes],
         candidates,
-        ...(selected === undefined ? {} : { selectedClusterId: selected.id }),
+        selectedClusterId: selected?.id,
         comparisons,
         conflicts: detectCitationConflicts(candidates),
         verdict,

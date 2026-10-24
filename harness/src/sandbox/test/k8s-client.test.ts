@@ -131,6 +131,7 @@ describe("k8s createSandbox", () => {
         expect(stub.createdJobs).toHaveLength(1);
         const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
         const container = podSpec.containers[0];
+        if (container === undefined) throw new Error("the job pod holds no container");
         const env = container.env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
         // The pod never dials out, thus it gets no address to dial.
@@ -314,6 +315,7 @@ describe("k8s createSandbox", () => {
 
         const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
         const container = podSpec.containers[0];
+        if (container === undefined) throw new Error("the job pod holds no container");
         expect(container.workingDir).toBe("/an-1");
 
         const sessionMounts = container.volumeMounts!.filter((m) => m.name === "session");
@@ -455,9 +457,11 @@ describe("k8s createSandbox", () => {
 
         const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
         expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session"]);
-        const mounts = podSpec.containers[0].volumeMounts!;
+        const container = podSpec.containers[0];
+        if (container === undefined) throw new Error("the job pod holds no container");
+        const mounts = container.volumeMounts!;
         expect(mounts.some((m) => m.mountPath.startsWith("/mnt"))).toBe(false);
-        const env = podSpec.containers[0].env ?? [];
+        const env = container.env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");

@@ -117,7 +117,7 @@ describe("tableDataAsset", () => {
     /** Run one asset as the page runs it, and give back the registry that it wrote. */
     function registryOf(bytes: string): Record<string, TablePayload> {
         const window: Record<string, unknown> = {};
-        new Function("window", bytes)(window);
+        new Function("window", bytes).call(undefined, window);
         return window[TABLE_DATA_GLOBAL] as Record<string, TablePayload>;
     }
 
@@ -137,6 +137,7 @@ describe("tableDataAsset", () => {
         // An object literal with a `__proto__` key sets the prototype of the object. The parse defines an
         // own property for every key, thus the payload reaches the page with the columns that it declares.
         const registered = registryOf(asset.bytes)["tbl-1"];
+        if (registered === undefined) throw new Error("the registry holds no tbl-1 entry");
         expect(registered.columns).toEqual(columns);
         expect(registered.rows).toEqual([["a", "b"]]);
     });

@@ -136,7 +136,7 @@ describe("conversation display recorder", () => {
         });
 
         expect(recorder.takeRound([])).toEqual([
-            { id: announced("assistant")[0], role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] },
+            { id: announced("assistant")[0] ?? "", role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] },
         ]);
         expect(forwarded.filter((event) => event.type === "data-compaction")).toHaveLength(2);
     });
@@ -294,7 +294,7 @@ describe("conversation display recorder — rounds", () => {
         const { recorder, announced } = harness();
         await recorder.emit({ type: "text-delta", text: "answer" });
 
-        expect(recorder.takeOpening()).toEqual([{ id: announced("user")[0], role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
+        expect(recorder.takeOpening()).toEqual([{ id: announced("user")[0] ?? "", role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
     });
 
     it("gives the parts of each round under one assistant id", async () => {
@@ -307,6 +307,7 @@ describe("conversation display recorder — rounds", () => {
         const second = recorder.takeRound([]);
 
         const [assistantId] = announced("assistant");
+        if (assistantId === undefined) throw new Error("the harness announced no assistant id");
         expect(announced("assistant")).toHaveLength(1);
         expect(first).toEqual([
             {
@@ -396,7 +397,7 @@ describe("conversation display recorder — compaction rounds", () => {
         const round = recorder.takeRound([dropMarkerMessage({ kind: "drop", ...figures, keptTurns: 2 })]);
 
         expect(round.map((message) => [message.id, message.role])).toEqual([
-            [announced("assistant")[0], "assistant"],
+            [announced("assistant")[0] ?? "", "assistant"],
             ["c-1", "system"],
         ]);
         expect(round[1]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "failed" } }]);

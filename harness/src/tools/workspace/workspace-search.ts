@@ -127,7 +127,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
                     return {
                         id: r.id,
                         score: r.score,
-                        ...(path !== undefined ? { path } : {}),
+                        path,
                         metadata: r.metadata,
                     };
                 }),

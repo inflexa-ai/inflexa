@@ -46,7 +46,7 @@ interface Edge {
  * number, a node with two heights or two parents, no root or two roots, a cycle, a child over its parent, a
  * leaf that is no category, and a category that no leaf names.
  */
-export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, categories: readonly Cell[]): Result<CheckedTree, RenderProblem> {
+export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, categories: ReadonlyArray<Cell | undefined>): Result<CheckedTree, RenderProblem> {
     const fault = (detail: string): Result<never, RenderProblem> => err(chartProblem(blockId, `The tree of ${axis} ${detail}`));
     if (tree.rows.length === 0) return fault("holds no edge.");
 
@@ -78,17 +78,18 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
     }
 
     const roots = [...childrenOf.keys()].filter((node) => !parentOf.has(node));
-    if (roots.length === 0) return fault(`holds a cycle through the node "${edges[0].parent}".`);
+    const root = roots[0];
+    if (root === undefined) return fault(`holds a cycle through the node "${edges[0]?.parent}".`);
     if (roots.length > 1) return fault(`holds more than one root, for example "${roots[0]}" and "${roots[1]}". A tree holds one root.`);
 
     // Each child has one parent and the root has none, thus a walk from the root meets each node one time. A
     // node that the walk never meets sits on a cycle apart from the root.
     const preorder: string[] = [];
-    const stack = [roots[0]];
+    const stack = [root];
     for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
         preorder.push(node);
         const children = childrenOf.get(node) ?? [];
-        for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
+        for (const child of children.slice().reverse()) stack.push(child);
     }
     const met = new Set(preorder);
     const stray = edges.find((edge) => !met.has(edge.parent));
@@ -101,7 +102,7 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
         }
     }
 
-    const byName = new Map<string, Cell>();
+    const byName = new Map<string, Cell | undefined>();
     for (const category of categories) byName.set(String(category), category);
     const leaves = preorder.filter((node) => !childrenOf.has(node));
     const order: Cell[] = [];
@@ -118,8 +119,7 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
     // The reverse of the preorder meets each child before its parent, and the walk met each node, thus each
     // lookup below finds a place.
     const placeOf = (node: string): number => place.get(node) as number;
-    for (let index = preorder.length - 1; index >= 0; index -= 1) {
-        const node = preorder[index];
+    for (const node of preorder.slice().reverse()) {
         const children = childrenOf.get(node);
         if (children === undefined) continue;
         let low = Infinity;
@@ -139,7 +139,7 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
             [placeOf(edge.parent), edge.height],
         ];
     });
-    return ok({ order, height: heightAt(roots[0]), elbows });
+    return ok({ order, height: heightAt(root), elbows });
 }
 
 /** The name of one node cell, or `undefined` for an empty cell. */

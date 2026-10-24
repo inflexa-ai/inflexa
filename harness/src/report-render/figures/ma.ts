@@ -66,7 +66,7 @@ function maClassification(rows: readonly ChartRow[], pColumn: string, pTitle: st
         rule: { kind: "ma", column: pColumn, cut },
         categoryOf: (x, y, index) => {
             if (x === null || y === null || x <= 0) return undefined;
-            const p = toNumber(rows[index][pColumn]);
+            const p = toNumber(rows[index]?.[pColumn]);
             return p !== null && p < cut ? significant : MA_NULL;
         },
     };
@@ -98,7 +98,7 @@ function deriveMa(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     if (pColumn.isErr()) return err(pColumn.error);
 
     const composition: ChartComposition = {
-        series: [{ form: "scatter", encoding: { x: x.value, y: y.value, ...(encoding.label !== undefined ? { label: encoding.label } : {}) } }],
+        series: [{ form: "scatter", encoding: { x: x.value, y: y.value, label: encoding.label } }],
         annotations: [{ kind: "reference-line", axis: "y", value: MA_BASELINE }],
         axes: { x: { scale: "log" } },
     };
@@ -114,7 +114,7 @@ function deriveMa(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     for (let index = 0; index < rows.length; index += 1) {
         const mean = xs[index];
         const effect = ys[index];
-        if (mean === null || effect === null || mean <= 0) continue;
+        if (mean === null || mean === undefined || effect === null || effect === undefined || mean <= 0) continue;
         means.push(mean);
         effects.push(Math.abs(effect));
     }
@@ -124,7 +124,11 @@ function deriveMa(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     const option = composed.value;
     return ok({
         ...option,
-        xAxis: { ...axisOf(option, "xAxis"), ...(low !== undefined && high !== undefined ? { min: decadeFloor(low), max: decadeCeiling(high) } : {}) },
+        xAxis: {
+            ...axisOf(option, "xAxis"),
+            min: low === undefined || high === undefined ? undefined : decadeFloor(low),
+            max: low === undefined || high === undefined ? undefined : decadeCeiling(high),
+        },
         yAxis: { ...axisOf(option, "yAxis"), ...symmetricRange(reach) },
         series:
             classification === undefined

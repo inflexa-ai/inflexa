@@ -142,7 +142,7 @@ export function dbosSdkLogger(logger: Logger, logLevel: string | undefined): DLo
         const attributes = metadata?.span?.attributes;
         const stack = metadata?.stack;
         if (attributes === undefined && stack === undefined) return undefined;
-        return { ...attributes, ...(stack !== undefined ? { stack } : {}) };
+        return { ...attributes, stack };
     };
     const message = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
     return {

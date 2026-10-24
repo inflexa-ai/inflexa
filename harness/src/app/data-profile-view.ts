@@ -76,9 +76,9 @@ function fromGroup(group: DataProfileGroup): ProfileGroupView {
         description: group.description,
         count: group.count,
         pattern: group.displayPattern,
-        ...(format ? { format } : {}),
-        ...(group.slots ? { slotIds: group.slots.map((slot) => slot.id) } : {}),
-        ...(group.unclassified ? { unclassified: true } : {}),
+        format: format ? format : undefined,
+        slotIds: group.slots?.map((slot) => slot.id),
+        unclassified: group.unclassified ? true : undefined,
     };
 }
 
@@ -92,7 +92,7 @@ export function profileGroups(result: DataProfileResult): ProfileGroupView[] {
         description: kind.description,
         count: kind.count,
         pattern: kind.pathPattern,
-        ...(kind.format ? { format: kind.format } : {}),
+        format: kind.format ? kind.format : undefined,
     }));
 }
 
@@ -103,14 +103,14 @@ export function profileDimensions(result: DataProfileResult): ProfileDimensionVi
             label: dimension.label,
             cardinalities: dimensionCardinalities(dimension),
             exampleValues: examplesOf(dimension),
-            ...(dimension.description ? { description: dimension.description } : {}),
+            description: dimension.description ? dimension.description : undefined,
         }));
     }
     return (result.axes ?? []).map((axis) => ({
         label: axis.label,
         cardinalities: [axis.cardinality],
         exampleValues: axis.exampleValues ?? [],
-        ...(axis.description ? { description: axis.description } : {}),
+        description: axis.description ? axis.description : undefined,
     }));
 }
 
@@ -127,7 +127,7 @@ export function profileFileRecords(result: DataProfileResult): DataProfileFile[]
             (group.memberAnnotations ?? []).map((annotation) => ({
                 path: annotation.path,
                 description: annotation.note,
-                ...(group.formats.length === 1 ? { format: group.formats[0]!.format } : {}),
+                format: group.formats.length === 1 ? group.formats[0]!.format : undefined,
             })),
         );
     }

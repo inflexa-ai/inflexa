@@ -253,12 +253,11 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
 
             const validation = await validateReport(finished.document, snapshot, resolver);
             if (!validation.valid) {
-                return ok({
-                    outcome: "invalid",
-                    ...(validation.schemaIssues ? { schemaIssues: validation.schemaIssues } : {}),
-                    ...(validation.duplicateIds ? { duplicateIds: validation.duplicateIds } : {}),
-                    ...(validation.resolutionFailures ? { resolutionFailures: validation.resolutionFailures } : {}),
-                });
+                const invalid: RecordVersionResult = { outcome: "invalid" };
+                if (validation.schemaIssues) invalid.schemaIssues = validation.schemaIssues;
+                if (validation.duplicateIds) invalid.duplicateIds = validation.duplicateIds;
+                if (validation.resolutionFailures) invalid.resolutionFailures = validation.resolutionFailures;
+                return ok(invalid);
             }
 
             const thread = await deps.threads.getThread(threadId);

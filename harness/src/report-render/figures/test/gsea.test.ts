@@ -88,8 +88,8 @@ function panelSeries(option: EchartOption, panel: number): EchartOption[] {
 }
 
 /** The drawn points of one series: each item whose members are all numbers. */
-function drawn(series: EchartOption): number[][] {
-    return (series.data as unknown[][]).filter((item) => item.every((member) => typeof member === "number")) as number[][];
+function drawn(series: EchartOption): Array<[number, number, ...number[]]> {
+    return (series.data as unknown[][]).filter((item) => item.every((member) => typeof member === "number")) as Array<[number, number, ...number[]]>;
 }
 
 /** The grid of one panel as numbers: the top, the height, the left, and the right, in percent. */
@@ -107,6 +107,7 @@ describe("the gsea figure", () => {
         const grids = list(derive(SMALL), "grid").map(place);
         expect(grids).toHaveLength(3);
         const [top, middle, bottom] = grids;
+        if (top === undefined || middle === undefined || bottom === undefined) throw new Error("the option holds no three panels");
         expect(top.top).toBeLessThan(middle.top);
         expect(middle.top).toBeGreaterThanOrEqual(top.top + top.height);
         expect(bottom.top).toBeGreaterThanOrEqual(middle.top + middle.height);
@@ -126,7 +127,7 @@ describe("the gsea figure", () => {
         ]);
         expect(xAxes.map((axis) => axis.name)).toEqual([undefined, undefined, "Rank in ordered dataset"]);
         expect(xAxes.map((axis) => (axis.axisLabel as EchartOption).show)).toEqual([false, false, undefined]);
-        expect(xAxes[2]).toEqual(expect.objectContaining({ type: "value", nameLocation: "middle" }));
+        expect(xAxes[2]).toMatchObject({ type: "value", nameLocation: "middle" });
     });
 
     it("draws the running score of each set in the top panel, in the palette color and in table order", () => {
@@ -136,18 +137,23 @@ describe("the gsea figure", () => {
             ["line", "septate junction assembly", CHART_PALETTE[1]],
         ]);
         // Under the stride target the line keeps every rank of the table.
-        expect(drawn(top[0])).toHaveLength(1000);
-        expect(drawn(top[0])[3]).toEqual([4, SMALL[3].running_es as number]);
+        const first = top[0];
+        if (first === undefined) throw new Error("the panel holds no first series");
+        expect(drawn(first)).toHaveLength(1000);
+        expect(drawn(first)[3]).toEqual([4, SMALL[3]?.running_es as number]);
     });
 
     it("draws a line at zero and a dashed mark at the maximum deviation of each set", () => {
         const top = panelSeries(derive(SMALL), 0);
-        const zero = (top[0].markLine as EchartOption).data as EchartOption[];
-        expect(zero[0]).toEqual(expect.objectContaining({ yAxis: 0 }));
-        expect((top[0].markLine as EchartOption).lineStyle).toEqual(expect.objectContaining({ color: GUIDE_LINE_COLOR }));
+        const first = top[0];
+        if (first === undefined) throw new Error("the panel holds no first series");
+        const zero = (first.markLine as EchartOption).data as EchartOption[];
+        expect(zero[0]).toMatchObject({ yAxis: 0 });
+        expect((first.markLine as EchartOption).lineStyle).toEqual(expect.objectContaining({ color: GUIDE_LINE_COLOR }));
         for (const [index, series] of top.entries()) {
             const points = drawn(series);
             let peak = points[0];
+            if (peak === undefined) throw new Error("the series draws no point");
             for (const point of points) if (Math.abs(point[1]) > Math.abs(peak[1])) peak = point;
             const marks = (series.markLine as EchartOption).data as unknown[];
             const mark = marks[marks.length - 1] as EchartOption[];
@@ -155,7 +161,7 @@ describe("the gsea figure", () => {
                 [peak[0], 0],
                 [peak[0], peak[1]],
             ]);
-            expect(mark[0].lineStyle).toEqual(expect.objectContaining({ color: CHART_PALETTE[index], type: "dashed" }));
+            expect(mark[0]?.lineStyle).toEqual(expect.objectContaining({ color: CHART_PALETTE[index], type: "dashed" }));
         }
     });
 
@@ -166,7 +172,9 @@ describe("the gsea figure", () => {
             ["septate junction assembly", CHART_PALETTE[1], true],
         ]);
         for (const [row, set] of [EARLY, LATE].entries()) {
-            const ends = drawn(middle[row]);
+            const rowSeries = middle[row];
+            if (rowSeries === undefined) throw new Error("the panel holds no series for the set");
+            const ends = drawn(rowSeries);
             expect(ends).toHaveLength(set.hits.length * 2);
             expect(ends.filter((_end, index) => index % 2 === 0).map((end) => end[0])).toEqual(set.hits);
             for (const [x, y] of ends) {
@@ -176,21 +184,22 @@ describe("the gsea figure", () => {
             }
         }
         const yAxes = list(derive(SMALL), "yAxis");
-        expect(yAxes[1]).toEqual(expect.objectContaining({ gridIndex: 1, min: 0, max: 2, inverse: true, show: false }));
+        expect(yAxes[1]).toMatchObject({ gridIndex: 1, min: 0, max: 2, inverse: true, show: false });
     });
 
     it("draws the ranked metric once as a gray area with a line at zero in the bottom panel", () => {
         const option = derive(SMALL);
         const [metric] = panelSeries(option, 2);
-        expect(metric).toEqual(
-            expect.objectContaining({ type: "line", name: "Ranked metric", areaStyle: expect.objectContaining({ color: MUTED_CHART_COLOR }) }),
-        );
+        if (metric === undefined) throw new Error("the option holds no metric series");
+        expect(metric).toMatchObject({ type: "line", name: "Ranked metric", areaStyle: { color: MUTED_CHART_COLOR } });
         expect(drawn(metric)).toHaveLength(1000);
-        expect(drawn(metric)[0]).toEqual([1, SMALL[0].ranked_metric as number]);
-        expect(((metric.markLine as EchartOption).data as EchartOption[])[0]).toEqual(expect.objectContaining({ yAxis: 0 }));
+        expect(drawn(metric)[0]).toEqual([1, SMALL[0]?.ranked_metric as number]);
+        const zeroLine = ((metric.markLine as EchartOption).data as EchartOption[])[0];
+        if (zeroLine === undefined) throw new Error("the metric holds no zero line");
+        expect(zeroLine).toMatchObject({ yAxis: 0 });
         const yAxes = list(option, "yAxis");
-        expect([yAxes[0].name, yAxes[2].name]).toEqual(["Enrichment score", "Ranked metric"]);
-        expect([yAxes[0].nameRotate, yAxes[2].nameRotate]).toEqual([90, 90]);
+        expect([yAxes[0]?.name, yAxes[2]?.name]).toEqual(["Enrichment score", "Ranked metric"]);
+        expect([yAxes[0]?.nameRotate, yAxes[2]?.nameRotate]).toEqual([90, 90]);
     });
 
     it("titles an axis with the declared label of its column before the title of the figure", () => {
@@ -203,9 +212,9 @@ describe("the gsea figure", () => {
             },
         });
         const option = derive(SMALL, labeled);
-        expect(list(option, "yAxis")[2].name).toBe("Wald statistic");
-        expect(list(option, "xAxis")[2].name).toBe("Gene rank");
-        expect(panelSeries(option, 2)[0].name).toBe("Wald statistic");
+        expect(list(option, "yAxis")[2]?.name).toBe("Wald statistic");
+        expect(list(option, "xAxis")[2]?.name).toBe("Gene rank");
+        expect(panelSeries(option, 2)[0]?.name).toBe("Wald statistic");
     });
 
     it("names each set in the legend with a line icon, and draws no legend for one set", () => {
@@ -214,7 +223,7 @@ describe("the gsea figure", () => {
         const single = derive(gseaRows(200, [{ name: "one", hits: [3, 7, 11] }]), block({ x: "rank", y: "running_es", hit: "hit", metric: "ranked_metric" }));
         expect(single.legend).toEqual({ show: false });
         expect(panelSeries(single, 0)).toHaveLength(1);
-        expect(list(single, "yAxis")[1].max).toBe(1);
+        expect(list(single, "yAxis")[1]?.max).toBe(1);
     });
 
     it("prints the statistics inside the top panel, at the top right for a set that peaks above zero", () => {
@@ -225,11 +234,14 @@ describe("the gsea figure", () => {
             ],
         });
         const [text] = list(option, "graphic");
+        if (text === undefined) throw new Error("the option holds no statistic text");
         const style = text.style as EchartOption;
         expect(style.text).toBe(`NES = ${statisticText(2.224448, "NES")}\nFDR = ${statisticText(0.00162, "fdr")}`);
         expect(style.text).toBe("NES = 2.22\nFDR = 1.6 × 10⁻³");
         expect(style.align).toBe("right");
-        const top = place(list(option, "grid")[0]);
+        const topGrid = list(option, "grid")[0];
+        if (topGrid === undefined) throw new Error("the option holds no top grid");
+        const top = place(topGrid);
         const offset = Number.parseFloat(String(text.top));
         expect(offset).toBeGreaterThan(top.top);
         expect(offset).toBeLessThan(top.top + top.height / 2);
@@ -240,8 +252,11 @@ describe("the gsea figure", () => {
         const rows = gseaRows(1000, [{ name: "down", hits: [700, 800, 900, 950, 990, 995, 999, 1000] }]);
         const option = derive(rows, block(ENCODING, { statistics: [statistic("NES", "NES")] }), { statistics: [{ label: "NES", value: -1.9 }] });
         const [text] = list(option, "graphic");
+        if (text === undefined) throw new Error("the option holds no statistic text");
         expect((text.style as EchartOption).align).toBe("left");
-        const top = place(list(option, "grid")[0]);
+        const topGrid = list(option, "grid")[0];
+        if (topGrid === undefined) throw new Error("the option holds no top grid");
+        const top = place(topGrid);
         const fromBottom = Number.parseFloat(String(text.bottom));
         expect(100 - fromBottom).toBeLessThan(top.top + top.height);
         expect(100 - fromBottom).toBeGreaterThan(top.top + top.height / 2);
@@ -260,24 +275,29 @@ describe("the gsea figure", () => {
         for (const [index, series] of panelSeries(option, 0).entries()) {
             const vertices = drawn(series);
             const kept = new Set(vertices.map((vertex) => vertex[0]));
-            for (const hit of sets[index].hits) {
+            const set = sets[index];
+            if (set === undefined) throw new Error("the rows hold no set");
+            for (const hit of set.hits) {
                 expect(kept.has(hit)).toBe(true);
                 // The rank before a hit is the foot of the rise, thus the line keeps it too.
                 expect(kept.has(hit - 1)).toBe(true);
             }
             expect(kept.has(1)).toBe(true);
             expect(kept.has(ranks)).toBe(true);
-            const own = rows.filter((row) => row.term === sets[index].name);
+            const own = rows.filter((row) => row.term === set.name);
             let peak = own[0];
+            if (peak === undefined) throw new Error("the set holds no row");
             for (const row of own) if (Math.abs(row.running_es as number) > Math.abs(peak.running_es as number)) peak = row;
             expect(kept.has(peak.rank as number)).toBe(true);
-            expect(vertices.length).toBeLessThanOrEqual(Math.ceil(ranks / stride) + 2 * sets[index].hits.length + 4);
+            expect(vertices.length).toBeLessThanOrEqual(Math.ceil(ranks / stride) + 2 * set.hits.length + 4);
             // Each kept vertex is a cell of the table.
-            for (const [rank, score] of vertices) expect(own[rank - 1].running_es).toBe(score);
+            for (const [rank, score] of vertices) expect(own[rank - 1]?.running_es).toBe(score);
         }
         const middle = panelSeries(option, 1);
         expect(middle.map((series) => drawn(series).length / 2)).toEqual(sets.map((set) => set.hits.length));
-        expect(drawn(panelSeries(option, 2)[0]).length).toBeLessThanOrEqual(Math.ceil(ranks / stride) + 4);
+        const thinned = panelSeries(option, 2)[0];
+        if (thinned === undefined) throw new Error("the option holds no metric series");
+        expect(drawn(thinned).length).toBeLessThanOrEqual(Math.ceil(ranks / stride) + 4);
     });
 
     it("stays under the export bound for three sets over the whole ranked list, thus the SVG draws", () => {
@@ -302,7 +322,10 @@ describe("the gsea figure", () => {
         // The reversed table meets the late set first, thus the late set draws first.
         const reversed = panelSeries(derive([...SMALL].reverse()), 0);
         expect(reversed.map((series) => series.name)).toEqual(["septate junction assembly", "cell-cell junction assembly (GO:0007043)"]);
-        expect(drawn(reversed[0])).toEqual(drawn(panelSeries(derive(SMALL), 0)[1]));
+        const reversedFirst = reversed[0];
+        const forwardSecond = panelSeries(derive(SMALL), 0)[1];
+        if (reversedFirst === undefined || forwardSecond === undefined) throw new Error("the panels hold no series");
+        expect(drawn(reversedFirst)).toEqual(drawn(forwardSecond));
     });
 });
 

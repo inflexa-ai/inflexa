@@ -18,7 +18,7 @@ function pageTwin(document?: unknown): {
     return new Function(
         "document",
         `${CHART_RENDERERS_SOURCE}\n${HYBRID_SVG_SOURCE}\nreturn { isPointLayer: reportIsPointLayer, millimeterRoot: reportMillimeterRoot, compose: reportComposeHybridSvg, vector: reportHybridVectorOption, raster: reportHybridRasterOption, box: reportPointLayerBox, hybrid: reportHybridSvg };`,
-    )(document) as ReturnType<typeof pageTwin>;
+    ).call(undefined, document) as ReturnType<typeof pageTwin>;
 }
 
 interface Box {
@@ -170,18 +170,17 @@ describe("the two draws of a hybrid SVG", () => {
         const input = denseOption();
         const vector = pageTwin().vector(input);
         const series = vector.series as Record<string, unknown>[];
-        expect(series[0].data).toEqual([
+        expect(series[0]?.data).toEqual([
             { value: ["300", 9], name: "rs2", label: { show: true, formatter: "{b}" } },
             { value: [100, 2], symbol: "none", label: { show: false } },
             { value: [300, 9], symbol: "none", label: { show: false } },
         ]);
-        expect(series[0].markLine).toEqual({ data: [{ yAxis: 7.3 }] });
+        expect(series[0]?.markLine).toEqual({ data: [{ yAxis: 7.3 }] });
         // A large layer draws each item alike, thus the vector draw turns the large path off and the anchors draw no symbol.
-        expect(series[1]).toEqual(
-            expect.objectContaining({ large: false, data: [expect.objectContaining({ value: [500, 1] }), expect.objectContaining({ value: [900, 4] })] }),
-        );
+        expect(series[1]).toMatchObject({ large: false, data: [{ value: [500, 1] }, { value: [900, 4] }] });
         // A name series is no point layer, thus the vector draw keeps it as it is.
-        expect((input.series as unknown[])[2]!).toBe(series[2]);
+        const nameSeries = (input.series as unknown[])[2];
+        expect(nameSeries).toBe(series[2]);
         expect(vector.graphic).toBe(input.graphic);
     });
 
@@ -195,7 +194,8 @@ describe("the two draws of a hybrid SVG", () => {
         const series = raster.series as Record<string, unknown>[];
         expect(series.map((entry) => (entry.data as unknown[]).length)).toEqual([2, 2, 0]);
         // The labeled row draws its point in the raster, and its name draws in the vector file alone.
-        expect((series[0].data as Record<string, unknown>[])[1]).toEqual({ value: ["300", 9], name: "rs2" });
+        const firstData = series[0]?.data;
+        expect((firstData as Record<string, unknown>[])[1]).toEqual({ value: ["300", 9], name: "rs2" });
         for (const entry of series) {
             expect(entry.markLine).toBeUndefined();
             expect(entry.label).toEqual({ show: false });
@@ -357,7 +357,7 @@ describe("the reach of the point layer past its grid", () => {
                     ],
                 },
             ],
-            ...(visualMap !== undefined ? { visualMap } : {}),
+            visualMap,
         };
     }
 
@@ -395,7 +395,7 @@ describe("the page build of a hybrid SVG", () => {
         echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
         const size = CHART_EXPORT_SIZES.single;
         const raster: { init?: Record<string, unknown>; option?: Record<string, unknown>; ratio?: number } = {};
-        const drawn: number[][] = [];
+        const drawn: Array<[number, number, number, number]> = [];
         const runtime = {
             init: (dom: unknown, theme: string, opts: Record<string, unknown>) => {
                 if (opts.renderer === "svg") return echarts.init(null, theme, opts as { renderer: "svg"; ssr: true; width: number; height: number });
@@ -418,7 +418,7 @@ describe("the page build of a hybrid SVG", () => {
                     ? {
                           width: 0,
                           height: 0,
-                          getContext: () => ({ drawImage: (...args: unknown[]) => drawn.push(args.slice(1) as number[]) }),
+                          getContext: () => ({ drawImage: (...args: unknown[]) => drawn.push(args.slice(1) as [number, number, number, number]) }),
                           toDataURL: () => "data:image/png;base64,AAAA",
                       }
                     : {},
@@ -442,15 +442,19 @@ describe("the page build of a hybrid SVG", () => {
         expect(text).toMatch(/<text[^>]*>Chromosome<\/text>/);
         expect(text).toMatch(/<text[^>]*>rs2<\/text>/);
         // The raster draws at 300 DPI in the print theme, and the crop reads the grid rectangle at that ratio.
-        expect(raster.init).toEqual(
-            expect.objectContaining({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 }),
-        );
+        expect(raster.init).toMatchObject({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 });
         if (raster.ratio === undefined) throw new Error("expected a raster ratio");
         expect(raster.ratio).toBe(300 / 96);
-        const [sx, sy, sw, sh] = drawn[0];
+        const crop = drawn[0];
+        if (crop === undefined) throw new Error("the raster holds no drawn image");
+        const [sx, sy, sw, sh] = crop;
         const image = /<image [^>]*x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(text);
-        expect(image).not.toBeNull();
-        const [ix, iy, iw, ih] = (image ?? []).slice(1).map(Number);
+        if (image === null) throw new Error("the raster holds no image element");
+        const pixels = image.slice(1).map(Number);
+        const ix = pixels[0] ?? Number.NaN;
+        const iy = pixels[1] ?? Number.NaN;
+        const iw = pixels[2] ?? Number.NaN;
+        const ih = pixels[3] ?? Number.NaN;
         expect([sx / raster.ratio, sy / raster.ratio, sw / raster.ratio, sh / raster.ratio].map((v) => Math.round(v))).toEqual(
             [ix, iy, iw, ih].map((v) => Math.round(v)),
         );
@@ -458,6 +462,7 @@ describe("the page build of a hybrid SVG", () => {
         // stands. The image reaches two pixels past the grid, the half of the symbol of 3 pixels rounded up.
         const grids = raster.option?.grid as Record<string, unknown>[];
         const grid = grids[0];
+        if (grid === undefined) throw new Error("the raster holds no grid");
         expect([grid.left, grid.top].map((v) => Math.round(Number(v)))).toEqual([Math.round(ix) + 2, Math.round(iy) + 2]);
         const xAxis = raster.option?.xAxis as Record<string, unknown>;
         expect(xAxis.show).toBe(false);

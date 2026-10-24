@@ -60,6 +60,20 @@ import { DOWNLOAD_CONTROL_LABEL, HYBRID_FAULT_NOTE } from "../views/chart-view.j
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "../views/values.js";
 
 /**
+ * Run compiled page source against the declared `window` global. `new Function`
+ * yields `Function`, which carries no call signature, so the invocation goes
+ * through `call`.
+ */
+function runWindowScript(script: string, window: Record<string, unknown>): void {
+    new Function("window", script).call(undefined, window);
+}
+
+/** Run the chart page bootstrap against the doubles that stand in for the browser globals. */
+function runChartBootstrap(window: Record<string, unknown>, doc: object, echarts: object, pageConsole: { error: (line: string) => void }): void {
+    new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP).call(undefined, window, doc, echarts, pageConsole);
+}
+
+/**
  * The site of the navigation brand. It is the one reference of the page that names a remote host.
  *
  * A brand link is a navigation, and a navigation costs no request. Thus the page still opens with no
@@ -109,7 +123,7 @@ function srcsetCandidates(list: string): string[] {
 function attributeReferences(html: string): string[] {
     const references: string[] = [];
     for (const match of html.matchAll(/\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-        const value = match[2] ?? match[3];
+        const value = match[2] ?? match[3] ?? "";
         if (match[1] === "srcset") references.push(...srcsetCandidates(value));
         else references.push(value);
     }
@@ -147,21 +161,28 @@ function referenceSites(html: string, value: string): string[] {
 function styleReferences(css: string): string[] {
     const references: string[] = [];
     for (const match of css.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g)) {
-        references.push(match[1] ?? match[2] ?? match[3]);
+        references.push(match[1] ?? match[2] ?? match[3] ?? "");
     }
     for (const match of css.matchAll(/@import\s+(?:"([^"]*)"|'([^']*)')/g)) {
-        references.push(match[1] ?? match[2]);
+        references.push(match[1] ?? match[2] ?? "");
     }
     // One declaration ends at its semicolon, thus the scan of a list stops there. A comma divides the
     // candidates, and each candidate leads with its quoted source. Thus a `type(...)` hint inside a
     // candidate never reads as a source of its own.
     for (const list of css.matchAll(/image-set\(([^;]*)/g)) {
-        for (const candidate of list[1].split(",")) {
+        for (const candidate of (list[1] ?? "").split(",")) {
             const quoted = /^\s*(?:"([^"]*)"|'([^']*)')/.exec(candidate);
-            if (quoted !== null) references.push(quoted[1] ?? quoted[2]);
+            if (quoted !== null) references.push(quoted[1] ?? quoted[2] ?? "");
         }
     }
     return references;
+}
+
+/** The one data asset of a render, narrowed for the byte and name reads of these tests. */
+function firstDataAsset<T extends { name: string; bytes: string }>(assets: readonly T[]): T {
+    const asset = assets[0];
+    if (asset === undefined) throw new Error("the render staged no data asset");
+    return asset;
 }
 
 /** Each table binding of a block tree, in document order. The sidecar of a card names its pinned artifact. */
@@ -307,14 +328,18 @@ describe("the table data assets", () => {
      * The asset is browser source text, thus a read of the source string would test the serialization and
      * not the value that a reader takes. `decode` runs the page decoder over the payload as well.
      */
-    function registeredPayload(asset: { bytes: string }, decode = false): { columns: string[]; rows: unknown[]; dict: Record<string, string[]> } {
+    function registeredPayload(assets: readonly { bytes: string }[], decode = false): { columns: string[]; rows: unknown[]; dict: Record<string, string[]> } {
+        const asset = assets[0];
+        if (asset === undefined) throw new Error("the render staged no data asset");
         const window: Record<string, unknown> = {};
-        new Function("window", asset.bytes)(window);
+        runWindowScript(asset.bytes, window);
         if (decode) {
-            new Function("window", TABLE_DATA_DECODER)(window);
+            runWindowScript(TABLE_DATA_DECODER, window);
         }
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { columns: string[]; rows: unknown[]; dict: Record<string, string[]> }>;
-        return registry["tbl"];
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { columns: string[]; rows: unknown[]; dict: Record<string, string[]> } | undefined>;
+        const payload = registry["tbl"];
+        if (payload === undefined) throw new Error("the table payload did not register");
+        return payload;
     }
 
     it("holds one empty grid mount, and the payload holds every row", async () => {
@@ -325,25 +350,25 @@ describe("the table data assets", () => {
         expect(page(`[${GRID_MOUNT_ATTRIBUTE}]`).text()).toBe("");
         expect(rendered.dataAssets.length).toBe(1);
 
-        const payload = registeredPayload(rendered.dataAssets[0]);
+        const payload = registeredPayload(rendered.dataAssets);
         expect(payload.columns).toEqual(["gene", "padj", "direction"]);
         expect(payload.rows.length).toBe(14201);
     });
 
     it("carries the display of each column beside the rows", async () => {
         const rendered = (await renderReportPage(tableDocument(), valuesOf(3)))._unsafeUnwrap();
-        const payload = registeredPayload(rendered.dataAssets[0]) as unknown as { display: { label: string; kind: string; bound?: number }[] };
+        const payload = registeredPayload(rendered.dataAssets) as unknown as { display: { label: string; kind: string; bound?: number }[] };
 
         // The server resolves the label, the kind, and the bound one time for each column. Thus the page
         // formats each cell with no read of a declaration.
         expect(payload.display.map((entry) => entry.kind)).toEqual(["compact-scientific", "scientific", "compact-scientific"]);
         expect(payload.display.map((entry) => entry.label)).toEqual(["gene", "padj", "direction"]);
-        expect(payload.display[1].bound).toBe(1 / 3);
+        expect(payload.display[1]?.bound).toBe(1 / 3);
     });
 
     it("compresses a repeated category into the dictionary of its column", async () => {
         const rendered = (await renderReportPage(tableDocument(), valuesOf(100)))._unsafeUnwrap();
-        const payload = registeredPayload(rendered.dataAssets[0]);
+        const payload = registeredPayload(rendered.dataAssets);
 
         // The direction column holds two values across one hundred rows, thus the payload names each one
         // time and each row holds its index.
@@ -362,7 +387,7 @@ describe("the table data assets", () => {
 
     it("references each asset from a classic script tag, and decodes after the last of them", async () => {
         const rendered = (await renderReportPage(tableDocument(), valuesOf(3)))._unsafeUnwrap();
-        const source = `${ASSETS_DIR}/${rendered.dataAssets[0].name}`;
+        const source = `${ASSETS_DIR}/${firstDataAsset(rendered.dataAssets).name}`;
 
         // A `fetch` is refused on a `file://` page. A classic script loads on any page, thus the data
         // reaches the reader through a script tag and never through a request.
@@ -377,17 +402,17 @@ describe("the table data assets", () => {
 
         // The asset is browser source text. It arrives as a classic script, thus the global is the whole
         // interface between the payload and the decoder.
-        new Function("window", rendered.dataAssets[0].bytes)(window);
-        new Function("window", TABLE_DATA_DECODER)(window);
+        runWindowScript(firstDataAsset(rendered.dataAssets).bytes, window);
+        runWindowScript(TABLE_DATA_DECODER, window);
 
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
-        expect(registry["tbl"].rows.length).toBe(4);
-        expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
-        expect(registry["tbl"].rows[1]).toEqual({ gene: "G1", padj: 0.25, direction: "down" });
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] } | undefined>;
+        expect(registry["tbl"]?.rows.length).toBe(4);
+        expect(registry["tbl"]?.rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
+        expect(registry["tbl"]?.rows[1]).toEqual({ gene: "G1", padj: 0.25, direction: "down" });
 
         // A second run finds the decoded rows and leaves them, thus a late script pays the decode one time.
-        new Function("window", TABLE_DATA_DECODER)(window);
-        expect(registry["tbl"].rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
+        runWindowScript(TABLE_DATA_DECODER, window);
+        expect(registry["tbl"]?.rows[0]).toEqual({ gene: "G0", padj: 0, direction: "up" });
     });
 
     it("decodes a column that names a prototype member as an ordinary column", async () => {
@@ -402,17 +427,18 @@ describe("the table data assets", () => {
         const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
 
-        new Function("window", rendered.dataAssets[0].bytes)(window);
-        new Function("window", TABLE_DATA_DECODER)(window);
+        runWindowScript(firstDataAsset(rendered.dataAssets).bytes, window);
+        runWindowScript(TABLE_DATA_DECODER, window);
 
         // A column name is authored text. An object literal would send `__proto__` to the prototype, and a
         // plain record would read `constructor` off the prototype instead of the dictionary of the column.
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
-        const first = registry["tbl"].rows[0];
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] } | undefined>;
+        const first = registry["tbl"]?.rows[0];
+        if (first === undefined) throw new Error("the page registered no first row");
         expect(Object.hasOwn(first, "__proto__")).toBe(true);
         expect(first["__proto__"]).toBe("left");
         expect(first["constructor"]).toBe("up");
-        expect(registry["tbl"].rows[1]["constructor"]).toBe("up");
+        expect(registry["tbl"]?.rows[1]?.["constructor"]).toBe("up");
     });
 
     it("omits a column that a ragged row does not hold, thus no key reads as an empty value", async () => {
@@ -421,11 +447,11 @@ describe("the table data assets", () => {
         const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
 
-        new Function("window", rendered.dataAssets[0].bytes)(window);
-        new Function("window", TABLE_DATA_DECODER)(window);
+        runWindowScript(firstDataAsset(rendered.dataAssets).bytes, window);
+        runWindowScript(TABLE_DATA_DECODER, window);
 
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] }>;
-        expect(registry["tbl"].rows[1]).toEqual({ gene: "MYC" });
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[] } | undefined>;
+        expect(registry["tbl"]?.rows[1]).toEqual({ gene: "MYC" });
     });
 
     it("links the staged raw bytes of the artifact as the download of the card", async () => {
@@ -481,6 +507,13 @@ describe("the provenance data assets", () => {
         return assets.filter((asset) => asset.name.startsWith("prov-"));
     }
 
+    /** The provenance asset at a load position, which the provenance export the test passed stages. */
+    function provenanceAt(assets: readonly { name: string; bytes: string }[], position: number): { name: string; bytes: string } {
+        const asset = assets[position];
+        if (asset === undefined) throw new Error("the page staged no provenance asset at that position");
+        return asset;
+    }
+
     /**
      * Run the provenance assets as the page runs them, and give back the registered global.
      *
@@ -490,7 +523,7 @@ describe("the provenance data assets", () => {
     function registeredProvenance(assets: readonly { name: string; bytes: string }[]): { document?: string; attestation?: string } {
         const window: Record<string, unknown> = {};
         for (const asset of provenanceAssets(assets)) {
-            new Function("window", asset.bytes)(window);
+            runWindowScript(asset.bytes, window);
         }
         return (window[REPORT_PROVENANCE_GLOBAL] ?? {}) as { document?: string; attestation?: string };
     }
@@ -512,7 +545,8 @@ describe("the provenance data assets", () => {
         const first = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } }))._unsafeUnwrap();
         const second = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: DOCUMENT, attestation: ATTESTATION } }))._unsafeUnwrap();
 
-        const [documentAsset, attestationAsset] = provenanceAssets(first.dataAssets);
+        const documentAsset = provenanceAt(provenanceAssets(first.dataAssets), 0);
+        const attestationAsset = provenanceAt(provenanceAssets(first.dataAssets), 1);
         expect(documentAsset.name).toMatch(/^prov-[0-9a-f]{12}\.data\.js$/);
         expect(attestationAsset.name).toMatch(/^prov-[0-9a-f]{12}\.sig\.data\.js$/);
         expect(second.dataAssets).toEqual(first.dataAssets);
@@ -529,8 +563,10 @@ describe("the provenance data assets", () => {
 
         // The name carries the hash of the bytes, thus a changed document lands under a new name and the
         // sweep of the stage removes the name that the page does not reference any more.
-        expect(provenanceAssets(changed.dataAssets)[0].name).not.toBe(provenanceAssets(first.dataAssets)[0].name);
-        expect(provenanceAssets(changed.dataAssets)[1].name).toBe(provenanceAssets(first.dataAssets)[1].name);
+        const changedAssets = provenanceAssets(changed.dataAssets);
+        const firstAssets = provenanceAssets(first.dataAssets);
+        expect(provenanceAt(changedAssets, 0).name).not.toBe(provenanceAt(firstAssets, 0).name);
+        expect(provenanceAt(changedAssets, 1).name).toBe(provenanceAt(firstAssets, 1).name);
     });
 
     it("references each asset from a classic script tag, before the table assets and every bootstrap", async () => {
@@ -539,7 +575,8 @@ describe("the provenance data assets", () => {
                 provenance: { document: DOCUMENT, attestation: ATTESTATION },
             })
         )._unsafeUnwrap();
-        const [documentAsset, attestationAsset] = provenanceAssets(rendered.dataAssets);
+        const documentAsset = provenanceAt(provenanceAssets(rendered.dataAssets), 0);
+        const attestationAsset = provenanceAt(provenanceAssets(rendered.dataAssets), 1);
         const tableAsset = rendered.dataAssets.find((asset) => asset.name.startsWith("t-"));
 
         // A `fetch` is refused on a `file://` page, thus the document reaches the reader through a script tag
@@ -569,7 +606,7 @@ describe("the provenance data assets", () => {
         const rendered = (await renderReportPage(pageDocument(), pageValues, { provenance: { document: hostile } }))._unsafeUnwrap();
 
         // The text rides as a JSON string, thus a `</script` sequence inside it cannot close the element.
-        expect(provenanceAssets(rendered.dataAssets)[0].bytes).not.toContain("</script");
+        expect(provenanceAt(provenanceAssets(rendered.dataAssets), 0).bytes).not.toContain("</script");
         expect(registeredProvenance(rendered.dataAssets).document).toBe(hostile);
     });
 
@@ -1294,8 +1331,8 @@ describe("renderReportPage metric grouping", () => {
     it("reports the missing value of one metric inside a run", async () => {
         const problems = (await renderReportPage(await pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m3")))._unsafeUnwrapErr();
         expect(problems.length).toBe(1);
-        expect(problems[0].kind).toBe("missing-value");
-        expect(problems[0].blockId).toBe("m2");
+        expect(problems[0]?.kind).toBe("missing-value");
+        expect(problems[0]?.blockId).toBe("m2");
     });
 });
 
@@ -1308,8 +1345,8 @@ describe("renderReportPage value validation", () => {
         // `_unsafeUnwrapErr` throws on an ok result, thus the direct chain asserts the err case and no HTML.
         const problems = (await renderReportPage(document, {}))._unsafeUnwrapErr();
         expect(problems.length).toBe(1);
-        expect(problems[0].kind).toBe("missing-value");
-        expect(problems[0].blockId).toBe("m1");
+        expect(problems[0]?.kind).toBe("missing-value");
+        expect(problems[0]?.blockId).toBe("m1");
     });
 
     it("reports a wrong shape when a chart gets a scalar", async () => {
@@ -1334,10 +1371,10 @@ describe("renderReportPage value validation", () => {
         };
         const problems = (await renderReportPage(document, { c1: { type: "scalar", value: 1 } }))._unsafeUnwrapErr();
         expect(problems.length).toBe(1);
-        expect(problems[0].kind).toBe("wrong-shape");
-        expect(problems[0].blockId).toBe("c1");
+        expect(problems[0]?.kind).toBe("wrong-shape");
+        expect(problems[0]?.blockId).toBe("c1");
         // The detail names the expected shape.
-        expect(problems[0].detail).toContain("table");
+        expect(problems[0]?.detail).toContain("table");
     });
 
     it("collects both problems when two entries are absent", async () => {
@@ -1739,8 +1776,8 @@ describe("the References appendix", () => {
     });
 
     it("reads quieter than the body of the report", () => {
-        const itemRules = [...DESIGN_CSS.matchAll(/\.report-ref-item\s*\{([^}]*)\}/g)].map((match) => match[1]);
-        const sizes = itemRules.flatMap((body) => [...body.matchAll(/font-size:\s*(\d+)px/g)].map((match) => Number(match[1])));
+        const itemRules = [...DESIGN_CSS.matchAll(/\.report-ref-item\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
+        const sizes = itemRules.flatMap((body) => [...body.matchAll(/font-size:\s*(\d+)px/g)].map((match) => Number(match[1] ?? "")));
         expect(sizes.length).toBeGreaterThan(0);
         // The body reads at 16px. A reader consults one entry of the appendix from a marker, thus the
         // appendix reads smaller than the text that sent the reader to it.
@@ -1868,7 +1905,7 @@ describe("the evidentiary bindings in the appendix", () => {
         // The option prints each statistic in the number format of its column.
         const option = JSON.parse(page(".report-chart script[type='application/json']").text()) as Record<string, unknown>;
         const graphic = (option.graphic as Array<{ style: { text: string } }>)[0];
-        expect(graphic.style.text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
+        expect(graphic?.style.text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
     });
 
     it("marks the tree of each axis of a chart after its binding, and lists each one in the appendix", async () => {
@@ -2037,13 +2074,14 @@ describe("the section scrollspy", () => {
                   return { observe: () => undefined };
               }
             : undefined;
-        new Function("document", "IntersectionObserver", SECTION_SPY)(doc, observer);
+        new Function("document", "IntersectionObserver", SECTION_SPY).call(undefined, doc, observer);
         return {
             active: () => links.filter((link) => link.classes.has(ACTIVE_CLASS)).map((link) => link.getAttribute()),
-            intersect: (visible: boolean[]) => callback?.(sections.map((target, index) => ({ target, isIntersecting: visible[index] }))),
+            intersect: (visible: boolean[]) => callback?.(sections.map((target, index) => ({ target, isIntersecting: visible[index] ?? false }))),
             place: (next: number[]) => {
-                for (let index = 0; index < sections.length; index++) {
-                    sections[index].box.top = next[index];
+                for (const [index, section] of sections.entries()) {
+                    const top = next[index];
+                    if (top !== undefined) section.box.top = top;
                 }
             },
             rootMargin,
@@ -2349,7 +2387,7 @@ describe("the grid boot", () => {
                 errors.push(message);
             },
         };
-        new Function("window", "document", "agGrid", "console", GRID_BOOTSTRAP)(window, document, agGrid, console);
+        new Function("window", "document", "agGrid", "console", GRID_BOOTSTRAP).call(undefined, window, document, agGrid, console);
         return {
             created,
             grids,
@@ -2366,6 +2404,27 @@ describe("the grid boot", () => {
                 }
             },
         };
+    }
+
+    /** The one grid that a boot over one payload built. */
+    function firstGrid(run: ReturnType<typeof boot>): { id: string; options: FakeOptions } {
+        const grid = run.created[0];
+        if (grid === undefined) throw new Error("the boot built no grid");
+        return grid;
+    }
+
+    /** The column def at a position of the one grid. */
+    function columnAt(run: ReturnType<typeof boot>, position: number): FakeColumn {
+        const column = firstGrid(run).options.columnDefs[position];
+        if (column === undefined) throw new Error("the grid holds no column at that position");
+        return column;
+    }
+
+    /** The mount at a position, which the boot made from the payloads or the given mount ids. */
+    function mountAt(run: ReturnType<typeof boot>, position: number): FakeMount {
+        const mount = run.mounts[position];
+        if (mount === undefined) throw new Error("the boot built no mount at that position");
+        return mount;
     }
 
     /** One table of two columns: a gene name and an adjusted p-value. */
@@ -2388,22 +2447,22 @@ describe("the grid boot", () => {
         const run = boot({ one: genePayload(2), two: genePayload(5) });
 
         expect(run.created.map((grid) => grid.id)).toEqual(["one", "two"]);
-        expect(run.created[1].options.rowData.length).toBe(5);
+        expect(run.created[1]?.options.rowData.length).toBe(5);
         // The client-side row model is the default, and it renders the visible slice alone. A page that
         // named another model would ask the page for rows that no page can give.
-        expect(run.created[0].options.rowModelType).toBeUndefined();
+        expect(firstGrid(run).options.rowModelType).toBeUndefined();
     });
 
     it("registers the community modules before it builds a grid", () => {
         const run = boot({ one: genePayload() });
 
         expect(run.registered.length).toBe(1);
-        expect(run.registered[0].length).toBe(1);
+        expect(run.registered[0]?.length).toBe(1);
     });
 
     it("names each column from the display and reads the own key of the row", () => {
         const payload = payloadOf(["p.value"], [{ label: "p value", kind: "scientific", filter: "number" }], [{ "p.value": 0.5 }]);
-        const column = boot({ one: payload }).created[0].options.columnDefs[0];
+        const column = columnAt(boot({ one: payload }), 0);
 
         expect(column.colId).toBe("p.value");
         expect(column.headerName).toBe("p value");
@@ -2414,50 +2473,54 @@ describe("the grid boot", () => {
     });
 
     it("puts the raw column name on the header hover where the label differs from it", () => {
-        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+        const run = boot({ one: genePayload() });
 
-        expect(columns[1].headerTooltip).toBe("padj");
+        expect(columnAt(run, 1).headerTooltip).toBe("padj");
         // A hover that repeats the header text tells a reader nothing, thus a plain header carries none.
-        expect(columns[0].headerTooltip).toBeUndefined();
+        expect(columnAt(run, 0).headerTooltip).toBeUndefined();
     });
 
     it("formats each cell under the kind of its column, as the server does", () => {
-        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+        const run = boot({ one: genePayload() });
+        const numeric = columnAt(run, 1);
+        const plain = columnAt(run, 0);
 
-        expect(columns[1].valueFormatter({ value: 0.0000427777663038 })).toBe(formatTableCell(0.0000427777663038, "scientific"));
-        expect(columns[1].valueFormatter({ value: 0.0000427777663038 })).toBe("4.3e-5");
+        expect(numeric.valueFormatter({ value: 0.0000427777663038 })).toBe(formatTableCell(0.0000427777663038, "scientific"));
+        expect(numeric.valueFormatter({ value: 0.0000427777663038 })).toBe("4.3e-5");
         // The bound of the column rides the display, thus a stored zero reads as a bound and never as a result.
-        expect(columns[1].valueFormatter({ value: 0 })).toBe("<1e-4");
-        expect(columns[0].valueFormatter({ value: 14201 })).toBe("14,201");
-        expect(columns[0].valueFormatter({ value: undefined })).toBe("");
+        expect(numeric.valueFormatter({ value: 0 })).toBe("<1e-4");
+        expect(plain.valueFormatter({ value: 14201 })).toBe("14,201");
+        expect(plain.valueFormatter({ value: undefined })).toBe("");
     });
 
     it("puts the raw value on the tooltip of a cell that the format changed", () => {
-        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+        const run = boot({ one: genePayload() });
+        const numeric = columnAt(run, 1);
+        const plain = columnAt(run, 0);
 
-        expect(columns[1].tooltipValueGetter({ value: 0.0000427777663038 })).toBe("0.0000427777663038");
-        expect(columns[1].tooltipValueGetter({ value: 0 })).toBe("0");
+        expect(numeric.tooltipValueGetter({ value: 0.0000427777663038 })).toBe("0.0000427777663038");
+        expect(numeric.tooltipValueGetter({ value: 0 })).toBe("0");
         // A cell whose shown text is its own raw text carries no tooltip.
-        expect(columns[0].tooltipValueGetter({ value: "up" })).toBe("");
-        expect(columns[0].tooltipValueGetter({ value: undefined })).toBe("");
+        expect(plain.tooltipValueGetter({ value: "up" })).toBe("");
+        expect(plain.tooltipValueGetter({ value: undefined })).toBe("");
     });
 
     it("trims a delimited name in the cell and keeps the whole name on the tooltip", () => {
         const name = "HALLMARK_HYPOXIA%MSigDB%M5891";
         const payload = payloadOf(["set"], [{ label: "set", kind: "compact-scientific", filter: "text" }], [{ set: name }]);
-        const column = boot({ one: payload }).created[0].options.columnDefs[0];
+        const column = columnAt(boot({ one: payload }), 0);
 
         expect(column.valueFormatter({ value: name })).toBe("HALLMARK_HYPOXIA");
         expect(column.tooltipValueGetter({ value: name })).toBe(name);
     });
 
     it("takes the filter of each column from the display", () => {
-        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+        const run = boot({ one: genePayload() });
 
         // A gene column holds names. A reader filters it by name, thus the number filter would leave the
         // column unfilterable.
-        expect(columns[0].filter).toBe("agTextColumnFilter");
-        expect(columns[1].filter).toBe("agNumberColumnFilter");
+        expect(columnAt(run, 0).filter).toBe("agTextColumnFilter");
+        expect(columnAt(run, 1).filter).toBe("agNumberColumnFilter");
     });
 
     it("parses the cell for a number filter, thus a column of numeric text compares as a number", () => {
@@ -2469,18 +2532,18 @@ describe("the grid boot", () => {
             ],
             [{ pmid: "31978945", gene: "TP53" }],
         );
-        const columns = boot({ one: payload }).created[0].options.columnDefs;
+        const run = boot({ one: payload });
 
-        expect(columns[0].filterValueGetter?.({ data: { pmid: "31978945" } })).toBe(31978945);
+        expect(columnAt(run, 0).filterValueGetter?.({ data: { pmid: "31978945" } })).toBe(31978945);
         // A cell that parses to no number matches no comparison of the filter.
-        expect(columns[0].filterValueGetter?.({ data: { pmid: "NA" } })).toBeNull();
-        expect(columns[0].filterValueGetter?.({})).toBeNull();
+        expect(columnAt(run, 0).filterValueGetter?.({ data: { pmid: "NA" } })).toBeNull();
+        expect(columnAt(run, 0).filterValueGetter?.({})).toBeNull();
         // A text column filters on the value itself, thus it carries no parse.
-        expect(columns[1].filterValueGetter).toBeUndefined();
+        expect(columnAt(run, 1).filterValueGetter).toBeUndefined();
     });
 
     it("sorts from the header and fits each column to the width of the grid", () => {
-        const defaults = boot({ one: genePayload() }).created[0].options.defaultColDef;
+        const defaults = firstGrid(boot({ one: genePayload() })).options.defaultColDef;
 
         // The per-column filters and the header sort are the one filter surface of a table.
         expect(defaults.sortable).toBe(true);
@@ -2492,16 +2555,16 @@ describe("the grid boot", () => {
         const run = boot({ one: genePayload() });
 
         expect(run.themeParams).toEqual([GRID_THEME_PARAMS]);
-        expect(run.created[0].options.theme).toEqual({ params: GRID_THEME_PARAMS });
+        expect(firstGrid(run).options.theme).toEqual({ params: GRID_THEME_PARAMS });
     });
 
     it("sizes the mount from the row count, up to the visible bound", () => {
         const short = boot({ one: genePayload(3) });
-        expect(short.mounts[0].style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + 3 * GRID_ROW_HEIGHT_PX}px`);
+        expect(mountAt(short, 0).style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + 3 * GRID_ROW_HEIGHT_PX}px`);
 
         const long = boot({ one: genePayload(GRID_VISIBLE_ROWS + 40) });
         // A long table scrolls inside its own viewport, thus the card never grows with the row count.
-        expect(long.mounts[0].style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + GRID_VISIBLE_ROWS * GRID_ROW_HEIGHT_PX}px`);
+        expect(mountAt(long, 0).style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + GRID_VISIBLE_ROWS * GRID_ROW_HEIGHT_PX}px`);
     });
 
     it("adds the horizontal scroll bar of a wide table to the mount, thus the bar covers no row", () => {
@@ -2509,30 +2572,30 @@ describe("the grid boot", () => {
 
         // A wide table scrolls sideways, and the grid takes the height of that bar out of the row space.
         const wide = boot({ one: genePayload(3) }, undefined, undefined, { offsetHeight: 15 });
-        expect(wide.mounts[0].style.height).toBe(`${rowSpace + 15}px`);
+        expect(mountAt(wide, 0).style.height).toBe(`${rowSpace + 15}px`);
 
         // An overlay bar lies over the rows and leaves the strip at zero, thus the mount keeps its height.
         const overlay = boot({ one: genePayload(3) }, undefined, undefined, { offsetHeight: 0 });
-        expect(overlay.mounts[0].style.height).toBe(`${rowSpace}px`);
+        expect(mountAt(overlay, 0).style.height).toBe(`${rowSpace}px`);
 
         // A table that fits carries no strip at all.
-        expect(boot({ one: genePayload(3) }).mounts[0].style.height).toBe(`${rowSpace}px`);
+        expect(mountAt(boot({ one: genePayload(3) }), 0).style.height).toBe(`${rowSpace}px`);
     });
 
     it("takes the print layout of the grid on a print and gives it back after one", () => {
         const run = boot({ one: genePayload(3) });
-        const height = run.mounts[0].style.height;
+        const height = mountAt(run, 0).style.height;
 
         run.fire("beforeprint");
         // The print layout lays every row out at once and it holds no scroll viewport, thus each row of the
         // print form reaches the paper. A table under the print bound prints whole and carries no note.
         expect(run.applied).toEqual([{ option: "domLayout", value: "print" }]);
-        expect(run.mounts[0].style.height).toBe("auto");
-        expect(run.notes[0].textContent).toBe("");
+        expect(mountAt(run, 0).style.height).toBe("auto");
+        expect(run.notes[0]?.textContent).toBe("");
 
         run.fire("afterprint");
         expect(run.applied[1]).toEqual({ option: "domLayout", value: "normal" });
-        expect(run.mounts[0].style.height).toBe(height);
+        expect(mountAt(run, 0).style.height).toBe(height);
     });
 
     it("bounds the print form of a long table and states the truncation on the card", () => {
@@ -2546,27 +2609,27 @@ describe("the grid boot", () => {
         expect(printed.option).toBe("rowData");
         expect(printed.value.length).toBe(GRID_PRINT_ROW_CAP);
         expect(run.applied[1]).toEqual({ option: "domLayout", value: "print" });
-        expect(run.notes[0].textContent).toBe("The print shows the first 1,000 of 1,201 rows. The full table rides the download.");
+        expect(run.notes[0]?.textContent).toBe("The print shows the first 1,000 of 1,201 rows. The full table rides the download.");
 
         run.fire("afterprint");
         expect(run.applied[2]).toEqual({ option: "domLayout", value: "normal" });
         expect((run.applied[3] as { option: string; value: unknown[] }).value.length).toBe(total);
         // The screen shows no note, thus the line lives for the print alone.
-        expect(run.notes[0].textContent).toBe("");
+        expect(run.notes[0]?.textContent).toBe("");
     });
 
     it("states the row count of the table on the card, and the shown count under a filter", () => {
         const run = boot({ one: genePayload(1201) });
 
         // The model event arrives with the rows, thus the card states the whole count before any filter.
-        expect(run.counts[0].textContent).toBe("1,201 rows");
+        expect(run.counts[0]?.textContent).toBe("1,201 rows");
 
-        run.grids[0].narrowTo(132);
+        run.grids[0]?.narrowTo(132);
         // A filter narrows the model. The status then reads what the grid shows against what it holds.
-        expect(run.counts[0].textContent).toBe("132 of 1,201 rows");
+        expect(run.counts[0]?.textContent).toBe("132 of 1,201 rows");
 
-        run.grids[0].narrowTo(1201);
-        expect(run.counts[0].textContent).toBe("1,201 rows");
+        run.grids[0]?.narrowTo(1201);
+        expect(run.counts[0]?.textContent).toBe("1,201 rows");
     });
 
     it("states the shown count against the pre-bound total of the artifact", () => {
@@ -2575,10 +2638,10 @@ describe("the grid boot", () => {
 
         // The rows of the card are the bound of the binding, and the total is the artifact. Thus the footer
         // never reads a cut table as the whole artifact.
-        expect(run.counts[0].textContent).toBe("10 of 14,201 rows");
+        expect(run.counts[0]?.textContent).toBe("10 of 14,201 rows");
 
-        run.grids[0].narrowTo(3);
-        expect(run.counts[0].textContent).toBe("3 of 14,201 rows");
+        run.grids[0]?.narrowTo(3);
+        expect(run.counts[0]?.textContent).toBe("3 of 14,201 rows");
     });
 
     it("skips a mount whose block the registry does not hold, and it throws nothing", () => {
@@ -2587,7 +2650,7 @@ describe("the grid boot", () => {
         expect(run.created.map((grid) => grid.id)).toEqual(["one"]);
         expect(run.errors).toEqual([]);
         // The mount of the absent block takes no height, thus its card shows its title and its download alone.
-        expect(run.mounts[1].style.height).toBe("");
+        expect(mountAt(run, 1).style.height).toBe("");
     });
 
     it("skips a payload that carries no display, and it throws nothing", () => {
@@ -2696,7 +2759,7 @@ describe("the chart bootstrap waits for each chart to finish", () => {
             registerCustomSeries: () => undefined,
         };
         const errors: string[] = [];
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        runChartBootstrap(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
         return { ready: () => win.__inflexaThemeReady === true, containers, charts, resize: () => onResize() };
     }
@@ -2708,9 +2771,9 @@ describe("the chart bootstrap waits for each chart to finish", () => {
             { width: 600, height: 400 },
         ]);
         expect(ready()).toBe(false);
-        charts[0].listeners.get("finished")?.();
+        charts[0]?.listeners.get("finished")?.();
         expect(ready()).toBe(false);
-        charts[1].listeners.get("finished")?.();
+        charts[1]?.listeners.get("finished")?.();
         expect(ready()).toBe(true);
     });
 
@@ -2719,19 +2782,23 @@ describe("the chart bootstrap waits for each chart to finish", () => {
         // the chunked render of a dense chart, and the capture would show its first chunk alone.
         const { charts, resize } = boot([{ width: 600, height: 400 }]);
         resize();
-        expect(charts[0].resized).toBe(0);
-        charts[0].width = 500;
+        expect(charts[0]?.resized).toBe(0);
+        const chart = charts[0];
+        if (chart === undefined) throw new Error("the boot built no chart");
+        chart.width = 500;
         resize();
-        expect(charts[0].resized).toBe(1);
+        expect(chart.resized).toBe(1);
     });
 
     it("draws no chart again at a zero size on a window resize", () => {
         // ECharts 6.1.0 throws `Cannot read properties of null (reading '0')` when a Sankey draws at a zero size
         // (apache/echarts#21706). A capture past the viewport can give a container a zero width for one resize.
         const { containers, charts, resize } = boot([{ width: 600, height: 400 }]);
-        containers[0].clientWidth = 0;
+        const container = containers[0];
+        if (container === undefined) throw new Error("the boot built no container");
+        container.clientWidth = 0;
         resize();
-        expect(charts[0].resized).toBe(0);
+        expect(charts[0]?.resized).toBe(0);
     });
 });
 
@@ -2760,7 +2827,7 @@ describe("the chart bootstrap under a broken chart", () => {
         const pageConsole = { error: (line: string) => errors.push(line) };
         // The bootstrap is browser source text. Each global arrives as a parameter, thus the fake console
         // of the page is the one that the script writes to.
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, pageConsole);
+        runChartBootstrap(win, doc, echarts, pageConsole);
         return { ready: win.__inflexaThemeReady === true, errors };
     }
 
@@ -2826,30 +2893,36 @@ describe("the chart bootstrap binds the toolbox", () => {
         const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
         const echarts = { init: () => instance, getInstanceByDom: () => instance, registerCustomSeries: () => undefined };
         const errors: string[] = [];
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        runChartBootstrap(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
         return { applied, listeners, chartEvents, layers };
     }
 
     it("attaches the zoom handler of the toolbox to the chart", () => {
-        expect(bootToolbox().chartEvents).toEqual(expect.arrayContaining(["datazoom", "restore"]));
+        const { chartEvents } = bootToolbox();
+        expect(chartEvents).toContain("datazoom");
+        expect(chartEvents).toContain("restore");
     });
 
     it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
         const { applied } = bootToolbox();
-        const feature = (applied[0].toolbox as { feature: Record<string, Record<string, unknown>> }).feature;
-        expect(typeof feature.myExport.onclick).toBe("function");
-        expect((feature.myExport.onclick as { name: string }).name).toBe(EXPORT_MENU_FUNCTION);
-        expect((feature.dataView.optionToContent as { name: string }).name).toBe(DATA_VIEW_FUNCTION);
+        const option = applied[0];
+        if (option === undefined) throw new Error("the page set no option");
+        const feature = (option.toolbox as { feature: Record<string, Record<string, unknown>> }).feature;
+        const exportClick = feature.myExport?.onclick;
+        expect(typeof exportClick).toBe("function");
+        expect((exportClick as { name: string }).name).toBe(EXPORT_MENU_FUNCTION);
+        const optionToContent = feature.dataView?.optionToContent;
+        expect((optionToContent as { name: string }).name).toBe(DATA_VIEW_FUNCTION);
     });
 
     it("hides the canvas layer of the toolbox of each chart for the print, and shows it again after the print", () => {
         const { applied, listeners, layers } = bootToolbox();
-        listeners.beforeprint();
+        listeners.beforeprint?.();
         // A new option draws each series again, and a dense series then draws in chunks, thus the print sets no option.
         expect(applied.length).toBe(1);
         expect(layers.map((layer) => (layer.dom.style.visibility ?? undefined) as string | undefined)).toEqual([undefined, undefined, "hidden"]);
-        listeners.afterprint();
+        listeners.afterprint?.();
         expect(applied.length).toBe(1);
         expect(layers.map((layer) => (layer.dom.style.visibility ?? undefined) as string | undefined)).toEqual([undefined, undefined, ""]);
     });
@@ -2890,7 +2963,7 @@ describe("the chart bootstrap registers the named renderers", () => {
             },
         };
         const errors: string[] = [];
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        runChartBootstrap(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
         return { applied, win, calls, registered };
     }
@@ -2910,13 +2983,16 @@ describe("the chart bootstrap registers the named renderers", () => {
         expect(typeof registered.get("interval")).toBe("function");
         expect(typeof registered.get("outline")).toBe("function");
         // The runtime finds each function by the name, thus the set option keeps the names as strings.
-        const series = applied[0].series as Record<string, unknown>[];
+        const set = applied[0];
+        if (set === undefined) throw new Error("the bootstrap set no option");
+        const series = set.series as Record<string, unknown>[];
         expect(series.map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
     });
 
     it("keeps the option of each chart by its block id, with the renderer names as data", () => {
         const { win } = bootOne(option);
         const kept = (win[CHART_OPTIONS_GLOBAL] as Record<string, Record<string, unknown>>)["violin-1"];
+        if (kept === undefined) throw new Error("the bootstrap kept no option for the chart");
         // The export draws the chart again from this option, thus it stays plain data and names each renderer.
         expect((kept.series as Record<string, unknown>[]).map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
     });
@@ -2956,12 +3032,12 @@ describe("renderReportPage number format", () => {
         };
         const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
-        new Function("window", rendered.dataAssets[0].bytes)(window);
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: unknown[] }>;
+        runWindowScript(firstDataAsset(rendered.dataAssets).bytes, window);
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { rows: unknown[] } | undefined>;
 
         // The number format is presentation, and the payload is data. A rounded value in the asset would
         // put a shown form where a magnitude belongs.
-        expect(registry["tbl"].rows[0]).toEqual(["TP53", -3.089028528355109, 0.0000427777663038, "up"]);
+        expect(registry["tbl"]?.rows[0]).toEqual(["TP53", -3.089028528355109, 0.0000427777663038, "up"]);
         expect(load(rendered.html)(".data-table tbody td").length).toBe(0);
     });
 });
@@ -2969,7 +3045,7 @@ describe("renderReportPage number format", () => {
 describe("the stat card value style rule", () => {
     /** The declaration body of each `.stat-card-value` rule of a style sheet, with each comment removed. */
     function statValueRules(css: string): string[] {
-        return [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.stat-card-value\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        return [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.stat-card-value\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
     }
 
     it("guards the overflow of the value", () => {
@@ -3041,9 +3117,9 @@ describe("the shared chart payload", () => {
     function registryOf(assets: readonly { bytes: string }[]): Record<string, { rows: Record<string, string | number>[]; total: number }> {
         const window: Record<string, unknown> = {};
         for (const asset of assets) {
-            new Function("window", asset.bytes)(window);
+            runWindowScript(asset.bytes, window);
         }
-        new Function("window", TABLE_DATA_DECODER)(window);
+        runWindowScript(TABLE_DATA_DECODER, window);
         return window[TABLE_DATA_GLOBAL] as Record<string, { rows: Record<string, string | number>[]; total: number }>;
     }
 
@@ -3129,9 +3205,9 @@ describe("the shared chart payload", () => {
     function bootChart(assets: readonly { bytes: string }[], json: string): { data: unknown[] }[] {
         const win: Record<string, unknown> = { addEventListener: () => undefined };
         for (const asset of assets) {
-            new Function("window", asset.bytes)(win);
+            runWindowScript(asset.bytes, win);
         }
-        new Function("window", TABLE_DATA_DECODER)(win);
+        runWindowScript(TABLE_DATA_DECODER, win);
 
         const applied: Record<string, unknown>[] = [];
         const container = { getAttribute: () => "cht", nextElementSibling: { getAttribute: () => "application/json", textContent: json } };
@@ -3147,12 +3223,14 @@ describe("the shared chart payload", () => {
             registerCustomSeries: () => undefined,
         };
         const errors: string[] = [];
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        runChartBootstrap(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
         expect(applied.length).toBe(1);
         // The member of the data source leaves the option before the chart runtime reads it.
-        expect(applied[0][CHART_SOURCE_MEMBER]).toBeUndefined();
-        return asSeries(applied[0]);
+        const option = applied[0];
+        if (option === undefined) throw new Error("the bootstrap set no option");
+        expect(option[CHART_SOURCE_MEMBER]).toBeUndefined();
+        return asSeries(option);
     }
 
     /** The series list of one option. */
@@ -3168,7 +3246,7 @@ describe("the chart exports", () => {
     function chartPage(block: ChartBlock, rows: Record<string, string | number>[], columns?: string[]): { document: ReportDocument; values: RenderValues } {
         return {
             document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] },
-            values: { [block.id]: { type: "table", rows, ...(columns !== undefined ? { columns } : {}) } },
+            values: { [block.id]: { type: "table", rows, columns } },
         };
     }
 
@@ -3191,7 +3269,9 @@ describe("the chart exports", () => {
             expect($(`script[src="${ASSETS_DIR}/${asset.name}"]`).length).toBe(0);
         }
         // The download name of a link reads as the chart, and not as a hash.
-        expect($(`a[href="${ASSETS_DIR}/${svgs[0].name}"]`).attr("download")).toBe("pathway-scores-89mm.svg");
+        const [firstSvg] = svgs;
+        if (firstSvg === undefined) throw new Error("the render staged no SVG");
+        expect($(`a[href="${ASSETS_DIR}/${firstSvg.name}"]`).attr("download")).toBe("pathway-scores-89mm.svg");
     });
 
     it("gives the same names and the same bytes over two renders", async () => {
@@ -3273,7 +3353,7 @@ describe("the chart exports", () => {
         // The export reads the inline option, thus each point of the table is in the file. A dense scatter
         // draws one path, and each point is one move of it.
         const cloud = /<path d="([^"]{1000,})"/.exec(single?.bytes ?? "");
-        expect(cloud?.[1].match(/M/g)?.length).toBe(6000);
+        expect(cloud?.[1]?.match(/M/g)?.length).toBe(6000);
     });
 
     it("stages no SVG for a scatter past the crowd row count, and the menu names the hybrid SVG that the page builds", async () => {
@@ -3416,7 +3496,7 @@ describe("the PNG download of the page", () => {
         };
         const echarts = {
             init: (_dom: unknown, theme: unknown, opts: Record<string, unknown> | undefined) => {
-                init.push({ theme, ...(opts ?? {}) });
+                init.push({ theme, ...opts });
                 return {
                     on: (event: string, listener: () => void) => event === "finished" && listener(),
                     setOption: (given: Record<string, unknown>) => setOption.push(given),
@@ -3432,11 +3512,11 @@ describe("the PNG download of the page", () => {
         };
         const win: Record<string, unknown> = { addEventListener: () => undefined };
         const errors: string[] = [];
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        runChartBootstrap(win, doc, echarts, { error: (line: string) => errors.push(line) });
         const control = {
             getAttribute: (name: string) => ({ "data-export": kind, "data-chart": "chart-bars", "data-file": `bars-${kind}.png` })[name] ?? null,
         };
-        listeners.click({ target: { closest: (selector: string) => (selector === "[data-export], [data-hybrid]" ? control : null) } });
+        listeners.click?.({ target: { closest: (selector: string) => (selector === "[data-export], [data-hybrid]" ? control : null) } });
         expect(errors).toEqual([]);
         return { init: init.slice(1), setOption: setOption.slice(1), downloads, dataUrl };
     }
@@ -3445,12 +3525,16 @@ describe("the PNG download of the page", () => {
         const drawn = clickExport("single");
         expect(drawn.init).toEqual([{ theme: "inflexa-print", renderer: "canvas", width: 336, height: 253, devicePixelRatio: 3.125 }]);
         // 336 CSS pixels at a ratio of 3.125 is 1050 pixels, the width of one journal column at 300 DPI.
-        expect(336 * (drawn.init[0].devicePixelRatio as number)).toBe(1050);
+        const offscreen = drawn.init[0];
+        if (offscreen === undefined) throw new Error("the page drew no offscreen chart");
+        expect(336 * (offscreen.devicePixelRatio as number)).toBe(1050);
         expect(drawn.dataUrl).toEqual([{ type: "png", pixelRatio: 3.125, backgroundColor: "#ffffff" }]);
-        expect(drawn.setOption[0].tooltip).toBeUndefined();
-        expect(drawn.setOption[0].animation).toBe(false);
+        const printOption = drawn.setOption[0];
+        if (printOption === undefined) throw new Error("the page set no print option");
+        expect(printOption.tooltip).toBeUndefined();
+        expect(printOption.animation).toBe(false);
         // The script reads the PNG in the same task, thus each series draws in one pass and no chunk waits for a later frame.
-        expect((drawn.setOption[0].series as Record<string, unknown>[]).map((entry) => entry.progressive)).toEqual([0]);
+        expect((printOption.series as Record<string, unknown>[]).map((entry) => entry.progressive)).toEqual([0]);
         expect(drawn.downloads).toEqual([{ href: "data:image/png;base64,AAAA", download: "bars-single.png" }]);
     });
 
@@ -3459,7 +3543,9 @@ describe("the PNG download of the page", () => {
         const slide = clickExport("slide");
         expect(slide.init[0]).toEqual({ theme: "inflexa-slide", renderer: "canvas", width: 1920, height: 1080, devicePixelRatio: 1 });
         // The slide text is twice the page text, thus the gap between the axis and its name doubles.
-        expect((slide.setOption[0].xAxis as Record<string, unknown>).nameGap as number).toBe(68);
+        const slideOption = slide.setOption[0];
+        if (slideOption === undefined) throw new Error("the page set no slide option");
+        expect((slideOption.xAxis as Record<string, unknown>).nameGap as number).toBe(68);
     });
 
     it("draws nothing for a control that names no kept chart or no size", () => {
@@ -3541,13 +3627,13 @@ describe("the hybrid SVG download of the page", () => {
             registerCustomSeries: () => undefined,
         };
         const errors: string[] = [];
-        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)({ addEventListener: () => undefined }, doc, echarts, {
+        runChartBootstrap({ addEventListener: () => undefined }, doc, echarts, {
             error: (line: string) => errors.push(line),
         });
 
-        listeners.click({ target: control });
+        listeners.click?.({ target: control });
         expect(classes.has(MENU_OPEN_CLASS)).toBe(true);
-        listeners.click({ target: entry });
+        listeners.click?.({ target: entry });
         // The reader sees why the entry gave no file, and the menu stays open with the PNG entries.
         expect(downloads).toEqual([]);
         expect(classes.has(MENU_OPEN_CLASS)).toBe(true);
@@ -3584,11 +3670,13 @@ describe("the pre-bound total of a table", () => {
         const page = boundedPage();
         const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
-        new Function("window", rendered.dataAssets[0].bytes)(window);
+        runWindowScript(firstDataAsset(rendered.dataAssets).bytes, window);
 
-        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { total: number; rows: unknown[] }>;
-        expect(registry["tbl"].total).toBe(14201);
-        expect(registry["tbl"].rows.length).toBe(10);
+        const registry = window[TABLE_DATA_GLOBAL] as Record<string, { total: number; rows: unknown[] } | undefined>;
+        const payload = registry["tbl"];
+        if (payload === undefined) throw new Error("the page registered no table payload");
+        expect(payload.total).toBe(14201);
+        expect(payload.rows.length).toBe(10);
     });
 
     it("takes the row count as the total for a table that no bound cut", async () => {
@@ -3606,10 +3694,10 @@ describe("the pre-bound total of a table", () => {
         const values: RenderValues = { tbl: { type: "table", columns: ["gene"], rows: [{ gene: "TP53" }, { gene: "MYC" }] } };
         const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
         const window: Record<string, unknown> = {};
-        new Function("window", rendered.dataAssets[0].bytes)(window);
+        runWindowScript(firstDataAsset(rendered.dataAssets).bytes, window);
 
         // A whole table shows every row that it holds, thus the footer states the one count.
         expect(load(rendered.html)(`.${GRID_COUNT_CLASS}`).text()).toBe("2 rows");
-        expect((window[TABLE_DATA_GLOBAL] as Record<string, { total: number }>)["tbl"].total).toBe(2);
+        expect((window[TABLE_DATA_GLOBAL] as Record<string, { total: number } | undefined>)["tbl"]?.total).toBe(2);
     });
 });

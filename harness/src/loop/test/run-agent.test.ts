@@ -1641,7 +1641,10 @@ describe("runAgent — event provenance", () => {
             }),
         );
 
-        expect(events.map((e) => e.type)).toEqual(expect.arrayContaining(["iteration", "tool-started", "tool-finished"]));
+        const eventTypes = events.map((e) => e.type);
+        expect(eventTypes).toContain("iteration");
+        expect(eventTypes).toContain("tool-started");
+        expect(eventTypes).toContain("tool-finished");
         for (const event of events) {
             expect(event.source).toEqual({ agentId: "planner", callPath: ["conversation-agent", "planner"], invocationId: "tu-parent" });
         }
@@ -2485,7 +2488,10 @@ describe("runAgent — compaction", () => {
         expect(finish.reason).toBe("stop");
         // [user, assistant(call), tool, request, summary reply, marker, record, assistant(done)]
         expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "user", "assistant", "user", "user", "assistant"]);
-        expect(messages.slice(3, 5).map((message) => compactionExchangeOf(message))).toEqual([expect.any(String), expect.any(String)]);
+        const exchanges = messages.slice(3, 5).map((message) => compactionExchangeOf(message));
+        expect(exchanges).toHaveLength(2);
+        expect(exchanges[0]).toBeTypeOf("string");
+        expect(exchanges[1]).toBeTypeOf("string");
         expect(compactionMarkerOf(messages[5]!)).toMatchObject({ kind: "summary", id: compactionExchangeOf(messages[3]!) });
         expect(messages[5]!.content).toBe(`[Conversation Summary]\n${SUMMARY}`);
         expect(messages[6]).toEqual(RECORD);
@@ -2524,7 +2530,9 @@ describe("runAgent — compaction", () => {
         expect(exchange!.toolNames).toEqual(task!.toolNames);
         expect(exchange!.system).toEqual(task!.system);
         expect(JSON.stringify(exchange!.messages.slice(0, 3))).toBe(JSON.stringify(messages.slice(0, 3)));
-        expect(exchange!.messages.slice(3)).toEqual([expect.objectContaining({ role: "user", content: COMPACT })]);
+        const exchangeTail = exchange!.messages.slice(3);
+        expect(exchangeTail).toHaveLength(1);
+        expect(exchangeTail[0]).toMatchObject({ role: "user", content: COMPACT });
     });
 
     it("sends the marker and the records after a summary, and no message of the exchange", async () => {
@@ -2670,7 +2678,8 @@ describe("runAgent — compaction", () => {
         expect(markersOf(messages)).toEqual([]);
         const parts = compactionParts(events);
         expect(parts.map((part) => part.status)).toEqual(["running", "failed"]);
-        expect(parts[1]).toMatchObject({ id: parts[0]!.id, tokensBefore: OVER, durationMs: expect.any(Number) });
+        expect(parts[1]).toMatchObject({ id: parts[0]!.id, tokensBefore: OVER });
+        expect(parts[1]?.durationMs).toBeTypeOf("number");
         expect(parts[1]).not.toHaveProperty("tokensAfter");
         const error = logger.records.find(
             (record) => record.level === "error" && record.msg.includes("compaction gave no summary, thus the run compacts no more"),
@@ -2679,10 +2688,10 @@ describe("runAgent — compaction", () => {
             compactionId: parts[0]!.id,
             trigger: "mid-turn",
             tokensBefore: OVER,
-            durationMs: expect.any(Number),
             status: 400,
             providerError: refusal400.message,
         });
+        expect(error?.fields.durationMs).toBeTypeOf("number");
     });
 
     it.each<[string, ProviderError]>([
@@ -2824,7 +2833,8 @@ describe("runAgent — compaction", () => {
         expect(parts.map((event) => ("source" in event ? event.source?.callPath : undefined))).toEqual([["tui-chat"], ["tui-chat"]]);
         const [running, done] = compactionParts(events);
         expect(running).toMatchObject({ status: "running", tokensBefore: OVER });
-        expect(done).toMatchObject({ id: running!.id, status: "done", tokensBefore: OVER, durationMs: expect.any(Number) });
+        expect(done).toMatchObject({ id: running!.id, status: "done", tokensBefore: OVER });
+        expect(done?.durationMs).toBeTypeOf("number");
         expect(done).not.toHaveProperty("tokensAfter");
         expect(markerIn(messages)).toEqual({ kind: "summary", id: running!.id, tokensBefore: OVER, durationMs: done!.durationMs!, trigger: "mid-turn" });
         const exchangeEvents = events.filter((event) => event.type === "tool-started" && event.toolUseId === "tu-m");
@@ -2957,7 +2967,12 @@ describe("runAgent — compaction", () => {
             expect(markerAt).toBeGreaterThan(-1);
             expect(messages.indexOf(USER_MESSAGE)).toBeGreaterThan(markerAt);
             expect(messages).not.toContain(TURN[1]!);
-            expect(messages.slice(markerAt)).toEqual([messages[markerAt]!, RECORD, USER_MESSAGE, expect.objectContaining({ role: "assistant" })]);
+            const tail = messages.slice(markerAt);
+            expect(tail).toHaveLength(4);
+            expect(tail[0]).toEqual(messages[markerAt]!);
+            expect(tail[1]).toEqual(RECORD);
+            expect(tail[2]).toEqual(USER_MESSAGE);
+            expect(tail[3]).toMatchObject({ role: "assistant" });
         });
 
         it("gives the sink the exchange, then the marker with its records, then the user message, each as one round", async () => {

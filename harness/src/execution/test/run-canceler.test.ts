@@ -513,7 +513,7 @@ function recordingErrorLogger(): { logger: Logger; errors: Array<{ msg: string; 
         info: () => {},
         warn: () => {},
         error: (msg, fields) => {
-            errors.push({ msg, ...(fields ? { fields } : {}) });
+            errors.push({ msg, fields });
         },
         with: () => logger,
         named: () => logger,
@@ -688,7 +688,7 @@ describe("createRunCanceler run end record", () => {
                 runCharge: charge,
                 runAuthorizer: authorizer,
                 cancelWorkflows,
-                ...(provenance === undefined ? {} : { provenance }),
+                provenance,
             });
 
             const result = await canceler.cancel("run-1", session);

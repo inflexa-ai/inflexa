@@ -87,7 +87,8 @@ describe("the lollipop figure", () => {
             ALTERATION_CLASS_COLORS.Nonsense_Mutation,
             ALTERATION_CLASS_COLORS.Frame_Shift_Del,
         ]);
-        const missense = (stems[0].data as Array<{ value: number[] }>).map((item) => item.value);
+        const firstStem = stems[0]?.data;
+        const missense = (firstStem as Array<{ value: number[] }>).map((item) => item.value);
         // The largest count draws first, thus a smaller head at one position draws over the stem of a larger one.
         expect(missense).toEqual([
             [882, 19],
@@ -99,27 +100,27 @@ describe("the lollipop figure", () => {
 
     it("starts the count axis at zero with whole counts", () => {
         const counts = axisList(derive(), "yAxis")[0];
-        expect(counts).toEqual(expect.objectContaining({ type: "value", min: 0, minInterval: 1, name: "Mutations" }));
+        expect(counts).toMatchObject({ type: "value", min: 0, minInterval: 1, name: "Mutations" });
     });
 
     it("spans the x axis from zero to the length column of the track", () => {
         for (const axis of axisList(derive(), "xAxis")) {
-            expect(axis).toEqual(expect.objectContaining({ type: "value", min: 0, max: 912 }));
+            expect(axis).toMatchObject({ type: "value", min: 0, max: 912 });
         }
     });
 
     it("spans the x axis to the largest end or position where the track names no length", () => {
         const { length: _length, ...noLength } = TRACK;
         const option = derive(lollipop(ENCODING, { track: noLength }));
-        expect(axisList(option, "xAxis")[0]).toEqual(expect.objectContaining({ min: 0, max: 912 }));
+        expect(axisList(option, "xAxis")[0]).toMatchObject({ min: 0, max: 912 });
         const bare = derive(lollipop(ENCODING, {}), {});
-        expect(axisList(bare, "xAxis")[0]).toEqual(expect.objectContaining({ min: 0, max: 882 }));
+        expect(axisList(bare, "xAxis")[0]).toMatchObject({ min: 0, max: 882 });
     });
 
     it("spans the x axis past the length column to a position that passes it", () => {
         const isoform = { track: { rows: [{ start: 100, end: 400, name: "PWWP", protein_length: 600 }] } };
         for (const axis of axisList(derive(lollipop(), isoform), "xAxis")) {
-            expect(axis).toEqual(expect.objectContaining({ min: 0, max: 882 }));
+            expect(axis).toMatchObject({ min: 0, max: 882 });
         }
     });
 
@@ -138,12 +139,14 @@ describe("the lollipop figure", () => {
         const lanes = areas.slice(1).map(([from]) => from.yAxis as number);
         expect(lanes[0]).not.toBe(lanes[1]);
         expect(lanes[2]).toBe(lanes[0]);
-        expect(areas[3][0].name).toBe("SAM-dependent MTase C5-type");
-        expect((areas[3][0].label as EchartOption).formatter).toMatch(/^SAM-dependent/);
+        const sam = areas[3]?.[0];
+        expect(sam?.name).toBe("SAM-dependent MTase C5-type");
+        expect((sam?.label as EchartOption | undefined)?.formatter).toMatch(/^SAM-dependent/);
         // The band axis carries the position title, and the stem axis above it carries no tick label.
         const [stemAxis, bandAxis] = axisList(option, "xAxis");
-        expect(stemAxis.axisLabel).toEqual(expect.objectContaining({ show: false }));
-        expect(bandAxis).toEqual(expect.objectContaining({ gridIndex: 1, name: "Amino-acid position" }));
+        if (stemAxis === undefined || bandAxis === undefined) throw new Error("the lollipop holds two x axes");
+        expect(stemAxis.axisLabel).toMatchObject({ show: false });
+        expect(bandAxis).toMatchObject({ gridIndex: 1, name: "Amino-acid position" });
     });
 
     it("puts each span in the lowest lane whose last span ends before it starts, in the order of the spans", () => {
@@ -159,7 +162,7 @@ describe("the lollipop figure", () => {
         expect(labels[0]).toMatch(/^Interaction.*…$/);
         expect(labels[1]).toBe("PWWP");
         const tiny = derive(lollipop(), { track: { rows: [{ start: 591, end: 597, name: "Juxtamembrane", protein_length: 993 }] } });
-        expect((bandAreas(tiny)[1][0].label as EchartOption).show).toBe(false);
+        expect((bandAreas(tiny)[1]?.[0]?.label as EchartOption | undefined)?.show).toBe(false);
     });
 
     it("labels the three largest counts with the label column", () => {

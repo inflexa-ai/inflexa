@@ -58,7 +58,7 @@ class Semaphore {
                 reject: (error: Error) => void;
                 signal?: AbortSignal;
                 onAbort?: () => void;
-            } = { resolve, reject, ...(signal === undefined ? {} : { signal }) };
+            } = { resolve, reject, signal };
             if (signal !== undefined) {
                 waiter.onAbort = () => {
                     const index = this.waiters.indexOf(waiter);

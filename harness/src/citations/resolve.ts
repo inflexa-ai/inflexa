@@ -69,17 +69,17 @@ interface PendingCitation {
 }
 
 function mergedRateLimit(source: CitationSource, config: CitationResolverConfig): RateLimitConfig {
-    return { ...DEFAULT_RATE_LIMITS[source], ...(config.sources?.[source] ?? {}) };
+    return { ...DEFAULT_RATE_LIMITS[source], ...config.sources?.[source] };
 }
 
 function createDefaultClients(config: CitationResolverConfig, deps: CitationResolverDependencies): CitationSourceClient[] {
-    const runtime: RateLimitRuntime = { ...(deps.now ? { now: deps.now } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}) };
+    const runtime: RateLimitRuntime = { now: deps.now, sleep: deps.sleep };
     const http = (source: CitationSource): SourceHttpOptions => {
         const limits = mergedRateLimit(source, config);
         return {
-            ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-            ...(config.timeoutMs === undefined ? {} : { timeoutMs: config.timeoutMs }),
-            ...(deps.sleep ? { sleep: deps.sleep } : {}),
+            fetch: deps.fetch,
+            timeoutMs: config.timeoutMs,
+            sleep: deps.sleep,
             schedule: createRateLimitSchedule(limits, runtime),
             maxRetries: limits.maxRetries,
             maxRetryDelayMs: limits.maxRetryDelayMs,
@@ -89,17 +89,17 @@ function createDefaultClients(config: CitationResolverConfig, deps: CitationReso
         createDoiRegistryClient(http("doi_registry")),
         createCrossrefClient({
             ...http("crossref"),
-            ...(config.crossref?.mailto === undefined ? {} : { mailto: config.crossref.mailto }),
-            ...(config.crossref?.userAgent === undefined ? {} : { userAgent: config.crossref.userAgent }),
+            mailto: config.crossref?.mailto,
+            userAgent: config.crossref?.userAgent,
         }),
         createPubmedCitationClient({
             ...http("pubmed"),
-            ...(config.ncbiApiKey === undefined ? {} : { apiKey: config.ncbiApiKey }),
+            apiKey: config.ncbiApiKey,
         }),
         createArxivCitationClient(http("arxiv")),
         createSemanticScholarCitationClient({
             ...http("semantic_scholar"),
-            ...(config.semanticScholarApiKey === undefined ? {} : { apiKey: config.semanticScholarApiKey }),
+            apiKey: config.semanticScholarApiKey,
         }),
     ];
 }
@@ -185,7 +185,7 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
     };
     const cache = new BoundedTtlCache<readonly CitationSourceOutcome[]>(cacheConfig.maximum, now);
     const inFlight = new Map<string, Promise<readonly CitationSourceOutcome[]>>();
-    const matchConfig: CitationMatchConfig = { ...DEFAULT_MATCH_CONFIG, ...(config.match ?? {}) };
+    const matchConfig: CitationMatchConfig = { ...DEFAULT_MATCH_CONFIG, ...config.match };
     const maxBatchSize = config.maxBatchSize ?? 200;
 
     const keyFor = (input: CitationInput): string => `${SOURCE_PLAN_VERSION}:${citationLookupKey(input)}`;

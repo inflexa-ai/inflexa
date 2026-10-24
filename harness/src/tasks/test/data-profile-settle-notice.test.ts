@@ -101,7 +101,7 @@ describe("the settle notice of the data profile", () => {
             // The embedder is read only when the body indexes a profile, which no case here reaches.
             embedding: { dimensions: 3, embed: () => okAsync([]) } as unknown as EmbeddingProvider,
             skillsDir: root,
-            ...(notifyDataProfileSettled === undefined ? {} : { notifyDataProfileSettled }),
+            notifyDataProfileSettled,
         };
     }
 

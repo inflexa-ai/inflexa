@@ -185,7 +185,7 @@ function recordingLogger(): { logger: Logger; warnings: Array<{ msg: string; fie
         debug: () => {},
         info: () => {},
         warn: (msg, fields) => {
-            warnings.push({ msg, ...(fields ? { fields } : {}) });
+            warnings.push({ msg, fields });
         },
         error: () => {},
         with: () => logger,

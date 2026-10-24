@@ -238,7 +238,7 @@ describe("the SVG assets of one chart", () => {
 
 describe("the export option", () => {
     /** The page twin of the export option. */
-    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`)() as (
+    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as (
         option: EchartOption,
         textPx: number,
         widthPx: number,
@@ -313,6 +313,13 @@ describe("the export option", () => {
         CROWDED_LEGEND,
     ];
 
+    /** The fixture option at a place of the vector list. */
+    function vectorAt(place: number): EchartOption {
+        const option = VECTOR[place];
+        if (option === undefined) throw new Error("the vector holds no option at that place");
+        return option;
+    }
+
     it("takes the series of the export width in place of the page series of the sized names", () => {
         const names = (option: EchartOption): unknown[] => (option.series as EchartOption[]).map((series) => [series.name, series.data]);
         const single = exportOption(SIZED_NAMES, CHART_PRINT_TEXT_PX, 336, 253);
@@ -328,12 +335,15 @@ describe("the export option", () => {
     });
 
     it("scales the text of each child of a graphic group, thus a size legend prints at the export text size", () => {
-        const print = exportOption(VECTOR[8], CHART_PRINT_TEXT_PX, 336, 253);
+        const print = exportOption(vectorAt(8), CHART_PRINT_TEXT_PX, 336, 253);
         const group = (print.graphic as EchartOption[])[0];
+        if (group === undefined) throw new Error("the option holds no graphic group");
         const [title, circle, inner] = group.children as EchartOption[];
+        if (title === undefined || inner === undefined) throw new Error("the group holds no title and inner group");
         expect((title.style as EchartOption).fontSize).toBe(CHART_PRINT_TEXT_PX);
         expect(circle).toEqual({ type: "circle", shape: { cx: 3, cy: 20, r: 3 } });
-        expect(((inner.children as EchartOption[])[0].style as EchartOption).fontSize as number).toBe(CHART_PRINT_TEXT_PX);
+        const firstChild = (inner.children as EchartOption[])[0]?.style;
+        expect((firstChild as EchartOption).fontSize as number).toBe(CHART_PRINT_TEXT_PX);
     });
 
     it("holds the lowest row of facet panels and the x title above the band of a legend that wraps at the column width", () => {
@@ -352,7 +362,7 @@ describe("the export option", () => {
         expect(title?.bottom).toBe(band);
         // The slide holds the eight names on one line, and its panels keep their boxes.
         const slide = exportOption(FACETED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080);
-        expect((slide.grid as EchartOption[])[0].height).toBe("70%");
+        expect((slide.grid as EchartOption[])[0]?.height).toBe("70%");
         expect(((slide.graphic as EchartOption[])[1] as EchartOption).bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
         expect((print.legend as EchartOption).type).toBeUndefined();
     });
@@ -375,28 +385,31 @@ describe("the export option", () => {
     });
 
     it("drops the tooltip and the toolbox, stops the animation, and scales the name gap and the panel labels", () => {
-        const slide = exportOption(VECTOR[5], CHART_SLIDE_TEXT_PX, 1920, 1080);
+        const slide = exportOption(vectorAt(5), CHART_SLIDE_TEXT_PX, 1920, 1080);
         expect(slide.animation).toBe(false);
-        expect((slide.xAxis as EchartOption[])[0].nameGap).toBe(68);
-        expect(((slide.graphic as EchartOption[])[0].style as EchartOption).fontSize).toBe(CHART_SLIDE_TEXT_PX);
-        const print = exportOption(VECTOR[1], CHART_PRINT_TEXT_PX, 336, 253);
+        expect((slide.xAxis as EchartOption[])[0]?.nameGap).toBe(68);
+        const slideStyle = (slide.graphic as EchartOption[])[0]?.style;
+        expect((slideStyle as EchartOption).fontSize).toBe(CHART_SLIDE_TEXT_PX);
+        const page = vectorAt(1);
+        const print = exportOption(page, CHART_PRINT_TEXT_PX, 336, 253);
         expect(print.tooltip).toBeUndefined();
         expect(print.toolbox).toBeUndefined();
         // The input stays as it is, thus the page keeps its own option.
-        expect(VECTOR[1].tooltip).toEqual({ trigger: "item" });
+        expect(page.tooltip).toEqual({ trigger: "item" });
     });
 
     it("scales the offset of an axis with the text, thus a column of text keeps its room", () => {
         const scale = CHART_PRINT_TEXT_PX / CHART_PAGE_TEXT_PX;
-        const [terms, estimates] = exportOption(VECTOR[7], CHART_PRINT_TEXT_PX, 336, 253).yAxis as EchartOption[];
+        const [terms, estimates] = exportOption(vectorAt(7), CHART_PRINT_TEXT_PX, 336, 253).yAxis as EchartOption[];
+        if (terms === undefined || estimates === undefined) throw new Error("the option holds no axis pair");
         expect(terms.offset).toBeUndefined();
         expect(estimates.offset).toBe(120 * scale);
-        expect(((exportOption(VECTOR[7], CHART_SLIDE_TEXT_PX, 1920, 1080).yAxis as EchartOption[])[1] as EchartOption).offset).toBe(240);
-        expect(((VECTOR[7].yAxis as EchartOption[])[1] as EchartOption).offset).toBe(120);
+        expect(((exportOption(vectorAt(7), CHART_SLIDE_TEXT_PX, 1920, 1080).yAxis as EchartOption[])[1] as EchartOption).offset).toBe(240);
+        expect(((vectorAt(7).yAxis as EchartOption[])[1] as EchartOption).offset).toBe(120);
     });
 
     it("holds the labels and the names of a short export above the band of a bottom legend", () => {
-        const print = exportOption(VECTOR[2], CHART_PRINT_TEXT_PX, 336, 253);
+        const print = exportOption(vectorAt(2), CHART_PRINT_TEXT_PX, 336, 253);
         expect(print.grid).toEqual({
             top: "8%",
             bottom: "20%",
@@ -404,17 +417,18 @@ describe("the export option", () => {
             outerBounds: { left: 0, right: 0, top: 0, bottom: Math.round(CHART_PRINT_TEXT_PX * 2.5) },
         });
         // A hidden legend takes no band, and a facet keeps the boxes of its panels.
-        expect(exportOption(VECTOR[3], CHART_PRINT_TEXT_PX, 336, 253).grid).toEqual({ top: "8%" });
-        expect(Array.isArray(exportOption(VECTOR[5], CHART_PRINT_TEXT_PX, 336, 253).grid)).toBe(true);
+        expect(exportOption(vectorAt(3), CHART_PRINT_TEXT_PX, 336, 253).grid).toEqual({ top: "8%" });
+        expect(Array.isArray(exportOption(vectorAt(5), CHART_PRINT_TEXT_PX, 336, 253).grid)).toBe(true);
     });
 
     it("gives the same export option on the page as on the server, for each text size", () => {
+        const sizes: Array<[number, number, number]> = [
+            [CHART_PRINT_TEXT_PX, 336, 253],
+            [CHART_PRINT_TEXT_PX, 692, 348],
+            [CHART_SLIDE_TEXT_PX, 1920, 1080],
+        ];
         for (const option of VECTOR) {
-            for (const [size, width, height] of [
-                [CHART_PRINT_TEXT_PX, 336, 253],
-                [CHART_PRINT_TEXT_PX, 692, 348],
-                [CHART_SLIDE_TEXT_PX, 1920, 1080],
-            ]) {
+            for (const [size, width, height] of sizes) {
                 expect(JSON.stringify(exportOnThePage(option, size, width, height))).toBe(JSON.stringify(exportOption(option, size, width, height)));
             }
         }
@@ -431,17 +445,21 @@ function barOption(encoding: NonNullable<ChartBlock["encoding"]>, rows: ChartRow
  * The boxes of each bar with one fill, as `[left, top, right, bottom]`. The server render writes a bar as one
  * move and three relative lines.
  */
-function boxesOf(svg: string, fill: string): number[][] {
-    const boxes: number[][] = [];
+function boxesOf(svg: string, fill: string): Array<[number, number, number, number]> {
+    const boxes: Array<[number, number, number, number]> = [];
     const number = "(-?[\\d.]+)";
     const bar = new RegExp(`<path d="M${number} ${number}l${number} ${number}l${number} ${number}l${number} ${number}Z"([^>]*)>`, "g");
     for (const match of svg.matchAll(bar)) {
-        if (!match[9].includes(`fill="${fill}"`)) continue;
-        const xs = [Number(match[1])];
-        const ys = [Number(match[2])];
+        if (!match[9]?.includes(`fill="${fill}"`)) continue;
+        let x = Number(match[1]);
+        let y = Number(match[2]);
+        const xs = [x];
+        const ys = [y];
         for (const index of [3, 5, 7]) {
-            xs.push(xs[xs.length - 1] + Number(match[index]));
-            ys.push(ys[ys.length - 1] + Number(match[index + 1]));
+            x += Number(match[index]);
+            y += Number(match[index + 1]);
+            xs.push(x);
+            ys.push(y);
         }
         boxes.push([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
     }
@@ -449,10 +467,10 @@ function boxesOf(svg: string, fill: string): number[][] {
 }
 
 /** The vertical segments in the ink of the chart that a series draws, as `[x, top, bottom]`. The axis lines draw none. */
-function verticalInk(svg: string): number[][] {
-    const segments: number[][] = [];
+function verticalInk(svg: string): Array<[number, number, number]> {
+    const segments: Array<[number, number, number]> = [];
     for (const match of svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"([^>]*)>/g)) {
-        if (!match[5].includes(`stroke="${CHART_INK}"`) || !match[5].includes("ecmeta_series_index") || match[1] !== match[3]) continue;
+        if (!match[5]?.includes(`stroke="${CHART_INK}"`) || !match[5]?.includes("ecmeta_series_index") || match[1] !== match[3]) continue;
         segments.push([Number(match[1]), Math.min(Number(match[2]), Number(match[4])), Math.max(Number(match[2]), Number(match[4]))]);
     }
     return segments;
@@ -469,8 +487,10 @@ describe("the bar of an interval through the server render", () => {
         expect(bars.length).toBe(2);
         // The value axis holds zero, thus both bars share one base, and the heights keep the ratio of the values.
         expect(svg).toMatch(/>0<\/text>/);
-        expect(bars[0][3]).toBeCloseTo(bars[1][3], 0);
-        expect((bars[1][3] - bars[1][1]) / (bars[0][3] - bars[0][1])).toBeCloseTo(0.75, 1);
+        expect(bars[0]?.[3]).toBeCloseTo(bars[1]?.[3] ?? Number.NaN, 0);
+        const secondRise = (bars[1]?.[3] ?? 0) - (bars[1]?.[1] ?? 0);
+        const firstRise = (bars[0]?.[3] ?? 0) - (bars[0]?.[1] ?? 0);
+        expect(secondRise / firstRise).toBeCloseTo(0.75, 1);
     });
 
     it("draws the interval of each group over the center of its own bar", () => {
@@ -571,10 +591,12 @@ describe("the export option at a column width", () => {
             series: [],
         };
         const maps = exportOption(option, CHART_PRINT_TEXT_PX, 336, 253).visualMap as EchartOption[];
+        const wrapped = maps[0];
+        if (wrapped === undefined) throw new Error("the option holds no wrapped map");
         // A title wider than the scale band wraps at its spaces, and the upper end stays the last line.
-        expect(maps[0]).toEqual(expect.objectContaining({ calculable: false, text: ["Adjusted\np\n0.13", "1e-4"] }));
+        expect(wrapped).toMatchObject({ calculable: false, text: ["Adjusted\np\n0.13", "1e-4"] });
         // The scale starts at the top of the plot and stays short, thus its lower end never meets the x labels.
-        expect(maps[0]).toEqual(expect.objectContaining({ top: "8%", itemHeight: 8 * CHART_PRINT_TEXT_PX }));
+        expect(wrapped).toMatchObject({ top: "8%", itemHeight: 8 * CHART_PRINT_TEXT_PX });
         expect(maps[1]).toEqual(option.visualMap[1]);
     });
 
@@ -601,7 +623,7 @@ describe("the export option at a column width", () => {
 function textExtents(svg: string, lines: readonly string[]): number[][] {
     const extents: number[][] = [];
     for (const match of svg.matchAll(/<text[^>]*?(?:\sx="(-?[\d.]+)")?[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*>([^<]*)<\/text>/g)) {
-        if (!lines.includes(match[4])) continue;
+        if (match[4] === undefined || !lines.includes(match[4])) continue;
         const center = Number(match[2]) + Number(match[1] ?? 0);
         const half = (match[4].length * CHART_PRINT_TEXT_PX * 0.6) / 2;
         extents.push([center - half, center + half]);
@@ -665,7 +687,7 @@ describe("the title of a color scale in the column export", () => {
         };
         expectClear(svgOf(option));
         // The page keeps its title as it is.
-        expect(option.visualMap[0].text).toEqual([`${TITLE}\n9.9`, "4"]);
+        expect(option.visualMap[0]?.text).toEqual([`${TITLE}\n9.9`, "4"]);
     });
 
     it("keeps the title of a faceted scatter clear of its rightmost panel", () => {
@@ -732,13 +754,13 @@ describe("the export of a faceted chart", () => {
         const heights = (exported.grid as EchartOption[]).map((grid) => percentOf(grid.height));
         // Four rows of three panels share the room of the band, thus each panel keeps one height.
         expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1e-3);
-        expect(Math.min(...heights)).toBeGreaterThan(percentOf((page.grid as EchartOption[])[0].height) * 0.5);
+        expect(Math.min(...heights)).toBeGreaterThan(percentOf((page.grid as EchartOption[])[0]?.height) * 0.5);
         // Each panel label keeps its gap over the top of its panel.
         const gap = (option: EchartOption, place: number): number =>
-            percentOf((option.grid as EchartOption[])[place].top) - percentOf((option.graphic as EchartOption[])[place].top);
+            percentOf((option.grid as EchartOption[])[place]?.top) - percentOf((option.graphic as EchartOption[])[place]?.top);
         for (let place = 0; place < 12; place += 1) expect(gap(exported, place)).toBeCloseTo(gap(page, place), 4);
         // The page builds the same export option.
-        const onThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`)() as (
+        const onThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as (
             option: EchartOption,
             textPx: number,
             widthPx: number,

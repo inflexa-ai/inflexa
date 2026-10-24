@@ -68,17 +68,18 @@ function mapPaper(raw: z.infer<typeof WirePaperSchema>): SemanticScholarPaper | 
     if (raw.paperId === undefined || raw.paperId.trim() === "") return undefined;
     const authors = raw.authors?.flatMap((author) => (typeof author.name === "string" && author.name.trim() ? [author.name] : [])) ?? [];
     const externalIds = stringExternalIds(raw.externalIds);
-    return {
+    const paper: SemanticScholarPaper = {
         id: raw.paperId,
-        ...(typeof raw.title === "string" ? { title: raw.title } : {}),
-        ...(typeof raw.abstract === "string" ? { abstract: raw.abstract } : {}),
-        ...(typeof raw.year === "number" ? { year: raw.year } : {}),
-        ...(typeof raw.venue === "string" ? { venue: raw.venue } : {}),
-        ...(typeof raw.citationCount === "number" ? { citationCount: raw.citationCount } : {}),
-        ...(typeof raw.url === "string" ? { url: raw.url } : {}),
         authors,
-        ...(externalIds === undefined ? {} : { externalIds }),
     };
+    if (typeof raw.title === "string") paper.title = raw.title;
+    if (typeof raw.abstract === "string") paper.abstract = raw.abstract;
+    if (typeof raw.year === "number") paper.year = raw.year;
+    if (typeof raw.venue === "string") paper.venue = raw.venue;
+    if (typeof raw.citationCount === "number") paper.citationCount = raw.citationCount;
+    if (typeof raw.url === "string") paper.url = raw.url;
+    if (externalIds !== undefined) paper.externalIds = externalIds;
+    return paper;
 }
 
 export function parseSemanticScholarResponse(raw: unknown): SemanticScholarSearchPaper[] {

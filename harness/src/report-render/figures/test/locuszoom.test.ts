@@ -55,7 +55,7 @@ function locuszoom(encoding: Encoding = ENCODING, extra: Partial<ChartBlock> = {
     return {
         kind: "chart",
         id: "lz",
-        binding: { kind: "artifact-table", path: "gwas/locus_fto.csv", hash: HASH, ...(labels !== undefined ? { columnLabels: labels } : {}) },
+        binding: { kind: "artifact-table", path: "gwas/locus_fto.csv", hash: HASH, columnLabels: labels },
         chartType: "locuszoom",
         encoding,
         ...extra,
@@ -116,6 +116,31 @@ function pairs(series: EchartOption): number[][] {
     return (series.data as unknown[]).map((item) => (Array.isArray(item) ? item : ((item as EchartOption).value as number[])) as number[]);
 }
 
+function firstSeries(option: EchartOption): EchartOption {
+    const [points] = seriesOf(option);
+    if (points === undefined) throw new Error("the option holds no series");
+    return points;
+}
+
+function firstAxis(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
+    const [axis] = axes(option, key);
+    if (axis === undefined) throw new Error(`the option holds no ${key}`);
+    return axis;
+}
+
+function firstDataItem(series: EchartOption): EchartOption {
+    const [item] = series.data as EchartOption[];
+    if (item === undefined) throw new Error("the series holds no data item");
+    return item;
+}
+
+/** The r² of one point, which the composition carries as the third member of each item. */
+function r2Of(pair: number[]): number {
+    const value = pair[2];
+    if (value === undefined) throw new Error("the point holds no r² member");
+    return value;
+}
+
 describe("the regional association plot", () => {
     it("registers in the figure registry", () => {
         expect(FIGURE_MODULES.locuszoom).toBe(LOCUSZOOM_FIGURE);
@@ -123,10 +148,16 @@ describe("the regional association plot", () => {
 
     it("colors each point by the five LD bins of LocusZoom, and states the bins in one legend", () => {
         const option = derive();
-        const points = seriesOf(option)[0];
+        const points = firstSeries(option);
         // The composition carries the r² as the third member of each item, thus the bins read it.
-        expect(pairs(points).map((pair) => pair[2])).toEqual(expect.arrayContaining([0.93, 1, 0.7, 0.5, 0.3, 0.05]));
-        expect(pairs(points).length).toBe(6);
+        const r2s = pairs(points).map(r2Of);
+        expect(r2s).toContain(0.93);
+        expect(r2s).toContain(1);
+        expect(r2s).toContain(0.7);
+        expect(r2s).toContain(0.5);
+        expect(r2s).toContain(0.3);
+        expect(r2s).toContain(0.05);
+        expect(r2s.length).toBe(6);
         expect(LD_BINS.map((bin) => [bin.low, bin.high, bin.color])).toEqual([
             [0, 0.2, "#000080"],
             [0.2, 0.4, "#87cefa"],
@@ -137,6 +168,7 @@ describe("the regional association plot", () => {
         const maps = option.visualMap as EchartOption[];
         expect(maps.length).toBe(1);
         const map = maps[0];
+        if (map === undefined) throw new Error("the option holds no visual map");
         expect(map.type).toBe("piecewise");
         expect(map.dimension).toBe(2);
         expect(map.seriesIndex).toEqual([0]);
@@ -157,8 +189,8 @@ describe("the regional association plot", () => {
 
     it("draws the high r² on top, and each point of no r² in gray under them", () => {
         const option = derive();
-        const points = seriesOf(option)[0];
-        const r2 = pairs(points).map((pair) => pair[2]);
+        const points = firstSeries(option);
+        const r2 = pairs(points).map(r2Of);
         expect(r2).toEqual([...r2].sort((a, b) => a - b));
         const gray = named(option, LD_MISSING_NAME);
         expect((gray.itemStyle as EchartOption).color).toBe(LD_MISSING_COLOR);
@@ -184,6 +216,7 @@ describe("the regional association plot", () => {
         expect(line.showSymbol).toBe(false);
         expect(pairs(line).map((pair) => pair[0])).toEqual([53650000, 53750000, 53797000, 53803574, 53820527, 53900000, 54010000, 54080000]);
         const right = axes(option, "yAxis")[1];
+        if (right === undefined) throw new Error("the option holds no second y axis");
         expect(right.position).toBe("right");
         expect(right.name).toBe("Recombination rate (cM/Mb)");
         expect(right.min).toBe(0);
@@ -199,8 +232,8 @@ describe("the regional association plot", () => {
         expect(guide?.yAxis).toBe(-Math.log10(5e-8));
         // The line itself names nothing, and a series of its own places the name at a free spot.
         expect(guide?.label).toEqual({ show: false });
-        expect((named(option, GUIDE_LABEL).data as EchartOption[])[0].name).toBe("p 5 × 10⁻⁸");
-        const left = axes(option, "yAxis")[0];
+        expect(firstDataItem(named(option, GUIDE_LABEL)).name).toBe("p 5 × 10⁻⁸");
+        const left = firstAxis(option, "yAxis");
         expect(left.name).toBe("−log10(p)");
         expect(left.min).toBe(0);
         expect(left.max).toBe(200);
@@ -208,7 +241,7 @@ describe("the regional association plot", () => {
 
     it("reads the position axis in megabases, with round ticks and the chromosome in the title", () => {
         const option = derive();
-        const x = axes(option, "xAxis")[0];
+        const x = firstAxis(option, "xAxis");
         // The window spans 53.65 to 54.08 Mb, thus the ticks step by 0.1 Mb, and the axis ends at the rows.
         expect(x.min).toBe(53650000);
         expect(x.max).toBe(54080000);
@@ -224,7 +257,7 @@ describe("the regional association plot", () => {
 
     it("titles the position axis with the declared label in megabases", () => {
         const option = derive(locuszoom(ENCODING, { track: TRACK }, { position: "Position on chromosome 16 (bp)" }));
-        expect(axes(option, "xAxis")[0].name).toBe("Position on chromosome 16 (Mb)");
+        expect(firstAxis(option, "xAxis").name).toBe("Position on chromosome 16 (Mb)");
     });
 
     it("draws each gene of the window as a line with its name, in lanes that never overlap", () => {
@@ -235,10 +268,14 @@ describe("the regional association plot", () => {
         // AKTIP and IRX3 lie outside the window, thus they draw nothing.
         expect(names).toEqual(["RPGRIP1L", "MIR1972", "FTO"]);
         expect(genes.label).toMatchObject({ show: true, position: "bottom", fontStyle: "italic" });
-        const spans = ((genes.markLine as EchartOption).data as EchartOption[][]).map(([from, to]) => [from.coord, to.coord] as number[][]);
-        const lanes = spans.map(([from]) => from[1]);
+        const spans = ((genes.markLine as EchartOption).data as EchartOption[][]).map((ends) => {
+            const [from, to] = ends;
+            if (from === undefined || to === undefined) throw new Error("the gene span is not a pair of ends");
+            return [from.coord, to.coord] as number[][];
+        });
+        const lanes = spans.map((span) => span[0]?.[1]);
         // The clipped FTO ends at the window, and each overlapping pair sits in two lanes.
-        expect(spans[2][1][0]).toBe(54080000);
+        expect(spans[2]?.[1]?.[0]).toBe(54080000);
         expect(lanes[0]).not.toBe(lanes[1]);
         expect(new Set(lanes).size).toBeGreaterThanOrEqual(2);
         const grids = option.grid as EchartOption[];
@@ -251,6 +288,7 @@ describe("the regional association plot", () => {
             const inputs: ChartInputs = { track: { rows: genes, columns: ["gene", "start", "end"] } };
             const render = deriveChartRender(locuszoom(), ROWS, undefined, { key: "lz", columns: [] }, inputs, OPTS)._unsafeUnwrap();
             const plot = (render.option.grid as EchartOption[])[0];
+            if (plot === undefined) throw new Error("the render holds no plot grid");
             const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
         };
@@ -265,14 +303,14 @@ describe("the regional association plot", () => {
         const option = derive(locuszoom(), rows);
         const zero = seriesOf(option).find((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
         expect(zero?.data).toEqual([{ name: "rs0", value: [53810000, -Math.log10(7.5e-153)], itemStyle: { color: "#ff0000" } }]);
-        expect((named(option, LEAD_VARIANT_NAME).data as EchartOption[])[0].name).toBe("rs0");
+        expect(firstDataItem(named(option, LEAD_VARIANT_NAME)).name).toBe("rs0");
     });
 
     it("draws the plot alone with no track, no metric, and no chromosome", () => {
         const option = derive(locuszoom({ x: "position", y: "pvalue", color: "r2", label: "variant" }, {}));
         expect(seriesOf(option).some((entry) => entry.name === RECOMBINATION_NAME || entry.name === GENE_NAMES)).toBe(false);
         expect(axes(option, "yAxis").length).toBe(1);
-        expect(axes(option, "xAxis")[0].name).toBe("Position (Mb)");
+        expect(firstAxis(option, "xAxis").name).toBe("Position (Mb)");
     });
 });
 
@@ -280,7 +318,7 @@ describe("the guide label of the regional association plot", () => {
     /** The spot of the guide label: its position and its height, and the text style of its label. */
     function guideSpot(option: EchartOption): { at: number[]; label: EchartOption } {
         const guide = named(option, GUIDE_LABEL);
-        const [item] = guide.data as EchartOption[];
+        const item = firstDataItem(guide);
         return { at: item.value as number[], label: guide.label as EchartOption };
     }
 
@@ -341,7 +379,7 @@ describe("the guide label of the regional association plot", () => {
 });
 
 describe("the LD legend of an export", () => {
-    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`)() as typeof exportOption;
+    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as typeof exportOption;
 
     it("keeps the row of bins at each column size, on the server and on the page", () => {
         const option = derive();
@@ -413,7 +451,7 @@ describe("the dense regional association plot", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
+    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
         payload: { columns: string[]; rows: ChartRow[] },
         source: ChartDataSource["series"][number],
         rule: unknown,
@@ -428,7 +466,7 @@ describe("the dense regional association plot", () => {
         expect(source.series.length).toBe(2);
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
-            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index].data));
+            expect(JSON.stringify(page)).toBe(JSON.stringify(seriesOf(render.inline)[index]?.data));
         }
         // The points of no r² ride inline after the payload series, one tenth of the rows.
         expect((named(render.option, LD_MISSING_NAME).data as unknown[]).length).toBe(2000);

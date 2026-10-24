@@ -447,7 +447,7 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
             ...policy,
             method,
             headers,
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            body: JSON.stringify(body),
         });
         if (result.isOk()) return result.value;
         const refusal = refusalOf(result.error, notFoundField);
@@ -472,14 +472,14 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
                 "/v1/recommend",
                 {
                     situation,
-                    ...(responseFormat ? { response_format: responseFormat } : {}),
-                    ...(preferences ? { preferences } : {}),
-                    ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}),
+                    response_format: responseFormat,
+                    preferences,
+                    expected_snapshot: expectedSnapshot,
                 },
                 RecommendResponseSchema,
             ),
         check: (situation, steps, expectedSnapshot) =>
-            call("POST", "/v1/check", { situation, steps, ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) }, CheckResponseSchema),
+            call("POST", "/v1/check", { situation, steps, expected_snapshot: expectedSnapshot }, CheckResponseSchema),
         render: (template, slots, farm, options) =>
             call(
                 "POST",
@@ -487,10 +487,10 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
                 {
                     template,
                     slots,
-                    ...(farm ? { farm } : {}),
-                    ...(options?.step ? { step: options.step } : {}),
-                    ...(options?.claims ? { claims: options.claims } : {}),
-                    ...(options?.expectedSnapshot ? { expected_snapshot: options.expectedSnapshot } : {}),
+                    farm,
+                    step: options?.step,
+                    claims: options?.claims,
+                    expected_snapshot: options?.expectedSnapshot,
                 },
                 RenderResponseSchema,
             ),

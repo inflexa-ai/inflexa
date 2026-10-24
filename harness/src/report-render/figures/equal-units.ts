@@ -122,7 +122,7 @@ interface Placement {
  */
 export function squareLayout(fields: SquareLayoutFields): SquareLayout {
     const placements = SQUARE_SIDES.map((side) => placement(side, fields, marginScale(side), TOOLBOX_BAND_PX));
-    const smallest = placements[0];
+    const smallest = placements[0] ?? placement(SQUARE_MIN_PX, fields, marginScale(SQUARE_MIN_PX), TOOLBOX_BAND_PX);
     const media: EchartOption[] = placements.map((entry, index) => ({
         // The first rule matches every container, thus a container that shrinks past a rule falls back to it.
         query: index === 0 ? { minWidth: 0 } : { minWidth: entry.minWidth, minHeight: entry.minHeight },
@@ -133,7 +133,7 @@ export function squareLayout(fields: SquareLayoutFields): SquareLayout {
         const fitting = SQUARE_SIDES.map((side) => placement(side, fields, scale, 0)).filter(
             (entry) => entry.minWidth <= size.widthPx && entry.minHeight <= size.heightPx,
         );
-        const chosen = fitting.length > 0 ? fitting[fitting.length - 1] : placement(SQUARE_MIN_PX, fields, scale, 0);
+        const chosen = fitting[fitting.length - 1] ?? placement(SQUARE_MIN_PX, fields, scale, 0);
         media.push({
             query: { minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx },
             option: placedOption(shifted(chosen, Math.max(0, Math.floor((size.widthPx - chosen.minWidth) / 2)))),
@@ -141,8 +141,8 @@ export function squareLayout(fields: SquareLayoutFields): SquareLayout {
     }
     return {
         grid: smallest.grid,
-        ...(smallest.legend !== undefined ? { legend: smallest.legend } : {}),
-        ...(smallest.visualMap !== undefined ? { visualMap: smallest.visualMap } : {}),
+        legend: smallest.legend,
+        visualMap: smallest.visualMap,
         media,
     };
 }
@@ -158,10 +158,10 @@ function marginScale(side: number): number {
 /** The option of one media rule: the point size, the grids, the legend, and the color scales of one placement. */
 function placedOption(entry: Placement): EchartOption {
     return {
-        ...(entry.series !== undefined ? { series: entry.series } : {}),
+        series: entry.series,
         grid: entry.grid,
-        ...(entry.legend !== undefined ? { legend: entry.legend } : {}),
-        ...(entry.visualMap !== undefined ? { visualMap: entry.visualMap } : {}),
+        legend: entry.legend,
+        visualMap: entry.visualMap,
     };
 }
 
@@ -171,8 +171,8 @@ function shifted(entry: Placement, by: number): Placement {
     return {
         ...entry,
         grid: entry.grid.map(move),
-        ...(entry.legend !== undefined ? { legend: move(entry.legend) } : {}),
-        ...(entry.visualMap !== undefined ? { visualMap: entry.visualMap.map(move) } : {}),
+        legend: entry.legend === undefined ? undefined : move(entry.legend),
+        visualMap: entry.visualMap?.map(move),
     };
 }
 
@@ -206,8 +206,8 @@ function placement(side: number, fields: SquareLayoutFields, scale: number, leas
     const series: EchartOption[] = Array.from(
         { length: Math.max(points?.series ?? 0, squareLabel === undefined ? 0 : squareLabel.series + 1) },
         (_entry, index) => ({
-            ...(points !== undefined && index < points.series ? { symbolSize: pointPx } : {}),
-            ...(squareLabel !== undefined && index === squareLabel.series ? { label: { width: side - 2 * squareLabel.insetPx, overflow: "break" } } : {}),
+            symbolSize: points !== undefined && index < points.series ? pointPx : undefined,
+            label: squareLabel !== undefined && index === squareLabel.series ? { width: side - 2 * squareLabel.insetPx, overflow: "break" } : undefined,
         }),
     );
     const blockBottom = top + rows * side + (rows - 1) * gap + margin(fields.margins.bottom);
@@ -221,12 +221,10 @@ function placement(side: number, fields: SquareLayoutFields, scale: number, leas
               ? { legend: { left: bandLeft, top } }
               : { legend: { left, top: blockBottom, width: blockRight - left, orient: "horizontal" } };
     return {
-        ...(series.length > 0 ? { series } : {}),
+        series,
         grid,
         ...legend,
-        ...(fields.visualMaps !== undefined && fields.visualMaps > 0
-            ? { visualMap: Array.from({ length: fields.visualMaps }, () => ({ left: bandLeft, top })) }
-            : {}),
+        visualMap: Array.from({ length: fields.visualMaps ?? 0 }, () => ({ left: bandLeft, top })),
         minWidth: blockRight + band + margin(fields.margins.right),
         minHeight: blockBottom + legendHeight,
     };
@@ -262,24 +260,26 @@ export function equalRanges(xs: readonly number[], ys: readonly number[], fields
         return { x: around(x, length), y: around(y, length) };
     }
     const step = roundStep(length / 5);
-    const snapped = [x, y].map((range) => ({ min: Math.floor(range.min / step), max: Math.ceil(range.max / step) }));
-    const steps = Math.max(...snapped.map((range) => range.max - range.min), 1);
-    const [xRange, yRange] = snapped.map((range) => {
+    const snap = (range: AxisRange): { min: number; max: number } => ({ min: Math.floor(range.min / step), max: Math.ceil(range.max / step) });
+    const xSnapped = snap(x);
+    const ySnapped = snap(y);
+    const steps = Math.max(xSnapped.max - xSnapped.min, ySnapped.max - ySnapped.min, 1);
+    const widen = (range: { min: number; max: number }): AxisRange => {
         const short = steps - (range.max - range.min);
         return { min: exact((range.min - Math.ceil(short / 2)) * step), max: exact((range.max + Math.floor(short / 2)) * step) };
-    });
-    return { x: xRange, y: yRange, step };
+    };
+    return { x: widen(xSnapped), y: widen(ySnapped), step };
 }
 
 /** The extent of some values, or the unit range for no value. */
 function extent(values: readonly number[]): AxisRange {
-    if (values.length === 0) return { min: 0, max: 1 };
-    let min = values[0];
-    let max = values[0];
+    let min: number | undefined;
+    let max: number | undefined;
     for (const value of values) {
-        if (value < min) min = value;
-        if (value > max) max = value;
+        if (min === undefined || value < min) min = value;
+        if (max === undefined || value > max) max = value;
     }
+    if (min === undefined || max === undefined) return { min: 0, max: 1 };
     return { min, max };
 }
 

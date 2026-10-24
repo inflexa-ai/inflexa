@@ -129,7 +129,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
         return (result.rowCount ?? 0) > 0;
     }).andThen((inserted) =>
         tryQuery("runs.reserveRunById.reload", async () => {
-            const result = await pool.query({
+            const result = await pool.query<Record<string, unknown>>({
                 text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                        status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                        mandate_jti, mandate_expires_at, plan_id
@@ -158,7 +158,7 @@ function isPartialUniqueViolation(err: unknown): boolean {
  */
 export function queryActiveRun(pool: Querier, analysisId: string, planId: string | null): ResultAsync<CortexRunRow | null, DbError> {
     return tryQuery("runs.queryActiveRun", async () => {
-        const result = await pool.query({
+        const result = await pool.query<Record<string, unknown>>({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -329,7 +329,7 @@ export function promoteFailedToPartial(pool: Querier, runId: string): ResultAsyn
 
 export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow | null, DbError> {
     return tryQuery("runs.queryRun", async () => {
-        const result = await pool.query({
+        const result = await pool.query<Record<string, unknown>>({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -433,14 +433,14 @@ export function queryNewestPlanRun(
  */
 export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string, limit = 20): ResultAsync<RunPage, DbError> {
     return tryQuery("runs.queryNonTerminalRunsByAnalysis", async () => {
-        const countResult = await pool.query({
+        const countResult = await pool.query<Record<string, unknown>>({
             text: `SELECT COUNT(*)::int AS total
             FROM cortex_runs
             WHERE analysis_id = $1
               AND status = 'running'`,
             values: [analysisId],
         });
-        const rowsResult = await pool.query({
+        const rowsResult = await pool.query<Record<string, unknown>>({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id
@@ -470,11 +470,11 @@ export function queryRunsForInspection(
     { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
 ): ResultAsync<RunPage, DbError> {
     return tryQuery("runs.queryRunsForInspection", async () => {
-        const countResult = await pool.query({
+        const countResult = await pool.query<Record<string, unknown>>({
             text: "SELECT COUNT(*)::int AS total FROM cortex_runs WHERE analysis_id = $1",
             values: [analysisId],
         });
-        const rowsResult = await pool.query({
+        const rowsResult = await pool.query<Record<string, unknown>>({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id
@@ -560,6 +560,10 @@ export function setRunSynthesisOutcome(
     });
 }
 
+function isUnknownArray(value: unknown): value is unknown[] {
+    return Array.isArray(value);
+}
+
 function mapRunRow(row: Record<string, unknown>): CortexRunRow {
     // JSONB is parsed by `pg` into native arrays/objects. Treat legacy TEXT
     // rows (if anything slipped through) as strings and parse them.
@@ -568,7 +572,8 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
         parts = row.parts as unknown[];
     } else if (typeof row.parts === "string") {
         try {
-            parts = JSON.parse(row.parts);
+            const parsed: unknown = JSON.parse(row.parts);
+            if (isUnknownArray(parsed)) parts = parsed;
         } catch {
             /* malformed — treat as null */
         }

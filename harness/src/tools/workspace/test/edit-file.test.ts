@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { isUnknownArray } from "../../../lib/unknown-array.js";
 import { createEditFileTool } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
@@ -14,6 +15,12 @@ import { stepWritePrefix } from "../../../workspace/paths.js";
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
 const STEP = "step-1";
+
+/** The JSON of a written decision record, narrowed to the object the tool wrote. */
+function asRecord(json: unknown): Record<string, unknown> {
+    if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error("the decision record stored no object");
+    return { ...json };
+}
 
 describe("edit_file tool", () => {
     let sessionsBasePath: string;
@@ -97,11 +104,15 @@ describe("edit_file tool", () => {
         )._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
 
-        const record = JSON.parse(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"));
+        const record = asRecord(JSON.parse(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8")));
         expect(record.written_sha256).toBe("sha256:old");
-        expect(record.unvetted_edits).toEqual([
-            { path: "scripts/de.R", note: "edit_file: 1 replacement(s)", sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) },
-        ]);
+        const edits = record.unvetted_edits;
+        if (!isUnknownArray(edits) || edits.length !== 1) throw new Error("the record stored no unvetted edit");
+        const [edit] = edits;
+        if (typeof edit !== "object" || edit === null || !("sha256" in edit)) throw new Error("the edit carries no sha256");
+        const { sha256, ...editShape } = edit;
+        expect(editShape).toEqual({ path: "scripts/de.R", note: "edit_file: 1 replacement(s)" });
+        expect(sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
         const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");
         expect(edited).toBe("ALPHA <- 0.1  # [adaptable: alpha]\n");
 

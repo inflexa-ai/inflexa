@@ -275,7 +275,8 @@ async function searchCompoundsByTarget(query: string, limit: number): Promise<Ch
     }
     if (!targetRes.value.targets?.length) return [];
 
-    const targetChemblId = targetRes.value.targets[0].target_chembl_id;
+    const firstTarget = targetRes.value.targets[0];
+    const targetChemblId = firstTarget?.target_chembl_id;
     if (!targetChemblId) return [];
 
     const activityRes = await apiFetchValidated(
@@ -672,7 +673,7 @@ export async function getModulatorPolypharmacology(
         const names = await Promise.all(batch.map(fetchTargetName));
         for (const [idx, id] of batch.entries()) {
             const hit = hits.find((h) => h.targetChemblId === id);
-            if (hit) hit.targetName = names[idx];
+            if (hit) hit.targetName = names[idx] ?? null;
         }
     }
 

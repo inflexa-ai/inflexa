@@ -12,6 +12,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { ReportDocument } from "../../contracts/report-blocks.js";
+import { nullProtoRecord } from "../../lib/null-proto.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
 import { createReportVersionStore, type ReportVersionStore } from "../report-versions.js";
@@ -295,7 +296,7 @@ describe("createReportVersionStore", () => {
         const threadId = "thread-proto";
         // The ledger accepts any path. A null-prototype map keeps `__proto__` an own
         // key, thus the stored snapshot carries it and the read gives it back.
-        const artifacts: Record<string, { hash: string; fileType: string }> = Object.create(null);
+        const artifacts = nullProtoRecord<{ hash: string; fileType: string }>();
         artifacts["__proto__"] = { hash: "sha256:eee", fileType: "output" };
         const withProto: ReportSnapshot = { artifacts };
 

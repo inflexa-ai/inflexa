@@ -257,9 +257,9 @@ export function queryDataProfileStatusByAnalyses(pool: Querier, analysisIds: str
             status: r.data_profile_status,
             completedAt: r.data_profile_completed_at ?? null,
             profiledFiles: profileDatasetFileCount({
-                ...(r.partition === null ? {} : { partition: r.partition }),
-                ...(r.coverage === null ? {} : { coverage: r.coverage }),
-                ...(r.kinds === null ? {} : { kinds: r.kinds }),
+                partition: r.partition ?? undefined,
+                coverage: r.coverage ?? undefined,
+                kinds: r.kinds ?? undefined,
             }),
         }));
     });

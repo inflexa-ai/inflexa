@@ -93,9 +93,9 @@ function bandRows(
     const complete: BandRow[] = [];
     for (let index = 0; index < rows.length; index += 1) {
         const x = xs[index];
-        const low = toNumber(rows[index][lowColumn]);
-        const high = toNumber(rows[index][highColumn]);
-        if (x === null || low === null || high === null) continue;
+        const low = toNumber(rows[index]?.[lowColumn]);
+        const high = toNumber(rows[index]?.[highColumn]);
+        if (x === null || x === undefined || low === null || high === null) continue;
         if (high < low) {
             return err(
                 chartProblem(
@@ -110,18 +110,30 @@ function bandRows(
     complete.sort((a, b) => a.x - b.x || a.index - b.index);
     if (complete.length <= QQ_BAND_POINTS) return ok(complete);
     const last = complete[complete.length - 1];
-    const step = (last.x - complete[0].x) / (QQ_BAND_POINTS - 1);
+    const first = complete[0];
+    if (last === undefined || first === undefined) return ok(complete);
+    const step = (last.x - first.x) / (QQ_BAND_POINTS - 1);
     // Each row sits zero steps from the next one, thus the rule of the step keeps each row.
     if (!(step > 0)) {
-        return ok(Array.from({ length: QQ_BAND_POINTS }, (_row, place) => complete[Math.round((place * (complete.length - 1)) / (QQ_BAND_POINTS - 1))]));
+        return ok(
+            Array.from({ length: QQ_BAND_POINTS }, (_row, place) => {
+                const sampled = complete[Math.round((place * (complete.length - 1)) / (QQ_BAND_POINTS - 1))];
+                return sampled ?? last;
+            }),
+        );
     }
     // The kept rows sit at least one step apart, and a kept row between the ends sits at least one step before
     // the last row. Thus the span holds at most `QQ_BAND_POINTS - 1` steps, and the band at most
     // `QQ_BAND_POINTS` rows.
-    const kept: BandRow[] = [complete[0]];
+    const kept: BandRow[] = [first];
+    let previous = first;
     for (let place = 1; place < complete.length - 1; place += 1) {
         const row = complete[place];
-        if (row.x - kept[kept.length - 1].x >= step && last.x - row.x >= step) kept.push(row);
+        if (row === undefined) continue;
+        if (row.x - previous.x >= step && last.x - row.x >= step) {
+            kept.push(row);
+            previous = row;
+        }
     }
     kept.push(last);
     return ok(kept);
@@ -171,7 +183,7 @@ function deriveQq(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     for (let index = 0; index < rows.length; index += 1) {
         const expected = xs[index];
         const observed = ys[index];
-        if (expected === null || observed === null) continue;
+        if (expected === null || expected === undefined || observed === null || observed === undefined) continue;
         expectedValues.push(expected);
         observedValues.push(observed);
     }
@@ -214,7 +226,7 @@ function deriveQq(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
                   ]
                 : []),
         ],
-        ...(statistics.length > 0 ? { graphic: statistics } : {}),
+        graphic: statistics,
     });
 }
 

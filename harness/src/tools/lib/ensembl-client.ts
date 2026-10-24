@@ -73,15 +73,16 @@ export interface LookupOptions {
 export async function lookupGenes(symbols: string[], options: LookupOptions = {}): Promise<{ genes: GeneInfo[]; notFound: string[] }> {
     const species = options.species ?? "homo_sapiens";
 
-    if (symbols.length === 1) {
-        const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}/${symbols[0]}`, RawGeneSchema, { headers: HEADERS });
+    const [singleSymbol] = symbols;
+    if (symbols.length === 1 && singleSymbol !== undefined) {
+        const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}/${singleSymbol}`, RawGeneSchema, { headers: HEADERS });
         if (result.isErr()) {
             if (result.error.type === "http_status" && result.error.status === 400) {
-                return { genes: [], notFound: [symbols[0]] };
+                return { genes: [], notFound: [singleSymbol] };
             }
             throw new Error(describeApiError(result.error));
         }
-        return { genes: [mapGene(symbols[0], result.value)], notFound: [] };
+        return { genes: [mapGene(singleSymbol, result.value)], notFound: [] };
     }
 
     const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}`, z.record(z.string(), RawGeneSchema), {

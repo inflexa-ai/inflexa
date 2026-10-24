@@ -40,10 +40,12 @@ import {
     type ChartComposition,
     type ChartEncoding,
     type ChartSeries,
+    type ChartStatistic,
     type ChartTransform,
     type ChartType,
 } from "../contracts/report-blocks.js";
 import { declaredForColumn } from "../contracts/report-reference.js";
+import { isUnknownArray } from "../lib/unknown-array.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { type PresetAxisTitles, type PresetClassification, type PresetRule } from "./chart-presets.js";
 import { categoryInterval, INTERVAL_RENDERER, LABEL_LINE_SHARE, OUTLINE_RENDERER, VIOLIN_GRID_POINTS } from "./chart-renderers.js";
@@ -405,7 +407,7 @@ function chartRender(pass: ChartPass): ChartRender {
         readsPayload: pass.readsPayload,
         inline: pass.inline,
         bodyPx: pass.bodyPx,
-        ...(widthPx !== undefined ? { widthPx } : {}),
+        widthPx,
     };
 }
 
@@ -498,7 +500,7 @@ function perRowQuickPath(block: ChartBlock, opts: ChartOpts): { chartType: BaseC
 function sourcedOption(option: EchartOption, series: readonly unknown[], collector: SourceCollector, key: string): EchartOption {
     const source: ChartDataSource = {
         payload: key,
-        ...(collector.rule !== undefined ? { rule: collector.rule } : {}),
+        rule: collector.rule,
         series: collector.series,
     };
     return {
@@ -596,8 +598,8 @@ function deriveRaw(
         {
             ...quick.value.block,
             meanings,
-            ...(block.focus !== undefined ? { focus: block.focus } : {}),
-            ...(stackedFacet !== undefined ? { facet: channelColumn(stackedFacet) } : {}),
+            focus: block.focus,
+            facet: stackedFacet === undefined ? undefined : channelColumn(stackedFacet),
         },
         quick.value.rows,
         columns,
@@ -719,10 +721,10 @@ function deriveFigure(
         blockId: block.id,
         labels,
         meanings,
-        ...(columns !== undefined ? { columns } : {}),
+        columns,
         statistics: statistics.value,
-        ...(track.value !== undefined ? { track: track.value } : {}),
-        ...(trees.value !== undefined ? { trees: trees.value } : {}),
+        track: track.value,
+        trees: trees.value,
         textPx: CHART_PAGE_TEXT_PX,
         compose: (composition, { keepsRowsInline, ...extras } = {}) => {
             // A composition with no collector describes no page build, thus the chart keeps its rows inline.
@@ -756,11 +758,19 @@ function figureStatistics(block: ChartBlock, values: readonly RenderStatistic[] 
     if (values === undefined || values.length !== declared.length) {
         return err(missingPart(block.id, `The chart declares ${declared.length} statistics, and its value entry carries ${values?.length ?? 0}.`));
     }
+    const pairs: Array<[ChartStatistic, RenderStatistic]> = [];
+    for (const [index, statistic] of declared.entries()) {
+        const resolved = values[index];
+        if (resolved === undefined) {
+            return err(missingPart(block.id, `The chart declares ${declared.length} statistics, and its value entry carries ${values.length}.`));
+        }
+        pairs.push([statistic, resolved]);
+    }
     return ok(
-        declared.map((statistic, index) => ({
+        pairs.map(([statistic, resolved]) => ({
             label: statistic.label,
-            value: values[index].value,
-            text: statisticText(values[index].value, statistic.value.locator.column, statistic.value.unit),
+            value: resolved.value,
+            text: statisticText(resolved.value, statistic.value.locator.column, statistic.value.unit),
         })),
     );
 }
@@ -774,11 +784,11 @@ function figureTrack(block: ChartBlock, value: RenderTrack | undefined): Result<
     }
     return ok({
         rows: value.rows,
-        ...(value.columns !== undefined ? { columns: value.columns } : {}),
+        columns: value.columns,
         start: declared.start,
         end: declared.end,
         label: declared.label,
-        ...(declared.length !== undefined ? { length: declared.length } : {}),
+        length: declared.length,
         labels: declared.binding.columnLabels,
         meanings: declared.binding.columnMeanings,
     });
@@ -801,7 +811,7 @@ function figureTrees(block: ChartBlock, values: RenderTrees | undefined): Result
         }
         trees[axis] = {
             rows: value.rows,
-            ...(value.columns !== undefined ? { columns: value.columns } : {}),
+            columns: value.columns,
             parent: tree.parent,
             child: tree.child,
             height: tree.height,
@@ -969,19 +979,19 @@ function deriveAsComposition(
                 encoding: {
                     x: x.value,
                     y: y.value,
-                    ...(encoding.group !== undefined ? { group: encoding.group } : {}),
-                    ...(encoding.label !== undefined ? { label: encoding.label } : {}),
-                    ...(encoding.color !== undefined ? { color: encoding.color } : {}),
-                    ...(encoding.size !== undefined ? { size: encoding.size } : {}),
-                    ...(encoding.low !== undefined ? { low: encoding.low } : {}),
-                    ...(encoding.high !== undefined ? { high: encoding.high } : {}),
+                    group: encoding.group,
+                    label: encoding.label,
+                    color: encoding.color,
+                    size: encoding.size,
+                    low: encoding.low,
+                    high: encoding.high,
                 },
                 // The caller refused an orientation on every type but the bar, thus the form here is a bar
                 // wherever one arrives. The arrangement crosses onto the series, and no name channel loses it.
-                ...(orientation !== undefined ? { orientation } : {}),
+                orientation,
             },
         ],
-        ...(encoding.facet !== undefined ? { facet: encoding.facet } : {}),
+        facet: encoding.facet,
     };
     return deriveComposition(blockId, composition, rows, columns, labels, extras);
 }
@@ -1058,18 +1068,18 @@ const CHANNELS: readonly Channel[] = ["x", "y", "group", "value"];
  * without a value drops, thus no substitute value ever appears.
  */
 function deriveTransformedRows(rows: readonly ChartRow[], derived: ReadonlyArray<{ column: string; name: string; transform: ChartTransform }>): ChartRow[] {
-    const values = derived.map((entry) => transformColumn(rows, entry.column, entry.transform));
+    const columns = derived.map((entry) => ({ name: entry.name, values: transformColumn(rows, entry.column, entry.transform) }));
     const out: ChartRow[] = [];
-    for (let index = 0; index < rows.length; index += 1) {
-        const next: ChartRow = { ...rows[index] };
+    for (const [index, row] of rows.entries()) {
+        const next: ChartRow = { ...row };
         let complete = true;
-        for (let slot = 0; slot < derived.length; slot += 1) {
-            const value = values[slot][index];
+        for (const column of columns) {
+            const value = column.values[index] ?? null;
             if (value === null) {
                 complete = false;
                 break;
             }
-            next[derived[slot].name] = value;
+            next[column.name] = value;
         }
         if (complete) out.push(next);
     }
@@ -1121,19 +1131,22 @@ function deriveBar(
         const focused = focusSet(block.id, block.focus, rows.length, group === undefined ? categories : firstAppearance(rows.map((row) => row[group])));
         if (focused.isErr()) return err(focused.error);
         const focus = focused.value;
-        const bars = groupedSeries(rows, group, (groupRows, name) => ({
-            type: "bar",
-            ...(name !== undefined ? { name: categoryName(name) } : {}),
-            ...categoryStyle(name, focus),
-            barGap: 0,
-            barCategoryGap: BAR_CATEGORY_GAP,
-            data: groupRows.map((row) => {
-                const pair = horizontal ? [row[y], categoryCell(row[x])] : [categoryCell(row[x]), row[y]];
-                // A bar with no group reads the focus over its own categories, thus each item carries its color.
-                const color = group === undefined ? focusColor(focus, row[x]) : undefined;
-                return color === undefined ? pair : { value: pair, itemStyle: { color } };
-            }),
-        }));
+        const bars = groupedSeries(rows, group, (groupRows, name) => {
+            const bar: EchartOption = {
+                type: "bar",
+                ...categoryStyle(name, focus),
+                barGap: 0,
+                barCategoryGap: BAR_CATEGORY_GAP,
+                data: groupRows.map((row) => {
+                    const pair = horizontal ? [row[y], categoryCell(row[x])] : [categoryCell(row[x]), row[y]];
+                    // A bar with no group reads the focus over its own categories, thus each item carries its color.
+                    const color = group === undefined ? focusColor(focus, row[x]) : undefined;
+                    return color === undefined ? pair : { value: pair, itemStyle: { color } };
+                }),
+            };
+            if (name !== undefined) bar.name = categoryName(name);
+            return bar;
+        });
         series = withValueLabels(bars, horizontal, (cell) => valueLabelText(y, cell, block.meanings));
     } else {
         if (block.facet !== undefined) {
@@ -1143,7 +1156,12 @@ function deriveBar(
         if (stacked.isErr()) return err(stacked.error);
         series = stacked.value;
     }
-    const valueAxis = { type: "value", ...(mode === "normalized" ? { min: 0, max: 1 } : {}), ...labelRoom(series, horizontal) };
+    const valueAxis: EchartOption = { type: "value" };
+    if (mode === "normalized") {
+        valueAxis.min = 0;
+        valueAxis.max = 1;
+    }
+    Object.assign(valueAxis, labelRoom(series, horizontal));
 
     if (horizontal) {
         return ok({
@@ -1179,9 +1197,9 @@ function stackedSeries(
     columns: readonly string[] | undefined,
     x: string,
     y: string,
-    categories: readonly Cell[],
+    categories: readonly (Cell | undefined)[],
     normalized: boolean,
-    tableGroups?: readonly Cell[],
+    tableGroups?: readonly (Cell | undefined)[],
 ): Result<EchartOption[], RenderProblem> {
     const groupResult = requireColumn(block, rows, columns, "group");
     if (groupResult.isErr()) return err(groupResult.error);
@@ -1243,7 +1261,7 @@ function deriveStackedFacets(
     columns: readonly string[] | undefined,
     x: string,
     y: string,
-    categories: readonly Cell[],
+    categories: readonly (Cell | undefined)[],
     normalized: boolean,
     facet: string,
 ): Result<EchartOption, RenderProblem> {
@@ -1345,15 +1363,23 @@ function derivePointForm(
     const places = block.orders.x !== undefined ? categoryPlaces(xAxis.value) : undefined;
     const xText = xAxis.value.type === "category";
     const yText = yAxis.value.type === "category";
-    const pairOf = (row: ChartRow): Cell[] => [xText ? categoryCell(row[x]) : row[x], yText ? categoryCell(row[y]) : row[y]];
+    const pairOf = (row: ChartRow): (Cell | undefined)[] => [xText ? categoryCell(row[x]) : row[x], yText ? categoryCell(row[y]) : row[y]];
 
-    const series = groupedSeries(rows, group, (groupRows, name) => ({
-        type: form,
-        ...(name !== undefined ? { name: categoryName(name) } : {}),
-        ...categoryStyle(name, focused.value),
-        ...(form === "line" ? { showSymbol: false } : { large: true, largeThreshold: 2000 }),
-        data: form === "line" ? sortByX(groupRows.map(pairOf), places) : groupRows.map(pairOf),
-    }));
+    const series = groupedSeries(rows, group, (groupRows, name) => {
+        const entry: EchartOption = {
+            type: form,
+            ...categoryStyle(name, focused.value),
+            data: form === "line" ? sortByX(groupRows.map(pairOf), places) : groupRows.map(pairOf),
+        };
+        if (name !== undefined) entry.name = categoryName(name);
+        if (form === "line") {
+            entry.showSymbol = false;
+        } else {
+            entry.large = true;
+            entry.largeThreshold = 2000;
+        }
+        return entry;
+    });
     return ok({ xAxis: xAxis.value, yAxis: yAxis.value, series });
 }
 
@@ -1440,22 +1466,21 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 
     const series: EchartOption[] = [];
     const buckets = slotBuckets(rows, x, y, groupColumn);
-    const valuesOf = groups.map((group) => categories.map((category) => buckets.get(slotKey(group.name, category)) ?? []));
-    const pointed = drawsDistributionPoints(valuesOf.flat());
+    const lanes = groups.map((group) => ({ name: group.name, values: categories.map((category) => buckets.get(slotKey(group.name, category)) ?? []) }));
+    const pointed = drawsDistributionPoints(lanes.flatMap((lane) => lane.values));
     // The axis jitter centers each point on its category and not on its slot, thus a grouped box places its
     // points on the slot axis.
     const grouped = groups.length > 1;
     const points: number[][] = [];
     const slotted: EchartOption[] = [];
-    for (const [place, group] of groups.entries()) {
-        const color = focusColor(focused.value, group.name);
+    for (const [place, lane] of lanes.entries()) {
+        const color = focusColor(focused.value, lane.name);
         const slot = boxSlot(place, groups.length);
         const boxData: (number[] | string)[] = [];
         const outliers: number[][] = [];
         const slotPointList: number[][] = [];
         const medians: EchartOption[][] = [];
-        for (let index = 0; index < categories.length; index++) {
-            const values = valuesOf[place][index];
+        for (const [index, values] of lane.values.entries()) {
             if (pointed && grouped) slotPointList.push(...slotPoints(values, index, slot));
             else if (pointed) {
                 for (const value of values) points.push([index, value]);
@@ -1476,28 +1501,28 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 
         series.push({
             type: "boxplot",
-            ...(group.name !== undefined ? { name: categoryName(group.name) } : {}),
+            name: categoryName(lane.name),
             // A box draws its median in the border color, thus a focus colors the border and never the fill.
-            ...(color !== undefined ? { itemStyle: { borderColor: color } } : {}),
+            itemStyle: { borderColor: color },
             data: boxData,
         });
         // The outlier scatter pairs with its box series, thus it only appears when an outlier exists. A box with
         // no group takes no palette slot by name, thus its outliers take the ink of the points.
         if (outliers.length > 0) {
-            const outlierColor = color ?? (group.name === undefined ? CHART_INK : undefined);
+            const outlierColor = color ?? (lane.name === undefined ? CHART_INK : undefined);
             series.push({
                 type: "scatter",
-                ...(group.name !== undefined ? { name: categoryName(group.name) } : {}),
-                ...(outlierColor !== undefined ? { itemStyle: { color: outlierColor } } : {}),
+                name: categoryName(lane.name),
+                itemStyle: { color: outlierColor },
                 symbolSize: 4,
                 data: outliers,
             });
         }
-        const onSlots = slotSeries(group.name === undefined ? undefined : categoryName(group.name), slotPointList, medians, grouped ? color : CHART_INK);
+        const onSlots = slotSeries(lane.name === undefined ? undefined : categoryName(lane.name), slotPointList, medians, grouped ? color : CHART_INK);
         if (onSlots !== undefined) slotted.push(onSlots);
     }
 
-    const pointName = groups[0]?.name;
+    const pointName = lanes[0]?.name;
     if (points.length > 0) series.push(pointSeries(points, pointName === undefined ? undefined : categoryName(pointName)));
     series.push(...slotted);
 
@@ -1505,8 +1530,8 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
         type: "category",
         data: categories,
         ...axisNameFields("x", categoryAxisTitle(block.labels, x)),
-        ...(points.length > 0 ? JITTERED_AXIS : {}),
     };
+    if (points.length > 0) Object.assign(categoryAxis, JITTERED_AXIS);
     return ok({
         xAxis: slotted.length > 0 ? [categoryAxis, slotAxis(categories.length)] : categoryAxis,
         yAxis: { type: "value", ...yAxisName(axisTitle(block.labels, y)) },
@@ -1601,19 +1626,18 @@ function slotSeries(
     if (points.length === 0 && medians.length === 0) return undefined;
     return {
         ...pointSeries(points, name),
-        itemStyle: { ...(color !== undefined ? { color } : {}), opacity: DISTRIBUTION_POINT_OPACITY },
+        itemStyle: { color, opacity: DISTRIBUTION_POINT_OPACITY },
         xAxisIndex: 1,
-        ...(medians.length > 0
-            ? {
-                  markLine: {
+        markLine:
+            medians.length > 0
+                ? {
                       silent: true,
                       symbol: "none",
                       label: { show: false },
                       lineStyle: { width: MEDIAN_LINE_WIDTH_PX, type: "solid", opacity: 1 },
                       data: medians.map((line) => [...line]),
-                  },
-              }
-            : {}),
+                  }
+                : undefined,
     };
 }
 
@@ -1647,7 +1671,7 @@ const JITTERED_AXIS: EchartOption = { jitter: 24, jitterOverlap: false, jitterMa
 function pointSeries(points: readonly number[][], name: string | undefined): EchartOption {
     return {
         type: "scatter",
-        ...(name !== undefined ? { name } : {}),
+        name,
         silent: true,
         symbolSize: DISTRIBUTION_POINT_SIZE,
         itemStyle: { color: CHART_INK, opacity: DISTRIBUTION_POINT_OPACITY },
@@ -1677,7 +1701,7 @@ function derivePie(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     const valueColumn = valueResult.value;
 
     const seen = new Set<string>();
-    const data: { name: string; value: Cell }[] = [];
+    const data: { name: string; value: Cell | undefined }[] = [];
     for (const row of rows) {
         const name = String(row[groupColumn]);
         if (seen.has(name)) {
@@ -1728,19 +1752,20 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
     if (focused.isErr()) return err(focused.error);
 
     const buckets = slotBuckets(rows, x, y, groupColumn);
-    const shapes: Array<Array<ViolinShape & { category: number }>> = groups.map((group) =>
-        categories.flatMap((category, index) => {
+    const lanes = groups.map((group) => ({
+        name: group.name,
+        shapes: categories.flatMap((category, index) => {
             const shape = violinShape(buckets.get(slotKey(group.name, category)) ?? []);
             return shape === undefined ? [] : [{ ...shape, category: index }];
         }),
-    );
+        values: categories.map((category) => buckets.get(slotKey(group.name, category)) ?? []),
+    }));
     let largest = 0;
-    for (const shape of shapes.flat()) {
+    for (const shape of lanes.flatMap((lane) => lane.shapes)) {
         for (const density of shape.densities) largest = Math.max(largest, density);
     }
 
-    const valuesOf = groups.map((group) => categories.map((category) => buckets.get(slotKey(group.name, category)) ?? []));
-    const pointed = drawsDistributionPoints(valuesOf.flat());
+    const pointed = drawsDistributionPoints(lanes.flatMap((lane) => lane.values));
     // The axis jitter centers each point on its category and not on its slot, thus a grouped violin places its
     // points on the slot axis.
     const grouped = groups.length > 1;
@@ -1748,14 +1773,14 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
 
     const series: EchartOption[] = [];
     const legend: string[] = [];
-    for (const [place, group] of groups.entries()) {
-        const name = group.name !== undefined ? categoryName(group.name) : axisTitle(block.labels, y);
+    for (const [place, lane] of lanes.entries()) {
+        const name = lane.name !== undefined ? categoryName(lane.name) : axisTitle(block.labels, y);
         const offset = slotOffset(place, groups.length);
         const slot = violinSlot(place, groups.length);
-        const shaped = new Set(shapes[place].map((shape) => shape.category));
-        const medians = valuesOf[place].flatMap((values, index) => (shaped.has(index) || values.length === 0 ? [] : [medianLine(values, index, slot)]));
-        const slotPointList = pointed && grouped ? valuesOf[place].flatMap((values, index) => slotPoints(values, index, slot)) : [];
-        const color = focusColor(focused.value, group.name);
+        const shaped = new Set(lane.shapes.map((shape) => shape.category));
+        const medians = lane.values.flatMap((values, index) => (shaped.has(index) || values.length === 0 ? [] : [medianLine(values, index, slot)]));
+        const slotPointList = pointed && grouped ? lane.values.flatMap((values, index) => slotPoints(values, index, slot)) : [];
+        const color = focusColor(focused.value, lane.name);
         const onSlots = slotSeries(name, slotPointList, medians, grouped ? color : CHART_INK);
         if (onSlots !== undefined) slotted.push(onSlots);
         const halfWidth = VIOLIN_HALF_WIDTH / groups.length;
@@ -1765,13 +1790,13 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
             renderItem: OUTLINE_RENDERER,
             silent: true,
             encode: { x: 0, y: [1, 2] },
-            ...(color !== undefined ? { itemStyle: { color } } : nullCategoryStyle(group.name)),
-            data: shapes[place].map((shape) => [
+            itemStyle: color !== undefined ? { color } : nullCategoryStyle(lane.name).itemStyle,
+            data: lane.shapes.map((shape) => [
                 shape.category,
                 shape.grid[0],
                 shape.grid[shape.grid.length - 1],
                 offset,
-                ...shape.grid.flatMap((value, point) => [roundWidth(largest > 0 ? (shape.densities[point] / largest) * halfWidth : 0), value]),
+                ...shape.grid.flatMap((value, point) => [roundWidth(largest > 0 ? ((shape.densities[point] ?? 0) / largest) * halfWidth : 0), value]),
             ]),
         });
         series.push({
@@ -1780,13 +1805,13 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
             renderItem: INTERVAL_RENDERER,
             silent: true,
             encode: { x: 0, y: [1, 2, 3] },
-            data: shapes[place].map((shape) => [shape.category, shape.median, shape.q1, shape.q3, 1, offset, 1]),
+            data: lane.shapes.map((shape) => [shape.category, shape.median, shape.q1, shape.q3, 1, offset, 1]),
         });
         legend.push(name);
     }
     const points: number[][] = [];
     if (pointed && !grouped) {
-        for (const [index, values] of (valuesOf[0] ?? []).entries()) {
+        for (const [index, values] of (lanes[0]?.values ?? []).entries()) {
             for (const value of values) points.push([index, value]);
         }
     }
@@ -1797,8 +1822,8 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
         type: "category",
         data: categories,
         ...axisNameFields("x", categoryAxisTitle(block.labels, x)),
-        ...(points.length > 0 ? JITTERED_AXIS : {}),
     };
+    if (points.length > 0) Object.assign(categoryAxis, JITTERED_AXIS);
     return ok({
         xAxis: slotted.length > 0 ? [categoryAxis, slotAxis(categories.length)] : categoryAxis,
         yAxis: { type: "value", scale: true, ...yAxisName(axisTitle(block.labels, y)) },
@@ -2223,7 +2248,8 @@ function deriveComposition(
         resolved.push(series.value);
     }
 
-    if (resolved.length === 0) {
+    const first = resolved[0];
+    if (first === undefined) {
         // The schema holds a composition to one series at least. The guard states the same rule for a
         // value that reaches the renderer without a parse, because the axes come from the first series.
         return err(problem(blockId, "The composition carries no series."));
@@ -2232,7 +2258,7 @@ function deriveComposition(
     const annotations = composition.annotations ?? [];
     const labeled = pointLabelRows(blockId, annotations, rows, columns, plottedRows(resolved, rows.length));
     if (labeled.isErr()) return err(labeled.error);
-    const focused = focusSet(blockId, extras.focus, rows.length, compositionCategories(resolved, rows.length));
+    const focused = focusSet(blockId, extras.focus, rows.length, compositionCategories(resolved));
     if (focused.isErr()) return err(focused.error);
 
     if (collector !== undefined && classification !== undefined) {
@@ -2261,11 +2287,10 @@ function deriveComposition(
         density: scatterDensity(rows.length),
         annotations,
         // The axes come from the first series, thus its order sorts the shared x axis of every series.
-        orderedX: resolved[0].x.order !== undefined,
+        orderedX: first.x.order !== undefined,
         colorOnTop: extras.colorOnTop === true,
     };
 
-    const first = resolved[0];
     const axes = compositionAxes(context, first, composition.axes);
     if (axes.isErr()) return err(axes.error);
     const plotted = resolved.map((entry) => plottedSeries(entry, axes.value, extras.meanings));
@@ -2281,21 +2306,21 @@ function deriveComposition(
     const series = labeledSeries(context, emitted.value, horizontal);
     const room = first.declared.form === "bar" ? labelRoom(series, horizontal) : {};
     const colored = emitted.value.some((entry) => entry.entry?.color !== undefined);
-    const grid = {
-        // A horizontal bar draws its category names as y labels, thus the grid must hold them.
-        ...(isHorizontalBar(first.declared) ? LABEL_CONTAINING_GRID : {}),
-        // A continuous color draws its scale at the right edge, thus the grid leaves that band free.
-        ...(colored ? { right: COLOR_SCALE_GRID_RIGHT } : {}),
-    };
-    return ok({
+    const grid: EchartOption = {};
+    // A continuous color draws its scale at the right edge, thus the grid leaves that band free.
+    if (colored) grid.right = COLOR_SCALE_GRID_RIGHT;
+    // A horizontal bar draws its category names as y labels, thus the grid must hold them.
+    if (isHorizontalBar(first.declared)) Object.assign(grid, LABEL_CONTAINING_GRID);
+    const panel: EchartOption = {
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
         xAxis: horizontal ? { ...axes.value.xAxis, ...room } : axes.value.xAxis,
         yAxis: horizontal ? axes.value.yAxis : { ...axes.value.yAxis, ...room },
         series,
-        ...(maps.length > 0 ? { visualMap: maps } : {}),
-        ...(emitted.value.some((entry) => entry.auxiliary) ? { legend: legendOf(drawnNames(emitted.value)) } : {}),
-        ...(Object.keys(grid).length > 0 ? { grid } : {}),
-    });
+    };
+    if (maps.length > 0) panel.visualMap = maps;
+    if (emitted.value.some((entry) => entry.auxiliary)) panel.legend = legendOf(drawnNames(emitted.value));
+    if (Object.keys(grid).length > 0) panel.grid = grid;
+    return ok(panel);
 }
 
 /** The stack prefix of a band. A facet panel adds its own place, thus two panels never stack each other. */
@@ -2385,13 +2410,12 @@ function compositionFault(composition: ChartComposition, focus: readonly string[
  * The categories that a focus of one composition can name: the values of each group channel, and the `x`
  * values of each bar series that splits by no group.
  */
-function compositionCategories(resolved: readonly ResolvedSeries[], rowCount: number): Cell[] {
+function compositionCategories(resolved: readonly ResolvedSeries[]): Cell[] {
     const categories: Cell[] = [];
     for (const entry of resolved) {
         const channel = entry.group ?? (entry.declared.form === "bar" ? entry.x : undefined);
         if (channel === undefined) continue;
-        for (let index = 0; index < rowCount; index += 1) {
-            const value = channel.values[index];
+        for (const value of channel.values) {
             if (value !== null) categories.push(value);
         }
     }
@@ -2432,9 +2456,10 @@ function composePanel(
     }
 
     const marks = markMembers(context.annotations);
-    const target = markCarrier(emitted);
-    if (Object.keys(marks).length > 0 && target >= 0) {
-        emitted[target] = { ...emitted[target], option: { ...emitted[target].option, ...marks } };
+    const carrier = markCarrier(emitted);
+    if (Object.keys(marks).length > 0 && carrier !== undefined) {
+        const target = emitted.indexOf(carrier);
+        emitted[target] = { ...carrier, option: { ...carrier.option, ...marks } };
     }
     return ok(emitted);
 }
@@ -2445,10 +2470,10 @@ function labeledSeries(context: CompositionContext, emitted: readonly EmittedSer
         emitted.map((entry) => entry.option),
         horizontal,
         (cell, index) => {
-            const value = emitted[index].entry?.y;
+            const value = emitted[index]?.entry?.y;
             return value === undefined ? String(cell) : valueLabelText(value.transformed ? value.name : value.column, cell, context.meanings);
         },
-        (index) => emitted[index].entry?.low === undefined,
+        (index) => emitted[index]?.entry?.low === undefined,
     );
 }
 
@@ -2504,8 +2529,8 @@ function visualMaps(context: CompositionContext, resolved: readonly ResolvedSeri
             show: false,
             seriesIndex,
             dimension,
-            min: sizes.length > 0 ? lowest(sizes) : 0,
-            max: sizes.length > 0 ? highest(sizes) : 1,
+            min: lowest(sizes) ?? 0,
+            max: highest(sizes) ?? 1,
             inRange: { symbolSize: [...SIZE_CHANNEL_RANGE_PX] },
         });
     }
@@ -2519,7 +2544,7 @@ function visualMaps(context: CompositionContext, resolved: readonly ResolvedSeri
 function drawnMembers(emitted: readonly EmittedSeries[], seriesIndex: readonly number[], dimension: number): number[] {
     const members: number[] = [];
     for (const index of seriesIndex) {
-        const data = emitted[index].option.data;
+        const data = emitted[index]?.option.data;
         if (!Array.isArray(data)) continue;
         for (const item of data) {
             const value = Array.isArray(item) ? item : typeof item === "object" && item !== null ? (item as EchartOption).value : undefined;
@@ -2530,17 +2555,21 @@ function drawnMembers(emitted: readonly EmittedSeries[], seriesIndex: readonly n
     return members;
 }
 
-/** The smallest of some values, read in one pass. */
-function lowest(values: readonly number[]): number {
-    let min = values[0];
-    for (const value of values) if (value < min) min = value;
+/** The smallest of some values, or `undefined` for no value. */
+function lowest(values: readonly number[]): number | undefined {
+    let min: number | undefined;
+    for (const value of values) {
+        if (min === undefined || value < min) min = value;
+    }
     return min;
 }
 
-/** The largest of some values, read in one pass. */
-function highest(values: readonly number[]): number {
-    let max = values[0];
-    for (const value of values) if (value > max) max = value;
+/** The largest of some values, or `undefined` for no value. */
+function highest(values: readonly number[]): number | undefined {
+    let max: number | undefined;
+    for (const value of values) {
+        if (max === undefined || value > max) max = value;
+    }
     return max;
 }
 
@@ -2644,6 +2673,10 @@ function deriveFacets(
     if (context.collector !== undefined) {
         context.collector.failed = true;
     }
+    const first = resolved[0];
+    if (first === undefined) {
+        return err(problem(context.blockId, "The composition carries no series."));
+    }
     const split = splitByChannel(context.rows, channel.value);
     if (split.length > FACET_PANEL_LIMIT) {
         return err(
@@ -2664,9 +2697,9 @@ function deriveFacets(
             emitted.push({ ...entry, option: { ...entry.option, xAxisIndex: place, yAxisIndex: place } });
         }
     }
-    const labeledPanels = labeledSeries(context, emitted, isHorizontalBar(resolved[0].declared));
-    const labeled = resolved[0].declared.form === "bar" && Object.keys(labelRoom(labeledPanels, isHorizontalBar(resolved[0].declared))).length > 0;
-    const shared = sharedAxes(context, resolved, axes, labeled);
+    const labeledPanels = labeledSeries(context, emitted, isHorizontalBar(first.declared));
+    const labeled = first.declared.form === "bar" && Object.keys(labelRoom(labeledPanels, isHorizontalBar(first.declared))).length > 0;
+    const shared = sharedAxes(context, resolved, axes, labeled, isHorizontalBar(first.declared));
 
     // A continuous color draws its scale at the right edge, thus the panels leave that band free.
     const scaleBand = emitted.some((entry) => entry.entry?.color !== undefined) ? COLOR_SCALE_BAND_PCT : 0;
@@ -2679,16 +2712,17 @@ function deriveFacets(
 
     const named = resolved.some((entry) => entry.label !== undefined) || context.labeled.size > 0;
     const maps = visualMaps(context, resolved, emitted);
-    return ok({
+    const panel: EchartOption = {
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
         grid: layout.grid,
         xAxis: layout.xAxis,
         yAxis: layout.yAxis,
         series: labeledPanels,
         graphic: layout.graphic,
-        ...(maps.length > 0 ? { visualMap: maps } : {}),
         legend: layout.legend,
-    });
+    };
+    if (maps.length > 0) panel.visualMap = maps;
+    return ok(panel);
 }
 
 /** The layout members of a facet: one grid and one axis pair for each panel, the panel labels and the axis titles, and the legend. */
@@ -2773,7 +2807,7 @@ function panelAxis(axis: EchartOption, widthPx?: number): EchartOption {
     const base = { ...withoutName(axis), splitNumber: FACET_SPLIT_NUMBER };
     if (axis.type !== "category" || !Array.isArray(axis.data)) return { ...base, axisLabel: { ...label, hideOverlap: true } };
     const turn = widthPx === undefined || label.rotate !== undefined ? undefined : categoryTurn(axis.data as readonly Cell[], widthPx);
-    return { ...base, axisLabel: { ...label, interval: 0, ...(turn !== undefined ? { rotate: turn } : {}) } };
+    return { ...base, axisLabel: { ...label, interval: 0, rotate: turn } };
 }
 
 /** The width of one character of the chart text, as a share of the text size. */
@@ -2817,7 +2851,9 @@ function thinnedLabels(option: EchartOption): EchartOption {
         return { ...fields, axisLabel: { ...label, interval } };
     };
     const xAxis = Array.isArray(option.xAxis) ? option.xAxis.map(thin) : thin(option.xAxis);
-    return { ...option, xAxis, ...(thinned && option.tooltip === undefined ? { tooltip: { trigger: "axis" } } : {}) };
+    const result: EchartOption = { ...option, xAxis };
+    if (thinned && option.tooltip === undefined) result.tooltip = { trigger: "axis" };
+    return result;
 }
 
 /**
@@ -2825,7 +2861,7 @@ function thinnedLabels(option: EchartOption): EchartOption {
  * as a facet panel does. Every other grid spans the page chart body less its two side margins.
  */
 function pagePlotWidth(grid: unknown, axis: EchartOption): number {
-    const entry = Array.isArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
+    const entry = isUnknownArray(grid) ? grid[typeof axis.gridIndex === "number" ? axis.gridIndex : 0] : grid;
     const fields = typeof entry === "object" && entry !== null ? (entry as EchartOption) : {};
     const stated = pagePx(fields.width);
     return stated > 0 ? stated : CHART_PAGE_WIDTH_PX - pagePx(fields.left) - pagePx(fields.right);
@@ -2876,7 +2912,7 @@ function withoutName(axis: EchartOption): EchartOption {
  * values. A category axis already lists the categories of every row, and a log axis keeps the range of the
  * chart runtime.
  */
-function sharedAxes(context: CompositionContext, resolved: readonly ResolvedSeries[], axes: AxisPair, labeled: boolean): AxisPair {
+function sharedAxes(context: CompositionContext, resolved: readonly ResolvedSeries[], axes: AxisPair, labeled: boolean, horizontal: boolean): AxisPair {
     const xs: number[] = [];
     const ys: number[] = [];
     for (const entry of resolved) {
@@ -2897,7 +2933,6 @@ function sharedAxes(context: CompositionContext, resolved: readonly ResolvedSeri
         if (entry.declared.form === "bar") (horizontal ? xs : ys).push(0);
     }
     // The value labels of a bar sit past the bar ends, thus the value axis of the bar takes the label room.
-    const horizontal = isHorizontalBar(resolved[0].declared);
     return { xAxis: sharedRange(axes.xAxis, xs, labeled && horizontal), yAxis: sharedRange(axes.yAxis, ys, labeled && !horizontal) };
 }
 
@@ -2908,11 +2943,11 @@ function sharedAxes(context: CompositionContext, resolved: readonly ResolvedSeri
  * of a bar chart with labels does on one panel. The zero of a bar stays the end of its side.
  */
 function sharedRange(axis: EchartOption, values: readonly number[], room: boolean): EchartOption {
-    if (axis.type !== "value" || values.length === 0) {
-        return axis;
-    }
     let low = lowest(values);
     let high = highest(values);
+    if (axis.type !== "value" || low === undefined || high === undefined) {
+        return axis;
+    }
     if (room) {
         const span = high - low;
         if (high > 0) high += span * LABEL_ROOM_SHARE;
@@ -2993,12 +3028,11 @@ function plottedSeries(entry: ResolvedSeries, axes: AxisPair, meanings: ColumnMe
     const horizontal = isHorizontalBar(entry.declared);
     const xAxis = horizontal ? axes.yAxis : axes.xAxis;
     const yAxis = horizontal ? axes.xAxis : axes.yAxis;
-    return {
-        ...entry,
-        x: plottedChannel(entry.x, xAxis, meanings),
-        y: plottedChannel(entry.y, yAxis, meanings),
-        ...(entry.y0 !== undefined ? { y0: plottedChannel(entry.y0, yAxis, meanings) } : {}),
-    };
+    const plotted: ResolvedSeries = { ...entry };
+    if (entry.x !== undefined) plotted.x = plottedChannel(entry.x, xAxis, meanings);
+    if (entry.y !== undefined) plotted.y = plottedChannel(entry.y, yAxis, meanings);
+    if (entry.y0 !== undefined) plotted.y0 = plottedChannel(entry.y0, yAxis, meanings);
+    return plotted;
 }
 
 /**
@@ -3016,7 +3050,11 @@ function plottedSeries(entry: ResolvedSeries, axes: AxisPair, meanings: ColumnMe
 function plottedChannel(channel: ResolvedChannel, axis: EchartOption, meanings: ColumnMeanings): ResolvedChannel {
     if (axis.type === "category") {
         const retyped = channel.values.some((cell) => typeof cell === "number");
-        return { ...channel, values: channel.values.map((cell) => (cell === null ? null : categoryCell(cell))), ...(retyped ? { retyped: true } : {}) };
+        return {
+            ...channel,
+            values: channel.values.map((cell) => (cell === null ? null : (categoryCell(cell) ?? null))),
+            retyped: retyped ? true : undefined,
+        };
     }
     if (channel.transformed || channel.values.some((cell) => cell !== null && isNonNumericString(cell))) return channel;
     if (namesCategories(meanings, channel.column)) return channel;
@@ -3112,8 +3150,7 @@ function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | unde
     }
     const buckets: Array<{ name: Cell; indices: number[] }> = [];
     const byKey = new Map<string, { name: Cell; indices: number[] }>();
-    for (let index = 0; index < rows.length; index += 1) {
-        const value = group.values[index];
+    for (const [index, value] of group.values.entries()) {
         if (value === null) continue;
         // The key carries the type of the cell, thus the number `1` and the string `"1"` are two groups.
         const key = `${typeof value}:${String(value)}`;
@@ -3240,20 +3277,18 @@ function collectSource(
         return;
     }
     const flags = split.indices.filter((index) => labeled.has(index));
-    collector.series.push({
-        x,
-        y,
-        ...(color !== undefined ? { color } : {}),
-        ...(size !== undefined ? { size } : {}),
-        ...(group !== undefined ? { group } : {}),
-        ...(split.category === undefined && split.name !== undefined ? { value: split.name } : {}),
-        ...(split.category !== undefined ? { category: split.category } : {}),
-        ...(label !== undefined ? { label } : {}),
-        ...(flags.length > 0 ? { flags } : {}),
-        ...(SORTED_FORMS.has(form) ? { sort: true } : {}),
-        ...(rises ? { rise: true } : {}),
-        ...(isHorizontalBar(entry.declared) ? { swap: true } : {}),
-    });
+    const described: { -readonly [K in keyof ChartSeriesSource]: ChartSeriesSource[K] } = { x, y };
+    if (color !== undefined) described.color = color;
+    if (size !== undefined) described.size = size;
+    if (group !== undefined) described.group = group;
+    if (split.category === undefined && split.name !== undefined) described.value = split.name;
+    if (split.category !== undefined) described.category = split.category;
+    if (label !== undefined) described.label = label;
+    if (flags.length > 0) described.flags = flags;
+    if (SORTED_FORMS.has(form)) described.sort = true;
+    if (rises) described.rise = true;
+    if (isHorizontalBar(entry.declared)) described.swap = true;
+    collector.series.push(described);
 }
 
 /**
@@ -3276,10 +3311,9 @@ function columnSource(collector: SourceCollector, channel: ResolvedChannel): Cha
  * no item style, and the theme answers for it.
  */
 function seriesItemStyle(color: string | undefined, form: ChartSeries["form"], density: ScatterDensity): EchartOption {
-    const fields = {
-        ...(color !== undefined ? { color } : {}),
-        ...(form === "scatter" && density === "crowd" ? { opacity: SCATTER_CROWD_OPACITY } : {}),
-    };
+    const fields: EchartOption = {};
+    if (color !== undefined) fields.color = color;
+    if (form === "scatter" && density === "crowd") fields.opacity = SCATTER_CROWD_OPACITY;
     return Object.keys(fields).length > 0 ? { itemStyle: fields } : {};
 }
 
@@ -3293,11 +3327,12 @@ function seriesItemStyle(color: string | undefined, form: ChartSeries["form"], d
  * Thus the ladder reads: a carrier with points and a palette color, then any carrier with a palette color,
  * then any carrier at all. Each guide reaches the page under every one of the three.
  */
-function markCarrier(emitted: readonly EmittedSeries[]): number {
-    const drawn = emitted.findIndex((entry) => entry.carriesMarks && !entry.muted && !entry.empty);
-    if (drawn >= 0) return drawn;
-    const colored = emitted.findIndex((entry) => entry.carriesMarks && !entry.muted);
-    return colored >= 0 ? colored : emitted.findIndex((entry) => entry.carriesMarks);
+function markCarrier(emitted: readonly EmittedSeries[]): EmittedSeries | undefined {
+    return (
+        emitted.find((entry) => entry.carriesMarks && !entry.muted && !entry.empty) ??
+        emitted.find((entry) => entry.carriesMarks && !entry.muted) ??
+        emitted.find((entry) => entry.carriesMarks)
+    );
 }
 
 /**
@@ -3309,7 +3344,7 @@ function collectPoints(entry: ResolvedSeries, indices: readonly number[]): Point
     for (const index of indices) {
         const x = entry.x.values[index];
         const y = entry.y.values[index];
-        if (x === null || y === null) continue;
+        if (x === null || x === undefined || y === null || y === undefined) continue;
         const point: Point = { index, x, y };
         if (entry.y0 !== undefined) {
             const y0 = entry.y0.values[index];
@@ -3387,14 +3422,21 @@ function seriesData(
             continue;
         }
         itemObjects = true;
-        data.push({
+        const item: EchartOption = {
             value: pair,
-            // A marked point of a series with no label channel takes the x cell as its name. Thus the
-            // `{b}` of the label template and of the tooltip names a cell of the row, and never nothing.
-            ...(named || marked ? { name: named ? String(label) : String(point.x) } : {}),
-            ...(color !== undefined ? { itemStyle: { color } } : {}),
-            ...(marked ? { label: { ...POINT_LABEL } } : {}),
-        });
+        };
+        // A marked point of a series with no label channel takes the x cell as its name. Thus the
+        // `{b}` of the label template and of the tooltip names a cell of the row, and never nothing.
+        if (named || marked) {
+            item.name = named ? String(label) : String(point.x);
+        }
+        if (color !== undefined) {
+            item.itemStyle = { color };
+        }
+        if (marked) {
+            item.label = { ...POINT_LABEL };
+        }
+        data.push(item);
     }
     return { data, itemObjects };
 }
@@ -3410,7 +3452,13 @@ function seriesData(
  * the upper one, thus the band would draw from the axis and state a bound that no cell holds. The two
  * columns are in the wrong order, and the refusal names the row.
  */
-function bandSeries(blockId: string, entry: ResolvedSeries, name: string, points: readonly Point[], stack: string): Result<EchartOption[], RenderProblem> {
+function bandSeries(
+    blockId: string,
+    entry: ResolvedSeries,
+    name: string,
+    points: readonly Point[],
+    stack: string,
+): Result<[EchartOption, EchartOption], RenderProblem> {
     const lower: unknown[] = [];
     const upper: unknown[] = [];
     for (const point of points) {
@@ -3426,7 +3474,7 @@ function bandSeries(blockId: string, entry: ResolvedSeries, name: string, points
         lower.push([point.x, base]);
         upper.push([point.x, top - base]);
     }
-    return ok([
+    return ok<[EchartOption, EchartOption], RenderProblem>([
         { type: "line", name, stack, showSymbol: false, silent: true, lineStyle: { opacity: 0 }, tooltip: { show: false }, data: lower },
         { type: "line", name, stack, showSymbol: false, areaStyle: { opacity: BAND_OPACITY }, tooltip: { show: false }, data: upper },
     ]);
@@ -3463,13 +3511,19 @@ function formOptions(form: ChartSeries["form"], density: ScatterDensity, perPoin
             return { step: "end", showSymbol: false };
         case "area":
             return { showSymbol: false, areaStyle: {} };
-        case "scatter":
-            return {
-                ...(density === "normal" ? {} : { symbolSize: density === "crowd" ? SCATTER_CROWD_SYMBOL_SIZE : SCATTER_HOVER_SYMBOL_SIZE }),
-                // The large path draws a simplified point in one fill, and it drops a per-item style. Thus a
-                // series whose items carry a name, a label, a color, or a size keeps the normal path.
-                ...(perPoint ? {} : { large: true, largeThreshold: LARGE_SCATTER_THRESHOLD }),
-            };
+        case "scatter": {
+            const scatter: EchartOption = {};
+            if (density !== "normal") {
+                scatter.symbolSize = density === "crowd" ? SCATTER_CROWD_SYMBOL_SIZE : SCATTER_HOVER_SYMBOL_SIZE;
+            }
+            // The large path draws a simplified point in one fill, and it drops a per-item style. Thus a
+            // series whose items carry a name, a label, a color, or a size keeps the normal path.
+            if (!perPoint) {
+                scatter.large = true;
+                scatter.largeThreshold = LARGE_SCATTER_THRESHOLD;
+            }
+            return scatter;
+        }
     }
 }
 
@@ -3528,15 +3582,16 @@ function pointLabelRows(
  * stable, thus two equal cells keep the row order and the subset is the same on every host.
  */
 function topRows(rows: readonly ChartRow[], column: string, order: "asc" | "desc", n: number, plotted: ReadonlySet<number>): number[] {
-    const ranked: number[] = [];
-    for (let index = 0; index < rows.length; index += 1) {
-        if (plotted.has(index) && rows[index][column] !== undefined) ranked.push(index);
+    const ranked: Array<{ index: number; cell: Cell }> = [];
+    for (const [index, row] of rows.entries()) {
+        const cell = row[column];
+        if (plotted.has(index) && cell !== undefined) ranked.push({ index, cell });
     }
     ranked.sort((a, b) => {
-        const compared = compareCell(rows[a][column], rows[b][column]);
+        const compared = compareCell(a.cell, b.cell);
         return order === "asc" ? compared : -compared;
     });
-    return ranked.slice(0, n);
+    return ranked.slice(0, n).map((entry) => entry.index);
 }
 
 /**
@@ -3562,10 +3617,10 @@ function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
             ]);
         }
     }
-    return {
-        ...(lines.length > 0 ? { markLine: guideMarkLine(lines) } : {}),
-        ...(areas.length > 0 ? { markArea: { silent: true, data: areas } } : {}),
-    };
+    const marks: EchartOption = {};
+    if (lines.length > 0) marks.markLine = guideMarkLine(lines);
+    if (areas.length > 0) marks.markArea = { silent: true, data: areas };
+    return marks;
 }
 
 /**
@@ -3575,10 +3630,9 @@ function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
  * its own default, and a member of either kind that states nothing gives the same bytes as before.
  */
 function markLabel(label: string | undefined, position?: string): EchartOption {
-    const fields = {
-        ...(label !== undefined ? { formatter: label } : {}),
-        ...(position !== undefined ? { position } : {}),
-    };
+    const fields: EchartOption = {};
+    if (label !== undefined) fields.formatter = label;
+    if (position !== undefined) fields.position = position;
     return Object.keys(fields).length > 0 ? { label: fields } : {};
 }
 
@@ -3709,7 +3763,7 @@ function orderChannel<T extends Cell>(context: CompositionContext, channel: Reso
         (index) => channel.values[index],
         categories,
         order,
-        (index) => (order === undefined ? undefined : context.rows[index][order.by]),
+        (index) => (order === undefined ? undefined : context.rows[index]?.[order.by]),
     );
 }
 
@@ -3765,7 +3819,7 @@ function transformedName(transform: ChartTransform, column: string): string {
  * One cell as a category axis reads it. The chart runtime reads a number on a category axis as the place of a
  * category and never as its name, thus a number gives its text and the point draws at its own category.
  */
-function categoryCell(cell: Cell): Cell {
+function categoryCell(cell: Cell | undefined): Cell | undefined {
     return typeof cell === "number" ? String(cell) : cell;
 }
 
@@ -3809,10 +3863,10 @@ function orderedAxis(
     const sorted = orderCategories(
         blockId,
         rows.length,
-        (index) => String(rows[index][column]),
+        (index) => String(rows[index]?.[column]),
         inferred.data as string[],
         order,
-        (index) => rows[index][order.by],
+        (index) => rows[index]?.[order.by],
     );
     return sorted.map((data) => ({ ...inferred, data }));
 }
@@ -3861,7 +3915,7 @@ function focusSet(
 function withValueLabels(
     series: readonly EchartOption[],
     horizontal: boolean,
-    textOf: (cell: Cell, index: number) => string,
+    textOf: (cell: Cell | undefined, index: number) => string,
     labelable: (index: number) => boolean = () => true,
 ): EchartOption[] {
     const labeled = (entry: EchartOption): boolean => entry.type === "bar" && entry.stack === undefined && Array.isArray(entry.data);
@@ -3918,7 +3972,7 @@ function labelRoom(series: readonly EchartOption[], horizontal: boolean): Echart
  * The place of the value label of one bar: past the end of the bar, away from the zero line. A negative bar
  * grows down or to the left, thus its label sits under it or at its left.
  */
-function labelPosition(cell: Cell, horizontal: boolean): string {
+function labelPosition(cell: Cell | undefined, horizontal: boolean): string {
     const negative = (toNumber(cell) ?? 0) < 0;
     if (horizontal) return negative ? "left" : "right";
     return negative ? "bottom" : "top";
@@ -3928,7 +3982,7 @@ function labelPosition(cell: Cell, horizontal: boolean): string {
  * The value label of one bar: the shown form of the number helper, for the column and the meaning that the
  * bound table declares. A card and a label of one page then read one number one way.
  */
-function valueLabelText(column: string, cell: Cell, meanings: ColumnMeanings): string {
+function valueLabelText(column: string, cell: Cell | undefined, meanings: ColumnMeanings): string {
     return formatNumberCell(cell, selectNumberKind(column, cell, declaredForColumn(meanings, column))).text;
 }
 
@@ -4025,12 +4079,12 @@ function groupedSeries(
  * Sort `[x, y]` pairs by x. Two numbers compare numerically, and any other pair compares as text. Where an
  * ordered category axis gives the place of each category, the pairs follow those places.
  */
-function sortByX(pairs: Cell[][], places?: ReadonlyMap<string, number>): Cell[][] {
+function sortByX(pairs: (Cell | undefined)[][], places?: ReadonlyMap<string, number>): (Cell | undefined)[][] {
     return [...pairs].sort((a, b) => compareAlong(a[0], b[0], places));
 }
 
 /** Compare two x cells along an ordered category axis, or by the compare of a sort where no axis order applies. */
-function compareAlong(a: Cell, b: Cell, places: ReadonlyMap<string, number> | undefined): number {
+function compareAlong(a: Cell | undefined, b: Cell | undefined, places: ReadonlyMap<string, number> | undefined): number {
     if (places === undefined) return compareCell(a, b);
     return (places.get(String(a)) ?? 0) - (places.get(String(b)) ?? 0);
 }
@@ -4039,12 +4093,12 @@ function compareAlong(a: Cell, b: Cell, places: ReadonlyMap<string, number> | un
  * A stable key for one `(x, y)` pair. The key carries the type of each cell, thus the number `1` and the
  * string `"1"` are different pairs and a false collision is impossible.
  */
-function pairKey(xCell: Cell, yCell: Cell): string {
+function pairKey(xCell: Cell | undefined, yCell: Cell | undefined): string {
     return `${typeof xCell}:${String(xCell)} ${typeof yCell}:${String(yCell)}`;
 }
 
 /** A stable key for one cell. The key carries the type of the cell, exactly as a pair key does. */
-function cellKey(cell: Cell): string {
+function cellKey(cell: Cell | undefined): string {
     return `${typeof cell}:${String(cell)}`;
 }
 
@@ -4058,6 +4112,9 @@ function histogramEdges(values: readonly number[]): number[] {
     const sorted = [...values].sort((a, b) => a - b);
     const min = sorted[0];
     const max = sorted[sorted.length - 1];
+    if (min === undefined || max === undefined) {
+        return [];
+    }
     if (max === min) {
         return [min, max];
     }
@@ -4092,14 +4149,18 @@ function autoBinCount(sorted: readonly number[], min: number, max: number): numb
 /** The bin counts for the values against the edges. The max value falls in the last bin. */
 function binCounts(values: readonly number[], edges: readonly number[]): number[] {
     const bins = edges.length - 1;
-    const counts = new Array<number>(bins).fill(0);
     const min = edges[0];
-    const width = (edges[bins] - min) / bins;
+    const max = edges[bins];
+    if (bins < 1 || min === undefined || max === undefined) {
+        return [];
+    }
+    const width = (max - min) / bins;
+    const counts = new Array<number>(bins).fill(0);
     for (const value of values) {
         let index = width === 0 ? 0 : Math.floor((value - min) / width);
         if (index < 0) index = 0;
         if (index >= bins) index = bins - 1;
-        counts[index] += 1;
+        counts[index] = (counts[index] ?? 0) + 1;
     }
     return counts;
 }
@@ -4108,8 +4169,11 @@ function binCounts(values: readonly number[], edges: readonly number[]): number[
 function histogramSeries(values: readonly number[], edges: readonly number[], name: Cell | undefined): EchartOption {
     const counts = binCounts(values, edges);
     const data: number[][] = [];
-    for (let i = 0; i < counts.length; i++) {
-        data.push([(edges[i] + edges[i + 1]) / 2, counts[i]]);
+    for (const [index, count] of counts.entries()) {
+        const low = edges[index];
+        const high = edges[index + 1];
+        if (low === undefined || high === undefined) continue;
+        data.push([(low + high) / 2, count]);
     }
     if (name === undefined) {
         return { type: "bar", barWidth: "99%", data };
@@ -4209,6 +4273,7 @@ function violinShape(values: readonly number[]): ViolinShape | undefined {
 
     const min = sorted[0];
     const max = sorted[n - 1];
+    if (min === undefined || max === undefined) return undefined;
     const grid: number[] = [];
     for (let point = 0; point < VIOLIN_GRID_POINTS; point += 1) {
         grid.push(min + (point * (max - min)) / (VIOLIN_GRID_POINTS - 1));
@@ -4241,11 +4306,9 @@ function roundWidth(width: number): number {
  * linearly between the `floor` and the `ceil` of that index.
  */
 function quantileType7(sorted: readonly number[], p: number): number {
-    const n = sorted.length;
-    if (n === 1) return sorted[0];
-    const index = p * (n - 1);
-    const low = Math.floor(index);
-    const high = Math.ceil(index);
-    if (low === high) return sorted[low];
-    return sorted[low] + (index - low) * (sorted[high] - sorted[low]);
+    const index = p * (sorted.length - 1);
+    const low = sorted[Math.floor(index)];
+    const high = sorted[Math.ceil(index)];
+    if (low === undefined || high === undefined) return Number.NaN;
+    return low + (index - Math.floor(index)) * (high - low);
 }

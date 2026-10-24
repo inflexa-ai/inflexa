@@ -165,7 +165,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
     const observation = provenance ? { provenance } : {};
-    const authoring = createReportAuthoringTools(gateway, { ...observation, ...(logger ? { logger } : {}) });
+    const authoring = createReportAuthoringTools(gateway, { ...observation, logger });
 
     const tools: Tool[] = [
         // The read surface toward the analysis. It roams the tree read-only.
@@ -192,7 +192,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createListPinnedArtifactsTool({
             gateway,
             resolveWorkspaceRoot,
-            ...(logger ? { logger } : {}),
+            logger,
         }),
         // The derivation tool. It reshapes the pinned evidence into one table under the
         // session directory, on the sandbox rails of the value tier.
@@ -200,32 +200,32 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             gateway,
             resolveWorkspaceRoot,
             derivations,
-            ...(runDerivation ? { runDerivation } : {}),
-            ...(runAuthorizer ? { runAuthorizer } : {}),
+            runDerivation,
+            runAuthorizer,
             ...observation,
-            ...(logger ? { logger } : {}),
+            logger,
         }),
         // The render-and-preview tool. It resolves the page root per call.
         createPreviewReportTool({
             gateway,
             resolveWorkspaceRoot,
             threads,
-            ...(makeResolver ? { makeResolver } : {}),
-            ...(resolvePageAsset ? { resolvePageAsset } : {}),
-            ...(makeSessionPages ? { makeSessionPages } : {}),
+            makeResolver,
+            resolvePageAsset,
+            makeSessionPages,
             // The preview is the one site that carries the document into the page, thus the read member
             // reaches this tool alone.
             ...observation,
-            ...(logger ? { logger } : {}),
+            logger,
         }),
         // The eyes tool. It opens the rendered page in headless Chrome.
         createExaminePageTool({
             gateway,
             resolveWorkspaceRoot,
             chrome,
-            ...(eyes ? { eyes } : {}),
-            ...(resolvePageUrl ? { resolvePageUrl } : {}),
-            ...(logger ? { logger } : {}),
+            eyes,
+            resolvePageUrl,
+            logger,
         }),
         // The record tool. It gates the whole document, records one version, then prunes each
         // derived table that the recorded document does not bind.
@@ -234,9 +234,9 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             store,
             threads,
             resolveWorkspaceRoot,
-            ...(makeResolver ? { makeResolver } : {}),
+            makeResolver,
             ...observation,
-            ...(logger ? { logger } : {}),
+            logger,
         }),
     ];
 

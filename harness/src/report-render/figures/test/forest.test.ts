@@ -57,26 +57,32 @@ function yAxes(option: EchartOption): EchartOption[] {
     return option.yAxis as EchartOption[];
 }
 
+function yAxis(option: EchartOption, index: number): EchartOption {
+    const axis = yAxes(option)[index];
+    if (axis === undefined) throw new Error(`the option holds no y axis ${index}`);
+    return axis;
+}
+
 describe("the forest figure", () => {
     it("registers for the forest chart type", () => {
         expect(FIGURE_MODULES.forest).toBe(FOREST_FIGURE);
     });
 
     it("reads the rows top-down in table order", () => {
-        const terms = yAxes(derive(forestBlock()))[0];
+        const terms = yAxis(derive(forestBlock()), 0);
         expect([terms.type, terms.inverse, terms.data]).toEqual(["category", true, TERMS.map(termLines)]);
     });
 
     it("sorts the rows by the order of the term channel", () => {
         const option = derive(forestBlock({ ...ENCODING, y: { column: "term", orderBy: "hr", order: "desc" } }));
-        expect(yAxes(option)[0].data).toEqual([
+        expect(yAxis(option, 0).data).toEqual([
             "ECOG performance\nscore",
             "Karnofsky score\n(physician)",
             "Age (per year)",
             "Weight loss (lb)",
             "Female vs male",
         ]);
-        expect(yAxes(option)[1].data).toEqual(["2.10 (1.44–3.05)", "1.02 (1.00–1.04)", "1.02 (1.00–1.03)", "0.99 (0.98–1.00)", "0.53 (0.38–0.75)"]);
+        expect(yAxis(option, 1).data).toEqual(["2.10 (1.44–3.05)", "1.02 (1.00–1.04)", "1.02 (1.00–1.03)", "0.99 (0.98–1.00)", "0.53 (0.38–0.75)"]);
     });
 
     it("draws a log axis that ends at the nice ratios just past the data", () => {
@@ -91,14 +97,16 @@ describe("the forest figure", () => {
         const axis = option.xAxis as EchartOption;
         expect(Math.log10((axis.max as number) / (axis.min as number))).toBeLessThanOrEqual(4);
         expect(axis.max).toBe(40);
-        const items = seriesOf(option)[1].data as number[][];
+        const intervals = seriesOf(option)[1];
+        if (intervals === undefined) throw new Error("the option holds no interval series");
+        const items = intervals.data as number[][];
         const separated = items.find((item) => item[1] === rows.length - 1);
         // The low bound ends at the axis and carries the clip mark of its end, and the high bound stays as it is.
         expect(separated?.slice(2, 4)).toEqual([axis.min as number, 40]);
         expect(separated?.[7]).toBe(1);
         expect(items.filter((item) => item !== separated).every((item) => item[7] === 0)).toBe(true);
         // The text column prints the bound of the table.
-        expect(yAxes(option)[1].data).toContain("3.20 (1.2 × 10⁻¹⁵⁰–40.00)");
+        expect(yAxis(option, 1).data).toContain("3.20 (1.2 × 10⁻¹⁵⁰–40.00)");
     });
 
     it("holds 1 inside the log axis where every interval lies on one side of it", () => {
@@ -160,6 +168,7 @@ describe("the forest figure", () => {
 
     it("prints the estimate with its interval and the p value in two columns at the right", () => {
         const [, estimates, pValues] = yAxes(derive(forestBlock()));
+        if (estimates === undefined || pValues === undefined) throw new Error("the option holds fewer than three y axes");
         expect([estimates.position, estimates.inverse, estimates.name, estimates.data]).toEqual([
             "right",
             true,
@@ -170,20 +179,26 @@ describe("the forest figure", () => {
     });
 
     it("formats the p channel as a p-value whatever its column name, and prints a stored zero as a bound", () => {
-        const rows = ROWS.map((row, index) => ({ ...row, wald: index === 0 ? 0 : row.pvalue }));
+        const rows = ROWS.map((row, index) => {
+            if (row.pvalue === undefined) throw new Error("the fixture row holds no p");
+            return { ...row, wald: index === 0 ? 0 : row.pvalue };
+        });
         const [, , pValues] = yAxes(derive(forestBlock({ ...ENCODING, p: "wald" }), rows));
+        if (pValues === undefined) throw new Error("the option holds no p axis");
         // The smallest positive value of the column bounds the stored zero.
         expect(pValues.data).toEqual(["<2 × 10⁻⁴", "3.6 × 10⁻⁴", "1.1 × 10⁻⁴", "0.12", "0.165"]);
     });
 
     it("prints a row whose smallest value sits under 0.1 with two significant digits on that value", () => {
         const [, estimates] = yAxes(derive(forestBlock(), [{ term: "a", hr: 0.052, lower: 0.0123, upper: 0.23, pvalue: 0.01 }]));
+        if (estimates === undefined) throw new Error("the option holds no estimate axis");
         expect(estimates.data).toEqual(["0.052 (0.012–0.230)"]);
     });
 
     it("prints a value under one thousandth as a power of ten, and the rest of its row at the decimals of the row", () => {
         // A separated covariate gives a Wald bound far under any fixed count of decimals.
         const [, estimates] = yAxes(derive(forestBlock(), [{ term: "a", hr: 3.2, lower: 1.2e-150, upper: 40, pvalue: 0.9 }]));
+        if (estimates === undefined) throw new Error("the option holds no estimate axis");
         expect(estimates.data).toEqual(["3.20 (1.2 × 10⁻¹⁵⁰–40.00)"]);
     });
 
@@ -192,12 +207,12 @@ describe("the forest figure", () => {
             { term: "a", hr: -0.4, lower: -0.9, upper: 0.1, pvalue: 0.2 },
             { term: "b", hr: 0.3, lower: 0.1, upper: 0.5, pvalue: 0.01 },
         ];
-        expect(yAxes(derive(forestBlock(), rows))[1].data).toEqual(["−0.40 (−0.90 to 0.10)", "0.30 (0.10–0.50)"]);
+        expect(yAxis(derive(forestBlock(), rows), 1).data).toEqual(["−0.40 (−0.90 to 0.10)", "0.30 (0.10–0.50)"]);
     });
 
     it("breaks a long term into two lines at most, and names the whole term of each square for the tooltip", () => {
         const option = derive(forestBlock());
-        expect(yAxes(option)[0].data).toEqual([
+        expect(yAxis(option, 0).data).toEqual([
             "Age (per year)",
             "Female vs male",
             "ECOG performance\nscore",
@@ -222,6 +237,7 @@ describe("the forest figure", () => {
         const block = forestBlock();
         const labeled: ChartBlock = { ...block, binding: { ...block.binding, columnLabels: { hr: "Hazard ratio", pvalue: "p" } } };
         const [, estimates, pValues] = yAxes(derive(labeled));
+        if (estimates === undefined || pValues === undefined) throw new Error("the option holds fewer than three y axes");
         expect([estimates.name, pValues.name, (derive(labeled).xAxis as EchartOption).name]).toEqual(["Hazard ratio", "p", "Hazard ratio"]);
     });
 
@@ -239,7 +255,11 @@ describe("the refusals of the forest figure", () => {
     });
 
     it("refuses a term that holds two rows", () => {
-        expect(refusal(forestBlock(), [ROWS[0], ROWS[0]])).toBe('The forest figure draws one row for each term, and the term "Age (per year)" holds two rows.');
+        const [firstRow] = ROWS;
+        if (firstRow === undefined) throw new Error("the fixture holds no row");
+        expect(refusal(forestBlock(), [firstRow, firstRow])).toBe(
+            'The forest figure draws one row for each term, and the term "Age (per year)" holds two rows.',
+        );
     });
 
     it("refuses a bound on the wrong side of the estimate", () => {

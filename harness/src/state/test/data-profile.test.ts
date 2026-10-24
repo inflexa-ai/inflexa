@@ -223,13 +223,14 @@ describe("data-profile state transitions", () => {
         const cleared = (await clearDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
         expect(cleared).toBe(true);
 
-        const raw = await pool.query({
+        const raw = await pool.query<Record<string, unknown>>({
             text: `SELECT data_profile_status, data_profile_error, data_profile_started_at,
                    data_profile_completed_at, data_profile_result, seed_input_file_ids
             FROM cortex_analysis_state WHERE analysis_id = $1`,
             values: ["a-clear-done"],
         });
         const row = raw.rows[0];
+        if (row === undefined) throw new Error("the analysis state holds no row");
         expect(row.data_profile_status).toBeNull();
         expect(row.data_profile_error).toBeNull();
         expect(row.data_profile_started_at).toBeNull();

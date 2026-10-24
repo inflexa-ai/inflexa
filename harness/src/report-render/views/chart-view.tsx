@@ -132,7 +132,7 @@ export function renderChart(
                 </button>
             </div>
             <div class="report-chart-card corner-accents">
-                <div id={containerId} data-echarts-id={block.id} class="chart-container" {...(bodyStyle !== "" ? { style: bodyStyle } : {})}></div>
+                <div id={containerId} data-echarts-id={block.id} class="chart-container" style={bodyStyle === "" ? undefined : bodyStyle}></div>
                 <script type="application/json">{raw(json)}</script>
                 <div id={chartMenuId(containerId)} class="report-chart-menu" role="menu" aria-label={MENU_LABEL}>
                     {SVG_EXPORTS.map((kind) => {

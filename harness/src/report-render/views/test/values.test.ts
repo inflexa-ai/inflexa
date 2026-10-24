@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../../contracts/report-blocks.js";
 import type { ScalarReference } from "../../../contracts/report-reference.js";
 import { tableSidecarName } from "../../assets.js";
+import type { ColumnDisplay } from "../../table-data.js";
 import {
     GRID_COUNT_CLASS,
     GRID_MOUNT_ATTRIBUTE,
@@ -89,65 +90,72 @@ describe("tableDisplay", () => {
         return tableDisplay(table.binding, { type: "table", rows }, columns);
     }
 
+    /** The display entry of one requested column: the module gives one entry per column, in the column order. */
+    function entryAt(display: ColumnDisplay[], position: number): ColumnDisplay {
+        const entry = display[position];
+        if (entry === undefined) throw new Error(`the display holds no column at ${position}`);
+        return entry;
+    }
+
     it("gives one entry for each column, in the column order", () => {
         const display = displayOf(block, ["gene", "padj"], [{ gene: "TP53", padj: 0.01 }]);
 
         expect(display.length).toBe(2);
-        expect(display[0].label).toBe("gene");
-        expect(display[1].label).toBe("padj");
+        expect(entryAt(display, 0).label).toBe("gene");
+        expect(entryAt(display, 1).label).toBe("padj");
     });
 
     it("shows the declared label of a column", () => {
         const display = displayOf(declared({ columnLabels: { padj: "Adjusted p-value" } }), ["padj"], [{ padj: 0.01 }]);
-        expect(display[0].label).toBe("Adjusted p-value");
+        expect(entryAt(display, 0).label).toBe("Adjusted p-value");
     });
 
     it("prettifies the label of an undeclared column", () => {
         const display = displayOf(block, ["gene_symbol"], [{ gene_symbol: "TP53" }]);
-        expect(display[0].label).toBe("gene symbol");
+        expect(entryAt(display, 0).label).toBe("gene symbol");
     });
 
     it("takes the filter of a column from its cells and not from its kind", () => {
         const display = displayOf(block, ["gene", "padj"], [{ gene: "TP53", padj: 0.01 }]);
 
         // A gene column holds names, thus a reader filters it by name. A p-value column holds magnitudes.
-        expect(display[0].filter).toBe("text");
-        expect(display[1].filter).toBe("number");
+        expect(entryAt(display, 0).filter).toBe("text");
+        expect(entryAt(display, 1).filter).toBe("number");
     });
 
     it("keeps the number filter of a column that holds a sentinel beside its numbers", () => {
         const rows = [{ reads: "NA" }, { reads: 14201 }];
-        expect(displayOf(block, ["reads"], rows)[0].filter).toBe("number");
+        expect(entryAt(displayOf(block, ["reads"], rows), 0).filter).toBe("number");
         // A column where no cell parses holds names, thus it filters as text.
-        expect(displayOf(block, ["direction"], [{ direction: "up" }, { direction: "down" }])[0].filter).toBe("text");
+        expect(entryAt(displayOf(block, ["direction"], [{ direction: "up" }, { direction: "down" }]), 0).filter).toBe("text");
     });
 
     it("gives the number filter to an identifier column that holds numeric text", () => {
         // The kind keeps the source text of the identifier, and the filter reads what the cells hold.
         const display = displayOf(block, ["pmid"], [{ pmid: "31978945" }]);
-        expect(display[0].kind).toBe("identifier");
-        expect(display[0].filter).toBe("number");
+        expect(entryAt(display, 0).kind).toBe("identifier");
+        expect(entryAt(display, 0).filter).toBe("number");
     });
 
     it("reads a p-value column as the scientific kind and every other column as the rounded kind", () => {
         const display = displayOf(block, ["gene", "padj", "reads"], [{ gene: "TP53", padj: 0.01, reads: 14201 }]);
 
-        expect(display[0].kind).toBe("compact-scientific");
-        expect(display[1].kind).toBe("scientific");
-        expect(display[2].kind).toBe("compact-scientific");
+        expect(entryAt(display, 0).kind).toBe("compact-scientific");
+        expect(entryAt(display, 1).kind).toBe("scientific");
+        expect(entryAt(display, 2).kind).toBe("compact-scientific");
     });
 
     it("reads a declared p-value column as the scientific kind, although its name matches no token", () => {
         const table = declared({ columnMeanings: { significance: "p-value" } });
-        expect(displayOf(table, ["significance"], [{ significance: 0.004 }])[0].kind).toBe("scientific");
+        expect(entryAt(displayOf(table, ["significance"], [{ significance: 0.004 }]), 0).kind).toBe("scientific");
         // The same column with no declaration matches no token, thus it keeps the rounded kind.
-        expect(displayOf(block, ["significance"], [{ significance: 0.004 }])[0].kind).toBe("compact-scientific");
+        expect(entryAt(displayOf(block, ["significance"], [{ significance: 0.004 }]), 0).kind).toBe("compact-scientific");
     });
 
     it("reads an identifier column and a declared category column as the identifier kind", () => {
-        expect(displayOf(block, ["pmid"], [{ pmid: "31978945" }])[0].kind).toBe("identifier");
+        expect(entryAt(displayOf(block, ["pmid"], [{ pmid: "31978945" }]), 0).kind).toBe("identifier");
         const table = declared({ columnMeanings: { cluster: "category" } });
-        expect(displayOf(table, ["cluster"], [{ cluster: "01" }])[0].kind).toBe("identifier");
+        expect(entryAt(displayOf(table, ["cluster"], [{ cluster: "01" }]), 0).kind).toBe("identifier");
     });
 
     it("bounds a p-value column by the smallest positive value of its own rows", () => {
@@ -159,18 +167,18 @@ describe("tableDisplay", () => {
         const display = displayOf(block, ["fdr", "pvalue"], rows);
 
         // Each column reads on its own, thus the neighbor of one column bounds no other.
-        expect(display[0].bound).toBe(0.00036);
-        expect(display[1].bound).toBe(0.0002);
+        expect(entryAt(display, 0).bound).toBe(0.00036);
+        expect(entryAt(display, 1).bound).toBe(0.0002);
     });
 
     it("gives no bound to a p-value column that holds no positive value", () => {
         const display = displayOf(block, ["padj"], [{ padj: 0 }, { padj: 0 }]);
-        expect(display[0].bound).toBeUndefined();
+        expect(entryAt(display, 0).bound).toBeUndefined();
     });
 
     it("gives no bound to a column of another nature, because no zero of it reads as a bound", () => {
         const display = displayOf(block, ["reads"], [{ reads: 0 }, { reads: 14201 }]);
-        expect(display[0].bound).toBeUndefined();
+        expect(entryAt(display, 0).bound).toBeUndefined();
     });
 
     it("ignores a declaration that names no column of the table", () => {

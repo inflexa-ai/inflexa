@@ -248,7 +248,9 @@ describe("createAskGateway — standing grants", () => {
 
         expect(reply).toEqual({ kind: "always" });
         // No prompt: the one part is already settled, thus the transcript shows the standing grant.
-        expect(parts).toEqual([{ id: expect.any(String), title: GRANTED.title, command: GRANTED.command, status: "resolved", reply: "always" }]);
+        const [settled] = parts;
+        expect(settled?.id).toBeTypeOf("string");
+        expect(settled).toMatchObject({ title: GRANTED.title, command: GRANTED.command, status: "resolved", reply: "always" });
         expect(await gateway.pending()).toHaveLength(0);
         // The short-circuit still records a resolved audit row.
         expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
@@ -346,7 +348,9 @@ describe("createAskGateway — standing grants", () => {
         const reply = await gateway.ask(later, { analysisId: "analysis-A", userId: USER_A, signal: new AbortController().signal, emit });
 
         expect(reply).toEqual({ kind: "always" });
-        expect(parts).toEqual([{ id: expect.any(String), title: later.title, command: later.command, status: "resolved", reply: "always" }]);
+        const [settled] = parts;
+        expect(settled?.id).toBeTypeOf("string");
+        expect(settled).toMatchObject({ title: later.title, command: later.command, status: "resolved", reply: "always" });
         expect(await gateway.pending()).toHaveLength(0);
         expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
 

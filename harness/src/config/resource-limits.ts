@@ -92,8 +92,6 @@ export function clampResources(spec: ResourceSpec, limits: ResourceLimits): Reso
     return {
         cpu: Math.min(spec.cpu, limits.maxCpu),
         memoryGb: Math.min(spec.memoryGb, limits.maxMemoryGb),
-        ...(spec.gpu && {
-            gpu: { count: Math.min(spec.gpu.count, limits.maxGpuCount) },
-        }),
+        gpu: spec.gpu === undefined ? undefined : { count: Math.min(spec.gpu.count, limits.maxGpuCount) },
     };
 }

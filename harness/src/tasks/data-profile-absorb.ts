@@ -71,17 +71,18 @@ function keptPaths(detected: DetectedSets): Set<string> {
  */
 function annotationOf(group: DataProfileGroup, kept: ReadonlySet<string>): GroupAnnotation {
     const annotations = (group.memberAnnotations ?? []).filter((entry) => kept.has(entry.path));
-    return {
+    const annotation: GroupAnnotation = {
         name: group.name,
         memberRepresents: group.memberRepresents,
         description: group.description,
         role: group.role as GroupRole,
         category: group.category as GroupCategory,
-        ...(group.categoryLabel ? { categoryLabel: group.categoryLabel } : {}),
-        ...(group.subtype ? { subtype: group.subtype } : {}),
-        ...(group.categoryReason ? { categoryReason: group.categoryReason } : {}),
-        ...(annotations.length > 0 ? { memberAnnotations: annotations.map((entry) => ({ path: entry.path, note: entry.note })) } : {}),
+        categoryLabel: group.categoryLabel,
+        subtype: group.subtype,
+        categoryReason: group.categoryReason,
     };
+    if (annotations.length > 0) annotation.memberAnnotations = annotations.map((entry) => ({ path: entry.path, note: entry.note }));
+    return annotation;
 }
 
 interface ReplayContext {
@@ -170,22 +171,23 @@ function replayDimension(ctx: ReplayContext, dimension: DataProfileDimension): P
                 `dimension "${dimension.label}": the template "${binding.template}" no longer carries a slot at position ${binding.slotIndex}`,
             );
         }
-        return { kind: "slot", setId: set.id, slotId: slot.id, ...(observation.note ? { note: observation.note } : {}) };
+        return { kind: "slot", setId: set.id, slotId: slot.id, note: observation.note };
     });
 
-    return {
+    const reconciliations = dimension.reconciliations?.map((entry) => ({ ...entry }));
+    const replayed: ProfileDimension = {
         label: dimension.label,
         category: dimension.category as DimensionCategory,
-        ...(dimension.categoryLabel ? { categoryLabel: dimension.categoryLabel } : {}),
-        ...(dimension.scope ? { scope: dimension.scope } : {}),
-        ...(dimension.description ? { description: dimension.description } : {}),
+        categoryLabel: dimension.categoryLabel,
+        scope: dimension.scope,
+        description: dimension.description,
         observations,
-        ...(dimension.reconciliations && dimension.reconciliations.length > 0
-            ? { reconciliations: dimension.reconciliations.map((entry) => ({ ...entry })) }
-            : {}),
-        ...(dimension.nestsUnder ? { nestsUnder: { ...dimension.nestsUnder } } : {}),
-        ...(dimension.treatmentReason ? { treatmentReason: dimension.treatmentReason } : {}),
+        reconciliations,
+        nestsUnder: dimension.nestsUnder === undefined ? undefined : { ...dimension.nestsUnder },
+        treatmentReason: dimension.treatmentReason,
     };
+    if (reconciliations && reconciliations.length > 0) replayed.reconciliations = reconciliations;
+    return replayed;
 }
 
 /** Every group id the authored steps named, including a value-mapped split's per-value groups. */
@@ -239,11 +241,11 @@ export function absorbRecipe(prior: DataProfileResult | null | undefined, detect
 
     const submission: ProfileSubmission = {
         operations,
-        ...(dimensions.length > 0 ? { dimensions } : {}),
         analysisSummary: prior.summary,
         domain: prior.domain ?? "",
         organism: prior.organism ?? null,
     };
+    if (dimensions.length > 0) submission.dimensions = dimensions;
     // Final round by construction: no agent is awake to repair anything this raises, so a
     // contested file sweeps rather than being awarded to whichever step ran first.
     const resolution = resolveProfileSubmission(submission, detected, menu, { finalRound: true });

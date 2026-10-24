@@ -29,7 +29,7 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
         chrome: {},
         derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
-        ...(toolOutputStore ? { toolOutputStore } : {}),
+        toolOutputStore,
     });
 }
 

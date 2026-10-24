@@ -305,24 +305,25 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
 
     const executionMode: ToolExecutionMode = def.executionMode ?? "step";
 
-    return {
+    const packaged: Tool<z.infer<Schema>, Output> = {
         id: def.id,
         description: def.description,
         inputSchema: def.inputSchema,
         jsonSchema,
         executionMode,
-        // Spread rather than assigned: a tool that declines carries no
-        // `describeCall` key at all, so "has a hook" is one property check.
-        // `typeof` is the discriminator, not equality with the sentinel, so a
-        // hook that returns the string `"none"` still packages as a hook.
-        ...(typeof def.describeCall === "function" ? { describeCall: def.describeCall } : {}),
-        // The same property-presence pattern as `describeCall`: a tool that
-        // declares no result hook carries no key, thus "has a hook" is one
-        // property check on either side.
-        ...(typeof def.describeResult === "function" ? { describeResult: def.describeResult } : {}),
-        // The loop passes back only a record that this tool's `execute`
-        // attached, thus the record has the declared type.
-        ...(typeof def.foldCallRecord === "function" ? { foldCallRecord: def.foldCallRecord as (record: unknown) => void } : {}),
         execute: def.execute,
     };
+    // The loop passes back only a record that this tool's `execute`
+    // attached, thus the record has the declared type.
+    if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord as (record: unknown) => void;
+    // A tool that declines carries no `describeCall` key at all, so "has a
+    // hook" is one property check. `typeof` is the discriminator, not equality
+    // with the sentinel, so a hook that returns the string `"none"` still
+    // packages as a hook.
+    if (def.describeCall !== undefined && def.describeCall !== "none") packaged.describeCall = def.describeCall;
+    // The same property-presence pattern as `describeCall`: a tool that
+    // declares no result hook carries no key, thus "has a hook" is one
+    // property check on either side.
+    if (def.describeResult !== undefined) packaged.describeResult = def.describeResult;
+    return packaged;
 }

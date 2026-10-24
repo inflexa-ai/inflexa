@@ -181,13 +181,13 @@ function chromosomeNames(found: readonly Chromosome[]): EchartOption {
  */
 function genomeAxis(found: readonly Chromosome[]): GenomeAxis {
     const byPlace = [...found].sort((a, b) => a.low - b.low);
-    return {
-        names: CHROMOSOME_NAMES,
-        starts: byPlace.map((chromosome, index) => [
-            index === 0 ? 0 : byPlace[index - 1].high,
-            `chr${categoryName(chromosome.name).trim().replace(CHROMOSOME_PREFIX, "")}`,
-        ]),
-    };
+    const starts: Array<[number, string]> = [];
+    let previous: Chromosome | undefined;
+    for (const chromosome of byPlace) {
+        starts.push([previous === undefined ? 0 : previous.high, `chr${categoryName(chromosome.name).trim().replace(CHROMOSOME_PREFIX, "")}`]);
+        previous = chromosome;
+    }
+    return { names: CHROMOSOME_NAMES, starts };
 }
 
 /** The sides of a peak where a lead name sits, in the order that the figure tries them. */
@@ -241,10 +241,10 @@ function chromosomes(
     const byKey = new Map<string, Chromosome>();
     const order: Chromosome[] = [];
     for (let index = 0; index < rows.length; index += 1) {
-        const value = rows[index][groupColumn];
+        const value = rows[index]?.[groupColumn];
         const x = xs[index];
         const y = ys[index];
-        if (value === undefined || x === null || y === null) continue;
+        if (value === undefined || x === null || x === undefined || y === null || y === undefined) continue;
         // The key carries the type of the cell, as the series split does.
         const key = `${typeof value}:${String(value)}`;
         let chromosome = byKey.get(key);
@@ -255,7 +255,7 @@ function chromosomes(
         }
         chromosome.low = Math.min(chromosome.low, x);
         chromosome.high = Math.max(chromosome.high, x);
-        const name = labelColumn === undefined ? undefined : rows[index][labelColumn];
+        const name = labelColumn === undefined ? undefined : rows[index]?.[labelColumn];
         if (y > line && name !== undefined && String(name).trim() !== "" && (chromosome.lead === undefined || leads(index, chromosome.lead, xs, ys))) {
             chromosome.lead = index;
         }
@@ -321,7 +321,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                     x: x.value,
                     y: { column: pColumn, transform: "neg_log10" },
                     group: group.value,
-                    ...(encoding.label !== undefined ? { label: encoding.label } : {}),
+                    label: encoding.label,
                 },
             },
         ],
@@ -343,12 +343,13 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
     // The composition splits the series in the order of the rows, thus each series takes the color of the
     // genome place of its chromosome, and never of its place in the series list.
     const places = new Map(found.map((chromosome, place) => [categoryName(chromosome.name), place]));
-    const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(String(name)) ?? 0) % MANHATTAN_COLORS.length];
+    const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(String(name)) ?? 0) % MANHATTAN_COLORS.length] ?? CHART_PALETTE[0];
     const low = smallest(found.map((chromosome) => chromosome.low));
     const high = largest(found.map((chromosome) => chromosome.high));
     const top = niceCeiling(Math.max(peak, line, zeroRows.length > 0 ? zeroY : 0));
     const labelColumn = encoding.label;
-    const names = labelColumn === undefined ? [] : leadRows.map((index) => ({ x: xs[index] ?? 0, y: ys[index] ?? 0, text: String(rows[index][labelColumn]) }));
+    const names =
+        labelColumn === undefined ? [] : leadRows.map((index) => ({ x: xs[index] ?? 0, y: ys[index] ?? 0, text: String(rows[index]?.[labelColumn]) }));
     const span = low !== undefined && high !== undefined ? { min: low, max: high } : undefined;
     const text = sizedSeries([CHROMOSOME_NAMES, POINT_NAMES], (frame) => {
         if (span === undefined) return [];
@@ -364,18 +365,24 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
         legend: { show: false },
         xAxis: {
             ...axisOf(option, "xAxis"),
-            ...(low !== undefined && high !== undefined ? { min: low, max: high } : {}),
+            min: low,
+            max: high,
             axisLabel: { show: false, formatter: GENOME_POSITION_FUNCTION },
             axisTick: { show: false },
             [GENOME_MEMBER]: genomeAxis(found),
         },
         yAxis: { ...axisOf(option, "yAxis"), min: 0, max: top },
         series: [
-            ...seriesOf(option).map((series) => ({
-                ...series,
-                ...pointLayer(colorOf(series.name), DENSE_NULL_SYMBOL_PX, DENSE_SIGNAL_OPACITY),
-                ...(series.markLine !== undefined ? { markLine: guideOverLine(series.markLine as EchartOption, line) } : {}),
-            })),
+            ...seriesOf(option).map((series) => {
+                const guided = {
+                    ...series,
+                    ...pointLayer(colorOf(series.name), DENSE_NULL_SYMBOL_PX, DENSE_SIGNAL_OPACITY),
+                };
+                if (series.markLine !== undefined) {
+                    guided.markLine = guideOverLine(series.markLine as EchartOption, line);
+                }
+                return guided;
+            }),
             ...(zeroRows.length > 0
                 ? [
                       {
@@ -385,11 +392,14 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                           symbolSize: BELOW_RESOLUTION_SYMBOL_PX,
                           itemStyle: { opacity: DENSE_SIGNAL_OPACITY },
                           tooltip: BELOW_RESOLUTION_TOOLTIP,
-                          data: zeroRows.map((index) => ({
-                              ...(labelColumn !== undefined ? { name: String(rows[index][labelColumn]) } : {}),
-                              value: [xs[index] ?? 0, zeroY],
-                              itemStyle: { color: colorOf(categoryName(rows[index][groupColumn])) },
-                          })),
+                          data: zeroRows.map((index) => {
+                              const group = groupColumn === undefined ? undefined : rows[index]?.[groupColumn];
+                              return {
+                                  name: labelColumn === undefined ? undefined : String(rows[index]?.[labelColumn]),
+                                  value: [xs[index] ?? 0, zeroY],
+                                  itemStyle: { color: group === undefined ? undefined : colorOf(categoryName(group)) },
+                              };
+                          }),
                       },
                   ]
                 : []),

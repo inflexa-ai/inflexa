@@ -23,7 +23,13 @@ import { DEPS_DIR, derivationScriptName, PAGE_ASSETS, tableSidecarName } from ".
 import type { DbError } from "../../../lib/db-result.js";
 import type { ThreadStore } from "../../../memory/thread-store.js";
 import type { DerivationRecord } from "../../../state/report-session-state.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../../report-authoring/authoring-tools.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../../report-authoring/authoring-tools.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
@@ -824,9 +830,9 @@ describe("the slots of a chart", () => {
                             binding: { kind: "artifact-table", path: CHART_PATH, hash: HASH },
                             chartType: "km",
                             encoding: { x: "time", y: "survival", group: "arm" },
-                            ...(withTrack
-                                ? { track: { binding: { kind: "artifact-table", path: TRACK_PATH, hash: HASH }, start: "start", end: "end", label: "domain" } }
-                                : {}),
+                            track: withTrack
+                                ? { binding: { kind: "artifact-table", path: TRACK_PATH, hash: HASH }, start: "start", end: "end", label: "domain" }
+                                : undefined,
                             statistics: [
                                 {
                                     label: "Log-rank p",
@@ -1424,7 +1430,7 @@ describe("the provenance export", () => {
             gateway,
             makeResolver: async () => createFixtureResolver(),
             resolveWorkspaceRoot: async () => root,
-            ...(readExport ? { provenance: { readExport } } : {}),
+            provenance: readExport ? { readExport } : undefined,
         });
     }
 

@@ -54,10 +54,10 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
         createKnowledgeRecommendTool({
             client: deps.client,
             pin,
-            ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
-            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
-            ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
-            ...(deps.onRecommend ? { onAnswer: deps.onRecommend } : {}),
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            refStorePath: deps.refStorePath,
+            onAnswer: deps.onRecommend,
         }),
         createKnowledgeCheckTool({ client: deps.client, pin }),
     ];

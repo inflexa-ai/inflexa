@@ -19,6 +19,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
 import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_BODY_PX, SEQUENTIAL_RAMP } from "../design.js";
 import type { RenderProblem } from "../types.js";
@@ -90,9 +91,11 @@ export function wrappedTerm(term: string): string {
     if (line !== "") lines.push(line);
     if (lines.length <= DOTPLOT_TERM_LINES) return lines.join("\n");
     const kept = lines.slice(0, DOTPLOT_TERM_LINES);
-    const last = kept[DOTPLOT_TERM_LINES - 1].split(" ");
-    while (last.length > 1 && `${last.join(" ")}…`.length > DOTPLOT_WRAP_CHARACTERS) last.pop();
-    kept[DOTPLOT_TERM_LINES - 1] = `${last.join(" ")}…`;
+    const last = kept[kept.length - 1];
+    if (last === undefined) return lines.join("\n");
+    const words = last.split(" ");
+    while (words.length > 1 && `${words.join(" ")}…`.length > DOTPLOT_WRAP_CHARACTERS) words.pop();
+    kept[kept.length - 1] = `${words.join(" ")}…`;
     return kept.join("\n");
 }
 
@@ -128,8 +131,11 @@ function formatSource(context: FigureContext, channel: ChartChannel): [string, C
 
 /** The members of one item: the array form, or the value of the object form. */
 function itemValue(item: unknown): unknown[] | undefined {
-    if (Array.isArray(item)) return item;
-    if (typeof item === "object" && item !== null && Array.isArray((item as EchartOption).value)) return (item as EchartOption).value as unknown[];
+    if (isUnknownArray(item)) return item;
+    if (typeof item === "object" && item !== null) {
+        const carried: unknown = (item as EchartOption).value;
+        if (isUnknownArray(carried)) return carried;
+    }
     return undefined;
 }
 
@@ -167,9 +173,9 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
                     x,
                     // The figure orders the y categories itself, thus the composition reads the plain column.
                     y: yColumn,
-                    ...(size !== undefined ? { size } : {}),
-                    ...(color !== undefined ? { color } : {}),
-                    ...(label !== undefined ? { label } : {}),
+                    size,
+                    color,
+                    label,
                 },
             },
         ],
@@ -193,7 +199,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const terms = wraps ? categories.value.map((category) => wrappedTerm(String(category))) : undefined;
     const yAxis = {
         ...categoryAxis("y", terms ?? categories.value, { title: categoryAxisTitle(context.labels, yColumn), topDown: true }),
-        ...(wraps ? { axisLabel: { lineHeight: DOTPLOT_LINE_PX } } : {}),
+        axisLabel: wraps ? { lineHeight: DOTPLOT_LINE_PX } : undefined,
     };
     const lines = terms === undefined ? 1 : highestOf(terms.map((term) => term.split("\n").length));
     const body = (categories.value.length * (lines * DOTPLOT_LINE_PX + DOTPLOT_ROW_GAP_PX)) / DOTPLOT_PLOT_SHARE;
@@ -210,8 +216,9 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     }
     const sizeMaps = maps.filter((entry) => entry.show === false);
     keys.push(...sizeMaps);
-    if (size !== undefined && sizeMaps.length > 0) {
-        const range = { min: toNumber(sizeMaps[0].min as Cell) ?? 0, max: toNumber(sizeMaps[0].max as Cell) ?? 0 };
+    const sizeMap = sizeMaps[0];
+    if (size !== undefined && sizeMap !== undefined) {
+        const range = { min: toNumber(sizeMap.min as Cell) ?? 0, max: toNumber(sizeMap.max as Cell) ?? 0 };
         graphic.push(sizeLegend(range, scaleTitle(context.labels, size), formatSource(context, size)[0], DOTPLOT_SIZE_PLACE, formatSource(context, size)[1]));
     }
 
@@ -226,7 +233,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         xAxis,
         yAxis,
         visualMap: keys,
-        ...(graphic.length > 0 ? { graphic } : {}),
+        graphic,
         legend: { show: false },
         // The grid holds its labels and its titles inside the chart, as the runtime does by default.
         grid: { right: DOTPLOT_KEY_BAND },
@@ -248,14 +255,18 @@ function drawnMembers(series: readonly EchartOption[], dimension: number): numbe
 
 /** The smallest of some values, or zero for none. */
 function lowestOf(values: readonly number[]): number {
-    let low = values.length > 0 ? values[0] : 0;
-    for (const value of values) if (value < low) low = value;
-    return low;
+    let low: number | undefined;
+    for (const value of values) {
+        if (low === undefined || value < low) low = value;
+    }
+    return low ?? 0;
 }
 
 /** The largest of some values, or one for none. */
 function highestOf(values: readonly number[]): number {
-    let high = values.length > 0 ? values[0] : 1;
-    for (const value of values) if (value > high) high = value;
-    return high;
+    let high: number | undefined;
+    for (const value of values) {
+        if (high === undefined || value > high) high = value;
+    }
+    return high ?? 1;
 }

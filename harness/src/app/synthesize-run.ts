@@ -124,7 +124,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             bioKeys,
             citationResolver,
             usageRecorder,
-            ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
+            toolOutputStore: deps.toolOutputStore,
             summaries,
             planNarrative,
             runId,

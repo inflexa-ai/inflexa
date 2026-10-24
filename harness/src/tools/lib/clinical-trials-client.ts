@@ -373,12 +373,8 @@ function extractEffect(resultsMeasure: CtResultsMeasure | undefined): OutcomeEff
                         kind: "quantitative",
                         value: num,
                         units: resultsMeasure?.unitOfMeasure ?? "",
-                        ...(m.lowerLimit !== undefined && m.lowerLimit !== null && !isNaN(parseFloat(m.lowerLimit))
-                            ? { ci_low: parseFloat(m.lowerLimit) }
-                            : {}),
-                        ...(m.upperLimit !== undefined && m.upperLimit !== null && !isNaN(parseFloat(m.upperLimit))
-                            ? { ci_high: parseFloat(m.upperLimit) }
-                            : {}),
+                        ci_low: m.lowerLimit !== undefined && m.lowerLimit !== null && !isNaN(parseFloat(m.lowerLimit)) ? parseFloat(m.lowerLimit) : undefined,
+                        ci_high: m.upperLimit !== undefined && m.upperLimit !== null && !isNaN(parseFloat(m.upperLimit)) ? parseFloat(m.upperLimit) : undefined,
                     };
                 }
             }

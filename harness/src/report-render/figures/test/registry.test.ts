@@ -83,7 +83,7 @@ describe("the figure registry", () => {
         const registered = deriveChartOption(block("scatter", { x: "x", y: "y" }), ROWS, undefined, {}, withFigure("scatter", module))._unsafeUnwrap();
         expect(seriesNames(registered)).toEqual(["from the module"]);
         const kept = deriveChartOption(block("line", { x: "x", y: "y" }), ROWS, undefined, {}, withFigure("scatter", module))._unsafeUnwrap();
-        expect((kept.series as EchartOption[])[0].type).toBe("line");
+        expect((kept.series as EchartOption[])[0]?.type).toBe("line");
     });
 
     it("runs the layout discipline and the figure rules over the option of a module", () => {
@@ -143,6 +143,7 @@ describe("the members that a module reads", () => {
         );
         deriveChartOption(chart, ROWS, undefined, inputs, withFigure("lollipop", module))._unsafeUnwrap();
         const context = seen[0];
+        if (context === undefined) throw new Error("the module saw no context");
         // The number helper formats each value in the kind of its locator column, thus a stored zero of a p
         // column prints the below-resolution form and never a bare zero.
         expect(context.statistics.map((entry) => [entry.label, entry.value, entry.text])).toEqual([
@@ -181,7 +182,7 @@ describe("the members that a module reads", () => {
         };
         deriveChartOption(chart, ROWS, undefined, inputs, withFigure("km", module))._unsafeUnwrap();
         // A percent sign joins its value, and every other unit follows a space.
-        expect(seen[0].statistics.map((entry) => entry.text)).toEqual(["426 days", "27.5%", "0.59"]);
+        expect(seen[0]?.statistics.map((entry) => entry.text)).toEqual(["426 days", "27.5%", "0.59"]);
     });
 
     it("refuses a block whose statistics or track the value entry does not carry", () => {
@@ -212,7 +213,7 @@ describe("the members that a module reads", () => {
         const edges = [{ parent: "n1", child: "a", height: 1 }];
         const inputs: ChartInputs = { trees: { x: { rows: edges, columns: ["parent", "child", "height"] }, y: { rows: edges } } };
         deriveChartOption(chart, ROWS, undefined, inputs, withFigure("heatmap", module))._unsafeUnwrap();
-        expect(seen[0].trees).toEqual({
+        expect(seen[0]?.trees).toEqual({
             x: {
                 rows: edges,
                 columns: ["parent", "child", "height"],

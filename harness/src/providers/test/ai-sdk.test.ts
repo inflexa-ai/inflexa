@@ -96,7 +96,7 @@ function streamFromGenerate(
                                 type: "reasoning-delta",
                                 id,
                                 delta: content.text,
-                                ...(content.providerMetadata !== undefined ? { providerMetadata: content.providerMetadata } : {}),
+                                providerMetadata: content.providerMetadata,
                             });
                             controller.enqueue({ type: "reasoning-end", id });
                             continue;
@@ -107,7 +107,7 @@ function streamFromGenerate(
                         type: "finish",
                         finishReason: generated.finishReason,
                         usage: generated.usage,
-                        ...(generated.providerMetadata !== undefined ? { providerMetadata: generated.providerMetadata } : {}),
+                        providerMetadata: generated.providerMetadata,
                     });
                     controller.close();
                 },
@@ -597,7 +597,7 @@ describe("the order of the reasoning effort", () => {
                 sent.push(options.reasoning);
                 return okResult();
             }),
-            ...(configured !== undefined ? { reasoning: configured } : {}),
+            reasoning: configured,
         });
         return { provider, sent };
     }
@@ -636,8 +636,8 @@ describe("the order of the reasoning effort", () => {
 
 describe("sessionKeyOf", () => {
     function sessionWith(threadId?: string, runFrame?: RunFrame): AgentSession {
-        const scope: Scope = { kind: "analysis", analysisId: "a1", ...(threadId !== undefined ? { threadId } : {}) };
-        return { ...makeSession({ scope }), ...(runFrame !== undefined ? { runFrame } : {}) };
+        const scope: Scope = { kind: "analysis", analysisId: "a1", threadId };
+        return { ...makeSession({ scope }), runFrame };
     }
 
     it.each<[string, AgentSession, string]>([

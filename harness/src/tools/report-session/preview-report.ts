@@ -615,7 +615,9 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             observe({ type: "preview", analysisId, threadId, pagePath: written.value, documentHash: renderedHash });
 
             const access = await mintAccess(deps.makeSessionPages, analysisId, threadId, ctx.session.auth, logger);
-            return ok({ outcome: "rendered", pagePath: written.value, ...(access !== undefined ? { access } : {}), warnings: finished.warnings });
+            const renderedOk = { outcome: "rendered" as const, pagePath: written.value, warnings: finished.warnings };
+            if (access !== undefined) return ok({ ...renderedOk, access });
+            return ok(renderedOk);
         },
     });
 }

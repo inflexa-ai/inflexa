@@ -53,8 +53,8 @@ export interface DraftSlot {
     readonly minLength?: number;
     readonly maxLength?: number;
     readonly skeleton?: string;
-    readonly prefix?: string;
-    readonly suffix?: string;
+    prefix?: string;
+    suffix?: string;
     readonly distinctValues: number;
     readonly sampleValues: readonly string[];
     /** The complete value set — bounded projection is `sampleValues`. */
@@ -336,20 +336,22 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
     const cores = distinct.map(strip);
     const observed = classifyValues(cores);
     const sorted = [...cores].sort((a, b) => a.localeCompare(b, "en"));
-    return {
+    const slot: DraftSlot = {
         location,
         index,
         tokenClass: observed.tokenClass,
-        ...(observed.width !== undefined ? { width: observed.width } : {}),
-        ...(observed.minLength !== undefined ? { minLength: observed.minLength, maxLength: observed.maxLength } : {}),
-        ...(observed.skeleton !== undefined ? { skeleton: observed.skeleton } : {}),
-        ...(prefix ? { prefix } : {}),
-        ...(suffix ? { suffix } : {}),
+        width: observed.width,
+        minLength: observed.minLength,
+        maxLength: observed.maxLength,
+        skeleton: observed.skeleton,
         distinctValues: distinct.length,
         sampleValues: sorted.slice(0, MAX_SLOT_SAMPLE_VALUES),
         values: cores,
         memberValues: rawValues.map(strip),
     };
+    if (prefix) slot.prefix = prefix;
+    if (suffix) slot.suffix = suffix;
+    return slot;
 }
 
 /** The template token a slot renders as. */

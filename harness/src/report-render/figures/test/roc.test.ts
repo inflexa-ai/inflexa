@@ -61,6 +61,12 @@ function seriesOf(option: EchartOption): EchartOption[] {
     return option.series as EchartOption[];
 }
 
+function firstGrid(option: EchartOption): EchartOption {
+    const grid = (option.grid as EchartOption[])[0];
+    if (grid === undefined) throw new Error("the roc chart holds no grid");
+    return grid;
+}
+
 describe("the roc figure", () => {
     it("registers for the roc chart type", () => {
         expect(FIGURE_MODULES.roc).toBe(ROC_FIGURE);
@@ -73,7 +79,7 @@ describe("the roc figure", () => {
             [ALONE, "line", undefined, CHART_PALETTE[1]],
         ]);
         // The two points at a false positive rate of 0 sort by the true positive rate, thus the curve rises first.
-        expect(curves[0].data).toEqual([
+        expect(curves[0]?.data).toEqual([
             [0, 0],
             [0, 0.0084],
             [0.0154, 0.0168],
@@ -115,21 +121,21 @@ describe("the roc figure", () => {
         const place = seriesOf(option).indexOf(text as EchartOption);
         for (const rule of option.media as EchartOption[]) {
             const placed = rule.option as EchartOption;
-            const side = (placed.grid as EchartOption[])[0].width as number;
-            expect((placed.series as EchartOption[])[place].label as EchartOption).toEqual({ width: side - 16, overflow: "break" });
+            const side = firstGrid(rule.option as EchartOption).width as number;
+            expect((placed.series as EchartOption[])[place]?.label).toEqual({ width: side - 16, overflow: "break" });
         }
     });
 
     it("draws one unit on x equal to one unit on y: a square grid, with the legend in a band under it", () => {
         const option = derive(rocBlock());
-        const grid = (option.grid as EchartOption[])[0];
+        const grid = firstGrid(option);
         expect(grid.width).toBe(grid.height);
         const legend = option.legend as EchartOption;
         expect(legend.left).toBe(grid.left);
         expect(legend.top as number).toBeGreaterThan((grid.top as number) + (grid.height as number));
         const rules = option.media as EchartOption[];
         for (const rule of rules) {
-            const placed = ((rule.option as EchartOption).grid as EchartOption[])[0];
+            const placed = firstGrid(rule.option as EchartOption);
             expect(placed.width).toBe(placed.height);
         }
     });

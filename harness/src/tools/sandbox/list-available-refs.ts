@@ -107,6 +107,10 @@ export interface ReferenceInventoryMetadata {
     readonly endpoint?: string;
 }
 
+type ReferenceInventoryMetadataBuilder = {
+    -readonly [K in keyof ReferenceInventoryMetadata]?: ReferenceInventoryMetadata[K];
+};
+
 interface ReferenceInventoryEntryBase {
     readonly path: string;
     readonly metadata?: ReferenceInventoryMetadata;
@@ -510,21 +514,23 @@ function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan
             // Per-artifact, not per-dataset: format and contents differ between files of the
             // same dataset (a Seurat object and its Annoy index are read nothing alike).
             const catalogArtifact = dataset?.artifacts.find((candidate) => candidate.path === artifact.path);
-            metadata.set(`${REFS_ROOT}/managed/${receipt.datasetId}/${receipt.datasetVersion}/${artifact.path}`, {
+            const managedMetadata: ReferenceInventoryMetadataBuilder = {
                 datasetId: receipt.datasetId,
                 version: receipt.datasetVersion,
-                ...(dataset
-                    ? {
-                          title: dataset.title,
-                          description: dataset.description,
-                          sourceUrl: dataset.sourceUrl,
-                          license: dataset.license.url ?? dataset.license.identifier,
-                          category: dataset.recommendation.group,
-                          ...(dataset.organism ? { organism: dataset.organism } : {}),
-                      }
-                    : {}),
-                ...(catalogArtifact ? { format: catalogArtifact.format, contents: catalogArtifact.contents } : {}),
-            });
+            };
+            if (dataset) {
+                managedMetadata.title = dataset.title;
+                managedMetadata.description = dataset.description;
+                managedMetadata.sourceUrl = dataset.sourceUrl;
+                managedMetadata.license = dataset.license.url ?? dataset.license.identifier;
+                managedMetadata.category = dataset.recommendation.group;
+                if (dataset.organism) managedMetadata.organism = dataset.organism;
+            }
+            if (catalogArtifact) {
+                managedMetadata.format = catalogArtifact.format;
+                managedMetadata.contents = catalogArtifact.contents;
+            }
+            metadata.set(`${REFS_ROOT}/managed/${receipt.datasetId}/${receipt.datasetVersion}/${artifact.path}`, managedMetadata);
         }
     }
 
@@ -535,14 +541,19 @@ function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan
         if (!localPath) continue;
         const resolved = resolveRequestedPath(localPath);
         if (!resolved.ok) continue;
-        const legacyMetadata: ReferenceInventoryMetadata = {
-            ...(stringValue(item.dataset) ? { datasetId: stringValue(item.dataset)! } : {}),
-            ...(stringValue(item.category) ? { category: stringValue(item.category)! } : {}),
-            ...(stringValue(item.subtype) ? { subtype: stringValue(item.subtype)! } : {}),
-            ...(stringValue(item.organism) ? { organism: stringValue(item.organism)! } : {}),
-            ...(numberValue(item.rows) !== undefined ? { rows: numberValue(item.rows)! } : {}),
-            ...(stringValue(item.endpoint) ? { endpoint: stringValue(item.endpoint)! } : {}),
-        };
+        const datasetId = stringValue(item.dataset);
+        const category = stringValue(item.category);
+        const subtype = stringValue(item.subtype);
+        const organism = stringValue(item.organism);
+        const rows = numberValue(item.rows);
+        const endpoint = stringValue(item.endpoint);
+        const legacyMetadata: ReferenceInventoryMetadataBuilder = {};
+        if (datasetId) legacyMetadata.datasetId = datasetId;
+        if (category) legacyMetadata.category = category;
+        if (subtype) legacyMetadata.subtype = subtype;
+        if (organism) legacyMetadata.organism = organism;
+        if (rows !== undefined) legacyMetadata.rows = rows;
+        if (endpoint) legacyMetadata.endpoint = endpoint;
         metadata.set(resolved.path, { ...legacyMetadata, ...metadata.get(resolved.path) });
     }
 

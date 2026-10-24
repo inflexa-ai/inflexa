@@ -37,6 +37,7 @@ import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
@@ -571,7 +572,7 @@ function restoreSkeletonGrounding(
                 next = { ...next, template: source.grounding.template };
             }
         }
-        if (Array.isArray(current.claims)) {
+        if (isUnknownArray(current.claims)) {
             let changed = false;
             const claims = current.claims.map((claim, position) => {
                 if (typeof claim !== "string" || memory.claims.has(claim)) return claim;
@@ -906,18 +907,20 @@ function readTranscript(messages: readonly LoopMessage[]): { toolCalls: string[]
  */
 function loopFields(run: RunToTerminalResult, kind: OutcomeKind): LogFields {
     const transcript = readTranscript(run.messages);
-    return {
+    const fields: LogFields = {
         loop: {
             finishReason: run.finish.reason,
             cappedOut: run.finish.cappedOut,
             truncationRecoveries: run.finish.truncationRecoveries,
             salvaged: run.salvage !== null,
-            ...(run.salvage ? { firstFinishReason: run.salvage.firstFinish.reason, salvageFinishReason: run.salvage.finish.reason } : {}),
+            firstFinishReason: run.salvage === null ? undefined : run.salvage.firstFinish.reason,
+            salvageFinishReason: run.salvage === null ? undefined : run.salvage.finish.reason,
             toolCalls: transcript.toolCalls,
-            ...(transcript.truncatedToolCalls ? { toolCallsTruncated: true } : {}),
+            toolCallsTruncated: transcript.truncatedToolCalls ? true : undefined,
         },
-        ...(PROSE_EXPLAINS_OUTCOME.has(kind) ? modelAuthored({ plannerFinalProse: transcript.finalProse }) : {}),
     };
+    if (PROSE_EXPLAINS_OUTCOME.has(kind)) Object.assign(fields, modelAuthored({ plannerFinalProse: transcript.finalProse }));
+    return fields;
 }
 
 /**
@@ -989,7 +992,7 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
             output: {
                 event: "clarification_needed",
                 question: outcome.question,
-                ...(outcome.questionContext ? { questionContext: outcome.questionContext } : {}),
+                questionContext: outcome.questionContext ? outcome.questionContext : undefined,
             },
             kind: "clarification",
         };
@@ -1108,7 +1111,7 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
         // cross-field index that ranks a method paper best.
         ncbi.pubmed,
         searchArxivTool,
-        createSearchSemanticScholarTool({ ...(bioKeys.semanticScholar === undefined ? {} : { apiKey: bioKeys.semanticScholar }) }),
+        createSearchSemanticScholarTool({ apiKey: bioKeys.semanticScholar }),
         // The same approach as running code — a pipeline that someone published.
         createSearchGithubReposTool({ githubToken: bioKeys.github }),
         // The API of a staged package, so a step names a function that exists.
@@ -1122,18 +1125,18 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
         // The planner is a conversation surface, thus the pool-scope reader binds
         // when the embedder gives one, and the answer names what the store HOLDS.
         createListAvailablePackagesTool({
-            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-            ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            readPoolInventory: deps.readPoolInventory,
         }),
         // The knowledge plane: one cited procedure per situation, and one check
         // of the draft. Both attach only when the embedder binds a client.
         ...createKnowledgeTools({
-            ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
-            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-            ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
-            ...(hooks.onRecommend === undefined ? {} : { onRecommend: hooks.onRecommend }),
+            client: deps.knowledge,
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            refStorePath: deps.refStorePath,
+            onRecommend: hooks.onRecommend,
         }),
     ];
 }
@@ -1206,9 +1209,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     elapsedMs: Date.now() - startedAt,
                     submitAttempts: trace.submitAttempts,
                     rejectedAttempts: trace.rejectedAttempts,
-                    ...(trace.rejections.length > 0 ? { rejections: trace.rejections } : {}),
-                    ...(trace.rejectedAttempts > trace.rejections.length ? { rejectionsTruncated: true } : {}),
-                    ...(trace.duplicateTerminalCalls > 0 ? { duplicateTerminalCalls: trace.duplicateTerminalCalls } : {}),
+                    rejections: trace.rejections,
+                    rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
+                    duplicateTerminalCalls: trace.duplicateTerminalCalls,
                     ...extra,
                 });
                 return ok(shaped.output);
@@ -1261,11 +1264,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     // Degrading to "no profile" is correct behaviour and indistinguishable, from
                     // the outcome, from an analysis that genuinely has none — so the read failure
                     // is reported here or it is never known to have happened.
-                    logger.warn("data profile read failed — planning without dataset facts", {
-                        dbErrorType: error.type,
-                        ...("op" in error ? { dbOp: error.op } : {}),
-                        ...("cause" in error ? logger.errorFields(error.cause) : {}),
-                    });
+                    const fields = { dbErrorType: error.type, dbOp: error.op };
+                    if ("cause" in error) Object.assign(fields, logger.errorFields(error.cause));
+                    logger.warn("data profile read failed — planning without dataset facts", fields);
                     return null;
                 },
             );
@@ -1277,9 +1278,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // the loop and put their rendered content in the planner's seed.
             const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
             const listAvailablePackages = createListAvailablePackagesTool({
-                ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-                ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-                ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+                farmLockFile: deps.farmLockFile,
+                imagePackagesFile: deps.imagePackagesFile,
+                readPoolInventory: deps.readPoolInventory,
             });
             // A path-separator query matches every reference path and selects the
             // tool's recursive leaf scan, so the seed contains usable file paths,
@@ -1317,7 +1318,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 salvageIterations: DEFAULT_SALVAGE_ITERATIONS,
                 timeoutMs: planTimeoutMs,
                 grounding: grounding.kind,
-                ...(input.parentPlanId ? { parentPlanId: input.parentPlanId } : {}),
+                parentPlanId: input.parentPlanId,
                 seedChars: {
                     total: prompt.length,
                     priorPlan: priorPlanBlock?.length ?? 0,
@@ -1424,13 +1425,13 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 timedOut: signal.aborted && !ctx.signal.aborted,
                 outerAborted: ctx.signal.aborted,
             });
-            return finish(shaped, {
-                // A throw leaves no result to read the transcript off, so the cause takes its
-                // place — `shapeOutcome` folds it into one prose sentence for the model, and
-                // this is the only place its type and stack survive.
-                ...(run ? loopFields(run, shaped.kind) : {}),
-                ...(runError ? logger.errorFields(runError) : {}),
-            });
+            const extra: LogFields = {};
+            if (run) Object.assign(extra, loopFields(run, shaped.kind));
+            // A throw leaves no result to read the transcript off, so the cause takes its
+            // place — `shapeOutcome` folds it into one prose sentence for the model, and
+            // this is the only place its type and stack survive.
+            if (runError) Object.assign(extra, logger.errorFields(runError));
+            return finish(shaped, extra);
         },
     });
 }

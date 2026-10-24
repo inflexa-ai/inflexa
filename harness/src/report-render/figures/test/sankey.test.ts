@@ -24,7 +24,7 @@ function sankey(encoding: Encoding = ENCODING, labels?: Record<string, string>):
     return {
         kind: "chart",
         id: "flows",
-        binding: { kind: "artifact-table", path: "sankey_flows.csv", hash: HASH, ...(labels !== undefined ? { columnLabels: labels } : {}) },
+        binding: { kind: "artifact-table", path: "sankey_flows.csv", hash: HASH, columnLabels: labels },
         chartType: "sankey",
         encoding,
     };
@@ -144,7 +144,7 @@ describe("the sankey figure on the LAML flow table", () => {
         const single = (option.media as EchartOption[]).find((rule) => (rule.query as EchartOption).maxWidth === CHART_EXPORT_SIZES.single.widthPx);
         const singleOption = single?.option as EchartOption;
         const [singleSeries] = singleOption.series as EchartOption[];
-        expect(singleSeries.nodeGap).toBeCloseTo(CHART_EXPORT_SIZES.single.textPx * 1.25, 3);
+        expect(singleSeries?.nodeGap).toBeCloseTo(CHART_EXPORT_SIZES.single.textPx * 1.25, 3);
     });
 });
 
@@ -154,11 +154,13 @@ describe("the sankey labels over the flows", () => {
         const label = sankeySeries(option).label as EchartOption;
         expect(label.formatter).toBe("{box|{b}}");
         expect(label.rich).toEqual({ box: { backgroundColor: "#ffffff", padding: [0, 2] } });
-        for (const svg of Object.values(chartSvgAssets(echarts, "flows", option)._unsafeUnwrap() ?? {})) {
+        const svgs = chartSvgAssets(echarts, "flows", option)._unsafeUnwrap();
+        if (svgs === undefined) throw new Error("the render staged no chart SVGs");
+        for (const svg of [svgs.single, svgs.double]) {
             const elements = [...svg.bytes.matchAll(/<(path|text)\b([^>]*)>([^<]*)/g)].map((match) => ({
-                tag: match[1],
-                attributes: match[2],
-                text: match[3],
+                tag: match[1] ?? "",
+                attributes: match[2] ?? "",
+                text: match[3] ?? "",
             }));
             // `findLastIndex` needs the es2023 lib, above this program's target, so the last
             // flow index comes from a reversed copy.
@@ -167,10 +169,12 @@ describe("the sankey labels over the flows", () => {
             const m7 = elements.findIndex((element) => element.tag === "text" && element.text === "M7");
             // The box of the label draws after every flow, and the label draws on its box.
             expect(m7).toBeGreaterThan(lastFlow + 1);
-            expect(elements[m7 - 1].tag).toBe("path");
-            expect(elements[m7 - 1].attributes).toContain('fill="#ffffff"');
+            const box = elements[m7 - 1];
+            if (box === undefined) throw new Error("the M7 label holds no box path");
+            expect(box.tag).toBe("path");
+            expect(box.attributes).toContain('fill="#ffffff"');
             // The box fits the text, and never the wrap width of the label.
-            const boxWidth = Number(/^M0 [-\d.]+l([\d.]+) 0/.exec(/d="([^"]*)"/.exec(elements[m7 - 1].attributes)?.[1] ?? "")?.[1]);
+            const boxWidth = Number(/^M0 [-\d.]+l([\d.]+) 0/.exec(/d="([^"]*)"/.exec(box.attributes)?.[1] ?? "")?.[1]);
             expect(boxWidth).toBeGreaterThan(0);
             expect(boxWidth).toBeLessThan(30);
         }
@@ -237,6 +241,7 @@ describe("the sankey figure", () => {
             expect(rule?.query).toEqual({ minWidth: size.widthPx, maxWidth: size.widthPx, minHeight: size.heightPx, maxHeight: size.heightPx });
             const ruleOption = rule?.option as EchartOption;
             const [series] = ruleOption.series as EchartOption[];
+            if (series === undefined) throw new Error("the export rule holds no series");
             const label = series.label as EchartOption;
             expect(label.fontSize).toBe(size.textPx);
             // The room between two of the three stages, less the gap of the label on each side.
@@ -251,8 +256,8 @@ describe("the sankey figure", () => {
         const series = sankeySeries(option);
         expect((series.data as Node[]).every((node) => node.itemStyle.color === MUTED_CHART_COLOR)).toBe(true);
         const links = series.links as Array<{ lineStyle: { color: string } }>;
-        expect(links[0].lineStyle.color).toBe(CHART_PALETTE[0]);
-        expect(links[1].lineStyle.color).toBe(CHART_PALETTE[1]);
+        expect(links[0]?.lineStyle.color).toBe(CHART_PALETTE[0]);
+        expect(links[1]?.lineStyle.color).toBe(CHART_PALETTE[1]);
         expect((option.legend as EchartOption).data).toEqual([
             { name: "Female", icon: "rect" },
             { name: "Male", icon: "rect" },

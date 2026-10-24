@@ -5,7 +5,7 @@ import { MAX_FULLY_LISTED_SET_MEMBERS, MAX_MENU_SETS, buildCorrespondences, buil
 import type { HeaderReadout, ScannedFile } from "../types.js";
 
 function file(path: string, format: string, extensions: string[] = [], wrapper?: string): ScannedFile {
-    return { path, size: 100, extensions, format, ...(wrapper ? { wrapper } : {}) };
+    return { path, size: 100, extensions, format, wrapper };
 }
 
 const id = (n: number) => `S${String(n).padStart(3, "0")}`;

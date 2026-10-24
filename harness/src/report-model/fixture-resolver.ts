@@ -61,20 +61,22 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     const locator = reference.locator;
     let selectedRow: Record<string, string | number>;
     if (locator.row !== undefined) {
-        if (locator.row < 0 || locator.row >= rows.length) {
+        const row = rows[locator.row];
+        if (row === undefined) {
             return fail(reference, "locator-out-of-range", `row ${locator.row} is outside the ${rows.length} rows`);
         }
-        selectedRow = rows[locator.row];
+        selectedRow = row;
     } else if (locator.rowFilter !== undefined) {
         const filter = locator.rowFilter;
         const matches = rows.filter((row) => cellMatchesFilterValue(row[filter.column], filter.value));
-        if (matches.length === 0) {
+        const match = matches[0];
+        if (match === undefined) {
             return fail(reference, "locator-out-of-range", `no row where ${filter.column} equals ${String(filter.value)}`);
         }
         if (matches.length > 1) {
             return fail(reference, "ambiguous-match", `${matches.length} rows where ${filter.column} equals ${String(filter.value)}`);
         }
-        selectedRow = matches[0];
+        selectedRow = match;
     } else {
         // The locator schema forbids a locator with neither selector. The resolver cannot depend on a
         // prior parse, thus it treats a row that no selector addresses as out of range.
@@ -138,8 +140,9 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
     const projectedRows = rows.map((row) => {
         const projected: Record<string, string | number> = {};
         for (const column of columns) {
-            if (column in row) {
-                projected[column] = row[column];
+            const cell = row[column];
+            if (cell !== undefined) {
+                projected[column] = cell;
             }
         }
         return projected;
@@ -180,6 +183,9 @@ async function resolveDerivation(reference: DerivationReference, snapshot: Repor
 
     const a = numbers[0];
     const b = numbers[1];
+    if (a === undefined || b === undefined) {
+        return fail(reference, "locator-out-of-range", `operation ${reference.op} needs two inputs, and the derivation holds ${numbers.length}`);
+    }
     let result: number;
     switch (reference.op) {
         case "ratio":

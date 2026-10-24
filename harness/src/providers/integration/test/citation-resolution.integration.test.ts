@@ -29,8 +29,8 @@ function liveResolver(enabled: readonly CitationSource[]) {
     return createCitationResolver({
         timeoutMs: 15_000,
         sources,
-        ...(process.env.CROSSREF_MAILTO ? { crossref: { mailto: process.env.CROSSREF_MAILTO } } : {}),
-        ...(process.env.NCBI_API_KEY ? { ncbiApiKey: process.env.NCBI_API_KEY } : {}),
+        crossref: { mailto: process.env.CROSSREF_MAILTO },
+        ncbiApiKey: process.env.NCBI_API_KEY,
     });
 }
 

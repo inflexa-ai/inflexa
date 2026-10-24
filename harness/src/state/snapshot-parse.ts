@@ -12,6 +12,8 @@
  */
 
 import { type Result, err, ok } from "neverthrow";
+
+import { nullProtoRecord } from "../lib/null-proto.js";
 import { z } from "zod";
 
 import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
@@ -88,9 +90,7 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     if (!citationRecords.success) {
         return err(prefixIssues("citationRecords", reduceIssues(citationRecords.error)));
     }
-    // The map takes a null prototype, the same as the pin, thus a path such as
-    // `__proto__` stays an ordinary entry and never reaches a prototype slot.
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts = nullProtoRecord<ArtifactSnapshot>();
     const issues: SchemaIssue[] = [];
     for (const [path, value] of Object.entries(stored.artifacts)) {
         const parsed = ArtifactSnapshotSchema.safeParse(value);
@@ -107,7 +107,7 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     // wrote, and an equality test over a stored snapshot holds across the round trip.
     return ok({
         artifacts,
-        ...(citations.data === undefined ? {} : { citations: citations.data }),
-        ...(citationRecords.data === undefined ? {} : { citationRecords: citationRecords.data }),
+        citations: citations.data,
+        citationRecords: citationRecords.data,
     });
 }

@@ -10,19 +10,19 @@ const ROOT: EventSource = { agentId: "conversation-agent", callPath: ["conversat
 const planner = (invocationId?: string): EventSource => ({
     agentId: "planner",
     callPath: ["conversation-agent", "planner"],
-    ...(invocationId === undefined ? {} : { invocationId }),
+    invocationId,
 });
 const deeper = (invocationId?: string): EventSource => ({
     agentId: "reviewer",
     callPath: ["conversation-agent", "planner", "reviewer"],
-    ...(invocationId === undefined ? {} : { invocationId }),
+    invocationId,
 });
 
 const started = (source: EventSource, toolUseId: string, detail?: string): ChatFrame => ({
     type: "tool-started",
     toolUseId,
     name: "search",
-    ...(detail === undefined ? {} : { detail }),
+    detail,
     source,
 });
 const finished = (source: EventSource, toolUseId: string, extra: { detail?: string; durationMs?: number } = {}): ChatFrame => ({

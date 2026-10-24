@@ -215,7 +215,7 @@ async function askForOrigin(url: URL, origin: string, ctx: ToolContext): Promise
                 output: {
                     status: "refused",
                     text: `web_fetch did not read ${url.toString()}: the guarded address ${url.hostname} was not approved.`,
-                    ...(error.feedback !== undefined ? { feedback: error.feedback } : {}),
+                    feedback: error.feedback,
                 },
             };
         }
@@ -563,13 +563,14 @@ function okResultOf(
     kept: WebFetchKept | undefined,
     shown: string,
 ): WebFetchOk {
-    return {
+    const result: { -readonly [K in keyof WebFetchOk]: WebFetchOk[K] } = {
         ...base,
-        ...(kept !== undefined ? { kept } : {}),
+        kept,
         text: shown,
         cut: shown.length < fullText.length,
-        ...(shown.length < fullText.length && kept === undefined ? { remainderNotKept: true } : {}),
     };
+    if (shown.length < fullText.length && kept === undefined) result.remainderNotKept = true;
+    return result;
 }
 
 async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolContext): Promise<WebFetchOutput> {
@@ -682,7 +683,7 @@ async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolCont
                     status: "unextractable",
                     contentType,
                     text: `web_fetch cannot extract text from the content type ${named}.`,
-                    ...(extracted.detail !== undefined ? { detail: extracted.detail } : {}),
+                    detail: extracted.detail,
                 };
             }
 
@@ -694,7 +695,7 @@ async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolCont
                 finalUrl: current.toString(),
                 contentType,
                 totalLength: fullText.length,
-                ...(extracted.pdfCut !== undefined ? { pdfCut: extracted.pdfCut } : {}),
+                pdfCut: extracted.pdfCut,
             };
             let output = okResultOf(base, fullText, undefined, shown);
             while (JSON.stringify(output).length > RESULT_BUDGET && shown.length > 0) {
@@ -713,13 +714,13 @@ async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolCont
                     ref,
                     toolName: "web_fetch",
                     toolCallId: ctx.invocationId,
-                    ...(ctx.session.scope.threadId !== undefined ? { threadId: ctx.session.scope.threadId } : {}),
+                    threadId: ctx.session.scope.threadId,
                     content,
                     totalLength: fullText.length,
                 });
                 if (put.isOk()) kept = { ref, keptLength: content.length };
             }
-            return okResultOf({ ...base, ...(kept !== undefined ? { kept } : {}) }, fullText, kept, shown);
+            return okResultOf(base, fullText, kept, shown);
         } finally {
             hop.dispose();
         }

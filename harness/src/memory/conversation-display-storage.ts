@@ -205,11 +205,10 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
     });
 
     if (unknownKey.length > 0 || schemaMismatch.length > 0) {
-        logger?.warn("dropped unrenderable stored display parts", {
-            identity,
-            ...(unknownKey.length > 0 ? { unknownKey: [...new Set(unknownKey)] } : {}),
-            ...(schemaMismatch.length > 0 ? { schemaMismatch: [...new Set(schemaMismatch)] } : {}),
-        });
+        const fields: Record<string, unknown> = { identity };
+        if (unknownKey.length > 0) fields.unknownKey = [...new Set(unknownKey)];
+        if (schemaMismatch.length > 0) fields.schemaMismatch = [...new Set(schemaMismatch)];
+        logger?.warn("dropped unrenderable stored display parts", fields);
     }
     return filtered;
 }
@@ -298,12 +297,13 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
             }
         }
         if (parts.length === 0) continue;
-        out.push({
+        const chat: ChatMessage = {
             id: message.id,
             role: message.role,
             parts,
-            ...(message.metadata?.interrupted ? { interrupted: true } : {}),
-        });
+        };
+        if (message.metadata?.interrupted) chat.interrupted = true;
+        out.push(chat);
     }
     return out;
 }

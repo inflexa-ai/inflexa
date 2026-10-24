@@ -37,6 +37,7 @@ import type { Pool } from "pg";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError, type DbError } from "../lib/db-result.js";
+import { nullProtoRecord } from "../lib/null-proto.js";
 import type { Logger } from "../lib/logger.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
@@ -122,7 +123,7 @@ function serveMembership(snapshot: ReportSnapshot, derivations: readonly Derivat
     if (derivations.length === 0) {
         return snapshot;
     }
-    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    const artifacts = nullProtoRecord<ArtifactSnapshot>();
     for (const [path, entry] of Object.entries(snapshot.artifacts)) {
         artifacts[path] = entry;
     }

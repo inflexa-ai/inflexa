@@ -54,8 +54,8 @@
       },
       "devDependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.93",
-        "@inflexa-ai/oxlint-plugin": "0.7.0",
-        "@inflexa-ai/typecheck": "0.7.0",
+        "@inflexa-ai/oxlint-plugin": "0.8.0",
+        "@inflexa-ai/typecheck": "0.8.0",
         "@types/bun": "latest",
         "@types/node": "^24.13.3",
         "@types/pdf-parse": "^1.1.5",
@@ -114,11 +114,11 @@
 
     "@html-validate/stylish": ["@html-validate/stylish@6.0.0", "", {}, "sha512-d1/lI3qIXhGVJF3+MmKEBn1dRX6U4Z+BDaOdDI3E6SXcO+OQ7hC/3mSo6BIjwQlcuV6NdDOKm6QCrzIQL1EezQ=="],
 
-    "@inflexa-ai/oxlint-plugin": ["@inflexa-ai/oxlint-plugin@0.7.0", "", { "dependencies": { "@oxlint/plugins": "^1.85.0", "oxlint-plugin-eslint": "^1.85.0" }, "peerDependencies": { "oxlint": "^1.85.0", "oxlint-tsgolint": ">=7.0.2003" }, "bin": { "directive-guard": "dist/directives/cli.js" } }, "sha512-DnFcxrUw6iO80oiuPFPFFzNyMYOlxFkwx0bIvaDpFvvri3gNwhFv6/3dlHgh/7fEgyG6Uq+IrYSZX5NjrRQNnw=="],
+    "@inflexa-ai/oxlint-plugin": ["@inflexa-ai/oxlint-plugin@0.8.0", "", { "dependencies": { "@oxlint/plugins": "^1.85.0", "oxlint-plugin-eslint": "^1.85.0" }, "peerDependencies": { "oxlint": "^1.85.0", "oxlint-tsgolint": ">=7.0.2003" }, "bin": { "directive-guard": "dist/directives/cli.js" } }, "sha512-HrJpaQj5wR4tEylY1gZAxYnlbXB8R1jurRpbc+dFWzATDO0z0wpscDq5f3dJg7JJ8/pcUl3oLS8H+RXOFbw/aA=="],
 
     "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.6.0", "", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-lbpZWYauO+WHUt1hMR0jX+0A0/3EjWpEK2j7osc07F5wpMkc4n1Wqm0fB9vCKjafTuCEYN9+6xE1lc0xG4CAJg=="],
 
-    "@inflexa-ai/typecheck": ["@inflexa-ai/typecheck@0.7.0", "", { "dependencies": { "@typescript/native": "npm:typescript@7.0.2" }, "bin": { "inflexa-typecheck": "dist/cli.js" } }, "sha512-SaVclo19mukVOsor4oDJmE+COjdeNwUOYTaHq+cW4RlrPyMYfBIOPIaj+V9ZO5fWMYm3DwQJG+bhethQtNQMNA=="],
+    "@inflexa-ai/typecheck": ["@inflexa-ai/typecheck@0.8.0", "", { "dependencies": { "@typescript/native": "npm:typescript@7.0.2" }, "bin": { "inflexa-typecheck": "dist/cli.js" } }, "sha512-drj5KrNx2/mrQSNGofA+Y4CN0/vZUEhh3eTOoZizTGHCViGHJ0KYUFPXWYW0q6v7NMbqwh5Vj/hwUs9LFnHBDg=="],
 
     "@isaacs/cliui": ["@isaacs/cliui@8.0.2", "", { "dependencies": { "string-width": "^5.1.2", "string-width-cjs": "npm:string-width@^4.2.0", "strip-ansi": "^7.0.1", "strip-ansi-cjs": "npm:strip-ansi@^6.0.1", "wrap-ansi": "^8.1.0", "wrap-ansi-cjs": "npm:wrap-ansi@^7.0.0" } }, "sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA=="],
 

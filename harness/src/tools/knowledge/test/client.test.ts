@@ -37,7 +37,7 @@ function stubService() {
         async fetch(request) {
             const url = new URL(request.url);
             const body = request.method === "POST" ? ((await request.clone().json()) as Record<string, unknown>) : undefined;
-            served.push({ method: request.method, pathname: url.pathname, ...(body ? { body } : {}) });
+            served.push({ method: request.method, pathname: url.pathname, body });
             if (request.headers.get("authorization") !== "Bearer secret") return Response.json({ error: "unauthorized" }, { status: 401 });
             // A pin on another release refuses every operation with the served digest, before any work.
             if (body?.expected_snapshot === OTHER_DIGEST) {

@@ -266,7 +266,7 @@ function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, ro
         threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
         chrome,
         derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
-        ...(eyes ? { eyes } : {}),
+        eyes,
     });
 }
 
@@ -277,6 +277,7 @@ async function look(agent: AgentDefinition, threadId: string): Promise<ExaminePa
     // here and no line below reads an absent member.
     expect(found).toHaveLength(1);
     const [tool] = found;
+    if (tool === undefined) throw new Error("the roster holds no matching tool");
     const { ctx } = makeToolContext();
     const scope: Scope = { kind: "analysis", analysisId: EYES_ANALYSIS_ID, threadId };
     const outcome = await tool.execute({}, { ...ctx, session: { ...ctx.session, scope } });
@@ -396,7 +397,7 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
         skillsDir: "/skills",
         chrome,
         citationResolver: unusedCitationResolver,
-        ...(eyes ? { eyes } : {}),
+        eyes,
     });
 }
 
@@ -424,6 +425,7 @@ async function startSession(agent: AgentDefinition, analysisId: string, parentTh
     // here and no line below reads an absent member.
     expect(found).toHaveLength(1);
     const [tool] = found;
+    if (tool === undefined) throw new Error("the roster holds no matching tool");
     const { ctx } = makeToolContext();
     const scope: Scope = { kind: "analysis", analysisId, threadId: parentThreadId };
     const outcome = await tool.execute(START_BRIEF, { ...ctx, session: { ...ctx.session, scope } });

@@ -117,7 +117,7 @@ describe("pinReportSnapshot", () => {
         const snapshot = (await pinReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
 
         const entry = snapshot.artifacts[DE_TABLE];
-        expect(entry).toBeDefined();
+        if (entry === undefined) throw new Error("the snapshot holds no entry for the derived table");
         expect(Object.hasOwn(entry, "rows")).toBe(false);
         expect(entry.rows).toBeUndefined();
     });

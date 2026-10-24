@@ -14,7 +14,7 @@ import type { DraftDocument } from "../../../report-model/draft.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
-import type { ToolContext } from "../../define-tool.js";
+import type { ToolContext, ToolExecutionMode } from "../../define-tool.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import {
     createReportAuthoringTools,
@@ -542,7 +542,9 @@ describe("set_title", () => {
         const untitled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
         expect("valid" in untitled && untitled.valid).toBe(false);
         if ("valid" in untitled && !untitled.valid) {
-            expect(untitled.gaps).toContainEqual({ kind: "schema", path: "title", message: expect.stringContaining(">=1") });
+            const gap = untitled.gaps.find((candidate) => candidate.kind === "schema" && candidate.path === "title");
+            if (gap?.kind !== "schema") throw new Error("the finish reports no schema gap at title");
+            expect(gap.message).toContain(">=1");
         }
 
         const set = (await tools.set_title.execute({ title: "Differential expression" }, ctx))._unsafeUnwrap();
@@ -631,7 +633,7 @@ describe("the tool surface", () => {
             tools.finish_draft,
         ];
 
-        expect(packaged.map((tool) => tool.executionMode)).toEqual(Array(8).fill("inline"));
+        expect(packaged.map((tool) => tool.executionMode)).toEqual(Array<ToolExecutionMode>(8).fill("inline"));
     });
 });
 

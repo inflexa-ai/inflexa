@@ -252,9 +252,9 @@ function renderBlock(
                 entry.columns,
                 { key: block.id, columns },
                 {
-                    ...(entry.statistics !== undefined ? { statistics: entry.statistics } : {}),
-                    ...(entry.track !== undefined ? { track: entry.track } : {}),
-                    ...(entry.trees !== undefined ? { trees: entry.trees } : {}),
+                    statistics: entry.statistics,
+                    track: entry.track,
+                    trees: entry.trees,
                 },
                 data.chart,
             );
@@ -276,8 +276,8 @@ function renderBlock(
             }
             return renderChart(block, ledger, derived.value.option, data.view, {
                 bodyPx: derived.value.bodyPx,
-                ...(derived.value.widthPx !== undefined ? { widthPx: derived.value.widthPx } : {}),
-                ...(svgs.value !== undefined ? { svg: { single: svgs.value.single.name, double: svgs.value.double.name } } : {}),
+                widthPx: derived.value.widthPx,
+                svg: svgs.value === undefined ? undefined : { single: svgs.value.single.name, double: svgs.value.double.name },
             });
         }
         case "section":
@@ -314,12 +314,11 @@ function renderChildren(
     let index = 0;
     while (index < blocks.length) {
         const run = metricRunLength(blocks, index);
-        const rendered: string[] = [];
-        for (let offset = 0; offset < Math.max(run, 1); offset += 1) {
-            rendered.push(renderBlock(blocks[index + offset], values, ledger, records, data, depth, problems));
-        }
+        const runLength = Math.max(run, 1);
+        const runBlocks = blocks.slice(index, index + runLength);
+        const rendered = runBlocks.map((block) => renderBlock(block, values, ledger, records, data, depth, problems));
         parts.push(run > 1 ? renderMetricGrid(rendered.join("")) : rendered.join(""));
-        index += Math.max(run, 1);
+        index += runLength;
     }
     return parts.join("");
 }
@@ -327,7 +326,7 @@ function renderChildren(
 /** The count of the metric blocks that start at `start`. A block of a different kind gives zero. */
 function metricRunLength(blocks: Block[], start: number): number {
     let length = 0;
-    while (start + length < blocks.length && blocks[start + length].kind === "metric") {
+    while (start + length < blocks.length && blocks[start + length]?.kind === "metric") {
         length += 1;
     }
     return length;

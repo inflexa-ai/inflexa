@@ -36,14 +36,14 @@ function cslRecord(doi: string, registrationAgency: string | undefined, metadata
         source: "doi_registry",
         sourceRecordId: doi,
         identifiers: { doi },
-        ...(title === undefined ? {} : { title }),
-        ...(authors === undefined || authors.length === 0 ? {} : { authors }),
-        ...(dateParts?.[0] === undefined ? {} : { year: parseYear(dateParts[0])! }),
-        ...(venue === undefined ? {} : { venue }),
-        ...(metadata?.volume === undefined ? {} : { volume: metadata.volume }),
-        ...(metadata?.page === undefined ? {} : { firstPage: metadata.page.split(/[-–]/)[0] }),
-        ...(registrationAgency === undefined ? {} : { registrationAgency }),
-        ...(metadata?.URL === undefined ? {} : { url: metadata.URL }),
+        title,
+        authors: authors !== undefined && authors.length > 0 ? authors : undefined,
+        year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0])!,
+        venue,
+        volume: metadata?.volume,
+        firstPage: metadata?.page?.split(/[-–]/)[0],
+        registrationAgency,
+        url: metadata?.URL,
     };
 }
 
@@ -102,7 +102,7 @@ export function createDoiRegistryClient(options: SourceHttpOptions = {}): Citati
                     type: "doi",
                     identifier: doi,
                     exists: true,
-                    ...(registrationAgency === undefined ? {} : { registrationAgency }),
+                    registrationAgency,
                     metadataAvailable: metadata !== undefined,
                 },
             };

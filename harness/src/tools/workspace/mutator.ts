@@ -41,7 +41,7 @@ import { tryFs, tryFsWrite } from "../../lib/fs-result.js";
 import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
-import { bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
+import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { resolveForWrite, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 
 /** Outcome of a confined write. Expected outcomes are data variants — never throws on them. */
@@ -59,7 +59,7 @@ export type WriteFileResult =
 export interface WriteRecord {
     readonly analysisId: string;
     /** The thread of a session write; absent under a run. */
-    readonly threadId?: string;
+    threadId?: string;
     /** Analysis-root-relative, forward-slashed. */
     readonly path: string;
     readonly hash: string;
@@ -339,26 +339,27 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
 
             const record: WriteRecord = {
                 analysisId: scope.analysisId,
-                ...(scope.threadId !== undefined ? { threadId: scope.threadId } : {}),
                 path: landed.relative,
                 hash: computeSha256(landed.bytes),
                 size: landed.bytes.length,
                 toolName,
                 invocationId,
             };
+            if (scope.threadId !== undefined) record.threadId = scope.threadId;
             return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
         },
         recordWrite(record) {
-            observe({
+            const event: Extract<SessionProvenanceEvent, { type: "write-file" }> = {
                 type: "write-file",
                 analysisId: record.analysisId,
-                ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
                 path: record.path,
                 hash: record.hash,
                 size: record.size,
                 tool: record.toolName,
                 invocationId: record.invocationId,
-            });
+            };
+            if (record.threadId !== undefined) event.threadId = record.threadId;
+            observe(event);
         },
     };
 }

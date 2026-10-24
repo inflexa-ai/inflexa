@@ -153,13 +153,13 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
                 encoding: {
                     x,
                     y,
-                    ...(group !== undefined ? { group } : {}),
-                    ...(color !== undefined ? { color } : {}),
-                    ...(label !== undefined ? { label } : {}),
+                    group,
+                    color,
+                    label,
                 },
             },
         ],
-        ...(facet !== undefined ? { facet } : {}),
+        facet,
     };
     const composed = context.compose(composition, color !== undefined ? { colorOnTop: true } : {});
     if (composed.isErr()) return err(composed.error);
@@ -188,8 +188,8 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             x: px,
             y: py,
             panel: facetCell === null ? 0 : (panelOf.get(`${typeof facetCell}:${String(facetCell)}`) ?? 0),
-            ...(cellGroup !== null ? { group: categoryName(cellGroup) } : {}),
-            ...(cellColor !== null ? { color: cellColor } : {}),
+            group: cellGroup === null ? undefined : categoryName(cellGroup),
+            color: cellColor ?? undefined,
         });
     }
 
@@ -200,10 +200,10 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
         ...entry,
         large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
         symbolSize: pointPx,
-        itemStyle: {
-            ...(typeof entry.itemStyle === "object" && entry.itemStyle !== null ? (entry.itemStyle as EchartOption) : {}),
-            opacity: EMBEDDING_OPACITY,
-        },
+        itemStyle:
+            typeof entry.itemStyle === "object" && entry.itemStyle !== null
+                ? { ...entry.itemStyle, opacity: EMBEDDING_OPACITY }
+                : { opacity: EMBEDDING_OPACITY },
     }));
 
     const ranges = equalRanges(
@@ -226,34 +226,31 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const keyStyle = { color: CHART_INK, align: "left" };
     for (let panel = 0; panel < panels; panel += 1) {
         const key = panel === 0;
+        const keyFields = key
+            ? {
+                  name: `${valueAxisTitle(context.labels, channelName(x))}${KEY_ARROW}`,
+                  nameLocation: "start",
+                  nameGap: 0,
+                  nameTextStyle: { ...keyStyle, verticalAlign: "top" },
+              }
+            : undefined;
         xAxes.push({
             type: "value",
             gridIndex: panel,
             ...ranges.x,
             ...HIDDEN_AXIS_PARTS,
-            ...(key
-                ? {
-                      name: `${valueAxisTitle(context.labels, channelName(x))}${KEY_ARROW}`,
-                      nameLocation: "start",
-                      nameGap: 0,
-                      nameTextStyle: { ...keyStyle, verticalAlign: "top" },
-                  }
-                : {}),
+            ...keyFields,
         });
         yAxes.push({
             type: "value",
             gridIndex: panel,
             ...ranges.y,
             ...HIDDEN_AXIS_PARTS,
-            ...(key
-                ? {
-                      name: `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}`,
-                      nameLocation: "start",
-                      nameRotate: 90,
-                      nameGap: 0,
-                      nameTextStyle: { ...keyStyle, verticalAlign: "bottom" },
-                  }
-                : {}),
+            name: `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}`,
+            nameLocation: "start",
+            nameRotate: 90,
+            nameGap: 0,
+            nameTextStyle: { ...keyStyle, verticalAlign: "bottom" },
         });
     }
     // Each panel names its facet value on an axis of no series over its square, thus the name moves with the square.
@@ -271,7 +268,7 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     }
 
     const out: EchartOption = {
-        ...(option.tooltip !== undefined ? { tooltip: option.tooltip } : {}),
+        tooltip: option.tooltip,
         grid: layout.grid,
         xAxis: xAxes,
         yAxis: yAxes,
@@ -310,7 +307,8 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
  */
 function clippedScale(values: readonly number[], title: string, column: string, meaning: ColumnMeaning | undefined): EchartOption {
     const sorted = [...values].sort((a, b) => a - b);
-    const negative = sorted.length > 0 && sorted[0] < 0;
+    const first = sorted[0];
+    const negative = first !== undefined && first < 0;
     if (negative) {
         const reach = quantile(
             values.map((value) => Math.abs(value)).sort((a, b) => a - b),
@@ -321,7 +319,8 @@ function clippedScale(values: readonly number[], title: string, column: string, 
     }
     const positive = sorted.find((value) => value > 0);
     const clip = quantile(sorted, EMBEDDING_CLIP_QUANTILE);
-    const top = clip > 0 ? clip : (sorted[sorted.length - 1] ?? 0) > 0 ? sorted[sorted.length - 1] : 1;
+    const last = sorted[sorted.length - 1];
+    const top = clip > 0 ? clip : last !== undefined && last > 0 ? last : 1;
     const low = positive === undefined ? top : Math.min(positive, top);
     return {
         ...withoutRight(colorScale({ min: 0, max: top, ramp: SEQUENTIAL_RAMP }, title, column, meaning)),
@@ -340,11 +339,11 @@ function withoutRight(map: EchartOption): EchartOption {
  * The linear quantile of sorted values, as numpy and R type 7 give it. An empty list gives zero.
  */
 function quantile(sorted: readonly number[], p: number): number {
-    if (sorted.length === 0) return 0;
     const place = (sorted.length - 1) * p;
-    const low = Math.floor(place);
-    const high = Math.ceil(place);
-    return sorted[low] + (sorted[high] - sorted[low]) * (place - low);
+    const low = sorted[Math.floor(place)];
+    const high = sorted[Math.ceil(place)];
+    if (low === undefined || high === undefined) return 0;
+    return low + (high - low) * (place - Math.floor(place));
 }
 
 /**

@@ -13,7 +13,7 @@ function apiError(status: number): Error {
  * `response.statusText`, while the raw bytes survive on `responseBody`.
  */
 function nonConformingApiError(status: number, reasonPhrase: string, responseBody?: string): Error {
-    return Object.assign(new Error(reasonPhrase), { status, ...(responseBody === undefined ? {} : { responseBody }) });
+    return Object.assign(new Error(reasonPhrase), { status, responseBody });
 }
 
 describe("classifyProviderError", () => {

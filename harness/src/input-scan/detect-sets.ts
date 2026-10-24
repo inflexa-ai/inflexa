@@ -166,14 +166,16 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
         location: slot.location,
         index: slot.index,
         tokenClass: slot.tokenClass,
-        ...(slot.width !== undefined ? { width: slot.width } : {}),
-        ...(slot.minLength !== undefined ? { minLength: slot.minLength, maxLength: slot.maxLength } : {}),
-        ...(slot.skeleton !== undefined ? { skeleton: slot.skeleton } : {}),
-        ...(slot.prefix !== undefined ? { prefix: slot.prefix } : {}),
-        ...(slot.suffix !== undefined ? { suffix: slot.suffix } : {}),
+        width: slot.width,
+        minLength: slot.minLength,
+        maxLength: slot.maxLength,
+        skeleton: slot.skeleton,
+        prefix: slot.prefix,
+        suffix: slot.suffix,
         distinctValues: slot.distinctValues,
         sampleValues: slot.sampleValues,
-        ...(slot.sameAs !== undefined ? { sameAsSlot: slotIds[slot.sameAs]!, crossCheckMismatches: slot.crossCheckMismatches ?? 0 } : {}),
+        sameAsSlot: slot.sameAs === undefined ? undefined : slotIds[slot.sameAs]!,
+        crossCheckMismatches: slot.sameAs === undefined ? undefined : (slot.crossCheckMismatches ?? 0),
     }));
 
     const segments: TemplateSegment[] = draft.segments.map((segment) =>
@@ -185,7 +187,7 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
         set: {
             id,
             origin: draft.origin,
-            ...(draft.marker ? { marker: draft.marker } : {}),
+            marker: draft.marker,
             pathTemplate: draft.pathTemplate,
             segments,
             memberCount: members.length,

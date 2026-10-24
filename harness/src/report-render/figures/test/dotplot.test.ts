@@ -17,7 +17,7 @@ function block(encoding: Encoding, labels?: Record<string, string>): ChartBlock 
     return {
         kind: "chart",
         id: "d1",
-        binding: { kind: "artifact-table", path: "dots.csv", hash: HASH, ...(labels !== undefined ? { columnLabels: labels } : {}) },
+        binding: { kind: "artifact-table", path: "dots.csv", hash: HASH, columnLabels: labels },
         chartType: "dotplot",
         encoding,
     };
@@ -49,23 +49,25 @@ describe("the marker dot plot", () => {
     )._unsafeUnwrap();
 
     it("lists the clusters top-down and the genes along x", () => {
-        expect(asObj(option.yAxis)).toEqual(expect.objectContaining({ type: "category", inverse: true, data: ["CD4 T", "CD14 Monocytes", "B"] }));
+        expect(asObj(option.yAxis)).toMatchObject({ type: "category", inverse: true, data: ["CD4 T", "CD14 Monocytes", "B"] });
         expect(asObj(option.yAxis).name).toBeUndefined();
-        expect(asObj(option.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["IL7R", "LYZ", "MS4A1"] }));
+        expect(asObj(option.xAxis)).toMatchObject({ type: "category", data: ["IL7R", "LYZ", "MS4A1"] });
         // Each dot names its cluster by its place on the y axis.
-        expect(((option.series as EchartOption[])[0].data as unknown[][])[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
+        const firstData = (option.series as EchartOption[])[0]?.data;
+        expect((firstData as unknown[][])[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
     });
 
     it("colors on the sequential ramp and prints the two ends with the number helper", () => {
         const color = (option.visualMap as EchartOption[]).find((map) => map.show !== false);
-        expect(color).toEqual(expect.objectContaining({ dimension: 2, min: 0, max: 1, calculable: false, inRange: { color: [...SEQUENTIAL_RAMP] } }));
+        expect(color).toMatchObject({ dimension: 2, min: 0, max: 1, calculable: false, inRange: { color: [...SEQUENTIAL_RAMP] } });
         expect(color?.text).toEqual(["Scaled mean expression\n1", "0"]);
     });
 
     it("keys the size with three reference circles and their values", () => {
         const legend = (option.graphic as EchartOption[])[0];
+        if (legend === undefined) throw new Error("the dotplot holds no size legend");
         const children = legend.children as EchartOption[];
-        expect(asObj(children[0].style).text).toBe("Fraction of cells");
+        expect(asObj(children[0]?.style).text).toBe("Fraction of cells");
         expect(children.filter((child) => child.type === "circle").length).toBe(3);
         const texts = children.filter((child) => child.type === "text").map((child) => asObj(child.style).text);
         expect(texts.slice(1)).toEqual(["0.0472", "0.524", "1"]);
@@ -100,8 +102,8 @@ describe("the enrichment dot plot", () => {
             "apical junction assembly\n(GO:0043297)",
             "septate junction assembly\n(GO:0019991)",
         ]);
-        expect(asObj(asObj(option.yAxis).axisLabel)).toEqual(expect.objectContaining({ lineHeight: DOTPLOT_LINE_PX }));
-        expect(asObj(option.xAxis)).toEqual(expect.objectContaining({ type: "value", name: "Gene ratio" }));
+        expect(asObj(asObj(option.yAxis).axisLabel)).toMatchObject({ lineHeight: DOTPLOT_LINE_PX });
+        expect(asObj(option.xAxis)).toMatchObject({ type: "value", name: "Gene ratio" });
     });
 
     it("titles a transformed color with its transform, and prints its ends as plain numbers", () => {
@@ -116,7 +118,11 @@ describe("the enrichment dot plot", () => {
     });
 
     it("refuses a term order whose rows disagree", () => {
-        const rows: ChartRow[] = [...TERMS, { term: TERMS[0].term, overlap: 3, gene_ratio: 0.5, padj: 0.01 }];
+        const first = TERMS[0];
+        if (first === undefined) throw new Error("the terms table is empty");
+        const firstTerm = first.term;
+        if (firstTerm === undefined) throw new Error("the first term holds no name");
+        const rows: ChartRow[] = [...TERMS, { term: firstTerm, overlap: 3, gene_ratio: 0.5, padj: 0.01 }];
         expect(
             deriveChartOption(block({ y: { column: "term", orderBy: "gene_ratio" }, x: "gene_ratio", size: "overlap" }), rows)._unsafeUnwrapErr().detail,
         ).toBe('The category "septate junction assembly (GO:0019991)" holds two values in the "gene_ratio" column, thus it has no one place in the order.');

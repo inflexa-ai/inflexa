@@ -43,6 +43,18 @@ function asObj(value: unknown): EchartOption {
     return value as EchartOption;
 }
 
+function firstSeries(option: EchartOption): EchartOption {
+    const entry = seriesOf(option)[0];
+    if (entry === undefined) throw new Error("the chart holds no series");
+    return entry;
+}
+
+function firstGrid(option: EchartOption): EchartOption {
+    const grid = (option.grid as EchartOption[])[0];
+    if (grid === undefined) throw new Error("the chart holds no grid");
+    return grid;
+}
+
 describe("the pca figure", () => {
     const option = deriveChartOption(block("pca", PCA_ENCODING), PASILLA)._unsafeUnwrap();
 
@@ -51,7 +63,7 @@ describe("the pca figure", () => {
         const yAxis = asObj(option.yAxis);
         expect([xAxis.min, xAxis.max, yAxis.min, yAxis.max]).toEqual([-10, 15, -10, 15]);
         expect(xAxis.interval).toBe(yAxis.interval);
-        const grid = (option.grid as EchartOption[])[0];
+        const grid = firstGrid(option);
         expect(grid.width).toBe(grid.height);
         expect(typeof grid.width).toBe("number");
         // Each media rule states a square, and a larger container takes a larger square. The rules of the
@@ -59,7 +71,7 @@ describe("the pca figure", () => {
         const media = option.media as EchartOption[];
         const sides = media.map((rule) => asObj((asObj(rule.option).grid as EchartOption[])[0]));
         expect(sides.every((entry) => entry.width === entry.height)).toBe(true);
-        const page = sides.filter((_entry, index) => asObj(media[index].query).maxWidth === undefined);
+        const page = sides.filter((_entry, index) => asObj(media[index]?.query).maxWidth === undefined);
         expect(page.map((entry) => entry.width)).toEqual([...page.map((entry) => entry.width as number)].sort((a, b) => a - b));
         expect(asObj((option.media as EchartOption[])[0]).query).toEqual({ minWidth: 0 });
     });
@@ -106,7 +118,7 @@ describe("the pca figure", () => {
     it("names no point of a table past the label bound, and keeps the name for the tooltip", () => {
         const rows: ChartRow[] = Array.from({ length: PCA_LABEL_ROWS + 1 }, (_row, index) => ({ sample: `s${index}`, PC1: index, PC2: -index }));
         const large = deriveChartOption(block("pca", { x: "PC1", y: "PC2", label: "sample" }), rows)._unsafeUnwrap();
-        const series = seriesOf(large)[0];
+        const series = firstSeries(large);
         expect(series.label).toBeUndefined();
         expect(asObj((series.data as unknown[])[0]).name).toBe("s0");
     });
@@ -154,7 +166,7 @@ describe("the shape on a plain scatter", () => {
         expect(option.media).toBeUndefined();
         expect(asObj(option.legend).bottom).toBe(0);
         // A plain scatter names its points in the tooltip alone.
-        expect(seriesOf(option)[0].label).toBeUndefined();
+        expect(firstSeries(option).label).toBeUndefined();
     });
 
     it("keys the shapes alone where the scatter names no group", () => {
@@ -193,9 +205,10 @@ describe("the layout of one unit", () => {
         const rules = (render.option.media as EchartOption[]).filter((rule) => asObj(rule.query).maxWidth === undefined);
         const fitting = rules.filter((rule) => ((asObj(rule.query).minHeight as number | undefined) ?? 0) <= CHART_BODY_PX);
         const chosen = fitting[fitting.length - 1];
+        if (chosen === undefined) throw new Error("the media rules hold no page rule at the body height");
         expect(render.bodyPx).toBe(CHART_BODY_PX);
         expect(render.widthPx).toBe(asObj(chosen.query).minWidth as number);
-        const grid = (asObj(chosen.option).grid as EchartOption[])[0];
+        const grid = firstGrid(asObj(chosen.option));
         expect((grid.top as number) + (grid.height as number)).toBeLessThanOrEqual(CHART_BODY_PX);
     });
 
@@ -229,10 +242,12 @@ describe("the layout of one unit", () => {
             legendBand: { place: "bottom", entries: ["ECOG alone", "ECOG + Karnofsky + age"] },
         });
         const grid = layout.grid[0];
+        if (grid === undefined) throw new Error("the one-panel layout holds no grid");
         expect(layout.legend).toEqual({ left: 50, top: TOOLBOX_BAND_PX + (grid.height as number) + 40, width: grid.width, orient: "horizontal" });
         // The smallest square is 120 pixels, and the two entries take one line each at that width.
-        const rule = layout.media[0].option as EchartOption;
-        expect((rule.grid as EchartOption[])[0].width as number).toBe(120);
+        const rule = layout.media[0]?.option as EchartOption | undefined;
+        if (rule === undefined) throw new Error("the layout holds no media rule");
+        expect(firstGrid(rule).width as number).toBe(120);
     });
 
     it("centers the squares and the band at each export size, and keeps each export square the largest that fits", () => {
@@ -247,7 +262,7 @@ describe("the layout of one unit", () => {
             });
             expect(rule).toBeDefined();
             const option = rule?.option as EchartOption;
-            const grid = (option.grid as EchartOption[])[0];
+            const grid = firstGrid(option);
             const legend = option.legend as EchartOption;
             // The block spans from the left edge of the y labels to the right margin of the band.
             const scale = size.textPx / CHART_PAGE_TEXT_PX;

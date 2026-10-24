@@ -131,7 +131,7 @@ export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot, deri
             gaps.push({
                 kind: "unresolved-reference",
                 blockId: entry.blockId,
-                ...(entry.slot !== undefined ? { slot: entry.slot } : {}),
+                slot: entry.slot,
                 failure: result.error,
             });
         }
