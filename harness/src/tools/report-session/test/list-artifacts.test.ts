@@ -453,7 +453,7 @@ describe("the result detail", () => {
     }
 
     /** Run the tool's result hook, asserting that the tool declares one. */
-    function detailOf(tool: ReturnType<typeof createListPinnedArtifactsTool>, result: ListPinnedArtifactsResult): string {
+    function detailOf(tool: ReturnType<typeof createListPinnedArtifactsTool>, result: ListPinnedArtifactsResult): string | undefined {
         expect(tool.describeResult).toBeDefined();
         return tool.describeResult!({}, result);
     }

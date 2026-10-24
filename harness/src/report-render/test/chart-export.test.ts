@@ -16,6 +16,7 @@ import {
     exportSizeFor,
     SCATTER_CROWD_ROWS,
 } from "../design.js";
+import { optionArray, optionAt, optionEntry, optionNumber, optionOf, optionsOf, pageCall } from "./options.js";
 
 /** The eight cell types of the Kang composition, one bar series each. */
 const KANG_TYPES = ["B cells", "CD14+ Monocytes", "CD4 T cells", "CD8 T cells", "Dendritic cells", "FCGR3A+ Monocytes", "Megakaryocytes", "NK cells"];
@@ -238,12 +239,8 @@ describe("the SVG assets of one chart", () => {
 
 describe("the export option", () => {
     /** The page twin of the export option. */
-    const exportOnThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as (
-        option: EchartOption,
-        textPx: number,
-        widthPx: number,
-        heightPx: number,
-    ) => EchartOption;
+    const exportOnThePage = (option: EchartOption, textPx: number, widthPx: number, heightPx: number): EchartOption =>
+        optionOf(pageCall(CHART_RENDERERS_SOURCE, "reportExportOption")(option, textPx, widthPx, heightPx));
 
     const VECTOR: readonly EchartOption[] = [
         GRADIENT_OPTION,
@@ -321,7 +318,7 @@ describe("the export option", () => {
     }
 
     it("takes the series of the export width in place of the page series of the sized names", () => {
-        const names = (option: EchartOption): unknown[] => (option.series as EchartOption[]).map((series) => [series.name, series.data]);
+        const names = (option: EchartOption): unknown[] => optionArray(option, "series").map((series) => [series.name, series.data]);
         const single = exportOption(SIZED_NAMES, CHART_PRINT_TEXT_PX, 336, 253);
         expect(names(single)).toEqual([
             ["Points", [[1, 2]]],
@@ -336,19 +333,19 @@ describe("the export option", () => {
 
     it("scales the text of each child of a graphic group, thus a size legend prints at the export text size", () => {
         const print = exportOption(vectorAt(8), CHART_PRINT_TEXT_PX, 336, 253);
-        const group = (print.graphic as EchartOption[])[0];
+        const group = optionArray(print, "graphic")[0];
         if (group === undefined) throw new Error("the option holds no graphic group");
-        const [title, circle, inner] = group.children as EchartOption[];
+        const [title, circle, inner] = optionArray(group, "children");
         if (title === undefined || inner === undefined) throw new Error("the group holds no title and inner group");
-        expect((title.style as EchartOption).fontSize).toBe(CHART_PRINT_TEXT_PX);
+        expect(optionAt(title, "style").fontSize).toBe(CHART_PRINT_TEXT_PX);
         expect(circle).toEqual({ type: "circle", shape: { cx: 3, cy: 20, r: 3 } });
-        const firstChild = (inner.children as EchartOption[])[0]?.style;
-        expect((firstChild as EchartOption).fontSize as number).toBe(CHART_PRINT_TEXT_PX);
+        const firstChild = optionArray(inner, "children")[0]?.style;
+        expect(optionNumber(optionOf(firstChild).fontSize)).toBe(CHART_PRINT_TEXT_PX);
     });
 
     it("holds the lowest row of facet panels and the x title above the band of a legend that wraps at the column width", () => {
         const print = exportOption(FACETED_LEGEND, CHART_PRINT_TEXT_PX, 336, 253);
-        const grids = print.grid as EchartOption[];
+        const grids = optionArray(print, "grid");
         // The eight names of the legend take three lines at the single column.
         const band = legendBandPx(3, CHART_PRINT_TEXT_PX);
         const room = 253 - band - Math.round(CHART_PRINT_TEXT_PX * 1.6);
@@ -358,13 +355,13 @@ describe("the export option", () => {
             expect(grid.top).toBe("10%");
             expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
         }
-        const title = (print.graphic as EchartOption[]).find((element) => element.bottom !== undefined);
+        const title = optionArray(print, "graphic").find((element) => element.bottom !== undefined);
         expect(title?.bottom).toBe(band);
         // The slide holds the eight names on one line, and its panels keep their boxes.
         const slide = exportOption(FACETED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080);
-        expect((slide.grid as EchartOption[])[0]?.height).toBe("70%");
-        expect(((slide.graphic as EchartOption[])[1] as EchartOption).bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
-        expect((print.legend as EchartOption).type).toBeUndefined();
+        expect(optionArray(slide, "grid")[0]?.height).toBe("70%");
+        expect(optionEntry(optionArray(slide, "graphic"), 1, "graphic").bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
+        expect(optionAt(print, "legend").type).toBeUndefined();
     });
 
     it("draws a legend whose lines leave a panel under half its height in one line that scrolls", () => {
@@ -372,24 +369,24 @@ describe("the export option", () => {
         expect(print.legend).toEqual({ bottom: 0, type: "scroll" });
         const band = legendBandPx(1, CHART_PRINT_TEXT_PX);
         const room = 253 - band - Math.round(CHART_PRINT_TEXT_PX * 1.6);
-        for (const grid of print.grid as EchartOption[]) {
+        for (const grid of optionArray(print, "grid")) {
             // The panel of the page is 70 percent high, thus the export keeps 35 percent of the height at least.
             expect(Number.parseFloat(String(grid.height))).toBeGreaterThanOrEqual(35);
             expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
         }
-        expect((print.graphic as EchartOption[]).find((element) => element.bottom !== undefined)?.bottom).toBe(band);
+        expect(optionArray(print, "graphic").find((element) => element.bottom !== undefined)?.bottom).toBe(band);
         // The chart runtime draws the one line and the page count of the legend in the file.
         expect(svgOf(CROWDED_LEGEND)).toMatch(/>1\/\d+<\/text>/);
         // The slide holds the twenty-eight names in lines that leave each panel its room, thus its legend wraps.
-        expect((exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080).legend as EchartOption).type).toBeUndefined();
+        expect(optionAt(exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080), "legend").type).toBeUndefined();
     });
 
     it("drops the tooltip and the toolbox, stops the animation, and scales the name gap and the panel labels", () => {
         const slide = exportOption(vectorAt(5), CHART_SLIDE_TEXT_PX, 1920, 1080);
         expect(slide.animation).toBe(false);
-        expect((slide.xAxis as EchartOption[])[0]?.nameGap).toBe(68);
-        const slideStyle = (slide.graphic as EchartOption[])[0]?.style;
-        expect((slideStyle as EchartOption).fontSize).toBe(CHART_SLIDE_TEXT_PX);
+        expect(optionArray(slide, "xAxis")[0]?.nameGap).toBe(68);
+        const slideStyle = optionArray(slide, "graphic")[0]?.style;
+        expect(optionOf(slideStyle).fontSize).toBe(CHART_SLIDE_TEXT_PX);
         const page = vectorAt(1);
         const print = exportOption(page, CHART_PRINT_TEXT_PX, 336, 253);
         expect(print.tooltip).toBeUndefined();
@@ -400,12 +397,12 @@ describe("the export option", () => {
 
     it("scales the offset of an axis with the text, thus a column of text keeps its room", () => {
         const scale = CHART_PRINT_TEXT_PX / CHART_PAGE_TEXT_PX;
-        const [terms, estimates] = exportOption(vectorAt(7), CHART_PRINT_TEXT_PX, 336, 253).yAxis as EchartOption[];
+        const [terms, estimates] = optionsOf(exportOption(vectorAt(7), CHART_PRINT_TEXT_PX, 336, 253).yAxis);
         if (terms === undefined || estimates === undefined) throw new Error("the option holds no axis pair");
         expect(terms.offset).toBeUndefined();
         expect(estimates.offset).toBe(120 * scale);
-        expect(((exportOption(vectorAt(7), CHART_SLIDE_TEXT_PX, 1920, 1080).yAxis as EchartOption[])[1] as EchartOption).offset).toBe(240);
-        expect(((vectorAt(7).yAxis as EchartOption[])[1] as EchartOption).offset).toBe(120);
+        expect(optionEntry(optionArray(exportOption(vectorAt(7), CHART_SLIDE_TEXT_PX, 1920, 1080), "yAxis"), 1, "y axis").offset).toBe(240);
+        expect(optionEntry(optionArray(vectorAt(7), "yAxis"), 1, "y axis").offset).toBe(120);
     });
 
     it("holds the labels and the names of a short export above the band of a bottom legend", () => {
@@ -573,11 +570,11 @@ describe("the export option at a column width", () => {
         const option = { xAxis: { type: "category", data: names, axisLabel: { interval: 0 } }, yAxis: { type: "value" }, series: [] };
         const single = exportOption(option, CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
         const slide = exportOption(option, CHART_SLIDE_TEXT_PX, CHART_EXPORT_SIZES.slide.widthPx, CHART_EXPORT_SIZES.slide.heightPx);
-        expect(((single.xAxis as EchartOption).axisLabel as EchartOption).rotate).toBe(45);
-        expect(((slide.xAxis as EchartOption).axisLabel as EchartOption).rotate).toBeUndefined();
+        expect(optionAt(optionAt(single, "xAxis"), "axisLabel").rotate).toBe(45);
+        expect(optionAt(optionAt(slide, "xAxis"), "axisLabel").rotate).toBeUndefined();
         // An authored rotation stays.
         const turned = { ...option, xAxis: { ...option.xAxis, axisLabel: { interval: 0, rotate: 90 } } };
-        expect(((exportOption(turned, CHART_PRINT_TEXT_PX, 336, 253).xAxis as EchartOption).axisLabel as EchartOption).rotate).toBe(90);
+        expect(optionAt(optionAt(exportOption(turned, CHART_PRINT_TEXT_PX, 336, 253), "xAxis"), "axisLabel").rotate).toBe(90);
     });
 
     it("wraps the title of a color scale into its band, and keeps the two ends that the page prints", () => {
@@ -590,7 +587,7 @@ describe("the export option at a column width", () => {
             ],
             series: [],
         };
-        const maps = exportOption(option, CHART_PRINT_TEXT_PX, 336, 253).visualMap as EchartOption[];
+        const maps = optionArray(exportOption(option, CHART_PRINT_TEXT_PX, 336, 253), "visualMap");
         const wrapped = maps[0];
         if (wrapped === undefined) throw new Error("the option holds no wrapped map");
         // A title wider than the scale band wraps at its spaces, and the upper end stays the last line.
@@ -729,9 +726,9 @@ describe("the export of a faceted chart", () => {
 
     it("turns the category labels of each panel against the width of its own grid", () => {
         const exported = exportOption(facetedBars(), CHART_PRINT_TEXT_PX, CHART_EXPORT_SIZES.single.widthPx, CHART_EXPORT_SIZES.single.heightPx);
-        const axes = exported.xAxis as EchartOption[];
+        const axes = optionArray(exported, "xAxis");
         expect(axes.length).toBe(3);
-        for (const axis of axes) expect([45, 90]).toContain(Number((axis.axisLabel as EchartOption).rotate));
+        for (const axis of axes) expect([45, 90]).toContain(Number(optionAt(axis, "axisLabel").rotate));
     });
 
     it("takes the room of the legend band from each row of panels, and each label moves with its row", () => {
@@ -751,22 +748,19 @@ describe("the export of a faceted chart", () => {
         const page = derived.inline;
         const exported = exportOption(page, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx);
         const percentOf = (value: unknown): number => Number.parseFloat(String(value));
-        const heights = (exported.grid as EchartOption[]).map((grid) => percentOf(grid.height));
+        const heights = optionArray(exported, "grid").map((grid) => percentOf(grid.height));
         // Four rows of three panels share the room of the band, thus each panel keeps one height.
         expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1e-3);
-        expect(Math.min(...heights)).toBeGreaterThan(percentOf((page.grid as EchartOption[])[0]?.height) * 0.5);
+        expect(Math.min(...heights)).toBeGreaterThan(percentOf(optionArray(page, "grid")[0]?.height) * 0.5);
         // Each panel label keeps its gap over the top of its panel.
         const gap = (option: EchartOption, place: number): number =>
-            percentOf((option.grid as EchartOption[])[place]?.top) - percentOf((option.graphic as EchartOption[])[place]?.top);
+            percentOf(optionArray(option, "grid")[place]?.top) - percentOf(optionArray(option, "graphic")[place]?.top);
         for (let place = 0; place < 12; place += 1) expect(gap(exported, place)).toBeCloseTo(gap(page, place), 4);
         // The page builds the same export option.
-        const onThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`).call(undefined) as (
-            option: EchartOption,
-            textPx: number,
-            widthPx: number,
-            heightPx: number,
-        ) => EchartOption;
-        expect(onThePage(JSON.parse(JSON.stringify(page)) as EchartOption, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx)).toEqual(exported);
+        /** The page twin of the export option. */
+        const onThePage = (option: EchartOption, textPx: number, widthPx: number, heightPx: number): EchartOption =>
+            optionOf(pageCall(CHART_RENDERERS_SOURCE, "reportExportOption")(option, textPx, widthPx, heightPx));
+        expect(onThePage(optionOf(JSON.parse(JSON.stringify(page))), CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx)).toEqual(exported);
     });
 
     it("keeps the value label of the tallest faceted bar inside its panel", () => {

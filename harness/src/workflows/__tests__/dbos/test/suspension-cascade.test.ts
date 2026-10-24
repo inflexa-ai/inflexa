@@ -30,7 +30,7 @@ import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 
 import { okAsync } from "neverthrow";
 
-import type { ChatProvider, EmbeddingProvider } from "../../../../providers/types.js";
+import { unusedChatProvider } from "../../../../providers/__fixtures__/chat-provider.js";
 import { unusedCitationResolver } from "../../../../citations/__fixtures__/resolver.js";
 import { createWorkingMemory } from "../../../../memory/working-memory.js";
 import { insertRun, queryRun, upsertAnalysis } from "../../../../state/index.js";
@@ -74,8 +74,8 @@ const testCChild = DBOS.registerWorkflow(
     async (_input: SandboxStepInput): Promise<SandboxStepResult> => {
         await DBOS.runStep(
             async () => {
-                const err = new Error("billing gateway: budget_exceeded for VK vk_test");
-                (err as { statusCode?: number }).statusCode = 402;
+                const err: Error & { statusCode?: number } = new Error("billing gateway: budget_exceeded for VK vk_test");
+                err.statusCode = 402;
                 throw err;
             },
             { name: "llm" },
@@ -213,8 +213,8 @@ describe("the suspension cascade — parent self-cancel", () => {
         const deps: ExecuteAnalysisDeps = {
             citationResolver: unusedCitationResolver,
             pool: rig.pool,
-            provider: {} as unknown as ChatProvider,
-            embedding: {} as unknown as EmbeddingProvider,
+            provider: unusedChatProvider(),
+            embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
             sandboxStepCallable: testCChild,
             resolveWorkspaceRoot: async (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
             workingMemory: createWorkingMemory(rig.pool),
@@ -281,8 +281,8 @@ describe("the suspension cascade — parent self-cancel", () => {
         const deps: ExecuteAnalysisDeps = {
             citationResolver: unusedCitationResolver,
             pool: rig.pool,
-            provider: {} as unknown as ChatProvider,
-            embedding: {} as unknown as EmbeddingProvider,
+            provider: unusedChatProvider(),
+            embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
             sandboxStepCallable: testDChild,
             resolveWorkspaceRoot: async (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
             workingMemory: createWorkingMemory(rig.pool),

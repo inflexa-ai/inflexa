@@ -32,6 +32,20 @@ describe("classifyProviderError", () => {
         expect(classifyProviderError(wrapped)).toEqual({ kind: "auth", retryable: false });
     });
 
+    it("classifies a thrown primitive and a primitive cause as provider errors instead of raising", () => {
+        // A gate upstream can throw anything, and the SDK can wrap a primitive as the cause. The cause
+        // walk refuses a link that is not an object instead of reading a field of it.
+        expect(classifyProviderError("boom")).toEqual({ kind: "provider", retryable: false });
+        expect(classifyProviderError(new Error("wrapped a thrown text", { cause: "boom" }))).toEqual({
+            kind: "provider",
+            retryable: false,
+        });
+        expect(classifyProviderError(new Error("wrapped a thrown number", { cause: 42 }))).toEqual({
+            kind: "provider",
+            retryable: false,
+        });
+    });
+
     it("classifies a 402 as a non-retryable suspend error with the reason of the default map", () => {
         expect(classifyProviderError(apiError(402))).toEqual({
             kind: "suspend",
@@ -314,7 +328,8 @@ describe("toProviderError — the suspend arm", () => {
     it("finds a suspend error that a step boundary rethrew on the cause chain", () => {
         const failure = toProviderError(apiError(402), "analysis:abc");
         const rethrown = new Error(failure.message, { cause: failure });
-        expect(findSuspendError(rethrown)).toBe(failure as never);
+        const found: unknown = findSuspendError(rethrown);
+        expect(found).toBe(failure);
         expect(findSuspendError(new Error("x", { cause: toProviderError(apiError(403), "analysis:abc") }))).toBeUndefined();
     });
 });

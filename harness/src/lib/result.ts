@@ -74,9 +74,9 @@ function describe(value: unknown): string {
         // Prefer a human `message` field when the structured error carries one
         // (e.g. a `ProviderError`) so the wrapped `Error.message` names the
         // failure; fall back to the `type` discriminant otherwise.
-        const message = (value as { message?: unknown }).message;
+        const message = "message" in value ? value.message : undefined;
         if (typeof message === "string" && message.length > 0) return message;
-        return String((value as DomainError).type);
+        return String(value.type);
     }
     return String(value);
 }

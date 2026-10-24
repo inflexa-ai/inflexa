@@ -115,7 +115,7 @@ export async function joinEnvironment(answer: RecommendResponse, paths: Environm
 
     const procedure = answer.procedure.map((step) => {
         const environment: { package?: StepEnvironment["package"]; collection?: StepEnvironment["collection"] } = {};
-        const pkg = (step as { package?: { name: string } }).package;
+        const pkg = step.package;
         if (pkg && farm) {
             const version = farm.get(pkg.name.toLowerCase());
             environment.package = { name: pkg.name, present: version !== undefined, version };

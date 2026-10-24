@@ -13,12 +13,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-// `csstree-validator` ships no type declarations, and the harness ignores `src/**/*.d.ts`, thus no local
-// declaration can type the module. The directive accepts the untyped import, and the cast below pins the
-// one signature that the gate uses.
-// @ts-expect-error the module resolves without a type declaration.
-import { validate as validateCssRaw } from "csstree-validator";
 import { HtmlValidate } from "html-validate";
+import { createRequire } from "node:module";
+
+import { optionAt, optionList, optionOf } from "./options.js";
 
 import type { ReportDocument } from "../../contracts/report-blocks.js";
 import { DESIGN_CSS, SCATTER_CROWD_ROWS } from "../design.js";
@@ -26,11 +24,35 @@ import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "../fixture
 import { renderReportPage } from "../render.js";
 import type { RenderValues } from "../types.js";
 
+/**
+ * The validator of the `csstree-validator` package, read through the module resolver. The package ships
+ * no type declarations, the `.gitignore` keeps a hand-written declaration file under `src` out of the
+ * repository, and an ambient `declare module` in a module file is an augmentation, which an untyped
+ * module refuses. The module rides as unknown, and the gate names the member that it calls before the
+ * call.
+ */
+const moduleResolver = createRequire(import.meta.url);
+const loaded: unknown = moduleResolver("csstree-validator");
+const validateCssRaw: unknown = typeof loaded === "object" && loaded !== null && "validate" in loaded ? loaded.validate : undefined;
+
 /** One `csstree-validator` finding. It names the property at fault, the class of the fault, and the message. */
 type CssFinding = { name: string; message: string; property?: string };
 
-/** The one signature that the gate uses. The cast gives the untyped import a precise type. */
-const validateCss = validateCssRaw as (css: string, filename?: string) => CssFinding[];
+/** The one signature that the gate uses, read through the finding shape that the validator gives. */
+const validateCss = (css: string, filename?: string): CssFinding[] => {
+    if (typeof validateCssRaw !== "function") throw new Error("the css validator module holds no validate function");
+    const findings = optionList(Reflect.apply(validateCssRaw, undefined, [css, filename]));
+    return findings.map((item) => {
+        const record = optionOf(item);
+        const name = record.name;
+        const message = record.message;
+        if (typeof name !== "string" || typeof message !== "string") throw new Error("the css validator gave a finding without a name and a message");
+        const property = record.property;
+        const finding: CssFinding = { name, message };
+        if (typeof property === "string") finding.property = property;
+        return finding;
+    });
+};
 
 /**
  * The HTML validator with the recommended preset. Two rules turn off, because the page rejects each one on
@@ -159,8 +181,8 @@ describe("a raw script sink stays hardened", () => {
         if (match === null) {
             throw new Error("The page holds no application/json script element.");
         }
-        const parsed = JSON.parse(match[1] ?? "") as { xAxis: { data: unknown[] } };
-        expect(parsed.xAxis.data).toContain(hostileCell);
+        const parsed = optionOf(JSON.parse(match[1] ?? ""));
+        expect(optionList(optionAt(parsed, "xAxis").data)).toContain(hostileCell);
         expect(JSON.stringify(parsed)).toContain(hostileCell);
     });
 });

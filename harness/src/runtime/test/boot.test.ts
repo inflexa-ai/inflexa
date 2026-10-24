@@ -3,30 +3,60 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { silentLogger } from "../../__tests__/setup/logger.js";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
+import { constructionWorkflows, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import { bootHarness, type BootHarnessDeps } from "../boot.js";
-import type { CoreRuntimeDeps } from "../assemble.js";
-import type { DbosConfig } from "../dbos.js";
-import type { ConnectionBudgetConfig } from "../connection-budget.js";
 
-/** A pool that fails loudly if boot reaches state-init / the budget guard. */
-function explodingPool(onUse: () => void): Pool {
+import type { Querier } from "../../state/db.js";
+
+/** A pool that fails loudly if boot reaches state-init / the budget guard. The driver object carries `options`; nothing dials the server. */
+function explodingPool(onUse: () => void): Querier & Pick<Pool, "connect" | "end" | "options"> {
     const trap = () => {
         onUse();
         throw new Error("exploding pool: boot reached state init");
     };
-    return { query: trap, connect: trap, end: async () => {} } as unknown as Pool;
+    return Object.assign(new Pool(), { query: trap, connect: trap, end: async () => {} });
 }
 
 function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
     return {
-        core: {} as CoreRuntimeDeps,
+        core: {
+            conversation: {
+                provider: unusedChatProvider(),
+                utilityProvider: unusedChatProvider(),
+                pool: new Pool(),
+                embedding: refuseEmbedding(),
+                workspaceFs: makeFakeWorkspaceFs(),
+                model: "test/model",
+                utilityModel: "test/utility-model",
+                resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+                runAuthorizer: createLocalRunAuthorizer(),
+                runLauncher: refuseRunLauncher(),
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                skillsDir: "/skills",
+                chrome: {},
+            },
+            workflows: constructionWorkflows(),
+        },
         pool: explodingPool(() => {}),
         skillsDir: "/definitely/not/a/real/skills/dir",
-        dbos: { executorId: "boot-test" } as DbosConfig,
-        connectionBudget: {} as ConnectionBudgetConfig,
+        dbos: {
+            dbHost: "",
+            dbPort: "",
+            dbName: "",
+            dbUser: "",
+            dbPassword: "",
+            dbSslMode: "disable",
+            appName: "boot-test",
+            adminPort: "",
+            executorId: "boot-test",
+        },
+        connectionBudget: {},
         logger: silentLogger,
         ...overrides,
     };

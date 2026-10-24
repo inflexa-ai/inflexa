@@ -78,7 +78,7 @@ import { DBOS, Error as DBOSErrors, type WorkflowHandle } from "@dbos-inc/dbos-s
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
@@ -92,7 +92,7 @@ import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
 import { recordRunCompleted, recordStepCompleted, stepOutcomeOf } from "../lib/metrics.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
-import { describeDbError, withTransaction, type DbError } from "../lib/db-result.js";
+import { describeDbError, withTransaction, type Connectable, type DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
     countArtifactsByRuns,
@@ -287,7 +287,7 @@ export type RunObservation = {
 export type ExecuteAnalysisDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    readonly pool: Pool;
+    readonly pool: Querier & Connectable;
     /** Chat provider for the in-body literature-grounded synthesis. */
     readonly provider: ChatProvider;
     /** Write-side embedder for indexing the run synthesis. */
@@ -817,7 +817,7 @@ async function collectUpstreamHandoffs(args: {
     workspaceRoot: string;
     dependsOn: readonly string[];
     agentByStepId: Readonly<Record<string, string>>;
-    pool: Pool;
+    pool: Querier & Connectable;
 }): Promise<UpstreamHandoff[]> {
     const { analysisId, runId, workspaceRoot, dependsOn, agentByStepId, pool } = args;
     if (dependsOn.length === 0) return [];
@@ -1505,9 +1505,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 parentWorkflowId: dbosParentId,
                 runSession: forStep(input.runSession, stepId),
             };
-            const handle = (await DBOS.startWorkflow(deps.sandboxStepCallable, {
+            const handle = await DBOS.startWorkflow(deps.sandboxStepCallable, {
                 workflowID: childWorkflowId,
-            })(childInput)) as WorkflowHandle<SandboxStepResult>;
+            })(childInput);
             inFlight.set(childWorkflowId, { stepId, handle });
             stepRuntime.set(stepId, { status: "running" });
         }

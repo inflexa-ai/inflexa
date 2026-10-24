@@ -29,9 +29,7 @@
  * outcome guards the call.
  */
 
-import type { Page } from "puppeteer-core";
-
-import { withPage, type ChromeConfig } from "./chrome.js";
+import { withPage, type CaptureArea, type ChromeConfig, type LookPage } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
 import { BLOCK_ID_ATTRIBUTE } from "../report-render/views/block-mark.js";
 
@@ -138,7 +136,7 @@ const BLOCK_MARGIN_PX = 16;
 function waitForThemeReady(sentinel: string, event: string, timeout: number): Promise<void> {
     return new Promise<void>((resolve) => {
         // The sentinel name arrives as a value, thus no declared property of the global object describes it.
-        if ((window as unknown as Record<string, unknown>)[sentinel]) {
+        if (Reflect.get(window, sentinel)) {
             resolve();
             return;
         }
@@ -173,24 +171,17 @@ function measureScrollHeight(): number {
  * Measure the document height, in CSS pixels. A page that refuses the measure reads as a short one, thus the
  * capture takes the one full-page shot and the refusal costs no look.
  */
-async function measureTotalHeight(page: Page): Promise<number> {
+async function measureTotalHeight(page: LookPage): Promise<number> {
     const measured = await page.evaluate(measureScrollHeight).catch(() => undefined);
     return typeof measured === "number" && Number.isFinite(measured) ? measured : 0;
 }
 
 /** A document area of one capture, in CSS pixels: the columns from `x`, and the rows from `fromY` to `toY`. */
-type CaptureArea = {
-    readonly x: number;
-    readonly width: number;
-    readonly fromY: number;
-    readonly toY: number;
-};
-
 /**
  * Capture the rows of one area as slices, in document order. Each slice clips {@link TILE_HEIGHT_PX} rows,
  * and the last slice ends at the area or at the budget, whichever comes first.
  */
-async function captureSlices(page: Page, area: CaptureArea): Promise<{ screenshots: CapturedShot[]; capturedPx: number }> {
+async function captureSlices(page: LookPage, area: CaptureArea): Promise<{ screenshots: CapturedShot[]; capturedPx: number }> {
     const heightPx = area.toY - area.fromY;
     const tileCount = Math.min(Math.ceil(heightPx / TILE_HEIGHT_PX), MAX_TILES);
     const screenshots: CapturedShot[] = [];
@@ -236,7 +227,7 @@ function measureBlock(attribute: string, blockId: string, margin: number): Captu
  * Take the pictures of one block. A refused bitmap propagates, because the window shows the top of the page
  * and not the block.
  */
-async function captureBlock(page: Page, blockId: string): Promise<Shots> {
+async function captureBlock(page: LookPage, blockId: string): Promise<Shots> {
     const area = await page.evaluate(measureBlock, BLOCK_ID_ATTRIBUTE, blockId, BLOCK_MARGIN_PX);
     if (area === null) {
         return { screenshots: [], coverage: { kind: "no-block" } };
@@ -255,7 +246,7 @@ async function captureBlock(page: Page, blockId: string): Promise<Shots> {
  * picture beats a dead look, thus a refusal retries one time at the window. A second throw names a broken
  * browser and not a tall page, thus it propagates to the caller.
  */
-async function captureShots(page: Page): Promise<Shots> {
+async function captureShots(page: LookPage): Promise<Shots> {
     const totalPx = await measureTotalHeight(page);
     try {
         if (totalPx > TILE_HEIGHT_PX) {

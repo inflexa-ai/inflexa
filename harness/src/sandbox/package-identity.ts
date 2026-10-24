@@ -9,9 +9,11 @@
  *
  * Two types carry the two ideas. A {@link PackageQuery} is what a person or an
  * agent asked: a spelling, an optional track, an optional version. A
- * {@link PackageIdentity} is the name that an ecosystem recognizes. The
- * identity is opaque, thus a caller cannot invent one, and every identity comes
- * from {@link pythonIdentity}, {@link rIdentity}, or {@link identityOf}.
+ * {@link PackageIdentity} is the name that an ecosystem recognizes. The name is
+ * a plain string, so the type alone cannot make a caller construct through the
+ * rule; the guard is the constructor funnel — every identity comes from
+ * {@link pythonIdentity}, {@link rIdentity}, or {@link identityOf}, and each
+ * of them validates and folds the name before it hands one out.
  *
  * The PEP 503 fold lives in exactly one function of this file. The provisioner
  * holds the Python twin, `images/sandbox-provisioner/package_identity.py`, and
@@ -39,13 +41,6 @@ export type PackageQuery = {
 };
 
 /**
- * The brand of an identity name. It has no runtime value: it exists so that a
- * literal `{ track, name }` fails the typecheck outside this module, and thus
- * every identity comes from a constructor that applied the rule of its track.
- */
-declare const identityBrand: unique symbol;
-
-/**
  * The name that one ecosystem recognizes, under the track that holds it.
  *
  * The name of a Python identity is the PEP 503 fold of the spelling, because
@@ -55,7 +50,7 @@ declare const identityBrand: unique symbol;
  */
 export type PackageIdentity = {
     readonly track: Track;
-    readonly name: string & { readonly [identityBrand]: true };
+    readonly name: string;
 };
 
 /**
@@ -68,26 +63,13 @@ function fold(name: string): string {
 }
 
 /**
- * Brand a name that a constructor of this module already ruled on.
- *
- * The cast is the whole point of the brand: the brand has no runtime value,
- * thus only a cast can produce one, and this function is the one place that
- * casts. A caller outside the module reaches a name through a constructor.
- */
-function brand(name: string): PackageIdentity["name"] {
-    // The brand is a compile-time marker with no runtime value, thus a cast is
-    // the only way to mint one, and this function is the only site that casts.
-    return name as PackageIdentity["name"];
-}
-
-/**
  * The Python identity of a spelling. The name folds, because PEP 503 makes
  * `PyYAML`, `pyyaml`, and `py_yaml` one distribution.
  *
  * @param spelling The distribution name, as the caller spells it.
  */
 export function pythonIdentity(spelling: string): PackageIdentity {
-    return { track: "python", name: brand(fold(spelling)) };
+    return { track: "python", name: fold(spelling) };
 }
 
 /**
@@ -97,7 +79,7 @@ export function pythonIdentity(spelling: string): PackageIdentity {
  * @param name The DESCRIPTION `Package` value.
  */
 export function rIdentity(name: string): PackageIdentity {
-    return { track: "r", name: brand(name) };
+    return { track: "r", name };
 }
 
 /**

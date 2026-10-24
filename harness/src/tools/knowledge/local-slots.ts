@@ -12,10 +12,15 @@
  * service when a slot type is added.
  */
 
+import { z } from "zod";
+
 import type { TemplateParameter } from "./client.js";
 
 /** A slot value: a scalar, or a list of strings. */
 export type LocalSlotValue = string | number | boolean | readonly string[];
+
+/** The contract of a validated local slot value, as `validateLocalSlot` accepts it. */
+const LocalSlotValueSchema: z.ZodType<LocalSlotValue> = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
 
 /** One refusal of a local value, in the shape of a render rejection issue. */
 export type LocalSlotIssue = {
@@ -164,13 +169,13 @@ export function bindLocalSlots(
                 continue;
             }
             // Validated above: a string, a finite number, a boolean, or a list of strings.
-            const value = given as LocalSlotValue;
+            const value = LocalSlotValueSchema.parse(given);
             values.set(parameter.name, value);
             slots.push({ name: parameter.name, value, source: "caller", adaptable: true, lines: [] });
         } else if (parameter.default !== undefined) {
             // The contract is loose on the wire; a default is a scalar or a list of strings by the contract of the service,
             // and the service renders whatever it holds, thus only an absent default is absent here too.
-            const value = parameter.default as LocalSlotValue;
+            const value = parameter.default;
             values.set(parameter.name, value);
             slots.push({
                 name: parameter.name,

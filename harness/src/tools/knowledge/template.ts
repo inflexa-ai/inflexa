@@ -326,7 +326,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
 
             const boundSlots: BoundSlotRecord[] = Object.entries(binding?.slots ?? {}).map(([slot, value]) => ({
                 slot,
-                value: value as TemplateBindingValue,
+                value,
                 source: binding ? sourceOf(binding, slot) : "plan",
             }));
             const settingsOverrides: SettingsOverrideRecord[] = boundSlots.flatMap(({ slot, value }) => {

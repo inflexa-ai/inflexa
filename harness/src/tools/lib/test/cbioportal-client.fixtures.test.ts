@@ -4,6 +4,18 @@ import { z } from "zod";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { RawCancerStudySchema, RawMutationRowSchema } from "../cbioportal-client.js";
 
+const OpenApiOracleSchema = z.object({
+    definitions: z.record(z.string(), z.object({ properties: z.record(z.string(), z.unknown()) })),
+});
+
+/** The named definition of the oracle document, failing the test when absent. */
+function oracleDefinition(name: string): { properties: Record<string, unknown> } {
+    const oracle = OpenApiOracleSchema.parse(readFixture("cbioportal", "openapi-v2.json"));
+    const definition = oracle.definitions[name];
+    if (definition === undefined) throw new Error(`the openapi oracle carries no ${name} definition`);
+    return definition;
+}
+
 runFixtureSuite("cBioPortal golden fixtures", [
     fixtureCase({
         name: "RawCancerStudySchema (projection=SUMMARY)",
@@ -50,7 +62,7 @@ runFixtureSuite("cBioPortal golden fixtures", [
 
 describe("the cBioPortal oracle and the wire", () => {
     it("shows no mutationCount on any observed mutation row", () => {
-        const rows = readFixture("cbioportal", "mutations-fetch-SUMMARY.json") as Record<string, unknown>[];
+        const rows = z.array(z.record(z.string(), z.unknown())).parse(readFixture("cbioportal", "mutations-fetch-SUMMARY.json"));
         for (const row of rows) expect("mutationCount" in row).toBe(false);
     });
 
@@ -58,20 +70,16 @@ describe("the cBioPortal oracle and the wire", () => {
         // The Swagger of the provider declares `TypeOfCancer.cancerTypeId`, and
         // the DETAILED payload serves `id`. The sampled wire is the oracle for
         // this one field, thus the schema reads `id` and keeps the fallback.
-        const oracle = readFixture("cbioportal", "openapi-v2.json") as {
-            definitions: { TypeOfCancer: { properties: Record<string, unknown> } };
-        };
-        expect(Object.keys(oracle.definitions.TypeOfCancer.properties)).toContain("cancerTypeId");
+        const oracle = oracleDefinition("TypeOfCancer");
+        expect(Object.keys(oracle.properties)).toContain("cancerTypeId");
 
-        const detailed = readFixture("cbioportal", "studies-DETAILED.json") as { cancerType: Record<string, unknown> }[];
+        const detailed = z.array(z.object({ cancerType: z.record(z.string(), z.unknown()) })).parse(readFixture("cbioportal", "studies-DETAILED.json"));
         expect(Object.keys(detailed[0]!.cancerType)).toContain("id");
         expect(Object.keys(detailed[0]!.cancerType)).not.toContain("cancerTypeId");
     });
 
     it("declares no mutationCount in the published Mutation definition", () => {
-        const oracle = readFixture("cbioportal", "openapi-v2.json") as {
-            definitions: { Mutation: { properties: Record<string, unknown> } };
-        };
-        expect(Object.keys(oracle.definitions.Mutation.properties)).not.toContain("mutationCount");
+        const oracle = oracleDefinition("Mutation");
+        expect(Object.keys(oracle.properties)).not.toContain("mutationCount");
     });
 });

@@ -1,6 +1,6 @@
-import type { ChatPart } from "./chat-parts.js";
+import type { KnownChatPart } from "./chat-parts.js";
 
-export type ChatPartType = ChatPart["type"];
+export type ChatPartType = KnownChatPart["type"];
 
 export type PartEmitter = "workflow" | "conversation";
 export type PartConsumer = "sidebar" | "conversation";
@@ -44,6 +44,10 @@ export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
 
 export function isTransient(type: ChatPartType): boolean {
     return PART_REGISTRY[type].transient;
+}
+
+export function isKnownPartType(type: string): type is ChatPartType {
+    return Object.hasOwn(PART_REGISTRY, type);
 }
 
 export function isReconciling(type: ChatPartType): boolean {

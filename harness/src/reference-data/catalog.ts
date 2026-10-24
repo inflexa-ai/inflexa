@@ -135,12 +135,12 @@ export function referenceArtifactKey(dataset: { readonly id: string; readonly ve
     return `${dataset.id}/${dataset.version}/${artifact.path}`;
 }
 
-function deepFreeze<T>(value: T): DeepReadonly<T> {
+function deepFreeze<T>(value: T): T {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
         for (const nested of Object.values(value)) deepFreeze(nested);
         Object.freeze(value);
     }
-    return value as DeepReadonly<T>;
+    return value;
 }
 
 /**

@@ -19,6 +19,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel } from "../../contracts/report-blocks.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PALETTE } from "../design.js";
 import type { RenderProblem } from "../types.js";
@@ -315,7 +316,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
         grid: layout.grid,
         xAxis: { ...valueAxis("x", xTitle, ranges.x), ...interval },
         yAxis: { ...valueAxis("y", yTitle, ranges.y), ...interval },
-        legend: { ...(option.legend as EchartOption), ...layout.legend },
+        legend: { ...parseUnknownRecord(option.legend), ...layout.legend },
         media: layout.media,
     });
 }

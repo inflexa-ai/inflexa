@@ -31,6 +31,7 @@ import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { tryFs } from "../lib/fs-result.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import {
@@ -45,7 +46,6 @@ import {
 } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
-import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { isSafeId, runDir } from "../workspace/paths.js";
@@ -89,14 +89,16 @@ const LITERATURE_REVIEWER_BUDGET = 3;
 
 // ── Types ────────────────────────────────────────────────────────────
 
-type ValidationIssue = {
+export type ValidationIssue = {
     readonly path: string;
     readonly code: "schema" | "semantic";
     readonly message: string;
     readonly hint?: string;
 };
 
-type SubmitSynthesisOutput = { accepted: true } | { accepted: false; issues: ValidationIssue[] };
+export type SubmitSynthesisOutput = { accepted: true } | { accepted: false; issues: ValidationIssue[] };
+
+export type ValidateSynthesisOutput = { valid: true; issues: ValidationIssue[] } | { valid: false; issues: ValidationIssue[] };
 
 type SynthesizerOutcome = { kind: "submitted"; synthesis: RunSynthesis } | { kind: "blocker"; reason: string };
 
@@ -249,7 +251,7 @@ type SalvagedInputs = {
 };
 
 function salvageInputs(candidate: unknown): SalvagedInputs {
-    const record: Record<string, unknown> = typeof candidate === "object" && candidate !== null ? (candidate as Record<string, unknown>) : {};
+    const record = parseUnknownRecord(candidate) ?? {};
 
     const runId = z.string().safeParse(record.runId);
     const findings = z.array(SynthesizedFindingSchema).safeParse(record.findings);
@@ -333,7 +335,7 @@ function fullyValidate(candidate: unknown, ctx: InnerToolContext): { valid: true
 
 // ── Inner tools ─────────────────────────────────────────────────────
 
-function buildValidateTool(ctx: InnerToolContext): Tool {
+function buildValidateTool(ctx: InnerToolContext): Tool<{ synthesis: unknown }, ValidateSynthesisOutput> {
     return defineTool({
         id: "validate_synthesis",
         description:
@@ -365,12 +367,13 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
         describeCall: "none",
         execute: async (input) => {
             const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
-            return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
+            const noIssues: ValidationIssue[] = [];
+            return ok(result.valid ? { valid: true as const, issues: noIssues } : { valid: false as const, issues: result.issues });
         },
     });
 }
 
-function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
+function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool<{ synthesis: RunSynthesis }, SubmitSynthesisOutput> {
     return defineTool({
         id: "submit_synthesis",
         description:
@@ -399,7 +402,7 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
     });
 }
 
-function buildBlockerTool(holder: OutcomeHolder): Tool {
+function buildBlockerTool(holder: OutcomeHolder): Tool<{ reason: string }, { recorded: true; message: string }> {
     return createReportBlockerToolFor({
         record: (outcome) => {
             if (holder.outcome === null) holder.outcome = outcome;
@@ -419,9 +422,9 @@ function buildBlockerTool(holder: OutcomeHolder): Tool {
  * validation + outcome capture without driving the whole agent loop.
  */
 export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string>; runId: string }): {
-    validate: Tool;
-    submit: Tool;
-    blocker: Tool;
+    validate: Tool<{ synthesis: unknown }, ValidateSynthesisOutput>;
+    submit: Tool<{ synthesis: RunSynthesis }, SubmitSynthesisOutput>;
+    blocker: Tool<{ reason: string }, { recorded: true; message: string }>;
     holder: OutcomeHolder;
 } {
     const holder: OutcomeHolder = { outcome: null };
@@ -669,9 +672,7 @@ export async function readRunSynthesis(args: ReadSynthesisInput): Promise<RunSyn
     if (!parsed.success) {
         return null;
     }
-    // The payload comes from a validated `RunSynthesis`, and the builder sets each field of the part contract.
-    // The tests parse the result with `RunSynthesisPartSchema`.
-    return flattenDataPart(buildRunSynthesisPart(args.runId, parsed.data)) as unknown as RunSynthesisPart;
+    return { type: "data-run-synthesis", ...runSynthesisPartFields(args.runId, parsed.data) };
 }
 
 // ── Embedding text ──────────────────────────────────────────────────
@@ -718,17 +719,19 @@ function buildSynthesizerPrompt(planNarrative: string, summaries: readonly StepS
  * `RunSynthesisPart` interface — keep them in lockstep.
  */
 export function buildRunSynthesisPart(runId: string, synthesis: RunSynthesis): ChatDataPart {
+    return { type: "data-run-synthesis", data: runSynthesisPartFields(runId, synthesis) };
+}
+
+/** The flat fields of the `data-run-synthesis` part, shared by the stream part and the stored-record read. */
+function runSynthesisPartFields(runId: string, synthesis: RunSynthesis): Omit<RunSynthesisPart, "type"> {
     return {
-        type: "data-run-synthesis",
-        data: {
-            id: `synthesis-${runId}`,
-            runId,
-            overview: synthesis.overview,
-            conclusions: synthesis.conclusions,
-            findings: synthesis.findings,
-            themes: synthesis.themes,
-            limitations: synthesis.limitations,
-            keyReferences: synthesis.keyReferences,
-        },
+        id: `synthesis-${runId}`,
+        runId,
+        overview: synthesis.overview,
+        conclusions: synthesis.conclusions,
+        findings: synthesis.findings,
+        themes: synthesis.themes,
+        limitations: synthesis.limitations,
+        keyReferences: synthesis.keyReferences,
     };
 }

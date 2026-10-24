@@ -26,6 +26,7 @@ import {
 import { forSubAgent, type AgentSession, type RunFrame, type Scope } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import { isProviderError } from "../errors.js";
 import type { ChatProvider, ChatRequest, ReasoningPolicy } from "../types.js";
@@ -300,8 +301,8 @@ describe("createAiSdkProvider", () => {
             const result = await provider.chat(request, makeSession(), signal);
             throw new Error(`expected abort to be rethrown, got a ${result.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            expect(err).toBeInstanceOf(DOMException);
-            expect((err as DOMException).name).toBe("AbortError");
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            expect(err.name).toBe("AbortError");
         }
     });
 
@@ -979,8 +980,8 @@ describe("createAiSdkProvider abort during backoff", () => {
             const outcome = await provider.chat(request, makeSession(), controller.signal);
             throw new Error(`expected the abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            expect(err).toBeInstanceOf(DOMException);
-            expect((err as DOMException).name).toBe("AbortError");
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            expect(err.name).toBe("AbortError");
         }
 
         expect(Date.now() - startedAt).toBeLessThan(2_000);
@@ -1007,8 +1008,8 @@ describe("createAiSdkProvider abort during backoff", () => {
             const outcome = await provider.chat(request, makeSession(), controller.signal);
             throw new Error(`expected the expiry to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            expect(err).toBeInstanceOf(DOMException);
-            expect((err as DOMException).name).toBe("TimeoutError");
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            expect(err.name).toBe("TimeoutError");
         }
 
         expect(attempts).toBe(1);
@@ -1699,7 +1700,10 @@ describe("a reply that a fallback model served", () => {
         }));
     }
 
-    const partTypesOf = (content: unknown): string[] => (typeof content === "string" ? [] : (content as { type: string }[]).map((part) => part.type));
+    const partTypesOf = (content: unknown): string[] => {
+        if (!isUnknownArray(content)) return [];
+        return content.map((part) => (typeof part === "object" && part !== null && "type" in part ? String(part.type) : ""));
+    };
 
     it("drops the thinking of the turn, keeps every other part, and names the model that answered", async () => {
         const { logger, warnings } = recordingLogger();

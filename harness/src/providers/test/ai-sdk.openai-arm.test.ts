@@ -1,10 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 
 import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, type AiSdkProviderConfig } from "../ai-sdk.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../prompt-cache.js";
-import type { ChatRequest, ChatStreamEvent, FetchLike } from "../types.js";
+import type { ChatRequest, ChatStreamEvent } from "../types.js";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 const request: ChatRequest = {
     system: "You are a test model.",
@@ -18,38 +24,34 @@ const request: ChatRequest = {
  */
 const MODEL = "gpt-5.1";
 
-/** One entry of the `input` array of a Responses request. */
-type ResponsesInputItem = {
-    readonly type?: string;
-    readonly id?: string;
-    readonly encrypted_content?: string;
-};
-
 /** The fields of a Responses request body that these tests read. */
-type ResponsesRequestBody = {
-    readonly model?: string;
-    readonly store?: boolean;
-    readonly prompt_cache_key?: string;
-    readonly max_output_tokens?: number;
-    readonly input?: readonly ResponsesInputItem[];
-};
+const ResponsesInputItemSchema = z.looseObject({ type: z.string().optional() });
+
+const ResponsesRequestBodySchema = z.looseObject({
+    model: z.string().optional(),
+    store: z.boolean().optional(),
+    prompt_cache_key: z.string().optional(),
+    max_output_tokens: z.number().optional(),
+    input: z.array(ResponsesInputItemSchema).optional(),
+});
+type ResponsesRequestBody = z.infer<typeof ResponsesRequestBodySchema>;
 
 /**
  * Record each outbound request body, then answer with `respond`. The body holds
  * the retention directive and the input items, thus a test reads the recorded
  * value instead of the model call.
  */
-function capturingFetch(respond: () => Response): { readonly fetch: FetchLike; readonly bodies: ResponsesRequestBody[] } {
+function capturingFetch(respond: () => Response): { readonly fetch: typeof fetch; readonly bodies: ResponsesRequestBody[] } {
     const bodies: ResponsesRequestBody[] = [];
-    const fetch: FetchLike = (_input, init) => {
-        bodies.push(init?.body === undefined || init.body === null ? {} : (JSON.parse(String(init.body)) as ResponsesRequestBody));
+    const fetch = fetchDouble((_input, init) => {
+        bodies.push(init?.body === undefined || init.body === null ? {} : ResponsesRequestBodySchema.parse(JSON.parse(String(init.body))));
         return Promise.resolve(respond());
-    };
+    });
     return { fetch, bodies };
 }
 
 /** Build an `openai` arm config over a stubbed wire, with the fields of one test. */
-function openaiArm(fetch: FetchLike, opts: { store?: boolean; maxRetries?: number; maxOutputTokens?: number } = {}): AiSdkProviderConfig {
+function openaiArm(fetch: typeof globalThis.fetch, opts: { store?: boolean; maxRetries?: number; maxOutputTokens?: number } = {}): AiSdkProviderConfig {
     return {
         kind: "openai",
         apiKey: "test-key",

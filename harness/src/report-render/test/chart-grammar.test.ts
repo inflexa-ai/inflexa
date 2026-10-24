@@ -6,11 +6,12 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition } from "../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../chart.js";
 import { INTERVAL_RENDERER, OUTLINE_RENDERER, VIOLIN_GRID_POINTS } from "../chart-renderers.js";
 import { CHART_BODY_PX, CHART_INLINE_OPTION_BOUND, DIVERGING_RAMP, FACET_ROW_PX, FOCUS_CHART_COLOR, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import type { RenderProblem } from "../types.js";
+import { chartSourceOf, optionList, optionNumbers, optionOf, pageCall } from "./options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -40,11 +41,11 @@ function composed(composition: ChartComposition, focus?: string[]): ChartBlock {
 }
 
 function asObj(value: unknown): Record<string, unknown> {
-    return value as Record<string, unknown>;
+    return optionOf(value);
 }
 
 function asArr(value: unknown): unknown[] {
-    return value as unknown[];
+    return optionList(value);
 }
 
 function derive(block: ChartBlock, rows: ChartRow[], columns?: string[]): EchartOption {
@@ -204,11 +205,7 @@ describe("the payload of a dense colored scatter", () => {
     const target = { key: "c1", columns: COLUMNS };
 
     /** The page twin of the series build. */
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[];
+    const seriesDataOnThePage = pageCall(CHART_SERIES_BUILDER, "reportSeriesData");
 
     it("names the color and the size columns in the descriptor, and the page builds the four-member items", () => {
         const rows = embedding(9000);
@@ -217,14 +214,14 @@ describe("the payload of a dense colored scatter", () => {
 
         expect(JSON.stringify(derive(block, rows, COLUMNS)).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(render.option);
         const firstSource = source.series[0];
         if (firstSource === undefined) throw new Error("the render named no series source");
         expect(firstSource.color).toEqual({ column: 3 });
         expect(firstSource.size).toEqual({ column: 5 });
 
         // The page reads the decoded rows, and it builds the same items as the inline derivation.
-        const page = seriesDataOnThePage({ columns: COLUMNS, rows }, firstSource, undefined);
+        const page = optionList(seriesDataOnThePage({ columns: COLUMNS, rows }, firstSource, undefined));
         const inline = asArr(firstSeries(derive(block, rows, COLUMNS)).data);
         expect(page.length).toBe(9000);
         expect(page[1]).toEqual([0.1, 0.1, 0.5, 11]);
@@ -234,10 +231,10 @@ describe("the payload of a dense colored scatter", () => {
     it("drops a row whose color cell is not numeric on the page too", () => {
         const rows = embedding(9000).map((row, index) => (index === 1 ? { ...row, expr: "NA" } : row));
         const block = quick("scatter", { x: "umap1", y: "umap2", color: "expr" });
-        const source = deriveChartRender(block, rows, COLUMNS, target)._unsafeUnwrap().option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(deriveChartRender(block, rows, COLUMNS, target)._unsafeUnwrap().option);
         const firstSource = source.series[0];
         if (firstSource === undefined) throw new Error("the render named no series source");
-        const page = seriesDataOnThePage({ columns: COLUMNS, rows }, firstSource, undefined);
+        const page = optionList(seriesDataOnThePage({ columns: COLUMNS, rows }, firstSource, undefined));
         expect(JSON.stringify(page)).toBe(JSON.stringify(asArr(firstSeries(derive(block, rows, COLUMNS)).data)));
         expect(page.length).toBe(8999);
     });
@@ -523,7 +520,7 @@ describe("the violin", () => {
 
         const outline = firstOutline(first);
         expect(outline.encode).toEqual({ x: 0, y: [1, 2] });
-        const items = asArr(outline.data).map((item) => asArr(item) as number[]);
+        const items = asArr(outline.data).map((item) => optionNumbers(asArr(item)));
         expect(items.length).toBe(2);
         const item = items[0];
         if (item === undefined) throw new Error("the outline holds no first item");
@@ -541,7 +538,7 @@ describe("the violin", () => {
         const option = derive(quick("violin", { x: "cluster", y: "score" }), violinRows());
         const inner = seriesOf(option).filter((entry) => entry.renderItem === INTERVAL_RENDERER);
         expect(inner.length).toBe(1);
-        const item = asArr(asArr(inner[0]?.data)[1]) as number[];
+        const item = optionNumbers(asArr(asArr(inner[0]?.data)[1]));
         // The second category holds 2, 2.5, 3, 3.5, and 4, four times each: the type-7 quartiles are 2.5 and 3.5.
         expect(item).toEqual([1, 3, 2.5, 3.5, 1, 0, 1]);
     });

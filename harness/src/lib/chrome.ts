@@ -10,7 +10,7 @@
  */
 
 import puppeteer from "puppeteer-core";
-import type { Browser, BrowserContext, Page } from "puppeteer-core";
+import type { ConsoleMessage, HTTPRequest, MediaFeature, ScreenshotOptions, Viewport, WaitForOptions } from "puppeteer-core";
 
 import { createNoopLogger } from "./console-logger.js";
 import type { Logger } from "./logger.js";
@@ -59,7 +59,57 @@ function requireBrowserUrl(browserUrl: string | undefined): string {
 }
 
 /** The connect operation of one endpoint. */
-export type BrowserConnector = (browserUrl: string) => Promise<Browser>;
+export type BrowserConnector = (browserUrl: string) => Promise<ConnectedBrowser>;
+
+/** A document area of one capture, in CSS pixels: the columns from `x`, and the rows from `fromY` to `toY`. */
+export type CaptureArea = {
+    readonly x: number;
+    readonly width: number;
+    readonly fromY: number;
+    readonly toY: number;
+};
+
+/** The browser context that one look runs in. */
+export type LookContext = {
+    newPage(): Promise<LookPage>;
+    close(): Promise<void>;
+};
+
+/** The page events that a look reads, with the payload each listener gets. */
+export type LookPageEvents = {
+    console: ConsoleMessage;
+    pageerror: Error;
+    requestfailed: HTTPRequest;
+};
+
+/**
+ * The page surface that a look reads, with no vendor type in the shape. The evaluate member carries the
+ * three call forms the capture module drives, each with the return type that the read of the result needs.
+ */
+export type LookPage = {
+    on<Key extends keyof LookPageEvents>(event: Key, listener: (event: LookPageEvents[Key]) => void): unknown;
+    setViewport(viewport: Viewport): Promise<void>;
+    emulateMediaFeatures(features: MediaFeature[]): Promise<void>;
+    goto(url: string, options?: WaitForOptions): Promise<unknown>;
+    waitForSelector(selector: string, options?: WaitForOptions): Promise<unknown>;
+    screenshot(options: ScreenshotOptions): Promise<string | Uint8Array>;
+    evaluate(pageFunction: () => number): Promise<number | undefined>;
+    evaluate(
+        pageFunction: (attribute: string, blockId: string, margin: number) => CaptureArea | null,
+        attribute: string,
+        blockId: string,
+        margin: number,
+    ): Promise<CaptureArea | null>;
+    evaluate(pageFunction: (...args: never[]) => unknown, ...args: unknown[]): Promise<unknown>;
+};
+
+/** The browser surface that the connection cache reads: the live flag, the socket, and the page factory. */
+export type ConnectedBrowser = {
+    readonly connected: boolean;
+    on(event: "disconnected", listener: () => void): unknown;
+    wsEndpoint(): string;
+    createBrowserContext(): Promise<LookContext>;
+};
 
 const connectOverPuppeteer: BrowserConnector = (browserUrl) => puppeteer.connect({ browserURL: browserUrl });
 
@@ -117,8 +167,8 @@ const DEFAULT_MAX_PAGES = 4;
  * one lifetime, thus one entry holds them and one eviction drops them together.
  */
 type EndpointEntry = {
-    browser?: Browser;
-    connecting?: Promise<Browser>;
+    browser?: ConnectedBrowser;
+    connecting?: Promise<ConnectedBrowser>;
     readonly semaphore: Semaphore;
 };
 
@@ -148,7 +198,7 @@ function entryFor(browserUrl: string, maxPages?: number): EndpointEntry {
     return fresh;
 }
 
-export async function getBrowser(browserUrl?: string, injected?: Logger): Promise<Browser> {
+export async function getBrowser(browserUrl?: string, injected?: Logger): Promise<ConnectedBrowser> {
     const logger = (injected ?? createNoopLogger()).named("chrome");
     const browserURL = requireBrowserUrl(browserUrl);
     const entry = entryFor(browserURL);
@@ -187,12 +237,12 @@ export async function getBrowser(browserUrl?: string, injected?: Logger): Promis
     return entry.connecting;
 }
 
-export async function withPage<T>(cfg: ChromeConfig, fn: (page: Page, context: BrowserContext) => Promise<T>): Promise<T> {
+export async function withPage<T>(cfg: ChromeConfig, fn: (page: LookPage, context: LookContext) => Promise<T>): Promise<T> {
     // The gate belongs to one endpoint, thus the endpoint must be known before the gate. A config that names
     // none refuses here, the same as the connection below refuses it.
     const browserURL = requireBrowserUrl(cfg.browserUrl);
     const release = await entryFor(browserURL, cfg.maxPages).semaphore.acquire();
-    let context: BrowserContext | undefined;
+    let context: LookContext | undefined;
     try {
         const b = await getBrowser(browserURL, cfg.logger);
         context = await b.createBrowserContext();

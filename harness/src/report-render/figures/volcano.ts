@@ -23,6 +23,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, type ChartBlock } from "../../contracts/report-blocks.js";
 import { expandVolcano, VOLCANO_EFFECT_THRESHOLD, volcanoAxisTitles, type PresetClassification } from "../chart-presets.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { ChartRow, EchartOption } from "../chart.js";
 import { CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
@@ -157,7 +158,7 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const text = sizedSeries([POINT_NAMES], (frame) =>
         pointNameSeries(names, placeLeaderNames(names, { xs, ys, pointPx: DENSE_SIGNAL_SYMBOL_PX }, plot, VOLCANO_NAME_SIDES, top, frame)),
     );
-    const legend = typeof option.legend === "object" && option.legend !== null ? (option.legend as EchartOption) : {};
+    const legend = parseUnknownRecord(option.legend) ?? {};
     return ok({
         ...option,
         ...text.member,

@@ -11,6 +11,21 @@
 import { reconcileKey } from "../contracts/chat-frame.js";
 import type { ChatPart } from "../contracts/chat-parts.js";
 import { PART_REGISTRY } from "../contracts/part-registry.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
+
+/**
+ * The registry is keyed by the discriminant alone, so this validates `type` and
+ * trusts the producer for the payload. The part schemas in `contracts/schemas/`
+ * are for a consumer at the edge of the package, which parses what it receives.
+ * Both ends of this stream are typed against the same union inside this package,
+ * so the discriminant is the boundary that can drift (a producer that emits
+ * something else entirely), and a part that fails its schema still reaches the
+ * consumer for its own check.
+ */
+function isChatPartRecord(record: Record<string, unknown>): record is ChatPart {
+    const { type } = record;
+    return typeof type === "string" && Object.hasOwn(PART_REGISTRY, type);
+}
 
 /**
  * Narrow one raw stream value to a chat data part, or `null` when it is not one.
@@ -21,21 +36,11 @@ import { PART_REGISTRY } from "../contracts/part-registry.js";
  * contract is the `ChatPart` union, so anything the registry does not
  * classify is not deliverable — which also covers a part written by a producer
  * newer than the reader.
- *
- * The registry is keyed by the discriminant alone, so this validates `type` and
- * trusts the producer for the payload. The part schemas in `contracts/schemas/`
- * are for a consumer at the edge of the package, which parses what it receives.
- * Both ends of this stream are typed against the same union inside this package,
- * so the discriminant is the boundary that can drift (a producer that emits
- * something else entirely), and a part that fails its schema still reaches the
- * consumer for its own check.
  */
 export function parseRunEventPart(value: unknown): ChatPart | null {
-    if (typeof value !== "object" || value === null) return null;
-    const type = (value as { type?: unknown }).type;
-    if (typeof type !== "string") return null;
-    if (!Object.hasOwn(PART_REGISTRY, type)) return null;
-    return value as ChatPart;
+    const record = parseUnknownRecord(value);
+    if (record === undefined || !isChatPartRecord(record)) return null;
+    return record;
 }
 
 /**

@@ -50,7 +50,14 @@ export type ToolExecutionMode = "step" | "inline";
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
 export function isToolError(value: unknown): value is ToolError {
-    return typeof value === "object" && value !== null && typeof (value as ToolError).error === "string" && typeof (value as ToolError).retryable === "boolean";
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "error" in value &&
+        typeof value.error === "string" &&
+        "retryable" in value &&
+        typeof value.retryable === "boolean"
+    );
 }
 
 /**
@@ -96,8 +103,7 @@ export function withToolResultImages<T extends object>(value: T, images: readonl
 /** Does one entry under the reserved key carry the picture shape? */
 function isToolResultImage(entry: unknown): entry is ToolResultImage {
     if (typeof entry !== "object" || entry === null) return false;
-    const { base64, mediaType } = entry as Partial<ToolResultImage>;
-    return typeof base64 === "string" && typeof mediaType === "string";
+    return "base64" in entry && typeof entry.base64 === "string" && "mediaType" in entry && typeof entry.mediaType === "string";
 }
 
 /**
@@ -108,7 +114,7 @@ function isToolResultImage(entry: unknown): entry is ToolResultImage {
  */
 export function readToolResultImages(value: unknown): ToolResultImage[] {
     if (typeof value !== "object" || value === null) return [];
-    const carried = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
+    const carried = toolResultImageKey in value ? value[toolResultImageKey] : undefined;
     const entries = Array.isArray(carried) ? carried : [carried];
     return entries.filter(isToolResultImage);
 }
@@ -142,7 +148,7 @@ export function withToolCallRecord<T extends object, R>(value: T, record: R): Wi
 /** Read the call record that a tool ok value carries, or `undefined` when it carries none. */
 export function readToolCallRecord(value: unknown): unknown {
     if (typeof value !== "object" || value === null) return undefined;
-    return (value as { [toolCallRecordKey]?: unknown })[toolCallRecordKey];
+    return toolCallRecordKey in value ? value[toolCallRecordKey] : undefined;
 }
 
 /**
@@ -183,13 +189,13 @@ export type ToolContext = {
 export type Tool<Input = unknown, Output = unknown> = {
     readonly id: string;
     readonly description: string;
-    readonly inputSchema: z.ZodType;
+    readonly inputSchema: z.ZodType<Input>;
     readonly jsonSchema: Record<string, unknown>;
     readonly executionMode: ToolExecutionMode;
     /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
-    describeCall?(input: Input): string;
+    describeCall?(input: Input): string | undefined;
     /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
-    describeResult?(input: Input, result: Output): string;
+    describeResult?(input: Input, result: Output): string | undefined;
     /**
      * See {@link ToolDefinition.foldCallRecord}. The record arrives untyped: the
      * loop passes back only what the `execute` of the same tool attached.
@@ -198,7 +204,7 @@ export type Tool<Input = unknown, Output = unknown> = {
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
-export type ToolDefinition<Schema extends z.ZodType, Output> = {
+export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>, unknown>, Output> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
@@ -235,7 +241,7 @@ export type ToolDefinition<Schema extends z.ZodType, Output> = {
      *
      * The hook never reaches the model.
      */
-    describeCall: ((input: z.infer<Schema>) => string) | "none";
+    describeCall: ((input: z.infer<Schema>) => string | undefined) | "none";
     /**
      * One line that names what THIS call PRODUCED — the outcome-time counterpart
      * of `describeCall`. A page path, a recorded id, and a listed count are facts
@@ -265,7 +271,7 @@ export type ToolDefinition<Schema extends z.ZodType, Output> = {
      *
      * The hook never reaches the model.
      */
-    readonly describeResult?: (input: z.infer<Schema>, result: Output) => string;
+    readonly describeResult?: (input: z.infer<Schema>, result: Output) => string | undefined;
     /**
      * Fold the call record of one settled call into process-local state. The
      * record is the one that `execute` attached with `withToolCallRecord`.
@@ -289,8 +295,8 @@ export type ToolDefinition<Schema extends z.ZodType, Output> = {
  * the first LLM call). Union-shaped inputs must be modelled as a flat object
  * with a discriminator field.
  */
-export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
-    const jsonSchema = z.toJSONSchema(def.inputSchema) as Record<string, unknown>;
+export function defineTool<Schema extends z.ZodType<z.output<Schema>, unknown>, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+    const jsonSchema: Record<string, unknown> = z.toJSONSchema(def.inputSchema);
     delete jsonSchema.$schema;
 
     if (jsonSchema.type !== "object") {
@@ -313,9 +319,7 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         executionMode,
         execute: def.execute,
     };
-    // The loop passes back only a record that this tool's `execute`
-    // attached, thus the record has the declared type.
-    if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord as (record: unknown) => void;
+    if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord;
     // A tool that declines carries no `describeCall` key at all, so "has a
     // hook" is one property check. `typeof` is the discriminator, not equality
     // with the sentinel, so a hook that returns the string `"none"` still

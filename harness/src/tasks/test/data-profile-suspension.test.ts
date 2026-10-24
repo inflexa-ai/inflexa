@@ -10,16 +10,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
 
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
+import type { Querier } from "../../state/db.js";
 import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxError } from "../../sandbox/sandbox-error.js";
 import type { SandboxRef } from "../../sandbox/types.js";
@@ -55,16 +55,16 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
-function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
+function statementPool(): { pool: Querier; statements: Array<{ text: string; values: readonly unknown[] }> } {
     const statements: Array<{ text: string; values: readonly unknown[] }> = [];
-    const pool = {
-        query: async (arg: unknown, params?: unknown[]) => {
-            const text = typeof arg === "string" ? arg : ((arg as { text?: string }).text ?? "");
-            const values = typeof arg === "object" && arg !== null && "values" in arg ? ((arg as { values?: unknown[] }).values ?? []) : (params ?? []);
-            statements.push({ text, values });
+    const pool: Querier = {
+        query: async (textOrConfig, values) => {
+            const text = typeof textOrConfig === "string" ? textOrConfig : textOrConfig.text;
+            const configValues = typeof textOrConfig === "string" ? undefined : textOrConfig.values;
+            statements.push({ text, values: configValues ?? values ?? [] });
             return { rows: [], rowCount: 0 };
         },
-    } as unknown as Pool;
+    };
     return { pool, statements };
 }
 
@@ -78,10 +78,10 @@ function runSession(analysisId = ANALYSIS_ID): RunSession {
     };
 }
 
-function deps(pool: Pool, sandboxClient: SandboxClient, revoked: string[]): DataProfileDeps {
+function deps(pool: Querier, sandboxClient: SandboxClient, revoked: string[]): DataProfileDeps {
     return {
         logger: silentLogger,
-        provider: {} as ChatProvider,
+        provider: unusedChatProvider(),
         pool,
         sandboxClient,
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
@@ -98,7 +98,7 @@ function deps(pool: Pool, sandboxClient: SandboxClient, revoked: string[]): Data
             revokeByJti: () => okAsync(undefined),
         },
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        embedding: { dimensions: 3, embed: () => okAsync([]) } as unknown as EmbeddingProvider,
+        embedding: { dimensions: 3, embed: () => okAsync([]) },
         skillsDir: root,
     };
 }
@@ -108,8 +108,9 @@ describe("the data profile — a refused spawn", () => {
         const { pool, statements } = statementPool();
         const revoked: string[] = [];
         const refusing = {
+            ...makeFakeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
-        } as unknown as SandboxClient;
+        };
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
@@ -124,8 +125,9 @@ describe("the data profile — a refused spawn", () => {
         const { pool, statements } = statementPool();
         const revoked: string[] = [];
         const refusing = {
+            ...makeFakeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-        } as unknown as SandboxClient;
+        };
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
@@ -141,8 +143,9 @@ describe("the data profile — a refused spawn", () => {
         const revoked: string[] = [];
         const cancel = new DBOSErrors.DBOSWorkflowCancelledError("wf-profile");
         const cancelled = {
+            ...makeFakeSandboxClient(),
             createSandbox: () => new ResultAsync<SandboxRef, SandboxError>(Promise.reject(cancel)),
-        } as unknown as SandboxClient;
+        };
 
         const outcome = await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, cancelled, revoked)).then(
             () => "completed",

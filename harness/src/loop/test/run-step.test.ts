@@ -27,7 +27,7 @@ async function stubRunStep() {
     const dbos = await import("@dbos-inc/dbos-sdk");
     originalRunStep ??= dbos.DBOS.runStep;
     const stub = mock(async (fn: () => Promise<unknown>, _config?: { name?: string }) => fn());
-    (dbos.DBOS.runStep as unknown) = stub;
+    Reflect.set(dbos.DBOS, "runStep", stub);
     return stub;
 }
 
@@ -38,7 +38,7 @@ afterEach(() => {
 afterAll(async () => {
     if (originalRunStep === undefined) return;
     const dbos = await import("@dbos-inc/dbos-sdk");
-    (dbos.DBOS.runStep as unknown) = originalRunStep;
+    Reflect.set(dbos.DBOS, "runStep", originalRunStep);
 });
 
 describe("passthroughStep", () => {

@@ -10,6 +10,11 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../../lib/__fixtures__/fixture-runner.js";
 import { Context7DocsResponseSchema, Context7SearchResponseSchema, queryDocsTool, resolveLibraryIdTool } from "../context7-docs.js";
@@ -58,10 +63,10 @@ afterEach(() => {
 /** Answer every request with one body, and record the URL that the tool asked for. */
 function serve(body: unknown, status = 200): void {
     const text = JSON.stringify(body);
-    globalThis.fetch = (async (url: string) => {
+    globalThis.fetch = fetchDouble(async (url) => {
         requested.push(String(url));
         return new Response(text, { status, headers: { "content-type": "application/json" } });
-    }) as unknown as typeof fetch;
+    });
 }
 
 describe("the Context7 routes", () => {

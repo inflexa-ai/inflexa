@@ -17,6 +17,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import type { EmitFn } from "../tools/define-tool.js";
@@ -162,6 +163,13 @@ async function readFromPrefix(args: ReadHeadersArgs, target: ReadoutTargetSpec):
     return { path, fields: readout.fields, unavailable: readout.unavailable };
 }
 
+/** One JSON line the decoder prints on stdout: the path it read, its fields, or why it could not. */
+const ReadoutLineSchema = z.object({
+    path: z.string().optional(),
+    fields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    unavailable: z.string().optional(),
+});
+
 async function decodeContainers(
     args: ReadHeadersArgs,
     machine: { readonly sandboxClient: SandboxClient; readonly sandbox: SandboxRef },
@@ -189,18 +197,14 @@ async function decodeContainers(
     for (const line of result.stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed.startsWith("{")) continue;
-        let parsed: { path?: string; fields?: Record<string, string | number | boolean>; unavailable?: string };
-        try {
-            parsed = JSON.parse(trimmed) as typeof parsed;
-        } catch {
-            continue;
-        }
-        const target = parsed.path ? byAbsolute.get(parsed.path) : undefined;
+        const parsed = ReadoutLineSchema.safeParse(JSON.parse(trimmed));
+        if (!parsed.success) continue;
+        const target = parsed.data.path ? byAbsolute.get(parsed.data.path) : undefined;
         if (!target) continue;
         readouts.set(target.path, {
             path: target.path,
-            fields: parsed.fields ?? {},
-            unavailable: parsed.unavailable,
+            fields: parsed.data.fields ?? {},
+            unavailable: parsed.data.unavailable,
         });
     }
 

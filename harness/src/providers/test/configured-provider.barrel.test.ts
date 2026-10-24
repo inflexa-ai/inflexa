@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
 
@@ -19,7 +20,11 @@ import {
 } from "../../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../__fixtures__/session.js";
 import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "../prompt-cache.js";
-import type { FetchLike } from "../types.js";
+
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
 
 /** One `text/event-stream` body: each arm of the provider reads the wire as SSE. */
 function sse(events: readonly string[]): Response {
@@ -77,16 +82,16 @@ type CapturedRequest = {
 };
 
 /** Captures each request so a test can assert on the wire model, since the request itself carries no model field. */
-function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; requests: CapturedRequest[] } {
+function capturingFetch(respond: (text: string, model: string) => Response): { fetch: typeof fetch; requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
-    const fetch: FetchLike = async (_input, init) => {
-        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    const fetch = fetchDouble(async (_input, init) => {
+        const body = init?.body ? (parseUnknownRecord(JSON.parse(String(init.body))) ?? {}) : {};
         // `Headers` folds each name to lowercase, thus an assertion does not
         // depend on the spelling that the SDK forwards.
         const headers = Object.fromEntries(new Headers(init?.headers));
         requests.push({ body, headers });
         return respond("Hello, world", typeof body["model"] === "string" ? body["model"] : "");
-    };
+    });
     return { fetch, requests };
 }
 
@@ -465,7 +470,7 @@ describe("output-token ceiling", () => {
     /** Run one chat over a capturing fetch and report the `max_tokens` that reached the wire. */
     async function wireMaxTokens(
         respond: (text: string, model: string) => Response,
-        build: (fetch: FetchLike) => AiSdkProviderConfig,
+        build: (fetch: typeof globalThis.fetch) => AiSdkProviderConfig,
     ): Promise<number | undefined> {
         const cap = capturingFetch(respond);
         const provider = createConfiguredAiSdkProvider({ config: build(cap.fetch) });
@@ -473,12 +478,13 @@ describe("output-token ceiling", () => {
         const result = await provider.chat(request, makeSession());
 
         expect(result.isOk()).toBe(true);
-        return cap.requests[0]?.body["max_tokens"] as number | undefined;
+        const maxTokens = cap.requests[0]?.body["max_tokens"];
+        return typeof maxTokens === "number" ? maxTokens : undefined;
     }
 
     const anthropicModel =
         (model: string, maxOutputTokens?: number) =>
-        (fetch: FetchLike): AiSdkProviderConfig => ({
+        (fetch: typeof globalThis.fetch): AiSdkProviderConfig => ({
             kind: "anthropic",
             baseURL: "http://models.local/anthropic",
             apiKey: "test-key",

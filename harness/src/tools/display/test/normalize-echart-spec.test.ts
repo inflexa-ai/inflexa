@@ -1,6 +1,21 @@
 import { describe, expect, it } from "bun:test";
 
+import { isUnknownArray } from "../../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { categoryCount, kebabFilename, normalizeEchartSpec } from "../normalize-echart-spec.js";
+
+/** The record the spec field holds, or a failed test. */
+function recordOf(value: unknown): Record<string, unknown> {
+    const parsed = parseUnknownRecord(value);
+    if (parsed === undefined) throw new Error("the spec field holds no record");
+    return parsed;
+}
+
+/** The record array the spec field holds, or a failed test. */
+function recordsOf(value: unknown): Record<string, unknown>[] {
+    if (!isUnknownArray(value)) throw new Error("the spec field holds no array");
+    return value.map((entry) => recordOf(entry));
+}
 
 /** A cartesian bar spec with `n` inline categories and `series` series. */
 function barSpec(n: number, series = 1): Record<string, unknown> {
@@ -13,21 +28,22 @@ function barSpec(n: number, series = 1): Record<string, unknown> {
 
 /** The normalized x-axis label options. */
 function axisLabel(spec: Record<string, unknown>): Record<string, unknown> {
-    const xAxis = spec.xAxis as Record<string, Record<string, unknown>>;
+    const xAxis = recordOf(spec.xAxis);
     const label = xAxis.axisLabel;
     if (label === undefined) throw new Error("the spec holds no x-axis label");
-    return label;
+    return recordOf(label);
 }
 
 /** The normalized grid. */
 function grid(spec: Record<string, unknown>): Record<string, unknown> {
-    return spec.grid as Record<string, unknown>;
+    return recordOf(spec.grid);
 }
 
 /** The normalized `saveAsImage` feature. */
 function saveAsImage(spec: Record<string, unknown>): Record<string, unknown> {
-    const toolbox = spec.toolbox as { feature: { saveAsImage: Record<string, unknown> } };
-    return toolbox.feature.saveAsImage;
+    const toolbox = recordOf(spec.toolbox);
+    const feature = recordOf(toolbox.feature);
+    return recordOf(feature.saveAsImage);
 }
 
 describe("normalizeEchartSpec — title", () => {
@@ -107,7 +123,7 @@ describe("normalizeEchartSpec — axis labels", () => {
     it("pins axisLabel.interval to 0 on both axes, overriding ECharts' silent label-skipping default", () => {
         const out = normalizeEchartSpec({ ...barSpec(6), xAxis: { type: "category", data: ["a"], axisLabel: { interval: "auto", color: "#333" } } }, {});
         expect(axisLabel(out)).toEqual({ interval: 0, color: "#333" });
-        expect((out.yAxis as Record<string, Record<string, unknown>>).axisLabel).toEqual({ interval: 0 });
+        expect(recordOf(out.yAxis).axisLabel).toEqual({ interval: 0 });
     });
 
     it("leaves <=10 categories horizontal", () => {
@@ -132,14 +148,14 @@ describe("normalizeEchartSpec — axis labels", () => {
 
     it("normalizes every entry of an array-valued xAxis", () => {
         const out = normalizeEchartSpec({ xAxis: [{ type: "category", data: ["a"] }, { type: "value" }], series: [{ type: "line" }] }, {});
-        const axes = out.xAxis as Record<string, unknown>[];
+        const axes = recordsOf(out.xAxis);
         expect(axes).toHaveLength(2);
-        expect(axes.every((a) => (a.axisLabel as Record<string, unknown>).interval === 0)).toBe(true);
+        expect(axes.every((a) => recordOf(a.axisLabel).interval === 0)).toBe(true);
     });
 
     it("does not rotate y-axis labels (a horizontal bar chart's categories read left-to-right)", () => {
         const out = normalizeEchartSpec({ xAxis: { type: "value" }, yAxis: { type: "category", data: Array(30).fill("g") }, series: [{ type: "bar" }] }, {});
-        const y = (out.yAxis as Record<string, Record<string, unknown>>).axisLabel;
+        const y = recordOf(out.yAxis).axisLabel;
         expect(y).toEqual({ interval: 0 });
     });
 });
@@ -252,10 +268,10 @@ describe("normalizeEchartSpec — toolbox", () => {
             { ...barSpec(4), toolbox: { left: 0, feature: { saveAsImage: { name: "keep-me" }, dataZoom: {} } } },
             { title: "Ignored" },
         );
-        const toolbox = out.toolbox as Record<string, unknown>;
+        const toolbox = recordOf(out.toolbox);
         expect(toolbox.left).toBe(0);
         expect(toolbox.right).toBeUndefined();
-        expect((toolbox.feature as Record<string, unknown>).dataZoom).toEqual({});
+        expect(recordOf(toolbox.feature).dataZoom).toEqual({});
         expect(saveAsImage(out)).toEqual({ name: "keep-me", type: "png" });
     });
 });

@@ -21,7 +21,12 @@ describe("mutate surface invariants", () => {
         // this object literal — the test fails at type-check time.
         const ctx: ToolContext = {
             invocationId: "tool-call-test",
-            session: undefined as unknown as ToolContext["session"],
+            session: {
+                identity: { user: "surface-test" },
+                scope: { kind: "analysis", analysisId: "surface-test" },
+                provenance: { agentId: "surface-test", callPath: [] },
+                auth: {},
+            },
             signal: new AbortController().signal,
             emit: () => {},
             ask: async () => {

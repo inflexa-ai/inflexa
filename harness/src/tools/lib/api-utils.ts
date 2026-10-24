@@ -68,9 +68,24 @@ export const HARNESS_USER_AGENT = "inflexa-harness (+https://inflexa.ai)";
  * and every wait stays at or below `maxRetryDelayMs`.
  *
  * Each request sends `HARNESS_USER_AGENT`, unless `headers` sets a User-Agent.
+ *
+ * The success value is `unknown`: the caller either walks it with guards, or
+ * validates it with `apiFetchValidated`, or reads text with `apiFetchText`.
  */
-export function apiFetch<T = unknown>(url: string, options: ApiFetchOptions = {}): ResultAsync<T, ApiError> {
-    return new ResultAsync(runFetch<T>(url, options));
+export function apiFetch(url: string, options: ApiFetchOptions = {}): ResultAsync<unknown, ApiError> {
+    return new ResultAsync(runFetch(url, options));
+}
+
+/**
+ * `apiFetch` for a `parseAs: "text"` response. The body reader is what makes the
+ * value a string, so the wrapper states that shape instead of casting the
+ * `unknown` read; the check never refuses a body, because `res.text()` always
+ * resolves to one.
+ */
+export function apiFetchText(url: string, options: ApiFetchOptions = {}): ResultAsync<string, ApiError> {
+    return apiFetch(url, { ...options, parseAs: "text" }).andThen((data): Result<string, ApiError> =>
+        typeof data === "string" ? ok(data) : err({ type: "invalid_response", issues: "expected a text body" }),
+    );
 }
 
 /**
@@ -96,7 +111,7 @@ export function apiFetchValidated<S extends z.ZodType>(
     schema: S,
     options: Omit<ApiFetchOptions, "parseAs"> = {},
 ): ResultAsync<z.infer<S>, ApiError> {
-    return apiFetch<unknown>(url, { ...options, parseAs: "json" }).andThen((data): Result<z.infer<S>, ApiError> => {
+    return apiFetch(url, options).andThen((data): Result<z.infer<S>, ApiError> => {
         const parsed = schema.safeParse(data);
         if (parsed.success) return ok(parsed.data);
         return err({ type: "invalid_response", issues: summarizeZodIssues(parsed.error) });
@@ -135,7 +150,7 @@ function retryAfterMilliseconds(res: Response): number | undefined {
     return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
-async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Result<T, ApiError>> {
+async function runFetch(url: string, options: ApiFetchOptions): Promise<Result<unknown, ApiError>> {
     const {
         method = "GET",
         headers = {},
@@ -181,8 +196,8 @@ async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Resul
                 return err({ type: "http_status", status: res.status, body: text.trim() });
             }
 
-            const data = parseAs === "text" ? ((await res.text()) as T) : ((await res.json()) as T);
-            return ok(data);
+            const readBody: (res: Response) => Promise<unknown> = parseAs === "text" ? (res) => res.text() : (res) => res.json();
+            return ok(await readBody(res));
         } catch (e) {
             if (e instanceof DOMException && e.name === "TimeoutError") {
                 return err({ type: "timeout", timeoutMs });

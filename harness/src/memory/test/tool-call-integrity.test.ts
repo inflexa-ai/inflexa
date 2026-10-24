@@ -15,16 +15,13 @@ function toolResult(toolCallId: string, toolName = "echo"): ModelMessage {
 }
 
 function assistantContent(message: ModelMessage | undefined): AssistantModelMessage["content"] {
-    expect(message).toBeDefined();
-    expect(message!.role).toBe("assistant");
-    // Safe: the role assertion above fails the test before this cast can lie.
-    return message!.content as AssistantModelMessage["content"];
+    if (message === undefined || message.role !== "assistant") throw new Error("expected the assistant message");
+    return message.content;
 }
 
 function toolParts(message: ModelMessage | undefined): ToolResultPart[] {
-    expect(message).toBeDefined();
-    expect(message!.role).toBe("tool");
-    return message!.content as ToolResultPart[];
+    if (message === undefined || message.role !== "tool") throw new Error("expected the tool message");
+    return message.content.filter((part): part is ToolResultPart => part.type === "tool-result");
 }
 
 describe("answerUnansweredToolCalls", () => {

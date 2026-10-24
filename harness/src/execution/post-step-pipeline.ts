@@ -14,7 +14,7 @@
 
 import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { LoopMessage } from "../loop/types.js";
@@ -43,7 +43,7 @@ import type { PostStepArtifacts, PostStepContext, StepFileEntry, StepOutputs } f
  * body passes its own `deps` straight through (it is a structural superset).
  */
 export type PostStepPipelineDeps = {
-    readonly pool: Pool;
+    readonly pool: Querier;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the metadata + summary continuations; omitted falls back to the no-op recorder. */

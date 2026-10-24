@@ -254,11 +254,18 @@ describe("createReportVersionStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-malformed-snapshot";
 
-        // The cast is the deliberate simulation of a caller bug. A bad value
-        // reaches the record where the compile-time type promises a good one.
-        const badSnapshot = { artifacts: "nope" } as unknown as ReportSnapshot;
+        // The rows cell type admits `null` (the resolver reads one as an absent
+        // cell), but the store's snapshot parse refuses it — a lawful value of the
+        // declared type that is malformed at the boundary it reaches.
         const failure = (
-            await store.record({ document: validDocument, snapshot: badSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+            await store.record({
+                document: validDocument,
+                snapshot: { artifacts: { "runs/r1/output/bad.csv": { hash: "broken-snapshot", rows: [{ broken: null }] } } },
+                analysisId,
+                threadId,
+                parentThreadId: null,
+                parentSeq: null,
+            })
         )._unsafeUnwrapErr();
         expect(failure.type).toBe("malformed_snapshot");
         if (failure.type === "malformed_snapshot") {

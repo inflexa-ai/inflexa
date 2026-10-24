@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { bucketRank, parseExpressionResponse } from "../bgee-client.js";
@@ -28,9 +29,13 @@ describe("Bgee golden fixtures", () => {
     });
 
     it("serves the expression score as a string on the wire", () => {
-        const body = readFixture("bgee", "expr-TP53-human.json") as {
-            data: { calls: { expressionScore?: { expressionScore?: unknown } }[] };
-        };
+        const body = z
+            .object({
+                data: z.object({
+                    calls: z.array(z.object({ expressionScore: z.object({ expressionScore: z.unknown() }).optional() })),
+                }),
+            })
+            .parse(readFixture("bgee", "expr-TP53-human.json"));
         expect(typeof body.data.calls[0]!.expressionScore!.expressionScore).toBe("string");
     });
 

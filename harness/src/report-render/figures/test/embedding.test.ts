@@ -5,10 +5,22 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_WIDE_PALETTE, SEQUENTIAL_RAMP } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { EMBEDDING_GROUND, EMBEDDING_LARGE_CELLS, EMBEDDING_OPACITY, embeddingPointPx } from "../embedding.js";
+import {
+    chartSourceOf,
+    optionArray,
+    optionAt,
+    optionList,
+    optionNumber,
+    optionNumberRows,
+    optionOf,
+    optionsOf,
+    pageCall,
+    seriesOf,
+} from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -19,11 +31,7 @@ function block(encoding: Encoding, extra: Partial<ChartBlock> = {}): ChartBlock 
 }
 
 function asObj(value: unknown): EchartOption {
-    return value as EchartOption;
-}
-
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
+    return optionOf(value);
 }
 
 function firstSeries(option: EchartOption): EchartOption {
@@ -33,7 +41,7 @@ function firstSeries(option: EchartOption): EchartOption {
 }
 
 function firstAxis(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
-    const [axis] = option[key] as EchartOption[];
+    const [axis] = optionsOf(option[key]);
     if (axis === undefined) throw new Error(`the option holds no ${key}`);
     return axis;
 }
@@ -76,8 +84,8 @@ describe("the embedding figure", () => {
     it("gives the two axes one length of data on a square grid", () => {
         const xAxis = firstAxis(option, "xAxis");
         const yAxis = firstAxis(option, "yAxis");
-        expect((xAxis.max as number) - (xAxis.min as number)).toBeCloseTo((yAxis.max as number) - (yAxis.min as number), 9);
-        const grid = firstOf(option.grid as EchartOption[], "grid");
+        expect(optionNumber(xAxis.max) - optionNumber(xAxis.min)).toBeCloseTo(optionNumber(yAxis.max) - optionNumber(yAxis.min), 9);
+        const grid = firstOf(optionArray(option, "grid"), "grid");
         expect(grid.width).toBe(grid.height);
     });
 
@@ -114,7 +122,7 @@ describe("the embedding figure", () => {
 
 describe("the continuous color of an embedding", () => {
     const option = deriveChartOption(block({ x: "UMAP_1", y: "UMAP_2", color: "LYZ" }), PBMC)._unsafeUnwrap();
-    const map = firstOf(option.visualMap as EchartOption[], "visual map");
+    const map = firstOf(optionArray(option, "visualMap"), "visual map");
 
     it("draws a zero in the gray ground and clips the scale at the 99th percentile", () => {
         // The linear 99th percentile of the seven values, between 3.218876 and 4.1.
@@ -135,14 +143,18 @@ describe("the continuous color of an embedding", () => {
             binding: { kind: "artifact-table", path: "cells.csv", hash: HASH, columnLabels: { LYZ: title } },
         };
         const render = deriveChartRender(labeled, PBMC, undefined, { key: "e1", columns: [] })._unsafeUnwrap();
-        const scaleLeft = firstOf(render.option.visualMap as EchartOption[], "visual map").left as number;
-        const media = render.option.media as EchartOption[];
+        const scaleLeft = firstOf(optionsOf(render.option.visualMap), "visual map").left;
+        const media = optionArray(render.option, "media");
         // The body takes the width of the chosen rule, and the title of the scale ends inside it.
         const chosen = media
-            .filter((rule) => asObj(rule.query).maxWidth === undefined && ((asObj(rule.query).minHeight as number) ?? 0) <= render.bodyPx)
+            .filter((rule) => {
+                const minHeight = asObj(rule.query).minHeight;
+                return asObj(rule.query).maxWidth === undefined && (minHeight === undefined ? 0 : optionNumber(minHeight)) <= render.bodyPx;
+            })
             .pop();
-        const left = ((asObj(chosen?.option).visualMap as EchartOption[])[0]?.left as number) ?? scaleLeft;
-        expect(render.widthPx as number).toBeGreaterThanOrEqual(left + title.length * 12 * 0.6);
+        const chosenMaps = chosen === undefined ? [] : optionList(optionAt(chosen, "option").visualMap);
+        const left = Number(chosenMaps[0] === undefined ? scaleLeft : optionOf(chosenMaps[0]).left);
+        expect(optionNumber(render.widthPx)).toBeGreaterThanOrEqual(left + title.length * 12 * 0.6);
     });
 
     it("keeps a continuous color off the large path, which reads no per-point color, and a group on it", () => {
@@ -160,7 +172,7 @@ describe("the continuous color of an embedding", () => {
     });
 
     it("draws the high values on top", () => {
-        const colors = (firstSeries(option).data as unknown[][]).map((item) => item[2]);
+        const colors = optionNumberRows(firstSeries(option).data).map((item) => optionNumber(item[2]));
         expect(colors).toEqual([0, 0, 0.6931472, 1.0986123, 1.3862944, 3.218876, 4.1]);
     });
 
@@ -175,14 +187,10 @@ describe("the continuous color of an embedding", () => {
         const render = deriveChartRender(dense, rows, columns, { key: "k1", columns })._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(render.option);
         const payload = firstOf(source.series, "payload series");
         expect(payload.rise).toBe(true);
-        const build = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
-            payload: { columns: string[]; rows: ChartRow[] },
-            descriptor: ChartDataSource["series"][number],
-            rule: unknown,
-        ) => unknown[];
+        const build = pageCall(CHART_SERIES_BUILDER, "reportSeriesData");
         const page = build({ columns, rows }, payload, undefined);
         expect(JSON.stringify(page)).toBe(JSON.stringify(firstSeries(render.inline).data));
     });
@@ -200,30 +208,32 @@ describe("the facet of an embedding", () => {
     const option = deriveChartOption(block({ x: "UMAP_1", y: "UMAP_2", color: "ISG15", facet: "condition" }), KANG)._unsafeUnwrap();
 
     it("draws one square for each condition, with one shared range", () => {
-        const grids = option.grid as EchartOption[];
+        const grids = optionArray(option, "grid");
         expect(grids.length).toBe(2);
         const [firstGrid] = grids;
         if (firstGrid === undefined) throw new Error("the option holds no grid");
         expect(grids.every((grid) => grid.width === firstGrid.width && grid.height === grid.width)).toBe(true);
-        const [firstPanel, secondPanel] = (option.xAxis as EchartOption[]).slice(0, 2);
+        const [firstPanel, secondPanel] = optionArray(option, "xAxis").slice(0, 2);
         if (firstPanel === undefined || secondPanel === undefined) throw new Error("the option holds fewer than two x axes");
         expect(firstPanel.min).toBe(secondPanel.min);
         expect(firstPanel.max).toBe(secondPanel.max);
     });
 
     it("names each panel over its square, and keys the dimensions under the first square alone", () => {
-        const names = (option.xAxis as EchartOption[]).filter((axis) => axis.position === "top").map((axis) => [axis.gridIndex, axis.name]);
+        const names = optionArray(option, "xAxis")
+            .filter((axis) => axis.position === "top")
+            .map((axis) => [axis.gridIndex, axis.name]);
         expect(names).toEqual([
             [0, "control"],
             [1, "stimulated"],
         ]);
-        const second = (option.xAxis as EchartOption[])[1];
+        const second = optionArray(option, "xAxis")[1];
         if (second === undefined) throw new Error("the option holds no second x axis");
         expect(second.name).toBeUndefined();
     });
 
     it("draws the zero cells of each panel in the ground", () => {
-        const map = firstOf(option.visualMap as EchartOption[], "visual map");
+        const map = firstOf(optionArray(option, "visualMap"), "visual map");
         expect(map.seriesIndex).toEqual([0, 1]);
         expect(map.outOfRange).toEqual({ color: EMBEDDING_GROUND });
     });

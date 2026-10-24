@@ -16,12 +16,13 @@ import {
     exportSizeFor,
     FOCUS_CHART_COLOR,
 } from "../design.js";
+import { optionOf } from "./options.js";
 
 /** The axis types of the chart runtime. A theme styles an axis by its type, and never by `xAxis` or `yAxis`. */
 const AXIS_TYPES = ["categoryAxis", "valueAxis", "logAxis", "timeAxis"] as const;
 
 function asObj(value: unknown): Record<string, unknown> {
-    return value as Record<string, unknown>;
+    return optionOf(value);
 }
 
 describe("the publication theme", () => {

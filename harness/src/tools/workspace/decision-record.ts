@@ -12,9 +12,12 @@
 
 import { createHash } from "node:crypto";
 import { posix as posixPath } from "node:path";
+import { z } from "zod";
 
 import type { AgentSession } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { MutateToolName, WorkspaceMutator, WriteRecord } from "./mutator.js";
 
@@ -54,10 +57,13 @@ export type UnvettedEdit = {
 };
 
 /** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
+/** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
+const LastEditRecordSchema = z.looseObject({ sha256: z.string() });
+
 export function expectedScriptSha256(record: Readonly<Record<string, unknown>>): string | undefined {
-    const edits = Array.isArray(record.unvetted_edits) ? (record.unvetted_edits as readonly Partial<UnvettedEdit>[]) : [];
-    const last = edits[edits.length - 1]?.sha256;
-    if (typeof last === "string") return last;
+    const edits = isUnknownArray(record.unvetted_edits) ? record.unvetted_edits : [];
+    const parsed = LastEditRecordSchema.safeParse(edits.at(-1));
+    if (parsed.success) return parsed.data.sha256;
     return typeof record.written_sha256 === "string" ? record.written_sha256 : undefined;
 }
 
@@ -98,13 +104,13 @@ export async function noteScriptChange(args: NoteScriptChangeArgs): Promise<Scri
     if (read.kind !== "ok") return { status: "no_record" };
     let record: Record<string, unknown>;
     try {
-        const parsed: unknown = JSON.parse(read.content.toString("utf8"));
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { status: "no_record" };
-        record = parsed as Record<string, unknown>;
+        const parsedRecord = parseUnknownRecord(JSON.parse(read.content.toString("utf8")));
+        if (!parsedRecord) return { status: "no_record" };
+        record = parsedRecord;
     } catch {
         return { status: "no_record" };
     }
-    const edits = Array.isArray(record.unvetted_edits) ? (record.unvetted_edits as unknown[]) : [];
+    const edits = isUnknownArray(record.unvetted_edits) ? record.unvetted_edits : [];
     const entry: UnvettedEdit = { path: args.scriptPath, note: args.note, sha256: args.sha256 };
     const next = { ...record, unvetted_edits: [...edits, entry] };
     const written = await args.mutator.writeFile({
@@ -133,9 +139,9 @@ export async function reconcileScriptRecord(args: ReconcileScriptRecordArgs): Pr
     if (record.kind !== "ok") return { status: "no_record" };
     let expected: string | undefined;
     try {
-        const parsed: unknown = JSON.parse(record.content.toString("utf8"));
-        if (parsed === null || typeof parsed !== "object") return { status: "no_record" };
-        expected = expectedScriptSha256(parsed as Record<string, unknown>);
+        const parsedRecord = parseUnknownRecord(JSON.parse(record.content.toString("utf8")));
+        if (!parsedRecord) return { status: "no_record" };
+        expected = expectedScriptSha256(parsedRecord);
     } catch {
         return { status: "no_record" };
     }

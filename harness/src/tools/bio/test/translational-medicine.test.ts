@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchClinicalTrialsTool } from "../search-clinical-trials.js";
 
@@ -10,7 +15,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = (async () => response()) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async () => response());
 }
 
 function trialsResponse(body: unknown): Response {
@@ -103,7 +108,7 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
 describe("searchClinicalTrials — action 'details'", () => {
     it("reads one study back by its NCT id, with its outcomes and adverse events", async () => {
         const seen: string[] = [];
-        globalThis.fetch = (async (input: unknown) => {
+        globalThis.fetch = fetchDouble(async (input) => {
             seen.push(String(input));
             return trialsResponse({
                 protocolSection: {
@@ -118,7 +123,7 @@ describe("searchClinicalTrials — action 'details'", () => {
                     },
                 },
             });
-        }) as unknown as typeof fetch;
+        });
 
         const { ctx } = makeToolContext();
         const result = (

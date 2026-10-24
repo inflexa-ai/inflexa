@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../../state/db.js";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { AgentSession } from "../../auth/types.js";
@@ -26,7 +26,7 @@ const OUT = `runs/${RUN}/${STEP}/output/out.csv`;
 const HASH = `sha256:${"a".repeat(64)}`;
 
 /** Every write this module makes is fire-and-forget SQL, and none of it is read back. */
-const stubDb = (): Pool => ({ query: async () => ({ rows: [], rowCount: 0 }) }) as unknown as Pool;
+const stubDb = (): Querier => ({ query: async () => ({ rows: [], rowCount: 0 }) });
 
 const manifest = (): ArtifactManifestEntry[] => [{ stepId: STEP, runId: RUN, path: "output/out.csv", size: 40, type: "output", hash: HASH }];
 
@@ -39,7 +39,7 @@ const run = async (result: ExternalRegistrationResult) => {
             stubDb(),
             registryReturning(result),
             { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-            {} as AgentSession,
+            session,
             logger,
         )
     )._unsafeUnwrap();
@@ -48,6 +48,13 @@ const run = async (result: ExternalRegistrationResult) => {
 };
 
 const accepted = { registered: [{ path: OUT, externalId: "a-1" }], failed: [], failedCount: 0 };
+
+const session: AgentSession = {
+    identity: { user: "tester" },
+    scope: { kind: "analysis", analysisId: "analysis-1" },
+    provenance: { agentId: "artifact-registration", callPath: ["artifact-registration"] },
+    auth: {},
+};
 
 describe("registerStepArtifacts — uncounted rejections", () => {
     it("logs a rejection the registry excluded, without failing the step over it", async () => {
@@ -98,19 +105,19 @@ describe("registerStepArtifacts — uncounted rejections", () => {
 describe("registerStepArtifacts — a refusal of the register gate", () => {
     it("returns the refusal as its err, throws nothing, and writes no external id", async () => {
         const statements: string[] = [];
-        const db = {
-            query: async (query: string | { text: string }) => {
+        const db: Querier = {
+            query: async (query) => {
                 statements.push(typeof query === "string" ? query : query.text);
                 return { rows: [], rowCount: 0 };
             },
-        } as unknown as Pool;
+        };
         const refusing: ArtifactRegistry = { register: () => errAsync({ reason: "r", suspend: false }), sync: () => okAsync(undefined) };
 
         const registration = await registerStepArtifacts(
             db,
             refusing,
             { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-            {} as AgentSession,
+            session,
         );
 
         expect(registration._unsafeUnwrapErr()).toEqual({ kind: "refused", refusal: { kind: "failed", gate: "ArtifactRegistry.register", reason: "r" } });
@@ -121,13 +128,13 @@ describe("registerStepArtifacts — a refusal of the register gate", () => {
 
 describe("registerStepArtifacts — a failed ledger write", () => {
     it("gives the write failure as its err", async () => {
-        const failing = { query: async () => Promise.reject(new Error("connection terminated")) } as unknown as Pool;
+        const failing: Querier = { query: async () => Promise.reject(new Error("connection terminated")) };
 
         const registration = await registerStepArtifacts(
             failing,
             registryReturning(accepted),
             { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-            {} as AgentSession,
+            session,
         );
 
         const failure = registration._unsafeUnwrapErr();

@@ -150,8 +150,11 @@ export type ChatResponse = {
      * it propagates a client abort as a throw, because durable workflow loops —
      * the non-streaming provider's callers — record cancellation only when it
      * surfaces as a thrown exception.
+     *
+     * The `string & {}` member admits a finish word an endpoint reports outside
+     * the modeled union; the loop consumers settle whatever arrives.
      */
-    readonly finishReason: FinishReason | "aborted";
+    readonly finishReason: FinishReason | "aborted" | (string & {});
     readonly rawFinishReason?: string;
     readonly usage?: ChatUsage;
     /**

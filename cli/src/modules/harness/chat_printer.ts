@@ -1,7 +1,7 @@
 import { basename, dirname } from "node:path";
 
 import type { EventSource, FileReferencePart, PlanPart, PresentationPart } from "@inflexa-ai/harness";
-import type { ChatFrame } from "@inflexa-ai/harness/contracts/index.js";
+import { PART_REGISTRY, type ChatFrame, type KnownChatPart } from "@inflexa-ai/harness/contracts/index.js";
 
 import type { OpenableEntry, PlanCardStepView, PresentationBody } from "../../types/session.ts";
 
@@ -66,6 +66,15 @@ export function subAgentActivityLabel(frame: ChatFrame): string | null {
         default:
             return null;
     }
+}
+
+/**
+ * Whether the part's type is one whose contract this build knows. A newer emitter's record has no reader
+ * here. The guard must run BEFORE a `type` discriminant read: every known part is also assignable to the
+ * passthrough record, so only this guard lets a following `part.type === "<literal>"` check narrow past it.
+ */
+export function isKnownPart(part: { type: string }): part is KnownChatPart {
+    return Object.hasOwn(PART_REGISTRY, part.type);
 }
 
 /**

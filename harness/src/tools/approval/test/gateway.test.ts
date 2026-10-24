@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
+import { z } from "zod";
 
 import { withSchema } from "../../../__tests__/setup/postgres.js";
-import type { ChatDataPart, EmitFn } from "../../../loop/types.js";
+import type { EmitFn } from "../../../loop/types.js";
 import { AskRejectedError, type AskRequest } from "../contract.js";
 import { createAskGateway, type AskContext, type AskGateway } from "../gateway.js";
 import { insertPendingAsk, type AskRow } from "../queries.js";
@@ -18,6 +19,19 @@ type AskPartData = {
     readonly status: string;
     readonly reply?: string;
 };
+
+const AskPartDataSchema = z.object({
+    id: z.string(),
+    title: z.string(),
+    command: z.string(),
+    detail: z.string().optional(),
+    status: z.string(),
+    reply: z.string().optional(),
+});
+
+const AskStateRowSchema = z.object({ status: z.string(), reply: z.unknown() });
+
+const CountRowSchema = z.object({ n: z.number() });
 
 type StartedAsk = {
     readonly promise: Promise<{ kind: "once" | "always" }>;
@@ -62,7 +76,7 @@ function startAsk(request: AskRequest, analysisId = "analysis-A", userId = USER_
     const controller = new AbortController();
     const parts: AskPartData[] = [];
     const emit: EmitFn = (event) => {
-        if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
+        if (event.type === "data-ask") parts.push(AskPartDataSchema.parse(event.data));
     };
     const ctx: AskContext = { analysisId, userId, signal: controller.signal, emit };
     const promise = gateway.ask(request, ctx);
@@ -88,12 +102,13 @@ async function waitForPendingId(analysisId?: string): Promise<string> {
 
 async function selectRow(id: string): Promise<{ status: string; reply: unknown } | undefined> {
     const res = await pool.query({ text: `SELECT status, reply FROM cortex_asks WHERE id = $1`, values: [id] });
-    return res.rows[0] as { status: string; reply: unknown } | undefined;
+    const row: unknown = res.rows[0];
+    return row === undefined ? undefined : AskStateRowSchema.parse(row);
 }
 
 async function countAsks(where = ""): Promise<number> {
     const res = await pool.query(`SELECT count(*)::int AS n FROM cortex_asks ${where}`);
-    return (res.rows[0] as { n: number }).n;
+    return CountRowSchema.parse(res.rows[0]).n;
 }
 
 // ── 5.1 — deferred round-trip, one case per reply variant ────────────
@@ -136,8 +151,8 @@ describe("createAskGateway — deferred round-trip", () => {
             () => undefined,
             (e: unknown) => e,
         );
-        expect(caught).toBeInstanceOf(AskRejectedError);
-        expect((caught as AskRejectedError).feedback).toBe("not this time");
+        if (!(caught instanceof AskRejectedError)) throw new Error("the denial rejects with AskRejectedError");
+        expect(caught.feedback).toBe("not this time");
         // The part shows the kind of the reply, and never the feedback, which is for the model.
         const terminal = started.parts.at(-1)!;
         expect(terminal).toMatchObject({ status: "rejected", reply: "reject" });
@@ -226,7 +241,7 @@ describe("createAskGateway — standing grants", () => {
             text: `SELECT count(*)::int AS n FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2 AND user_id = $3`,
             values: [analysisId, grantKey, userId],
         });
-        return (res.rows[0] as { n: number }).n;
+        return CountRowSchema.parse(res.rows[0]).n;
     }
 
     it("records a grant on always, then auto-approves a matching ask without pausing and logs the audit row", async () => {
@@ -242,7 +257,7 @@ describe("createAskGateway — standing grants", () => {
         const controller = new AbortController();
         const parts: AskPartData[] = [];
         const emit: EmitFn = (event) => {
-            if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
+            if (event.type === "data-ask") parts.push(AskPartDataSchema.parse(event.data));
         };
         const reply = await gateway.ask(GRANTED, { analysisId: "analysis-A", userId: USER_A, signal: controller.signal, emit });
 
@@ -342,7 +357,7 @@ describe("createAskGateway — standing grants", () => {
         const beforeResolved = await countAsks(`WHERE status = 'resolved'`);
         const parts: AskPartData[] = [];
         const emit: EmitFn = (event) => {
-            if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
+            if (event.type === "data-ask") parts.push(AskPartDataSchema.parse(event.data));
         };
         const later: AskRequest = { title: "Write a file", command: "write_file report/b.txt", grantKey: WIDE_KEY };
         const reply = await gateway.ask(later, { analysisId: "analysis-A", userId: USER_A, signal: new AbortController().signal, emit });

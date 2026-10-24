@@ -170,7 +170,7 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
         describeCall: "none",
         execute: async (input) => {
             const inputs = typeof input.query === "string" ? [input.query] : input.query;
-            const selected = input.sources ?? (["dgidb"] as Source[]);
+            const selected: Source[] = input.sources ?? ["dgidb"];
             const limit = input.limit ?? DEFAULT_LIMIT;
             const isGeneSide = input.direction === "gene_to_drugs";
 

@@ -16,7 +16,7 @@ const SOURCES: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed"
 
 function liveResolver(enabled: readonly CitationSource[]) {
     const enabledSet = new Set(enabled);
-    const sources = Object.fromEntries(
+    const sources: NonNullable<CitationResolverConfig["sources"]> = Object.fromEntries(
         SOURCES.map((source) => [
             source,
             {
@@ -25,7 +25,7 @@ function liveResolver(enabled: readonly CitationSource[]) {
                 maxRetryDelayMs: 1_000,
             },
         ]),
-    ) as NonNullable<CitationResolverConfig["sources"]>;
+    );
     return createCitationResolver({
         timeoutMs: 15_000,
         sources,

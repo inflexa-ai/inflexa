@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { mapSearxngResponse, SearxngSearchResponseSchema } from "../../../../research/searxng-engine.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../../fixture-runner.js";
@@ -54,8 +55,8 @@ runFixtureSuite("searxng golden fixtures — the web search response", [
 
 describe("the searxng twin", () => {
     it("breaks the answer type against the positive fixture", () => {
-        const positive = readFixture("searxng", "01-search-general.json") as { answers: unknown[] };
-        const drift = readFixture("searxng", "01-search-general.drift.json") as { answers: unknown[] };
+        const positive = z.object({ answers: z.array(z.unknown()) }).parse(readFixture("searxng", "01-search-general.json"));
+        const drift = z.object({ answers: z.array(z.unknown()) }).parse(readFixture("searxng", "01-search-general.drift.json"));
 
         expect(positive.answers.every((answer) => typeof answer === "object")).toBe(true);
         expect(drift.answers.every((answer) => typeof answer === "string")).toBe(true);

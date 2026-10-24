@@ -5,7 +5,8 @@
 
 import { randomUUID } from "node:crypto";
 import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
-import type { Pool, PoolClient } from "pg";
+import { type Connectable } from "../lib/db-result.js";
+import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
 import { capabilityDataRequirement } from "../agents/sandbox-catalog.js";
@@ -19,7 +20,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { readInstalledDatasetIds } from "./sandbox/list-available-refs.js";
-import { tryQuery, withTransaction, type DbError } from "../lib/db-result.js";
+import { tryQuery, withTransaction, type DbError, type TransactionQuerier } from "../lib/db-result.js";
 import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -74,7 +75,7 @@ const inputSchema = z
 type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
 
 export type ExecuteAnalysisToolDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory" | "refStorePath"> & {
-    readonly pool: Pool;
+    readonly pool: Querier & Connectable;
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
     readonly runLauncher: RunLauncher;
@@ -362,7 +363,7 @@ function workflowInput(
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? "unknown"])),
         resourcesByStepId: args.resourcesByStepId,
-        timeoutByStepId: Object.fromEntries(plan.steps.filter((step) => step.timeout !== undefined).map((step) => [step.id, step.timeout as number])),
+        timeoutByStepId: Object.fromEntries(plan.steps.flatMap((step): [string, number][] => (step.timeout === undefined ? [] : [[step.id, step.timeout]]))),
         budget: args.budget,
         runSession: args.runSession,
         ownsMandate: args.ownsMandate,
@@ -623,7 +624,7 @@ function refuseStaleView(view: StaleView): Result<PlanLaunch, LaunchPlanRunRefus
 
 type PlanSlot = { type: "inserted" } | { type: "stale"; view: StaleView };
 
-function lockPlanLaunch(client: PoolClient, planId: string): ResultAsync<void, DbError> {
+function lockPlanLaunch(client: TransactionQuerier, planId: string): ResultAsync<void, DbError> {
     return tryQuery("execute-analysis.lockPlanLaunch", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`plan-launch:${planId}`])).map(
         () => undefined,
     );

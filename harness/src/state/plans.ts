@@ -6,9 +6,20 @@
 import { randomUUID } from "node:crypto";
 
 import type { ResultAsync } from "neverthrow";
+import type { QueryConfig } from "pg";
+import { z } from "zod";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
+
+/**
+ * What the plan reads of the pool: one row-reading query over concrete rows.
+ * A real `Pool` and a `Querier`-typed caller satisfy it; a computed test fake
+ * satisfies it directly, where the row-generic `Querier` refuses it.
+ */
+export type PlanRowQuerier = {
+    query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+};
 
 /**
  * `cortex_plans.plan_id` shape contract — `pln-` followed by 8 lowercase hex
@@ -154,6 +165,14 @@ export type PlanRecord = {
     createdAt: string;
 };
 
+/** The `cortex_plans` row of {@link loadPlanRecord}, as the SELECT returns it. */
+const PlanRecordRowSchema = z.object({
+    plan: z.unknown(),
+    parent_plan_id: z.string().nullable(),
+    created_at: z.string(),
+    superseded_by: z.string().nullable(),
+});
+
 /**
  * Analysis-scoped read of one plan with its parent and the newest plan that
  * replaced it, in one statement. Returns `ok(null)` for an unknown planId OR a
@@ -162,9 +181,9 @@ export type PlanRecord = {
  * `created_at` is ISO 8601 text, thus the text order is the time order; the plan
  * id breaks a tie so that the answer is stable.
  */
-export function loadPlanRecord(pool: Querier, planId: string, opts: { analysisId: string }): ResultAsync<PlanRecord | null, DbError> {
+export function loadPlanRecord(pool: PlanRowQuerier, planId: string, opts: { analysisId: string }): ResultAsync<PlanRecord | null, DbError> {
     return tryQuery("plans.loadPlanRecord", async () => {
-        const result = await pool.query<{ plan: unknown; parent_plan_id: string | null; created_at: string; superseded_by: string | null }>({
+        const result = await pool.query({
             text: `SELECT p.plan, p.parent_plan_id, p.created_at,
                      (SELECT c.plan_id FROM cortex_plans c
                        WHERE c.parent_plan_id = p.plan_id AND c.analysis_id = p.analysis_id
@@ -173,8 +192,9 @@ export function loadPlanRecord(pool: Querier, planId: string, opts: { analysisId
                WHERE p.plan_id = $1 AND p.analysis_id = $2`,
             values: [planId, opts.analysisId],
         });
-        const row = result.rows[0];
-        if (!row) return null;
+        const raw = result.rows[0];
+        if (!raw) return null;
+        const row = PlanRecordRowSchema.parse(raw);
         return { planId, plan: row.plan, parentPlanId: row.parent_plan_id, supersededBy: row.superseded_by, createdAt: row.created_at };
     });
 }

@@ -7,9 +7,10 @@ import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { chartSvgAssets } from "../../chart-export.js";
-import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartRow, type EchartOption } from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type Cell, type ChartInputs, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_INK, CHART_PALETTE, DIVERGING_RAMP, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "../../design.js";
 import { HEATMAP_CELL_GAP_PX, HEATMAP_LABEL_LIMIT, HEATMAP_ROW_PX, TRACK_BAND_GAP_PX, TRACK_LEGEND_LINE_PX } from "../heatmap.js";
+import { gridAt, optionArray, optionList, optionNumber, optionNumberRows, optionOf, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -26,11 +27,23 @@ function block(encoding: Encoding, labels?: Record<string, string>): ChartBlock 
 }
 
 function asObj(value: unknown): EchartOption {
-    return value as EchartOption;
+    return optionOf(value);
 }
 
 /** Two genes of the pasilla top-gene heatmap over its seven samples. */
-const TOP_GENES: ChartRow[] = [
+/** The bound row of one positional fixture row, under the column names that the heatmap reads. */
+function rowOf(cells: unknown[]): ChartRow {
+    const names = ["gene_symbol", "sample", "zscore", "gene_order", "sample_order", "condition", "type"];
+    const row: Record<string, Cell> = {};
+    for (const [index, name] of names.entries()) {
+        const cell = cells[index];
+        if (typeof cell !== "string" && typeof cell !== "number") throw new Error(`the fixture row holds no ${name}`);
+        row[name] = cell;
+    }
+    return row;
+}
+
+const TOP_GENES = [
     ["Kal1", "untreated1", 0.8472503432276401, 24, 3, "untreated", "single-read"],
     ["Kal1", "untreated2", 0.799915233570179, 24, 5, "untreated", "single-read"],
     ["Kal1", "untreated3", 0.7519530648648491, 24, 6, "untreated", "paired-end"],
@@ -45,15 +58,7 @@ const TOP_GENES: ChartRow[] = [
     ["Treh", "treated1", 1.142082469564719, 0, 0, "treated", "single-read"],
     ["Treh", "treated2", 1.0720643446397156, 0, 1, "treated", "paired-end"],
     ["Treh", "treated3", 0.959043916304015, 0, 2, "treated", "paired-end"],
-].map(([gene_symbol, sample, zscore, gene_order, sample_order, condition, type]) => ({
-    gene_symbol,
-    sample,
-    zscore,
-    gene_order,
-    sample_order,
-    condition,
-    type,
-})) as ChartRow[];
+].map(rowOf);
 
 const TRACKED: Encoding = {
     x: { column: "sample", orderBy: "sample_order" },
@@ -64,11 +69,11 @@ const TRACKED: Encoding = {
 
 describe("the heatmap with annotation tracks", () => {
     const option = deriveChartOption(block(TRACKED, { zscore: "z-score" }), TOP_GENES)._unsafeUnwrap();
-    const series = option.series as EchartOption[];
-    const maps = option.visualMap as EchartOption[];
+    const series = seriesOf(option);
+    const maps = optionArray(option, "visualMap");
 
     it("draws the matrix in the run order, top-down, on the diverging ramp", () => {
-        const [xAxis, yAxis] = [(option.xAxis as EchartOption[])[0], (option.yAxis as EchartOption[])[0]];
+        const [xAxis, yAxis] = [optionArray(option, "xAxis")[0], optionArray(option, "yAxis")[0]];
         if (xAxis === undefined || yAxis === undefined) throw new Error("the option holds no matrix axes");
         expect(xAxis.data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
         expect(yAxis.data).toEqual(["Treh", "Kal1"]);
@@ -80,17 +85,17 @@ describe("the heatmap with annotation tracks", () => {
 
     it("separates the cells with a thin white gap, and draws no axis line", () => {
         expect(series[0]?.itemStyle).toEqual({ borderColor: "#ffffff", borderWidth: HEATMAP_CELL_GAP_PX });
-        const xAxis = (option.xAxis as EchartOption[])[0];
+        const xAxis = optionArray(option, "xAxis")[0];
         if (xAxis === undefined) throw new Error("the option holds no matrix axis");
         expect([asObj(xAxis.axisLine).show, asObj(xAxis.axisTick).show]).toEqual([false, false]);
     });
 
     it("draws one strip of category colors for each track over the matrix, in the x order", () => {
-        const grids = option.grid as EchartOption[];
+        const grids = optionArray(option, "grid");
         expect(grids.length).toBe(2);
         const [matrix, strips] = grids;
         if (matrix === undefined || strips === undefined) throw new Error("the option holds no matrix and strip grids");
-        expect((strips.top as number) < (matrix.top as number)).toBe(true);
+        expect(optionNumber(strips.top) < optionNumber(matrix.top)).toBe(true);
         expect(matrix.left).toBe(strips.left);
         expect(series.slice(1).map((entry) => [entry.name, entry.xAxisIndex, entry.data])).toEqual([
             [
@@ -120,7 +125,7 @@ describe("the heatmap with annotation tracks", () => {
                 ],
             ],
         ]);
-        expect((option.yAxis as EchartOption[])[1]?.data).toEqual(["condition", "type"]);
+        expect(optionArray(option, "yAxis")[1]?.data).toEqual(["condition", "type"]);
     });
 
     it("keys each track in a legend of its own, with colors that no other track takes", () => {
@@ -148,13 +153,13 @@ describe("the heatmap with annotation tracks", () => {
     });
 
     it("gives the track legends a band of their own, one line apart, clear of the strips", () => {
-        const legends = maps.slice(1).map((map) => map.top as number);
-        const strips = (option.grid as EchartOption[])[1];
+        const legends = maps.slice(1).map((map) => optionNumber(map.top));
+        const strips = gridAt(option, 1);
         if (strips === undefined) throw new Error("the option holds no strip grid");
         const [firstLegend, secondLegend] = legends;
         if (firstLegend === undefined || secondLegend === undefined) throw new Error("the option holds no track legends");
         expect(secondLegend - firstLegend).toBe(TRACK_LEGEND_LINE_PX);
-        expect((strips.top as number) - secondLegend).toBe(TRACK_LEGEND_LINE_PX + TRACK_BAND_GAP_PX);
+        expect(optionNumber(strips.top) - secondLegend).toBe(TRACK_LEGEND_LINE_PX + TRACK_BAND_GAP_PX);
     });
 
     it("refuses a track column that holds two values for one sample", () => {
@@ -173,9 +178,9 @@ describe("the heatmap with annotation tracks", () => {
             batch: `B${index % 8}`,
         }));
         const tracked = deriveChartOption(block({ x: "sample", y: "gene_symbol", value: "zscore", tracks: ["tissue", "batch"] }), rows)._unsafeUnwrap();
-        const batchMap = (tracked.visualMap as EchartOption[])[2];
+        const batchMap = optionArray(tracked, "visualMap")[2];
         if (batchMap === undefined) throw new Error("the option holds no batch map");
-        const batch = batchMap.pieces as EchartOption[];
+        const batch = optionArray(batchMap, "pieces");
         expect(batch.map((piece) => piece.color).slice(4)).toEqual([MUTED_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR]);
     });
 
@@ -227,10 +232,10 @@ describe("the height of a heatmap of many rows", () => {
     /** The height of one matrix row on the page, in pixels. */
     function rowPx(rows: ChartRow[], genes: number): number {
         const render = deriveChartRender(block(TRACKED), rows, undefined, { key: "h1", columns: [] })._unsafeUnwrap();
-        const grid = (render.option.grid as EchartOption[])[0];
+        const grid = optionArray(render.option, "grid")[0];
         if (grid === undefined) throw new Error("the render holds no matrix grid");
         const bottom = (Number.parseFloat(String(grid.bottom)) * render.bodyPx) / 100;
-        return (render.bodyPx - (grid.top as number) - bottom) / genes;
+        return (render.bodyPx - optionNumber(grid.top) - bottom) / genes;
     }
 
     it("states a body tall enough that each row takes one line of text, thus each row name prints", () => {
@@ -293,17 +298,17 @@ const BOTH: ChartInputs = { trees: { x: { rows: SAMPLE_TREE }, y: { rows: GENE_T
 
 /** The series of one option that draws a dendrogram, with the grid of each. */
 function treeSeries(option: EchartOption): Array<{ series: EchartOption; grid: EchartOption; xAxis: EchartOption; yAxis: EchartOption }> {
-    const grids = option.grid as EchartOption[];
-    const xAxes = option.xAxis as EchartOption[];
-    const yAxes = option.yAxis as EchartOption[];
-    return (option.series as EchartOption[])
+    const grids = optionArray(option, "grid");
+    const xAxes = optionArray(option, "xAxis");
+    const yAxes = optionArray(option, "yAxis");
+    return seriesOf(option)
         .filter((entry) => entry.type === "lines")
         .map((series) => {
-            const xAxis = xAxes[series.xAxisIndex as number];
+            const xAxis = xAxes[optionNumber(series.xAxisIndex)];
             if (xAxis === undefined) throw new Error("the option holds no x axis of the tree");
-            const yAxis = yAxes[series.yAxisIndex as number];
+            const yAxis = yAxes[optionNumber(series.yAxisIndex)];
             if (yAxis === undefined) throw new Error("the option holds no y axis of the tree");
-            const grid = grids[xAxis.gridIndex as number];
+            const grid = grids[optionNumber(xAxis.gridIndex)];
             if (grid === undefined) throw new Error("the option holds no grid of the tree");
             return { series, xAxis, yAxis, grid };
         });
@@ -313,11 +318,11 @@ describe("the dendrograms of the heatmap", () => {
     const option = deriveChartOption(treed({ x: treeOf("sample_tree.csv"), y: treeOf("gene_tree.csv") }), TOP_GENES, undefined, BOTH)._unsafeUnwrap();
     const [xTree, yTree] = treeSeries(option);
     if (xTree === undefined || yTree === undefined) throw new Error("the option holds no tree pair");
-    const grids = option.grid as EchartOption[];
+    const grids = optionArray(option, "grid");
 
     it("puts each axis in the depth-first leaf order of its tree", () => {
-        expect((option.xAxis as EchartOption[])[0]?.data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
-        expect((option.yAxis as EchartOption[])[0]?.data).toEqual(["Kal1", "Treh"]);
+        expect(optionArray(option, "xAxis")[0]?.data).toEqual(["treated1", "treated2", "treated3", "untreated1", "untreated4", "untreated2", "untreated3"]);
+        expect(optionArray(option, "yAxis")[0]?.data).toEqual(["Kal1", "Treh"]);
     });
 
     it("draws each edge as one elbow from the child up to the height of the parent and across to the place of the parent", () => {
@@ -328,7 +333,7 @@ describe("the dendrograms of the heatmap", () => {
             silent: true,
             lineStyle: { color: CHART_INK, opacity: 1 },
         });
-        const elbows = (xTree.series.data as Array<{ coords: number[][] }>).map((item) => item.coords);
+        const elbows = optionArray(xTree.series, "data").map((item) => optionNumberRows(item.coords));
         expect(elbows).toHaveLength(SAMPLE_TREE.length);
         // The root joins s10 (over treated1 and the pair of treated2 and treated3) and s11 (over the untreated samples).
         expect(elbows[0]).toEqual([
@@ -348,8 +353,8 @@ describe("the dendrograms of the heatmap", () => {
         const strips = grids[1];
         const matrix = grids[0];
         if (strips === undefined || matrix === undefined) throw new Error("the option holds no matrix and strip grids");
-        expect((xTree.grid.top as number) + (xTree.grid.height as number)).toBeLessThan(strips.top as number);
-        expect((strips.top as number) < (matrix.top as number)).toBe(true);
+        expect(optionNumber(xTree.grid.top) + optionNumber(xTree.grid.height)).toBeLessThan(optionNumber(strips.top));
+        expect(optionNumber(strips.top) < optionNumber(matrix.top)).toBe(true);
         expect([xTree.grid.left, xTree.grid.right]).toEqual([matrix.left, matrix.right]);
         expect([xTree.xAxis.min, xTree.xAxis.max, xTree.yAxis.min, xTree.yAxis.max]).toEqual([-0.5, 6.5, 0, 11.738902]);
         expect([xTree.xAxis.show, xTree.yAxis.show]).toEqual([false, false]);
@@ -358,17 +363,19 @@ describe("the dendrograms of the heatmap", () => {
     it("draws the tree of y at the left of the row names, over the rows of the matrix, with the root at the left", () => {
         const matrix = grids[0];
         if (matrix === undefined) throw new Error("the option holds no matrix grid");
-        expect((yTree.grid.left as number) + (yTree.grid.width as number)).toBeLessThan(matrix.left as number);
+        expect(optionNumber(yTree.grid.left) + optionNumber(yTree.grid.width)).toBeLessThan(optionNumber(matrix.left));
         expect([yTree.grid.top, yTree.grid.bottom]).toEqual([matrix.top, matrix.bottom]);
         expect([yTree.yAxis.min, yTree.yAxis.max, yTree.yAxis.inverse]).toEqual([-0.5, 1.5, true]);
         expect([yTree.xAxis.min, yTree.xAxis.max, yTree.xAxis.inverse]).toEqual([0, 4.86, true]);
         // Each row name starts beside the leaves, thus a smaller export text keeps the names at the tree.
-        const names = asObj((option.yAxis as EchartOption[])[0]?.axisLabel);
+        const names = asObj(optionArray(option, "yAxis")[0]?.axisLabel);
         expect(names.align).toBe("left");
-        expect((matrix.left as number) - (names.margin as number)).toBe((yTree.grid.left as number) + (yTree.grid.width as number) + 4);
-        const legends = (option.visualMap as EchartOption[]).slice(1).map((map) => map.left);
-        expect(legends).toEqual([(matrix.left as number) - (names.margin as number), (matrix.left as number) - (names.margin as number)]);
-        const elbows = (yTree.series.data as Array<{ coords: number[][] }>).map((item) => item.coords);
+        expect(optionNumber(matrix.left) - optionNumber(names.margin)).toBe(optionNumber(yTree.grid.left) + optionNumber(yTree.grid.width) + 4);
+        const legends = optionArray(option, "visualMap")
+            .slice(1)
+            .map((map) => map.left);
+        expect(legends).toEqual([optionNumber(matrix.left) - optionNumber(names.margin), optionNumber(matrix.left) - optionNumber(names.margin)]);
+        const elbows = optionArray(yTree.series, "data").map((item) => optionNumberRows(item.coords));
         // Along y the place is the second coordinate, and the height is the first.
         expect(elbows[0]).toEqual([
             [0, 0],
@@ -378,7 +385,7 @@ describe("the dendrograms of the heatmap", () => {
     });
 
     it("keeps the strips and their legends in the x order of the tree", () => {
-        const condition = (option.series as EchartOption[]).find((entry) => entry.name === "condition");
+        const condition = seriesOf(option).find((entry) => entry.name === "condition");
         expect(condition?.data).toEqual([
             [0, 0, 0],
             [1, 0, 0],
@@ -420,9 +427,9 @@ describe("the dendrograms of the heatmap", () => {
         const distances = treed({ x: tree, y: tree }, { x: "sample_a", y: "sample_b", value: "distance" });
         const drawn = deriveChartOption(distances, rows, undefined, { trees: { x: { rows: distanceTree }, y: { rows: distanceTree } } })._unsafeUnwrap();
         const order = ["treated1", "treated2", "treated3", "untreated1", "untreated2", "untreated3", "untreated4"];
-        expect((drawn.xAxis as EchartOption[])[0]?.data).toEqual(order);
-        expect((drawn.yAxis as EchartOption[])[0]?.data).toEqual(order);
-        expect(treeSeries(drawn).map((entry) => (entry.series.data as unknown[]).length)).toEqual([12, 12]);
+        expect(optionArray(drawn, "xAxis")[0]?.data).toEqual(order);
+        expect(optionArray(drawn, "yAxis")[0]?.data).toEqual(order);
+        expect(treeSeries(drawn).map((entry) => optionList(entry.series.data).length)).toEqual([12, 12]);
         expect(asObj(drawn.legend).show).toBe(false);
     });
 
@@ -454,10 +461,10 @@ describe("the dendrograms of the heatmap", () => {
         const render = deriveChartRender(tall, rows, undefined, { key: "h1", columns: [] }, { trees: { y: { rows: edgeRows(edges) } } })._unsafeUnwrap();
         expect(render.bodyPx).toBeGreaterThan(CHART_BODY_PX);
         const [yTall] = treeSeries(render.option);
-        const matrixGrid = (render.option.grid as EchartOption[])[0];
+        const matrixGrid = optionArray(render.option, "grid")[0];
         if (yTall === undefined || matrixGrid === undefined) throw new Error("the render holds no y tree or matrix grid");
         expect([yTall.grid.top, yTall.grid.bottom]).toEqual([matrixGrid.top, matrixGrid.bottom]);
-        expect((render.option.yAxis as EchartOption[])[0]?.data).toEqual(Array.from({ length: genes }, (_gene, index) => `G${index}`));
+        expect(optionArray(render.option, "yAxis")[0]?.data).toEqual(Array.from({ length: genes }, (_gene, index) => `G${index}`));
     });
 });
 
@@ -469,7 +476,17 @@ describe("the refusals of a heatmap tree", () => {
     }
 
     it("refuses a leaf that is no category, and a category that no leaf names", () => {
-        const extra = edgeRows([...SAMPLE_TREE.map((row) => [row.parent, row.child, row.height] as [string, string, number]), ["s9", "untreated5", 1.563189]]);
+        /** The tree edge that one row of the sample tree carries: two names and a height. */
+        function edgeOf(row: ChartRow): [string, string, number] {
+            const parent = row.parent;
+            const child = row.child;
+            const height = row.height;
+            if (typeof parent !== "string" || typeof child !== "string" || typeof height !== "number")
+                throw new Error("a tree row holds two names and a height");
+            return [parent, child, height];
+        }
+
+        const extra = edgeRows([...SAMPLE_TREE.map(edgeOf), ["s9", "untreated5", 1.563189]]);
         expect(refusal(extra)).toBe('The tree of x holds the leaf "untreated5", which is no category of the x axis.');
         const missing = SAMPLE_TREE.filter((row) => row.child !== "untreated3");
         expect(refusal(missing)).toBe('The tree of x holds no leaf for the x category "untreated3".');

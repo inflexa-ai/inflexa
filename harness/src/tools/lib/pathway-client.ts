@@ -10,7 +10,7 @@
 
 import { z } from "zod";
 
-import { apiFetch, apiFetchValidated, parseTSV } from "./api-utils.js";
+import { apiFetchText, apiFetchValidated, parseTSV } from "./api-utils.js";
 
 const KEGG_BASE = "https://rest.kegg.jp";
 // Both `reactome.org/ContentService` and `release.reactome.org/ContentService`
@@ -94,7 +94,7 @@ export type PathwaySearchOptions = {
 };
 
 export async function searchKegg(query: string, organism: string, maxResults: number, includeGenes: boolean): Promise<Pathway[]> {
-    const searchRes = await apiFetch<string>(`${KEGG_BASE}/find/pathway/${encodeURIComponent(query)}`, { parseAs: "text" });
+    const searchRes = await apiFetchText(`${KEGG_BASE}/find/pathway/${encodeURIComponent(query)}`);
     if (searchRes.isErr()) return [];
 
     const rows = parseTSV(searchRes.value);
@@ -110,7 +110,7 @@ export async function searchKegg(query: string, organism: string, maxResults: nu
 
     if (includeGenes) {
         for (const pw of pathways) {
-            const geneRes = await apiFetch<string>(`${KEGG_BASE}/link/${organism}/${pw.id}`, { parseAs: "text" });
+            const geneRes = await apiFetchText(`${KEGG_BASE}/link/${organism}/${pw.id}`);
             if (geneRes.isOk()) {
                 const geneRows = parseTSV(geneRes.value);
                 pw.genes = geneRows.map((r) => (r[1] ?? "").replace(`${organism}:`, ""));
@@ -161,13 +161,13 @@ export function parseKeggPathwayLinks(rows: string[][]): string[] {
  * organism, thus it replaces one `get/{id}` call for each membership.
  */
 export async function keggPathwaysForGene(geneSymbol: string, organism: string, maxResults: number): Promise<Pathway[]> {
-    const geneRes = await apiFetch<string>(`${KEGG_BASE}/find/${organism}/${encodeURIComponent(geneSymbol)}`, { parseAs: "text" });
+    const geneRes = await apiFetchText(`${KEGG_BASE}/find/${organism}/${encodeURIComponent(geneSymbol)}`);
     if (geneRes.isErr()) return [];
 
     const geneId = selectKeggGeneId(parseTSV(geneRes.value), geneSymbol);
     if (!geneId) return [];
 
-    const linkRes = await apiFetch<string>(`${KEGG_BASE}/link/pathway/${encodeURIComponent(geneId)}`, { parseAs: "text" });
+    const linkRes = await apiFetchText(`${KEGG_BASE}/link/pathway/${encodeURIComponent(geneId)}`);
     if (linkRes.isErr()) return [];
 
     const pathwayIds = parseKeggPathwayLinks(parseTSV(linkRes.value)).slice(0, maxResults);
@@ -185,7 +185,7 @@ export async function keggPathwaysForGene(geneSymbol: string, organism: string, 
 /** The pathway vocabulary of one organism, keyed by the pathway identifier. */
 async function keggPathwayNames(organism: string): Promise<Map<string, string>> {
     const names = new Map<string, string>();
-    const res = await apiFetch<string>(`${KEGG_BASE}/list/pathway/${encodeURIComponent(organism)}`, { parseAs: "text" });
+    const res = await apiFetchText(`${KEGG_BASE}/list/pathway/${encodeURIComponent(organism)}`);
     if (res.isErr()) return names;
     for (const cols of parseTSV(res.value)) {
         const id = (cols[0] ?? "").trim();
@@ -268,7 +268,7 @@ function keggField(record: string, field: string): string | null {
 }
 
 async function getKeggPathway(id: string): Promise<Pathway | null> {
-    const res = await apiFetch<string>(`${KEGG_BASE}/get/${encodeURIComponent(id)}`, { parseAs: "text" });
+    const res = await apiFetchText(`${KEGG_BASE}/get/${encodeURIComponent(id)}`);
     if (res.isErr()) return null;
     const record = res.value;
     const name = keggField(record, "NAME");

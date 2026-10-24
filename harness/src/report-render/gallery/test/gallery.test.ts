@@ -22,7 +22,7 @@ import { createFixtureResolver } from "../../../report-model/fixture-resolver.js
 import { parseDelimited } from "../../../report-model/production-resolver.js";
 import { walkBlocks } from "../../../report-model/block-walk.js";
 import { validateReport } from "../../../report-model/validate.js";
-import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { categoricalPalette, statisticText } from "../../figures/common.js";
 import { FIGURE_MODULES, isFigurePresetType } from "../../figures/index.js";
@@ -32,6 +32,21 @@ import { CHART_SERIES_BUILDER } from "../../page.js";
 import { renderReportPage } from "../../render.js";
 import type { RenderTrees } from "../../types.js";
 import { GALLERY_DATA_HINT, GALLERY_DIR, GALLERY_DOCUMENT, hasGalleryData, loadGallery, type GalleryLoad } from "../gallery.js";
+import {
+    chartSourceOf,
+    optionArray,
+    optionAt,
+    optionList,
+    optionMaybe,
+    optionNumber,
+    optionNumbers,
+    optionOf,
+    optionPair,
+    optionsOf,
+    optionStrings,
+    pageCall,
+    seriesOf,
+} from "../../test/options.js";
 
 /** The suffix of the name of each group that reads the tables. It names the command that rebuilds absent tables. */
 const NEEDS_DATA = hasGalleryData() ? "" : ` (skipped: ${GALLERY_DATA_HINT})`;
@@ -56,6 +71,34 @@ type ManifestEntry = {
     thinning: string;
 };
 
+/** The text that one record of the manifest holds under a name, or a failed test. */
+function textOf(record: Record<string, unknown>, name: string, what: string): string {
+    const read = record[name];
+    if (typeof read !== "string") throw new Error(`the manifest ${what} holds no ${name}`);
+    return read;
+}
+
+/** One entry of the gallery manifest, read through its shape. */
+function manifestEntry(value: unknown): ManifestEntry {
+    const entry = optionOf(value);
+    const dataset = optionOf(entry.dataset);
+    const license = optionOf(entry.license);
+    return {
+        field: textOf(entry, "field", "entry"),
+        table: textOf(entry, "table", "entry"),
+        path: textOf(entry, "path", "entry"),
+        rows: optionNumber(entry.rows),
+        bytes: optionNumber(entry.bytes),
+        sha256: textOf(entry, "sha256", "entry"),
+        dataset: { name: textOf(dataset, "name", "dataset"), citation: textOf(dataset, "citation", "dataset") },
+        license: { name: textOf(license, "name", "license"), url: textOf(license, "url", "license"), quote: textOf(license, "quote", "license") },
+        source_urls: optionStrings(entry.source_urls),
+        script: textOf(entry, "script", "entry"),
+        derivation: textOf(entry, "derivation", "entry"),
+        thinning: textOf(entry, "thinning", "entry"),
+    };
+}
+
 /** Every block of a tree, in document order. A section contributes itself and then its children. */
 function everyBlock(blocks: readonly Block[]): Block[] {
     return blocks.flatMap((block) => (block.kind === "section" ? [block, ...everyBlock(block.blocks)] : [block]));
@@ -74,7 +117,7 @@ let gallery: GalleryLoad;
 let manifest: ManifestEntry[];
 
 beforeAll(async () => {
-    manifest = JSON.parse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8")) as ManifestEntry[];
+    manifest = optionList(JSON.parse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"))).map((item) => manifestEntry(item));
     if (!NO_DATA) gallery = (await loadGallery())._unsafeUnwrap();
 });
 
@@ -92,7 +135,7 @@ function valueOf(id: string): {
 }
 
 /** The inline option of one gallery chart, with its statistics, its track, and its trees. */
-function optionOf(id: string): EchartOption {
+function chartOf(id: string): EchartOption {
     const block = CHARTS.find((chart) => chart.id === id);
     if (block === undefined) throw new Error(`The gallery holds no chart ${id}.`);
     const value = valueOf(id);
@@ -106,11 +149,6 @@ function statisticOf(id: string, label: string): string | number {
     return statistic.value;
 }
 
-/** The series of an option, each as a plain record. */
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function firstSeries(option: EchartOption): EchartOption {
     const [points] = seriesOf(option);
     if (points === undefined) throw new Error("the option holds no series");
@@ -120,14 +158,14 @@ function firstSeries(option: EchartOption): EchartOption {
 /** One axis of an option: the only axis, or the axis at an index of a list. */
 function axisOf(option: EchartOption, key: "xAxis" | "yAxis", index = 0): EchartOption {
     const axis = option[key];
-    return (Array.isArray(axis) ? axis[index] : axis) as EchartOption;
+    return Array.isArray(axis) ? optionOf(optionList(axis)[index]) : optionOf(axis);
 }
 
 /** The text of each `text` element of the graphic of an option, children included. */
 function graphicTexts(option: EchartOption): string[] {
     const walk = (elements: unknown): string[] =>
         (Array.isArray(elements) ? elements : []).flatMap((element: EchartOption) => [
-            ...(element.type === "text" ? [String((element.style as EchartOption).text)] : []),
+            ...(element.type === "text" ? [String(optionAt(element, "style").text)] : []),
             ...walk(element.children),
         ]);
     return walk(option.graphic);
@@ -155,7 +193,7 @@ function orderedBy(id: string, column: string, order: string): string[] {
 function treeSeries(option: EchartOption, axis: "x" | "y"): EchartOption {
     const trees = seriesOf(option).filter((entry) => entry.type === "lines" && entry.polyline === true);
     // The tree of x runs its leaves along a hidden x axis, and the tree of y runs them along a hidden y axis.
-    const found = trees.find((entry) => axisOf(option, axis === "x" ? "xAxis" : "yAxis", entry.xAxisIndex as number).min === -0.5);
+    const found = trees.find((entry) => axisOf(option, axis === "x" ? "xAxis" : "yAxis", optionNumber(entry.xAxisIndex)).min === -0.5);
     if (found === undefined) throw new Error(`The option holds no tree of ${axis}.`);
     return found;
 }
@@ -165,8 +203,8 @@ function treeSeries(option: EchartOption, axis: "x" | "y"): EchartOption {
  * that starts at height zero. The tree of y draws the height on x.
  */
 function leafPlaces(tree: EchartOption, axis: "x" | "y"): number[] {
-    return (tree.data as EchartOption[]).flatMap((edge) => {
-        const start = (edge.coords as Array<[number, number]>)[0];
+    return optionArray(tree, "data").flatMap((edge) => {
+        const start = optionPair(optionList(edge.coords)[0]);
         if (start === undefined) throw new Error("the tree drew an edge with no start");
         const [a, b] = start;
         return (axis === "x" ? b : a) === 0 ? [axis === "x" ? a : b] : [];
@@ -357,11 +395,7 @@ describe.skipIf(NO_DATA)(`the gallery render${NEEDS_DATA}`, () => {
 });
 
 describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () => {
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
-        payload: { columns: readonly string[]; rows: readonly ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[];
+    const seriesDataOnThePage = pageCall(CHART_SERIES_BUILDER, "reportSeriesData");
 
     /** The largest count of copies of a table that the dense form of a small chart reads. */
     const COPY_LIMIT = 400;
@@ -382,7 +416,7 @@ describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () =
             const render = deriveChartRender(block, rows, value.columns, target, inputs);
             if (render.isErr() || !render.value.readsPayload) continue;
             built.push(block.id);
-            const source = render.value.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+            const source = chartSourceOf(render.value.option);
             const inline = seriesOf(render.value.inline);
             for (const [index, entry] of source.series.entries()) {
                 const page = seriesDataOnThePage({ columns, rows }, entry, source.rule);
@@ -399,7 +433,7 @@ describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () =
 
 describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery data${NEEDS_DATA}`, () => {
     it("volcano: names each side with its count and holds a symmetric effect axis", () => {
-        const option = optionOf("bulk-volcano");
+        const option = chartOf("bulk-volcano");
         // A gene with no adjusted p drops, thus an empty cell is never significant.
         const significant = (row: ChartRow): boolean => numberOf(row.padj) < 0.05 && Math.abs(numberOf(row.log2FoldChange)) > 1;
         const down = countRows("bulk-volcano", (row) => significant(row) && Number(row.log2FoldChange) < 0);
@@ -407,26 +441,24 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const names = seriesOf(option).map((series) => series.name);
         expect(names.slice(0, 2)).toEqual([`Down (${down})`, `Up (${up})`]);
         expect(String(names[2])).toMatch(/^Not significant \([\d,]+\)$/);
-        expect(axisOf(option, "xAxis").min).toBe(-(axisOf(option, "xAxis").max as number));
+        expect(axisOf(option, "xAxis").min).toBe(-optionNumber(axisOf(option, "xAxis").max));
     });
 
     it("ma: draws the mean on a log axis, the significant genes apart, and a line at zero", () => {
-        const option = optionOf("bulk-ma");
+        const option = chartOf("bulk-ma");
         expect(axisOf(option, "xAxis").type).toBe("log");
         const significant = firstSeries(option);
         expect(significant.name).toBe("Adjusted p-value < 0.05");
-        expect((significant.data as unknown[]).length).toBe(countRows("bulk-ma", (row) => numberOf(row.padj) < 0.05));
-        expect(((significant.markLine as EchartOption).data as EchartOption[])[0]?.yAxis).toBe(0);
-        expect(axisOf(option, "yAxis").min).toBe(-(axisOf(option, "yAxis").max as number));
+        expect(optionList(significant.data).length).toBe(countRows("bulk-ma", (row) => numberOf(row.padj) < 0.05));
+        expect(optionsOf(optionAt(significant, "markLine").data)[0]?.yAxis).toBe(0);
+        expect(axisOf(option, "yAxis").min).toBe(-optionNumber(axisOf(option, "yAxis").max));
     });
 
     it("pca: sets the symbol by the shape channel, labels each sample, and shares one range on both axes", () => {
-        const option = optionOf("bulk-pca");
-        const legend = (option.legend as EchartOption).data as EchartOption[];
+        const option = chartOf("bulk-pca");
+        const legend = optionsOf(optionAt(option, "legend").data);
         expect(legend.find((entry) => entry.name === "paired-end")?.icon).toBe("triangle");
-        const labeled = seriesOf(option).flatMap((series) =>
-            (series.label as EchartOption | undefined)?.show === true ? (series.data as EchartOption[]) : [],
-        );
+        const labeled = seriesOf(option).flatMap((series) => (optionMaybe(series, "label")?.show === true ? optionArray(series, "data") : []));
         expect(labeled.map((point) => point.name).sort()).toEqual(
             valueOf("bulk-pca")
                 .rows.map((row) => String(row.sample))
@@ -436,7 +468,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     });
 
     it("heatmap: draws a strip for each track and a dendrogram on each axis, in the leaf order of the clustering", () => {
-        const option = optionOf("bulk-top-genes");
+        const option = chartOf("bulk-top-genes");
         const trees = valueOf("bulk-top-genes").trees;
         expect(seriesOf(option).map((series) => [series.type, series.name])).toEqual([
             ["heatmap", undefined],
@@ -456,14 +488,14 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const xTree = treeSeries(option, "x");
         const yTree = treeSeries(option, "y");
         if (trees?.x === undefined || trees.y === undefined) throw new Error("expected both trees");
-        expect((xTree.data as unknown[]).length).toBe(trees.x.rows.length);
-        expect((yTree.data as unknown[]).length).toBe(trees.y.rows.length);
+        expect(optionList(xTree.data).length).toBe(trees.x.rows.length);
+        expect(optionList(yTree.data).length).toBe(trees.y.rows.length);
         expect(leafPlaces(xTree, "x").sort((a, b) => a - b)).toEqual(samples.map((_name, place) => place));
         expect(leafPlaces(yTree, "y").sort((a, b) => a - b)).toEqual(genes.map((_name, place) => place));
     });
 
     it("heatmap: draws one sample tree on both axes of the distance matrix, in the order of the clustering", () => {
-        const option = optionOf("bulk-distances");
+        const option = chartOf("bulk-distances");
         const trees = valueOf("bulk-distances").trees;
         const rows = orderedBy("bulk-distances", "sample_a", "row_order");
         expect(orderedBy("bulk-distances", "sample_b", "col_order")).toEqual(rows);
@@ -475,52 +507,54 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
             const tree = treeSeries(option, axis);
             const treeRows = trees?.[axis]?.rows;
             if (treeRows === undefined) throw new Error(`expected a tree for ${axis}`);
-            expect((tree.data as unknown[]).length).toBe(treeRows.length);
+            expect(optionList(tree.data).length).toBe(treeRows.length);
             expect(leafPlaces(tree, axis).sort((a, b) => a - b)).toEqual(rows.map((_name, place) => place));
         }
     });
 
     it("embedding: hides the axes, names each cluster on the data, and draws no legend", () => {
-        const option = optionOf("single-cell-clusters");
-        expect((axisOf(option, "xAxis").axisLabel as EchartOption).show).toBe(false);
+        const option = chartOf("single-cell-clusters");
+        expect(optionAt(axisOf(option, "xAxis"), "axisLabel").show).toBe(false);
         expect(axisOf(option, "xAxis").name).toBe("UMAP 1 →");
-        expect((option.legend as EchartOption).show).toBe(false);
+        expect(optionAt(option, "legend").show).toBe(false);
         const names = seriesOf(option).find((series) => series.name === "Category names");
-        expect(((names?.data ?? []) as EchartOption[]).map((point) => point.name).sort()).toEqual(
-            [...new Set(valueOf("single-cell-clusters").rows.map((row) => String(row.cluster)))].sort(),
-        );
+        expect(
+            optionsOf(names?.data ?? [])
+                .map((point) => point.name)
+                .sort(),
+        ).toEqual([...new Set(valueOf("single-cell-clusters").rows.map((row) => String(row.cluster)))].sort());
     });
 
     it("embedding: draws one panel for each condition under one continuous color scale", () => {
-        const option = optionOf("single-cell-isg15");
-        expect((option.grid as EchartOption[]).length).toBe(2);
-        expect(seriesOf(option).map((series) => (series.data as unknown[]).length)).toEqual([3000, 3000]);
+        const option = chartOf("single-cell-isg15");
+        expect(optionArray(option, "grid").length).toBe(2);
+        expect(seriesOf(option).map((series) => optionList(series.data).length)).toEqual([3000, 3000]);
         expect(option.visualMap).toBeDefined();
     });
 
     it("dotplot: draws a size legend of three reference circles and orders the sets by the gene ratio", () => {
-        const option = optionOf("enrichment-ora");
+        const option = chartOf("enrichment-ora");
         const texts = graphicTexts(option);
         expect(texts[0]).toBe("Genes in the set");
         expect(texts.length).toBe(4);
         const rows = valueOf("enrichment-ora").rows;
         const largest = rows.reduce((best, row) => (Number(row.gene_ratio) > Number(best.gene_ratio) ? row : best));
         // A long term wraps to two lines and ends with an ellipsis, thus the first category reads the head of the term.
-        const first = String((axisOf(option, "yAxis").data as unknown[])[0]);
+        const first = String(optionList(axisOf(option, "yAxis").data)[0]);
         expect(String(largest.term).startsWith(first.replaceAll("\n", " ").replace(/…$/, ""))).toBe(true);
         expect(option.visualMap).toBeDefined();
     });
 
     it("km: draws step curves, a censor mark at each censored row, the number at risk, the median, and the log-rank p", () => {
-        const option = optionOf("clinical-km");
+        const option = chartOf("clinical-km");
         const series = seriesOf(option);
         expect(series.filter((entry) => entry.type === "line" && entry.name !== undefined).every((entry) => entry.step === "end")).toBe(true);
         for (const group of ["Female", "Male"]) {
             const marks = series.find((entry) => entry.type === "scatter" && entry.name === group);
-            const markData = marks?.data as unknown[];
+            const markData = optionList(marks?.data);
             expect(markData.length).toBe(countRows("clinical-km", (row) => row.strata === group && Number(row.n_censor) > 0));
         }
-        const risk = series.filter((entry) => entry.xAxisIndex === 1).map((entry) => (entry.data as EchartOption[]).map((cell) => cell.name));
+        const risk = series.filter((entry) => entry.xAxisIndex === 1).map((entry) => optionArray(entry, "data").map((cell) => cell.name));
         expect(risk).toEqual([
             ["90", "53", "21", "3", "0"],
             ["138", "62", "20", "7", "2"],
@@ -532,37 +566,37 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     });
 
     it("forest: draws the ratio on a log axis around a solid line at one, with the estimate and the p columns", () => {
-        const option = optionOf("clinical-forest");
+        const option = chartOf("clinical-forest");
         expect(axisOf(option, "xAxis").type).toBe("log");
-        expect((firstSeries(option).markLine as EchartOption).data).toEqual([{ xAxis: 1 }]);
+        expect(optionAt(firstSeries(option), "markLine").data).toEqual([{ xAxis: 1 }]);
         expect(axisOf(option, "yAxis", 1).data).toContain("0.53 (0.38–0.75)");
         const sex = valueOf("clinical-forest").rows.find((row) => row.term === "Female vs male");
         expect(axisOf(option, "yAxis", 2).data).toContain(statisticText(sex?.pvalue ?? "", "pvalue"));
     });
 
     it("roc: draws the chance diagonal on two unit axes and prints one AUC for each model", () => {
-        const option = optionOf("clinical-roc");
+        const option = chartOf("clinical-roc");
         expect([axisOf(option, "xAxis").min, axisOf(option, "xAxis").max, axisOf(option, "yAxis").min, axisOf(option, "yAxis").max]).toEqual([0, 1, 0, 1]);
         expect(JSON.stringify(seriesOf(option).find((entry) => entry.markLine !== undefined)?.markLine)).toContain('[{"coord":[0,0]},{"coord":[1,1]}]');
-        const names = seriesOf(option).flatMap((entry) => ((entry.data as EchartOption[] | undefined) ?? []).map((item) => item?.name));
+        const names = seriesOf(option).flatMap((entry) => optionsOf(entry.data ?? []).map((item) => item?.name));
         expect(names).toContain("AUC, ECOG + Karnofsky + age = 0.627\nAUC, ECOG alone = 0.619");
         expect(valueOf("clinical-roc").statistics?.map((statistic) => statistic.value)).toEqual(["0.626761473820297", "0.619166666666667"]);
     });
 
     it("manhattan: alternates the chromosomes, names them under the points, and marks the two thresholds", () => {
-        const option = optionOf("gwas-manhattan");
+        const option = chartOf("gwas-manhattan");
         const series = seriesOf(option);
         const chromosomes = [...new Set(valueOf("gwas-manhattan").rows.map((row) => String(row.chrom)))];
         expect(series.slice(0, chromosomes.length).map((entry) => entry.name)).toEqual(chromosomes);
         const firstChromosome = series[0];
         if (firstChromosome === undefined) throw new Error("the option holds no chromosome series");
-        const lines = (firstChromosome.markLine as EchartOption).data as EchartOption[];
+        const lines = optionArray(optionAt(firstChromosome, "markLine"), "data");
         expect(lines.map((line) => line.yAxis)).toEqual([-Math.log10(5e-8), 5]);
         expect(series.some((entry) => entry.name === "Chromosome names")).toBe(true);
     });
 
     it("qq: draws the null band, the identity line to the largest expected value, and the inflation factor", () => {
-        const option = optionOf("gwas-qq");
+        const option = chartOf("gwas-qq");
         const series = seriesOf(option);
         expect(series.filter((entry) => entry.name === "Null band").length).toBe(2);
         const largest = Math.max(...valueOf("gwas-qq").rows.map((row) => Number(row.expected_neg_log10_p)));
@@ -572,8 +606,8 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     });
 
     it("gsea: prints the enrichment statistics over the running score, the hit ticks, and the ranked metric", () => {
-        const option = optionOf("enrichment-gsea");
-        expect((option.grid as unknown[]).length).toBe(3);
+        const option = chartOf("enrichment-gsea");
+        expect(optionList(option.grid).length).toBe(3);
         const hits = countRows("enrichment-gsea", (row) => row.hit === "1");
         const names = seriesOf(option).map((entry) => entry.name);
         expect(names.at(-1)).toBe("Wald statistic");
@@ -585,30 +619,30 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     });
 
     it("oncoprint: draws a glyph in each cell of the matrix, the count bar, and the share of each gene", () => {
-        const option = optionOf("mutations-oncoprint");
+        const option = chartOf("mutations-oncoprint");
         const series = seriesOf(option);
         const genes = new Set(valueOf("mutations-oncoprint").rows.map((row) => row.gene)).size;
         const samples = new Set(valueOf("mutations-oncoprint").rows.map((row) => row.sample)).size;
         const glyphs = series[0];
         if (glyphs === undefined) throw new Error("the option holds no glyph series");
         expect(glyphs.renderItem).toBe("cell-glyph");
-        expect((glyphs.data as unknown[]).length).toBe(genes * samples);
+        expect(optionList(glyphs.data).length).toBe(genes * samples);
         expect(series.some((entry) => entry.type === "bar" && entry.name === "Missense Mutation")).toBe(true);
-        const share = series.at(-1) as EchartOption;
-        expect((share.data as EchartOption[])[0]?.label).toMatchObject({ formatter: "27%" });
+        const share = optionOf(series.at(-1));
+        expect(optionArray(share, "data")[0]?.label).toMatchObject({ formatter: "27%" });
     });
 
     it("lollipop: draws each mutation as a stem, ends the axis at the protein length, and labels the hotspot", () => {
-        const option = optionOf("mutations-dnmt3a");
+        const option = chartOf("mutations-dnmt3a");
         const series = seriesOf(option);
         expect(series.filter((entry) => entry.type === "custom").every((entry) => entry.renderItem === "stem")).toBe(true);
         expect(axisOf(option, "xAxis").max).toBe(912);
-        const labels = series.find((entry) => entry.type === "scatter" && (entry.label as EchartOption | undefined)?.show === true);
-        expect(((labels?.data ?? []) as EchartOption[]).map((point) => point.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        const labels = series.find((entry) => entry.type === "scatter" && optionMaybe(entry, "label")?.show === true);
+        expect(optionsOf(labels?.data ?? []).map((point) => point.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
     });
 
     it("upset: counts each exact combination of the mutated genes one time, and sorts the intersections and the sets by size", () => {
-        const option = optionOf("mutations-upset");
+        const option = chartOf("mutations-upset");
         const rows = valueOf("mutations-upset").rows;
         const genesOf = new Map<string, string[]>();
         for (const row of rows) genesOf.set(String(row.sample), [...(genesOf.get(String(row.sample)) ?? []), String(row.gene)]);
@@ -621,9 +655,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
             combinations.set(key, (combinations.get(key) ?? 0) + 1);
         }
         const series = seriesOf(option);
-        const bars = series.find((entry) => entry.id === "intersections") as EchartOption;
-        const sizes = bars.data as number[];
-        const names = axisOf(option, "xAxis", bars.xAxisIndex as number).data as string[];
+        const bars = optionOf(series.find((entry) => entry.id === "intersections"));
+        const sizes = optionNumbers(bars.data);
+        const names = optionStrings(axisOf(option, "xAxis", optionNumber(bars.xAxisIndex)).data);
         // Each tumor counts in one intersection alone, thus the bars sum to the tumors of the table.
         expect(sizes.length).toBe(combinations.size);
         expect(sizes.reduce((sum, size) => sum + size, 0)).toBe(genesOf.size);
@@ -642,19 +676,19 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(names.slice(0, 5)).toEqual(["FLT3", "IDH2", "DNMT3A", "TET2", "FLT3 & NPM1"]);
         expect(sizes.slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
         // The sets sort by size, the largest at the top of the matrix.
-        const setBars = series.find((entry) => entry.id === "sets") as EchartOption;
-        expect(axisOf(option, "yAxis", setBars.yAxisIndex as number).data).toEqual(sets);
+        const setBars = optionOf(series.find((entry) => entry.id === "sets"));
+        expect(axisOf(option, "yAxis", optionNumber(setBars.yAxisIndex)).data).toEqual(sets);
         expect(setBars.data).toEqual(sets.map((gene) => setSizes.get(gene)));
         // Each intersection draws, thus the matrix states no hidden count.
-        expect(axisOf(option, "xAxis", (series.find((entry) => entry.id === "members") as EchartOption).xAxisIndex as number).name).toBeUndefined();
+        expect(axisOf(option, "xAxis", optionNumber(optionOf(series.find((entry) => entry.id === "members")).xAxisIndex)).name).toBeUndefined();
     });
 
     it("sankey: keeps the node order of the table in three stages, and colors each stage from the start of the palette", () => {
-        const option = optionOf("mutations-sankey");
+        const option = chartOf("mutations-sankey");
         const [sankey] = seriesOf(option);
         if (sankey === undefined) throw new Error("the option holds no sankey series");
         const rows = valueOf("mutations-sankey").rows;
-        const nodes = sankey.data as EchartOption[];
+        const nodes = optionArray(sankey, "data");
         expect(nodes.map((node) => node.name)).toEqual(
             rows.flatMap((row) => [String(row.source), String(row.target)]).filter((name, index, all) => all.indexOf(name) === index),
         );
@@ -668,43 +702,43 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
             const palette = categoricalPalette(members.length);
             const drawn = nodes.filter((node) => node.depth === depth);
             expect(drawn.map((node) => node.name)).toEqual(members);
-            expect(drawn.map((node) => (node.itemStyle as EchartOption).color)).toEqual(members.map((_name, place) => palette[place % palette.length]));
+            expect(drawn.map((node) => optionAt(node, "itemStyle").color)).toEqual(members.map((_name, place) => palette[place % palette.length]));
         }
         // Each flow takes the color of its source, and the last stage puts its labels at the left of its nodes.
         expect(sankey.lineStyle).toEqual({ color: "source", opacity: SANKEY_LINK_OPACITY });
-        expect((sankey.links as EchartOption[]).map((link) => [link.source, link.target, link.value])).toEqual(
+        expect(optionArray(sankey, "links").map((link) => [link.source, link.target, link.value])).toEqual(
             rows.map((row) => [String(row.source), String(row.target), Number(row.value)]),
         );
-        expect(nodes.filter((node) => (node.label as EchartOption).position === "left").map((node) => node.name)).toEqual(["Alive", "Deceased"]);
+        expect(nodes.filter((node) => optionAt(node, "label").position === "left").map((node) => node.name)).toEqual(["Alive", "Deceased"]);
         expect(sankey.name).toBe("Patients");
     });
 
     it("locuszoom: bins the r², marks the lead variant, draws the recombination axis, and lays the genes in lanes", () => {
-        const option = optionOf("gwas-locuszoom");
+        const option = chartOf("gwas-locuszoom");
         const series = seriesOf(option);
         const rows = valueOf("gwas-locuszoom").rows;
         // The legend states the five LocusZoom bins, highest first, and the gray of a missing r².
-        const legendMap = (option.visualMap as EchartOption[])[0];
+        const legendMap = optionArray(option, "visualMap")[0];
         if (legendMap === undefined) throw new Error("the option holds no visual map");
-        const pieces = (legendMap.pieces as EchartOption[]).map((piece) => [piece.label, piece.color]);
+        const pieces = optionArray(legendMap, "pieces").map((piece) => [piece.label, piece.color]);
         expect(pieces).toEqual([...[...LD_BINS].reverse().map((bin) => [`${bin.low}–${bin.high}`, bin.color]), [LD_MISSING_NAME, LD_MISSING_COLOR]]);
         const missing = series.find((entry) => entry.name === LD_MISSING_NAME);
-        const missingData = missing?.data as unknown[];
+        const missingData = optionList(missing?.data);
         expect(missingData.length).toBe(rows.filter((row) => row.r2 === "").length);
         // The lead variant is the row of the smallest p, a purple diamond with its name.
         const lead = rows.reduce((best, row) => (Number(row.pvalue) < Number(best.pvalue) ? row : best));
-        const diamond = series.find((entry) => entry.name === LEAD_VARIANT_NAME) as EchartOption;
-        expect([diamond.symbol, (diamond.itemStyle as EchartOption).color]).toEqual(["diamond", LEAD_VARIANT_COLOR]);
-        expect((diamond.data as EchartOption[]).map((point) => point.name)).toEqual([String(lead.variant)]);
+        const diamond = optionOf(series.find((entry) => entry.name === LEAD_VARIANT_NAME));
+        expect([diamond.symbol, optionAt(diamond, "itemStyle").color]).toEqual(["diamond", LEAD_VARIANT_COLOR]);
+        expect(optionArray(diamond, "data").map((point) => point.name)).toEqual([String(lead.variant)]);
         expect(lead.variant).toBe("rs1421085");
         // The recombination rate draws on a right axis in cM/Mb, and the position axis reads in megabases.
-        const rate = series.find((entry) => entry.name === RECOMBINATION_NAME) as EchartOption;
-        const rateAxis = axisOf(option, "yAxis", rate.yAxisIndex as number);
+        const rate = optionOf(series.find((entry) => entry.name === RECOMBINATION_NAME));
+        const rateAxis = axisOf(option, "yAxis", optionNumber(rate.yAxisIndex));
         expect([rateAxis.position, rateAxis.name]).toEqual(["right", "Recombination rate (cM/Mb)"]);
         expect(axisOf(option, "xAxis").name).toBe("Position on chr16 (Mb)");
         // The genes draw in the order of their starts, and two genes of one lane never overlap.
-        const genes = series.find((entry) => entry.name === GENE_NAMES) as EchartOption;
-        const placed = (genes.data as EchartOption[]).map((gene) => ({ name: String(gene.name), lane: (gene.value as number[])[1] }));
+        const genes = optionOf(series.find((entry) => entry.name === GENE_NAMES));
+        const placed = optionArray(genes, "data").map((gene) => ({ name: String(gene.name), lane: optionNumbers(gene.value)[1] }));
         expect(placed.map((gene) => gene.name)).toEqual(["RBL2", "AKTIP", "RPGRIP1L", "FTO"]);
         const spans = new Map<string, [number, number]>(
             (valueOf("gwas-locuszoom").track?.rows ?? []).map((row) => [String(row.gene), [Number(row.start), Number(row.end)]]),
@@ -724,15 +758,15 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
     });
 
     it("violin: draws each outline and each interval through the registered renderers", () => {
-        const option = optionOf("single-cell-qc-mito");
+        const option = chartOf("single-cell-qc-mito");
         expect(seriesOf(option).map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
     });
 
     it("stacked forms: draw one panel for each condition", () => {
         for (const id of ["single-cell-composition", "single-cell-counts"]) {
-            const option = optionOf(id);
+            const option = chartOf(id);
             expect(graphicTexts(option).slice(0, 2)).toEqual(["control", "stimulated"]);
-            expect((option.xAxis as unknown[]).length).toBe(2);
+            expect(optionList(option.xAxis).length).toBe(2);
         }
     });
 });

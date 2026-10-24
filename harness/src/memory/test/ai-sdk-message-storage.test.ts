@@ -74,7 +74,7 @@ describe("context records", () => {
     const text = "[Working Memory]\nThe working memory is empty.";
 
     it("round-trips the kind and the hash through the stored envelope", () => {
-        const stored = JSON.parse(JSON.stringify(envelopeMessage(contextRecordMessage("working-memory", text)))) as unknown;
+        const stored: unknown = JSON.parse(JSON.stringify(envelopeMessage(contextRecordMessage("working-memory", text))));
 
         const { message } = parseStoredMessageEnvelope(stored, "thread/0");
 
@@ -101,7 +101,7 @@ describe("compaction marks", () => {
     const drop = dropMarkerMessage({ kind: "drop", id: "c-2", tokensBefore: 170_000, durationMs: 3_000, keptTurns: 4 });
 
     function throughStorage(message: ModelMessage): ModelMessage {
-        return parseStoredMessageEnvelope(JSON.parse(JSON.stringify(envelopeMessage(message))) as unknown, "thread/0").message;
+        return parseStoredMessageEnvelope(JSON.parse(JSON.stringify(envelopeMessage(message))), "thread/0").message;
     }
 
     it("round-trips a summary marker and a drop marker through the stored envelope", () => {
@@ -198,10 +198,7 @@ describe("the input tokens of a request", () => {
             providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
         };
 
-        const stored = parseStoredMessageEnvelope(
-            JSON.parse(JSON.stringify(envelopeMessage(withRequestInputTokens(reply, 302_000)))) as unknown,
-            "thread/0",
-        ).message;
+        const stored = parseStoredMessageEnvelope(JSON.parse(JSON.stringify(envelopeMessage(withRequestInputTokens(reply, 302_000)))), "thread/0").message;
 
         expect(requestInputTokensOf(stored)).toBe(302_000);
         expect(stored.content).toEqual(reply.content);

@@ -345,9 +345,9 @@ describe("countArtifactsByRuns", () => {
 
 describe("a driver failure of the artifact reads", () => {
     // The reads under test call only `query`, thus an object with a rejecting `query` stands for the whole interface.
-    const rejecting = {
+    const rejecting: Querier = {
         query: () => Promise.reject(new Error("connection lost")),
-    } as unknown as Querier;
+    };
 
     it("rides the error channel of queryArtifactPage, with the op", async () => {
         const error = (await queryArtifactPage(rejecting, "a1", { sort: "path", limit: 10, offset: 0 })).match(

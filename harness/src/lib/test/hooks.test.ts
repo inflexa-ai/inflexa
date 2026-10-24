@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Err, Ok, ResultAsync, errAsync, okAsync } from "neverthrow";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import { deliverNotice, passGate, type GateFailure, type NoticeFailure } from "../hooks.js";
+import { deliverNotice, passGate, type ForeignGateResult, type GateFailure, type GateSettlement, type NoticeFailure } from "../hooks.js";
 
 describe("passGate", () => {
     it("gives the value of a gate that succeeds, as the host gives it", async () => {
@@ -32,8 +32,7 @@ describe("passGate", () => {
     it("gives the outcome of a gate from another copy of neverthrow as a Result of the harness copy", async () => {
         // A structural stand-in for the `ResultAsync` of the neverthrow copy of an embedder: a
         // thenable whose settled value has the methods of a `Result`, but not the class of the harness.
-        const foreign = <T>(settled: object): ResultAsync<T, GateFailure> =>
-            ({ then: (resolve: (value: unknown) => unknown) => resolve(settled) }) as unknown as ResultAsync<T, GateFailure>;
+        const foreign = <T>(settled: GateSettlement<T>): ForeignGateResult<T> => ({ then: (resolve) => resolve(settled) });
 
         const opened = await passGate("RunCharge.open", foreign<number>({ isOk: () => true, value: 7 }));
         const refused = await passGate("RunCharge.open", foreign<number>({ isOk: () => false, error: { reason: "r", suspend: true } }));

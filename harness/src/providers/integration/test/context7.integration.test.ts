@@ -21,10 +21,10 @@ describe.skipIf(!LIVE)("live Context7", () => {
         const { ctx } = makeToolContext();
         const output = (await resolveLibraryIdTool.execute({ libraryName: "scanpy", query: "differential expression" }, ctx))._unsafeUnwrap();
 
+        if (!("libraryId" in output)) throw new Error("expected the resolved arm");
         expect(output.found).toBe(true);
-        const resolved = output as { found: true; libraryId: string; name: string; description: string };
-        expect(resolved.libraryId.length).toBeGreaterThan(0);
-        expect(resolved.name.length).toBeGreaterThan(0);
-        expect(typeof resolved.description).toBe("string");
+        expect(output.libraryId.length).toBeGreaterThan(0);
+        expect(output.name.length).toBeGreaterThan(0);
+        expect(typeof output.description).toBe("string");
     }, 60_000);
 });

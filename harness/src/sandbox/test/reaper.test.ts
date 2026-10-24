@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { Pool } from "pg";
 
 import { classifyManaged, reapOnce, terminalStepStatus } from "../reaper.js";
+import type { Querier } from "../../state/db.js";
 import type { ManagedSandbox, SandboxLiveness } from "../types.js";
 
 const GRACE = 10 * 60_000;
@@ -67,19 +67,19 @@ describe("terminalStepStatus", () => {
 });
 
 type FakePool = {
-    pool: Pool;
+    pool: Querier;
     reconciled: string[];
 };
 
 /** Minimal pool that records `reconcileReapedSandbox` UPDATEs by sandboxId. */
 function fakePool(): FakePool {
     const reconciled: string[] = [];
-    const pool = {
-        query: async (arg: { values?: unknown[] }) => {
-            reconciled.push(String(arg.values?.[0]));
-            return { rowCount: 1 };
+    const pool: Querier = {
+        query: async (query) => {
+            if (typeof query !== "string") reconciled.push(String(query.values?.[0]));
+            return { rows: [], rowCount: 1 };
         },
-    } as unknown as Pool;
+    };
     return { pool, reconciled };
 }
 

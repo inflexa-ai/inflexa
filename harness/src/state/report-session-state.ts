@@ -35,7 +35,7 @@
  */
 
 import { type Result, type ResultAsync, err, ok } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
 import { type DbError, tryMutation, tryQuery } from "../lib/db-result.js";
@@ -203,7 +203,7 @@ export type ReportSessionStateStore = {
 };
 
 export type ReportSessionStateStoreDeps = {
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly logger?: Logger;
 };
 

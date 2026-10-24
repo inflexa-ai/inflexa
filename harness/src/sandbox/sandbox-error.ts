@@ -38,7 +38,7 @@
  */
 
 import { ResultAsync, err, ok, type Result } from "neverthrow";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
 import { unwrapOrThrow, type DomainError } from "../lib/result.js";
 import type { FarmLockError } from "./farm.js";
@@ -149,14 +149,20 @@ const _assertDomainError: _AssertDomainError = true;
  * A Node system error (`code: "ECONNREFUSED"`) has a string `code`, so guard on
  * `typeof === "number"` to avoid returning it as a status.
  */
+/** The error fields the backend SDKs attach: dockerode `statusCode`, k8s numeric `code`, and the SDK `response`. */
+const SandboxCauseSchema = z.looseObject({
+    code: z.unknown().optional(),
+    statusCode: z.unknown().optional(),
+    response: z.looseObject({ statusCode: z.unknown().optional() }).nullish(),
+});
+
 export function sandboxStatusOf(cause: unknown): number | undefined {
-    const e = cause as {
-        code?: unknown;
-        statusCode?: number;
-        response?: { statusCode?: number };
-    };
+    const parsed = SandboxCauseSchema.safeParse(cause);
+    if (!parsed.success) return undefined;
+    const e = parsed.data;
     if (typeof e.code === "number") return e.code;
-    return e.statusCode ?? e.response?.statusCode;
+    if (typeof e.statusCode === "number") return e.statusCode;
+    return typeof e.response?.statusCode === "number" ? e.response.statusCode : undefined;
 }
 
 /**

@@ -24,7 +24,9 @@ function recordingLogger(): { logger: Logger; debugs: { msg: string; fields?: Lo
 }
 
 /** A tool over `{ path }` whose hook is whatever the test supplies. */
-function toolWithHook(describeCall: (input: { path: string }) => string): Tool {
+/** A tool over `{ path }` whose detail hook is whatever the test supplies. The guard under test reads any
+ * hook return, thus the widened return lets the test hand the guard its off-contract values directly. */
+function toolWithHook(describeCall: (input: { path: string }) => string | undefined): Tool {
     return defineTool({
         id: "described",
         description: "A tool that describes its own calls.",
@@ -40,7 +42,7 @@ type ReadOutcome = {
 };
 
 /** A tool over `{ path }` whose result hook is whatever the test supplies. */
-function toolWithResultHook(describeResult: (input: { path: string }, result: ReadOutcome) => string): Tool {
+function toolWithResultHook(describeResult: (input: { path: string }, result: ReadOutcome) => string | undefined): Tool {
     return defineTool({
         id: "described-result",
         description: "A tool that describes its own results.",
@@ -190,7 +192,7 @@ describe("computeDetail", () => {
     });
 
     it("ignores a hook that returns a non-string or an empty string", () => {
-        const nonString = toolWithHook(() => undefined as unknown as string);
+        const nonString = toolWithHook(() => undefined);
         const empty = toolWithHook(() => "");
 
         expect(computeDetail(nonString, { path: "a.csv" }, log)).toBeUndefined();
@@ -280,7 +282,7 @@ describe("computeResultDetail", () => {
     });
 
     it("ignores a hook that returns a non-string or an empty string", () => {
-        const nonString = toolWithResultHook(() => undefined as unknown as string);
+        const nonString = toolWithResultHook(() => undefined);
         const empty = toolWithResultHook(() => "");
 
         expect(computeResultDetail(nonString, { path: "a.csv" }, { bytes: 1 }, log)).toBeUndefined();
@@ -290,7 +292,10 @@ describe("computeResultDetail", () => {
     // The result satisfies no schema, thus a hook that reads a field the tool never produced sees
     // `undefined` and the guard keeps that mistake cosmetic.
     it("survives a hook that reads a field the result does not carry", () => {
-        const tool = toolWithResultHook((_input, result) => (result as unknown as { missing: { deep: string } }).missing.deep);
+        const tool = toolWithResultHook((_input, result) => {
+            const deep: unknown = Reflect.get(Reflect.get(result, "missing"), "deep");
+            return typeof deep === "string" ? deep : undefined;
+        });
 
         expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, createNoopLogger())).toBeUndefined();
     });

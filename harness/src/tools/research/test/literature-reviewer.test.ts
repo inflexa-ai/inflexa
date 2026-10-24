@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../../loop/__fixtures__/scripted-provider.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -37,7 +38,8 @@ describe("literatureReviewer sub-agent tool", () => {
             },
         };
 
-        const result = (await tool.execute({ brief: "Investigate BRCA1." }, ctx))._unsafeUnwrap() as { report: string };
+        const result = parseUnknownRecord((await tool.execute({ brief: "Investigate BRCA1." }, ctx))._unsafeUnwrap());
+        if (!result || !("report" in result)) throw new Error("expected a report");
 
         // The child's final report is surfaced as the tool result.
         expect(result.report).toBe("Evidence report: BRCA1 is a tumour suppressor.");

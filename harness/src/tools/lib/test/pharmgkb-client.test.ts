@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { PharmgkbResponseSchema, searchPharmgkb } from "../pharmgkb-client.js";
 
@@ -10,7 +15,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = (async (input: unknown) => response(String(input))) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async (input) => response(String(input)));
 }
 
 function json(body: unknown, status = 200): Response {

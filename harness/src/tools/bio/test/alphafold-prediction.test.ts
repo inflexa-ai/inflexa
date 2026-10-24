@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { alphafoldPredictionTool } from "../alphafold-prediction.js";
@@ -11,7 +16,7 @@ afterEach(() => {
 });
 
 function stubResponse(status: number, body: unknown): void {
-    globalThis.fetch = (async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status })) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
 }
 
 describe("alphafoldPrediction — an accession with a model", () => {

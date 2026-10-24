@@ -9,15 +9,18 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { buildViabilityCalls, derivedViability, parsePhenotypeResponse } from "../impc-client.js";
 
+const SolrEnvelopeSchema = z.object({
+    response: z.object({ numFound: z.number().optional(), docs: z.array(z.record(z.string(), z.unknown())) }),
+});
+
 describe("IMPC golden fixtures", () => {
     it("resolves the mouse marker of a human symbol", () => {
-        const body = readFixture("impc", "gene-select-TP53.json") as {
-            response: { numFound: number; docs: Record<string, unknown>[] };
-        };
+        const body = SolrEnvelopeSchema.parse(readFixture("impc", "gene-select-TP53.json"));
         expect(body.response.numFound).toBe(1);
         expect(body.response.docs[0]!.marker_symbol).toBe("Trp53");
         expect(body.response.docs[0]!.mgi_accession_id).toBe("MGI:98834");
@@ -33,9 +36,7 @@ describe("IMPC golden fixtures", () => {
     });
 
     it("serves p_value as a float and sex as a string", () => {
-        const body = readFixture("impc", "gp-select-Trp53-rows5.json") as {
-            response: { docs: Record<string, unknown>[] };
-        };
+        const body = SolrEnvelopeSchema.parse(readFixture("impc", "gp-select-Trp53-rows5.json"));
         for (const doc of body.response.docs) {
             if ("p_value" in doc) expect(typeof doc.p_value).toBe("number");
             if ("sex" in doc) expect(typeof doc.sex).toBe("string");

@@ -6,20 +6,12 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import {
-    CHART_SOURCE_MEMBER,
-    deriveChartOption,
-    deriveChartRender,
-    type ChartDataSource,
-    type ChartInputs,
-    type ChartOpts,
-    type ChartRow,
-    type EchartOption,
-} from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { BELOW_RESOLUTION_SYMBOL } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { QQ_BAND_POINTS, QQ_FIGURE, QQ_POINT_PX } from "../qq.js";
+import { chartSourceOf, optionArray, optionAt, optionList, optionNumber, optionNumberRows, optionPairRows, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -58,10 +50,6 @@ function derive(chartBlock: ChartBlock = block(), rows: readonly ChartRow[] = RO
     return deriveChartOption(chartBlock, rows, undefined, inputs, OPTS)._unsafeUnwrap();
 }
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function firstSeries(option: EchartOption): EchartOption {
     const [points] = seriesOf(option);
     if (points === undefined) throw new Error("the option holds no series");
@@ -91,10 +79,10 @@ describe("the QQ figure", () => {
         const [points, lower, upper] = seriesOf(derive());
         if (points === undefined || lower === undefined || upper === undefined) throw new Error("the option holds fewer than three series");
         expect(lower.stack).toBe(upper.stack);
-        expect((lower.lineStyle as EchartOption).opacity).toBe(0);
+        expect(optionAt(lower, "lineStyle").opacity).toBe(0);
         expect(upper.areaStyle).toBeDefined();
-        expect(lower.z as number).toBeLessThan((points.z as number | undefined) ?? 2);
-        expect(upper.z as number).toBeLessThan((points.z as number | undefined) ?? 2);
+        expect(optionNumber(lower.z)).toBeLessThan(points.z === undefined ? 2 : optionNumber(points.z));
+        expect(optionNumber(upper.z)).toBeLessThan(points.z === undefined ? 2 : optionNumber(points.z));
         // The band reads each row with both bounds, whether or not the row draws a point.
         expect(lower.data).toEqual([
             [0, 0],
@@ -105,7 +93,7 @@ describe("the QQ figure", () => {
             [6.4, 5.5],
             [6.41, 5.52],
         ]);
-        expect((upper.data as number[][]).map(([x, width]) => [x, Number(width?.toFixed(6))])).toEqual([
+        expect(optionNumberRows(upper.data).map(([x, width]) => [x, Number(width?.toFixed(6))])).toEqual([
             [0, 0],
             [0.3, 0.05],
             [1, 0.11],
@@ -118,10 +106,10 @@ describe("the QQ figure", () => {
 
     it("draws the identity line to the largest expected value, and gives each axis its own range", () => {
         const option = derive();
-        const identity = (firstSeries(option).markLine as EchartOption).data as EchartOption[][];
+        const identity = optionPairRows(optionAt(firstSeries(option), "markLine").data);
         expect(identity).toEqual([[{ coord: [0, 0] }, { coord: [6.41, 6.41] }]]);
-        const x = option.xAxis as EchartOption;
-        const y = option.yAxis as EchartOption;
+        const x = optionAt(option, "xAxis");
+        const y = optionAt(option, "yAxis");
         // The x axis ends past the largest expected value, and the y axis past the largest observed value.
         expect([x.min, x.max]).toEqual([0, 8]);
         expect([y.min, y.max]).toEqual([0, 20]);
@@ -129,15 +117,15 @@ describe("the QQ figure", () => {
 
     it("keeps the identity line and the band inside the y axis when the observed values stay low", () => {
         const deflated = ROWS.map((row) => ({ ...row, observed_neg_log10_p: "0.5" }));
-        const y = derive(block(), deflated).yAxis as EchartOption;
+        const y = optionAt(derive(block(), deflated), "yAxis");
         expect(y.max).toBe(8);
     });
 
     it("prints the statistics in the top left corner", () => {
         const option = derive(block(ENCODING, { statistics: [LAMBDA] }), ROWS, { statistics: [{ label: "λ", value: 1.111615383472537 }] });
-        const [text] = option.graphic as EchartOption[];
+        const [text] = optionArray(option, "graphic");
         if (text === undefined) throw new Error("the option holds no statistic text");
-        expect((text.style as EchartOption).text).toBe("λ = 1.11");
+        expect(optionAt(text, "style").text).toBe("λ = 1.11");
         expect(text.left).toBeDefined();
         expect(text.top).toBeDefined();
     });
@@ -157,7 +145,7 @@ describe("the QQ figure", () => {
         const triangles = seriesOf(option).filter((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
         expect(triangles.length).toBe(1);
         expect(firstOf(triangles, "triangle").data).toEqual([[3, 3]]);
-        expect((option.yAxis as EchartOption).max as number).toBeGreaterThanOrEqual(3);
+        expect(optionNumber(optionAt(option, "yAxis").max)).toBeGreaterThanOrEqual(3);
     });
 
     it("thins the band to at most 400 rows, the two ends included", () => {
@@ -169,7 +157,7 @@ describe("the QQ figure", () => {
         rows.push({ expected_neg_log10_p: "400", observed_neg_log10_p: "400", ci_lower: "0", ci_upper: "1" });
         const [, lower] = seriesOf(derive(block(), rows));
         if (lower === undefined) throw new Error("the option holds no lower band");
-        const xs = (lower.data as number[][]).map(([x]) => x);
+        const xs = optionNumberRows(lower.data).map(([x]) => x);
         expect(QQ_BAND_POINTS).toBe(400);
         expect(xs.length).toBeLessThanOrEqual(QQ_BAND_POINTS);
         expect(xs[0]).toBe(0);
@@ -199,8 +187,8 @@ describe("the QQ figure", () => {
         }));
         const [, lower, upper] = seriesOf(derive(block(), rows));
         if (lower === undefined || upper === undefined) throw new Error("the option holds fewer than three series");
-        expect((lower.data as unknown[]).length).toBe(QQ_BAND_POINTS);
-        expect((upper.data as unknown[]).length).toBe(QQ_BAND_POINTS);
+        expect(optionList(lower.data).length).toBe(QQ_BAND_POINTS);
+        expect(optionList(upper.data).length).toBe(QQ_BAND_POINTS);
     });
 
     it("derives the same bytes two times", () => {
@@ -231,14 +219,14 @@ describe("the dense QQ plot", () => {
         const render = deriveChartRender(block(), rows, COLUMNS, { key: "qq", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(render.option);
         expect(source.series.length).toBe(1);
         const [points, lower, upper] = seriesOf(render.option);
         if (points === undefined || lower === undefined || upper === undefined) throw new Error("the option holds fewer than three series");
         expect(points.data).toEqual([]);
         // The band holds a width that no cell gives, thus it rides the page option, thinned along the axis.
-        expect((lower.data as unknown[]).length).toBeLessThanOrEqual(QQ_BAND_POINTS + 1);
-        expect((lower.data as unknown[]).length).toBeGreaterThan(QQ_BAND_POINTS / 2);
+        expect(optionList(lower.data).length).toBeLessThanOrEqual(QQ_BAND_POINTS + 1);
+        expect(optionList(lower.data).length).toBeGreaterThan(QQ_BAND_POINTS / 2);
         expect(upper.data).toEqual(seriesOf(render.inline)[2]?.data);
         expect(JSON.stringify(render.option).length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
     });

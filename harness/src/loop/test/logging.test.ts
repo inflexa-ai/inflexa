@@ -202,7 +202,7 @@ describe("runAgent — an unwired logger changes nothing", () => {
 describe("runToTerminal — the salvage record", () => {
     it("warns when a run ends without recording its terminal outcome", async () => {
         const logger = createCapturingLogger();
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const tool = submitTool(cell);
         const provider = scriptedProvider((_i, request) => {
             const last = request.messages.at(-1);
@@ -223,7 +223,7 @@ describe("runToTerminal — the salvage record", () => {
 
     it("writes no salvage record when the first run resolves", async () => {
         const logger = createCapturingLogger();
-        const cell = { value: null as string | null };
+        const cell: { value: string | null } = { value: null };
         const tool = submitTool(cell);
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("t1", "submit", { answer: "done" })], "tool_use"),

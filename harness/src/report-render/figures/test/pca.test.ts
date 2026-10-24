@@ -10,6 +10,7 @@ import { TOOLBOX_BAND_PX } from "../../chart-toolbox.js";
 import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART_PALETTE } from "../../design.js";
 import { equalRanges, squareLayout } from "../equal-units.js";
 import { PCA_LABEL_ROWS, SHAPE_SYMBOLS } from "../pca.js";
+import { gridAt, optionArray, optionAt, optionList, optionMaybe, optionNumber, optionOf, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -35,12 +36,8 @@ function block(chartType: ChartType, encoding: Encoding, extra: Partial<ChartBlo
 
 const PCA_ENCODING: Encoding = { x: "PC1", y: "PC2", group: "condition", shape: "type", label: "sample" };
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function asObj(value: unknown): EchartOption {
-    return value as EchartOption;
+    return optionOf(value);
 }
 
 function firstSeries(option: EchartOption): EchartOption {
@@ -50,7 +47,7 @@ function firstSeries(option: EchartOption): EchartOption {
 }
 
 function firstGrid(option: EchartOption): EchartOption {
-    const grid = (option.grid as EchartOption[])[0];
+    const grid = gridAt(option, 0);
     if (grid === undefined) throw new Error("the chart holds no grid");
     return grid;
 }
@@ -68,12 +65,12 @@ describe("the pca figure", () => {
         expect(typeof grid.width).toBe("number");
         // Each media rule states a square, and a larger container takes a larger square. The rules of the
         // export sizes follow the rules of the page.
-        const media = option.media as EchartOption[];
-        const sides = media.map((rule) => asObj((asObj(rule.option).grid as EchartOption[])[0]));
+        const media = optionArray(option, "media");
+        const sides = media.map((rule) => asObj(optionArray(asObj(rule.option), "grid")[0]));
         expect(sides.every((entry) => entry.width === entry.height)).toBe(true);
         const page = sides.filter((_entry, index) => asObj(media[index]?.query).maxWidth === undefined);
-        expect(page.map((entry) => entry.width)).toEqual([...page.map((entry) => entry.width as number)].sort((a, b) => a - b));
-        expect(asObj((option.media as EchartOption[])[0]).query).toEqual({ minWidth: 0 });
+        expect(page.map((entry) => entry.width)).toEqual([...page.map((entry) => optionNumber(entry.width))].sort((a, b) => a - b));
+        expect(asObj(optionArray(option, "media")[0]).query).toEqual({ minWidth: 0 });
     });
 
     it("titles each axis with the declared label, which carries the variance", () => {
@@ -83,7 +80,7 @@ describe("the pca figure", () => {
     });
 
     it("colors by the group and sets the symbol by the shape, one series for each pair", () => {
-        const drawn = seriesOf(option).filter((entry) => Array.isArray(entry.data) && (entry.data as unknown[]).length > 0);
+        const drawn = seriesOf(option).filter((entry) => Array.isArray(entry.data) && optionList(entry.data).length > 0);
         expect(drawn.map((entry) => [entry.name, entry.symbol, asObj(entry.itemStyle).color])).toEqual([
             ["untreated", SHAPE_SYMBOLS[0], CHART_PALETTE[0]],
             ["untreated", SHAPE_SYMBOLS[1], CHART_PALETTE[0]],
@@ -99,7 +96,7 @@ describe("the pca figure", () => {
             { name: "single-read", icon: SHAPE_SYMBOLS[0] },
             { name: "paired-end", icon: SHAPE_SYMBOLS[1] },
         ]);
-        const keys = seriesOf(option).filter((entry) => Array.isArray(entry.data) && (entry.data as unknown[]).length === 0);
+        const keys = seriesOf(option).filter((entry) => Array.isArray(entry.data) && optionList(entry.data).length === 0);
         expect(keys.map((entry) => [entry.name, asObj(entry.itemStyle).color])).toEqual([
             ["single-read", CHART_INK],
             ["paired-end", CHART_INK],
@@ -107,7 +104,7 @@ describe("the pca figure", () => {
     });
 
     it("names each point of a small table, and moves a name off its close neighbor", () => {
-        const items = seriesOf(option).flatMap((entry) => (entry.data as EchartOption[]).map((item) => ({ item, labeled: asObj(entry.label).show === true })));
+        const items = seriesOf(option).flatMap((entry) => optionArray(entry, "data").map((item) => ({ item, labeled: asObj(entry.label).show === true })));
         expect(items.every((entry) => entry.labeled)).toBe(true);
         const byName = new Map(items.map((entry) => [entry.item.name, entry.item]));
         // untreated3 and untreated4 lie one sixth of a unit apart. The later name takes a free side.
@@ -120,7 +117,7 @@ describe("the pca figure", () => {
         const large = deriveChartOption(block("pca", { x: "PC1", y: "PC2", label: "sample" }), rows)._unsafeUnwrap();
         const series = firstSeries(large);
         expect(series.label).toBeUndefined();
-        expect(asObj((series.data as unknown[])[0]).name).toBe("s0");
+        expect(asObj(optionList(series.data)[0]).name).toBe("s0");
     });
 
     it("refuses a seventh shape, a value shared by a group and a shape, and an order on an axis", () => {
@@ -202,14 +199,17 @@ describe("the shape on a plain scatter", () => {
 describe("the layout of one unit", () => {
     it("states the width of the square block at the page body, thus the card centers the block", () => {
         const render = deriveChartRender(block("pca", PCA_ENCODING), PASILLA, undefined, { key: "p1", columns: [] })._unsafeUnwrap();
-        const rules = (render.option.media as EchartOption[]).filter((rule) => asObj(rule.query).maxWidth === undefined);
-        const fitting = rules.filter((rule) => ((asObj(rule.query).minHeight as number | undefined) ?? 0) <= CHART_BODY_PX);
+        const rules = optionArray(render.option, "media").filter((rule) => asObj(rule.query).maxWidth === undefined);
+        const fitting = rules.filter((rule) => {
+            const minHeight = asObj(rule.query).minHeight;
+            return (minHeight === undefined ? 0 : optionNumber(minHeight)) <= CHART_BODY_PX;
+        });
         const chosen = fitting[fitting.length - 1];
         if (chosen === undefined) throw new Error("the media rules hold no page rule at the body height");
         expect(render.bodyPx).toBe(CHART_BODY_PX);
-        expect(render.widthPx).toBe(asObj(chosen.query).minWidth as number);
+        expect(render.widthPx).toBe(optionNumber(asObj(chosen.query).minWidth));
         const grid = firstGrid(asObj(chosen.option));
-        expect((grid.top as number) + (grid.height as number)).toBeLessThanOrEqual(CHART_BODY_PX);
+        expect(optionNumber(grid.top) + optionNumber(grid.height)).toBeLessThanOrEqual(CHART_BODY_PX);
     });
 
     it("ends two rounded axes on one step, and grows the shorter axis to the length of the longer", () => {
@@ -243,11 +243,12 @@ describe("the layout of one unit", () => {
         });
         const grid = layout.grid[0];
         if (grid === undefined) throw new Error("the one-panel layout holds no grid");
-        expect(layout.legend).toEqual({ left: 50, top: TOOLBOX_BAND_PX + (grid.height as number) + 40, width: grid.width, orient: "horizontal" });
+        expect(layout.legend).toEqual({ left: 50, top: TOOLBOX_BAND_PX + optionNumber(grid.height) + 40, width: grid.width, orient: "horizontal" });
         // The smallest square is 120 pixels, and the two entries take one line each at that width.
-        const rule = layout.media[0]?.option as EchartOption | undefined;
+        const media = layout.media[0];
+        const rule = media === undefined ? undefined : optionMaybe(media, "option");
         if (rule === undefined) throw new Error("the layout holds no media rule");
-        expect(firstGrid(rule).width as number).toBe(120);
+        expect(optionNumber(firstGrid(rule).width)).toBe(120);
     });
 
     it("centers the squares and the band at each export size, and keeps each export square the largest that fits", () => {
@@ -255,23 +256,23 @@ describe("the layout of one unit", () => {
         const layout = squareLayout({ panels: 1, margins, side: 120, legend: true });
         for (const size of [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide]) {
             const rule = layout.media.find((entry) => {
-                const query = entry.query as EchartOption;
+                const query = optionAt(entry, "query");
                 return (
                     query.minWidth === size.widthPx && query.maxWidth === size.widthPx && query.minHeight === size.heightPx && query.maxHeight === size.heightPx
                 );
             });
             expect(rule).toBeDefined();
-            const option = rule?.option as EchartOption;
+            const option = optionAt(optionOf(rule), "option");
             const grid = firstGrid(option);
-            const legend = option.legend as EchartOption;
+            const legend = optionAt(option, "legend");
             // The block spans from the left edge of the y labels to the right margin of the band.
             const scale = size.textPx / CHART_PAGE_TEXT_PX;
             // An export has no toolbox, thus its top margin is the margin of the figure alone.
             expect(grid.top).toBe(Math.round(margins.top * scale));
-            const blockLeft = (grid.left as number) - Math.round(margins.left * scale);
-            const blockRight = (legend.left as number) + Math.round(120 * scale) + Math.round(margins.right * scale);
+            const blockLeft = optionNumber(grid.left) - Math.round(margins.left * scale);
+            const blockRight = optionNumber(legend.left) + Math.round(120 * scale) + Math.round(margins.right * scale);
             expect(Math.abs(blockLeft - (size.widthPx - blockRight))).toBeLessThanOrEqual(1);
-            expect((grid.top as number) + (grid.height as number) + Math.round(margins.bottom * scale)).toBeLessThanOrEqual(size.heightPx);
+            expect(optionNumber(grid.top) + optionNumber(grid.height) + Math.round(margins.bottom * scale)).toBeLessThanOrEqual(size.heightPx);
         }
     });
 });

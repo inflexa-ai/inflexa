@@ -26,12 +26,12 @@ import { randomUUID } from "node:crypto";
 import type { ModelMessage } from "ai";
 import { type Histogram, metrics } from "@opentelemetry/api";
 import { ResultAsync, ok, okAsync } from "neverthrow";
-import type { Pool, PoolClient } from "pg";
 
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
-import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import { type Connectable, type DbError, type TransactionQuerier, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import type { Querier } from "../state/db.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
 import { conversationView, groupTurns, isGenuineUserStart } from "./conversation-view.js";
@@ -47,6 +47,7 @@ import type { MessagePart } from "../contracts/message.js";
 import {
     conversationDisplayPart,
     envelopeDisplayMessages,
+    isStoredSourcePart,
     parseStoredDisplayEnvelope,
     type ConversationUIMessage,
     type StoredDisplayEnvelope,
@@ -154,7 +155,9 @@ export function conversationRecordTurn(text: string, displayParts?: readonly Exc
                 id: randomUUID(),
                 role: "system",
                 parts:
-                    displayParts !== undefined && displayParts.length > 0 ? displayParts.map(conversationDisplayPart) : [{ type: "text", text, state: "done" }],
+                    displayParts !== undefined && displayParts.length > 0
+                        ? displayParts.filter(isStoredSourcePart).map(conversationDisplayPart)
+                        : [{ type: "text", text, state: "done" }],
             },
         ],
     };
@@ -397,12 +400,12 @@ export function __resetThreadHistoryMetricsForTest(): void {
  * both read the same MAX(seq) and collide on the (thread_id, seq) primary key.
  * Released automatically at COMMIT/ROLLBACK.
  */
-function lockThread(client: PoolClient, threadId: string, op: string): ResultAsync<void, DbError> {
+function lockThread(client: TransactionQuerier, threadId: string, op: string): ResultAsync<void, DbError> {
     return tryQuery(`${op}.lock`, () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId])).map(() => undefined);
 }
 
 /** The `seq` of the next row of the thread. Read it under {@link lockThread}. */
-function nextSeq(client: PoolClient, threadId: string, op: string): ResultAsync<number, DbError> {
+function nextSeq(client: TransactionQuerier, threadId: string, op: string): ResultAsync<number, DbError> {
     return tryQuery(`${op}.maxSeq`, async () => {
         const { rows } = await client.query<{ max_seq: string }>("SELECT COALESCE(MAX(seq), -1)::text AS max_seq FROM messages WHERE thread_id = $1", [
             threadId,
@@ -412,7 +415,7 @@ function nextSeq(client: PoolClient, threadId: string, op: string): ResultAsync<
 }
 
 /** Insert the rows of one group, from `startSeq` on. */
-function insertGroup(client: PoolClient, threadId: string, startSeq: number, group: ConversationTurn, op: string): ResultAsync<void, DbError> {
+function insertGroup(client: TransactionQuerier, threadId: string, startSeq: number, group: ConversationTurn, op: string): ResultAsync<void, DbError> {
     const { modelMessages: messages, displayMessages, author } = group;
     // The display projection rides the group's FIRST row, so one SELECT of a
     // thread's rows yields every envelope in order with no join and no grouping.
@@ -461,7 +464,7 @@ function insertGroup(client: PoolClient, threadId: string, startSeq: number, gro
 }
 
 /** Move `cortex_analysis_threads.updated_at` forward inside the write transaction. */
-function touchThread(client: PoolClient, threadId: string, op: string): ResultAsync<void, DbError> {
+function touchThread(client: TransactionQuerier, threadId: string, op: string): ResultAsync<void, DbError> {
     // Thread listings sort on `cortex_analysis_threads.updated_at`, and
     // the only other writer of it is the title update — so without this
     // touch "most recently updated" degrades to "most recently created
@@ -510,7 +513,7 @@ function touchThread(client: PoolClient, threadId: string, op: string): ResultAs
 }
 
 /** Add the `open` record of a turn. The upsert replaces a record whose rows are gone, because the opening row holds its key now. */
-function openTurnRecord(client: PoolClient, threadId: string, startSeq: number): ResultAsync<void, DbError> {
+function openTurnRecord(client: TransactionQuerier, threadId: string, startSeq: number): ResultAsync<void, DbError> {
     return tryMutation("thread-history.writeTurn.openRecord", () =>
         client.query(
             `INSERT INTO cortex_thread_turns (thread_id, start_seq, status)
@@ -523,7 +526,7 @@ function openTurnRecord(client: PoolClient, threadId: string, startSeq: number):
 }
 
 /** Set the outcome of a turn record that is still `open`, thus a second close changes nothing. */
-function closeTurnRecord(client: PoolClient, threadId: string, startSeq: number, close: TurnClose): ResultAsync<void, DbError> {
+function closeTurnRecord(client: TransactionQuerier, threadId: string, startSeq: number, close: TurnClose): ResultAsync<void, DbError> {
     // The predicate of the loop decides whether a rollup reported a quantity, thus the two cannot drift.
     const rollup = hasReportedUsage(close.turnUsage) ? JSON.stringify(close.turnUsage) : null;
     return tryMutation("thread-history.writeTurn.closeRecord", () =>
@@ -670,7 +673,10 @@ function pageLimit(limit: number): number {
  * same messages either way — the drop reports a deploy, not a failed read — and
  * requiring it would break every call site over a diagnostic.
  */
-export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory {
+/** What this module reads of the pool: the direct `query` plus the transactional `connect`. */
+type ThreadHistoryPool = Querier & Connectable;
+
+export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): ThreadHistory {
     function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
         if (turn.modelMessages.length === 0) return okVoid();
         return withTransaction(pool, "thread-history.appendTurn", (client) =>

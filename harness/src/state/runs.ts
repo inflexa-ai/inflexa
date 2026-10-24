@@ -11,12 +11,24 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import type { QueryConfig } from "pg";
 
 import { stripNulCharacters } from "../input-sanitization.js";
 import type { DbError } from "../lib/db-result.js";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
+import { UnknownArraySchema } from "../lib/unknown-containers.js";
+import { z } from "zod";
 import type { Querier } from "./db.js";
-import type { CortexRunRow, SynthesisStatus } from "./schema.js";
+import { CortexRunRowSchema, type CortexRunRow, type SynthesisStatus } from "./schema.js";
+
+/**
+ * The row-reading surface of this module: one query over the text or config form, whose rows the mapRunRow
+ * parser types. A computed test fake satisfies this shape directly, where the row-generic of `Querier`
+ * cannot be implemented by a fake that computes its rows.
+ */
+export type RunRowQuerier = {
+    query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+};
 
 export type InsertRunInput = {
     runId: string;
@@ -145,10 +157,12 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
     );
 }
 
+/** The two pg error fields a dedup collision is read from; a driver error is an `Error` carrying them as own fields. */
+const PgErrorIdentitySchema = z.object({ code: z.string(), constraint: z.string() });
+
 function isPartialUniqueViolation(err: unknown): boolean {
-    if (err === null || typeof err !== "object") return false;
-    const e = err as { code?: string; constraint?: string };
-    return e.code === "23505" && e.constraint === "idx_cortex_runs_active_plan";
+    const parsed = PgErrorIdentitySchema.safeParse(err);
+    return parsed.success && parsed.data.code === "23505" && parsed.data.constraint === "idx_cortex_runs_active_plan";
 }
 
 /**
@@ -327,9 +341,9 @@ export function promoteFailedToPartial(pool: Querier, runId: string): ResultAsyn
     });
 }
 
-export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow | null, DbError> {
+export function queryRun(pool: RunRowQuerier, runId: string): ResultAsync<CortexRunRow | null, DbError> {
     return tryQuery("runs.queryRun", async () => {
-        const result = await pool.query<Record<string, unknown>>({
+        const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -465,16 +479,16 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
  * contract.
  */
 export function queryRunsForInspection(
-    pool: Querier,
+    pool: RunRowQuerier,
     analysisId: string,
     { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
 ): ResultAsync<RunPage, DbError> {
     return tryQuery("runs.queryRunsForInspection", async () => {
-        const countResult = await pool.query<Record<string, unknown>>({
+        const countResult = await pool.query({
             text: "SELECT COUNT(*)::int AS total FROM cortex_runs WHERE analysis_id = $1",
             values: [analysisId],
         });
-        const rowsResult = await pool.query<Record<string, unknown>>({
+        const rowsResult = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id
@@ -560,38 +574,33 @@ export function setRunSynthesisOutcome(
     });
 }
 
-function isUnknownArray(value: unknown): value is unknown[] {
-    return Array.isArray(value);
-}
-
 function mapRunRow(row: Record<string, unknown>): CortexRunRow {
     // JSONB is parsed by `pg` into native arrays/objects. Treat legacy TEXT
-    // rows (if anything slipped through) as strings and parse them.
-    let parts: unknown[] | null = null;
-    if (Array.isArray(row.parts)) {
-        parts = row.parts as unknown[];
-    } else if (typeof row.parts === "string") {
+    // rows (if anything slipped through) as strings and parse them. A parts
+    // value that survives neither shape reads as null, like a row with no parts.
+    let parts: unknown = row.parts;
+    if (typeof parts === "string") {
         try {
-            const parsed: unknown = JSON.parse(row.parts);
-            if (isUnknownArray(parsed)) parts = parsed;
+            parts = JSON.parse(parts);
         } catch {
-            /* malformed — treat as null */
+            parts = null;
         }
     }
-    return {
-        runId: row.run_id as string,
-        analysisId: row.analysis_id as string,
-        threadId: (row.thread_id as string) ?? null,
-        workflowName: row.workflow_name as string,
-        status: row.status as CortexRunRow["status"],
-        startedAt: row.started_at as string,
-        completedAt: (row.completed_at as string) ?? null,
-        error: (row.error as string) ?? null,
-        synthesisStatus: (row.synthesis_status as CortexRunRow["synthesisStatus"]) ?? null,
-        synthesisReason: (row.synthesis_reason as string) ?? null,
-        parts,
-        mandateJti: (row.mandate_jti as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-        mandateExpiresAt: (row.mandate_expires_at as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-        planId: (row.plan_id as string) ?? null,
-    };
+    const parsedParts = UnknownArraySchema.safeParse(parts);
+    return CortexRunRowSchema.parse({
+        runId: row.run_id,
+        analysisId: row.analysis_id,
+        threadId: row.thread_id ?? null,
+        workflowName: row.workflow_name,
+        status: row.status,
+        startedAt: row.started_at,
+        completedAt: row.completed_at ?? null,
+        error: row.error ?? null,
+        synthesisStatus: row.synthesis_status ?? null,
+        synthesisReason: row.synthesis_reason ?? null,
+        parts: parsedParts.success ? parsedParts.data : null,
+        mandateJti: row.mandate_jti ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+        mandateExpiresAt: row.mandate_expires_at ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+        planId: row.plan_id ?? null,
+    });
 }

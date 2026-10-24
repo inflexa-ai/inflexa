@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { HARNESS_USER_AGENT, apiFetch, apiFetchValidated, describeApiError, isUnexpectedApiError, parseWireNumber, zWireNumber } from "../api-utils.js";
 
 const realFetch = globalThis.fetch;
@@ -10,7 +15,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = (async () => response()) as unknown as typeof fetch;
+    globalThis.fetch = fetchDouble(async () => response());
 }
 
 function json(body: unknown, status = 200): Response {
@@ -212,10 +217,10 @@ describe("apiFetchValidated", () => {
 describe("apiFetch — the User-Agent", () => {
     function recordHeaders(): Headers[] {
         const seen: Headers[] = [];
-        globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+        globalThis.fetch = fetchDouble(async (_url, init) => {
             seen.push(new Headers(init?.headers));
             return json({});
-        }) as unknown as typeof fetch;
+        });
         return seen;
     }
 

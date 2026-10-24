@@ -7,15 +7,7 @@ import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
-import {
-    CHART_SOURCE_MEMBER,
-    deriveChartOption,
-    deriveChartRender,
-    type ChartDataSource,
-    type ChartOpts,
-    type ChartRow,
-    type EchartOption,
-} from "../../chart.js";
+import { deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { exportOption } from "../../chart-renderers.js";
 import { CHART_TOOLBOX_SOURCE, pageChartOption } from "../../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../../design.js";
@@ -24,6 +16,30 @@ import { BELOW_RESOLUTION_SYMBOL, POINT_NAMES } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
 import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, textWidthPx, type LeaderName, type NameFrame } from "../label-room.js";
 import { guideLabelBox, MANHATTAN_COLORS, MANHATTAN_FIGURE, MANHATTAN_LABEL_COUNT, MANHATTAN_NAME_GAP_SHARE, MANHATTAN_SUGGESTIVE_P } from "../manhattan.js";
+import {
+    chartSourceOf,
+    markLineData,
+    optionArray,
+    optionAt,
+    optionList,
+    optionNumber,
+    optionNumbers,
+    optionOf,
+    optionPair,
+    optionPairRows,
+    optionsOf,
+    pageCall,
+    seriesOf,
+} from "../../test/options.js";
+
+const LABEL_SIDES = ["right", "left", "top"] as const satisfies readonly LeaderName["side"][];
+
+/** The label side that one placed name carries, or a failed test. */
+function labelSide(label: EchartOption): LeaderName["side"] {
+    const side = LABEL_SIDES.find((candidate) => candidate === label.position);
+    if (side === undefined) throw new Error(`a name label carries the position ${String(label.position)}`);
+    return side;
+}
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -63,10 +79,6 @@ function derive(chartBlock: ChartBlock = block(), rows: readonly ChartRow[] = RO
     return deriveChartOption(chartBlock, rows, undefined, {}, OPTS)._unsafeUnwrap();
 }
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function firstOf<T>(items: readonly T[], label: string): T {
     const [first] = items;
     if (first === undefined) throw new Error(`no ${label}`);
@@ -75,7 +87,7 @@ function firstOf<T>(items: readonly T[], label: string): T {
 
 /** The upper end of the y axis of one option. */
 function asTop(option: EchartOption): number {
-    return (option.yAxis as EchartOption).max as number;
+    return optionNumber(optionAt(option, "yAxis").max);
 }
 
 describe("the Manhattan figure", () => {
@@ -87,7 +99,7 @@ describe("the Manhattan figure", () => {
         const option = derive();
         const series = seriesOf(option).slice(0, 3);
         expect(series.map((entry) => entry.name)).toEqual(["1", "2", "3"]);
-        expect(series.map((entry) => (entry.itemStyle as EchartOption).color)).toEqual([MANHATTAN_COLORS[0], MANHATTAN_COLORS[1], MANHATTAN_COLORS[0]]);
+        expect(series.map((entry) => optionAt(entry, "itemStyle").color)).toEqual([MANHATTAN_COLORS[0], MANHATTAN_COLORS[1], MANHATTAN_COLORS[0]]);
         expect(option.legend).toEqual({ show: false });
     });
 
@@ -105,19 +117,19 @@ describe("the Manhattan figure", () => {
             { name: "2", value: [(249100000 + 491000000) / 2, 0] },
             { name: "3", value: [(491300000 + 689000000) / 2, 0] },
         ]);
-        const x = option.xAxis as EchartOption;
+        const x = optionAt(option, "xAxis");
         expect(x.min).toBe(1082207);
         expect(x.max).toBe(689000000);
-        expect((x.axisLabel as EchartOption).show).toBe(false);
-        expect((option.yAxis as EchartOption).min).toBe(0);
+        expect(optionAt(x, "axisLabel").show).toBe(false);
+        expect(optionAt(option, "yAxis").min).toBe(0);
     });
 
     it("draws the genome-wide line with its label and the suggestive line", () => {
         const lines = seriesOf(derive())
             .filter((entry) => entry.name !== POINT_NAMES)
-            .flatMap((entry) => ((entry.markLine as EchartOption | undefined)?.data as EchartOption[] | undefined) ?? []);
+            .flatMap((entry) => markLineData(entry));
         expect(MANHATTAN_SUGGESTIVE_P).toBe(1e-5);
-        expect(lines.map((line) => [line.yAxis, (line.label as EchartOption).formatter])).toEqual([
+        expect(lines.map((line) => [optionOf(line).yAxis, optionAt(optionOf(line), "label").formatter])).toEqual([
             [-Math.log10(5e-8), "p 5 × 10⁻⁸"],
             [-Math.log10(1e-5), undefined],
         ]);
@@ -125,7 +137,7 @@ describe("the Manhattan figure", () => {
         // under the axis.
         const genomeLine = lines[0];
         if (genomeLine === undefined) throw new Error("the genome-wide line drew no mark");
-        expect((genomeLine.label as EchartOption).position).toBe("insideEndTop");
+        expect(optionAt(optionOf(genomeLine), "label").position).toBe("insideEndTop");
     });
 
     it("keeps the name of a lead variant at the right end clear of the label of the genome-wide line", () => {
@@ -133,12 +145,12 @@ describe("the Manhattan figure", () => {
         const rows = [...ROWS, { chrom: "3", snp: "rs99", pvalue: "1e-8", cum_pos: String(high - 1000000) }];
         const option = derive(block(), rows);
         const names = seriesOf(option).find((entry) => entry.name === POINT_NAMES);
-        const lead = ((names?.data ?? []) as EchartOption[]).find((item) => item.name === "rs99");
+        const lead = optionsOf(names?.data ?? []).find((item) => item.name === "rs99");
         if (lead === undefined) throw new Error("the lead rs99 drew no point");
         // The page frame reads a window 1280 pixels wide, thus the runtime hides a lead name that still overlaps
         // another on a narrower window.
         expect(names?.labelLayout).toEqual({ hideOverlap: true });
-        const [x, y] = lead.value as [number, number];
+        const [x, y] = optionPair(lead.value);
         const box = guideLabelBox(-Math.log10(5e-8), { min: 1082207, max: high }, asTop(option), "p 5 × 10⁻⁸", PAGE_PLOT_FRAME);
         expect(x >= box.left && x <= box.right && y >= box.bottom && y <= box.top).toBe(false);
     });
@@ -146,7 +158,7 @@ describe("the Manhattan figure", () => {
     /** The names of the lead variants, in the order of their p. */
     function shownLabels(option: EchartOption): unknown[] {
         const names = seriesOf(option).find((entry) => entry.name === POINT_NAMES);
-        return ((names?.data ?? []) as EchartOption[]).map((item) => item.name);
+        return optionsOf(names?.data ?? []).map((item) => item.name);
     }
 
     it("names the ten most significant lead variants over the genome, one for each chromosome", () => {
@@ -174,7 +186,7 @@ describe("the Manhattan figure", () => {
             { chrom: "3", snp: "f", pvalue: "0.5", cum_pos: "100" },
         ];
         const names = (option: EchartOption): unknown[] =>
-            ((seriesOf(option).find((entry) => entry.name === "Chromosome names") as EchartOption).data as EchartOption[]).map((entry) => entry.name);
+            optionArray(optionOf(seriesOf(option).find((entry) => entry.name === "Chromosome names")), "data").map((entry) => entry.name);
         expect(MANHATTAN_NAME_GAP_SHARE).toBe(0.5);
         // On the page plot of 760 px, the middles sit at 76, 163.4, and 467.4 px. The names are 7.2 px wide,
         // thus each text starts far past the end of the one before it.
@@ -192,31 +204,31 @@ describe("the Manhattan figure", () => {
         expect(shownLabels(option)).toEqual(["rs6545814", "rs657452"]);
         // The points carry no label of the runtime, thus no name hides.
         for (const points of seriesOf(option).slice(0, 3)) {
-            expect((points.data as unknown[]).some((item) => typeof item === "object" && item !== null && "label" in item)).toBe(false);
+            expect(optionList(points.data).some((item) => typeof item === "object" && item !== null && "label" in item)).toBe(false);
         }
     });
 
     it("places each lead name over its peak where the axis holds the room, with a leader line to its point", () => {
         // A variant with no name lifts the p axis to 20, thus each named peak has room above it.
         const rows = [...ROWS, { chrom: "3", snp: "", pvalue: "1e-19", cum_pos: "500000000" }];
-        const names = seriesOf(derive(block(), rows)).find((entry) => entry.name === POINT_NAMES) as EchartOption;
-        const items = names.data as EchartOption[];
-        expect(items.map((item) => (item.label as EchartOption).position)).toEqual(["top", "top"]);
-        const leaders = (names.markLine as EchartOption).data as Array<[{ coord: number[] }, { coord: number[] }]>;
+        const names = optionOf(seriesOf(derive(block(), rows)).find((entry) => entry.name === POINT_NAMES));
+        const items = optionArray(names, "data");
+        expect(items.map((item) => optionAt(item, "label").position)).toEqual(["top", "top"]);
+        const leaders = optionPairRows(optionAt(names, "markLine").data);
         expect(leaders.map((pair) => pair[0].coord)).toEqual([
             [274000000, -Math.log10(4.4e-15)],
             [49124175, -Math.log10(2.123e-13)],
         ]);
         // `value` is `unknown` in the echarts option type; the equality below is the check of the numbers.
-        expect(leaders.map((pair) => pair[1].coord)).toEqual(items.map((item) => item.value as number[]));
+        expect(leaders.map((pair) => pair[1].coord)).toEqual(items.map((item) => optionNumbers(item.value)));
     });
 
     it("places the name of a peak at the top of the axis beside the peak", () => {
-        const names = seriesOf(derive()).find((entry) => entry.name === POINT_NAMES) as EchartOption;
+        const names = optionOf(seriesOf(derive()).find((entry) => entry.name === POINT_NAMES));
         // The tallest peak reaches the end of the p axis, thus its name finds no room over it.
-        const [tallest] = names.data as EchartOption[];
+        const [tallest] = optionArray(names, "data");
         if (tallest === undefined) throw new Error("the option holds no lead name");
-        expect((tallest.label as EchartOption).position).toBe("right");
+        expect(optionAt(tallest, "label").position).toBe("right");
     });
 
     it("gives the same colors, chromosome names, and lead names to a table sorted by p as to the table sorted by position", () => {
@@ -230,7 +242,7 @@ describe("the Manhattan figure", () => {
             Object.fromEntries(
                 seriesOf(option)
                     .slice(0, 3)
-                    .map((entry): [string, unknown] => [String(entry.name), (entry.itemStyle as EchartOption).color]),
+                    .map((entry): [string, unknown] => [String(entry.name), optionAt(entry, "itemStyle").color]),
             );
         const dataOf = (option: EchartOption, name: string): unknown => seriesOf(option).find((entry) => entry.name === name)?.data;
         expect(colors(byP)).toEqual(colors(byPosition));
@@ -251,12 +263,12 @@ describe("the Manhattan figure", () => {
             { chrom: "Y", snp: "y", pvalue: "0.5", cum_pos: "800" },
         ];
         const option = derive(block(), rows);
-        const names = ((seriesOf(option).find((entry) => entry.name === "Chromosome names") as EchartOption).data as EchartOption[]).map((entry) => entry.name);
+        const names = optionArray(optionOf(seriesOf(option).find((entry) => entry.name === "Chromosome names")), "data").map((entry) => entry.name);
         expect(names).toEqual(["1", "2", "10", "X", "Y", "MT", "Un"]);
         const colors = Object.fromEntries(
             seriesOf(option)
                 .slice(0, 7)
-                .map((entry): [string, unknown] => [String(entry.name), (entry.itemStyle as EchartOption).color]),
+                .map((entry): [string, unknown] => [String(entry.name), optionAt(entry, "itemStyle").color]),
         );
         const [blue, gray] = MANHATTAN_COLORS;
         expect(colors).toEqual({ "1": blue, "2": gray, "10": blue, X: gray, Y: blue, MT: gray, Un: blue });
@@ -269,7 +281,7 @@ describe("the Manhattan figure", () => {
         expect(triangles.length).toBe(1);
         const top = -Math.log10(4.4e-15);
         expect(firstOf(triangles, "triangle").data).toEqual([{ name: "rsZero", value: [300000001, top], itemStyle: { color: MANHATTAN_COLORS[1] } }]);
-        expect((option.yAxis as EchartOption).max as number).toBeGreaterThanOrEqual(top);
+        expect(optionNumber(optionAt(option, "yAxis").max)).toBeGreaterThanOrEqual(top);
         expect(shownLabels(option)).toEqual(["rsZero", "rs657452"]);
     });
 
@@ -342,27 +354,34 @@ function bmiExcerpt(): ChartRow[] {
 describe("the Manhattan text at each size", () => {
     const rows = bmiExcerpt();
     const option = derive(block(), rows);
-    const x = option.xAxis as EchartOption;
-    const plot = { x: { min: x.min as number, max: x.max as number }, y: { min: 0, max: asTop(option) } };
+    const x = optionAt(option, "xAxis");
+    const plot = { x: { min: optionNumber(x.min), max: optionNumber(x.max) }, y: { min: 0, max: asTop(option) } };
+
+    /** The export sizes under test, in the order of the table. */
+    const EXPORT_KINDS = ["single", "double", "slide"] as const satisfies readonly (keyof typeof CHART_EXPORT_SIZES)[];
 
     /** The page option, and the export option of each export size, with the frame where its text places. */
     const renders: Array<readonly [string, EchartOption, NameFrame]> = [
         ["page", option, PAGE_PLOT_FRAME],
-        ...Object.entries(CHART_EXPORT_SIZES).map(
-            ([kind, size]) =>
-                [kind, exportOption(option, size.textPx, size.widthPx, size.heightPx), EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]] as const,
+        ...EXPORT_KINDS.map(
+            (kind) =>
+                [
+                    kind,
+                    exportOption(option, CHART_EXPORT_SIZES[kind].textPx, CHART_EXPORT_SIZES[kind].widthPx, CHART_EXPORT_SIZES[kind].heightPx),
+                    EXPORT_PLOT_FRAMES[kind],
+                ] as const,
         ),
     ];
 
     function dataOf(render: EchartOption, name: string): EchartOption[] {
-        return (seriesOf(render).find((entry) => entry.name === name)?.data ?? []) as EchartOption[];
+        return optionsOf(seriesOf(render).find((entry) => entry.name === name)?.data ?? []);
     }
 
     for (const [kind, render, frame] of renders) {
         it(`prints no lead name over another lead name at the ${kind} size`, () => {
             const boxes = dataOf(render, POINT_NAMES).map((item) => {
-                const [nameX, nameY] = item.value as [number, number];
-                const placed: LeaderName = { x: nameX, y: nameY, side: (item.label as EchartOption).position as LeaderName["side"] };
+                const [nameX, nameY] = optionPair(item.value);
+                const placed: LeaderName = { x: nameX, y: nameY, side: labelSide(optionAt(item, "label")) };
                 return leaderNameBox(placed, String(item.name), plot, frame);
             });
             expect(boxes.length).toBeGreaterThan(0);
@@ -374,7 +393,7 @@ describe("the Manhattan text at each size", () => {
         it(`prints no chromosome name over another chromosome name at the ${kind} size`, () => {
             const toPx = (value: number): number => ((value - plot.x.min) / (plot.x.max - plot.x.min)) * frame.widthPx;
             const spans = dataOf(render, "Chromosome names").map((item) => {
-                const middle = toPx((item.value as [number, number])[0]);
+                const middle = toPx(optionPair(item.value)[0]);
                 const half = textWidthPx(String(item.name), frame.textPx) / 2;
                 return [middle - half, middle + half] as const;
             });
@@ -413,18 +432,14 @@ describe("the dense Manhattan plot", () => {
         return rows;
     }
 
-    const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`).call(undefined) as (
-        payload: { columns: string[]; rows: ChartRow[] },
-        source: ChartDataSource["series"][number],
-        rule: unknown,
-    ) => unknown[];
+    const seriesDataOnThePage = pageCall(CHART_SERIES_BUILDER, "reportSeriesData");
 
     it("reads the payload past the bound, and the page builds each chromosome as the server does", () => {
         const rows = denseRows(20000);
         const render = deriveChartRender(block(), rows, COLUMNS, { key: "gw", columns: COLUMNS }, {}, OPTS)._unsafeUnwrap();
         expect(JSON.stringify(render.inline).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
         expect(render.readsPayload).toBe(true);
-        const source = render.option[CHART_SOURCE_MEMBER] as ChartDataSource;
+        const source = chartSourceOf(render.option);
         expect(source.series.length).toBe(22);
         for (const [index, entry] of source.series.entries()) {
             const page = seriesDataOnThePage({ columns: COLUMNS, rows }, entry, source.rule);
@@ -433,7 +448,7 @@ describe("the dense Manhattan plot", () => {
         // The chromosome names ride the page option after the points, thus the page draws them over the payload points.
         const names = seriesOf(render.option)[22];
         if (names === undefined) throw new Error("the option holds no chromosome-name series");
-        expect((names.data as unknown[]).length).toBe(22);
+        expect(optionList(names.data).length).toBe(22);
     });
 });
 
@@ -442,9 +457,9 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     const ZOOM_IDS = { x: "\0_ec_\0toolbox-dataZoom_xAxis0", y: "\0_ec_\0toolbox-dataZoom_yAxis0" } as const;
 
     /** The page functions of the bootstrap: the binding of each named page function, and the zoom handler that the bootstrap attaches after the init. */
-    const page = new Function(`${CHART_TOOLBOX_SOURCE}\nreturn { bind: reportBindToolbox, watch: reportWatchZoom };`).call(undefined) as {
-        readonly bind: (option: EchartOption) => void;
-        readonly watch: (chart: echarts.ECharts, option: EchartOption) => void;
+    const page = {
+        bind: pageCall(CHART_TOOLBOX_SOURCE, "reportBindToolbox"),
+        watch: pageCall(CHART_TOOLBOX_SOURCE, "reportWatchZoom"),
     };
 
     /** A zoom window in data units, as a box select of the toolbox gives it. */
@@ -477,8 +492,8 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
         try {
             page.watch(chart, option);
             chart.setOption(option);
-            const x = option.xAxis as EchartOption;
-            const full: ZoomWindow = { x: [x.min as number, x.max as number], y: [0, asTop(option)] };
+            const x = optionAt(option, "xAxis");
+            const full: ZoomWindow = { x: [optionNumber(x.min), optionNumber(x.max)], y: [0, asTop(option)] };
             let window = full;
             for (const step of steps) {
                 if (step === "restore") {

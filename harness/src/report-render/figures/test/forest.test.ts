@@ -15,6 +15,7 @@ import { TOOLBOX_BAND_PX } from "../../chart-toolbox.js";
 import { CHART_EXPORT_SIZES, CHART_INK, GUIDE_LINE_COLOR } from "../../design.js";
 import { FOREST_FIGURE, termLines } from "../forest.js";
 import { FIGURE_MODULES } from "../index.js";
+import { optionArray, optionAt, optionMaybe, optionNumber, optionNumberRows, optionOf, seriesOf } from "../../test/options.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -48,13 +49,9 @@ function refusal(block: ChartBlock, rows: readonly ChartRow[] = ROWS): string {
 }
 
 /** The series of one option. */
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 /** The y axes of one option. */
 function yAxes(option: EchartOption): EchartOption[] {
-    return option.yAxis as EchartOption[];
+    return optionArray(option, "yAxis");
 }
 
 function yAxis(option: EchartOption, index: number): EchartOption {
@@ -86,7 +83,7 @@ describe("the forest figure", () => {
     });
 
     it("draws a log axis that ends at the nice ratios just past the data", () => {
-        const axis = derive(forestBlock()).xAxis as EchartOption;
+        const axis = optionAt(derive(forestBlock()), "xAxis");
         expect([axis.type, axis.min, axis.max, axis.name]).toEqual(["log", 0.25, 4, "hr"]);
     });
 
@@ -94,15 +91,15 @@ describe("the forest figure", () => {
         // A separated covariate gives a Wald interval of many decades.
         const rows = [...ROWS, { term: "Separated", hr: 3.2, lower: 1.2e-150, upper: 40, pvalue: 0.9 }];
         const option = derive(forestBlock(), rows);
-        const axis = option.xAxis as EchartOption;
-        expect(Math.log10((axis.max as number) / (axis.min as number))).toBeLessThanOrEqual(4);
+        const axis = optionAt(option, "xAxis");
+        expect(Math.log10(optionNumber(axis.max) / optionNumber(axis.min))).toBeLessThanOrEqual(4);
         expect(axis.max).toBe(40);
         const intervals = seriesOf(option)[1];
         if (intervals === undefined) throw new Error("the option holds no interval series");
-        const items = intervals.data as number[][];
+        const items = optionNumberRows(intervals.data);
         const separated = items.find((item) => item[1] === rows.length - 1);
         // The low bound ends at the axis and carries the clip mark of its end, and the high bound stays as it is.
-        expect(separated?.slice(2, 4)).toEqual([axis.min as number, 40]);
+        expect(separated?.slice(2, 4)).toEqual([optionNumber(axis.min), 40]);
         expect(separated?.[7]).toBe(1);
         expect(items.filter((item) => item !== separated).every((item) => item[7] === 0)).toBe(true);
         // The text column prints the bound of the table.
@@ -110,7 +107,7 @@ describe("the forest figure", () => {
     });
 
     it("holds 1 inside the log axis where every interval lies on one side of it", () => {
-        const axis = derive(forestBlock(), [{ term: "a", hr: 3, lower: 2.2, upper: 4.5, pvalue: 0.01 }]).xAxis as EchartOption;
+        const axis = optionAt(derive(forestBlock(), [{ term: "a", hr: 3, lower: 2.2, upper: 4.5, pvalue: 0.01 }]), "xAxis");
         expect([axis.min, axis.max]).toEqual([1, 5]);
     });
 
@@ -120,8 +117,9 @@ describe("the forest figure", () => {
             { term: "b", hr: 0.3, lower: 0.1, upper: 0.5, pvalue: 0.01 },
         ];
         const option = derive(forestBlock(), rows);
-        expect((option.xAxis as EchartOption).type).toBe("value");
-        const line = seriesOf(option).find((series) => series.markLine !== undefined)?.markLine as EchartOption;
+        expect(optionAt(option, "xAxis").type).toBe("value");
+        const line = optionMaybe(optionOf(seriesOf(option).find((series) => series.markLine !== undefined)), "markLine");
+        if (line === undefined) throw new Error("the option holds no guide line");
         expect(line.data).toEqual([{ xAxis: 0 }]);
     });
 
@@ -136,16 +134,17 @@ describe("the forest figure", () => {
     });
 
     it("draws a solid gray line at 1", () => {
-        const line = seriesOf(derive(forestBlock())).find((series) => series.markLine !== undefined)?.markLine as EchartOption;
+        const line = optionMaybe(optionOf(seriesOf(derive(forestBlock())).find((series) => series.markLine !== undefined)), "markLine");
+        if (line === undefined) throw new Error("the option holds no guide line");
         expect(line.lineStyle).toEqual({ color: GUIDE_LINE_COLOR, width: 1, type: "solid" });
         expect(line.data).toEqual([{ xAxis: 1 }]);
         expect(line.label).toEqual({ show: false });
     });
 
     it("draws each estimate as a square on its row", () => {
-        const squares = seriesOf(derive(forestBlock())).find((series) => series.type === "scatter") as EchartOption;
-        expect([squares.symbol, (squares.itemStyle as EchartOption).color]).toEqual(["rect", CHART_INK]);
-        expect((squares.data as EchartOption[]).map((item) => [item.value, item.symbolSize])).toEqual([
+        const squares = optionOf(seriesOf(derive(forestBlock())).find((series) => series.type === "scatter"));
+        expect([squares.symbol, optionAt(squares, "itemStyle").color]).toEqual(["rect", CHART_INK]);
+        expect(optionArray(squares, "data").map((item) => [item.value, item.symbolSize])).toEqual([
             [[1.0152725322439, 0], 9],
             [[0.531834967483113, 1], 9],
             [[2.09636398838477, 2], 9],
@@ -156,14 +155,14 @@ describe("the forest figure", () => {
 
     it("sizes each square by the size channel, with the area in proportion to the value", () => {
         const rows = ROWS.slice(0, 2).map((row, index) => ({ ...row, weight: index === 0 ? 100 : 25 }));
-        const squares = seriesOf(derive(forestBlock({ ...ENCODING, size: "weight" }), rows)).find((series) => series.type === "scatter") as EchartOption;
-        expect((squares.data as EchartOption[]).map((item) => item.symbolSize)).toEqual([16, 8]);
+        const squares = optionOf(seriesOf(derive(forestBlock({ ...ENCODING, size: "weight" }), rows)).find((series) => series.type === "scatter"));
+        expect(optionArray(squares, "data").map((item) => item.symbolSize)).toEqual([16, 8]);
     });
 
     it("draws the interval of each row as a line along the x axis", () => {
-        const interval = seriesOf(derive(forestBlock())).find((series) => series.type === "custom") as EchartOption;
+        const interval = optionOf(seriesOf(derive(forestBlock())).find((series) => series.type === "custom"));
         expect([interval.renderItem, interval.encode]).toEqual(["interval", { x: [0, 2, 3], y: 1 }]);
-        expect((interval.data as number[][])[1]).toEqual([0.531834967483113, 1, 0.375837377499962, 0.752581966485737, 0, 0, 0, 0]);
+        expect(optionNumberRows(interval.data)[1]).toEqual([0.531834967483113, 1, 0.375837377499962, 0.752581966485737, 0, 0, 0, 0]);
     });
 
     it("prints the estimate with its interval and the p value in two columns at the right", () => {
@@ -219,8 +218,8 @@ describe("the forest figure", () => {
             "Karnofsky score\n(physician)",
             "Weight loss (lb)",
         ]);
-        const squares = seriesOf(option).find((series) => series.type === "scatter") as EchartOption;
-        expect((squares.data as EchartOption[]).map((item) => item.name)).toEqual(TERMS);
+        const squares = optionOf(seriesOf(option).find((series) => series.type === "scatter"));
+        expect(optionArray(squares, "data").map((item) => item.name)).toEqual(TERMS);
     });
 
     it("ends a term past two lines with an ellipsis", () => {
@@ -238,7 +237,7 @@ describe("the forest figure", () => {
         const labeled: ChartBlock = { ...block, binding: { ...block.binding, columnLabels: { hr: "Hazard ratio", pvalue: "p" } } };
         const [, estimates, pValues] = yAxes(derive(labeled));
         if (estimates === undefined || pValues === undefined) throw new Error("the option holds fewer than three y axes");
-        expect([estimates.name, pValues.name, (derive(labeled).xAxis as EchartOption).name]).toEqual(["Hazard ratio", "p", "Hazard ratio"]);
+        expect([estimates.name, pValues.name, optionAt(derive(labeled), "xAxis").name]).toEqual(["Hazard ratio", "p", "Hazard ratio"]);
     });
 
     it("keeps the column titles of an export at its top edge, because an export has no toolbox", () => {

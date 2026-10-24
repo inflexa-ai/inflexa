@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { DraftDocument } from "./draft.js";
 
 /**
@@ -25,9 +26,11 @@ function canonicalize(value: unknown): unknown {
         return value.map(canonicalize);
     }
     if (value !== null && typeof value === "object") {
+        const record = parseUnknownRecord(value);
+        if (record === undefined) return value;
         const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-            sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
+        for (const key of Object.keys(record).sort()) {
+            sorted[key] = canonicalize(record[key]);
         }
         return sorted;
     }

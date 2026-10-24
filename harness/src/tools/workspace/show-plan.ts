@@ -10,19 +10,19 @@
  */
 
 import { ok, type Result } from "neverthrow";
-import type { Pool } from "pg";
 import { z } from "zod";
 
 import { buildPlanCardData } from "../../memory/card-builders.js";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import type { PlanRowQuerier } from "../../state/plans.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 
 type ShowPlanOutput = { shown: false; reason: "plan_not_found" } | { shown: true; id: string };
 
 const PLAN_ID_REGEX = /^pln-[a-f0-9]{8}$/;
 
-export function createShowPlanTool(pool: Pool) {
+export function createShowPlanTool(pool: PlanRowQuerier) {
     return defineTool({
         id: "show_plan",
         description:

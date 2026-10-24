@@ -1,11 +1,12 @@
 // The one translation path of a chat stream. Browser-safe: each import from outside `contracts/` is a type import.
 
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
+import { z } from "zod";
 import type { ChatStreamEvent } from "../providers/types.js";
 import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent, MessageStartEvent } from "./chat-events.js";
-import type { ChatPart } from "./chat-parts.js";
+import type { KnownChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
-import { isReconciling, PART_REGISTRY } from "./part-registry.js";
+import { isKnownPartType, isReconciling } from "./part-registry.js";
 import { EventSourceSchema } from "./schemas/chat-events.js";
 import { ChatPartSchema } from "./schemas/chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
@@ -18,6 +19,19 @@ export type ApplyFrameResult = {
 };
 
 export type ChatPartCheck = { readonly ok: true; readonly frame: ChatPartFrame } | { readonly ok: false; readonly error: string };
+
+/** The module imports no value from outside `contracts/` (browser-safe), so the generic record schema lives here. */
+const UnknownRecordSchema = z.record(z.string(), z.unknown());
+
+const ChatPartFrameSchema = z.looseObject({ type: z.templateLiteral(["data-", z.string()]), source: EventSourceSchema.optional() });
+
+/**
+ * The frame that {@link ChatPartFrameSchema} checked, given back as it arrived. The parse rebuilds the
+ * record and strips each field of `source` that the source schema does not know, but the passthrough
+ * contract of a type the registry does not know is byte for byte, so the arm returns the original
+ * record and not the parse's copy of it.
+ */
+const UnchangedFrameSchema = z.custom<ChatPartFrame>((value) => ChatPartFrameSchema.safeParse(value).success);
 
 function toSource(source: EmitEvent["source"]): EventSource {
     const frame: EventSource = { agentId: source.agentId, callPath: [...source.callPath] };
@@ -33,8 +47,10 @@ export function flattenDataPart(part: Pick<ChatDataPart, "type" | "data">): { ty
     // The payload is `unknown`, and the spread is not checked here. The chat stream checks each frame with `checkChatPart`.
     // On the run stream the producer builds the payload with the fields of its part contract, and the synthesis-sink test
     // parses the result with `RunSynthesisPartSchema`.
-    const data = (part.data ?? {}) as Record<string, unknown>;
-    return { ...data, type: part.type };
+    const data = UnknownRecordSchema.safeParse(part.data ?? {});
+    let payload: Record<string, unknown> = {};
+    if (data.success) payload = data.data;
+    return { ...payload, type: part.type };
 }
 
 /**
@@ -79,9 +95,8 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
             return { type: "message-start", messageId: event.messageId, role: event.role, source: toSource(event.source) };
 
         default: {
-            // The cast names the frame that the type claims. `checkChatPart` is the check.
             const part = flattenDataPart(event);
-            return { ...part, source: event.source === undefined ? undefined : toSource(event.source) } as ChatPartFrame;
+            return { ...part, source: event.source === undefined ? undefined : toSource(event.source) };
         }
     }
 }
@@ -91,16 +106,24 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
  * does not know. A type that the registry does not know passes unchanged, because a newer emitter can send it. The
  * source is checked for each type, because {@link isRootFrame} reads its call path.
  */
-export function checkChatPart(frame: ChatPartFrame): ChatPartCheck {
-    const { source, ...part } = frame;
-    if (source !== undefined) {
-        const checkedSource = EventSourceSchema.safeParse(source);
-        if (!checkedSource.success) return { ok: false, error: checkedSource.error.message };
-    }
-    if (!Object.hasOwn(PART_REGISTRY, frame.type)) return { ok: true, frame };
+export function checkChatPart(value: unknown): ChatPartCheck {
+    const frame = ChatPartFrameSchema.safeParse(value);
+    if (!frame.success) return { ok: false, error: frame.error.message };
+    const { source, ...part } = frame.data;
+    if (!isKnownPartType(frame.data.type)) return { ok: true, frame: UnchangedFrameSchema.parse(value) };
     const parsed = ChatPartSchema.safeParse(part);
     if (!parsed.success) return { ok: false, error: parsed.error.message };
     return { ok: true, frame: source === undefined ? parsed.data : { ...parsed.data, source } };
+}
+
+/**
+ * Whether the frame is a part whose type the registry knows. The guard narrows by the registry key alone
+ * and does not re-validate the payload. That is safe on the arrival path only: the payload of a known part
+ * was schema-checked by {@link checkChatPart} where the frame arrived, so a frame that passed the check
+ * and holds a known key carries the checked part with the source it arrived with.
+ */
+export function isKnownPartFrame(frame: ChatPartFrame): frame is KnownChatPart & { source?: EventSource } {
+    return isKnownPartType(frame.type);
 }
 
 /** A frame of the root agent of a chat turn, whose call path is `[agent.id]`. A longer path is a sub-agent. */
@@ -114,7 +137,7 @@ export function isRootFrame(frame: ChatFrame): boolean {
  */
 export function reconcileKey(part: MessagePart): string | undefined {
     if (part.type === "tool-call") return `tool-call:${part.toolCallId}`;
-    if (part.type === "text" || !Object.hasOwn(PART_REGISTRY, part.type) || !isReconciling(part.type)) return undefined;
+    if (part.type === "text" || !isKnownPartType(part.type) || !isReconciling(part.type)) return undefined;
     return "id" in part && typeof part.id === "string" ? `${part.type}:${part.id}` : undefined;
 }
 
@@ -183,9 +206,9 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
             // A chat event type that no case above takes is not a part frame, thus this annotation fails to compile.
             const partFrame: ChatPartFrame = frame;
             // The source routes the frame, and it is not a field of the part. A rest type does not distribute over the
-            // union of the part frames, thus the cast names the part that remains.
+            // union of the part frames, thus the rest names the part that remains.
             const { source: _source, ...part } = partFrame;
-            return upsertPart(parts, part as ChatPart);
+            return upsertPart(parts, part);
         }
     }
 }

@@ -30,8 +30,8 @@ export class BoundedTtlCache<Value> {
         this.entries.delete(key);
         this.entries.set(key, { value, expiresAt: this.now() + ttlMs });
         while (this.entries.size > this.maximum) {
-            const oldest = this.entries.keys().next().value as string | undefined;
-            if (oldest === undefined) break;
+            const oldest: unknown = this.entries.keys().next().value;
+            if (typeof oldest !== "string") break;
             this.entries.delete(oldest);
         }
     }

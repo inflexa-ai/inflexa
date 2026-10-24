@@ -73,7 +73,11 @@ import {
 import type { AgentDefinition, EmitFn, LoopMessage, RunStep } from "./types.js";
 
 export type AgentFinish = {
-    readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
+    /**
+     * The loop's stop reason: normalized when the word is modeled, and kept as
+     * the provider sent it when the word is outside the modeled union.
+     */
+    readonly reason: FinishReason | "aborted" | "max_iterations" | "denied" | (string & {});
     /**
      * The endpoint's own word for the stop, when the provider captured one —
      * `reason` normalizes it (an Anthropic `refusal` becomes `content-filter`).

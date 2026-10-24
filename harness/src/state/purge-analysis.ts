@@ -34,11 +34,11 @@
  */
 
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import type { WorkflowPurger } from "../execution/workflow-purger.js";
 import { createNoopLogger } from "../lib/console-logger.js";
-import { tryMutation, tryQuery, withTransaction, type DbError } from "../lib/db-result.js";
+import { tryMutation, tryQuery, withTransaction, type DbError, type TransactionQuerier } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import { searchIndexName } from "../workspace/search-config.js";
 import { isSqlIdentifier } from "./vector-store.js";
@@ -139,7 +139,7 @@ function refuse(op: string, message: string): ResultAsync<AnalysisPurgeOutcome, 
 }
 
 /** Run one delete on the transaction's client and report how many rows it took. */
-function deleteRows(client: PoolClient, op: string, text: string, analysisId: string): ResultAsync<number, DbError> {
+function deleteRows(client: TransactionQuerier, op: string, text: string, analysisId: string): ResultAsync<number, DbError> {
     return tryMutation(op, async () => {
         const { rowCount } = await client.query({ text, values: [analysisId] });
         return rowCount ?? 0;

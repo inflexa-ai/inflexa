@@ -6,34 +6,34 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import type { Browser } from "puppeteer-core";
 
-import { getBrowser, setBrowserConnector, withPage } from "../chrome.js";
+import { fakeLookPage } from "../__fixtures__/chrome.js";
+import { getBrowser, setBrowserConnector, withPage, type ConnectedBrowser } from "../chrome.js";
 
 /** A browser that no process backs, plus the control that fires the disconnect event of that browser. */
 type FakeBrowser = {
-    readonly browser: Browser;
+    readonly browser: ConnectedBrowser;
     emitDisconnected(): void;
 };
 
 function makeFakeBrowser(id: string): FakeBrowser {
     const listeners: Array<() => void> = [];
-    const fake = {
+    const fake: ConnectedBrowser = {
         connected: true,
         on(event: string, listener: () => void) {
             if (event === "disconnected") listeners.push(listener);
         },
         wsEndpoint: () => `ws://${id}`,
         createBrowserContext: async () => ({
-            newPage: async () => ({}),
+            newPage: async () => fakeLookPage(),
             close: async () => {},
         }),
     };
     return {
         // The cache reads the connected flag, it registers the disconnect listener, it logs the socket
         // endpoint, and it opens one context for each page. The fake carries those four members, thus no call
-        // of the cache reaches the gap between the fake and the class of puppeteer.
-        browser: fake as unknown as Browser,
+        // of the cache reaches the gap between the fake and the vendor type behind the structural type.
+        browser: fake,
         emitDisconnected() {
             for (const listener of listeners) listener();
         },

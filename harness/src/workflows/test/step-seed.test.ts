@@ -12,10 +12,14 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Pool } from "pg";
+import { Pool } from "pg";
+import { okAsync } from "neverthrow";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createNoopRunCharge } from "../../billing/noop-run-charge.js";
+import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { createWorkingMemory, type WorkingMemory } from "../../memory/working-memory.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import { ANALYSIS_MEMORY_HEADING } from "../../prompts/briefing.js";
 import type { DataProfileResult } from "../../state/data-profile.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
@@ -84,24 +88,45 @@ function fakePool(state: FakeState): Pool {
             return data ? { rows: [{ data }], rowCount: 1 } : { rows: [], rowCount: 0 };
         }
         if (text.startsWith("SELECT path, file_type")) {
-            const stepId = q.values?.[2] as string;
-            const limit = q.values?.[3] as number;
+            const stepId = q.values?.[2];
+            const limit = q.values?.[3];
+            if (typeof stepId !== "string" || typeof limit !== "number") throw new Error(`unexpected artifact-list query values: ${JSON.stringify(q.values)}`);
             const rows = (state.artifactsByStep?.[stepId] ?? []).slice(0, limit);
             return { rows, rowCount: rows.length };
         }
         return { rows: [], rowCount: 0 };
     };
-    return { query } as unknown as Pool;
+    return Object.assign(new Pool(), { query });
 }
 
 function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: KnowledgeClient): ExecuteAnalysisDeps {
     const pool = fakePool(state);
     return {
         pool,
+        provider: unusedChatProvider(),
+        embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
+        sandboxStepCallable: async () => {
+            throw new Error("sandboxStepCallable should not be invoked in the seed tests");
+        },
+        resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
+        synthesisModel: "test-synthesis-model",
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        citationResolver: unusedCitationResolver,
+        runCharge: createNoopRunCharge(),
+        runAuthorizer: {
+            authorize() {
+                throw new Error("runAuthorizer.authorize not exercised in the seed tests");
+            },
+            revoke() {
+                throw new Error("runAuthorizer.revoke not exercised in the seed tests");
+            },
+            revokeByJti() {
+                throw new Error("runAuthorizer.revokeByJti not exercised in the seed tests");
+            },
+        },
         workingMemory: createWorkingMemory(pool),
-        resolveWorkspaceRoot: () => workspaceRoot,
         knowledge,
-    } as unknown as ExecuteAnalysisDeps;
+    };
 }
 
 function memoryRow(overrides: Partial<WorkingMemory> = {}): WorkingMemory {

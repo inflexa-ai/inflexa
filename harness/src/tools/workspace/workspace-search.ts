@@ -12,13 +12,14 @@
  */
 
 import { err, ok, okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import type { QueryConfig } from "pg";
 import { z } from "zod";
 
 import type { EmbeddingProvider } from "../../providers/types.js";
 import { scopeResource } from "../../auth/types.js";
 import { tryQuery } from "../../lib/db-result.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { defineTool } from "../define-tool.js";
 
 /** pgvector / Postgres "undefined_table" — the index has no rows indexed yet. */
@@ -26,7 +27,7 @@ const UNDEFINED_TABLE = "42P01";
 
 /** True when a captured driver cause is the "undefined_table" SQLSTATE. */
 function isUndefinedTable(cause: unknown): boolean {
-    return !!cause && typeof cause === "object" && (cause as { code?: unknown }).code === UNDEFINED_TABLE;
+    return !!cause && typeof cause === "object" && "code" in cause && cause.code === UNDEFINED_TABLE;
 }
 
 function indexName(analysisId: string): string {
@@ -48,7 +49,7 @@ const PATTERN_TYPES = new Set(["input-group", "input-dimension", "input-kind"]);
  * segment. The consumer branches on presence, nothing else.
  */
 export function fileTargetOf(id: string, metadata: unknown): string | undefined {
-    const meta = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+    const meta = parseUnknownRecord(metadata) ?? {};
     const type = typeof meta.type === "string" ? meta.type : undefined;
     if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
     if (type === "input" && meta.entity !== undefined) return undefined;
@@ -56,7 +57,15 @@ export function fileTargetOf(id: string, metadata: unknown): string | undefined 
     return id.replace(/^\/[^/]+\//, "");
 }
 
-export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvider) {
+/** One search-hit row, as the pgvector SELECT returns it. */
+type SearchHitRow = { id: string; score: number; metadata: unknown };
+
+/** What the workspace search reads of the pool: its one row-reading query. A real `Pool` satisfies it. */
+export type WorkspaceSearchQuerier = {
+    query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: SearchHitRow[]; rowCount: number | null }>;
+};
+
+export function createWorkspaceSearchTool(pool: WorkspaceSearchQuerier, embedding: EmbeddingProvider) {
     return defineTool({
         id: "workspace_search",
         description:
@@ -100,11 +109,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
 
             const rows = unwrapOrThrow(
                 await tryQuery("workspaceSearch.query", async () => {
-                    const result = await pool.query<{
-                        id: string;
-                        score: number;
-                        metadata: unknown;
-                    }>(
+                    const result = await pool.query(
                         `SELECT vector_id AS id,
                     1 - (embedding <=> $1::vector) AS score,
                     metadata

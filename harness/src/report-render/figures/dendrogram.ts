@@ -118,7 +118,7 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
     const place = new Map<string, number>(leaves.map((leaf, index) => [leaf, index]));
     // The reverse of the preorder meets each child before its parent, and the walk met each node, thus each
     // lookup below finds a place.
-    const placeOf = (node: string): number => place.get(node) as number;
+    const placeOf = (node: string): number => place.get(node) ?? Number.NaN;
     for (const node of preorder.slice().reverse()) {
         const children = childrenOf.get(node);
         if (children === undefined) continue;

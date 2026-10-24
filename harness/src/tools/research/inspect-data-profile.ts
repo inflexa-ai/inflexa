@@ -31,7 +31,7 @@
  */
 
 import { ok, type Result } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../../state/db.js";
 import { z } from "zod";
 
 import { profileCaveats, profileDatasetFileCount, profileFileRecords, profileGroups } from "../../app/data-profile-view.js";
@@ -240,7 +240,7 @@ const FAILURE_SCOPE_NOTE =
     "holds now, so do not read it as a verdict on the current data. Compare failedAt against when the input set " +
     "last changed, and re-profile if they have moved apart.";
 
-export function createInspectDataProfileTool(pool: Pool) {
+export function createInspectDataProfileTool(pool: Querier) {
     return defineTool({
         id: "inspect_data_profile",
         description:

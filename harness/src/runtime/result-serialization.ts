@@ -17,6 +17,7 @@
 
 import type { SerializationRecipe } from "@dbos-inc/dbos-sdk";
 import { Err, Ok, err, ok } from "neverthrow";
+import { z } from "zod";
 
 export type Json = string | number | boolean | null | undefined | Json[] | { [key: string]: Json };
 
@@ -36,8 +37,13 @@ function toJson(value: unknown): Json {
         if (typeof v === "bigint") return v.toString();
         return v;
     });
-    return text === undefined ? undefined : (JSON.parse(text) as Json);
+    // The stringify round-trip holds only JSON values, so the parse cannot refuse.
+    return text === undefined ? undefined : JsonSchema.parse(JSON.parse(text));
 }
+
+const JsonSchema: z.ZodType<Json> = z.lazy(() =>
+    z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonSchema), z.record(z.string(), JsonSchema)]),
+);
 
 export const okRecipe: SerializationRecipe<Ok<unknown, never>, EncodedOk> = {
     name: "neverthrow.Ok",

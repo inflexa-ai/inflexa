@@ -14,6 +14,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../../providers/ai-sdk.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../../providers/prompt-cache.js";
@@ -188,7 +189,7 @@ describe("withPromptCacheBreakpoint", () => {
     it("places nothing when caching is off, and strips what a stored message carried", () => {
         const stale: ModelMessage = { ...userText("old"), providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } };
 
-        const marked = withPromptCacheBreakpoint([stale, userText("new")], "off" as PromptCachePolicy);
+        const marked = withPromptCacheBreakpoint([stale, userText("new")], "off");
 
         expect(breakpointsOf(marked)).toEqual([]);
         // The namespace held nothing else, thus it goes with the marker.
@@ -198,7 +199,7 @@ describe("withPromptCacheBreakpoint", () => {
     it("returns the array itself when there is nothing to place and nothing to strip", () => {
         const transcript = [userText("a")];
 
-        expect(withPromptCacheBreakpoint(transcript, "off" as PromptCachePolicy)).toBe(transcript);
+        expect(withPromptCacheBreakpoint(transcript, "off")).toBe(transcript);
         expect(withPromptCacheBreakpoint([], DEFAULT_PROMPT_CACHE)).toEqual([]);
     });
 });
@@ -216,7 +217,7 @@ describe("withSystemPromptBreakpoint", () => {
     });
 
     it("leaves the system prompt a plain string when caching is off", () => {
-        expect(withSystemPromptBreakpoint("You are a test agent.", "off" as PromptCachePolicy)).toBe("You are a test agent.");
+        expect(withSystemPromptBreakpoint("You are a test agent.", "off")).toBe("You are a test agent.");
     });
 
     it("leaves an empty system prompt a plain string, thus no marker lands on an empty text block", () => {
@@ -312,7 +313,7 @@ describe("runAgent prompt-cache directive", () => {
     it("sends no directive when the host turns caching off", async () => {
         const chat = neverTerminating();
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
+        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" }));
 
         // 2 iterations + 2 wrap-up requests.
         expect(chat.calls).toHaveLength(4);
@@ -397,7 +398,10 @@ describe("runAgent cache-token metrics", () => {
         if (metric === undefined) return undefined;
         return metric.dataPoints
             .filter((dp) => Object.entries(labels).every(([key, value]) => dp.attributes[key] === value))
-            .reduce((acc, dp) => acc + (dp.value as number), 0);
+            .reduce((acc, dp) => {
+                const pointValue: unknown = dp.value;
+                return typeof pointValue === "number" ? acc + pointValue : acc;
+            }, 0);
     }
 
     it("sums usage across every iteration of a run and reports it per agent, model, and provider", async () => {
@@ -495,14 +499,21 @@ describe("runAgent cache-token metrics", () => {
 
 // ── The openai-compatible no-op ─────────────────────────────────────
 
+/** The captured body the canned fetch saw, or a failed test. */
+function seenBody(init: RequestInit | undefined): Record<string, unknown> {
+    const parsed = parseUnknownRecord(JSON.parse(String(init?.body)));
+    if (parsed === undefined) throw new Error("the canned provider saw a non-object request body");
+    return parsed;
+}
+
 /**
  * A canned OpenAI chat-completions stream. `prompt_tokens_details.cached_tokens`
  * is the OpenAI-family cache-read report — the provider normalizes it onto the
  * same neutral field the Anthropic provider uses.
  */
 function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
-    return (async (_input: string | URL | Request, init?: RequestInit) => {
-        seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    const run = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        seen.push(seenBody(init));
         const base = { id: "chatcmpl-1", object: "chat.completion.chunk", created: 1_700_000_000, model: "local-model" };
         const body = [
             `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "done" }, finish_reason: null }] })}\n\n`,
@@ -514,7 +525,8 @@ function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
             "data: [DONE]\n\n",
         ].join("");
         return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
-    }) as typeof fetch;
+    };
+    return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
 describe("prompt caching against an openai-compatible provider", () => {
@@ -582,8 +594,8 @@ describe("prompt caching against an openai-compatible provider", () => {
 
 /** A canned Bedrock Converse response — enough for the provider to parse a reply. */
 function cannedBedrockFetch(seen: Record<string, unknown>[]): typeof fetch {
-    return (async (_input: string | URL | Request, init?: RequestInit) => {
-        seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    const run = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        seen.push(seenBody(init));
         return new Response(
             JSON.stringify({
                 output: { message: { role: "assistant", content: [{ text: "ok" }] } },
@@ -592,7 +604,8 @@ function cannedBedrockFetch(seen: Record<string, unknown>[]): typeof fetch {
             }),
             { status: 200, headers: { "content-type": "application/json" } },
         );
-    }) as typeof fetch;
+    };
+    return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
 describe("the bedrock marker on the wire", () => {
@@ -606,7 +619,7 @@ describe("the bedrock marker on the wire", () => {
             messages: [...withPromptCacheBreakpoint([userText("first"), assistantText("second"), userText("third")], policy)],
         });
 
-        const messages = (bodies[0]?.["messages"] ?? []) as { content: Record<string, unknown>[] }[];
+        const messages = z.array(z.object({ content: z.array(z.record(z.string(), z.unknown())) })).parse(bodies[0]?.["messages"] ?? []);
         return messages.at(-1)?.content ?? [];
     }
 
@@ -623,7 +636,7 @@ describe("the bedrock marker on the wire", () => {
     });
 
     it("renders no cachePoint at all when caching is off", async () => {
-        const blocks = await lastMessageBlocks("off" as PromptCachePolicy);
+        const blocks = await lastMessageBlocks("off");
 
         expect(blocks.some((b) => "cachePoint" in b)).toBe(false);
     });
@@ -638,7 +651,7 @@ describe("the bedrock marker on the wire", () => {
             messages: [userText("first")],
         });
 
-        const system = (bodies[0]?.["system"] ?? []) as Record<string, unknown>[];
+        const system = z.array(z.record(z.string(), z.unknown())).parse(bodies[0]?.["system"] ?? []);
         expect(system.at(-1)).toEqual({ cachePoint: { type: "default", ttl: "5m" } });
         expect(system.at(-2)).toEqual({ text: "You are a test agent." });
     });

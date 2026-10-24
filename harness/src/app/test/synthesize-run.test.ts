@@ -12,11 +12,13 @@ import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Pool } from "pg";
+
+import type { Querier } from "../../state/db.js";
 
 import { okAsync } from "neverthrow";
 
 import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
+import type { RunSynthesis } from "../../schemas/run-synthesis.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
@@ -41,14 +43,14 @@ function makeRunSession(): RunSession {
 }
 
 /** A pool stub that returns no rows — `queryRun` → null → empty narrative. */
-function emptyPool(): Pool {
+function emptyPool(): Querier {
     return {
         query: async () => ({ rows: [], rowCount: 0 }),
-    } as unknown as Pool;
+    };
 }
 
 /** A valid synthesis payload (schema + semantic checks); mirrors run-synthesis.test. */
-function validSynthesisPayload(): unknown {
+function validSynthesisPayload(): RunSynthesis {
     return {
         runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
@@ -238,7 +240,7 @@ describe("synthesizeRun", () => {
             // The produced path does not warn.
             expect(h.logs.some((r) => r.level === "warn")).toBe(false);
             // The final run-synthesis chat part was emitted.
-            expect(emitted.some((e) => typeof e === "object" && e !== null && (e as { type?: string }).type === "data-run-synthesis")).toBe(true);
+            expect(emitted.some((e) => typeof e === "object" && e !== null && "type" in e && e.type === "data-run-synthesis")).toBe(true);
             // synthesis.json was written under the run directory.
             const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);
@@ -282,7 +284,7 @@ describe("synthesizeRun", () => {
     });
 
     it("skips on a blocker that follows a rejected submission, writing nothing", async () => {
-        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        const bad = validSynthesisPayload();
         bad.findings[0]!.stepId = "UNKNOWN";
         const provider = scriptedProvider((i) => {
             if (i === 0) return makeMessage([toolUseBlock("tu-0", "submit_synthesis", { synthesis: bad })], "tool_use");

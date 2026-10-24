@@ -15,9 +15,16 @@ import {
     makeFakeWorkspaceFs,
 } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createDataProfilerAgent } from "../../agents/sandbox/data-profiler.js";
-import type { RunAuthorizer } from "../../execution/run-authorizer.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
+
+const unusedEmbedding: EmbeddingProvider = {
+    dimensions: 1536,
+    embed() {
+        throw new Error("not used at composition time");
+    },
+};
 import { sandboxPackageLinkPrompt } from "../../prompts/sandbox-standards.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
 import { profilerSandboxAgentDeps, type DataProfileDeps } from "../data-profile.js";
@@ -31,10 +38,10 @@ function makeProfileDeps(over: Partial<DataProfileDeps> = {}): DataProfileDeps {
         resolveWorkspaceRoot: async (resourceId: string) => `/tmp/sessions/${resourceId}`,
         model: "claude-opus-4-7",
         // The projection copies fields and calls nothing, so an empty stub is safe.
-        runAuthorizer: {} as RunAuthorizer,
+        runAuthorizer: createLocalRunAuthorizer(),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         // Same invariant: the composition never embeds.
-        embedding: {} as EmbeddingProvider,
+        embedding: unusedEmbedding,
         skillsDir: "/tmp/skills",
         ...over,
     };

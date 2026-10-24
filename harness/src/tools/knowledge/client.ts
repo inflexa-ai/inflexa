@@ -22,6 +22,8 @@ import { z } from "zod";
 
 import { apiFetchValidated, describeApiError, type ApiError } from "../lib/api-utils.js";
 
+import type { SituationFieldsSchema } from "./situation.js";
+
 // ── The situation ───────────────────────────────────────────────────
 
 /** The role of the blocking factor. A role and never a column name, because the situation leaves the machine. */
@@ -32,43 +34,7 @@ export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "other";
 export type PredictorRole = "dose" | "time" | "age" | "score" | "other";
 
 /** The typed description of one analysis situation. Never a sample row, never an identifier, and never a column name. */
-export type KnowledgeSituation = {
-    readonly question: "differential_expression" | "enrichment" | "qc" | "full_plan";
-    readonly modality: "bulk_rna_seq";
-    readonly data_state: "fastq" | "counts" | "tpm_or_fpkm" | "log_normalized";
-    readonly count_source?: "salmon" | "kallisto" | "star_featurecounts" | "rsem" | "unknown";
-    /** Whether the length correction of a quantifier occurred. Never required: the service sets `unknown` on counts. */
-    readonly import_state?: "quantifications" | "estimated_counts_with_lengths" | "corrected_counts" | "integer_counts" | "unknown";
-    readonly organism: "human" | "mouse" | "other";
-    readonly n_groups: number;
-    readonly n_per_group_min: number;
-    readonly n_per_group_max: number;
-    /** The total number of biological samples. Never required. */
-    readonly n_samples?: number;
-    /** The number of samples with an observed event, for a survival question. Never required. */
-    readonly n_events?: number;
-    readonly paired: boolean;
-    /** The role of the blocking factor, or null. The column name stays on the machine. */
-    readonly blocking_factor?: BlockingRole | null;
-    /** How the blocking factor relates to the condition: crossed, or nested inside one condition. */
-    readonly block_structure?: "crossed" | "nested";
-    readonly batch: "none" | "known_balanced" | "known_confounded" | "known_unbalanced" | "suspected";
-    /** The role of each covariate of the design, one entry per covariate. The column names stay on the machine. */
-    readonly covariates?: readonly CovariateRole[];
-    readonly n_timepoints?: number | null;
-    /** The role of the numeric variable of interest when the question is a trend over it; then `n_groups` is 1. The column name stays on the machine. */
-    readonly continuous_predictor?: PredictorRole | null;
-    /** True when some columns of the count table are technical replicates of one biological sample. */
-    readonly technical_replicates?: boolean;
-    /** The row unit of the count table. Absent for a gene-level table. */
-    readonly feature_level?: "gene" | "exon" | "transcript";
-    readonly library_type?: "polyA" | "total" | "three_prime" | "unknown";
-    readonly strandedness?: "verified" | "declared_unverified" | "unknown";
-    readonly interaction?: boolean;
-    /** True for a classifier of the samples into classes; absent for a per-sample score. */
-    readonly classifier?: boolean;
-    readonly quality_flags?: readonly ("low_depth_sample" | "outlier_sample" | "sample_identity_doubt" | "high_duplication" | "degraded_rna")[];
-};
+export type KnowledgeSituation = z.infer<typeof SituationFieldsSchema>;
 
 // ── The answers, as the harness reads them ──────────────────────────
 
@@ -115,6 +81,10 @@ const ProcedureStepSchema = z.looseObject({
     substitution: ProcedureSubstitutionSchema.optional(),
     limit: ProcedureLimitSchema.optional(),
     unrealized: ProcedureUnrealizedSchema.optional(),
+    /** The runtime package the step installs, when the service names one. */
+    package: z.looseObject({ name: z.string() }).optional(),
+    /** The forbidden method ids, read defensively by the grounding report. */
+    forbids: z.unknown().optional(),
 });
 
 const ClaimSchema = z.looseObject({
@@ -196,10 +166,11 @@ export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
 // ── The template contract ───────────────────────────────────────────
 
-const SlotScalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+/** A scalar on the wire. Absence rides the optional key; the service omits, never nulls. */
+const SlotScalarSchema = z.union([z.string(), z.number(), z.boolean()]);
 
-/** A slot value on the wire: a scalar, or a list of scalars. */
-const SlotValueSchema = z.union([SlotScalarSchema, z.array(SlotScalarSchema)]);
+/** A slot value on the wire: a scalar, or a list of strings — the contract the service states for a default. */
+const SlotValueSchema = z.union([SlotScalarSchema, z.array(z.string())]);
 
 /**
  * One slot of a template with the constraint a caller value must obey.
@@ -462,7 +433,7 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
         if (typeof answer === "object" && answer !== null && "match" in answer && answer.match === "snapshot_mismatch") {
             return { match: "unavailable", reason: answer.message };
         }
-        return answer as z.infer<S> | KnowledgeUnavailable | KnowledgeRejected;
+        return answer;
     }
 
     return {

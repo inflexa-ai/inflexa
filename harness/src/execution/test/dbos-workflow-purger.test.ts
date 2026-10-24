@@ -18,7 +18,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import { createDbosLedgerSeeder, type DbosLedgerSeeder } from "../../__tests__/setup/dbos-ledger.js";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
@@ -194,24 +194,23 @@ describe("createDbosWorkflowPurger", () => {
  */
 function failingPool(code: string, systemSchema: "present" | "absent"): Pool {
     const failure = Object.assign(new Error(`relation "dbos.workflow_status" does not exist (${code})`), { code });
-    const fake: Record<string, unknown> = {
-        // Read once, for the pool size the engine client derives its polling limit from.
-        options: {},
-    };
     const textOf = (config: unknown): string => {
         if (typeof config === "string") return config;
         if (typeof config === "object" && config !== null && "text" in config) return String(config.text);
         return "";
     };
-    fake.query = (config: unknown) =>
-        textOf(config).includes("information_schema.schemata") ? Promise.resolve({ rows: [{ present: systemSchema === "present" }] }) : Promise.reject(failure);
-    // `pg` returns the pool from `on`, which is where the engine client registers its
-    // own `error` and `connect` handlers.
-    fake.on = () => fake;
-    // The purger reaches its ledger through `query` alone, and the engine client it
-    // hands the same pool to touches only `options` and `on` before its own first
-    // `query` — so this covers every part of `Pool` either one reaches.
-    return fake as unknown as Pool;
+    const base = new Pool();
+    return Object.assign(base, {
+        // Read once, for the pool size the engine client derives its polling limit from.
+        options: {},
+        query: (config: unknown) =>
+            textOf(config).includes("information_schema.schemata")
+                ? Promise.resolve({ rows: [{ present: systemSchema === "present" }] })
+                : Promise.reject(failure),
+        // `pg` returns the pool from `on`, which is where the engine client registers its
+        // own `error` and `connect` handlers.
+        on: () => base,
+    });
 }
 
 describe("createDbosWorkflowPurger against an unreachable ledger", () => {
@@ -258,9 +257,8 @@ describe("createDbosWorkflowPurger against an unreachable ledger", () => {
 describe("dbosClientFor", () => {
     // The client registers its handlers on the pool and reads `options` once; creating it opens no connection.
     function inertPool(): Pool {
-        const fake: Record<string, unknown> = { options: {} };
-        fake.on = () => fake;
-        return fake as unknown as Pool;
+        const base = new Pool();
+        return Object.assign(base, { on: () => base });
     }
 
     it("gives every caller of one pool the same client, and a different pool its own", async () => {

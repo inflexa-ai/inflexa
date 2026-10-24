@@ -10,20 +10,15 @@
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { z } from "zod";
 
 import { buildReportSessionUrl, reportSessionResourceId } from "../content-url.js";
 
-type ReportSessionVector = {
-    analysisId: string;
-    threadId: string;
-    expectedRes: string;
-};
+const ReportSessionVectorSchema = z.object({ analysisId: z.string(), threadId: z.string(), expectedRes: z.string() });
 
-function readFixture<T>(name: string): { vectors: T[] } {
-    return JSON.parse(readFileSync(new URL(`../../__tests__/fixtures/${name}`, import.meta.url), "utf8")) as { vectors: T[] };
-}
-
-const reportSessionFixture = readFixture<ReportSessionVector>("report-session-res.json");
+const reportSessionFixture = z
+    .object({ vectors: z.array(ReportSessionVectorSchema) })
+    .parse(JSON.parse(readFileSync(new URL("../../__tests__/fixtures/report-session-res.json", import.meta.url), "utf8")));
 
 describe("reportSessionResourceId", () => {
     test("matches every vector of the shared fixture", () => {

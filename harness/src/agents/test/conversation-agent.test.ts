@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { join } from "node:path";
 import { ok, okAsync } from "neverthrow";
 import { z } from "zod";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { createConversationAgent, CONVERSATION_AGENT_ID } from "../conversation-agent.js";
@@ -11,11 +11,14 @@ import { createRegistry } from "../../tools/registry.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { AskRejectedError } from "../../tools/approval/contract.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
-import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import type { RunAuthorizer } from "../../execution/run-authorizer.js";
+import type { EmbeddingProvider } from "../../providers/types.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
+import { makeFakeWorkspaceFs } from "../sandbox/__fixtures__/deps.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
+import type { ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
+import type { EnsureSessionStateResult } from "../../app/report-session-runtime.js";
 import type { WebSearchEngine } from "../../tools/research/web-search.js";
 
 // Composition never calls the engine — a bare stub shapes the deps bag.
@@ -28,24 +31,38 @@ const unusedWebSearchEngine: WebSearchEngine = {
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
 // for asserting the assembled `AgentDefinition`'s shape.
+const refuseExecuteAnalysis = async (): Promise<ExecuteAnalysisResult> => {
+    throw new Error("not used at composition time");
+};
+const refuseAnchorReportSession: (threadId: string) => Promise<EnsureSessionStateResult> = () => {
+    throw new Error("not used at composition time");
+};
+const refuseRunLauncher: RunLauncher = {
+    launch() {
+        throw new Error("not used at composition time");
+    },
+};
+const unusedEmbedding: EmbeddingProvider = {
+    dimensions: 1536,
+    embed() {
+        throw new Error("not used at composition time");
+    },
+};
+
 function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore, webSearch?: WebSearchEngine) {
     return createConversationAgent({
-        provider: {} as ChatProvider,
-        utilityProvider: {} as ChatProvider,
-        pool: {} as Pool,
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
+        provider: unusedChatProvider(),
+        utilityProvider: unusedChatProvider(),
+        pool: new Pool(),
+        embedding: unusedEmbedding,
+        workspaceFs: makeFakeWorkspaceFs(),
         model: "anthropic/claude-opus-4-7",
         utilityModel: "anthropic/claude-haiku-4-5",
-        executeAnalysisWorkflow: (async () => {
-            throw new Error("not used at composition time");
-        }) as never,
-        anchorReportSession: (async () => {
-            throw new Error("not used at composition time");
-        }) as never,
+        executeAnalysisWorkflow: refuseExecuteAnalysis,
+        anchorReportSession: refuseAnchorReportSession,
         resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-        runAuthorizer: {} as RunAuthorizer,
-        runLauncher: {} as RunLauncher,
+        runAuthorizer: createLocalRunAuthorizer(),
+        runLauncher: refuseRunLauncher,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         skillsDir: "/skills",
         chrome: {},

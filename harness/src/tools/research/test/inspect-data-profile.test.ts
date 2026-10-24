@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../../__tests__/setup/postgres.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { completeDataProfile, failDataProfile, tryRerunDataProfile, tryStartDataProfile, type DataProfileResult } from "../../../state/index.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createInspectDataProfileTool, type InspectDataProfileOutput } from "../inspect-data-profile.js";
@@ -28,6 +29,13 @@ async function seedAnalysis(seed: string[] = ["file-aaa", "file-bbb"], status: s
 async function completeWith(result: DataProfileResult): Promise<void> {
     (await tryStartDataProfile(pool, ANALYSIS))._unsafeUnwrap();
     (await completeDataProfile(pool, ANALYSIS, result))._unsafeUnwrap();
+}
+
+/** The serialized wire view of one tool answer: the record the model reads. */
+function wireOf(value: unknown): Record<string, unknown> {
+    const wire = parseUnknownRecord(JSON.parse(JSON.stringify(value)));
+    if (!wire) throw new Error("expected a serializable wire object");
+    return wire;
 }
 
 async function run(input: { scope?: "overview" | "groups" | "files"; page?: number; pageSize?: number } = {}): Promise<InspectDataProfileOutput> {
@@ -96,9 +104,9 @@ async function resetLedger(): Promise<void> {
 
 describe("the tool contract", () => {
     it("declares a bounded, paged input surface", () => {
-        const schema = tool.jsonSchema as { properties: Record<string, unknown> };
+        const schema = parseUnknownRecord(tool.jsonSchema.properties) ?? {};
         expect(tool.id).toBe("inspect_data_profile");
-        expect(Object.keys(schema.properties).sort()).toEqual(["page", "pageSize", "scope"]);
+        expect(Object.keys(schema).sort()).toEqual(["page", "pageSize", "scope"]);
         // The description must say where the profile lives, because nothing else will.
         expect(tool.description).toContain("authoritative record");
         expect(tool.description).toContain("no data-profile file");
@@ -147,10 +155,10 @@ describe("lifecycle variants — every one is data, not an error", () => {
         const out = await run();
         expect(out.state).toBe("failed");
         expect(out).toMatchObject({ error: "sandbox crashed" });
-        expect(typeof (out as { failedAt: string | null }).failedAt).toBe("string");
-        const message = (out as { message: string }).message;
-        expect(message).toContain("earlier attempt");
-        expect(message).toContain("cannot establish");
+        if (!("failedAt" in out) || !("message" in out)) throw new Error("the failed output carries its reason fields");
+        expect(typeof out.failedAt).toBe("string");
+        expect(out.message).toContain("earlier attempt");
+        expect(out.message).toContain("cannot establish");
     });
 
     it("failed: a row recording no completion time answers failedAt: null, not a fabricated one", async () => {
@@ -163,7 +171,7 @@ describe("lifecycle variants — every one is data, not an error", () => {
             values: [ANALYSIS],
         });
 
-        const wire = JSON.parse(JSON.stringify(await run())) as Record<string, unknown>;
+        const wire = wireOf(await run());
         expect(wire.state).toBe("failed");
         expect(wire).toHaveProperty("failedAt");
         expect(wire.failedAt).toBeNull();
@@ -177,7 +185,7 @@ describe("lifecycle variants — every one is data, not an error", () => {
 
         // The tool reads one ledger row; the analysis's current input set is the
         // embedder's knowledge. A field claiming that comparison would be constant.
-        const wire = JSON.parse(JSON.stringify(await run())) as Record<string, unknown>;
+        const wire = wireOf(await run());
         expect(Object.keys(wire).sort()).toEqual(["error", "failedAt", "message", "state"]);
         expect(tool.description).not.toContain("inputSetSinceFailure");
     });
@@ -298,11 +306,11 @@ describe("scope: overview", () => {
         expect(out).toMatchObject({ state: "ready", summary: "Three count matrices.", describedFileCount: 1, datasetFileCount: null, groupCount: null });
         // The widened fields come back undefined and drop out at JSON serialization —
         // the model is told nothing rather than told a default.
-        const overview = out as { domain?: string; organism?: unknown; qualityAssessment?: unknown };
-        expect(overview.domain).toBeUndefined();
-        expect(overview.organism).toBeUndefined();
-        expect(overview.qualityAssessment).toBeUndefined();
-        expect(JSON.parse(JSON.stringify(out))).not.toHaveProperty("domain");
+        const wire = wireOf(out);
+        expect(wire.domain).toBeUndefined();
+        expect(wire.organism).toBeUndefined();
+        expect(wire.qualityAssessment).toBeUndefined();
+        expect(wire).not.toHaveProperty("domain");
     });
 });
 
@@ -348,16 +356,19 @@ describe("scope: files — paged, with truncation always visible", () => {
 
         const first = await run({ scope: "files", page: 1, pageSize: 10 });
         expect(first).toMatchObject({ page: 1, pageSize: 10, total: 25, hasMore: true });
-        expect((first as { files: unknown[] }).files).toHaveLength(10);
+        if (!("files" in first)) throw new Error("the files scope carries files");
+        expect(first.files).toHaveLength(10);
 
         const second = await run({ scope: "files", page: 2, pageSize: 10 });
         expect(second).toMatchObject({ page: 2, total: 25, hasMore: true });
-        expect((second as { files: { path: string }[] }).files[0]?.path).toBe(`/${ANALYSIS}/data/inputs/f10/counts.csv`);
+        if (!("files" in second)) throw new Error("the files scope carries files");
+        expect(second.files[0]?.path).toBe(`/${ANALYSIS}/data/inputs/f10/counts.csv`);
 
         // The last page holds the remainder and says so — no silent truncation anywhere.
         const third = await run({ scope: "files", page: 3, pageSize: 10 });
         expect(third).toMatchObject({ page: 3, total: 25, hasMore: false });
-        expect((third as { files: unknown[] }).files).toHaveLength(5);
+        if (!("files" in third)) throw new Error("the files scope carries files");
+        expect(third.files).toHaveLength(5);
     });
 
     it("a page past the end is empty and honest, not an error", async () => {
@@ -367,7 +378,8 @@ describe("scope: files — paged, with truncation always visible", () => {
 
         const out = await run({ scope: "files", page: 9, pageSize: 10 });
         expect(out).toMatchObject({ page: 9, total: 3, hasMore: false });
-        expect((out as { files: unknown[] }).files).toHaveLength(0);
+        if (!("files" in out)) throw new Error("the files scope carries files");
+        expect(out.files).toHaveLength(0);
     });
 
     it("a profile that exactly fills one page reports hasMore: false", async () => {
@@ -434,14 +446,12 @@ describe("scope: groups — a snapshot of the kinds era", () => {
             axes: [{ label: "patient", cardinality: 800 }],
             coverage: { matched: 3197, unmatched: 3, total: 3200 },
         });
-        expect((out as { kinds: unknown[] }).kinds).toHaveLength(2);
+        if (!("kinds" in out) || out.kinds === undefined || !("message" in out)) throw new Error("the groups snapshot carries kinds and a message");
+        expect(out.kinds).toHaveLength(2);
         // The structure exists; an agent must never be told the dataset has none.
-        expect((out as { message: string }).message).toContain("previous model");
+        expect(out.message).toContain("previous model");
         // A glob takes the same rooting as a file path, and its wildcard survives it.
-        expect((out as { kinds: { pathPattern: string }[] }).kinds.map((k) => k.pathPattern)).toEqual([
-            `/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`,
-            `/${ANALYSIS}/data/inputs/tbi/*.tbi`,
-        ]);
+        expect(out.kinds.map((k) => k.pathPattern)).toEqual([`/${ANALYSIS}/data/inputs/vcf/*.vcf.gz`, `/${ANALYSIS}/data/inputs/tbi/*.tbi`]);
     });
 
     it("reports the scope unavailable — not empty — for a snapshot that predates every structure record", async () => {
@@ -456,7 +466,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
         const out = await run({ scope: "groups" });
         expect(out).toMatchObject({ scope: "groups", available: false });
         expect(out).not.toHaveProperty("kinds");
-        expect((out as { message: string }).message).toContain("before the dataset-structure record existed");
+        if (!("message" in out)) throw new Error("the unavailable scope carries a message");
+        expect(out.message).toContain("before the dataset-structure record existed");
     });
 
     it("does not let the described-file count masquerade as the dataset size", async () => {
@@ -466,7 +477,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
 
         const out = await run();
         expect(out).toMatchObject({ describedFileCount: 1, datasetFileCount: 3200, groupCount: 2 });
-        expect((out as { structureNote: string }).structureNote).toContain("scope:'groups'");
+        if (!("structureNote" in out)) throw new Error("the overview carries the structure note");
+        expect(out.structureNote).toContain("scope:'groups'");
     });
 
     it("states nothing about the dataset size a legacy row cannot support", async () => {
@@ -480,7 +492,8 @@ describe("scope: groups — a snapshot of the kinds era", () => {
 
         const out = await run();
         expect(out).toMatchObject({ datasetFileCount: null, groupCount: null });
-        expect((out as { structureNote: string }).structureNote).toContain("predates");
+        if (!("structureNote" in out)) throw new Error("the overview carries the structure note");
+        expect(out.structureNote).toContain("predates");
     });
 });
 
@@ -567,7 +580,8 @@ describe("scope: groups — a snapshot resolved into groups", () => {
         expect(out).not.toHaveProperty("legacy");
         expect(out).not.toHaveProperty("kinds");
 
-        const groups = (out as { groups: { id: string; count: number; fileCount: number; displayPattern: string; slots?: unknown[] }[] }).groups;
+        if (!("groups" in out) || out.groups === undefined) throw new Error("the groups scope carries the groups");
+        const groups = out.groups;
         expect(groups.map((g) => g.id)).toEqual(["per-subject-calls", "unclassified"]);
         expect(groups[0]).toMatchObject({ count: 40, fileCount: 80, displayPattern: `/${ANALYSIS}/data/inputs/vcf/<id>.vcf.gz` });
         expect(groups[0]!.slots).toHaveLength(1);
@@ -591,7 +605,8 @@ describe("scope: groups — a snapshot resolved into groups", () => {
             recipe: [{ op: "use", groupIds: ["per-subject-calls"] }],
         });
         // Both observations stand: nothing here resolves 40 against 42.
-        const dimensions = (out as { dimensions: { observations: unknown[] }[] }).dimensions;
+        if (!("dimensions" in out) || out.dimensions === undefined) throw new Error("the overview carries the dimensions");
+        const dimensions = out.dimensions;
         expect(dimensions[0]!.observations).toHaveLength(2);
     });
 

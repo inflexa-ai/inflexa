@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { createRateLimitSchedule } from "../../../lib/rate-limit.js";
 import { requestJson } from "../http.js";
 
@@ -14,10 +19,10 @@ describe("shared source HTTP request policy", () => {
         const options = {
             schedule: createRateLimitSchedule({ maxConcurrency: 1, requestsPerSecond: 25, maxRetries: 0, maxRetryDelayMs: 0 }),
             timeoutMs: 60,
-            fetch: (async (_url: string, init?: RequestInit) => {
+            fetch: fetchDouble(async (_url, init) => {
                 if (init?.signal?.aborted) throw init.signal.reason;
                 return Response.json({ ok: true });
-            }) as unknown as typeof fetch,
+            }),
         };
 
         const results = await Promise.all(Array.from({ length: 4 }, () => requestJson("https://example.test", BodySchema, options)));
@@ -28,10 +33,12 @@ describe("shared source HTTP request policy", () => {
     it("reports a slow network call as a timeout", async () => {
         const result = await requestJson("https://example.test", BodySchema, {
             timeoutMs: 5,
-            fetch: ((_url: string, init?: RequestInit) =>
-                new Promise((_resolve, reject) => {
-                    init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
-                })) as unknown as typeof fetch,
+            fetch: fetchDouble(
+                (_url, init) =>
+                    new Promise((_resolve, reject) => {
+                        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+                    }),
+            ),
         });
 
         expect(result).toMatchObject({ status: "unavailable", detail: "request timed out after 5ms" });
@@ -46,10 +53,10 @@ describe("shared source HTTP request policy", () => {
             sleep: async (milliseconds: number): Promise<void> => {
                 waits.push(milliseconds);
             },
-            fetch: (async () => {
+            fetch: fetchDouble(async () => {
                 calls += 1;
                 return calls === 1 ? new Response("later", { status: 429, headers: { "retry-after": "2" } }) : Response.json({ ok: true });
-            }) as unknown as typeof fetch,
+            }),
         });
 
         expect(result).toMatchObject({ status: "ok" });
@@ -63,10 +70,10 @@ describe("shared source HTTP request policy", () => {
             maxRetries: 2,
             maxRetryDelayMs: 10,
             sleep: async (): Promise<void> => {},
-            fetch: (async () => {
+            fetch: fetchDouble(async () => {
                 calls += 1;
                 return new Response("unavailable", { status: 503 });
-            }) as unknown as typeof fetch,
+            }),
         });
 
         expect(result).toMatchObject({ status: "unavailable", detail: "HTTP 503" });
@@ -84,10 +91,10 @@ describe("shared source HTTP request policy", () => {
                 admitted += 1;
                 return await operation();
             },
-            fetch: (async () => {
+            fetch: fetchDouble(async () => {
                 calls += 1;
                 return calls === 1 ? new Response("later", { status: 429 }) : Response.json({ ok: true });
-            }) as unknown as typeof fetch,
+            }),
         });
 
         expect(result).toMatchObject({ status: "ok" });

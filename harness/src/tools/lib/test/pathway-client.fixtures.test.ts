@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { parseTSV } from "../api-utils.js";
 import { fixtureCase, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import {
@@ -63,14 +68,14 @@ describe("KEGG golden fixtures", () => {
 
     it("gives the pathway memberships of a gene over the three golden bodies", async () => {
         const seen: string[] = [];
-        globalThis.fetch = (async (input: unknown) => {
+        globalThis.fetch = fetchDouble(async (input) => {
             const url = String(input);
             seen.push(url);
             if (url.includes("/find/hsa/")) return new Response(readTextFixture("kegg", "find-hsa-TP53.txt"));
             if (url.includes("/link/pathway/")) return new Response(readTextFixture("kegg", "link-pathway-hsa7157.txt"));
             if (url.includes("/list/pathway/")) return new Response(readTextFixture("kegg", "list-pathway-hsa.txt"));
             return new Response("unrouted", { status: 404 });
-        }) as unknown as typeof fetch;
+        });
 
         const pathways = await keggPathwaysForGene("TP53", "hsa", 25);
 

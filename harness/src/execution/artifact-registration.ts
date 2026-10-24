@@ -11,7 +11,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import type { Pool, PoolClient } from "pg";
+import type { Querier } from "../state/db.js";
 import type { AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { DbError } from "../lib/db-result.js";
@@ -52,7 +52,7 @@ export type ArtifactRegistrationFailure =
  * write.
  */
 export async function registerStepArtifacts(
-    db: Pool | PoolClient,
+    db: Querier,
     registry: ArtifactRegistry,
     input: ArtifactRegistrationInput,
     session: AgentSession,

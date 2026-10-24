@@ -434,7 +434,8 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
         expect(rejectionMarkFailedCalls).toBe(1);
 
         // The sync's own failure does not displace the registration rejection.
-        const err = status?.error as Error | undefined;
+        const err = status?.error;
+        if (err !== undefined && !(err instanceof Error)) throw new Error("the sync failure is not an Error");
         expect(err?.message).toContain(REGISTRATION_REJECTION);
         expect(err?.message).not.toContain(SYNC_UNREACHABLE);
 

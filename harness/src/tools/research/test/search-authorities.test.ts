@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchArxivTool } from "../search-arxiv.js";
 import { createSearchSemanticScholarTool } from "../search-semantic-scholar.js";
@@ -13,8 +18,8 @@ afterEach(() => {
 describe("shared authority discovery adapters", () => {
     it("preserves the search_arxiv input and output contract", async () => {
         let seen: URL | undefined;
-        globalThis.fetch = (async (url: string) => {
-            seen = new URL(url);
+        globalThis.fetch = fetchDouble(async (url) => {
+            seen = new URL(String(url));
             return new Response(`
                 <feed>
                   <entry>
@@ -28,7 +33,7 @@ describe("shared authority discovery adapters", () => {
                   </entry>
                 </feed>
             `);
-        }) as unknown as typeof fetch;
+        });
 
         const result = (await searchArxivTool.execute({ query: "shared client", categories: ["cs.LG"], limit: 4 }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -39,8 +44,8 @@ describe("shared authority discovery adapters", () => {
 
     it("preserves the search_semantic_scholar input and output contract", async () => {
         let seen: URL | undefined;
-        globalThis.fetch = (async (url: string) => {
-            seen = new URL(url);
+        globalThis.fetch = fetchDouble(async (url) => {
+            seen = new URL(String(url));
             return Response.json({
                 data: [
                     {
@@ -55,7 +60,7 @@ describe("shared authority discovery adapters", () => {
                     },
                 ],
             });
-        }) as unknown as typeof fetch;
+        });
 
         const result = (await createSearchSemanticScholarTool().execute({ query: "shared client", limit: 4 }, makeToolContext().ctx))._unsafeUnwrap();
 

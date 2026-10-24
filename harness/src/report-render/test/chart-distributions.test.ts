@@ -12,6 +12,7 @@ import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../chart.js";
 import { renderChartSvg } from "../chart-export.js";
 import { CHART_EXPORT_SIZES, CHART_INK } from "../design.js";
+import { optionArray, optionAt, optionList, optionMaybe, optionNumber, optionNumberRows, optionPair, optionPairRows, seriesOf } from "./options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
@@ -34,10 +35,6 @@ function cells(cluster: string, count: number, group?: string): ChartRow[] {
 /** A small cluster and a cluster past the point limit. */
 const QC_ROWS: ChartRow[] = [...cells("Megakaryocytes", 15), ...cells("CD4 T", 201)];
 
-function seriesOf(option: EchartOption): EchartOption[] {
-    return option.series as EchartOption[];
-}
-
 function seriesAt(option: EchartOption, index: number): EchartOption {
     const entry = seriesOf(option)[index];
     if (entry === undefined) throw new Error(`the chart holds no series at ${index}`);
@@ -46,7 +43,7 @@ function seriesAt(option: EchartOption, index: number): EchartOption {
 
 function pointsOf(option: EchartOption): number[][] {
     const points = seriesOf(option).find((entry) => entry.type === "scatter" && entry.silent === true);
-    return (points?.data ?? []) as number[][];
+    return optionNumberRows(points?.data ?? []);
 }
 
 describe("the points of a box and of a violin", () => {
@@ -65,16 +62,16 @@ describe("the points of a box and of a violin", () => {
             const option = deriveChartOption(block(chartType, { x: "cluster", y: "pct_counts_mt" }), QC_ROWS)._unsafeUnwrap();
             // The cluster of 201 values draws no points, thus the cluster of 15 values draws none either.
             expect(pointsOf(option)).toEqual([]);
-            expect((option.xAxis as EchartOption).jitter).toBeUndefined();
+            expect(optionAt(option, "xAxis").jitter).toBeUndefined();
         });
 
         it(`draws the points of a grouped ${chartType} on the slot axis, with no axis jitter`, () => {
             const rows = [...cells("B", 10, "s1"), ...cells("B", 10, "s2")];
             const option = deriveChartOption(block(chartType, { x: "cluster", y: "pct_counts_mt", group: "sample" }), rows)._unsafeUnwrap();
-            const [categories] = option.xAxis as EchartOption[];
+            const [categories] = optionArray(option, "xAxis");
             if (categories === undefined) throw new Error("the grouped chart holds no category axis");
             expect(categories.jitter).toBeUndefined();
-            expect(slotSeries(option).map((entry) => (entry.data as unknown[]).length)).toEqual([10, 10]);
+            expect(slotSeries(option).map((entry) => optionList(entry.data).length)).toEqual([10, 10]);
         });
     }
 
@@ -107,7 +104,7 @@ describe("the points of a box and of a violin", () => {
     it("keeps the axis plain where each category passes the limit", () => {
         const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt" }), cells("CD4 T", 201))._unsafeUnwrap();
         expect(pointsOf(option)).toEqual([]);
-        expect((option.xAxis as EchartOption).jitter).toBeUndefined();
+        expect(optionAt(option, "xAxis").jitter).toBeUndefined();
     });
 
     it("gives the same SVG bytes for two exports of a jittered chart", () => {
@@ -145,9 +142,13 @@ function slotSeries(option: EchartOption): EchartOption[] {
 /** The median lines of an option as `[from x, to x, y]`. */
 function medianLines(option: EchartOption): Array<[number, number, number]> {
     return slotSeries(option).flatMap((entry) =>
-        (((entry.markLine as EchartOption | undefined)?.data ?? []) as Array<[{ coord: [number, number] }, { coord: [number, number] }]>).map(
-            ([from, to]): [number, number, number] => [from.coord[0], to.coord[0], from.coord[1]],
-        ),
+        optionPairRows(optionMaybe(entry, "markLine")?.data ?? []).map(([from, to]): [number, number, number] => {
+            const [fromRow, toRow] = optionNumberRows([from.coord, to.coord]);
+            if (fromRow === undefined || toRow === undefined) throw new Error("the median mark holds no pair of ends");
+            const [fromX, fromY] = fromRow;
+            const [toX] = toRow;
+            return [optionNumber(fromX), optionNumber(toX), optionNumber(fromY)];
+        }),
     );
 }
 
@@ -155,19 +156,27 @@ describe("the thin slots of a box and of a violin", () => {
     for (const chartType of ["box", "violin"] as const) {
         it(`draws each value of a grouped ${chartType} as a point inside the slot of its group, and never an empty chart`, () => {
             const option = deriveChartOption(block(chartType, { x: "gene", y: "count", group: "condition" }), COUNTS)._unsafeUnwrap();
-            const axes = option.xAxis as EchartOption[];
+            const axes = optionArray(option, "xAxis");
             expect(axes[1]).toMatchObject({ type: "value", min: -0.5, max: 1.5, show: false });
-            const points = slotSeries(option).map((entry) => [entry.name, (entry.data as number[][]).length]);
+            const points = slotSeries(option).map((entry) => [entry.name, optionList(entry.data).length]);
             expect(points).toEqual([
                 ["untreated", 7],
                 ["treated", 6],
             ]);
             // The untreated slot sits left of the center of each category, and the treated slot right of it.
-            const [untreated, treated] = slotSeries(option).map((entry) => entry.data as Array<[number, number]>);
+            const [untreated, treated] = slotSeries(option).map((entry) => optionNumberRows(entry.data));
             if (untreated === undefined || treated === undefined) throw new Error("the grouped chart lost a slot series");
-            for (const [x] of untreated) expect(x - Math.round(x)).toBeLessThan(0);
-            for (const [x] of treated) expect(x - Math.round(x)).toBeGreaterThan(0);
-            expect(untreated.map((point) => point[1]).sort((a, b) => a - b)).toEqual([364.08, 396.19, 429.57, 1140.91, 1237.78, 1238.69, 1341.43]);
+            for (const point of untreated) {
+                const [x] = optionPair(point);
+                expect(x - Math.round(x)).toBeLessThan(0);
+            }
+            for (const point of treated) {
+                const [x] = optionPair(point);
+                expect(x - Math.round(x)).toBeGreaterThan(0);
+            }
+            expect(untreated.map((point) => optionNumber(point[1])).sort((a, b) => a - b)).toEqual([
+                364.08, 396.19, 429.57, 1140.91, 1237.78, 1238.69, 1341.43,
+            ]);
         });
 
         it(`draws the median of each ${chartType} slot of fewer than five values as a short line`, () => {
@@ -206,7 +215,7 @@ describe("the facet of the stacked bars", () => {
             block("stacked-bar", { x: "sample", y: "n_cells", group: "cell_type", facet: "condition" }),
             COMPOSITION,
         )._unsafeUnwrap();
-        expect(option.grid as EchartOption[]).toHaveLength(2);
+        expect(optionArray(option, "grid")).toHaveLength(2);
         const series = seriesOf(option);
         expect(series.map((entry) => [entry.name, entry.xAxisIndex, entry.stack])).toEqual([
             ["B cells", 0, "total-0"],
@@ -217,12 +226,12 @@ describe("the facet of the stacked bars", () => {
         // The stimulated panel holds its own parts in the category order of the table.
         expect(series[3]?.data).toEqual([90, 70]);
         // Each panel reads one value range over the largest total of any panel.
-        const values = (option.yAxis as EchartOption[]).map((axis) => [axis.min, axis.max]);
+        const values = optionArray(option, "yAxis").map((axis) => [axis.min, axis.max]);
         expect(values).toEqual([
             [0, 500],
             [0, 500],
         ]);
-        const labels = (option.graphic as EchartOption[]).map((element) => (element.style as EchartOption).text);
+        const labels = optionArray(option, "graphic").map((element) => optionAt(element, "style").text);
         expect(labels).toContain("control");
         expect(labels).toContain("stimulated");
     });
@@ -234,7 +243,7 @@ describe("the facet of the stacked bars", () => {
         )._unsafeUnwrap();
         expect(seriesAt(option, 0).data).toEqual([0.25, 0.5]);
         expect(seriesAt(option, 2).data).toEqual([0.1, 0.3]);
-        for (const axis of option.yAxis as EchartOption[]) expect(axis).toMatchObject({ min: 0, max: 1 });
+        for (const axis of optionArray(option, "yAxis")) expect(axis).toMatchObject({ min: 0, max: 1 });
     });
 
     it("refuses a pair that repeats inside one panel", () => {

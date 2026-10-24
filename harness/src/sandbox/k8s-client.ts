@@ -21,8 +21,10 @@ import {
     CoreV1Api,
     KubeConfig,
     type V1Job,
+    type V1JobList,
     type V1ObjectMeta,
     type V1Pod,
+    type V1PodList,
     type V1PodSpec,
     type V1Toleration,
     type V1Volume,
@@ -85,6 +87,19 @@ function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): string | null 
     return metadata?.annotations?.[OWNER_WORKFLOW_ANNOTATION] ?? null;
 }
 
+/** The Job operations of `BatchV1Api` the module reads, read structurally so tests build fakes cast-free. */
+export type BatchJobApi = {
+    createNamespacedJob(request: { namespace: string; body: V1Job }): Promise<V1Job>;
+    readNamespacedJob(request: { namespace: string; name: string }): Promise<V1Job>;
+    deleteNamespacedJob(request: { namespace: string; name: string; propagationPolicy?: string }): Promise<unknown>;
+    listNamespacedJob(request: { namespace: string; labelSelector?: string }): Promise<V1JobList>;
+};
+
+/** The Pod operations of `CoreV1Api` the module reads, read structurally so tests build fakes cast-free. */
+export type CorePodApi = {
+    listNamespacedPod(request: { namespace: string; labelSelector?: string }): Promise<V1PodList>;
+};
+
 export type K8sClientConfig = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
@@ -141,12 +156,12 @@ export type K8sClientConfig = {
     /** RuntimeClass for runtime isolation (e.g. `gvisor`). Omit for the default runtime. */
     runtimeClassName?: string;
     /** Injected for tests. */
-    batchApi?: BatchV1Api;
-    coreApi?: CoreV1Api;
+    batchApi?: BatchJobApi;
+    coreApi?: CorePodApi;
     registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
 };
 
-function deleteJobIgnoreMissing(batchApi: BatchV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
+function deleteJobIgnoreMissing(batchApi: BatchJobApi, namespace: string, name: string): ResultAsync<void, SandboxError> {
     return trySandbox(
         async () => {
             await batchApi.deleteNamespacedJob({
@@ -168,7 +183,7 @@ function deleteJobIgnoreMissing(batchApi: BatchV1Api, namespace: string, name: s
     );
 }
 
-function buildKubeApi(): { batchApi: BatchV1Api; coreApi: CoreV1Api } {
+function buildKubeApi(): { batchApi: BatchJobApi; coreApi: CorePodApi } {
     const kc = new KubeConfig();
     // In-cluster when running on a pod, else from ~/.kube/config.
     try {
@@ -420,7 +435,7 @@ export type WaitForPodReadyDeps = {
 };
 
 export function waitForPodReady(
-    coreApi: CoreV1Api,
+    coreApi: CorePodApi,
     namespace: string,
     sandboxId: string,
     deps: WaitForPodReadyDeps = {},
@@ -494,7 +509,7 @@ export function waitForPodReady(
 
 /** The single pod behind a sandbox Job is in a terminal phase — a genuinely
  *  dead prior attempt, not a machine we should adopt. */
-function existingPodIsTerminal(coreApi: CoreV1Api, namespace: string, sandboxId: string): ResultAsync<boolean, SandboxError> {
+function existingPodIsTerminal(coreApi: CorePodApi, namespace: string, sandboxId: string): ResultAsync<boolean, SandboxError> {
     return trySandbox(
         () =>
             coreApi.listNamespacedPod({
@@ -516,7 +531,7 @@ function existingPodIsTerminal(coreApi: CoreV1Api, namespace: string, sandboxId:
 
 /** Poll until a deleted Job's name is free again — K8s deletion is async, and
  *  recreating under the same name before the old object is gone 409s. */
-function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
+function waitForJobGone(batchApi: BatchJobApi, namespace: string, name: string): ResultAsync<void, SandboxError> {
     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
         type: "container_create_failed",
         op: "k8s.waitForJobGone",
@@ -556,8 +571,8 @@ function waitForJobGone(batchApi: BatchV1Api, namespace: string, name: string): 
  * its Job would kill a live sibling. Refuse loudly instead.
  */
 function createOrAdoptJob(
-    batchApi: BatchV1Api,
-    coreApi: CoreV1Api,
+    batchApi: BatchJobApi,
+    coreApi: CorePodApi,
     namespace: string,
     sandboxId: string,
     ownerWorkflowId: string,
@@ -793,7 +808,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
  * matters; a delete error here is logged and swallowed so it never masks the
  * create error returned to the caller.
  */
-async function cleanupFailedJob(batchApi: BatchV1Api, namespace: string, sandboxId: string, logger: Logger): Promise<void> {
+async function cleanupFailedJob(batchApi: BatchJobApi, namespace: string, sandboxId: string, logger: Logger): Promise<void> {
     const deleted = await deleteJobIgnoreMissing(batchApi, namespace, sandboxId);
     if (deleted.isErr()) {
         logger.named("k8s-client").error("failed to delete Job after startup failure", { sandboxId, err: deleted.error });

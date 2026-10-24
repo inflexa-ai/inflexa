@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { errAsync, ok, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { forSubAgent, type AgentSession } from "../../auth/types.js";
@@ -22,6 +22,10 @@ import { isWrapUpRequest, makeMessage, scriptedProvider, type ScriptedProvider, 
 import { runAgent, type AgentFinish, type RunAgentOptions } from "../run-agent.js";
 import { passthroughStep } from "../run-step.js";
 import type { AgentDefinition, RunStep } from "../types.js";
+import type { ProviderError } from "../../providers/errors.js";
+
+/** The value an llm step stores: the chat Result, as the loop's step body returns it. */
+type LlmStepValue = Result<ChatResponse, ProviderError>;
 
 // ── Harness helpers ─────────────────────────────────────────────────
 
@@ -64,13 +68,20 @@ function opts(provider: ChatProvider, recorder: UsageRecorder, overrides: Partia
 function cachingStep(): { runStep: RunStep; names: string[] } {
     const cache = new Map<string, unknown>();
     const names: string[] = [];
-    const runStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-        names.push(name);
-        if (cache.has(name)) return cache.get(name) as T;
-        const value = await fn();
-        cache.set(name, value);
-        return value;
-    };
+    // The overloads carry the replay contract: a stored step returns the value of the step kind
+    // that wrote it, which is what lets the memo read its stored value without an assertion.
+    const runStep: RunStep = (() => {
+        async function runStep(name: string, fn: () => Promise<LlmStepValue>): Promise<LlmStepValue>;
+        async function runStep(name: string, fn: () => Promise<unknown>): Promise<unknown>;
+        async function runStep(name: string, fn: () => Promise<unknown>): Promise<unknown> {
+            names.push(name);
+            if (cache.has(name)) return cache.get(name);
+            const value = await fn();
+            cache.set(name, value);
+            return value;
+        }
+        return runStep;
+    })();
     return { runStep, names };
 }
 

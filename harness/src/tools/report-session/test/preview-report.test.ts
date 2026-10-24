@@ -9,6 +9,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -353,7 +354,7 @@ describe("the pass path", () => {
 
         expect(result.outcome).toBe("rendered");
         expect(emitted).toHaveLength(1);
-        const part = emitted[0] as { type: string; data: { id: string; renderedAt: string; title: string } };
+        const part = z.object({ type: z.string(), data: z.object({ id: z.string(), renderedAt: z.string(), title: z.string() }) }).parse(emitted[0]);
         expect(part.type).toBe("data-report-rendered");
         expect(part.data.title).toBe("Report");
         // The id is one UUID per emission, and the timestamp is a valid ISO instant.
@@ -1118,7 +1119,7 @@ describe("the session refusal", () => {
 
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
-    function detailOf(tool: ReturnType<typeof createPreviewReportTool>, result: PreviewReportResult): string {
+    function detailOf(tool: ReturnType<typeof createPreviewReportTool>, result: PreviewReportResult): string | undefined {
         expect(tool.describeResult).toBeDefined();
         return tool.describeResult!({}, result);
     }

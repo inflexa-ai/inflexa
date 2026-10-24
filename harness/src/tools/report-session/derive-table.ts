@@ -40,6 +40,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { RunSession } from "../../auth/types.js";
+import { errnoOf } from "../../lib/fs-result.js";
 import type { Suspension } from "../../workflows/suspension.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -441,7 +442,7 @@ async function derive(args: {
     try {
         await unlink(absolute);
     } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+        if (errnoOf(cause) !== "ENOENT") {
             args.logger.error("the output path did not clear before the derivation", { threadId: args.threadId, ...defaultErrorFields(cause) });
             return { outcome: "exec-failed", detail: `${args.outputName} already holds a file that did not clear, thus this derivation takes a new name` };
         }

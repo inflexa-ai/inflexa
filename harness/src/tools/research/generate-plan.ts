@@ -38,6 +38,7 @@ import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
@@ -546,7 +547,9 @@ function restoreSkeletonGrounding(
     readonly unknown: readonly ValidationIssue[];
 } {
     const decoded = decodeObjectString(candidate);
-    if (memory.steps.size === 0 || typeof decoded !== "object" || decoded === null || !Array.isArray((decoded as { steps?: unknown }).steps)) {
+    const decodedRecord = parseUnknownRecord(decoded);
+    const decodedSteps = decodedRecord?.steps;
+    if (memory.steps.size === 0 || !isUnknownArray(decodedSteps)) {
         return { candidate: decoded, stamped: [], restored: [], repaired: [], unknown: [] };
     }
     const byRule = claimsByRule(memory.claims);
@@ -554,11 +557,12 @@ function restoreSkeletonGrounding(
     const restored: string[] = [];
     const repaired: RepairedClaim[] = [];
     const unknown: ValidationIssue[] = [];
-    const steps = (decoded as { steps: unknown[] }).steps.map((step, index) => {
-        if (typeof step !== "object" || step === null) return step;
-        const { id, grounding } = step as { id?: unknown; grounding?: unknown };
-        if (typeof grounding !== "object" || grounding === null) return step;
-        const current = grounding as { status?: unknown; template?: unknown; snapshot?: unknown; claims?: unknown };
+    const steps = decodedSteps.map((step, index) => {
+        const fields = parseUnknownRecord(step);
+        if (fields === undefined) return step;
+        const { id, grounding } = fields;
+        const current = parseUnknownRecord(grounding);
+        if (current === undefined) return step;
         const label = typeof id === "string" ? id : String(index);
         let next = current;
         const source = typeof id === "string" ? memory.steps.get(id) : undefined;
@@ -597,9 +601,9 @@ function restoreSkeletonGrounding(
             stamped.push(label);
             next = { ...next, snapshot: memory.digest };
         }
-        return next === current ? step : { ...step, grounding: next };
+        return next === current ? step : { ...fields, grounding: next };
     });
-    return { candidate: { ...decoded, steps }, stamped, restored, repaired, unknown };
+    return { candidate: { ...decodedRecord, steps }, stamped, restored, repaired, unknown };
 }
 
 /**

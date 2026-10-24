@@ -15,7 +15,8 @@
  * a `skipped` phase.
  */
 
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
+import { z } from "zod";
 
 import type { SynthesisPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 
@@ -47,7 +48,7 @@ import type { CitationResolver } from "../citations/types.js";
 export type SynthesizeRunDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly provider: ChatProvider;
     /** Write-side embedder — its `dimensions` sizes the per-analysis index. */
     readonly embedding: EmbeddingProvider;
@@ -189,10 +190,14 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
     }
 }
 
-async function loadPlanNarrative(pool: Pool, runId: string, analysisId: string): Promise<string> {
+async function loadPlanNarrative(pool: Querier, runId: string, analysisId: string): Promise<string> {
     const run = unwrapOrThrow(await queryRun(pool, runId));
     const planId = run?.planId ?? null;
     if (!planId) return "";
-    const plan = unwrapOrThrow(await loadPlan(pool, planId, { analysisId })) as { analytical_narrative?: string } | null;
-    return plan?.analytical_narrative ?? "";
+    const plan = unwrapOrThrow(await loadPlan(pool, planId, { analysisId }));
+    const parsed = PlanNarrativeSchema.nullable().catch(null).parse(plan);
+    return parsed?.analytical_narrative ?? "";
 }
+
+/** The one field of the stored plan document this reader takes; every other field passes. */
+const PlanNarrativeSchema = z.looseObject({ analytical_narrative: z.string().optional() });

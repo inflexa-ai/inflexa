@@ -23,6 +23,7 @@ import {
     columnsHeldByNoRow,
     fileTypeHoldsNoCell,
     snapshotEntry,
+    snapshotRows,
     type ReferenceResolver,
     type ReportSnapshot,
     type ResolvedValue,
@@ -57,7 +58,11 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
 
     // An artifact with no rows is pinned whole, thus it addresses no cell and every locator over it lands
     // out of range.
-    const rows = artifact.rows ?? [];
+    const readRows = snapshotRows(artifact);
+    if (readRows.isErr()) {
+        return fail(reference, "unreadable-artifact", `the artifact at ${reference.path} holds a malformed row: ${readRows.error}`);
+    }
+    const rows = readRows.value;
     const locator = reference.locator;
     let selectedRow: Record<string, string | number>;
     if (locator.row !== undefined) {
@@ -96,6 +101,16 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     return valueFailure !== undefined ? err(valueFailure) : ok({ type: "scalar", value: cell });
 }
 
+/**
+ * Put one own data property on a projected row.
+ *
+ * A plain assignment at the key `__proto__` reaches the prototype setter, thus the projection loses a
+ * column that the row holds. The definition makes an own data property for each key.
+ */
+function defineOwn(target: Record<string, string | number>, key: string, value: string | number): void {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 function resolveArtifactTable(reference: ArtifactTableReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
     const artifact = snapshotEntry(snapshot, reference.path);
     if (artifact === undefined) {
@@ -114,7 +129,11 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
     // below leaves out still ranks them. An unknown bound column addresses nothing, exactly as an unknown
     // subset column does.
     const bound = reference.rowBound;
-    const allRows = artifact.rows ?? [];
+    const readRows = snapshotRows(artifact);
+    if (readRows.isErr()) {
+        return fail(reference, "unreadable-artifact", `the artifact at ${reference.path} holds a malformed row: ${readRows.error}`);
+    }
+    const allRows = readRows.value;
     if (bound !== undefined && columnsHeldByNoRow(allRows, [bound.column]).length > 0) {
         return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the table at ${reference.path} does not hold`);
     }
@@ -142,7 +161,7 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
         for (const column of columns) {
             const cell = row[column];
             if (cell !== undefined) {
-                projected[column] = cell;
+                defineOwn(projected, column, cell);
             }
         }
         return projected;

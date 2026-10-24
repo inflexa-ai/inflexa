@@ -14,7 +14,7 @@
  * work is done by then.
  */
 
-import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, ok, type Result } from "neverthrow";
 
 import { forStep } from "../auth/types.js";
@@ -116,8 +116,8 @@ export async function triggerDeriveTableExec(
     workflow: (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>,
     input: DeriveTableExecInput,
 ): Promise<Result<ExecResult, Suspension>> {
-    const handle = (await DBOS.startWorkflow(workflow, {
+    const handle = await DBOS.startWorkflow(workflow, {
         workflowID: deriveTableExecWorkflowId(input.executionId),
-    })(input)) as WorkflowHandle<Result<ExecResult, Suspension>>;
+    })(input);
     return handle.getResult();
 }

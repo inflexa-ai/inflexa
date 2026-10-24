@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import { type Connectable } from "../../lib/db-result.js";
+import type { Querier } from "../../state/db.js";
+
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
@@ -67,7 +70,16 @@ function doubles(over: { launchFails?: boolean } = {}) {
     const runAuthorizer: RunAuthorizer = {
         authorize: (input) => {
             authorizations.push(input);
-            return okAsync({ runSession: {} as never, ownsMandate: true });
+            return okAsync({
+                runSession: {
+                    identity: { user: "u-1" },
+                    scope: { kind: "analysis", analysisId: ANALYSIS_ID },
+                    provenance: { agentId: "approvePlan", callPath: ["approvePlan"] },
+                    runFrame: { runId: "run-approve" },
+                    auth: makeLocalAuth(),
+                },
+                ownsMandate: true,
+            });
         },
         revoke: () => okAsync(undefined),
         revokeByJti: () => okAsync(undefined),
@@ -144,7 +156,8 @@ describe("approvePlan", () => {
         expect(d.events).toHaveLength(1);
         const event = d.events[0]!;
         expect(event).toMatchObject({ type: "approve-plan", analysisId: ANALYSIS_ID, threadId: THREAD_ID, planId: PLAN_ID, runId: approval.runId });
-        const atMs = (event as { atMs: number }).atMs;
+        if (event.type !== "approve-plan") throw new Error("expected the approve-plan event");
+        const atMs = event.atMs;
         expect(atMs).toBeLessThanOrEqual(d.launches[0]!.atMs);
         const part = approval.message!.parts[0];
         expect(part).toEqual({ type: "data-plan-approval", planId: PLAN_ID, runId: approval.runId, approvedAt: new Date(atMs).toISOString() });
@@ -297,10 +310,10 @@ describe("approvePlan", () => {
         const logger = createCapturingLogger();
         // The reservation of the run takes the first connection and the record append takes the second, thus refusing the second connection fails the append alone.
         let connections = 0;
-        const flaky = {
-            query: (...args: unknown[]) => (pool.query as (...rest: unknown[]) => Promise<unknown>)(...args),
+        const flaky: Querier & Connectable = {
+            query: (textOrConfig, values) => pool.query(textOrConfig, values),
             connect: () => (++connections === 1 ? pool.connect() : Promise.reject(new Error("append boom"))),
-        } as unknown as Pool;
+        };
 
         const approval = (await approvePlan(depsOf(d, { pool: flaky, logger }), input()))._unsafeUnwrap();
 

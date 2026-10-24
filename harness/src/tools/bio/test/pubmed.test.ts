@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createPubMedTool } from "../pubmed.js";
 
@@ -18,11 +23,11 @@ const tool = createPubMedTool({});
  */
 function stubNcbi(responder: (url: URL) => Response): URL[] {
     const seen: URL[] = [];
-    globalThis.fetch = (async (url: string) => {
-        const parsed = new URL(url);
+    globalThis.fetch = fetchDouble(async (url) => {
+        const parsed = new URL(String(url));
         seen.push(parsed);
         return responder(parsed);
-    }) as unknown as typeof fetch;
+    });
     return seen;
 }
 

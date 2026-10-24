@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
 import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
-import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
+import { requestJson, type SourceHttpOptions, type SourceHttpResult } from "../../literature/sources/http.js";
 
 const CrossrefItemSchema = z
     .object({
@@ -89,12 +89,15 @@ export function createCrossrefClient(options: CrossrefClientOptions = {}): Citat
                       if (options.mailto) params.set("mailto", options.mailto);
                       return `https://api.crossref.org/works?${params}`;
                   })();
-            const result = exact
-                ? await requestJson(url, ExactSchema, options, signal, { headers })
-                : await requestJson(url, SearchSchema, options, signal, { headers });
-            if (result.status !== "ok") return sourceOutcome("crossref", request.plan.operation, result.status, 1, [], result.detail);
-            const items = exact ? [(result.value as z.infer<typeof ExactSchema>).message] : (result.value as z.infer<typeof SearchSchema>).message.items;
-            const records = items.flatMap((item, index) => {
+            const fetched = exact
+                ? await requestJson(url, ExactSchema, options, signal, { headers }).then((result): SourceHttpResult<[z.infer<typeof CrossrefItemSchema>]> =>
+                      result.status === "ok" ? { status: "ok", value: [result.value.message] } : result,
+                  )
+                : await requestJson(url, SearchSchema, options, signal, { headers }).then((result): SourceHttpResult<z.infer<typeof CrossrefItemSchema>[]> =>
+                      result.status === "ok" ? { status: "ok", value: result.value.message.items } : result,
+                  );
+            if (fetched.status !== "ok") return sourceOutcome("crossref", request.plan.operation, fetched.status, 1, [], fetched.detail);
+            const records = fetched.value.flatMap((item, index) => {
                 const record = crossrefRecord(item, index);
                 return record === undefined ? [] : [record];
             });

@@ -43,6 +43,7 @@ export type {
     ReportRenderedPart,
     CompactionPart,
     ChatPart,
+    KnownChatPart,
 } from "./chat-parts.js";
 
 export type {
@@ -111,7 +112,7 @@ export type {
     ProbeOutcome,
 } from "./profile-vocabulary.js";
 export type { TextPart, ToolCallPart, MessagePart, ChatMessage } from "./message.js";
-export { toChatFrame, applyChatFrame, checkChatPart } from "./chat-frame.js";
+export { toChatFrame, applyChatFrame, checkChatPart, isKnownPartFrame } from "./chat-frame.js";
 export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./chat-frame.js";
 export { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "./subagent-activity.js";
 export type { SubAgentActivityTracker } from "./subagent-activity.js";

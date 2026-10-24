@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { modelMessageSchema, type AssistantModelMessage, type ModelMessage, type UserContent } from "ai";
+import { isJSONValue, type JSONValue } from "@ai-sdk/provider";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
@@ -282,12 +283,13 @@ export type LegacyMessageRow = {
 function providerOptionsFromLegacy(block: Record<string, unknown>): ProviderOptions | undefined {
     // A block may carry both a signed thinking signature and cache_control;
     // both are required for valid continuation, so both must survive.
-    const anthropic: Record<string, unknown> = {};
+    const anthropic: Record<string, JSONValue> = {};
     if (typeof block.signature === "string") anthropic.signature = block.signature;
-    if (typeof block.cache_control === "object" && block.cache_control !== null) {
-        anthropic.cacheControl = block.cache_control;
+    const cacheControl = block.cache_control;
+    if (typeof cacheControl === "object" && cacheControl !== null && isJSONValue(cacheControl)) {
+        anthropic.cacheControl = cacheControl;
     }
-    return Object.keys(anthropic).length > 0 ? ({ anthropic } as ProviderOptions) : undefined;
+    return Object.keys(anthropic).length > 0 ? { anthropic } : undefined;
 }
 
 export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessage {
@@ -326,13 +328,13 @@ export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessa
         const userContent = content.map((block) => ({ type: "text" as const, text: String(block.text), providerOptions: providerOptionsFromLegacy(block) }));
         return {
             role: "user",
-            content: userContent as Extract<ModelMessage, { role: "user" }>["content"],
+            content: userContent,
         };
     }
 
     if (row.role === "assistant") {
         if (typeof content === "string") return { role: "assistant", content };
-        const assistantContent: unknown[] = [];
+        const assistantContent: Extract<ModelMessage, { role: "assistant" }>["content"] = [];
         for (const block of content) {
             if (block.type === "text" && typeof block.text === "string") {
                 assistantContent.push({ type: "text" as const, text: block.text, providerOptions: providerOptionsFromLegacy(block) });
@@ -363,7 +365,7 @@ export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessa
         }
         return {
             role: "assistant",
-            content: assistantContent as Extract<ModelMessage, { role: "assistant" }>["content"],
+            content: assistantContent,
         };
     }
 

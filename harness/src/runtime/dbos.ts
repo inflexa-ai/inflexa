@@ -14,7 +14,7 @@
  */
 
 import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import type { LogFields, Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
@@ -268,7 +268,7 @@ export async function sweepEphemeralWorkflows({
     logger: injectedLogger,
     executorId,
 }: {
-    pool: Pool;
+    pool: Querier;
     logger: Logger;
     /** Stable per-pod executor id — must match `launchDbos`'s `executorId`. */
     executorId: string;

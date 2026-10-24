@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
@@ -10,6 +11,11 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 type SeenRequest = {
     readonly url: URL;
     readonly body: unknown;
@@ -20,19 +26,21 @@ function json(body: unknown, status = 200): Response {
 }
 
 /** Route a stubbed fetch by URL substring, and record each request. Unmatched URLs 404. */
+const PatentLookupSchema = z.object({ data: z.array(z.unknown()) });
+
 function stubFetch(routes: Array<[string, () => Response]>): SeenRequest[] {
     const seen: SeenRequest[] = [];
-    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    globalThis.fetch = fetchDouble(async (input, init) => {
         const request: SeenRequest = {
             url: new URL(String(input)),
-            body: typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined,
+            body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {
             if (request.url.toString().includes(needle)) return make();
         }
         return json({ error: { status: 404, code: "NOT_FOUND", message: "unrouted" } }, 404);
-    }) as typeof fetch;
+    });
     return seen;
 }
 
@@ -43,7 +51,7 @@ async function run(input: Record<string, unknown>) {
     const { ctx } = makeToolContext();
     // `Tool` erases the schema generic, so `parse` hands back `unknown`; the schema
     // and the execute input type come from one declaration in the tool module.
-    return tool.execute(tool.inputSchema.parse(input) as Parameters<typeof tool.execute>[0], ctx);
+    return tool.execute(tool.inputSchema.parse(input), ctx);
 }
 
 const PATENT = "AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M";
@@ -71,7 +79,7 @@ describe("search_patents — action 'search'", () => {
 
 describe("search_patents — action 'details'", () => {
     it("resolves a publication number, then asks for the claims only when told to", async () => {
-        const lookup = readFixture("amass", "patent-lookup.json") as { data: unknown[] };
+        const lookup = PatentLookupSchema.parse(readFixture("amass", "patent-lookup.json"));
         const seen = stubFetch([
             ["/patentcore/records/lookup", () => json({ data: [lookup.data[0]] })],
             [`/patentcore/records/${PATENT}`, () => json(readFixture("amass", "patent-record.json"))],
@@ -85,7 +93,7 @@ describe("search_patents — action 'details'", () => {
     });
 
     it("gives the candidates of an application number with two publications", async () => {
-        const lookup = readFixture("amass", "patent-lookup.json") as { data: unknown[] };
+        const lookup = PatentLookupSchema.parse(readFixture("amass", "patent-lookup.json"));
         const seen = stubFetch([["/patentcore/records/lookup", () => json({ data: [lookup.data[1]] })]]);
 
         const result = (await run({ action: "details", applicationNumber: "CN-201310332334-A" }))._unsafeUnwrap();
@@ -95,7 +103,7 @@ describe("search_patents — action 'details'", () => {
     });
 
     it("gives not_found for an in-band lookup miss, with no get request", async () => {
-        const lookup = readFixture("amass", "patent-lookup.json") as { data: unknown[] };
+        const lookup = PatentLookupSchema.parse(readFixture("amass", "patent-lookup.json"));
         const seen = stubFetch([["/patentcore/records/lookup", () => json({ data: [lookup.data[2]] })]]);
 
         const result = (await run({ action: "details", publicationNumber: "US-0000000-B2" }))._unsafeUnwrap();
@@ -115,9 +123,7 @@ describe("search_patents — the key", () => {
         const keyless = createSearchPatentsTool({ apiKey: "" });
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }) as Parameters<typeof keyless.execute>[0], ctx)).rejects.toThrow(
-            /AMASS_API_KEY/,
-        );
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(/AMASS_API_KEY/);
         expect(seen).toHaveLength(0);
     });
 

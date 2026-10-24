@@ -539,7 +539,7 @@ describe("AnalysisStep field-coverage guard", () => {
     // whether the sandbox agent needs to see it. It does not assert layout, so
     // wording/format changes to the renderer never break it.
 
-    const schemaKeys = Object.keys(AnalysisStepSchema.shape) as (keyof AnalysisStep)[];
+    const schemaKeys = Object.keys(AnalysisStepSchema.shape);
 
     it("classifies every schema field as task or non-task", () => {
         const task = new Set<string>(STEP_TASK_FIELDS);
@@ -555,11 +555,12 @@ describe("AnalysisStep field-coverage guard", () => {
     });
 
     it("keeps the analysis memory out of the plan step, because it comes from the working memory at dispatch", () => {
-        expect(schemaKeys as string[]).not.toContain("memory");
+        expect(schemaKeys).not.toContain("memory");
     });
 
     it("never classifies a field as both task and non-task", () => {
-        const overlap = STEP_TASK_FIELDS.filter((f) => (STEP_NON_TASK_FIELDS as readonly string[]).includes(f));
+        const nonTaskSet = new Set<string>(STEP_NON_TASK_FIELDS);
+        const overlap = STEP_TASK_FIELDS.filter((f) => nonTaskSet.has(f));
         expect(overlap).toEqual([]);
     });
 
@@ -575,11 +576,11 @@ describe("AnalysisStep field-coverage guard", () => {
         // forgets to emit is caught here.
         const base = fullyPopulatedStep();
         const sentinels = new Map<string, string>();
-        const step = { ...base } as Record<string, unknown>;
+        const step: Record<string, unknown> = { ...base };
         for (const field of STEP_TASK_FIELDS) {
             const sentinel = `COVER_${field.toUpperCase()}`;
             sentinels.set(field, sentinel);
-            const current = (base as Record<string, unknown>)[field];
+            const current = base[field];
             // An object-valued field (the grounding) keeps its shape, and each of its
             // string members carries the sentinel, thus the renderer must emit the
             // members and not only the presence of the field. A list of objects
@@ -596,7 +597,9 @@ describe("AnalysisStep field-coverage guard", () => {
             };
             step[field] = withSentinel(current);
         }
-        const prompt = renderTask(step as unknown as AnalysisStep);
+        const rendered: unknown = Reflect.apply(renderTask, undefined, [step]);
+        if (typeof rendered !== "string") throw new Error("renderTask returned a non-string");
+        const prompt: string = rendered;
         for (const [field, sentinel] of sentinels) {
             expect(prompt, `task field "${field}" is not rendered`).toContain(sentinel);
         }

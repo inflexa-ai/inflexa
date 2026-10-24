@@ -288,7 +288,7 @@ function sendHop(url: URL, state: HopState): Promise<HopOutcome> {
                     // The connect asked for one address (address-family selection off), and node rejects an array there with ERR_INVALID_IP_ADDRESS.
                     const first = addresses[0];
                     if (first === undefined) {
-                        const notFound = new Error(`getaddrinfo ENOTFOUND ${hostname}`) as NodeJS.ErrnoException;
+                        const notFound: NodeJS.ErrnoException = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
                         notFound.code = "ENOTFOUND";
                         callback(notFound, "");
                         return;

@@ -8,6 +8,11 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { BondResponseSchema, DrugResponseSchema, searchDrugbank } from "../drugbank-client.js";
 
@@ -21,10 +26,10 @@ afterEach(() => {
 
 /** Answer every request with the given payload, and record each URL. */
 function stubFetch(body: unknown): void {
-    globalThis.fetch = (async (input: unknown) => {
+    globalThis.fetch = fetchDouble(async (input) => {
         requested.push(String(input));
         return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-    }) as unknown as typeof fetch;
+    });
 }
 
 runFixtureSuite("drugbank golden fixtures", [

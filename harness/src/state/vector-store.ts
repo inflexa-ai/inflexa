@@ -14,7 +14,7 @@
  */
 
 import { okAsync, ResultAsync } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "./db.js";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 
@@ -104,7 +104,7 @@ function toVectorLiteral(v: readonly number[]): string {
     return `[${v.join(",")}]`;
 }
 
-export function createVectorStore(pool: Pool): VectorStore {
+export function createVectorStore(pool: Querier): VectorStore {
     return {
         createIndex({ indexName, dimension }) {
             assertIdent(indexName);

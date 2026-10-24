@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
 import type { ChartBlock, ChartType } from "../../contracts/report-blocks.js";
+import { rendererApi } from "../chart-export.js";
 import { deriveChartRender, type ChartInputs, type ChartRow } from "../chart.js";
 import { registerChartRenderers } from "../chart-renderers.js";
 import { CHART_PAGE_WIDTH_PX, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
@@ -24,9 +25,12 @@ import {
     TOOLBOX_ZLEVEL,
 } from "../chart-toolbox.js";
 
-/** The feature member of one toolbox. */
-function features(toolbox: Record<string, unknown>): Record<string, Record<string, unknown>> {
-    return toolbox.feature as Record<string, Record<string, unknown>>;
+import type { EchartOption } from "../chart.js";
+import { optionAt, optionList, optionMaybe, optionNumber, optionOf, optionStrings } from "./options.js";
+
+/** The feature member of one toolbox, each control an option object. */
+function features(toolbox: EchartOption): Record<string, EchartOption> {
+    return Object.fromEntries(Object.entries(optionAt(toolbox, "feature")).map(([name, control]) => [name, optionOf(control)]));
 }
 
 type DataView = {
@@ -56,26 +60,56 @@ type StubNode = {
 /** The page functions of the fragment, over one stub document. */
 function pageFunctions(document: unknown): {
     rows: (option: Record<string, unknown>, limit: number) => DataView;
-    content: (option: Record<string, unknown>) => StubNode;
-    bind: (option: Record<string, unknown>) => void;
-    open: (model: unknown, api: unknown, icon: string, event: unknown) => void;
-    click: (event: unknown) => void;
-    key: (event: unknown) => void;
-    fault: (entry: unknown) => void;
+    content: (option: Record<string, unknown>) => unknown;
+    bind: (option: Record<string, unknown>) => unknown;
+    open: (model: unknown, api: unknown, icon: string, event: unknown) => unknown;
+    click: (event: unknown) => unknown;
+    key: (event: unknown) => unknown;
+    fault: (entry: unknown) => unknown;
     named: Record<string, unknown>;
 } {
-    return new Function(
+    const made: unknown = new Function(
         "document",
         `${CHART_TOOLBOX_SOURCE}\nreturn { rows: reportDataViewRows, content: reportDataViewContent, bind: reportBindToolbox, open: reportOpenExportMenu, click: reportMenuClick, key: reportMenuKey, fault: reportMenuFault, named: reportToolboxFunctions };`,
-    ).call(undefined, document) as ReturnType<typeof pageFunctions>;
+    ).call(undefined, document);
+    const page = optionOf(made);
+    const fn = (name: string): ((...args: unknown[]) => unknown) => {
+        const member = page[name];
+        if (typeof member !== "function") throw new Error(`the page source holds no ${name}`);
+        return (...args: unknown[]) => {
+            const given: unknown = Reflect.apply(member, undefined, args);
+            return given;
+        };
+    };
+    return {
+        rows: (option, limit): DataView => {
+            const view = optionOf(fn("rows")(option, limit));
+            return {
+                columns: optionStrings(view.columns),
+                rows: optionList(view.rows).map((row) => optionStrings(row)),
+                total: optionNumber(view.total),
+            };
+        },
+        content: (option) => fn("content")(option),
+        bind: (option) => fn("bind")(option),
+        open: (model, api, icon, event) => fn("open")(model, api, icon, event),
+        click: (event) => fn("click")(event),
+        key: (event) => fn("key")(event),
+        fault: (entry) => fn("fault")(entry),
+        named: optionOf(page.named),
+    };
 }
 
 /** A stub document that builds nodes, holds a focus, and finds one element by its id. */
 function stubDocument(byId: Record<string, StubNode> = {}): {
-    document: Record<string, unknown>;
+    document: { activeElement: unknown; createElement: (tag: string) => StubNode; getElementById: (id: string) => StubNode | null };
     node: (tag: string, attributes?: Record<string, string>) => StubNode;
 } {
-    const document: Record<string, unknown> = { activeElement: null };
+    const document: { activeElement: unknown; createElement: (tag: string) => StubNode; getElementById: (id: string) => StubNode | null } = {
+        activeElement: null,
+        createElement: (tag) => node(tag),
+        getElementById: (id) => byId[id] ?? null,
+    };
     function node(tag: string, attributes: Record<string, string> = {}): StubNode {
         const classes = new Set<string>();
         const self: StubNode = {
@@ -111,8 +145,6 @@ function stubDocument(byId: Record<string, StubNode> = {}): {
         };
         return self;
     }
-    document.createElement = (tag: string) => node(tag);
-    document.getElementById = (id: string) => byId[id] ?? null;
     return { document, node };
 }
 
@@ -239,7 +271,10 @@ describe("the band of the toolbox", () => {
         const option = pageChartOption(render.option, block.chartType);
         pageFunctions(stubDocument().document).bind(option);
         echarts.registerTheme(ECHARTS_THEME_NAME, ECHARTS_THEME);
-        registerChartRenderers({ registerCustomSeries: (name, draw) => echarts.registerCustomSeries(name, draw as unknown as echarts.CustomSeriesRenderItem) });
+        registerChartRenderers({
+            registerCustomSeries: (name, draw) =>
+                echarts.registerCustomSeries(name, (params, api) => draw({ itemPayload: params.itemPayload }, rendererApi(api))),
+        });
         const chart = echarts.init(null, ECHARTS_THEME_NAME, { renderer: "svg", ssr: true, width, height: render.bodyPx });
         try {
             chart.setOption(option);
@@ -419,7 +454,8 @@ describe("the bootstrap binding of the toolbox", () => {
         // Each handler name of a toolbox is a page function, thus the bootstrap binds each one.
         for (const feature of Object.values(features(chartToolbox("qq")))) {
             for (const member of TOOLBOX_FUNCTION_MEMBERS) {
-                if (typeof feature[member] === "string") expect(TOOLBOX_PAGE_FUNCTIONS).toContain(feature[member] as (typeof TOOLBOX_PAGE_FUNCTIONS)[number]);
+                const bound = feature[member];
+                if (typeof bound === "string") expect(TOOLBOX_PAGE_FUNCTIONS.some((name) => name === bound)).toBe(true);
             }
         }
     });
@@ -428,14 +464,17 @@ describe("the bootstrap binding of the toolbox", () => {
         const { document } = stubDocument();
         const page = pageFunctions(document);
         const option = pageChartOption({ series: [] }, "scatter");
-        const restore = features(option.toolbox as Record<string, unknown>).restore;
+        const feature = optionAt(optionAt(option, "toolbox"), "feature");
+        const restore = optionMaybe(feature, "restore");
         if (restore === undefined) throw new Error("the toolbox holds no restore control");
-        restore.onclick = "constructor";
+        option.toolbox = { ...optionAt(option, "toolbox"), feature: { ...feature, restore: { ...restore, onclick: "constructor" } } };
         page.bind(option);
-        const bound = features(option.toolbox as Record<string, unknown>);
-        expect(bound.myExport?.onclick).toBe(page.named[EXPORT_MENU_FUNCTION]);
-        expect(bound.dataView?.optionToContent).toBe(page.named[DATA_VIEW_FUNCTION]);
-        expect("onclick" in restore).toBe(false);
+        const boundFeature = optionAt(optionAt(option, "toolbox"), "feature");
+        expect(optionMaybe(boundFeature, "myExport")?.onclick).toBe(page.named[EXPORT_MENU_FUNCTION]);
+        expect(optionMaybe(boundFeature, "dataView")?.optionToContent).toBe(page.named[DATA_VIEW_FUNCTION]);
+        const boundRestore = optionMaybe(boundFeature, "restore");
+        if (boundRestore === undefined) throw new Error("the bound toolbox holds no restore control");
+        expect("onclick" in boundRestore).toBe(false);
     });
 
     it("leaves an option with no toolbox as it is", () => {
@@ -526,16 +565,22 @@ describe("the data view", () => {
     it("builds one plain table with a note of the rows that it holds back, and writes each cell as text", () => {
         const data: (number | Record<string, unknown>)[][] = [];
         for (let index = 0; index < DATA_VIEW_ROW_LIMIT + 5; index += 1) data.push([index, index]);
-        const root = page.content({ xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "scatter", name: "<b>x</b>", data }] });
+        const root = optionOf(page.content({ xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "scatter", name: "<b>x</b>", data }] }));
         expect(root.className).toBe("report-data-view");
-        const [note, table] = root.children;
+        const [note, table] = optionList(root.children);
         if (note === undefined || table === undefined) throw new Error("the data view holds no note and table");
-        expect(note.textContent).toBe("The view shows the first 1,000 of 1,005 rows.");
-        const [head, body] = table.children;
+        expect(optionOf(note).textContent).toBe("The view shows the first 1,000 of 1,005 rows.");
+        const [head, body] = optionList(optionOf(table).children);
         if (head === undefined || body === undefined) throw new Error("the table holds no head and body");
-        expect(head.children[0]?.children.map((cell) => cell.textContent)).toEqual(["Series", "x", "y"]);
-        expect(body.children.length).toBe(DATA_VIEW_ROW_LIMIT);
-        expect(body.children[0]?.children[0]?.textContent).toBe("<b>x</b>");
+        const headRow = optionList(optionOf(head).children)[0];
+        if (headRow === undefined) throw new Error("the table holds no head row");
+        expect(optionList(optionOf(headRow).children).map((cell) => optionOf(cell).textContent)).toEqual(["Series", "x", "y"]);
+        expect(optionList(optionOf(body).children).length).toBe(DATA_VIEW_ROW_LIMIT);
+        const firstRow = optionList(optionOf(body).children)[0];
+        if (firstRow === undefined) throw new Error("the data view holds a first row");
+        const firstCell = optionList(optionOf(firstRow).children)[0];
+        if (firstCell === undefined) throw new Error("the first row of the data view holds no cell");
+        expect(optionOf(firstCell).textContent).toBe("<b>x</b>");
     });
 });
 
@@ -636,7 +681,7 @@ describe("the download control of the card", () => {
         items: StubNode[];
         fault: StubNode;
         control: StubNode;
-        document: Record<string, unknown>;
+        document: ReturnType<typeof stubDocument>["document"];
     } {
         const byId: Record<string, StubNode> = {};
         const { document, node } = stubDocument(byId);
@@ -715,7 +760,7 @@ describe("the download control of the card", () => {
 
     it("states the control open and gives the focus back to it when the toolbox icon opens the menu", () => {
         const { page, control, document } = card();
-        page.open({}, { getDom: () => (document.getElementById as (id: string) => unknown)("chart-gwas") }, "myExport", { event: {} });
+        page.open({}, { getDom: () => document.getElementById("chart-gwas") }, "myExport", { event: {} });
         expect(control.attributes["aria-expanded"]).toBe("true");
         page.key({ key: "Escape", preventDefault: () => undefined });
         expect(document.activeElement).toBe(control);
@@ -724,7 +769,7 @@ describe("the download control of the card", () => {
 
     it("shows the fault note in the open menu and gives it the focus, and the close hides the note again", () => {
         const { page, menu, items, fault, document } = card();
-        page.open({}, { getDom: () => (document.getElementById as (id: string) => unknown)("chart-gwas") }, "myExport", { event: {} });
+        page.open({}, { getDom: () => document.getElementById("chart-gwas") }, "myExport", { event: {} });
         page.fault(items[1]);
         expect(menu.classList.contains(MENU_OPEN_CLASS)).toBe(true);
         expect(fault.classList.contains(MENU_FAULT_SHOWN_CLASS)).toBe(true);

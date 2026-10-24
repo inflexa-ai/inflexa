@@ -6,14 +6,7 @@ import { join } from "node:path";
 
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
-import {
-    createListAvailablePackagesTool,
-    lockSections,
-    queryPackages,
-    readInventorySections,
-    type CheckedPackage,
-    type Section,
-} from "../list-available-packages.js";
+import { createListAvailablePackagesTool, lockSections, queryPackages, readInventorySections, type Section } from "../list-available-packages.js";
 import type { FarmLock } from "../../../sandbox/farm.js";
 
 // The shape every source is normalized into before `queryPackages` sees it:
@@ -333,7 +326,8 @@ describe("list_available_packages — reading the inventory", () => {
 
         const result = (
             await createListAvailablePackagesTool({ farmLockFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; checked: readonly CheckedPackage[] };
+        )._unsafeUnwrap();
+        if (!("checked" in result)) throw new Error("the targeted check returns the checked arm");
 
         expect(result.available).toBe(true);
         // The lock records the store identity, thus the targeted check carries it.
@@ -354,11 +348,8 @@ describe("list_available_packages — reading the inventory", () => {
     it("merges the image record into the report, with a version on each row", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
         expect(result.available).toBe(true);
         // 2 farm packages + 2 image tools + 1 image node package.
@@ -373,11 +364,8 @@ describe("list_available_packages — reading the inventory", () => {
     it("answers the cli language filter with the image tools alone", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const result = (await createListAvailablePackagesTool(deps).execute({ language: "cli" }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = (await createListAvailablePackagesTool(deps).execute({ language: "cli" }, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
         expect(result.total).toBe(2);
         expect(result.content).toContain("samtools==1.22.1");
@@ -388,11 +376,8 @@ describe("list_available_packages — reading the inventory", () => {
     it("answers the node language filter with the image packages alone", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const result = (await createListAvailablePackagesTool(deps).execute({ language: "node" }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = (await createListAvailablePackagesTool(deps).execute({ language: "node" }, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
         expect(result.total).toBe(1);
         expect(result.content).toContain("Node (npm)");
@@ -404,10 +389,8 @@ describe("list_available_packages — reading the inventory", () => {
     it("finds a tool by its executable name when the package name differs", async () => {
         const deps = await makeStore(JSON.stringify(IMAGE_RECORD));
 
-        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            checked: readonly CheckedPackage[];
-        };
+        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["eagle", "eagle2"] }, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("checked" in result)) throw new Error("the targeted check returns the checked arm");
 
         expect(result.checked).toEqual([
             { requested: "eagle", present: true, name: "eagle", section: "System tools (CLI)", version: "2.4.1" },
@@ -428,19 +411,15 @@ describe("list_available_packages — reading the inventory", () => {
             }),
         );
 
-        const listed = (await createListAvailablePackagesTool(deps).execute({ language: "r" }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            content: string;
-        };
+        const listed = (await createListAvailablePackagesTool(deps).execute({ language: "r" }, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("content" in listed)) throw new Error("the listing returns the content arm");
         expect(listed.content).toContain("R (ships with R)");
         expect(listed.content).toContain("survival==3.8-6");
         // The R filter answers with the R tracks alone.
         expect(listed.content).not.toContain("samtools");
 
-        const checked = (await createListAvailablePackagesTool(deps).execute({ names: ["survival"] }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            checked: readonly CheckedPackage[];
-        };
+        const checked = (await createListAvailablePackagesTool(deps).execute({ names: ["survival"] }, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("checked" in checked)) throw new Error("the targeted check returns the checked arm");
         expect(checked.checked[0]).toMatchObject({ requested: "survival", present: true, name: "survival", version: "3.8-6" });
     });
 
@@ -462,7 +441,8 @@ describe("list_available_packages — reading the inventory", () => {
 
         const result = (
             await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ names: ["echarts"] }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; checked: readonly CheckedPackage[] };
+        )._unsafeUnwrap();
+        if (!("checked" in result)) throw new Error("the targeted check returns the checked arm");
 
         expect(result.checked[0]).toMatchObject({ present: true, name: "echarts", version: "5.4.0", storeDir: "echarts-5.4.0-abcd1234abcd1234" });
     });
@@ -486,7 +466,8 @@ describe("list_available_packages — reading the inventory", () => {
 
         const result = (
             await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({ language: "node" }, makeToolContext().ctx)
-        )._unsafeUnwrap() as { available: true; total: number; content: string };
+        )._unsafeUnwrap();
+        if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
         expect(result.total).toBe(2);
         expect(result.content.match(/## Node \(npm\)/g)).toHaveLength(1);
@@ -510,13 +491,12 @@ describe("list_available_packages — reading the inventory", () => {
         // No farmLockFile: with a pool reader, the lock must not even be tried.
         const tool = createListAvailablePackagesTool({ readPoolInventory });
 
-        const listing = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: true; content: string };
+        const listing = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("content" in listing)) throw new Error("the listing returns the content arm");
         expect(listing.content).toContain("scipy==1.16.3");
 
-        const checked = (await tool.execute({ names: ["SCIPY"] }, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            checked: readonly CheckedPackage[];
-        };
+        const checked = (await tool.execute({ names: ["SCIPY"] }, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("checked" in checked)) throw new Error("the targeted check returns the checked arm");
         expect(checked.checked[0]).toMatchObject({ present: true, name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000" });
     });
 
@@ -525,7 +505,8 @@ describe("list_available_packages — reading the inventory", () => {
             readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
         });
 
-        const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap() as { available: false; content: string };
+        const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        if (result.available !== false) throw new Error("the refused read returns the unavailable arm");
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");
@@ -539,11 +520,8 @@ describe("list_available_packages — reading the inventory", () => {
     it("still reports the farm inventory when no image record is readable", async () => {
         const { farmLockFile, imagePackagesFile } = await makeStore();
 
-        const result = (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: true;
-            total: number;
-            content: string;
-        };
+        const result = (await createListAvailablePackagesTool({ farmLockFile, imagePackagesFile }).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
         expect(result.available).toBe(true);
         expect(result.total).toBe(2);
@@ -554,11 +532,8 @@ describe("list_available_packages — reading the inventory", () => {
         for (const bytes of ["## System tools (CLI)\nsamtools, bcftools\n", JSON.stringify({ ...IMAGE_RECORD, schema: 2 })]) {
             const deps = await makeStore(bytes);
 
-            const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-                available: true;
-                total: number;
-                content: string;
-            };
+            const result = (await createListAvailablePackagesTool(deps).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+            if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
             expect(result.available).toBe(true);
             expect(result.total).toBe(2);
@@ -570,10 +545,8 @@ describe("list_available_packages — reading the inventory", () => {
     // of them, and a generous guess is exactly what produces a confident bad import.
     it("reports the package set as UNKNOWN when the inventory cannot be read, naming no packages", async () => {
         const missing = join(tmpdir(), "packages-does-not-exist-xyz", "inflexa.lock");
-        const result = (await createListAvailablePackagesTool({ farmLockFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
-            available: false;
-            content: string;
-        };
+        const result = (await createListAvailablePackagesTool({ farmLockFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        if (result.available !== false) throw new Error("the refused read returns the unavailable arm");
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");
@@ -618,9 +591,8 @@ describe("list_available_packages — reading the inventory", () => {
 
     /** The presence answer of `Seurat`, the package that only the full lock holds. */
     async function seuratPresent(deps: Parameters<typeof createListAvailablePackagesTool>[0], analysisId: string): Promise<boolean> {
-        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap() as {
-            checked: readonly CheckedPackage[];
-        };
+        const result = (await createListAvailablePackagesTool(deps).execute({ names: ["Seurat"] }, contextFor(analysisId)))._unsafeUnwrap();
+        if (!("checked" in result)) throw new Error("the targeted check returns the checked arm");
         return result.checked[0]?.present ?? false;
     }
 
@@ -657,7 +629,8 @@ describe("queryPackages — a real-sized store is not truncated by default", () 
             { title: "R (CRAN)", packages: Array.from({ length: 120 }, (_, i) => ({ name: `pkg-r-${i}` })) },
         ];
 
-        const result = queryPackages(sections, {}) as { available: true; total: number; returned: number; hasMore: boolean; content: string };
+        const result = queryPackages(sections, {});
+        if (!("total" in result)) throw new Error("the listing returns the paged arm");
 
         expect(result.total).toBe(300);
         expect(result.returned).toBe(300);

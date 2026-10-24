@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createComptoxTool } from "../comptox.js";
 
@@ -15,13 +20,13 @@ function json(body: unknown, status = 200): Response {
 
 /** Route a stubbed fetch by URL substring; unmatched URLs 404. */
 function stubFetch(routes: Array<[string, () => Response]>): void {
-    globalThis.fetch = (async (url: string | URL) => {
+    globalThis.fetch = fetchDouble(async (url) => {
         const u = String(url);
         for (const [needle, make] of routes) {
             if (u.includes(needle)) return make();
         }
         return new Response("unrouted", { status: 404 });
-    }) as typeof fetch;
+    });
 }
 
 const comptox = createComptoxTool({ apiKey: "test-key" });

@@ -21,7 +21,6 @@
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
-import type { Pool } from "pg";
 
 import { forStep, forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
@@ -36,6 +35,7 @@ import { durableStep } from "../loop/run-step.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { DbError } from "../lib/db-result.js";
+import type { Querier } from "../state/db.js";
 import { deliverNotice, passGate, type GateRefusal, type NoticeFailure } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -131,7 +131,7 @@ export type DataProfileDeps = EnvironmentStorePaths & {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly sandboxClient: SandboxClient;
     readonly workspaceFs: WorkspaceFilesystem;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
@@ -806,7 +806,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             if (!accepted) {
                 throw new Error("Data profiling failed: agent did not call submit_profile");
             }
-            const { submission, resolution } = accepted as { submission: ProfileSubmission; resolution: ProfileResolution };
+            const { submission, resolution }: { submission: ProfileSubmission; resolution: ProfileResolution } = accepted;
 
             // 5. Index into vector store — one entry per group, one per dimension, one per annotated member.
             //
@@ -945,7 +945,7 @@ export function describeDataProfileStartError(e: DataProfileStartError): string 
 export type DataProfileTriggerDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly runAuthorizer: RunAuthorizer;
     readonly workflow: (input: DataProfileWorkflowInput) => Promise<void>;
 };

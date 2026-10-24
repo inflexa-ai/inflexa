@@ -1,34 +1,79 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "node:path";
 import { okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { createReportSessionAgent, REPORT_SESSION_AGENT_ID } from "../report-session-agent.js";
 import { reportSessionPrompt } from "../../prompts/report-session.js";
 import { createRegistry } from "../../tools/registry.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
 import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../../tools/report-authoring/authoring-tools.js";
+import { makeFakeWorkspaceFs } from "../sandbox/__fixtures__/deps.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice for
 // asserting the assembled `AgentDefinition`'s shape.
+const unusedEmbedding: EmbeddingProvider = {
+    dimensions: 1536,
+    embed() {
+        throw new Error("not used at composition time");
+    },
+};
+const refuseGateway: ReportSessionStateGateway = {
+    load() {
+        throw new Error("not used at composition time");
+    },
+    persist() {
+        throw new Error("not used at composition time");
+    },
+    stampRendered() {
+        throw new Error("not used at composition time");
+    },
+    stampSeen() {
+        throw new Error("not used at composition time");
+    },
+};
+const refuseStore: ReportVersionStore = {
+    record() {
+        throw new Error("not used at composition time");
+    },
+    getVersion() {
+        throw new Error("not used at composition time");
+    },
+    getThreadVersion() {
+        throw new Error("not used at composition time");
+    },
+};
+const refuseThreads: Pick<ThreadStore, "getThread" | "setAutoTitle"> = {
+    getThread() {
+        throw new Error("not used at composition time");
+    },
+    setAutoTitle() {
+        throw new Error("not used at composition time");
+    },
+};
+const refuseDerivations: Pick<ReportSessionStateStore, "appendDerivation"> = {
+    appendDerivation() {
+        throw new Error("not used at composition time");
+    },
+};
+
 function buildAgent(toolOutputStore?: ToolOutputStore) {
     return createReportSessionAgent({
         model: "anthropic/claude-opus-4-8",
-        pool: {} as Pool,
-        embedding: {} as EmbeddingProvider,
-        workspaceFs: {} as WorkspaceFilesystem,
-        gateway: {} as ReportSessionStateGateway,
+        pool: new Pool(),
+        embedding: unusedEmbedding,
+        workspaceFs: makeFakeWorkspaceFs(),
+        gateway: refuseGateway,
         resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
-        store: {} as ReportVersionStore,
-        threads: {} as Pick<ThreadStore, "getThread" | "setAutoTitle">,
+        store: refuseStore,
+        threads: refuseThreads,
         chrome: {},
-        derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
+        derivations: refuseDerivations,
         toolOutputStore,
     });
 }

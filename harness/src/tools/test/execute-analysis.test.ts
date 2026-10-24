@@ -11,16 +11,47 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { Pool } from "pg";
+import { z } from "zod";
+import { Pool, type QueryConfig, type QueryResultRow } from "pg";
+import type { Querier } from "../../state/db.js";
+import type { Connectable } from "../../lib/db-result.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 
-import type { RequestSession, RunSession } from "../../auth/types.js";
+/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
+function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
+    return Object.assign(run, { preconnect: fetch.preconnect });
+}
+
+/** The stored ad-hoc plan, parsed out of the state layer's `unknown` payload; a drifted shape fails the test. */
+function storedAdHocPlan(stored: unknown): { steps: Array<{ packages: string[]; caveats?: string[] }> } {
+    return z.object({ steps: z.array(z.object({ packages: z.array(z.string()), caveats: z.array(z.string()).optional() })) }).parse(stored);
+}
+
+/** The workflow input the launcher captured, parsed off the seam's abstract element; a drifted shape fails the test. */
+function launchedInput(stored: unknown): {
+    steps: Array<{ id: string; depends_on: string[] }>;
+    agentByStepId: Record<string, string>;
+    synthesisEnabled: boolean;
+    planStepById: Record<string, { question: string; acceptance_criteria: string[] }>;
+} {
+    return z
+        .object({
+            steps: z.array(z.object({ id: z.string(), depends_on: z.array(z.string()) })),
+            agentByStepId: z.record(z.string(), z.string()),
+            synthesisEnabled: z.boolean(),
+            planStepById: z.record(z.string(), z.object({ question: z.string(), acceptance_criteria: z.array(z.string()) })),
+        })
+        .parse(stored);
+}
+
+import type { RequestSession } from "../../auth/types.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
 import type { ChatProvider } from "../../providers/types.js";
-import type { ExecuteAnalysisInput } from "../../workflows/execute-analysis.js";
 import type { AdHocRoute } from "../ad-hoc-router.js";
 import type { ToolContext } from "../define-tool.js";
 import { capabilityDataRequirement } from "../../agents/sandbox-catalog.js";
@@ -45,15 +76,15 @@ import {
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
     launcher: RunLauncher;
     launches: Array<{ workflowId: string }>;
-    inputs: ExecuteAnalysisInput[];
+    inputs: unknown[];
 } {
     const launches: Array<{ workflowId: string }> = [];
-    const inputs: ExecuteAnalysisInput[] = [];
+    const inputs: unknown[] = [];
     const launcher: RunLauncher = {
         launch: async (_workflow, o, input) => {
             if (opts.failLaunch) throw new Error("launch boom");
             launches.push({ workflowId: o.workflowId });
-            inputs.push(input as ExecuteAnalysisInput);
+            inputs.push(input);
         },
     };
     return { launcher, launches, inputs };
@@ -68,7 +99,13 @@ function recordingAuthorizer(): {
     const authorizer: RunAuthorizer = {
         authorize: () =>
             okAsync<RunAuthorization, GateFailure>({
-                runSession: {} as RunSession,
+                runSession: {
+                    identity: { user: "u-1" },
+                    scope: { kind: "analysis", analysisId: "a1" },
+                    provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+                    runFrame: { runId: "run-test" },
+                    auth: makeLocalAuth(),
+                },
                 ownsMandate: true,
             }),
         revoke: (_authorization, reason) => {
@@ -111,7 +148,8 @@ function fakePool(rowsByPrefix: Record<string, Row[]>): {
         return Promise.resolve({ rows: [] });
     };
     const connect = async () => ({ query, release: () => {} });
-    return { pool: { query, connect } as unknown as Pool, queries };
+    // A real `Pool` whose `query` and `connect` the fake overrides; the own properties win at runtime.
+    return { pool: Object.assign(new Pool(), { query, connect }), queries };
 }
 
 function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): ToolContext {
@@ -162,8 +200,10 @@ function routeProvider(agentId = "single-cell-agent", packages?: string[]): { pr
                     finishReason: "tool-calls",
                 });
             },
-            chatStream: async function* () {},
-        } as ChatProvider,
+            chatStream: () => {
+                throw new Error("the routing probe never streams");
+            },
+        },
     };
 }
 
@@ -211,7 +251,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
         // No persisted data profile.
         return { rows: [], rowCount: 0 };
     };
-    return { pool: { query } as unknown as Pool, plans, runs };
+    return { pool: Object.assign(new Pool(), { query }), plans, runs };
 }
 
 function setEnv(): void {
@@ -245,7 +285,7 @@ const validPlan = {
 };
 
 const utilityDeps = {
-    utilityProvider: {} as never,
+    utilityProvider: unusedChatProvider(),
     utilityModel: "utility-model",
 };
 
@@ -253,7 +293,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
     it("exposes one flat refined schema with only mode, planId, and request", () => {
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
-            pool: {} as Pool,
+            pool: new Pool(),
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
             executeAnalysisWorkflow: async () => {
@@ -261,7 +301,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        expect(Object.keys((tool.jsonSchema.properties ?? {}) as Record<string, unknown>).sort()).toEqual(["mode", "planId", "request"]);
+        expect(Object.keys(parseUnknownRecord(tool.jsonSchema.properties) ?? {}).sort()).toEqual(["mode", "planId", "request"]);
         expect(tool.inputSchema.safeParse({ mode: "plan", planId: PLAN_ID }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compute this" }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "plan", request: "wrong" }).success).toBe(false);
@@ -338,13 +378,13 @@ describe("createExecuteAnalysisTool plan mode", () => {
         // Saved and restored below: a stub left in place would answer every
         // later test file's request from this one's fixture.
         const realFetch = globalThis.fetch;
-        globalThis.fetch = (async () => {
+        globalThis.fetch = fetchDouble(async () => {
             mintCalls++;
             return new Response("{}", {
                 status: 200,
                 headers: { "content-type": "application/json" },
             });
-        }) as unknown as typeof fetch;
+        });
 
         let dispatched = false;
         const tool = createExecuteAnalysisTool({
@@ -456,10 +496,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as {
-            runId: string;
-            status: string;
-        };
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
         expect(launches).toHaveLength(1);
         expect(launches[0]!.workflowId).toBe(result.runId);
@@ -486,7 +523,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        const workflowInput = inputs[0]!;
+        const workflowInput = launchedInput(inputs[0]);
         expect(workflowInput.planStepById["step-a"]!.question).toBe("do step-a");
         expect(workflowInput.planStepById["step-a"]!.acceptance_criteria).toEqual(["completes"]);
         // No pre-rendered prompt string is frozen into the durable input.
@@ -537,20 +574,20 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
         const first = (
             await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
-        )._unsafeUnwrap() as { runId: string };
+        )._unsafeUnwrap();
         // Simulate a terminal DBOS outcome. A duplicate tool delivery must still
         // return this exact run instead of launching it again.
         runs.get(first.runId)!.status = "completed";
         const replay = (
             await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
-        )._unsafeUnwrap() as { runId: string };
+        )._unsafeUnwrap();
 
         expect(replay.runId).toBe(first.runId);
         expect(routing.calls.count).toBe(1);
         expect(launches).toHaveLength(1);
-        expect(inputs[0]!.steps).toEqual([{ id: "T1S1", depends_on: [] }]);
-        expect(inputs[0]!.agentByStepId).toEqual({ T1S1: "single-cell-agent" });
-        expect(inputs[0]!.synthesisEnabled).toBe(false);
+        expect(launchedInput(inputs[0]).steps).toEqual([{ id: "T1S1", depends_on: [] }]);
+        expect(launchedInput(inputs[0]).agentByStepId).toEqual({ T1S1: "single-cell-agent" });
+        expect(launchedInput(inputs[0]).synthesisEnabled).toBe(false);
         expect(plans.size).toBe(1);
         expect(emitted).toHaveLength(2);
     });
@@ -572,8 +609,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         });
         const request = "Calculate descriptors for the supplied compounds";
 
-        const first = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-1")))._unsafeUnwrap() as { runId: string };
-        const second = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-2")))._unsafeUnwrap() as { runId: string };
+        const first = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-1")))._unsafeUnwrap();
+        const second = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-2")))._unsafeUnwrap();
 
         expect(second.runId).not.toBe(first.runId);
         expect(launches).toHaveLength(2);
@@ -603,7 +640,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
         const result = (
             await tool.execute({ mode: "adhoc", request: "Cluster these cells and score the markers" }, fakeContext("call-adhoc-packages"))
-        )._unsafeUnwrap() as { status: string };
+        )._unsafeUnwrap();
 
         expect(seamCalls).toHaveLength(1);
         expect(seamCalls[0]!.analysisId).toBe(ANALYSIS_ID);
@@ -627,7 +664,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                     queries.map((q) => ({
                         kind: "collision" as const,
                         spelling: q.spelling,
-                        storeDirs: ["python-dir", "r-dir"] as [string, string],
+                        storeDirs: ["python-dir", "r-dir"] as const,
                     })),
                 ),
             executeAnalysisWorkflow: async () => {
@@ -666,7 +703,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
         (await tool.execute({ mode: "adhoc", request: "Summarize the staged table" }, fakeContext("call-adhoc-no-packages")))._unsafeUnwrap();
 
-        const stored = [...plans.values()][0] as { steps: Array<{ packages: string[]; caveats?: string[] }> };
+        const stored = storedAdHocPlan([...plans.values()][0]);
         expect(stored.steps[0]!.packages).toEqual([]);
         // The step agent must learn that nothing was linked for it, because the
         // link pass is silent when a step declares no package.
@@ -758,7 +795,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             },
         });
 
-        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as { status: string };
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
         // One call, with the union: "scanpy" appears in two steps and links once.
         expect(seamCalls).toHaveLength(1);
@@ -1016,7 +1053,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                             ? {
                                   kind: "collision" as const,
                                   spelling: q.spelling,
-                                  storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                                  storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as const,
                               }
                             : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
                     ),
@@ -1053,7 +1090,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                     queries.map((q) => ({
                         kind: "collision" as const,
                         spelling: q.spelling,
-                        storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                        storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as const,
                         detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
                     })),
                 ),
@@ -1129,28 +1166,28 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
  * transaction. `intercept` gives an error to fail the statement, or nothing to let it run. The launch
  * reads the pool through `query` and `connect` only, thus a bare object stands for it.
  */
-function interceptingPool(pool: Pool, intercept: (text: string) => Error | undefined | Promise<Error | undefined>): Pool {
-    const guard =
-        (query: (...args: unknown[]) => Promise<unknown>) =>
-        async (q: { text: string } | string, ...rest: unknown[]) => {
-            const error = await intercept(typeof q === "string" ? q : q.text);
+function interceptingPool(pool: Pool, intercept: (text: string) => Error | undefined | Promise<Error | undefined>): Querier & Connectable {
+    const guarded =
+        (query: Querier["query"]) =>
+        async <R extends QueryResultRow>(textOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: R[]; rowCount: number | null }> => {
+            const error = await intercept(typeof textOrConfig === "string" ? textOrConfig : textOrConfig.text);
             if (error) throw error;
-            return query(q, ...rest);
+            return query(textOrConfig, values);
         };
     return {
-        query: guard(pool.query.bind(pool) as (...args: unknown[]) => Promise<unknown>),
+        query: (textOrConfig, values) => guarded(pool.query.bind(pool))(textOrConfig, values),
         connect: async () => {
             const client = await pool.connect();
             return {
-                query: guard(client.query.bind(client) as (...args: unknown[]) => Promise<unknown>),
-                release: (...args: unknown[]) => (client.release as (...rest: unknown[]) => void)(...args),
+                query: (textOrConfig, values) => guarded(client.query.bind(client))(textOrConfig, values),
+                release: () => client.release(),
             };
         },
-    } as unknown as Pool;
+    };
 }
 
 /** A pool that fails the statements the matcher names, also inside a transaction, and delegates the others. */
-function poolFailingOn(pool: Pool, failure: (text: string) => Error | undefined): Pool {
+function poolFailingOn(pool: Pool, failure: (text: string) => Error | undefined): Querier & Connectable {
     return interceptingPool(pool, failure);
 }
 
@@ -1379,7 +1416,8 @@ describe("the launch of a stored plan, over a real database", () => {
 
             expect(malformed).toEqual({ type: "plan_invalid", planId: PLAN_ID, malformed: true, errors: [] });
             expect(invalid).toMatchObject({ type: "plan_invalid", planId: "pln-0000000b", malformed: false });
-            expect((invalid as { errors: string[] }).errors.length).toBeGreaterThan(0);
+            if (!("errors" in invalid)) throw new Error("plan_invalid carries the step errors");
+            expect(invalid.errors.length).toBeGreaterThan(0);
             expect(await runRows()).toEqual([]);
         });
 
@@ -1491,7 +1529,8 @@ describe("the launch of a stored plan, over a real database", () => {
             const refusal = (await launchPlanRun(deps({ pool: colliding }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
             expect(refusal.type).toBe("store_failed");
-            expect((refusal as { cause: unknown }).cause).toBeInstanceOf(RunDedupCollisionError);
+            if (!("cause" in refusal)) throw new Error("store_failed carries the collision cause");
+            expect(refusal.cause).toBeInstanceOf(RunDedupCollisionError);
         });
 
         it("gives store_failed when a read of the store fails, and does not reject", async () => {
@@ -1515,7 +1554,8 @@ describe("the launch of a stored plan, over a real database", () => {
             )._unsafeUnwrapErr();
 
             expect(refusal.type).toBe("launch_failed");
-            expect(((refusal as { cause: unknown }).cause as Error).message).toBe("launch boom");
+            if (!("cause" in refusal) || !(refusal.cause instanceof Error)) throw new Error("launch_failed carries an Error cause");
+            expect(refusal.cause.message).toBe("launch boom");
             expect(revokes).toEqual(["workflow-start-failed"]);
             expect(await runRows()).toMatchObject([{ status: "failed", error: "workflow start failed" }]);
         });
@@ -1700,8 +1740,8 @@ describe("the launch of a stored plan, over a real database", () => {
             const tool = createExecuteAnalysisTool({ ...utilityDeps, ...deps() });
             const failure = await tool.execute({ mode: "plan", planId: "pln-0000000b" }, fakeContext()).catch((error: unknown) => error);
 
-            expect(failure).toBeInstanceOf(PlanValidationError);
-            expect((failure as PlanValidationError).errors.length).toBeGreaterThan(0);
+            if (!(failure instanceof PlanValidationError)) throw new Error("the call fails with PlanValidationError");
+            expect(failure.errors.length).toBeGreaterThan(0);
         });
 
         it("fails the call with the package error, and the message names the missing entry", async () => {
@@ -1747,8 +1787,8 @@ describe("the launch of a stored plan, over a real database", () => {
                 .run()
                 .catch((error: unknown) => error);
 
-            expect(failure).toBeInstanceOf(Error);
-            expect((failure as Error).cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
+            if (!(failure instanceof Error)) throw new Error("the call fails with an Error");
+            expect(failure.cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
         });
 
         it("runs a plan again after its run ended", async () => {
@@ -1756,7 +1796,7 @@ describe("the launch of a stored plan, over a real database", () => {
             (await insertRun(pool, { runId: "r1", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID }))._unsafeUnwrap();
             (await updateRunStatus(pool, "r1", "completed"))._unsafeUnwrap();
 
-            const result = (await toolFor().run())._unsafeUnwrap() as { runId: string; status: string };
+            const result = (await toolFor().run())._unsafeUnwrap();
 
             expect(result.status).toBe("in_progress");
             expect(result.runId).not.toBe("r1");
@@ -1784,8 +1824,8 @@ describe("the launch of a stored plan, over a real database", () => {
             const emitted: unknown[] = [];
             const run = toolFor({}, emitted).run;
 
-            const first = (await run())._unsafeUnwrap() as { runId: string; status: string };
-            const second = (await run())._unsafeUnwrap() as { runId: string; status: string };
+            const first = (await run())._unsafeUnwrap();
+            const second = (await run())._unsafeUnwrap();
 
             expect(first.status).toBe("in_progress");
             expect(second).toEqual({ runId: first.runId, status: "in_progress" });

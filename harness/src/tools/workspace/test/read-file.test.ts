@@ -115,15 +115,16 @@ describe("createReadFileTool", () => {
         try {
             await tool.execute({ path: "data/inputs/cold.csv" }, ctx);
         } catch (e) {
+            if (!(e instanceof Error)) throw new Error(`expected an Error, got ${String(e)}`, { cause: e });
             threw = true;
-            expect((e as Error).message).toContain("upstream 502");
+            expect(e.message).toContain("upstream 502");
         }
         expect(threw).toBe(true);
     });
 
     it("emits a valid Anthropic input schema", () => {
         const tool = createReadFileTool(fakeFs(() => ({ kind: "not_found" })));
-        expect((tool.jsonSchema as { type?: unknown }).type).toBe("object");
+        expect(tool.jsonSchema.type).toBe("object");
     });
 
     it("forwards headLines to the seam and tags the response mode", async () => {

@@ -2,13 +2,20 @@ import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import type { SandboxClient } from "../../sandbox/client.js";
+import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import type { ExecRequest, ExecResult } from "../../sandbox/types.js";
-import type { ReadBytesResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
+import type { ListResult, ReadBytesResult, ReadFileResult, StatResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { enrichShapes, type EnrichShapesArgs } from "../enrich.js";
 import { observeShapes } from "../shapes.js";
 import type { ScannedFile } from "../types.js";
+import type { AgentSession } from "../../auth/types.js";
 
-const SESSION = {} as never;
+const SESSION: AgentSession = {
+    identity: { user: "tester" },
+    scope: { kind: "analysis", analysisId: "analysis-1" },
+    provenance: { agentId: "enrich", callPath: ["enrich"] },
+    auth: {},
+};
 
 function file(path: string, format: string): ScannedFile {
     const base = path.slice(path.lastIndexOf("/") + 1);
@@ -30,36 +37,41 @@ function motivatingTree(): ScannedFile[] {
 /** A read seam over an in-memory tree; every read is recorded with its byte budget. */
 function readSeam(contents: Record<string, Buffer>): { fs: WorkspaceFilesystem; reads: { path: string; length: number }[] } {
     const reads: { path: string; length: number }[] = [];
-    const fs = {
+    const fs: WorkspaceFilesystem = {
+        readFile: () => okAsync<ReadFileResult>({ kind: "not_found" }),
         readBytes({ path, length }: { path: string; length: number }) {
             reads.push({ path, length });
             const bytes = contents[path];
             return okAsync<ReadBytesResult, never>(bytes ? { kind: "ok", bytes: bytes.subarray(0, length) } : { kind: "not_found" });
         },
-    } as unknown as WorkspaceFilesystem;
+        stat: () => okAsync<StatResult>({ kind: "not_found" }),
+        list: () => okAsync<ListResult>({ kind: "not_found" }),
+    };
     return { fs, reads };
 }
 
 function recordingSandbox(): { client: SandboxClient; submitted: ExecRequest[] } {
     const submitted: ExecRequest[] = [];
-    const client = {
+    const client: SandboxClient = {
+        ...makeFakeSandboxClient(),
         async exec(_ref: unknown, request: ExecRequest): Promise<ExecResult> {
             submitted.push(request);
             const paths = request.command.slice(3);
             const stdout = paths.map((path) => JSON.stringify({ path, fields: { columnCount: 7 } })).join("\n");
             return { execId: "wf:7", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false };
         },
-    } as unknown as SandboxClient;
+    };
     return { client, submitted };
 }
 
 /** A sandbox whose decoder exec produced no usable stdout, with the outcome under test. */
 function failingSandbox(result: Partial<ExecResult>): SandboxClient {
     return {
+        ...makeFakeSandboxClient(),
         async exec(): Promise<ExecResult> {
             return { execId: "wf:7", exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result };
         },
-    } as unknown as SandboxClient;
+    };
 }
 
 function enrichArgs(overrides: Pick<EnrichShapesArgs, "shapes" | "fs"> & Partial<EnrichShapesArgs>) {

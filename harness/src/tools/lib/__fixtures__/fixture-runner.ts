@@ -41,7 +41,7 @@ export type FixtureCase<S extends z.ZodType> = {
      * The assertion over the parsed fixture. A client that maps the payload calls
      * its own mapper here and asserts the mapped record.
      */
-    assertOutput?: (output: z.infer<S>) => void;
+    assertOutput?(output: z.infer<S>): void;
 };
 
 /**
@@ -60,12 +60,12 @@ export type ErasedFixtureCase = FixtureCase<z.ZodType>;
  * each row through this function, and never through a bare object literal.
  */
 export function fixtureCase<S extends z.ZodType>(testCase: FixtureCase<S>): ErasedFixtureCase {
-    return testCase as unknown as ErasedFixtureCase;
+    return testCase;
 }
 
 /** Read one fixture file of a provider directory and parse it as JSON. */
 export function readFixture(provider: string, file: string): unknown {
-    return JSON.parse(readFileSync(join(FIXTURES_DIR, provider, file), "utf8")) as unknown;
+    return JSON.parse(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"));
 }
 
 /** Register the accept, map, and reject assertions for each row of a fixture table. */

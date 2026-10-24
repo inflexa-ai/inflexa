@@ -12,7 +12,7 @@
  * standing machine exists.
  */
 
-import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, ok, type Result } from "neverthrow";
 import { randomUUID } from "node:crypto";
 
@@ -244,9 +244,9 @@ export async function triggerExtractValues(
         throw new Error(`the extraction was not authorized: ${authorized.error.reason}`);
     }
     const { runSession, ownsMandate } = authorized.value; // oss-core-managed-ok
-    const handle = (await DBOS.startWorkflow(deps.workflow, {
+    const handle = await DBOS.startWorkflow(deps.workflow, {
         workflowID: extractValuesWorkflowId(analysisId, randomUUID()),
-    })({ analysisId, runSession, requests: [...requests], ownsMandate })) as WorkflowHandle<Result<ExtractValuesResult, Suspension>>; // oss-core-managed-ok
+    })({ analysisId, runSession, requests: [...requests], ownsMandate }); // oss-core-managed-ok
     return handle.getResult();
 }
 

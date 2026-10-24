@@ -11,8 +11,9 @@
 
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { Pool, PoolClient } from "pg";
+import { z } from "zod";
 
-import { tryMutation, tryQuery, withTransaction, type DbError } from "../../lib/db-result.js";
+import { tryMutation, tryQuery, withTransaction, type DbError, type TransactionQuerier } from "../../lib/db-result.js";
 import type { AskReply } from "./contract.js";
 
 type Querier = Pool | PoolClient;
@@ -40,6 +41,36 @@ export type AskResolution = {
     readonly status: AskStatus;
     readonly reply: AskReply | null;
 };
+
+/** The reply column of `cortex_asks`: the JSONB the answer write stored. */
+const AskReplySchema: z.ZodType<AskReply> = z.union([
+    z.object({ kind: z.literal("once") }),
+    z.object({ kind: z.literal("always") }),
+    z.object({ kind: z.literal("reject"), feedback: z.string().optional() }),
+]);
+
+const AskResolutionRowSchema = z.object({ status: z.enum(["pending", "resolved", "rejected", "aborted", "expired"]), reply: AskReplySchema.nullable() });
+
+/** The columns of the pending enumeration, as the SELECT spells them. */
+const PendingAskRowSchema = z.object({
+    id: z.string(),
+    analysis_id: z.string(),
+    user_id: z.string(),
+    thread_id: z.string().nullable(),
+    title: z.string(),
+    command: z.string(),
+    detail: z.string().nullable(),
+    created_at: z.string(),
+});
+
+/** The columns the guarded UPDATE returns for the standing-grant insert. */
+const GrantedRowSchema = z.object({ analysis_id: z.string(), user_id: z.string(), grant_key: z.string() });
+
+function mapAskResolutionRow(row: unknown): AskResolution | null {
+    if (row === null || row === undefined) return null;
+    const parsed = AskResolutionRowSchema.parse(row);
+    return { status: parsed.status, reply: parsed.reply ?? null };
+}
 
 /** Column payload shared by the pending insert and the grant short-circuit insert. */
 export type AskRow = {
@@ -113,9 +144,9 @@ export function selectAskResolution(querier: Querier, id: string): ResultAsync<A
             text: `SELECT status, reply FROM cortex_asks WHERE id = $1`,
             values: [id],
         });
-        const row = result.rows[0] as { status: AskStatus; reply: AskReply | null } | undefined;
+        const row = mapAskResolutionRow(result.rows[0]);
         if (!row) return null;
-        return { status: row.status, reply: row.reply ?? null };
+        return row;
     });
 }
 
@@ -139,16 +170,19 @@ export function selectPending(querier: Querier): ResultAsync<PendingAsk[], DbErr
             text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
               FROM cortex_asks WHERE status = 'pending' ORDER BY created_at ASC`,
         });
-        return result.rows.map((row: Record<string, unknown>) => ({
-            id: row.id as string,
-            analysisId: row.analysis_id as string,
-            userId: row.user_id as string,
-            threadId: (row.thread_id as string | null) ?? null,
-            title: row.title as string,
-            command: row.command as string,
-            detail: (row.detail as string | null) ?? null,
-            createdAt: row.created_at as string,
-        }));
+        return result.rows.map((row: unknown) => {
+            const parsed = PendingAskRowSchema.parse(row);
+            return {
+                id: parsed.id,
+                analysisId: parsed.analysis_id,
+                userId: parsed.user_id,
+                threadId: parsed.thread_id ?? null,
+                title: parsed.title,
+                command: parsed.command,
+                detail: parsed.detail ?? null,
+                createdAt: parsed.created_at,
+            };
+        });
     });
 }
 
@@ -200,7 +234,12 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             // the column — `command` is NOT NULL, so the key can never be null.
             // `user_id` reads the same way: its COALESCE gives the empty string for a
             // row that predates the column, and that identity matches no real user.
-            const granted = updated.rows[0] as { analysis_id: string; user_id: string; grant_key: string };
+            // The COALESCEs make every returned field non-null: each insert writes
+            // grant_key (command when the tool supplied none) and user_id (empty
+            // string when the row predates the column), so the row schema below can
+            // demand all three strings; a row that misses one is refused through the
+            // transaction's `DbError` channel.
+            const granted = GrantedRowSchema.parse(updated.rows[0]);
             return tryMutation("asks.answer:grant", async () => {
                 await client.query({
                     text: `INSERT INTO cortex_ask_grants (analysis_id, user_id, grant_key, created_at)
@@ -213,7 +252,7 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
 }
 
 /** A zero-row `UPDATE` means the id is absent or already terminal — tell them apart. */
-function discriminateMiss(client: PoolClient, id: string): ResultAsync<AnswerOutcome, DbError> {
+function discriminateMiss(client: TransactionQuerier, id: string): ResultAsync<AnswerOutcome, DbError> {
     return tryQuery<AnswerOutcome>("asks.answer:discriminate", async () => {
         const result = await client.query({ text: `SELECT 1 FROM cortex_asks WHERE id = $1`, values: [id] });
         return (result.rowCount ?? 0) > 0 ? "already_terminal" : "not_found";

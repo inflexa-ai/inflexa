@@ -60,8 +60,8 @@ describe("ImagePackagesSchema", () => {
         });
         if (!parsed.success) throw new Error(`expected a valid record: ${parsed.error.message}`);
 
-        expect(parsed.data as Record<string, unknown>).toHaveProperty("built_at", "2026-09-01T00:00:00Z");
-        expect(parsed.data.system_tools[0] as Record<string, unknown>).toHaveProperty("channel", "bioconda");
+        expect(parsed.data).toHaveProperty("built_at", "2026-09-01T00:00:00Z");
+        expect(parsed.data.system_tools[0]).toHaveProperty("channel", "bioconda");
     });
 
     it("refuses a missing track and an entry with no version", () => {

@@ -41,6 +41,7 @@
 
 import type { Pool } from "pg";
 
+import type { Querier } from "../state/db.js";
 import type { Logger } from "../lib/logger.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
@@ -61,8 +62,8 @@ const SKILL_DECLARING_AGENTS = SANDBOX_AGENT_META;
 export type BootHarnessDeps = {
     /** Everything `assembleCoreRuntime` needs (workflow + conversation deps, resource policy). */
     readonly core: CoreRuntimeDeps;
-    /** App `pg.Pool` — used for state init, the connection-budget guard, and closed on shutdown. */
-    readonly pool: Pool;
+    /** The ledger pool — used for state init, the connection-budget guard, and closed on shutdown. */
+    readonly pool: Querier & Pick<Pool, "connect" | "end" | "options">;
     /** Skills root; validated against the harness-owned agent catalog before launch. */
     readonly skillsDir: string;
     /** DBOS launch config (carries the stable `executorId`). */

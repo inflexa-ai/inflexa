@@ -8,6 +8,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_PAGE_TEXT_PX, CHART_PALETTE, CHART_WIDE_PALETTE, DIVERGING_RAMP, GUIDE_LINE_COLOR, SIZE_CHANNEL_RANGE_PX } from "../../design.js";
+import { optionArray, optionAt } from "../../test/options.js";
 import {
     AREA_LEGEND_ICON,
     applyFigureRules,
@@ -100,7 +101,7 @@ describe("the statistics text", () => {
         const [lower] = statisticsGraphic(statistics, "bottom-left");
         if (lower === undefined) throw new Error("the figure holds no statistic element");
         expect(lower).toMatchObject({ left: "12%", bottom: "24%" });
-        expect((lower.style as EchartOption).fontSize).toBe(CHART_PAGE_TEXT_PX);
+        expect(optionAt(lower, "style").fontSize).toBe(CHART_PAGE_TEXT_PX);
     });
 
     it("gives no element for a figure with no statistic", () => {
@@ -138,16 +139,16 @@ describe("the size legend", () => {
     it("draws three reference circles at the sizes of the size map, with the value of each one", () => {
         const legend = sizeLegend({ min: 10, max: 50 }, "Genes", "count", { right: 8, bottom: "20%" });
         expect(legend).toMatchObject({ type: "group", right: 8, bottom: "20%" });
-        const children = legend.children as EchartOption[];
+        const children = optionArray(legend, "children");
         const circles = children.filter((child) => child.type === "circle");
         const [small, large] = SIZE_CHANNEL_RANGE_PX;
-        expect(circles.map((circle) => (circle.shape as EchartOption).r)).toEqual([small / 2, (small + large) / 4, large / 2]);
-        const texts = children.filter((child) => child.type === "text").map((child) => (child.style as EchartOption).text);
+        expect(circles.map((circle) => optionAt(circle, "shape").r)).toEqual([small / 2, (small + large) / 4, large / 2]);
+        const texts = children.filter((child) => child.type === "text").map((child) => optionAt(child, "style").text);
         expect(texts).toEqual(["Genes", "10", "30", "50"]);
     });
 
     it("draws one circle for a range of one value", () => {
-        const circles = (sizeLegend({ min: 5, max: 5 }, "n", "n", {}).children as EchartOption[]).filter((child) => child.type === "circle");
+        const circles = optionArray(sizeLegend({ min: 5, max: 5 }, "n", "n", {}), "children").filter((child) => child.type === "circle");
         expect(circles).toHaveLength(1);
     });
 });
@@ -175,7 +176,7 @@ describe("the categorical palette", () => {
 describe("the legend icons", () => {
     /** The icon of each legend entry of one option. */
     function icons(option: EchartOption): Record<string, unknown> {
-        const data = (option.legend as EchartOption).data as EchartOption[];
+        const data = optionArray(optionAt(option, "legend"), "data");
         return Object.fromEntries(data.map((entry): [string, unknown] => [String(entry.name), entry.icon]));
     }
 

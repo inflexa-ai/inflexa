@@ -6,7 +6,8 @@
  * and a fixture realization can read an in-memory snapshot. The two obey the same contract.
  */
 
-import type { Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 
 import type { Reference, RowBound, UnresolvedReference } from "../contracts/report-reference.js";
 import type { ArtifactType } from "../schemas/artifact-manifest.js";
@@ -19,6 +20,9 @@ import { asFiniteNumber } from "./assert-rules.js";
  * text-backed artifact such as a CSV gives a numeric column as a string. Thus a realization is free to
  * skip a type inference pass, and resolution compares a numeral by its numeric value and never by its
  * JavaScript type.
+ *
+ * A real parser gives an empty cell back as an absent key, `undefined`, or `null`, and a row admits all
+ * three. `snapshotRows` parses an entry's rows into the present cells that the resolution reads.
  *
  * `rows` is optional because an image is pinned by its hash alone and holds no cells. An empty array in
  * that position would say that the artifact holds zero rows, which is a different and false claim. The
@@ -34,8 +38,59 @@ import { asFiniteNumber } from "./assert-rules.js";
 export type ArtifactSnapshot = {
     hash: string;
     fileType?: string | null;
-    rows?: Array<Record<string, string | number>>;
+    rows?: Array<Record<string, string | number | null | undefined>>;
 };
+
+/** One cell that a row of a snapshot may hold: a string or a number, or one of the empty-cell shapes. */
+const CellSchema = z.union([z.string(), z.number()]).nullish();
+
+/**
+ * Put one own data property on a row.
+ *
+ * A plain assignment at the key `__proto__` reaches the prototype setter, thus the row loses a column
+ * that the payload carries. The definition makes an own data property for each key.
+ */
+function defineOwn(target: Record<string, string | number>, key: string, value: string | number): void {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/**
+ * Give back the present cells of a snapshot entry's rows, or an empty array for an entry with no rows.
+ *
+ * The structural tier and the fixture resolver both read this one parse. Thus the two tiers can never
+ * disagree about the rows of one entry.
+ *
+ * A real parser gives an empty cell back as an absent key, `undefined`, or `null`; the parse admits each
+ * and yields the present cells, so the reads below see one absence shape only. The `Err` channel carries
+ * the account of a row that the artifact forbids: an entry of the rows list that is not a record, or a
+ * cell that is neither a string nor a number. The caller refuses the reference through its own channel,
+ * so a malformed row never throws out of resolution.
+ */
+export function snapshotRows(entry: ArtifactSnapshot | undefined): Result<Array<Record<string, string | number>>, string> {
+    const rows = entry?.rows;
+    if (rows === undefined) return ok([]);
+    if (!Array.isArray(rows)) return err("the rows of the artifact are not a list");
+    const list: unknown[] = rows;
+    const parsed: Array<Record<string, string | number>> = [];
+    for (const [index, row] of list.entries()) {
+        if (row === null || typeof row !== "object" || Array.isArray(row)) {
+            return err(`row ${index} of the artifact is not a record`);
+        }
+        const cells: Record<string, string | number> = {};
+        for (const column of Object.keys(row)) {
+            const cell: unknown = Reflect.get(row, column);
+            const read = CellSchema.safeParse(cell);
+            if (!read.success) {
+                return err(`the cell ${column} of row ${index} is neither a string, a number, nor empty`);
+            }
+            if (read.data !== undefined && read.data !== null) {
+                defineOwn(cells, column, read.data);
+            }
+        }
+        parsed.push(cells);
+    }
+    return ok(parsed);
+}
 
 /**
  * One pinned citation record: the short citation of the paper, and the description that the synthesis

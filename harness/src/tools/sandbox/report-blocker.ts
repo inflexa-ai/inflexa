@@ -73,7 +73,7 @@ export type ReportBlockerDeps = {
  * the terminal contract ("pass a reason, then stop") are fixed here; the call
  * site supplies only the per-loop meaning and the capture closure.
  */
-export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
+export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool<z.infer<typeof ReportBlockerInputSchema>, { recorded: true; message: string }> {
     return defineTool({
         id: REPORT_BLOCKER_TOOL_ID,
         description: `Terminal. ${deps.blockedWhen} Pass a clear reason. Stop immediately after calling — take no further actions.`,

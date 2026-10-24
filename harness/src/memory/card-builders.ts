@@ -17,13 +17,14 @@
 import { createHash } from "node:crypto";
 
 import { okAsync, type ResultAsync } from "neverthrow";
-import type { Pool } from "pg";
+import type { Querier } from "../state/db.js";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
-import { loadPlan, loadPlanRecord, type PlanRecord } from "../state/index.js";
+import { loadPlan, loadPlanRecord, type PlanRecord, type PlanRowQuerier } from "../state/index.js";
 import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
@@ -103,7 +104,7 @@ export function planPartOf(record: PlanRecord): PlanPart | null {
 /** Build the `data-plan` payload by loading the stored plan. `ok(null)` when
  *  the plan is missing or no longer parses (absence is NOT an error) — the
  *  caller falls back to a chip. */
-export function buildPlanCardData(pool: Pool, planId: string, analysisId: string, title?: string): ResultAsync<PlanCardData | null, DbError> {
+export function buildPlanCardData(pool: PlanRowQuerier, planId: string, analysisId: string, title?: string): ResultAsync<PlanCardData | null, DbError> {
     return loadPlanRecord(pool, planId, { analysisId }).map((record) => (record ? planCardOf(record, title) : null));
 }
 
@@ -113,7 +114,7 @@ export function buildPlanCardData(pool: Pool, planId: string, analysisId: string
  *  path omits it and the most recent run for `(analysisId, planId)` is looked
  *  up from `cortex_runs`. Null when the plan or run cannot be resolved — the
  *  caller falls back to a chip. */
-export function buildRunCardData(pool: Pool, opts: { planId: string; analysisId: string; runId?: string }): ResultAsync<RunCardData | null, DbError> {
+export function buildRunCardData(pool: Querier, opts: { planId: string; analysisId: string; runId?: string }): ResultAsync<RunCardData | null, DbError> {
     const { planId, analysisId } = opts;
     return loadPlan(pool, planId, { analysisId }).andThen((plan) => {
         if (!plan) return okAsync(null);
@@ -235,7 +236,8 @@ export function buildFileReferenceCardData(input: Record<string, unknown>): File
 
     const files: FileReferenceEntryData[] = [];
     for (const raw of rawFiles) {
-        const file = (raw ?? {}) as Record<string, unknown>;
+        const file = parseUnknownRecord(raw);
+        if (file === undefined) return null;
         const path = typeof file.path === "string" ? file.path : "";
         if (validatePath(path) !== null) return null;
         const runId = deriveRunId(path);

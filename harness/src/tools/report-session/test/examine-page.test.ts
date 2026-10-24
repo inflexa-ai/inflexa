@@ -19,9 +19,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Browser } from "puppeteer-core";
 
 import type { AuthContext, Scope } from "../../../auth/types.js";
+import { fakeLookBrowser } from "../../../lib/__fixtures__/chrome.js";
 import { setBrowserConnector } from "../../../lib/chrome.js";
 import { createNoopLogger } from "../../../lib/console-logger.js";
 import type { AcquireEyes, EyesLease, EyesScope } from "../../../lib/eyes.js";
@@ -187,26 +187,8 @@ function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRe
  * fake carries those members alone, thus no call of the capture reaches the gap between the fake and the
  * class of puppeteer.
  */
-function makeFakeBrowser(screenshot: string): Browser {
-    const page = {
-        on: () => {},
-        setViewport: () => Promise.resolve(),
-        emulateMediaFeatures: () => Promise.resolve(),
-        goto: () => Promise.resolve(),
-        evaluate: () => Promise.resolve(),
-        screenshot: () => Promise.resolve(screenshot),
-    };
-    const fake = {
-        connected: true,
-        on: () => {},
-        wsEndpoint: () => "ws://fake",
-        createBrowserContext: () =>
-            Promise.resolve({
-                newPage: () => Promise.resolve(page),
-                close: () => Promise.resolve(),
-            }),
-    };
-    return fake as unknown as Browser;
+function makeFakeBrowser(screenshot: string) {
+    return fakeLookBrowser({ screenshot: () => Promise.resolve(screenshot) });
 }
 
 /**
@@ -745,7 +727,7 @@ describe("the transport precedence", () => {
 
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
-    function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string {
+    function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string | undefined {
         expect(tool.describeResult).toBeDefined();
         return tool.describeResult!({}, result);
     }

@@ -8,6 +8,7 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
 import { CHART_BODY_PX, CHART_INLINE_OPTION_BOUND, SEQUENTIAL_RAMP } from "../../design.js";
 import { DOTPLOT_LINE_PX, DOTPLOT_ROW_GAP_PX, wrappedTerm } from "../dotplot.js";
+import { optionArray, optionList, optionOf, seriesOf } from "../../test/options.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -24,7 +25,7 @@ function block(encoding: Encoding, labels?: Record<string, string>): ChartBlock 
 }
 
 function asObj(value: unknown): EchartOption {
-    return value as EchartOption;
+    return optionOf(value);
 }
 
 /** Three clusters and three markers of the PBMC 3k dot plot table. */
@@ -53,20 +54,20 @@ describe("the marker dot plot", () => {
         expect(asObj(option.yAxis).name).toBeUndefined();
         expect(asObj(option.xAxis)).toMatchObject({ type: "category", data: ["IL7R", "LYZ", "MS4A1"] });
         // Each dot names its cluster by its place on the y axis.
-        const firstData = (option.series as EchartOption[])[0]?.data;
-        expect((firstData as unknown[][])[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
+        const firstData = seriesOf(option)[0]?.data;
+        expect(optionList(firstData)[1]).toEqual(["IL7R", 1, 0.0, 0.11666666666666667]);
     });
 
     it("colors on the sequential ramp and prints the two ends with the number helper", () => {
-        const color = (option.visualMap as EchartOption[]).find((map) => map.show !== false);
+        const color = optionArray(option, "visualMap").find((map) => map.show !== false);
         expect(color).toMatchObject({ dimension: 2, min: 0, max: 1, calculable: false, inRange: { color: [...SEQUENTIAL_RAMP] } });
         expect(color?.text).toEqual(["Scaled mean expression\n1", "0"]);
     });
 
     it("keys the size with three reference circles and their values", () => {
-        const legend = (option.graphic as EchartOption[])[0];
+        const legend = optionArray(option, "graphic")[0];
         if (legend === undefined) throw new Error("the dotplot holds no size legend");
-        const children = legend.children as EchartOption[];
+        const children = optionArray(legend, "children");
         expect(asObj(children[0]?.style).text).toBe("Fraction of cells");
         expect(children.filter((child) => child.type === "circle").length).toBe(3);
         const texts = children.filter((child) => child.type === "text").map((child) => asObj(child.style).text);
@@ -107,7 +108,7 @@ describe("the enrichment dot plot", () => {
     });
 
     it("titles a transformed color with its transform, and prints its ends as plain numbers", () => {
-        const color = (option.visualMap as EchartOption[]).find((map) => map.show !== false);
+        const color = optionArray(option, "visualMap").find((map) => map.show !== false);
         expect(asObj(color).text).toEqual(["−log10(adjusted p)\n4.11", "3.96"]);
     });
 

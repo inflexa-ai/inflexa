@@ -32,7 +32,7 @@ import type {
     DataProfileProbeReport,
     DataProfileRecipeStep,
 } from "../contracts/data-profile.js";
-import type { GroupAnnotation, MenuOperation, Observation, ProfileSubmission } from "../schemas/data-profile-schemas.js";
+import type { GroupAnnotationInput, MenuOperationInput, Observation, ProfileSubmissionInput } from "../schemas/data-profile-schemas.js";
 import { MAX_SPLIT_GROUPS } from "../schemas/data-profile-schemas.js";
 
 /** The id the swept residue carries. Visible in the record and in the accounting. */
@@ -78,7 +78,7 @@ type Claim = {
 };
 
 type DraftGroup = {
-    readonly annotation: GroupAnnotation;
+    readonly annotation: GroupAnnotationInput;
     readonly nameOverride?: string;
     readonly reason?: string;
     readonly displayPattern: string;
@@ -270,14 +270,14 @@ function claimsAt(set: DetectedSet, indices: readonly number[]): Claim[] {
     return indices.map((index) => ({ member: set.members[index]!, set, memberIndex: index }));
 }
 
-function applyUse(ctx: OperationContext, op: Extract<MenuOperation, { op: "use" }>): void {
+function applyUse(ctx: OperationContext, op: Extract<MenuOperationInput, { op: "use" }>): void {
     const set = resolveSet(ctx, op.setId, "use");
     if (!set) return;
     const entry = openStep(ctx, { op: "use", templates: [set.pathTemplate], groupIds: [] });
     emit(ctx, entry, { annotation: op.group, displayPattern: set.pathTemplate, sets: [set], claims: allClaims(set) });
 }
 
-function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "split" }>): void {
+function applySplit(ctx: OperationContext, op: Extract<MenuOperationInput, { op: "split" }>): void {
     const set = resolveSet(ctx, op.setId, "split");
     if (!set) return;
     const slotIndex = set.slots.findIndex((slot) => slot.id === op.by.slotId);
@@ -377,7 +377,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperation, { op: "spl
     });
 }
 
-function applyMerge(ctx: OperationContext, op: Extract<MenuOperation, { op: "merge" }>): void {
+function applyMerge(ctx: OperationContext, op: Extract<MenuOperationInput, { op: "merge" }>): void {
     const sets: DetectedSet[] = [];
     const named = new Set<string>();
     for (const setId of op.setIds) {
@@ -403,7 +403,7 @@ function applyMerge(ctx: OperationContext, op: Extract<MenuOperation, { op: "mer
     });
 }
 
-function applyGroup(ctx: OperationContext, op: Extract<MenuOperation, { op: "group" }>): void {
+function applyGroup(ctx: OperationContext, op: Extract<MenuOperationInput, { op: "group" }>): void {
     const claims: Claim[] = [];
     for (const path of op.paths) {
         const claim = ctx.byPath.get(path);
@@ -520,7 +520,7 @@ function crossCheckSlots(detected: DetectedSets, observations: readonly DataProf
 }
 
 function resolveDimensions(
-    submission: ProfileSubmission,
+    submission: ProfileSubmissionInput,
     detected: DetectedSets,
     menuSets: ReadonlyMap<string, DetectedSet>,
     groupsBySet: ReadonlyMap<string, readonly string[]>,
@@ -587,7 +587,7 @@ export type ResolveOptions = {
  * profile that gates planning.
  */
 export function resolveProfileSubmission(
-    submission: ProfileSubmission,
+    submission: ProfileSubmissionInput,
     detected: DetectedSets,
     menu: SetMenu = buildSetMenu(detected),
     options: ResolveOptions = {},

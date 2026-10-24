@@ -371,7 +371,7 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
 
     if (!hgncDoc && !uniprotDoc && !ensemblId) return null;
 
-    const symbolFromHgnc = (hgncDoc as { symbol?: string } | null)?.symbol;
+    const symbolFromHgnc = hgncDoc?.symbol;
     const uniprotGene = uniprotDoc?.genes?.[0]?.geneName?.value;
     const resolvedSymbol = symbolFromHgnc ?? uniprotGene ?? upper;
 
@@ -387,20 +387,20 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
         seenLower.add(key);
         synonyms.push(raw);
     };
-    for (const s of (hgncDoc as { alias_symbol?: string[] } | null)?.alias_symbol ?? []) addSynonym(s);
-    for (const s of (hgncDoc as { prev_symbol?: string[] } | null)?.prev_symbol ?? []) addSynonym(s);
+    for (const s of hgncDoc?.alias_symbol ?? []) addSynonym(s);
+    for (const s of hgncDoc?.prev_symbol ?? []) addSynonym(s);
     // Pull synonyms from every UniProt gene record — read-through transcripts
     // and multi-gene entries surface aliases beyond the primary record.
     for (const g of uniprotDoc?.genes ?? []) {
         for (const s of g.synonyms ?? []) addSynonym(s.value);
     }
 
-    const hgncEnsembl = (hgncDoc as { ensembl_gene_id?: string } | null)?.ensembl_gene_id;
+    const hgncEnsembl = hgncDoc?.ensembl_gene_id;
 
     return {
         symbol: resolvedSymbol,
-        displayName: (hgncDoc as { name?: string } | null)?.name ?? uniprotDoc?.proteinDescription?.recommendedName?.fullName?.value ?? null,
-        hgncId: (hgncDoc as { hgnc_id?: string } | null)?.hgnc_id ?? null,
+        displayName: hgncDoc?.name ?? uniprotDoc?.proteinDescription?.recommendedName?.fullName?.value ?? null,
+        hgncId: hgncDoc?.hgnc_id ?? null,
         ensemblId: ensemblId ?? hgncEnsembl ?? null,
         uniprotId: uniprotDoc?.primaryAccession ?? null,
         synonyms: synonyms.sort((a, b) => a.localeCompare(b)),

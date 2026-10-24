@@ -3,6 +3,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolContext } from "../../tools/define-tool.js";
+import { makeSession } from "../../providers/__fixtures__/session.js";
 import { canonicalInputKey, guardRepeatedCalls } from "../call-guard.js";
 
 function makeTool(id: string) {
@@ -20,7 +21,13 @@ function makeTool(id: string) {
     return { tool, count: () => served };
 }
 
-const ctx = {} as ToolContext;
+const ctx: ToolContext = {
+    invocationId: "tu-call-guard",
+    session: makeSession({ agentId: "call-guard", callPath: ["call-guard"] }),
+    signal: new AbortController().signal,
+    emit: () => {},
+    ask: () => Promise.reject(new Error("the call guard tests ask no user decision")),
+};
 
 describe("guardRepeatedCalls", () => {
     it("keys an input by its content, not by the order of its keys", () => {

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
+import type { ResultAsync } from "neverthrow";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { Scope } from "../../auth/types.js";
+import type { Querier } from "../../state/db.js";
 import { createReportSessionSpawn } from "../../app/spawn-report-session.js";
-import type { DbError } from "../../lib/db-result.js";
+import type { DbError, Connectable } from "../../lib/db-result.js";
 import type { AcquireEyes } from "../../lib/eyes.js";
 import { conversationRecordTurn, createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../../memory/thread-store.js";
@@ -101,14 +102,14 @@ async function refuseMessageInserts(): Promise<void> {
  * and each insert, and `connect` for the transaction of the seed write. Thus the
  * two members carry every call that a case makes.
  */
-function watchedPool(): { watched: Pool; statements: string[] } {
+function watchedPool(): { watched: Querier & Connectable; statements: string[] } {
     const statements: string[] = [];
-    const forward = pool.query.bind(pool) as unknown as (text: unknown, values?: unknown) => Promise<unknown>;
-    const query = (text: unknown, values?: unknown): Promise<unknown> => {
-        statements.push(typeof text === "string" ? text : JSON.stringify(text));
-        return forward(text, values);
+    const forward = pool.query.bind(pool);
+    const query: Querier["query"] = (textOrConfig, values) => {
+        statements.push(typeof textOrConfig === "string" ? textOrConfig : JSON.stringify(textOrConfig));
+        return forward(textOrConfig, values);
     };
-    return { watched: { query, connect: () => pool.connect() } as unknown as Pool, statements };
+    return { watched: { query, connect: () => pool.connect() }, statements };
 }
 
 /** Run the tool and unwrap the ok channel, which each degraded condition also rides. */

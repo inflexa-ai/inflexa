@@ -12,7 +12,7 @@
 
 import { createServer, type Server } from "node:http";
 import { EventEmitter } from "node:events";
-import { isIP, type AddressInfo } from "node:net";
+import { isIP } from "node:net";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
@@ -22,6 +22,7 @@ import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } f
 import type { ToolContext } from "../../define-tool.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { HARNESS_USER_AGENT } from "../../lib/api-utils.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { type KeptToolOutput, type ToolOutputStore } from "../../../loop/tool-output.js";
 import { createReadToolOutputTool } from "../../read-tool-output.js";
 import {
@@ -187,8 +188,8 @@ function makeCtx(ask?: (request: AskRequest) => Promise<AskApproval>, signal?: A
 
 async function fetchUrl(url: string, deps: WebFetchToolDeps = {}, ctx: ToolContext = makeCtx()): Promise<WebFetchOutput> {
     const tool = createWebFetchTool(deps);
-    const input = tool.inputSchema.parse({ url }) as Parameters<typeof tool.execute>[0];
-    return (await tool.execute(input, ctx))._unsafeUnwrap() as WebFetchOutput;
+    const input = tool.inputSchema.parse({ url });
+    return (await tool.execute(input, ctx))._unsafeUnwrap();
 }
 
 /** A minimal PDF with one text line per page, the same builder shape the pdf-parse probe used. */
@@ -226,7 +227,9 @@ async function startLocalServer(host: "127.0.0.1" | "localhost" | "::1"): Promis
         server.once("error", reject);
         server.listen(0, host, () => resolve());
     });
-    const { port } = server.address() as AddressInfo;
+    const address = server.address();
+    if (typeof address !== "object" || address === null) throw new Error("expected a local address");
+    const { port } = address;
     return {
         server,
         port,
@@ -244,7 +247,9 @@ async function startAuthEchoServer(): Promise<LocalServer> {
         server.once("error", reject);
         server.listen(0, "127.0.0.1", () => resolve());
     });
-    const { port } = server.address() as AddressInfo;
+    const address = server.address();
+    if (typeof address !== "object" || address === null) throw new Error("expected a local address");
+    const { port } = address;
     return {
         server,
         port,
@@ -927,7 +932,8 @@ describe("web_fetch — the returned text and the kept remainder", () => {
         const reader = createReadToolOutputTool(memoryStore(rows));
         const readToolCtx = makeToolContext().ctx;
         const parsedInput = reader.inputSchema.parse({ ref, offset: 30_000, limit: 10_000 });
-        const page = (await reader.execute(parsedInput as Parameters<typeof reader.execute>[0], readToolCtx))._unsafeUnwrap() as Record<string, unknown>;
+        const page = parseUnknownRecord((await reader.execute(parsedInput, readToolCtx))._unsafeUnwrap());
+        if (!page) throw new Error("expected a serialized page record");
         expect(page).toMatchObject({ status: "ok", ref, offset: 30_000, keptLength: 40_000, more: false });
         expect(page.text).toBe(LONG_TEXT.slice(30_000, 40_000));
     });
@@ -984,10 +990,8 @@ describe("web_fetch — the returned text and the kept remainder", () => {
 
         const reader = createReadToolOutputTool(memoryStore(rows));
         const parsedInput = reader.inputSchema.parse({ ref, offset: output.text.length, limit: 1_000 });
-        const page = (await reader.execute(parsedInput as Parameters<typeof reader.execute>[0], makeToolContext().ctx))._unsafeUnwrap() as Record<
-            string,
-            unknown
-        >;
+        const page = parseUnknownRecord((await reader.execute(parsedInput, makeToolContext().ctx))._unsafeUnwrap());
+        if (!page) throw new Error("expected a serialized page record");
         expect(page).toMatchObject({ status: "ok", ref, keptLength: 60_000, more: true });
         expect(page.text).toBe(quoted.slice(output.text.length, output.text.length + 1_000));
     });

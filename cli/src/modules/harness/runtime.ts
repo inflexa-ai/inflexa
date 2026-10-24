@@ -548,7 +548,7 @@ function applyCredential(headers: Headers, cred: Credential): void {
  * failure surfaces unchanged. A resolution failure REJECTS the fetch (its throwing contract), which the
  * harness maps to a provider error with the actionable message. `underlying` is injectable for tests.
  */
-export function buildAuthInjectingFetch(source: CredentialSource, underlying: InjectingFetch = fetch): InjectingFetch {
+export function buildAuthInjectingFetch(source: CredentialSource, underlying: InjectingFetch = fetch) {
     const attempt = (input: string | URL | Request, init: RequestInit | undefined, cred: Credential): Promise<Response> => {
         // A fresh Headers per attempt, seeded from the ORIGINAL init, so a retry never inherits the prior
         // attempt's rewrite — each attempt applies the (possibly refreshed) credential from a clean base.
@@ -556,7 +556,7 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
         applyCredential(headers, cred);
         return underlying(input, { ...init, headers });
     };
-    return async (input, init) => {
+    const inject = async (input: string | URL | Request, init: RequestInit | undefined) => {
         const first = await source.get();
         // A failed credential resolution can only surface through fetch's throwing contract; the harness's
         // provider-error mapping wraps it into the chat error path with this actionable message.
@@ -568,6 +568,9 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
         if (refreshed.isErr()) return response;
         return attempt(input, init, refreshed.value);
     };
+    // The harness `config.fetch` option is `typeof fetch`, whose Bun declaration carries a required
+    // `preconnect` member, so the wrapper carries the member of the global fetch.
+    return Object.assign(inject, { preconnect: fetch.preconnect });
 }
 
 /**

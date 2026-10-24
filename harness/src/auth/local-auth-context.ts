@@ -14,10 +14,11 @@ import type { AuthContext } from "./types.js";
 
 /**
  * Build the trivial opaque `auth` value an OSS session constructor stores.
- * Returned as `AuthContext` so callers stay credential-blind. The cast bridges
- * the empty literal to the phantom-branded interface; the brand is an optional
- * `never`, so no real field is fabricated.
+ * Returned as `AuthContext` so callers stay credential-blind.
  */
 export function makeLocalAuth(): AuthContext {
+    // SAFETY: the auth brand is an optional phantom with no runtime member, so the
+    // empty literal carries every real field the interface holds; no caller may
+    // mint one outside this constructor.
     return {} as AuthContext;
 }

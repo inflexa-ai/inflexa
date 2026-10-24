@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ModelMessage, ToolResultPart } from "ai";
+import type { ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
@@ -56,9 +56,11 @@ async function callWith(tool: Tool, input: unknown): Promise<ToolResultPart> {
         runStep: passthroughStep,
     });
 
-    const toolMessage = messages[2] as Extract<ModelMessage, { role: "tool" }>;
+    const toolMessage = messages[2]!;
     expect(toolMessage.role).toBe("tool");
-    return (toolMessage.content as ToolResultPart[])[0]!;
+    const content = toolMessage.content;
+    if (typeof content === "string") throw new Error("the tool message carries string content");
+    return content.filter((part): part is ToolResultPart => part.type === "tool-result")[0]!;
 }
 
 function errorText(result: ToolResultPart): string {

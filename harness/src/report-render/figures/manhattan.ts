@@ -33,6 +33,8 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, type ChartBlock, type ChartComposition } from "../../contracts/report-blocks.js";
 import { MANHATTAN_P_THRESHOLD } from "../chart-presets.js";
 import { GENOME_MEMBER, GENOME_POSITION_FUNCTION, type GenomeAxis } from "../chart-toolbox.js";
+import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
 import { formatNumberCell, typographicExponent } from "../number-format.js";
@@ -274,14 +276,15 @@ function leads(index: number, other: number, xs: readonly (number | null)[], ys:
 
 /** The guide lines of a mark member, with the label of the genome-wide line over the line. */
 function guideOverLine(markLine: EchartOption, line: number): EchartOption {
-    const data = Array.isArray(markLine.data) ? (markLine.data as EchartOption[]) : [];
+    const data = isUnknownArray(markLine.data) ? markLine.data : [];
     return {
         ...markLine,
-        data: data.map((entry) =>
-            entry.yAxis === line && typeof entry.label === "object" && entry.label !== null
-                ? { ...entry, label: { ...(entry.label as EchartOption), position: GUIDE_OVER_LINE } }
-                : entry,
-        ),
+        data: data.map((entry) => {
+            const fields = parseUnknownRecord(entry);
+            const label = fields === undefined ? undefined : parseUnknownRecord(fields.label);
+            if (fields === undefined || label === undefined || fields.yAxis !== line) return entry;
+            return { ...fields, label: { ...label, position: GUIDE_OVER_LINE } };
+        }),
     };
 }
 
@@ -379,7 +382,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                     ...pointLayer(colorOf(series.name), DENSE_NULL_SYMBOL_PX, DENSE_SIGNAL_OPACITY),
                 };
                 if (series.markLine !== undefined) {
-                    guided.markLine = guideOverLine(series.markLine as EchartOption, line);
+                    guided.markLine = guideOverLine(parseUnknownRecord(series.markLine) ?? {}, line);
                 }
                 return guided;
             }),

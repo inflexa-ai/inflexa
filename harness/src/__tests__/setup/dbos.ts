@@ -104,7 +104,7 @@ function poolConnectionEnv(pool: Pool): {
     password: string;
     database: string;
 } {
-    const cfg = (pool as unknown as { options?: Record<string, unknown> }).options ?? {};
+    const cfg = pool.options;
     if (cfg.connectionString) {
         return parseConnectionStringToEnv(String(cfg.connectionString));
     }

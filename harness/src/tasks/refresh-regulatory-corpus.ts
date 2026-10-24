@@ -13,9 +13,10 @@
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
-import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaCenter, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
+import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
 import { fetchIchListing, fetchAndExtractIchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
 import { chunkText, upsertChunks, type ChunkRow } from "../lib/regulatory-corpus.js";
+import { z } from "zod";
 
 export type RegulatoryCorpusSource = "FDA-CDER" | "FDA-CBER" | "ICH";
 export const REGULATORY_CORPUS_SOURCES: RegulatoryCorpusSource[] = ["FDA-CDER", "FDA-CBER", "ICH"];
@@ -62,6 +63,8 @@ export type RefreshOptions = {
  * `OPENAI_API_KEY` (a real OpenAI key, NOT a billing-gateway virtual key — direct
  * calls to api.openai.com would 401 against a `sk-billing-*` value).
  */
+const EmbeddingResponseSchema = z.object({ data: z.array(z.object({ embedding: z.array(z.number()) })) });
+
 export function buildMaintenanceEmbedder(opts: { apiKey?: string; embeddingModel?: string }): ((text: string) => Promise<number[]>) | null {
     const { apiKey } = opts;
     if (!apiKey) return null;
@@ -85,9 +88,9 @@ export function buildMaintenanceEmbedder(opts: { apiKey?: string; embeddingModel
             const body = await res.text();
             throw new Error(`buildMaintenanceEmbedder: openai /embeddings ${res.status}: ${body}`);
         }
-        const data = (await res.json()) as { data: Array<{ embedding: number[] }> };
-        const embedding = data.data?.[0]?.embedding;
-        if (!embedding) throw new Error("buildMaintenanceEmbedder: empty response");
+        const data = EmbeddingResponseSchema.parse(await res.json());
+        const embedding = data.data[0]?.embedding;
+        if (!embedding || embedding.length === 0) throw new Error("buildMaintenanceEmbedder: empty response");
         return embedding;
     };
 }
@@ -97,21 +100,21 @@ async function listForSource(source: RegulatoryCorpusSource): Promise<Array<FdaD
         case "FDA-CDER":
             return (await fetchFdaGuidanceListing("CDER")).map((s) => ({
                 ...s,
-                center: "CDER" as FdaCenter,
+                center: "CDER" as const,
             }));
         case "FDA-CBER":
             return (await fetchFdaGuidanceListing("CBER")).map((s) => ({
                 ...s,
-                center: "CBER" as FdaCenter,
+                center: "CBER" as const,
             }));
         case "ICH":
             return await fetchIchListing();
     }
 }
 
+// Each source's listing carries only its own stub kind, thus the stub's own shape picks the fetcher.
 async function fetchOne(source: RegulatoryCorpusSource, stub: FdaDocStub | IchStub) {
-    if (source === "ICH") return await fetchAndExtractIchDoc(stub as IchStub);
-    return await fetchAndExtractFdaDoc(stub as FdaDocStub);
+    return "center" in stub ? await fetchAndExtractFdaDoc(stub) : await fetchAndExtractIchDoc(stub);
 }
 
 async function indexSource(
@@ -148,7 +151,7 @@ async function indexSource(
                 doc_title: doc.doc_title,
                 doc_url: doc.doc_url,
                 chunks,
-                metadata: doc.metadata as Record<string, unknown>,
+                metadata: doc.metadata,
             };
             unwrapOrThrow(await upsertChunks(pool, row));
             ok++;

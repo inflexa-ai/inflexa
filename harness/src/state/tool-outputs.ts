@@ -1,6 +1,6 @@
 /** The Postgres realization of the tool output store of the loop, over `cortex_tool_outputs`. */
 
-import type { Pool } from "pg";
+import type { Querier } from "./db.js";
 
 import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { KeptToolOutput, ToolOutputStore } from "../loop/tool-output.js";
@@ -28,7 +28,7 @@ function toKeptToolOutput(row: ToolOutputRow): KeptToolOutput {
     };
 }
 
-export function createToolOutputStore(pool: Pool): ToolOutputStore {
+export function createToolOutputStore(pool: Querier): ToolOutputStore {
     return {
         put: (output) =>
             tryMutation("toolOutputs.put", () =>

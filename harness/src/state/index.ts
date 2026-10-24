@@ -66,7 +66,7 @@ export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutio
 export { setSandboxRef, clearSandboxRef, reconcileReapedSandbox } from "./active-sandboxes.js";
 
 export { insertPlan, upsertPlan, loadPlan, loadPlanRecord } from "./plans.js";
-export type { InsertPlanInput, UpsertPlanInput, PlanRecord } from "./plans.js";
+export type { InsertPlanInput, UpsertPlanInput, PlanRecord, PlanRowQuerier } from "./plans.js";
 
 export {
     tryStartDataProfile,

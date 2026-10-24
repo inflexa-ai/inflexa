@@ -10,6 +10,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelTransform, type ChartChannel, type ChartEncoding, type ChartType } from "../../contracts/report-blocks.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { ChartRow, EchartOption } from "../chart.js";
 import { SIZED_SERIES_MEMBER, type SizedSeries } from "../chart-renderers.js";
 import { CHART_EXPORT_SIZES, CHART_INK } from "../design.js";
@@ -17,6 +18,9 @@ import { formatNumberCell } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import { chartProblem, toNumber, transformColumn } from "./common.js";
 import { EXPORT_PLOT_FRAMES, PAGE_PLOT_FRAME, type LeaderName, type NamedPoint, type NameFrame } from "./label-room.js";
+
+/** The plot frames of each export size, keyed by the same kind that names the size. */
+const EXPORT_SIZE_KINDS = ["single", "double", "slide"] as const satisfies readonly (keyof typeof CHART_EXPORT_SIZES)[];
 
 /**
  * The symbol sizes in pixels of a dense figure: a signal point, and a point that states no finding.
@@ -132,8 +136,8 @@ export function sizedSeries(
     build: (frame: NameFrame) => EchartOption[],
 ): { readonly page: EchartOption[]; readonly member: EchartOption } {
     const widths: Record<string, EchartOption[]> = {};
-    for (const [kind, size] of Object.entries(CHART_EXPORT_SIZES)) {
-        widths[String(size.widthPx)] = build(EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]);
+    for (const kind of EXPORT_SIZE_KINDS) {
+        widths[String(CHART_EXPORT_SIZES[kind].widthPx)] = build(EXPORT_PLOT_FRAMES[kind]);
     }
     const sized: SizedSeries = { names, widths };
     return { page: build(PAGE_PLOT_FRAME), member: { [SIZED_SERIES_MEMBER]: sized } };
@@ -217,8 +221,7 @@ export function seriesOf(option: EchartOption): EchartOption[] {
 
 /** The axis of an option as one object. A composition of one grid gives one object for each axis. */
 export function axisOf(option: EchartOption, key: "xAxis" | "yAxis"): EchartOption {
-    const axis = option[key];
-    return typeof axis === "object" && axis !== null && !Array.isArray(axis) ? (axis as EchartOption) : {};
+    return parseUnknownRecord(option[key]) ?? {};
 }
 
 /** The fields of one layer of points: the fill, the opacity, the symbol size, and the drawing order. */
