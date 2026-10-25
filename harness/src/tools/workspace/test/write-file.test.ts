@@ -14,6 +14,7 @@ import { createWorkspaceMutator } from "../mutator.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
 import { presentAt } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
@@ -156,7 +157,7 @@ describe("write_file tool", () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const content = "α,β,γ\n1,2,3\n";
-        await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/u.csv`, content }, ctx);
+        await awaitOk(tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/u.csv`, content }, ctx));
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         const readTool = createReadFileTool(fs);
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/u.csv` }, ctx))._unsafeUnwrap();

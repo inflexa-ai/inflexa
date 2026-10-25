@@ -12,24 +12,19 @@ export default typecheck({
             // `resultStep`); `passGate` forwards the Result of a gate as its own
             // Result; `deliverNotice` consumes the Result of a notice and logs its
             // err; `keepSuspendingRefusal` forwards the refusal of a spawn as its
-            // own Result and throws each other failure through `unwrapOrThrow`.
+            // own Result and throws each other failure through `unwrapOrThrow`;
+            // `awaitOk` is the test helper that awaits a call and unwraps the ok,
+            // so its call states that the call succeeded; `isResult` is the type
+            // guard — a Result that flows into it is inspected, not dropped.
             files: ["src/**"],
             rules: {
                 "must-use-result": [
                     "error",
-                    { consumers: ["unwrapOrThrow", "passGate", "deliverNotice", "keepSuspendingRefusal"] },
+                    {
+                        consumers: ["unwrapOrThrow", "passGate", "deliverNotice", "keepSuspendingRefusal", "awaitOk", "isResult"],
+                    },
                 ],
             },
-        },
-        {
-            // A floating awaited `Promise<Result>` was invisible to the previous lint
-            // rule (its visitor missed the promise wrapper), so the tests that drop the
-            // Result and assert side effects were invisible to it. This command closes
-            // that blind spot with 77 reports on main, 76 of them test drops. Turned on
-            // in tests by a child of #607, where each test asserts the Result instead
-            // of dropping it.
-            files: ["**/*.test.{ts,tsx}"],
-            rules: { "must-use-result": "off" },
         },
     ],
 });

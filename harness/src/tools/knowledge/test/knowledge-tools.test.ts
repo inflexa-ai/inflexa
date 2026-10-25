@@ -20,6 +20,7 @@ import { buildPlanSkeleton } from "../skeleton.js";
 import { decisionRecordPath } from "../../workspace/decision-record.js";
 import { createKnowledgeTemplateTool } from "../template.js";
 import { presentAt, presentFind } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const SITUATION = {
     question: "differential_expression" as const,
@@ -121,7 +122,7 @@ describe("knowledge_recommend", () => {
         const { client, calls } = fakeKnowledgeClient();
         const tool = createKnowledgeRecommendTool({ client });
         const { ctx } = makeToolContext();
-        await tool.execute(tool.inputSchema.parse({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" }), ctx);
+        await awaitOk(tool.execute(tool.inputSchema.parse({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" }), ctx));
         expect(calls.recommend[0]?.situation).toEqual({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" });
         expect(tool.inputSchema.safeParse({ ...SITUATION, import_state: "tximport" }).success).toBe(false);
     });
@@ -130,7 +131,7 @@ describe("knowledge_recommend", () => {
         const { client, calls } = fakeKnowledgeClient();
         const tool = createKnowledgeRecommendTool({ client });
         const { ctx } = makeToolContext();
-        await tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }), ctx);
+        await awaitOk(tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }), ctx));
         expect(calls.recommend[0]?.preferences).toEqual({ language: "python" });
         expect(Object.keys(presentAt(calls.recommend, 0).situation)).not.toContain("preferred_language");
     });
@@ -409,11 +410,11 @@ describe("the release pin of one plan", () => {
         const recommend = presentAt(tools, 0, "the recommend tool");
         const check = presentAt(tools, 1, "the check tool");
         const { ctx } = makeToolContext();
-        await recommend.execute(SITUATION, ctx);
+        await awaitOk(recommend.execute(SITUATION, ctx));
         expect(fake.calls.recommend[0]?.expected_snapshot).toBeUndefined();
-        await recommend.execute(SITUATION, ctx);
+        await awaitOk(recommend.execute(SITUATION, ctx));
         expect(fake.calls.recommend[1]?.expected_snapshot).toBe(SNAPSHOT.digest);
-        await check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx);
+        await awaitOk(check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx));
         expect(fake.calls.check[0]?.expected_snapshot).toBe(SNAPSHOT.digest);
     });
 
@@ -466,7 +467,7 @@ describe("knowledge_check", () => {
             ...SITUATION,
             steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test", method_id: "M-0001" }],
         });
-        await tool.execute(input, ctx);
+        await awaitOk(tool.execute(input, ctx));
         expect(calls.check[0]?.steps[0]?.method_id).toBe("M-0001");
         expect(
             tool.inputSchema.safeParse({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test", method_id: "deseq2" }] })
@@ -500,7 +501,7 @@ describe("knowledge_check", () => {
             ...SITUATION,
             steps: [{ step_type: "differential_expression", method: "log2 fold change only", outcome: "descriptive_only" }],
         });
-        await tool.execute(input, ctx);
+        await awaitOk(tool.execute(input, ctx));
         expect(calls.check[0]?.steps[0]?.outcome).toBe("descriptive_only");
     });
 
@@ -649,7 +650,7 @@ describe("knowledge_template", () => {
         const fake = fakeKnowledgeClient();
         const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, farmLockFile: lockPath, imagePackagesFile: recordPath });
         const { ctx } = makeToolContext();
-        await tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx);
+        await awaitOk(tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx));
         const farm = fake.calls.render[0]?.farm;
         // The lock schema may carry more than the two fields; the client sends the pair.
         expect(farm?.some((pkg) => pkg.name === "DESeq2" && pkg.version === "1.52.0")).toBe(true);
@@ -657,7 +658,7 @@ describe("knowledge_template", () => {
         expect(farm?.some((pkg) => pkg.name === "survival" && pkg.version === "3.8-6")).toBe(true);
 
         const { tool: bare, calls } = build();
-        await bare.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx);
+        await awaitOk(bare.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx));
         expect(calls.render[0]?.farm).toBeUndefined();
     });
 

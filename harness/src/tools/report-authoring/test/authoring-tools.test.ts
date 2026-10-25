@@ -28,6 +28,7 @@ import {
     type StampResult,
 } from "../authoring-tools.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 /** The authoring tools read and write the draft only, thus a stamp is a no-op stub in these tests. */
 const stampStubs = {
@@ -704,9 +705,9 @@ describe("the cost of a landing", () => {
         gateway.seed("t1", { document: emptyDraft(), snapshot });
         const tools = createReportAuthoringTools(gateway);
         const ctx = ctxForThread("t1");
-        await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "First", blocks: [] } }, ctx);
-        await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "in the first section" } }, parentId: "s1" }, ctx);
-        await tools.add_block.execute({ block: { kind: "section", id: "s2", title: "Second", blocks: [] } }, ctx);
+        await awaitOk(tools.add_block.execute({ block: { kind: "section", id: "s1", title: "First", blocks: [] } }, ctx));
+        await awaitOk(tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "in the first section" } }, parentId: "s1" }, ctx));
+        await awaitOk(tools.add_block.execute({ block: { kind: "section", id: "s2", title: "Second", blocks: [] } }, ctx));
 
         const result = await tools.add_block.execute({ block: { kind: "text", id: "t2", content: { prose: "x" } }, parentId: "s2" }, ctx);
 

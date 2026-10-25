@@ -7,6 +7,7 @@ import { insertRun } from "../../../state/index.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createUpdateWorkingMemoryTool } from "../update-working-memory.js";
 import { presentAt, presentGet } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 // `makeToolContext` builds a session whose workload id is "analysis-001".
 const ANALYSIS = "analysis-001";
@@ -35,7 +36,7 @@ afterEach(async () => {
 describe("section routing", () => {
     it("a 'goal' update replaces the goal section", async () => {
         const { ctx } = makeToolContext();
-        await tool.execute({ section: "goal", text: "discover resistance drivers" }, ctx);
+        await awaitOk(tool.execute({ section: "goal", text: "discover resistance drivers" }, ctx));
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.goal).toBe("discover resistance drivers");
@@ -43,7 +44,7 @@ describe("section routing", () => {
 
     it("a 'constraint' update appends to the constraints section", async () => {
         const { ctx } = makeToolContext();
-        await tool.execute({ section: "constraint", text: "FDR threshold 0.01", origin: "user" }, ctx);
+        await awaitOk(tool.execute({ section: "constraint", text: "FDR threshold 0.01", origin: "user" }, ctx));
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.constraints.length).toBe(1);
@@ -53,7 +54,7 @@ describe("section routing", () => {
 
     it("a 'hypothesis' update appends to the hypotheses section", async () => {
         const { ctx } = makeToolContext();
-        await tool.execute({ section: "hypothesis", text: "EGFR amplification drives resistance" }, ctx);
+        await awaitOk(tool.execute({ section: "hypothesis", text: "EGFR amplification drives resistance" }, ctx));
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.hypotheses.length).toBe(1);
@@ -74,11 +75,11 @@ describe("section routing", () => {
 
     it("a 'constraint' revise addresses an existing entry by id", async () => {
         const { ctx } = makeToolContext();
-        await tool.execute({ section: "constraint", text: "FDR 0.05", origin: "agent" }, ctx);
+        await awaitOk(tool.execute({ section: "constraint", text: "FDR 0.05", origin: "agent" }, ctx));
         const seeded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         const id = presentAt(seeded.constraints, 0).id;
 
-        await tool.execute({ section: "constraint", operation: "revise", id, text: "FDR 0.01" }, ctx);
+        await awaitOk(tool.execute({ section: "constraint", operation: "revise", id, text: "FDR 0.01" }, ctx));
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.constraints.length).toBe(1);
@@ -90,7 +91,7 @@ describe("findings can be revised and retired", () => {
     it("revises a finding by its own id — no runId needed", async () => {
         const { ctx } = makeToolContext();
         await seedRun("run-A");
-        await tool.execute({ section: "finding", runId: "run-A", text: "412 genes DE" }, ctx);
+        await awaitOk(tool.execute({ section: "finding", runId: "run-A", text: "412 genes DE" }, ctx));
         const id = presentAt(presentGet((await wm.load(ANALYSIS))._unsafeUnwrap().findings, "run-A"), 0).id;
 
         const result = await tool.execute({ section: "finding", operation: "revise", id, text: "412 genes DE (ComBat-corrected)" }, ctx);
@@ -103,7 +104,7 @@ describe("findings can be revised and retired", () => {
     it("retires a finding, and the run it cited disappears with it", async () => {
         const { ctx } = makeToolContext();
         await seedRun("run-A");
-        await tool.execute({ section: "finding", runId: "run-A", text: "a superseded conclusion" }, ctx);
+        await awaitOk(tool.execute({ section: "finding", runId: "run-A", text: "a superseded conclusion" }, ctx));
         const id = presentAt(presentGet((await wm.load(ANALYSIS))._unsafeUnwrap().findings, "run-A"), 0).id;
 
         const result = await tool.execute({ section: "finding", operation: "retire", id }, ctx);
@@ -120,7 +121,7 @@ describe("findings can be revised and retired", () => {
     it("rejects a retire whose id addresses nothing, leaving state untouched", async () => {
         const { ctx } = makeToolContext();
         await seedRun("run-A");
-        await tool.execute({ section: "finding", runId: "run-A", text: "the real finding" }, ctx);
+        await awaitOk(tool.execute({ section: "finding", runId: "run-A", text: "the real finding" }, ctx));
 
         const result = await tool.execute({ section: "finding", operation: "retire", id: "deadbeef" }, ctx);
 
@@ -278,7 +279,7 @@ describe("finding runId must name a real run of this analysis", () => {
     it("a rejected finding does not disturb findings already recorded under a real run", async () => {
         const { ctx } = makeToolContext();
         await seedRun("run-real");
-        await tool.execute({ section: "finding", runId: "run-real", text: "the real finding" }, ctx);
+        await awaitOk(tool.execute({ section: "finding", runId: "run-real", text: "the real finding" }, ctx));
 
         const result = await tool.execute({ section: "finding", runId: "run-typo", text: "the typo'd finding" }, ctx);
         expect(result.isErr()).toBe(true);

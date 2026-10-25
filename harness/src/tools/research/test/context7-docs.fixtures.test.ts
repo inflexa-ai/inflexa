@@ -18,6 +18,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../../lib/__fixtures__/fixture-runner.js";
 import { Context7DocsResponseSchema, Context7SearchResponseSchema, queryDocsTool, resolveLibraryIdTool } from "../context7-docs.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 runFixtureSuite("context7 golden fixtures — the documentation tools", [
     fixtureCase({
@@ -85,8 +86,8 @@ describe("the Context7 routes", () => {
         serve(readFixture("context7", "08-docs-path-form.json"));
         const { ctx } = makeToolContext();
 
-        await queryDocsTool.execute({ libraryId: "/scverse/scanpy", query: "rank genes" }, ctx);
-        await queryDocsTool.execute({ libraryId: "scverse/scanpy", query: "rank genes" }, ctx);
+        await awaitOk(queryDocsTool.execute({ libraryId: "/scverse/scanpy", query: "rank genes" }, ctx));
+        await awaitOk(queryDocsTool.execute({ libraryId: "scverse/scanpy", query: "rank genes" }, ctx));
 
         expect(requested).toEqual([
             "https://context7.com/api/v1/scverse/scanpy?type=json&topic=rank%20genes",

@@ -11,6 +11,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { openTargetsTool } from "../opentargets.js";
 import { presentAt } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 function operationNameOf(query: string): string {
     const at = query.indexOf("query ");
@@ -165,11 +166,11 @@ describe("opentargets — action 'target'", () => {
         const seen = stubOpenTargets(() => gqlResponse(TARGET_DATA));
 
         const { ctx } = makeToolContext();
-        await openTargetsTool.execute({ action: "target", ensemblId: TP53, limit: 5 }, ctx);
+        await awaitOk(openTargetsTool.execute({ action: "target", ensemblId: TP53, limit: 5 }, ctx));
         expect(presentAt(seen, 0).variables.size).toBe(5);
 
         // `execute` owns the default, so an omitted limit still pages at 10.
-        await openTargetsTool.execute({ action: "target", ensemblId: TP53 }, ctx);
+        await awaitOk(openTargetsTool.execute({ action: "target", ensemblId: TP53 }, ctx));
         expect(presentAt(seen, 1).variables.size).toBe(10);
     });
 

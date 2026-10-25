@@ -45,6 +45,7 @@ import type { ChatRequest } from "../../providers/types.js";
 import { synthesisAgentPrompt } from "../../prompts/synthesis-agent.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { presentAt, presentLast } from "../../lib/present.js";
+import { awaitOk } from "../../lib/test/result-assert.js";
 
 const RUN_ID = "run-001";
 
@@ -174,7 +175,7 @@ describe("submit_synthesis inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
 
         const bad = validSynthesisPayload();
         presentAt(bad.findings, 0).stepId = "T9S9";
@@ -196,7 +197,7 @@ describe("submit_synthesis inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
 
         const revised = validSynthesisPayload();
         revised.overview = "The revised, real synthesis of the run.";
@@ -215,7 +216,7 @@ describe("submit_synthesis inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        await blocker.execute({ reason: "nothing to synthesize" }, makeToolCtx());
+        await awaitOk(blocker.execute({ reason: "nothing to synthesize" }, makeToolCtx()));
         expect(holder.outcome?.kind).toBe("blocker");
 
         const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
@@ -402,7 +403,7 @@ describe("validate_synthesis inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
 
         const bad = validSynthesisPayload();
         presentAt(bad.findings, 0).stepId = "T9S9";
@@ -434,9 +435,9 @@ describe("report_blocker inner tool", () => {
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
 
-        await blocker.execute({ reason: "changed my mind" }, makeToolCtx());
+        await awaitOk(blocker.execute({ reason: "changed my mind" }, makeToolCtx()));
 
         expect(holder.outcome?.kind).toBe("submitted");
     });
