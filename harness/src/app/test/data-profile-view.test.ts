@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "bun:test";
 
+import { presentAt, presentFirst } from "../../lib/present.js";
 import type { DataProfileResult } from "../../contracts/data-profile.js";
 import { profileCaveats, profileDatasetFileCount, profileDimensions, profileFileRecords, profileGroups } from "../data-profile-view.js";
 
@@ -90,26 +91,28 @@ const RESOLVED: DataProfileResult = {
 describe("reading a snapshot of either era", () => {
     it("serves a resolved row's groups and a legacy row's kinds through one shape", () => {
         expect(profileGroups(RESOLVED).map((group) => group.name)).toEqual(["per-subject calls", "unclassified"]);
-        expect(profileGroups(RESOLVED)[0]!.pattern).toBe("data/inputs/vcf/<id>.vcf.gz");
-        expect(profileGroups(RESOLVED)[1]!.unclassified).toBe(true);
+        expect(presentFirst(profileGroups(RESOLVED)).pattern).toBe("data/inputs/vcf/<id>.vcf.gz");
+        expect(presentAt(profileGroups(RESOLVED), 1).unclassified).toBe(true);
 
         const legacy = profileGroups(LEGACY);
         expect(legacy).toHaveLength(1);
-        expect(legacy[0]!.pattern).toBe("data/inputs/vcf/*.vcf.gz");
-        expect(legacy[0]!.memberRepresents).toBe("one subject's calls");
+        expect(presentFirst(legacy).pattern).toBe("data/inputs/vcf/*.vcf.gz");
+        expect(presentFirst(legacy).memberRepresents).toBe("one subject's calls");
     });
 
     it("carries every observed cardinality side by side rather than picking one", () => {
-        expect(profileDimensions(RESOLVED)[0]!.cardinalities).toEqual([40, 42]);
-        expect(profileDimensions(LEGACY)[0]!.cardinalities).toEqual([40]);
-        expect(profileDimensions(LEGACY)[0]!.exampleValues).toEqual(["S001", "S002"]);
+        expect(presentFirst(profileDimensions(RESOLVED)).cardinalities).toEqual([40, 42]);
+        expect(presentFirst(profileDimensions(LEGACY)).cardinalities).toEqual([40]);
+        expect(presentFirst(profileDimensions(LEGACY)).exampleValues).toEqual(["S001", "S002"]);
     });
 
     it("serves annotated members as the individually described files on a resolved row", () => {
         expect(profileFileRecords(RESOLVED)).toEqual([
             { path: "data/inputs/vcf/S001.vcf.gz", description: "Only member carrying a contig header.", format: "VCF" },
         ]);
-        expect(profileFileRecords(LEGACY)).toEqual(LEGACY.files!);
+        const legacyFiles = LEGACY.files;
+        if (legacyFiles === undefined) throw new Error("the legacy fixture carries no files");
+        expect(profileFileRecords(LEGACY)).toEqual(legacyFiles);
     });
 
     it("prefers the census over the older coverage figure, and admits when a row can say neither", () => {

@@ -14,6 +14,7 @@ import type { ScannedFile } from "../../input-scan/types.js";
 import type { GroupAnnotation, MenuOperation, ProfileDimension, ProfileSubmission } from "../../schemas/data-profile-schemas.js";
 import { absorbRecipe, renderAbsorbDelta } from "../data-profile-absorb.js";
 import { resolveProfileSubmission } from "../data-profile-resolve.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 function file(path: string, format: string, extensions: string[] = []): ScannedFile {
     return { path, size: 100, extensions, format };
@@ -60,8 +61,8 @@ type ProfileFixture = {
 function profile(files: ScannedFile[], build: (authoring: Authoring) => ProfileFixture): DataProfileResult {
     const detected = detectSets(files);
     const menu = buildSetMenu(detected);
-    const set = (fragment: string) => menu.sets.find((candidate) => candidate.pathTemplate.includes(fragment))!;
-    const fixture = build({ setId: (fragment) => set(fragment).id, slotId: (fragment, index = 0) => set(fragment).slots[index]!.id });
+    const set = (fragment: string) => presentFind(menu.sets, (candidate) => candidate.pathTemplate.includes(fragment));
+    const fixture = build({ setId: (fragment) => set(fragment).id, slotId: (fragment, index = 0) => presentAt(set(fragment).slots, index).id });
     const resolution = resolveProfileSubmission(submission(fixture.operations, fixture.dimensions), detected, menu);
     expect(resolution.errors).toEqual([]);
     if (!fixture.residue) expect(resolution.unclaimed).toEqual([]);
@@ -99,7 +100,7 @@ describe("a recipe that covers the fresh tree absorbs in full", () => {
 
     it("re-derives the counts over the files that arrived", () => {
         if (outcome.kind !== "full") throw new Error("expected a full absorb");
-        const calls = outcome.resolution.groups.find((group) => group.name === "per-subject calls")!;
+        const calls = presentFind(outcome.resolution.groups, (group) => group.name === "per-subject calls");
         expect(calls.count).toBe(14);
         expect(outcome.resolution.partition.keptFiles).toBe(16);
         expect(outcome.resolution.partition.unclassifiedFiles).toBe(0);
@@ -107,12 +108,16 @@ describe("a recipe that covers the fresh tree absorbs in full", () => {
 
     it("keeps the group ids the prior profile carried, so dimension bindings still point somewhere", () => {
         if (outcome.kind !== "full") throw new Error("expected a full absorb");
-        expect(outcome.resolution.groups.map((group) => group.id).sort()).toEqual(prior.groups!.map((group) => group.id).sort());
+        const priorGroups = prior.groups;
+        if (priorGroups === undefined) throw new Error("the prior profile carries no groups");
+        expect(outcome.resolution.groups.map((group) => group.id).sort()).toEqual(priorGroups.map((group) => group.id).sort());
     });
 
     it("re-emits a template-keyed recipe, so the next drift absorbs too", () => {
         if (outcome.kind !== "full") throw new Error("expected a full absorb");
-        expect(outcome.resolution.recipe.map((step) => step.op)).toEqual(prior.recipe!.map((step) => step.op));
+        const priorRecipe = prior.recipe;
+        if (priorRecipe === undefined) throw new Error("the prior profile carries no recipe");
+        expect(outcome.resolution.recipe.map((step) => step.op)).toEqual(priorRecipe.map((step) => step.op));
         const nextTree = detectSets(tree(9));
         expect(
             absorbRecipe({ ...prior, groups: [...outcome.resolution.groups], recipe: [...outcome.resolution.recipe] }, nextTree, buildSetMenu(nextTree)).kind,
@@ -135,7 +140,7 @@ describe("structurally new files leave a delta for the agent", () => {
     it("carries the resolution forward rather than re-authoring it", () => {
         if (outcome.kind !== "partial") throw new Error("expected a partial absorb");
         expect(outcome.operations.map((operation) => operation.op)).toEqual(["use", "group", "group"]);
-        const calls = outcome.resolution.groups.find((group) => group.name === "per-subject calls")!;
+        const calls = presentFind(outcome.resolution.groups, (group) => group.name === "per-subject calls");
         expect(calls.count).toBe(6);
     });
 
@@ -158,9 +163,10 @@ describe("a split absorbs its named values and hands back the ones nobody judged
                 setId: authoring.setId("calls"),
                 by: {
                     kind: "values",
-                    slotId: detectSets(tree(3))
-                        .sets.find((set) => set.pathTemplate.includes("calls"))!
-                        .slots.find((slot) => slot.tokenClass === "word")!.id,
+                    slotId: presentFind(
+                        presentFind(detectSets(tree(3)).sets, (set) => set.pathTemplate.includes("calls")).slots,
+                        (slot) => slot.tokenClass === "word",
+                    ).id,
                     groups: [
                         { values: ["somatic"], group: annotation("somatic calls") },
                         { values: ["germline"], group: annotation("germline calls") },
@@ -177,7 +183,7 @@ describe("a split absorbs its named values and hands back the ones nobody judged
         const outcome = absorbRecipe(prior, detected, buildSetMenu(detected));
         expect(outcome.kind).toBe("full");
         if (outcome.kind !== "full") return;
-        expect(outcome.resolution.groups.find((group) => group.name === "somatic calls")!.count).toBe(5);
+        expect(presentFind(outcome.resolution.groups, (group) => group.name === "somatic calls").count).toBe(5);
     });
 
     it("hands back members taking a value the mapping never named", () => {
@@ -214,7 +220,9 @@ describe("a stranded recipe falls back to a full re-profile", () => {
     it("strands when the recipe names a group the profile no longer carries", () => {
         const prior = profile(tree(3), useEverything);
         const detected = detectSets(tree(3));
-        const outcome = absorbRecipe({ ...prior, groups: prior.groups!.slice(1) }, detected, buildSetMenu(detected));
+        const priorGroups = prior.groups;
+        if (priorGroups === undefined) throw new Error("the prior profile carries no groups");
+        const outcome = absorbRecipe({ ...prior, groups: priorGroups.slice(1) }, detected, buildSetMenu(detected));
 
         expect(outcome.kind).toBe("stranded");
     });
@@ -243,19 +251,24 @@ describe("a dimension's slot binding survives a set-order flip", () => {
     const outcome = absorbRecipe(prior, flipped, buildSetMenu(flipped));
 
     it("was written against a slot id that now names a different set's slot", () => {
-        const priorObservation = prior.dimensions![0]!.observations[0]!;
+        const priorObservation = presentAt(
+            presentAt(prior.dimensions ?? [], 0, "the first dimension of the prior profile").observations,
+            0,
+            "the first observation",
+        );
         if (priorObservation.kind !== "slot") throw new Error("expected a slot observation");
         expect(priorObservation.slotId).toBe("set-2.slot-1");
         expect(priorObservation.cardinality).toBe(3);
-        expect(flipped.sets.find((set) => set.id === "set-2")!.pathTemplate).toContain("/align/");
+        expect(presentFind(flipped.sets, (set) => set.id === "set-2").pathTemplate).toContain("/align/");
     });
 
     it("re-binds to the same TEMPLATE slot and recomputes its cardinality", () => {
         if (outcome.kind !== "full") throw new Error("expected a full absorb");
-        const observation = outcome.resolution.dimensions[0]!.observations[0]!;
+        const observation = presentAt(outcome.resolution.dimensions, 0).observations[0];
+        if (observation === undefined) throw new Error("observation is absent");
         if (observation.kind !== "slot") throw new Error("expected a slot observation");
 
-        expect(observation.binding!.template).toContain("/calls/");
+        expect(observation.binding?.template).toContain("/calls/");
         expect(observation.slotId).toBe("set-1.slot-1");
         expect(observation.cardinality).toBe(9);
         expect(observation.groupIds).toEqual(["per-subject-calls"]);
@@ -295,7 +308,7 @@ describe("the residue a profile already swept is not delta", () => {
     }));
 
     it("carries the swept paths in the recipe", () => {
-        expect(prior.recipe!.find((step) => step.op === "unclassified")!.paths).toEqual(["data/inputs/README.md"]);
+        expect(prior.recipe?.find((step) => step.op === "unclassified")?.paths).toEqual(["data/inputs/README.md"]);
     });
 
     it("absorbs a byte-identical tree in full, with no model", () => {
@@ -304,7 +317,7 @@ describe("the residue a profile already swept is not delta", () => {
 
         expect(outcome.kind).toBe("full");
         if (outcome.kind !== "full") return;
-        expect(outcome.resolution.groups.find((group) => group.unclassified)!.memberPaths).toEqual(["data/inputs/README.md"]);
+        expect(presentFind(outcome.resolution.groups, (group) => group.unclassified === true).memberPaths).toEqual(["data/inputs/README.md"]);
         expect(outcome.resolution.partition.keptFiles).toBe(detected.keptFileCount);
     });
 

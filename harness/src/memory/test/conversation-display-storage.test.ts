@@ -10,6 +10,7 @@ import {
     parseStoredDisplayEnvelope,
     type ConversationUIMessage,
 } from "../conversation-display-storage.js";
+import { presentAt } from "../../lib/present.js";
 
 const messages: ConversationUIMessage[] = [
     { id: "u1", role: "user", parts: [{ type: "text", text: "show results" }] },
@@ -29,13 +30,13 @@ const messages: ConversationUIMessage[] = [
 describe("stored conversation display envelope", () => {
     it("validates and copies a versioned AI SDK UI message envelope", async () => {
         const envelope = envelopeDisplayMessages(messages);
-        messages[1]!.id = "mutated";
+        presentAt(messages, 1).id = "mutated";
 
         const parsed = await parseStoredDisplayEnvelope(envelope, "thread-1/0/display");
         expect(parsed.kind).toBe("ai-sdk-ui-messages");
         expect(parsed.aiSdkMajor).toBe(7);
         expect(parsed.schemaVersion).toBe(1);
-        expect(parsed.messages[1]!.id).toBe("a1");
+        expect(presentAt(parsed.messages, 1).id).toBe("a1");
     });
 
     it.each([
@@ -59,7 +60,7 @@ describe("stored conversation display envelope", () => {
             ],
         };
         const parsed = await parseStoredDisplayEnvelope(value, "thread-1/0/display");
-        expect(parsed.messages[0]!.parts).toHaveLength(1);
+        expect(presentAt(parsed.messages, 0).parts).toHaveLength(1);
     });
 });
 
@@ -72,7 +73,7 @@ describe("a stored display part the vocabulary can no longer render", () => {
 
     it("drops a part whose key has been retired, keeping the rest of the turn", async () => {
         const parsed = await parseStoredDisplayEnvelope(envelopeWithParts([{ type: "data-retired-card", data: { x: 1 } }, known]), "t/0/display");
-        expect(parsed.messages[0]!.parts).toEqual([known]);
+        expect(presentAt(parsed.messages, 0).parts).toEqual([known]);
     });
 
     it("drops a part whose payload no longer satisfies its schema", async () => {
@@ -80,12 +81,12 @@ describe("a stored display part the vocabulary can no longer render", () => {
         // under the current schema even though its key still exists.
         const stale = { type: "data-file-reference", data: { id: "files-2" } };
         const parsed = await parseStoredDisplayEnvelope(envelopeWithParts([stale, known]), "t/0/display");
-        expect(parsed.messages[0]!.parts).toEqual([known]);
+        expect(presentAt(parsed.messages, 0).parts).toEqual([known]);
     });
 
     it("does not resolve a part key up the prototype chain", async () => {
         const parsed = await parseStoredDisplayEnvelope(envelopeWithParts([{ type: "data-constructor", data: {} }, known]), "t/0/display");
-        expect(parsed.messages[0]!.parts).toEqual([known]);
+        expect(presentAt(parsed.messages, 0).parts).toEqual([known]);
     });
 
     it("reports each drop with the row identity and the reason", async () => {
@@ -122,7 +123,7 @@ describe("a stored tool call", () => {
             messages: [{ id: "a1", role: "assistant", parts: [{ type: "data-tool-call", id: "t1", data: call }] }],
         };
 
-        const parts = conversationUIToChatMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages)[0]!.parts;
+        const parts = presentAt(conversationUIToChatMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages), 0).parts;
 
         const expected: ToolCallPart = { type: "tool-call", ...call };
         expect(parts).toEqual([expected]);
@@ -160,7 +161,7 @@ describe("a stored sub-agent activity part", () => {
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
 
         expect(parsed.messages).toEqual([stored]);
-        expect(conversationUIToChatMessages(parsed.messages)[0]!.parts).toEqual([part]);
+        expect(presentAt(conversationUIToChatMessages(parsed.messages), 0).parts).toEqual([part]);
     });
 
     it("stores an open entry as incomplete, with no end time", () => {
@@ -194,7 +195,7 @@ describe("a stored sub-agent activity part", () => {
 
         const parsed = await parseStoredDisplayEnvelope(value, "t/0/display");
 
-        expect(parsed.messages[0]!.parts).toEqual([{ type: "text", text: "kept" }]);
+        expect(presentAt(parsed.messages, 0).parts).toEqual([{ type: "text", text: "kept" }]);
     });
 });
 
@@ -207,6 +208,6 @@ describe("a stored plan-approval part", () => {
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
 
         expect(parsed.messages).toEqual([stored]);
-        expect(conversationUIToChatMessages(parsed.messages)[0]!.parts).toEqual([part]);
+        expect(presentAt(conversationUIToChatMessages(parsed.messages), 0).parts).toEqual([part]);
     });
 });

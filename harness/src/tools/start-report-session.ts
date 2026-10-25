@@ -221,7 +221,7 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             };
 
             const { scope } = ctx.session;
-            if (scope.kind !== "analysis" || scope.threadId === undefined || scope.threadId.length === 0) {
+            if (scope.threadId === undefined || scope.threadId.length === 0) {
                 return ok({ outcome: "refused", detail: NO_THREAD_SCOPE_DETAIL });
             }
             const parentThreadId = scope.threadId;

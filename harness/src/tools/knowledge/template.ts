@@ -27,6 +27,7 @@
  */
 
 import { ok, type Result } from "neverthrow";
+import { presentGet } from "../../lib/present.js";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
@@ -280,7 +281,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             const localByName = new Map(locals.map((parameter) => [parameter.name, parameter]));
             // A local value the contract refuses is refused before the service call, thus a bad path costs no render.
             const localIssues = Object.entries(localValues).flatMap(([name, value]) => {
-                const issue = validateLocalSlot(localByName.get(name)!, value);
+                const issue = validateLocalSlot(presentGet(localByName, name, "the template parameter of the local value"), value);
                 return issue ? [issue] : [];
             });
             if (localIssues.length > 0) {

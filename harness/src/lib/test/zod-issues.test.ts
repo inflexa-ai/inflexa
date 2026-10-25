@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { hintForZodIssue, repairToolInput } from "../zod-issues.js";
 import { parseUnknownRecord } from "../unknown-containers.js";
+import { presentAt } from "../present.js";
 
 /** Parse `input` against `schema` and return the issues it produced. */
 function issuesFor(schema: z.ZodType, input: unknown): z.core.$ZodIssue[] {
@@ -45,8 +46,8 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ audience: z.string().max(400) });
         const input = { audience: "x".repeat(463) };
 
-        const [issue] = issuesFor(schema, input);
-        const hint = hintForZodIssue(issue!, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
+        const hint = hintForZodIssue(issue, input);
 
         expect(hint).toBeDefined();
         expect(hint).toContain("463 characters");
@@ -57,26 +58,26 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ audience: z.string().min(4) });
         const input = { audience: "ab" };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("stays silent when a maximum applies to an array, not to a string", () => {
         const schema = z.object({ steps: z.array(z.string()).max(1) });
         const input = { steps: ["a", "b"] };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("hints when an object field arrived as a JSON-encoded string", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: JSON.stringify({ runId: "run-1" }) };
 
-        const [issue] = issuesFor(schema, input);
-        const hint = hintForZodIssue(issue!, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
+        const hint = hintForZodIssue(issue, input);
 
         expect(hint).toBeDefined();
         expect(hint).toContain("JSON-encoded string");
@@ -87,8 +88,8 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ steps: z.array(z.string()) });
         const input = { steps: JSON.stringify(["a", "b"]) };
 
-        const [issue] = issuesFor(schema, input);
-        const hint = hintForZodIssue(issue!, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
+        const hint = hintForZodIssue(issue, input);
 
         expect(hint).toBeDefined();
         expect(hint).toContain("JSON-encoded string");
@@ -99,46 +100,46 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: '\n  {"runId":"run-1"}' };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeDefined();
+        expect(hintForZodIssue(issue, input)).toBeDefined();
     });
 
     test("stays silent for a plain string that is not serialized JSON", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: "hello" };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("stays silent for a number where an object was expected", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: 42 };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("stays silent for a non-invalid_type issue", () => {
         const schema = z.object({ name: z.string().min(5) });
         const input = { name: "ab" };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(issue!.code).not.toBe("invalid_type");
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(issue.code).not.toBe("invalid_type");
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("stays silent when a string was expected and a string-ish object arrived", () => {
         const schema = z.object({ note: z.string() });
         const input = { note: { text: "hi" } };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("resolves a nested array-index path", () => {
@@ -146,10 +147,10 @@ describe("hintForZodIssue", () => {
             findings: [{ title: "t", references: JSON.stringify([{ pmid: "1" }]) }],
         };
 
-        const [issue] = issuesFor(NestedSchema, input);
+        const issue = presentAt(issuesFor(NestedSchema, input), 0);
 
-        expect(issue!.path).toEqual(["findings", 0, "references"]);
-        expect(hintForZodIssue(issue!, input)).toBeDefined();
+        expect(issue.path).toEqual(["findings", 0, "references"]);
+        expect(hintForZodIssue(issue, input)).toBeDefined();
     });
 
     test("returns undefined for a path that does not resolve into the input", () => {
@@ -171,8 +172,8 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: '{"runId":"run-1"}</parameter>\n</invoke>' };
 
-        const [issue] = issuesFor(schema, input);
-        const hint = hintForZodIssue(issue!, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
+        const hint = hintForZodIssue(issue, input);
 
         expect(hint).toBeDefined();
         expect(hint).toContain("extra content wrapped around");
@@ -184,8 +185,8 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: '```json\n{"runId":"run-1"}\n```' };
 
-        const [issue] = issuesFor(schema, input);
-        const hint = hintForZodIssue(issue!, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
+        const hint = hintForZodIssue(issue, input);
 
         expect(hint).toContain("extra content wrapped around");
         expect(hint).toContain("```");
@@ -195,8 +196,8 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: `{"runId":"run-1"}</parameter>${" ".repeat(200)}</invoke>` };
 
-        const [issue] = issuesFor(schema, input);
-        const hint = hintForZodIssue(issue!, input)!;
+        const hint = hintForZodIssue(presentAt(issuesFor(schema, input), 0), input);
+        if (hint === undefined) throw new Error("hint is absent");
 
         expect(hint).toBeDefined();
         expect(hint.length).toBeLessThan(400);
@@ -206,19 +207,19 @@ describe("hintForZodIssue", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: '\n<parameter name="runId">fb0f43f5-1234' };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(() => hintForZodIssue(issue!, input)).not.toThrow();
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(() => hintForZodIssue(issue, input)).not.toThrow();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 
     test("stays silent for a truncated JSON object", () => {
         const schema = z.object({ synthesis: z.object({ runId: z.string() }) });
         const input = { synthesis: '{"runId":"run-1", "findings": [{"title":' };
 
-        const [issue] = issuesFor(schema, input);
+        const issue = presentAt(issuesFor(schema, input), 0);
 
-        expect(hintForZodIssue(issue!, input)).toBeUndefined();
+        expect(hintForZodIssue(issue, input)).toBeUndefined();
     });
 });
 
@@ -337,7 +338,7 @@ describe("repairToolInput", () => {
         // Untouched branches are shared, not copied.
         expect(readPath(repaired, "meta")).toBe(input.meta);
         expect(readPath(repaired, "findings", 0)).toBe(input.findings[0]);
-        expect(input.findings[1]!.references).toBe('[{"pmid":"2"}]</parameter>\n</invoke>');
+        expect(presentAt(input.findings, 1).references).toBe('[{"pmid":"2"}]</parameter>\n</invoke>');
     });
 
     test("repairs several wrapped fields in one pass", () => {

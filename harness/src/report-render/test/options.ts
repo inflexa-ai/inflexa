@@ -9,8 +9,14 @@ import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { CHART_SOURCE_MEMBER, type EchartOption } from "../chart.js";
 
+/** The JSON text of a value, or `undefined` when the value holds no JSON form. The lib signature types
+ * the result `string`, but it gives back `undefined` for a value it cannot hold. */
+function stringifyJson(value: unknown): string | undefined {
+    return JSON.stringify(value);
+}
+
 function fail(what: string, value: unknown): never {
-    const shown = JSON.stringify(value)?.slice(0, 80) ?? String(value);
+    const shown = stringifyJson(value)?.slice(0, 80) ?? String(value);
     throw new Error(`the produced option holds ${what} in another shape: ${shown}`);
 }
 

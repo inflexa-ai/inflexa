@@ -272,13 +272,14 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
     if (path.length === 0) return value;
 
     const [key, ...rest] = path;
+    if (key === undefined) return value;
     if (root === null || typeof root !== "object") return root;
 
-    const child = setAtPath(Reflect.get(root, key!), rest, value);
+    const child = setAtPath(Reflect.get(root, key), rest, value);
     if (isUnknownArray(root) && typeof key === "number") {
         const copy = [...root];
         copy[key] = child;
         return copy;
     }
-    return { ...root, [key!]: child };
+    return { ...root, [key]: child };
 }

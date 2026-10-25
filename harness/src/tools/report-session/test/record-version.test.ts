@@ -379,14 +379,15 @@ describe("createRecordVersionTool", () => {
             // The metric carries no prose, thus the finish warns about nothing.
             expect(result.warnings).toEqual([]);
         }
+        if (versionId === undefined) throw new Error("the recorded version id is absent");
 
         // The store holds one version, and it carries the anchor from the thread row.
         const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        expect(stored!.versionId).toBe(versionId!);
-        expect(stored!.parentThreadId).toBe(parentId);
-        expect(stored!.parentSeq).toBe(7);
-        expect(stored!.document.title).toBe("Report");
+        expect(stored?.versionId).toBe(versionId);
+        expect(stored?.parentThreadId).toBe(parentId);
+        expect(stored?.parentSeq).toBe(7);
+        expect(stored?.document.title).toBe("Report");
     });
 
     describe("the record loop", () => {
@@ -420,7 +421,7 @@ describe("createRecordVersionTool", () => {
             }
 
             const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
-            expect(stored!.document.title).toBe("An amended report");
+            expect(stored?.document.title).toBe("An amended report");
         });
 
         it("keeps the stored version when a later record fails its gate", async () => {
@@ -440,9 +441,9 @@ describe("createRecordVersionTool", () => {
             expect(second.outcome).toBe("invalid");
             // The gate refused before the store, thus the earlier record still stands whole.
             const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
-            expect(stored!.document.title).toBe("Report");
+            expect(stored?.document.title).toBe("Report");
             if (first.outcome === "recorded") {
-                expect(stored!.versionId).toBe(first.versionId);
+                expect(stored?.versionId).toBe(first.versionId);
             }
         });
 
@@ -461,7 +462,7 @@ describe("createRecordVersionTool", () => {
 
             expect(second.outcome).toBe("stale-look");
             const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
-            expect(stored!.document.title).toBe("Report");
+            expect(stored?.document.title).toBe("Report");
         });
     });
 
@@ -659,7 +660,9 @@ describe("createRecordVersionTool", () => {
         /** Run the tool's result hook, asserting that the tool declares one. */
         function detailOf(tool: ReturnType<typeof createRecordVersionTool>, result: RecordVersionResult): string | undefined {
             expect(tool.describeResult).toBeDefined();
-            return tool.describeResult!({}, result);
+            const describeResult = tool.describeResult;
+            if (describeResult === undefined) throw new Error("the tool declares no result detail");
+            return describeResult({}, result);
         }
 
         it("names the version that landed", async () => {

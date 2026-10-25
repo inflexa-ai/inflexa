@@ -47,9 +47,7 @@ function firstSeries(option: EchartOption): EchartOption {
 }
 
 function firstGrid(option: EchartOption): EchartOption {
-    const grid = gridAt(option, 0);
-    if (grid === undefined) throw new Error("the chart holds no grid");
-    return grid;
+    return gridAt(option, 0);
 }
 
 describe("the pca figure", () => {

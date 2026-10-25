@@ -14,6 +14,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { presentAt, presentFirst } from "../../lib/present.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../../providers/ai-sdk.js";
@@ -241,7 +242,7 @@ describe("runAgent prompt-cache directive", () => {
         // Each wrap-up request carries the tool set of the loop and no tool
         // choice, thus it keeps the prefix. A mask refuses each call.
         for (const wrapUp of chat.calls.slice(3)) {
-            expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
+            expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(presentFirst(chat.calls).tools));
             expect("toolChoice" in wrapUp).toBe(false);
             expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
         }
@@ -285,9 +286,9 @@ describe("runAgent prompt-cache directive", () => {
         // Each iteration appends the assistant reply and its tool results, and the
         // breakpoint advances with them: a pinned one would re-process the whole
         // tool transcript uncached on every iteration.
-        const marked = chat.calls.map((call) => breakpointsOf(call.messages)[0]!);
+        const marked = chat.calls.map((call) => presentFirst(breakpointsOf(call.messages)));
         for (let i = 1; i < marked.length; i++) {
-            expect(marked[i]!).toBeGreaterThan(marked[i - 1]!);
+            expect(presentAt(marked, i)).toBeGreaterThan(presentAt(marked, i - 1));
         }
     });
 

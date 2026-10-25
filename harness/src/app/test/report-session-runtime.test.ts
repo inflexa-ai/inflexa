@@ -16,6 +16,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { Scope } from "../../auth/types.js";
+import { presentFirst, presentGet } from "../../lib/present.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createThreadStore } from "../../memory/thread-store.js";
 import type { DraftDocument } from "../../report-model/draft.js";
@@ -70,7 +71,7 @@ describe("createReportSessionRuntime", () => {
             text: "SELECT COUNT(*)::int AS n FROM cortex_report_session_state WHERE thread_id = $1",
             values: [threadId],
         });
-        return rows[0]!.n;
+        return presentFirst(rows).n;
     }
 
     it("pins one time and freezes the membership across two loads", async () => {
@@ -274,15 +275,15 @@ describe("createReportSessionRuntime", () => {
         // The served entry carries the output hash of the record.
         expect(served.state.snapshot.artifacts[record.outputPath]).toEqual({ hash: record.outputHash });
         // The pinned entry is untouched by the merge.
-        expect(served.state.snapshot.artifacts[pinnedPath]!.hash).toBe("sha256:aaa");
+        expect(presentGet(served.state.snapshot.artifacts, pinnedPath).hash).toBe("sha256:aaa");
 
         // The stored snapshot column holds the pin alone, thus the anchor stays honest.
         const { rows: after } = await pool.query<{ snapshot: unknown }>({
             text: "SELECT snapshot FROM cortex_report_session_state WHERE thread_id = $1",
             values: [threadId],
         });
-        expect(after[0]!.snapshot).toEqual(before[0]!.snapshot);
-        expect(Object.keys(parseUnknownRecord(after[0]!.snapshot) ?? {})).not.toContain(record.outputPath);
+        expect(presentFirst(after).snapshot).toEqual(presentFirst(before).snapshot);
+        expect(Object.keys(parseUnknownRecord(presentFirst(after).snapshot) ?? {})).not.toContain(record.outputPath);
     });
 
     it("binds a derived path through the authoring tools, and the stamp fills its hash", async () => {
@@ -317,8 +318,8 @@ describe("createReportSessionRuntime", () => {
 
         const loaded = await runtime.gateway.load(threadId);
         if (loaded.outcome !== "found") throw new Error("expected found");
-        const section = loaded.state.document.sections[0]!;
-        const table = section.blocks[0]!;
+        const section = presentFirst(loaded.state.document.sections);
+        const table = presentFirst(section.blocks);
         expect(table).toMatchObject({ kind: "table", id: "t1", binding: { path: record.outputPath, hash: record.outputHash } });
     });
 

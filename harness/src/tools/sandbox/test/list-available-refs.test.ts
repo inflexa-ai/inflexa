@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../../../reference-data/receipt.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createListAvailableRefsTool } from "../list-available-refs.js";
+import { presentAt } from "../../../lib/present.js";
 
 const HASH = "a".repeat(64);
 
@@ -53,7 +54,7 @@ describe("list_available_refs", () => {
         const result = (await createTool(root).execute({ path: "user/cohort" }, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result.entries).toEqual([{ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 }]);
-        expect(result.entries[0]!.path.startsWith(root)).toBe(false);
+        expect(presentAt(result.entries, 0).path.startsWith(root)).toBe(false);
     });
 
     it("needs no sandbox and discovers manifest-free user files", async () => {
@@ -67,7 +68,7 @@ describe("list_available_refs", () => {
         expect(tool.executionMode).not.toBe("workflow");
         expect(result).toMatchObject({ available: true, state: "populated", truncated: false });
         expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
-        expect(result.entries[0]!.metadata).toBeUndefined();
+        expect(presentAt(result.entries, 0).metadata).toBeUndefined();
     });
 
     it("merges valid receipt and legacy enrichment while retaining user files", async () => {
@@ -90,7 +91,7 @@ describe("list_available_refs", () => {
         const managed = (await tool.execute({ path: "managed/alpha/2026.07" }, makeToolContext().ctx))._unsafeUnwrap();
         // Receipt for a dataset the catalog does not know: identity only, no provenance labels.
         expect(managed.entries[0]).toMatchObject({ bytes: 12, metadata: { datasetId: "alpha", version: "2026.07" } });
-        expect(managed.entries[0]!.metadata?.title).toBeUndefined();
+        expect(presentAt(managed.entries, 0).metadata?.title).toBeUndefined();
 
         // Receipt for a catalog dataset: provenance is joined in from the catalog entry.
         const catalogued = (await tool.execute({ path: "managed/ncbi-gene-human/current" }, makeToolContext().ctx))._unsafeUnwrap();
@@ -125,8 +126,8 @@ describe("list_available_refs", () => {
         // "regulon" appears in neither filename; it is only in the catalog's contents description.
         const byMeaning = (await tool.execute({ path: "managed/collectri-human/2.0", query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(byMeaning.entries).toHaveLength(1);
-        expect(byMeaning.entries[0]!.path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
-        expect(byMeaning.entries[0]!.metadata).toMatchObject({ organism: "human", format: "csv", category: "regulatory-networks" });
+        expect(presentAt(byMeaning.entries, 0).path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
+        expect(presentAt(byMeaning.entries, 0).metadata).toMatchObject({ organism: "human", format: "csv", category: "regulatory-networks" });
         // The reader and the column shape must reach the model, not just sit in structured metadata.
         expect(byMeaning.content).toContain("csv — TF-target regulons");
         expect(byMeaning.content).toContain("source (TF symbol)");
@@ -149,8 +150,8 @@ describe("list_available_refs", () => {
         const result = (await createTool(root).execute({ query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result.entries).toHaveLength(1);
-        expect(result.entries[0]!.path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
-        expect(result.entries[0]!.metadata).toMatchObject({ organism: "human", format: "csv" });
+        expect(presentAt(result.entries, 0).path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
+        expect(presentAt(result.entries, 0).metadata).toMatchObject({ organism: "human", format: "csv" });
     });
 
     // Browsing must stay a directory summary — a recursive dump of every file is what
@@ -243,7 +244,7 @@ describe("list_available_refs", () => {
         await symlink(join(outside, "registry.json"), join(root, "registry.json"));
 
         const result = (await createTool(root).execute({ path: "managed/collectri-human/2.0" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result.entries[0]!.metadata).toBeUndefined();
+        expect(presentAt(result.entries, 0).metadata).toBeUndefined();
     });
 
     it("supports directory drill-down from the root", async () => {
@@ -327,6 +328,6 @@ describe("list_available_refs", () => {
         const first = (await tool.execute({ path: "shards" }, makeToolContext().ctx))._unsafeUnwrap();
         const second = (await tool.execute({ path: "shards" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(first.entries.map((entry) => entry.path)).toEqual(second.entries.map((entry) => entry.path));
-        expect(first.entries[0]!.path).toBe("/mnt/refs/shards/0000.parquet");
+        expect(presentAt(first.entries, 0).path).toBe("/mnt/refs/shards/0000.parquet");
     });
 });

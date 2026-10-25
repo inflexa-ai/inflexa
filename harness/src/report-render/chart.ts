@@ -2865,7 +2865,6 @@ function categoryTurn(categories: readonly unknown[], widthPx: number): 45 | 90 
  */
 function thinnedLabels(option: EchartOption): EchartOption {
     if (option.xAxis === undefined) return option;
-    let thinned = false;
     const thin = (axis: unknown): unknown => {
         const fields = parseUnknownRecord(axis);
         if (fields === undefined) return axis;
@@ -2873,10 +2872,14 @@ function thinnedLabels(option: EchartOption): EchartOption {
         if (fields.type !== "category" || !isUnknownArray(fields.data) || label.rotate !== 90 || label.show === false) return axis;
         const interval = categoryInterval(fields.data.length, CHART_PAGE_TEXT_PX, pagePlotWidth(option.grid, fields));
         if (interval === 0) return axis;
-        thinned = true;
         return { ...fields, axisLabel: { ...label, interval } };
     };
-    const xAxis = Array.isArray(option.xAxis) ? option.xAxis.map(thin) : thin(option.xAxis);
+    const declared = option.xAxis;
+    const axes: readonly unknown[] = Array.isArray(declared) ? declared : [declared];
+    const thinnedAxes = axes.map(thin);
+    const thinned = thinnedAxes.some((axis, index) => axis !== axes[index]);
+    const [singleAxis] = thinnedAxes;
+    const xAxis = Array.isArray(declared) ? thinnedAxes : singleAxis;
     const result: EchartOption = { ...option, xAxis };
     if (thinned && option.tooltip === undefined) result.tooltip = { trigger: "axis" };
     return result;
@@ -3055,8 +3058,8 @@ function plottedSeries(entry: ResolvedSeries, axes: AxisPair, meanings: ColumnMe
     const xAxis = horizontal ? axes.yAxis : axes.xAxis;
     const yAxis = horizontal ? axes.xAxis : axes.yAxis;
     const plotted: ResolvedSeries = { ...entry };
-    if (entry.x !== undefined) plotted.x = plottedChannel(entry.x, xAxis, meanings);
-    if (entry.y !== undefined) plotted.y = plottedChannel(entry.y, yAxis, meanings);
+    plotted.x = plottedChannel(entry.x, xAxis, meanings);
+    plotted.y = plottedChannel(entry.y, yAxis, meanings);
     if (entry.y0 !== undefined) plotted.y0 = plottedChannel(entry.y0, yAxis, meanings);
     return plotted;
 }

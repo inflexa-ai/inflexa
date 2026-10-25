@@ -9,6 +9,7 @@ import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { createShowPlanTool } from "../show-plan.js";
 import { showUserTool } from "../../display/show-user.js";
 import { createWorkspaceSearchTool, type WorkspaceSearchQuerier } from "../workspace-search.js";
+import { presentAt } from "../../../lib/present.js";
 
 /** The emitted chat event, checked: the type string and the data record, or a failed test. */
 function emittedEvent(emitted: unknown[]): { type: string; data: Record<string, unknown> } {
@@ -49,8 +50,8 @@ describe("createWorkspaceSearchTool (dependency-bearing factory)", () => {
         const result = (await tool.execute({ query: "differential expression results", limit: 8 }, ctx))._unsafeUnwrap();
 
         expect(result.results).toHaveLength(2);
-        expect(result.results[0]!.id).toBe("v1");
-        expect(result.results[0]!.score).toBeGreaterThan(result.results[1]!.score);
+        expect(presentAt(result.results, 0).id).toBe("v1");
+        expect(presentAt(result.results, 0).score).toBeGreaterThan(presentAt(result.results, 1).score);
     });
 
     it("returns an empty list when the index table does not exist yet", async () => {

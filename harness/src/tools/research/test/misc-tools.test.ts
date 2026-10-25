@@ -10,6 +10,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { resolveLibraryIdTool } from "../context7-docs.js";
 import { createInspectRunTool, type InspectRunQuerier } from "../inspect-run.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -287,7 +288,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
             query: async (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
                 if (/cortex_step_executions/i.test(text)) return { rows: [], rowCount: 0 };
-                const row = rows[Math.min(reads++, rows.length - 1)]!;
+                const row = presentAt(rows, Math.min(reads++, rows.length - 1));
                 return { rows: [row], rowCount: 1 };
             },
         };

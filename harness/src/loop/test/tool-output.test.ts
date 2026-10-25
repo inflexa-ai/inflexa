@@ -4,6 +4,7 @@ import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { presentAt, presentFirst } from "../../lib/present.js";
 import type { AgentSession } from "../../auth/types.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../../providers/types.js";
@@ -90,10 +91,11 @@ function callBig(length: number, id = "tu-1"): ChatResponse[] {
 function onlyResult(messages: readonly ModelMessage[]): ToolResultPart {
     const tool = messages.find((m) => m.role === "tool");
     expect(tool).toBeDefined();
-    const content = tool!.content;
+    if (tool === undefined) throw new Error("the tool message is absent");
+    const content = tool.content;
     if (typeof content === "string") throw new Error("the tool message carries string content");
     const results = content.filter((part): part is ToolResultPart => part.type === "tool-result");
-    return results[0]!;
+    return presentFirst(results);
 }
 
 function textOf(result: ToolResultPart): string {
@@ -136,7 +138,7 @@ describe("runAgent — long tool results", () => {
 
         const result = onlyResult(messages);
         expect(result.output.type).toBe("text");
-        const ref = store.puts[0]!.ref;
+        const ref = presentFirst(store.puts).ref;
         expect(textOf(result).split("\n")).toEqual([
             `[Tool result cut: ${length} characters, over the limit of ${TOOL_RESULT_CAP}. Shown: the first ${EXCERPT_HEAD_CHARS} and the last ${EXCERPT_TAIL_CHARS} characters.]`,
             `[The harness kept ${length} characters as reference "${ref}". Call read_tool_output with this reference and an offset and a limit, or with a pattern. Offsets start at 0.]`,
@@ -215,7 +217,7 @@ describe("runAgent — long tool results", () => {
         );
 
         expect(store.puts).toHaveLength(1);
-        const kept = store.puts[0]!;
+        const kept = presentFirst(store.puts);
         expect(kept).toMatchObject({ analysisId: "analysis-001", toolName: "big", toolCallId: "tu-1", totalLength: length });
         expect(kept.ref).toMatch(/^to_[0-9a-f]{20}$/);
         expect(kept.content).toBe(sizedText(length));
@@ -231,8 +233,8 @@ describe("runAgent — long tool results", () => {
         await runAgent(agent, GO, makeSession({ scope }), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: chatStore }));
         await runAgent(agent, GO, runSession(scope), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: runStore }));
 
-        expect(chatStore.puts[0]!.threadId).toBe("t-1");
-        expect(runStore.puts[0]!).not.toHaveProperty("threadId");
+        expect(presentFirst(chatStore.puts).threadId).toBe("t-1");
+        expect(presentFirst(runStore.puts)).not.toHaveProperty("threadId");
     });
 
     it("puts the record before the next model request", async () => {
@@ -282,7 +284,7 @@ describe("runAgent — long tool results", () => {
         expect(textOf(onlyResult(failing.messages))).toBe(textOf(onlyResult(working.messages)));
         const warns = logger.records.filter((r) => r.level === "warn" && r.msg.includes("tool output not kept"));
         expect(warns).toHaveLength(1);
-        expect(warns[0]!.fields).toMatchObject({ toolName: "big", toolCallId: "tu-1", errorType: "mutation_failed" });
+        expect(presentFirst(warns).fields).toMatchObject({ toolName: "big", toolCallId: "tu-1", errorType: "mutation_failed" });
         expect(failing.finish.reason).toBe("stop");
     });
 
@@ -294,7 +296,7 @@ describe("runAgent — long tool results", () => {
         await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: first }));
         await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: second }));
 
-        expect(second.puts[0]!.ref).toBe(first.puts[0]!.ref);
+        expect(presentFirst(second.puts).ref).toBe(presentFirst(first.puts).ref);
     });
 
     it("puts the same record again when an inline-mode tool runs again under one run frame", async () => {
@@ -305,7 +307,7 @@ describe("runAgent — long tool results", () => {
         const replay = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: store }));
 
         expect(store.puts).toHaveLength(2);
-        expect(store.puts[1]).toEqual(store.puts[0]!);
+        expect(store.puts[1]).toEqual(presentFirst(store.puts));
         expect(textOf(onlyResult(replay.messages))).toBe(textOf(onlyResult(first.messages)));
     });
 
@@ -342,11 +344,12 @@ describe("runAgent — long tool results", () => {
 
         const toolMessage = messages.find((m) => m.role === "tool");
         expect(toolMessage).toBeDefined();
-        const messageContent = toolMessage!.content;
+        if (toolMessage === undefined) throw new Error("the tool message is absent");
+        const messageContent = toolMessage.content;
         if (typeof messageContent === "string") throw new Error("the tool message carries string content");
         const results = messageContent.filter((part): part is ToolResultPart => part.type === "tool-result");
         expect(results.map((r) => r.toolCallId)).toEqual(["tu-A", "tu-B"]);
-        expect(textOf(results[0]!).startsWith("[Tool result cut: 40000 characters")).toBe(true);
+        expect(textOf(presentFirst(results)).startsWith("[Tool result cut: 40000 characters")).toBe(true);
         expect(store.puts.map((kept) => kept.toolCallId)).toEqual(["tu-A"]);
     });
 
@@ -374,7 +377,7 @@ describe("runAgent — long tool results", () => {
 
         await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(scriptedProvider(callBig(length)), { toolOutputStore: store }));
 
-        const kept = store.puts[0]!;
+        const kept = presentFirst(store.puts);
         const half = TOOL_OUTPUT_KEEP_MAX / 2;
         expect(kept.totalLength).toBe(length);
         expect(kept.content).toBe(`${text.slice(0, half)}\n[... ${length - 2 * half} characters not kept ...]\n${text.slice(-half)}`);
@@ -412,7 +415,9 @@ describe("runAgent — long tool results", () => {
             if (i === 0) return makeMessage([toolUseBlock("tu-1", "big", { length: 100_000 })], "tool_use");
             if (i === 1) {
                 const excerpt = textOf(onlyResult(request.messages));
-                const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt)![1]!;
+                const match = /reference "(to_[0-9a-f]{20})"/.exec(excerpt);
+                if (match === null) throw new Error("the excerpt names no stored tool output");
+                const ref = presentAt(match, 1);
                 return makeMessage([toolUseBlock("tu-2", "read_tool_output", { ref, limit: 16_384 })], "tool_use");
             }
             return makeMessage([textBlock("done")], "end_turn");
@@ -426,9 +431,9 @@ describe("runAgent — long tool results", () => {
         );
 
         const toolMessages = messages.filter((m) => m.role === "tool");
-        const readContent = toolMessages[1]!.content;
+        const readContent = presentAt(toolMessages, 1).content;
         if (typeof readContent === "string") throw new Error("the tool message carries string content");
-        const read = readContent.filter((part): part is ToolResultPart => part.type === "tool-result")[0]!;
+        const read = presentFirst(readContent.filter((part): part is ToolResultPart => part.type === "tool-result"));
         if (read.output.type !== "json") throw new Error("the result carries no json output");
         expect(read.output.value).toMatchObject({
             status: "ok",

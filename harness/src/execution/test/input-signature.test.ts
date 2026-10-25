@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { computeInputSignature } from "../input-signature.js";
+import { presentAt } from "../../lib/present.js";
 
 const inputs = [
     { fileId: "f-1", size: 100, mtimeMs: 1_700_000_000_000 },
@@ -31,7 +32,7 @@ describe("computeInputSignature", () => {
 
     it("changes when the same path holds different bytes", () => {
         const before = computeInputSignature(inputs);
-        const edited = computeInputSignature([{ ...inputs[0]!, size: 101, mtimeMs: 1_700_000_100_000 }, inputs[1]!, inputs[2]!]);
+        const edited = computeInputSignature([{ ...presentAt(inputs, 0), size: 101, mtimeMs: 1_700_000_100_000 }, presentAt(inputs, 1), presentAt(inputs, 2)]);
         expect(edited.digest).not.toBe(before.digest);
         expect(edited.count).toBe(before.count);
     });

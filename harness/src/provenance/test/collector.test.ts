@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 
 import { classifyReadPath, ProvenanceCollector } from "../collector.js";
 import type { ArtifactRecord } from "../../execution/artifact-record.js";
+import { presentAt } from "../../lib/present.js";
 
 const RUN = "run-001";
 const STEP = "step-de";
@@ -31,7 +32,7 @@ describe("ProvenanceCollector.recordFileToolWrite", () => {
 
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
-        const rec = records[0]!;
+        const rec = presentAt(records, 0);
         expect(rec.outputPath).toBe("output/x.csv");
         expect(rec.producer).toEqual({ type: "file_tool", tool: "write_file", invocationId: "inv-1" });
         expect(rec.inputs).toEqual([]);
@@ -47,7 +48,7 @@ describe("ProvenanceCollector.recordFileToolWrite", () => {
 
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
-        expect(records[0]!.producer.type).toBe("command");
+        expect(presentAt(records, 0).producer.type).toBe("command");
     });
 
     test("command then file-tool resolves to the file-tool record — shared keyspace across path shapes", () => {
@@ -61,7 +62,7 @@ describe("ProvenanceCollector.recordFileToolWrite", () => {
 
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
-        const rec = records[0]!;
+        const rec = presentAt(records, 0);
         expect(rec.producer).toEqual({ type: "file_tool", tool: "edit_file", invocationId: "inv-1" });
         expect(rec.inputs).toEqual([]);
         expect(rec.outputPath).toBe("output/x.csv");

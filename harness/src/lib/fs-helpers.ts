@@ -147,10 +147,10 @@ export async function writeFileWithinRoot(workspaceRoot: string, absPath: string
         throw new Error(`writeFileWithinRoot: parent directory escapes the workspace root via a symlink: ${absPath}`);
     }
 
-    // `O_NOFOLLOW ?? 0`: the flag is defined on Linux/macOS (the harness host
-    // platforms); the `?? 0` keeps the open valid on a platform that lacks it
-    // rather than NaN-ing the flag mask.
-    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | (fsConstants.O_NOFOLLOW ?? 0);
+    // A platform may lack `O_NOFOLLOW` — absent at runtime even though the
+    // constants type says number. The bitwise OR coerces an absent flag to 0,
+    // so the open stays valid without a nullish guard on the flag.
+    const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW;
     const fh = await open(target, flags, 0o644);
     try {
         await fh.writeFile(data);

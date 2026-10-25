@@ -8,6 +8,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { openTargetsTool } from "../opentargets.js";
+import { presentAt } from "../../../lib/present.js";
 
 const GqlBodySchema = z.object({ query: z.string(), variables: z.record(z.string(), z.unknown()) });
 
@@ -154,11 +155,11 @@ describe("opentargets — action 'target'", () => {
 
         const { ctx } = makeToolContext();
         await openTargetsTool.execute({ action: "target", ensemblId: TP53, limit: 5 }, ctx);
-        expect(seen[0]!.variables.size).toBe(5);
+        expect(presentAt(seen, 0).variables.size).toBe(5);
 
         // `execute` owns the default, so an omitted limit still pages at 10.
         await openTargetsTool.execute({ action: "target", ensemblId: TP53 }, ctx);
-        expect(seen[1]!.variables.size).toBe(10);
+        expect(presentAt(seen, 1).variables.size).toBe(10);
     });
 
     it("throws on an upstream 5xx failure", async () => {
@@ -226,8 +227,8 @@ describe("opentargets — action 'resolve_disease'", () => {
         const { ctx } = makeToolContext();
         const result = (await openTargetsTool.execute({ action: "resolve_disease", diseaseName: "type 2 diabetes", limit: 5 }, ctx))._unsafeUnwrap();
 
-        expect(seen[0]!.operation).toBe("DiseaseSearch");
-        expect(seen[0]!.variables).toMatchObject({ queryString: "type 2 diabetes", size: 5 });
+        expect(presentAt(seen, 0).operation).toBe("DiseaseSearch");
+        expect(presentAt(seen, 0).variables).toMatchObject({ queryString: "type 2 diabetes", size: 5 });
         expect(result).toEqual({
             totalFound: 2,
             candidates: [

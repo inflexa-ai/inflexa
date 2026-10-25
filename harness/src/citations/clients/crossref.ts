@@ -42,7 +42,7 @@ function crossrefRecord(item: z.infer<typeof CrossrefItemSchema>, index: number)
         identifiers: { doi },
         title,
         authors: authors !== undefined && authors.length > 0 ? authors : undefined,
-        year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0])!,
+        year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0]),
         venue,
         volume: item.volume,
         firstPage: item.page?.split(/[-–]/)[0],
@@ -75,20 +75,20 @@ export function createCrossrefClient(options: CrossrefClientOptions = {}): Citat
 
             const doi = request.normalized.identifiers.doi;
             const exact = request.plan.operation === "crossref_doi_if_owned";
-            const url = exact
-                ? (() => {
-                      const target = new URL(`https://api.crossref.org/works/${encodeDoiPath(doi!)}`);
-                      if (options.mailto) target.searchParams.set("mailto", options.mailto);
-                      return target.toString();
-                  })()
-                : (() => {
-                      const params = new URLSearchParams({
-                          "query.bibliographic": request.input.citation,
-                          rows: String(options.maxCandidates ?? 5),
-                      });
-                      if (options.mailto) params.set("mailto", options.mailto);
-                      return `https://api.crossref.org/works?${params}`;
-                  })();
+            let url: string;
+            if (exact) {
+                if (doi === undefined) return sourceOutcome("crossref", request.plan.operation, "unavailable", 0, [], "the exact plan carries no DOI");
+                const target = new URL(`https://api.crossref.org/works/${encodeDoiPath(doi)}`);
+                if (options.mailto) target.searchParams.set("mailto", options.mailto);
+                url = target.toString();
+            } else {
+                const params = new URLSearchParams({
+                    "query.bibliographic": request.input.citation,
+                    rows: String(options.maxCandidates ?? 5),
+                });
+                if (options.mailto) params.set("mailto", options.mailto);
+                url = `https://api.crossref.org/works?${params}`;
+            }
             const fetched = exact
                 ? await requestJson(url, ExactSchema, options, signal, { headers }).then((result): SourceHttpResult<[z.infer<typeof CrossrefItemSchema>]> =>
                       result.status === "ok" ? { status: "ok", value: [result.value.message] } : result,

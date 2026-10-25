@@ -18,6 +18,7 @@ import { ProvenanceCollector } from "../../provenance/collector.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import { registerStepArtifacts } from "../artifact-registration.js";
 import type { ArtifactRegistry, ExternalRegistrationResult } from "../artifact-registry.js";
+import { presentAt } from "../../lib/present.js";
 
 const RID = "an-1";
 const RUN = "run-1";
@@ -71,9 +72,9 @@ describe("registerStepArtifacts — uncounted rejections", () => {
         // ...but the rejection is on the record, with enough to check the verdict
         // against what the external system actually said.
         expect(rejectionWarnings).toHaveLength(1);
-        expect(rejectionWarnings[0]!.fields.rejected).toEqual([{ path: "data/unused.csv", error: "ArtifactNotReferencedError" }]);
+        expect(presentAt(rejectionWarnings, 0).fields.rejected).toEqual([{ path: "data/unused.csv", error: "ArtifactNotReferencedError" }]);
         // Bound context, so the line is attributable without reading around it.
-        expect(rejectionWarnings[0]!.fields).toMatchObject({ runId: RUN, stepId: STEP });
+        expect(presentAt(rejectionWarnings, 0).fields).toMatchObject({ runId: RUN, stepId: STEP });
     });
 
     it("says nothing when the registry excluded nothing", async () => {

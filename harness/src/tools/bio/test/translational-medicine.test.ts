@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchClinicalTrialsTool } from "../search-clinical-trials.js";
+import { presentAt, presentFirst } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -66,8 +67,8 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
 
         expect(result.totalFound).toBe(1);
         expect(result.trials).toHaveLength(1);
-        expect(result.trials[0]!.nctId).toBe("NCT01234567");
-        expect(result.trials[0]!.phase).toBe("PHASE3");
+        expect(presentAt(result.trials, 0).nctId).toBe("NCT01234567");
+        expect(presentAt(result.trials, 0).phase).toBe("PHASE3");
     });
 
     it("returns an empty trials list when nothing matches (does not throw)", async () => {
@@ -132,10 +133,10 @@ describe("searchClinicalTrials — action 'details'", () => {
         if (!("trial" in result)) throw new Error("expected the details variant");
 
         expect(seen[0]).toContain("/studies/NCT01234567");
-        expect(result.trial!.trial.nctId).toBe("NCT01234567");
-        expect(result.trial!.whyStopped).toBe("Slow accrual");
-        expect(result.trial!.outcomes[0]!.measure).toBe("Overall survival");
-        expect(result.trial!.adverseEvents[0]).toMatchObject({ term: "Neutropenia", serious: true });
+        expect(result.trial?.trial.nctId).toBe("NCT01234567");
+        expect(result.trial?.whyStopped).toBe("Slow accrual");
+        expect(presentFirst(result.trial?.outcomes ?? [], "the first trial outcome").measure).toBe("Overall survival");
+        expect(result.trial?.adverseEvents[0]).toMatchObject({ term: "Neutropenia", serious: true });
     });
 
     it("returns a null trial for an NCT id the registry does not hold (not is_error)", async () => {

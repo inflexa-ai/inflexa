@@ -10,6 +10,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-tr
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 
 import { ATTR_INFLEXA_RUN_ID, createDbosRunLauncher } from "../dbos-run-launcher.js";
+import { presentFind } from "../../lib/present.js";
 
 let exporter: InMemorySpanExporter;
 let provider: NodeTracerProvider;
@@ -58,17 +59,19 @@ describe("createDbosRunLauncher", () => {
         chat.end();
 
         expect(inputAtStart).toEqual({ planId: "p" });
-        const startedUnder = trace.getSpan(contextAtStart!)!.spanContext();
-        expect(startedUnder.traceId).not.toBe(chat.spanContext().traceId);
+        if (contextAtStart === undefined) throw new Error("the capture context is absent");
+        const startedUnder = trace.getSpan(contextAtStart);
+        if (startedUnder === undefined) throw new Error("the span at start is absent");
+        expect(startedUnder.spanContext().traceId).not.toBe(chat.spanContext().traceId);
 
         const finished = exporter.getFinishedSpans();
-        const root = finished.find((s) => s.name === "launch run")!;
-        expect(root.spanContext().spanId).toBe(startedUnder.spanId);
+        const root = presentFind(finished, (s) => s.name === "launch run");
+        expect(root.spanContext().spanId).toBe(startedUnder.spanContext().spanId);
         expect(root.parentSpanContext).toBeUndefined();
         expect(root.attributes[ATTR_INFLEXA_RUN_ID]).toBe("run-1");
         expect(root.links.map((l) => l.context)).toEqual([chat.spanContext()]);
 
-        const originating = finished.find((s) => s.name === "POST /chat")!;
+        const originating = presentFind(finished, (s) => s.name === "POST /chat");
         expect(originating.attributes[ATTR_INFLEXA_RUN_ID]).toBe("run-1");
     });
 
@@ -77,8 +80,11 @@ describe("createDbosRunLauncher", () => {
 
         await launcher.launch(workflow, { workflowId: "run-2" }, { planId: "p" });
 
-        const root = exporter.getFinishedSpans().find((s) => s.name === "launch run")!;
-        expect(trace.getSpan(contextAtStart!)!.spanContext().spanId).toBe(root.spanContext().spanId);
+        const root = presentFind(exporter.getFinishedSpans(), (s) => s.name === "launch run");
+        if (contextAtStart === undefined) throw new Error("the capture context is absent");
+        const spanAtStart = trace.getSpan(contextAtStart);
+        if (spanAtStart === undefined) throw new Error("the span at start is absent");
+        expect(spanAtStart.spanContext().spanId).toBe(root.spanContext().spanId);
         expect(root.links).toEqual([]);
         expect(root.attributes[ATTR_INFLEXA_RUN_ID]).toBe("run-2");
     });

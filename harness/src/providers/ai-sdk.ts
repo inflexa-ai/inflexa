@@ -563,9 +563,9 @@ function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefin
     return {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        cacheCreationInputTokens: usage.inputTokenDetails?.cacheWriteTokens,
-        cacheReadInputTokens: usage.inputTokenDetails?.cacheReadTokens,
-        reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
+        cacheCreationInputTokens: usage.inputTokenDetails.cacheWriteTokens,
+        cacheReadInputTokens: usage.inputTokenDetails.cacheReadTokens,
+        reasoningTokens: usage.outputTokenDetails.reasoningTokens,
     };
 }
 
@@ -1151,8 +1151,7 @@ export function wrapFetchWithRequestTimeout(fetchImpl: typeof fetch, requestTime
             const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
             // The harness runs on Node, where a timer has `unref`. Unref the guard
             // timer, thus an armed guard does not keep a short-lived process alive.
-            // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
-            timer.unref?.();
+            timer.unref();
             const clear = (): void => {
                 clearTimeout(timer);
                 // The harness runs on Node, where a caller signal can outlive one fetch

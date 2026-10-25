@@ -15,6 +15,7 @@ import type { Pool } from "pg";
 import type { Querier } from "./db.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { presentFirst } from "../lib/present.js";
 import { cortexMigrations } from "./migrations/index.js";
 
 /**
@@ -44,7 +45,7 @@ export async function initCortexState(pool: Querier & Pick<Pool, "connect" | "op
             migrationLockTableName: "cortex_migration_lock",
             // Without a schema, the migrator finds its tables in any schema, thus a
             // test schema would see the tables of the other test schemas.
-            migrationTableSchema: rows[0]!.schema,
+            migrationTableSchema: presentFirst(rows, "the current schema row").schema,
         });
         const { error, results } = await migrator.migrateToLatest();
         for (const result of results ?? []) {

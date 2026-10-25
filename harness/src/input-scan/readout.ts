@@ -14,6 +14,7 @@ import { constants as zlibConstants, createGunzip, createZstdDecompress } from "
 import type { Transform } from "node:stream";
 
 import { isUnknownArray } from "../lib/unknown-array.js";
+import { presentAt, presentFirst } from "../lib/present.js";
 
 /** Bytes read from each file. The readout's whole per-file I/O budget. */
 export const READOUT_PREFIX_BYTES = 262_144;
@@ -132,7 +133,8 @@ function textFields(text: string, format: string): PrefixReadout {
     if (head.startsWith("##")) return metaHeaderFields(lines);
     if (head.startsWith(">")) return { fields: { firstRecord: clip(head.slice(1), MAX_RECORD_CHARS), recordsInPrefix: countPrefixed(lines, ">") } };
     if (head.startsWith("@HD") || head.startsWith("@SQ")) return samFields(lines);
-    if (head.startsWith("@") && lines.length > 1) return { fields: { firstRecord: clip(head.slice(1), MAX_RECORD_CHARS), readLength: lines[1]!.length } };
+    if (head.startsWith("@") && lines.length > 1)
+        return { fields: { firstRecord: clip(head.slice(1), MAX_RECORD_CHARS), readLength: presentAt(lines, 1, "prefix lines").length } };
     return delimitedFields(lines) ?? { fields: { firstLine: clip(head, MAX_LINE_CHARS), linesInPrefix: lines.length } };
 }
 
@@ -172,7 +174,7 @@ function samFields(lines: readonly string[]): PrefixReadout {
         readGroups: countPrefixed(lines, "@RG"),
     };
     const sortOrder = /(?:^|\t)SO:([^\t]+)/.exec(lines.find((line) => line.startsWith("@HD")) ?? "");
-    if (sortOrder) fields.sortOrder = clip(sortOrder[1]!, 20);
+    if (sortOrder) fields.sortOrder = clip(presentAt(sortOrder, 1, "the SO: capture group"), 20);
     return { fields };
 }
 
@@ -204,7 +206,7 @@ function sniffDelimiter(line: string): { readonly char: string; readonly name: s
 function delimitedFields(lines: readonly string[]): PrefixReadout | undefined {
     const headerIndex = lines.findIndex((line) => !line.startsWith("#"));
     if (headerIndex < 0) return undefined;
-    const header = lines[headerIndex]!;
+    const header = presentAt(lines, headerIndex, "the header line");
     const delimiter = sniffDelimiter(header);
     if (delimiter === undefined) return undefined;
 
@@ -235,10 +237,11 @@ function looksLikeHeader(columns: readonly string[]): boolean {
 
 function splitDelimited(line: string, delimiter: string): string[] {
     const cells: string[] = [];
+    const chars = line.split("");
     let current = "";
     let quoted = false;
     for (let index = 0; index < line.length; index++) {
-        const char = line[index]!;
+        const char = presentAt(chars, index, "line characters");
         if (quoted) {
             if (char !== '"') current += char;
             else if (line[index + 1] === '"') {
@@ -279,7 +282,7 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     if (record !== undefined && complete.length >= Math.max(1, candidates.length - 1)) {
         return { fields: { jsonType: "json-lines", recordsInPrefix: lines.length, keys: joinKeys(Object.keys(record)) } };
     }
-    return { fields: { firstLine: clip(lines[0]!, MAX_LINE_CHARS) }, unavailable: "JSON document extends past the readout prefix" };
+    return { fields: { firstLine: clip(presentFirst(lines, "prefix lines"), MAX_LINE_CHARS) }, unavailable: "JSON document extends past the readout prefix" };
 }
 
 /** Top-level keys, read positionally: an unindented `key:` line opens a mapping entry. */
@@ -287,7 +290,7 @@ function yamlFields(lines: readonly string[]): PrefixReadout {
     const keys: string[] = [];
     for (const line of lines.slice(0, MAX_META_LINES)) {
         const match = /^([A-Za-z_][\w.-]*):(\s|$)/.exec(line);
-        if (match) keys.push(match[1]!);
+        if (match) keys.push(presentAt(match, 1, "the yaml key capture"));
     }
     const documents = lines.filter((line) => line.trim() === "---").length;
     const fields: PrefixReadout["fields"] = {
@@ -303,7 +306,7 @@ function markdownFields(lines: readonly string[]): PrefixReadout {
     const headings = lines.filter((line) => /^#{1,6}\s/.test(line));
     return {
         fields: {
-            title: clip((headings[0] ?? lines[0]!).replace(/^#+\s*/, ""), MAX_LINE_CHARS),
+            title: clip((headings[0] ?? presentFirst(lines, "prefix lines")).replace(/^#+\s*/, ""), MAX_LINE_CHARS),
             headings: headings.length,
             linesInPrefix: lines.length,
         },

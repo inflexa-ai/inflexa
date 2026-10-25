@@ -12,6 +12,7 @@ import {
     type WorkingMemoryStore,
     workingMemorySchema,
 } from "../working-memory.js";
+import { presentAt, presentGet } from "../../lib/present.js";
 
 const ANALYSIS = "analysis-wm-1";
 
@@ -117,7 +118,7 @@ describe("updateSection section isolation (2.5)", () => {
         expect(JSON.stringify(after.hypotheses)).toBe(JSON.stringify(before.hypotheses));
         expect(JSON.stringify(after.findings)).toBe(JSON.stringify(before.findings));
         expect(after.constraints.length).toBe(1);
-        expect(after.constraints[0]!.text).toBe("FDR threshold 0.01");
+        expect(presentAt(after.constraints, 0).text).toBe("FDR threshold 0.01");
     });
 
     it("revising and retiring list entries amends only that section", async () => {
@@ -134,26 +135,27 @@ describe("updateSection section isolation (2.5)", () => {
             })
         )._unsafeUnwrap();
         const seeded = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        const [first, second] = seeded.hypotheses;
+        const first = presentAt(seeded.hypotheses, 0, "the first hypothesis");
+        const second = presentAt(seeded.hypotheses, 1, "the second hypothesis");
 
         (
             await wm.updateSection(ANALYSIS, "hypothesis", {
                 op: "revise",
-                id: first!.id,
+                id: first.id,
                 text: "first hypothesis (refined)",
             })
         )._unsafeUnwrap();
         (
             await wm.updateSection(ANALYSIS, "hypothesis", {
                 op: "retire",
-                id: second!.id,
+                id: second.id,
             })
         )._unsafeUnwrap();
 
         const after = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(after.hypotheses.length).toBe(1);
-        expect(after.hypotheses[0]!.id).toBe(first!.id);
-        expect(after.hypotheses[0]!.text).toBe("first hypothesis (refined)");
+        expect(presentAt(after.hypotheses, 0).id).toBe(first.id);
+        expect(presentAt(after.hypotheses, 0).text).toBe("first hypothesis (refined)");
     });
 });
 
@@ -179,22 +181,22 @@ describe("updateSection run-scoped findings (2.6)", () => {
         const afterB = (await wm.load(ANALYSIS))._unsafeUnwrap();
 
         expect(JSON.stringify(afterB.findings["run-A"])).toBe(JSON.stringify(runABefore));
-        expect(afterB.findings["run-B"]!.length).toBe(1);
-        expect(afterB.findings["run-B"]![0]!.text).toBe("finding from run B");
+        expect(presentGet(afterB.findings, "run-B").length).toBe(1);
+        expect(presentAt(presentGet(afterB.findings, "run-B"), 0).text).toBe("finding from run B");
     });
 
     it("appends multiple findings under the same run", async () => {
         (await wm.updateSection(ANALYSIS, "finding", { op: "add", runId: "run-A", text: "first finding" }))._unsafeUnwrap();
         (await wm.updateSection(ANALYSIS, "finding", { op: "add", runId: "run-A", text: "second finding" }))._unsafeUnwrap();
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        expect(loaded.findings["run-A"]!.map((f) => f.text)).toEqual(["first finding", "second finding"]);
+        expect(presentGet(loaded.findings, "run-A").map((f) => f.text)).toEqual(["first finding", "second finding"]);
     });
 });
 
 describe("findings are revisable and retirable", () => {
     it("revises a finding's text in place, keeping its id and run", async () => {
         (await wm.updateSection(ANALYSIS, "finding", { op: "add", runId: "run-A", text: "412 genes DE" }))._unsafeUnwrap();
-        const id = (await wm.load(ANALYSIS))._unsafeUnwrap().findings["run-A"]![0]!.id;
+        const id = presentAt(presentGet((await wm.load(ANALYSIS))._unsafeUnwrap().findings, "run-A"), 0).id;
 
         (await wm.updateSection(ANALYSIS, "finding", { op: "revise", id, text: "412 genes DE — batch-corrected" }))._unsafeUnwrap();
 
@@ -207,7 +209,7 @@ describe("findings are revisable and retirable", () => {
         (await wm.updateSection(ANALYSIS, "finding", { op: "add", runId: "run-B", text: "retired" }))._unsafeUnwrap();
         const seeded = (await wm.load(ANALYSIS))._unsafeUnwrap();
 
-        (await wm.updateSection(ANALYSIS, "finding", { op: "retire", id: seeded.findings["run-B"]![0]!.id }))._unsafeUnwrap();
+        (await wm.updateSection(ANALYSIS, "finding", { op: "retire", id: presentAt(presentGet(seeded.findings, "run-B"), 0).id }))._unsafeUnwrap();
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         // The emptied run is gone entirely — no phantom key, nothing to render.
@@ -257,11 +259,11 @@ describe("write-time caps", () => {
         expect(JSON.stringify(after)).toBe(JSON.stringify(before));
 
         // And it stays refused until something is retired — then it lands.
-        (await wm.updateSection(ANALYSIS, "constraint", { op: "retire", id: before.constraints[0]!.id }))._unsafeUnwrap();
+        (await wm.updateSection(ANALYSIS, "constraint", { op: "retire", id: presentAt(before.constraints, 0).id }))._unsafeUnwrap();
         (await wm.updateSection(ANALYSIS, "constraint", { op: "add", text: "one rule too many", origin: "user" }))._unsafeUnwrap();
         const reopened = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(reopened.constraints.length).toBe(WORKING_MEMORY_LIMITS.constraints);
-        expect(reopened.constraints[reopened.constraints.length - 1]!.text).toBe("one rule too many");
+        expect(presentAt(reopened.constraints, reopened.constraints.length - 1).text).toBe("one rule too many");
     });
 
     it("refuses an add into a full hypotheses section", async () => {
@@ -370,7 +372,7 @@ describe("legacy rows written before the caps existed", () => {
     it("loads without throwing", async () => {
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.constraints.length).toBe(40);
-        expect(loaded.findings["run-legacy"]!.length).toBe(60);
+        expect(presentGet(loaded.findings, "run-legacy").length).toBe(60);
     });
 
     it("renders bounded — newest entries only, every line inside the caps", async () => {

@@ -23,6 +23,7 @@ import { conversationRecordTurn, createThreadHistory, type StoredMessage } from 
 import { NOT_RUN_TOOL_RESULT } from "../../memory/tool-call-integrity.js";
 import { deriveThreadTitle } from "../../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../../memory/working-memory.js";
+import { presentAt, presentFind, presentFirst, presentLast } from "../../lib/present.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ProviderError } from "../../providers/errors.js";
@@ -92,7 +93,8 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("not_found");
         // Ownership untouched — the foreign thread still belongs to B.
         const still = (await store.getThread("t1"))._unsafeUnwrap();
-        expect(still!.analysisId).toBe(ANALYSIS_B);
+        if (still === null) throw new Error("the thread row is absent");
+        expect(still.analysisId).toBe(ANALYSIS_B);
     });
 
     it("creates the thread with a derived title and returns ok with history + new input", async () => {
@@ -125,8 +127,9 @@ describe("prepareChatTurn", () => {
         // Thread row created with a derived title.
         const created = (await store.getThread("t-new"))._unsafeUnwrap();
         expect(created).not.toBeNull();
-        expect(created!.analysisId).toBe(ANALYSIS_A);
-        expect(created!.title).toBe(deriveThreadTitle("run a differential expression analysis please"));
+        if (created === null) throw new Error("the thread row is absent");
+        expect(created.analysisId).toBe(ANALYSIS_A);
+        expect(created.title).toBe(deriveThreadTitle("run a differential expression analysis please"));
 
         // userMessage carries the new input.
         expect(contentText(result.userMessage.content)).toContain("run a differential expression analysis please");
@@ -161,7 +164,8 @@ describe("prepareChatTurn", () => {
 
         expect(result.kind).toBe("ok");
         const after = (await store.getThread("t-titled"))._unsafeUnwrap();
-        expect(after!.title).toBe("My Existing Title");
+        if (after === null) throw new Error("the thread row is absent");
+        expect(after.title).toBe("My Existing Title");
     });
 
     it("keeps an empty title that a person set", async () => {
@@ -172,7 +176,9 @@ describe("prepareChatTurn", () => {
         const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-cleared", userInput: "compare the two batches" });
 
         expect(result.kind).toBe("ok");
-        expect((await store.getThread("t-cleared"))._unsafeUnwrap()!.title).toBe("");
+        const cleared = (await store.getThread("t-cleared"))._unsafeUnwrap();
+        if (cleared === null) throw new Error("the thread row is absent");
+        expect(cleared.title).toBe("");
     });
 
     it("injects the analysis-wide running runs, and not a suspended run, regardless of launching thread", async () => {
@@ -250,7 +256,8 @@ describe("prepareChatTurn", () => {
 
         // The created row matches the surfaced type.
         const created = (await createThreadStore(pool).getThread("t-first"))._unsafeUnwrap();
-        expect(created!.threadType).toBe("conversation");
+        if (created === null) throw new Error("the thread row is absent");
+        expect(created.threadType).toBe("conversation");
     });
 
     it("carries the stored report type on a report thread", async () => {
@@ -412,7 +419,12 @@ describe("runChatTurn", () => {
         let calls = 0;
         return {
             capabilities: { toolCalling: true },
-            chat: () => (calls < replies.length ? okAsync(replies[calls++]!) : errAsync(failure)),
+            chat: () => {
+                const reply = replies[calls];
+                if (reply === undefined) return errAsync(failure);
+                calls += 1;
+                return okAsync(reply);
+            },
         };
     }
 
@@ -446,8 +458,9 @@ describe("runChatTurn", () => {
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "assistant"]);
         expect(rows.slice(1, 3).map((row) => contextRecordOf(row.message)?.kind)).toEqual(["run-activity", "working-memory"]);
-        expect(rows[0]!.turn).toMatchObject({ status: "done", usage: { inputTokens: 220, outputTokens: 30 } });
-        expect(rows[0]!.turn!.durationMs).toBeGreaterThanOrEqual(1_000);
+        const storedTurn = presentFirst(rows).turn;
+        expect(storedTurn).toMatchObject({ status: "done", usage: { inputTokens: 220, outputTokens: 30 } });
+        expect(storedTurn?.durationMs).toBeGreaterThanOrEqual(1_000);
     });
 
     it("reads a stored turn back as one user message and one assistant message", async () => {
@@ -458,8 +471,8 @@ describe("runChatTurn", () => {
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
-        expect(replay[1]!.parts).toHaveLength(2);
-        const [toolCallPart, textPart] = replay[1]!.parts;
+        expect(presentAt(replay, 1).parts).toHaveLength(2);
+        const [toolCallPart, textPart] = presentAt(replay, 1).parts;
         if (toolCallPart?.type !== "tool-call") throw new Error("the reply did not store the tool call");
         const { durationMs, ...call } = toolCallPart;
         expect(call).toEqual({ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok" });
@@ -494,7 +507,7 @@ describe("runChatTurn", () => {
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model endpoint refused the credential." } });
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "assistant", "tool", "user"]);
-        expect(rows.at(-1)!.message.content).toBe(
+        expect(presentLast(rows).message.content).toBe(
             "[Turn Failed]\nThe turn stopped before it finished. Reason: The model endpoint refused the credential.\nThe rounds above this note ran, and their results are stored.",
         );
         expect(JSON.stringify(rows.map((row) => row.message))).not.toContain("sk-secret-123");
@@ -510,7 +523,7 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents }, params(next, { userInput: "try again", promptCache: "off" }));
 
-        expect(JSON.stringify(next.calls[0]!.messages.slice(0, stored.length))).toBe(JSON.stringify(stored));
+        expect(JSON.stringify(presentFirst(next.calls).messages.slice(0, stored.length))).toBe(JSON.stringify(stored));
     });
 
     it("closes failed with the reason of the host on a suspend error", async () => {
@@ -550,7 +563,7 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents }, params(next, { userInput: "say hello", promptCache: "off" }));
 
-        const sent = next.calls[0]!.messages;
+        const sent = presentFirst(next.calls).messages;
         const opening = sent.findIndex((message) => contentText(message.content) === "say hello");
         expect(sent[opening - 1]).toMatchObject({
             role: "user",
@@ -576,7 +589,7 @@ describe("runChatTurn", () => {
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The turn stopped on an internal error." } });
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "user"]);
-        const answer = toolResultParts(rows[4]!.message);
+        const answer = toolResultParts(presentAt(rows, 4).message);
         expect(answer.map((part) => [part.toolCallId, part.output])).toEqual([["tu-1", { type: "error-text", value: NOT_RUN_TOOL_RESULT }]]);
     });
 
@@ -600,7 +613,7 @@ describe("runChatTurn", () => {
 
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user", "assistant"]);
-        expect(contextRecordOf(rows[4]!.message)).toBeUndefined();
+        expect(contextRecordOf(presentAt(rows, 4).message)).toBeUndefined();
     });
 
     it("opens a report thread with the report agent, and runs it under the provenance of that agent", async () => {
@@ -649,7 +662,7 @@ describe("runChatTurn", () => {
         await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { userInput: `use the key ${secret}` }));
 
         const replay = storedMessagesToChat(await storedRows());
-        expect(replay[0]!.parts).toEqual([{ type: "text", text: "use the key [REDACTED: OpenAI API Key]" }]);
+        expect(presentFirst(replay).parts).toEqual([{ type: "text", text: "use the key [REDACTED: OpenAI API Key]" }]);
         expect(JSON.stringify(replay)).not.toContain(secret);
     });
 
@@ -682,13 +695,15 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents: resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])) }, params(provider));
 
-        const round = (await storedRows()).find((row) => row.message.role === "tool")!;
-        const output = toolResultParts(round.message)[0]!.output;
+        const round = presentFind(await storedRows(), (row) => row.message.role === "tool");
+        const output = presentFirst(toolResultParts(round.message)).output;
         if (output.type !== "text") throw new Error("expected the cut text output");
         const excerpt = output.value;
         expect(excerpt.startsWith("[Tool result cut: 50002 characters")).toBe(true);
         expect(excerpt.length).toBeLessThan(text.length);
-        const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt)![1]!;
+        const match = /reference "(to_[0-9a-f]{20})"/.exec(excerpt);
+        if (match === null) throw new Error("the excerpt names no stored tool output");
+        const ref = presentAt(match, 1);
         const { rows } = await pool.query<{ thread_id: string | null; content: string; total_length: number }>(
             "SELECT thread_id, content, total_length FROM cortex_tool_outputs WHERE analysis_id = $1 AND ref = $2",
             [ANALYSIS_A, ref],
@@ -701,9 +716,9 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
 
-        const request = provider.calls[0]!;
+        const request = presentFirst(provider.calls);
         expect(systemDirective(request)).toEqual({ type: "ephemeral", ttl: "1h" });
-        expect(request.messages.at(-1)!.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+        expect(presentLast(request.messages).providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
     });
 
     it("sends the cache directive of a host policy", async () => {
@@ -711,13 +726,13 @@ describe("runChatTurn", () => {
 
         await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { promptCache: { ttl: "5m" } }));
 
-        expect(systemDirective(provider.calls[0]!)).toEqual({ type: "ephemeral", ttl: "5m" });
+        expect(systemDirective(presentFirst(provider.calls))).toEqual({ type: "ephemeral", ttl: "5m" });
     });
 
     it("sends the 5-minute cache directive from a sub-agent loop of the turn", async () => {
         const SUB_PROMPT = "You are the test sub-agent.";
         const provider = scriptedProvider((callIndex, request) => {
-            if (request.system !== undefined && JSON.stringify(request.system).includes(SUB_PROMPT)) return makeMessage([textBlock("sub answer")], "end_turn");
+            if (JSON.stringify(request.system).includes(SUB_PROMPT)) return makeMessage([textBlock("sub answer")], "end_turn");
             return callIndex === 0 ? makeMessage([toolUseBlock("tu-1", "delegate", {})], "tool_use") : makeMessage([textBlock("done")], "end_turn");
         });
         const delegate = defineTool({
@@ -792,7 +807,7 @@ describe("runChatTurn", () => {
         expect("storeError" in result).toBe(false);
         const rows = await storedRows();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-        expect(rows.filter((row) => row.message.role === "tool").map((row) => toolResultParts(row.message)[0]!.toolCallId)).toEqual(["tu-1", "tu-2"]);
+        expect(rows.filter((row) => row.message.role === "tool").map((row) => presentFirst(toolResultParts(row.message)).toolCallId)).toEqual(["tu-1", "tu-2"]);
     });
 });
 
@@ -804,6 +819,8 @@ describe("runChatTurn — compaction", () => {
     /** The input tokens of a request past each budget of the test agents. */
     const OVER = 5_000;
     const CONVERSATION_RULES: CompactionRules = { turnStartBudget: 1_000, budget: 1_000 };
+    const TURN_START_BUDGET = CONVERSATION_RULES.turnStartBudget;
+    if (TURN_START_BUDGET === undefined) throw new Error("the conversation rules carry no turn-start budget");
     const REPORT_RULES: CompactionRules = { budget: 1_000 };
 
     function echoTool(): Tool {
@@ -948,15 +965,15 @@ describe("runChatTurn — compaction", () => {
         const replay = storedMessagesToChat(await storedRows());
 
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
-        expect(replay[1]!.id).not.toBe(replay[3]!.id);
-        expect(replay[2]!.parts).toHaveLength(1);
-        const [compactionPart] = replay[2]!.parts;
+        expect(presentAt(replay, 1).id).not.toBe(presentAt(replay, 3).id);
+        expect(presentAt(replay, 2).parts).toHaveLength(1);
+        const [compactionPart] = presentAt(replay, 2).parts;
         if (compactionPart?.type !== "data-compaction") throw new Error("the turn did not store the compaction part");
         const { durationMs, ...storedPart } = compactionPart;
-        expect(storedPart).toEqual({ type: "data-compaction", id: replay[2]!.id, status: "done", tokensBefore: OVER, trigger: "mid-turn" });
+        expect(storedPart).toEqual({ type: "data-compaction", id: presentAt(replay, 2).id, status: "done", tokensBefore: OVER, trigger: "mid-turn" });
         expect(durationMs).toBeTypeOf("number");
         expect(JSON.stringify(replay)).not.toContain(SUMMARY);
-        expect(replay[3]!.parts).toEqual([{ type: "text", text: "done" }]);
+        expect(presentAt(replay, 3).parts).toEqual([{ type: "text", text: "done" }]);
     });
 
     it("starts the next turn with the summary marker and its records, then the later rounds, then the new opening", async () => {
@@ -965,10 +982,10 @@ describe("runChatTurn — compaction", () => {
 
         await runChatTurn({ pool, agents: agents() }, params(next, { userInput: "and now?", promptCache: "off" }));
 
-        const sent = next.calls[0]!.messages;
+        const sent = presentFirst(next.calls).messages;
         expect(sent.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "assistant", "user"]);
-        expect(sent[0]!.content).toBe(`[Conversation Summary]\n${SUMMARY}`);
-        expect(sent.at(-1)!.content).toBe("and now?");
+        expect(presentFirst(sent).content).toBe(`[Conversation Summary]\n${SUMMARY}`);
+        expect(presentLast(sent).content).toBe("and now?");
     });
 
     it("sends no text delta of the exchange to the emit of the host", async () => {
@@ -1000,7 +1017,7 @@ describe("runChatTurn — compaction", () => {
         const afterMarker = rows.slice(rows.findIndex((message) => compactionMarkerOf(message) !== undefined) + 1);
         const memory = afterMarker.find((message) => contextRecordOf(message)?.kind === "working-memory");
         expect(String(memory?.content)).toContain("Use an FDR of 0.01.");
-        expect(provider.calls.at(-1)!.messages.some((message) => String(message.content).includes("Use an FDR of 0.01."))).toBe(true);
+        expect(presentLast(provider.calls).messages.some((message) => String(message.content).includes("Use an FDR of 0.01."))).toBe(true);
     });
 
     it("keeps the seed and the summary marker first on a report turn, runs no tool in the exchange, and adds no working-memory record", async () => {
@@ -1015,13 +1032,13 @@ describe("runChatTurn — compaction", () => {
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
         const exchange = provider.calls.filter(isExchangeRequest);
-        expect(exchange[0]!.messages.at(-1)!.content).toBe(SUMMARY_COMPACTION_REQUEST);
-        const refused = toolResultParts(exchange[1]!.messages.at(-1)!);
-        expect(refused[0]!.output).toMatchObject({ type: "error-text" });
-        expect(JSON.stringify(refused[0]!.output)).toContain("No tool can run for this request");
-        const after = provider.calls.at(-1)!.messages;
+        expect(presentLast(presentFirst(exchange).messages).content).toBe(SUMMARY_COMPACTION_REQUEST);
+        const refused = toolResultParts(presentLast(presentAt(exchange, 1).messages));
+        expect(presentFirst(refused).output).toMatchObject({ type: "error-text" });
+        expect(JSON.stringify(presentFirst(refused).output)).toContain("No tool can run for this request");
+        const after = presentLast(provider.calls).messages;
         expect(after.map(kindOf)).toEqual(["user", "summary-marker", "run-activity"]);
-        expect(after[0]!.content).toBe("[Report Brief]\nDraft the methods section.");
+        expect(presentFirst(after).content).toBe("[Report Brief]\nDraft the methods section.");
     });
 
     it("removes the exchange and the marker of the last turn at a retract, and the next turn starts from the earlier marker", async () => {
@@ -1041,7 +1058,7 @@ describe("runChatTurn — compaction", () => {
             "summary-marker",
         ]);
         const view = (await createThreadHistory(pool).loadRecent(THREAD))._unsafeUnwrap();
-        expect(view[0]!.content).toBe("[Conversation Summary]\nfirst summary");
+        expect(presentFirst(view).content).toBe("[Conversation Summary]\nfirst summary");
     });
 
     it("compacts before the user message when the last request passed the turn-start budget, and sends the user message after the summary", async () => {
@@ -1061,16 +1078,17 @@ describe("runChatTurn — compaction", () => {
 
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
-        const [first, task] = replies.calls;
-        expect(isExchangeRequest(first!)).toBe(true);
-        expect(first!.messages.map(kindOf)).toEqual(["user", "assistant", "user"]);
-        expect(first!.messages.at(-1)!.content).toBe(MEMORY_COMPACTION_REQUEST);
+        const first = presentAt(replies.calls, 0);
+        const task = presentAt(replies.calls, 1);
+        expect(isExchangeRequest(first)).toBe(true);
+        expect(first.messages.map(kindOf)).toEqual(["user", "assistant", "user"]);
+        expect(presentLast(first.messages).content).toBe(MEMORY_COMPACTION_REQUEST);
         expect(storedAtRequest).toEqual([
             ["user", "assistant"],
             ["user", "assistant", "exchange-user", "exchange-assistant", "summary-marker", "run-activity", "working-memory", "user"],
         ]);
-        expect(task!.messages.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "user"]);
-        expect(task!.messages.at(-1)!.content).toBe("compare the two groups");
+        expect(task.messages.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "user"]);
+        expect(presentLast(task.messages).content).toBe("compare the two groups");
         const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
         expect(marker).toMatchObject({ kind: "summary", tokensBefore: OVER, trigger: "turn-start" });
     });
@@ -1094,17 +1112,17 @@ describe("runChatTurn — compaction", () => {
             "user",
             "assistant",
         ]);
-        expect(rows.flatMap((row) => (row.turn === undefined ? [] : [row.seq]))).toEqual([rows[7]!.seq]);
-        expect(rows[7]!.turn).toMatchObject({ status: "done" });
-        expect(rows[7]!.message.content).toBe("compare the two groups");
-        expect(rows.flatMap((row) => (row.author === undefined ? [] : [[row.seq, row.author]]))).toEqual([[rows[7]!.seq, "dr.chen@lab.example"]]);
+        expect(rows.flatMap((row) => (row.turn === undefined ? [] : [row.seq]))).toEqual([presentAt(rows, 7).seq]);
+        expect(presentAt(rows, 7).turn).toMatchObject({ status: "done" });
+        expect(presentAt(rows, 7).message.content).toBe("compare the two groups");
+        expect(rows.flatMap((row) => (row.author === undefined ? [] : [[row.seq, row.author]]))).toEqual([[presentAt(rows, 7).seq, "dr.chen@lab.example"]]);
         const replay = storedMessagesToChat(rows);
         expect(replay.map((message) => message.role)).toEqual(["system", "user", "assistant"]);
-        expect(replay[0]!.parts).toHaveLength(1);
-        const [compactionPart] = replay[0]!.parts;
+        expect(presentFirst(replay).parts).toHaveLength(1);
+        const [compactionPart] = presentFirst(replay).parts;
         if (compactionPart?.type !== "data-compaction") throw new Error("the turn did not store the compaction part");
         const { durationMs, ...storedPart } = compactionPart;
-        expect(storedPart).toEqual({ type: "data-compaction", id: replay[0]!.id, status: "done", tokensBefore: OVER, trigger: "turn-start" });
+        expect(storedPart).toEqual({ type: "data-compaction", id: presentFirst(replay).id, status: "done", tokensBefore: OVER, trigger: "turn-start" });
         expect(durationMs).toBeTypeOf("number");
     });
 
@@ -1196,7 +1214,7 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("runs no turn-start compaction at the turn-start budget of the agent", async () => {
-        await storeMeasuredTurn(CONVERSATION_RULES.turnStartBudget!);
+        await storeMeasuredTurn(TURN_START_BUDGET);
         const provider = compactingProvider([text("done")], []);
 
         await runChatTurn({ pool, agents: agents() }, params(provider));
@@ -1205,7 +1223,7 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("compacts at 80% of a context window that the provider reports below the budget", async () => {
-        await storeMeasuredTurn(CONVERSATION_RULES.turnStartBudget!);
+        await storeMeasuredTurn(TURN_START_BUDGET);
         const provider = compactingProvider([text("done")], [text(SUMMARY)]);
 
         await runChatTurn({ pool, agents: agents() }, params({ ...provider, capabilities: { toolCalling: true, contextWindow: 1_000 } }));
@@ -1223,7 +1241,7 @@ describe("runChatTurn — compaction", () => {
         await runChatTurn({ pool, agents: agents() }, params(provider));
 
         expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
-        expect(provider.calls[0]!.messages.map((message) => message.content)).toContain("compare the two groups");
+        expect(presentFirst(provider.calls).messages.map((message) => message.content)).toContain("compare the two groups");
         const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
         expect(marker).toMatchObject({ kind: "summary", trigger: "mid-turn" });
     });
@@ -1248,7 +1266,7 @@ describe("runChatTurn — compaction", () => {
             "exchange-assistant",
             "user",
         ]);
-        expect(rows[0]!.turn?.status).toBe("aborted");
+        expect(presentFirst(rows).turn?.status).toBe("aborted");
     });
 
     it("runs no exchange on a thread whose agent declares no compaction rules", async () => {

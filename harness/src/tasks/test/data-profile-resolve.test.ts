@@ -12,6 +12,7 @@ import type { DetectedSets } from "../../input-scan/set-types.js";
 import type { ScannedFile } from "../../input-scan/types.js";
 import { ProfileSubmissionSchema, type GroupAnnotation, type MenuOperation, type ProfileSubmission } from "../../schemas/data-profile-schemas.js";
 import { UNCLASSIFIED_GROUP_ID, formatResolutionErrors, resolveProfileSubmission } from "../data-profile-resolve.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 function file(path: string, format: string, extensions: string[] = [], wrapper?: string): ScannedFile {
     return { path, size: 100, extensions, format, wrapper };
@@ -58,11 +59,11 @@ function tree(): ScannedFile[] {
 
 const detected: DetectedSets = detectSets(tree());
 const menu = buildSetMenu(detected);
-const calls = detected.sets.find((set) => set.pathTemplate.includes("calls"))!;
-const align = detected.sets.find((set) => set.pathTemplate.includes("align"))!;
-const originSlot = calls.slots.find((slot) => slot.tokenClass === "word")!;
-const subjectSlot = calls.slots.find((slot) => slot.tokenClass !== "word")!;
-const alignSubjectSlot = align.slots[0]!;
+const calls = presentFind(detected.sets, (set) => set.pathTemplate.includes("calls"));
+const align = presentFind(detected.sets, (set) => set.pathTemplate.includes("align"));
+const originSlot = presentFind(calls.slots, (slot) => slot.tokenClass === "word");
+const subjectSlot = presentFind(calls.slots, (slot) => slot.tokenClass !== "word");
+const alignSubjectSlot = presentAt(align.slots, 0);
 
 function annotation(name: string, over: Partial<GroupAnnotation> = {}): GroupAnnotation {
     return {
@@ -99,7 +100,7 @@ function claimEverything(extra: MenuOperation[] = []): MenuOperation[] {
 describe("membership is computed per operation", () => {
     it("use takes every member of the set, and its counts come from the scan", () => {
         const resolution = resolveProfileSubmission(submission(claimEverything([{ op: "use", setId: calls.id, group: annotation("calls") }])), detected, menu);
-        const group = resolution.groups.find((candidate) => candidate.name === "calls")!;
+        const group = presentFind(resolution.groups, (candidate) => candidate.name === "calls");
 
         expect(resolution.errors).toEqual([]);
         expect(group.count).toBe(calls.memberCount);
@@ -131,15 +132,15 @@ describe("membership is computed per operation", () => {
             menu,
         );
 
-        const somatic = resolution.groups.find((group) => group.name === "somatic calls")!;
-        const germline = resolution.groups.find((group) => group.name === "germline calls")!;
+        const somatic = presentFind(resolution.groups, (group) => group.name === "somatic calls");
+        const germline = presentFind(resolution.groups, (group) => group.name === "germline calls");
         expect(resolution.errors).toEqual([]);
         expect(somatic.count).toBe(SUBJECTS);
         expect(germline.count).toBe(SUBJECTS);
         expect(somatic.memberPaths.every((path) => path.includes("somatic"))).toBe(true);
         // The split narrows the slot: inside the group the origin no longer varies.
-        expect(somatic.slots!.find((slot) => slot.id === originSlot.id)!.distinctValues).toBe(1);
-        expect(somatic.slots!.find((slot) => slot.id === subjectSlot.id)!.distinctValues).toBe(SUBJECTS);
+        expect(somatic.slots?.find((slot) => slot.id === originSlot.id)?.distinctValues).toBe(1);
+        expect(somatic.slots?.find((slot) => slot.id === subjectSlot.id)?.distinctValues).toBe(SUBJECTS);
         expect(somatic.reason).toContain("downstream step");
     });
 
@@ -172,7 +173,7 @@ describe("membership is computed per operation", () => {
             detected,
             menu,
         );
-        const merged = resolution.groups.find((group) => group.name === "per-subject data")!;
+        const merged = presentFind(resolution.groups, (group) => group.name === "per-subject data");
         expect(resolution.errors).toEqual([]);
         expect(merged.count).toBe(calls.memberCount + align.memberCount);
         expect(merged.displayPattern).toContain(calls.pathTemplate);
@@ -181,7 +182,7 @@ describe("membership is computed per operation", () => {
 
     it("group gathers explicit paths the scan left over", () => {
         const resolution = resolveProfileSubmission(submission(claimEverything([{ op: "use", setId: calls.id, group: annotation("calls") }])), detected, menu);
-        const context = resolution.groups.find((group) => group.name === "context")!;
+        const context = presentFind(resolution.groups, (group) => group.name === "context");
         expect(context.count).toBe(2);
         expect([...context.memberPaths].sort()).toEqual(["data/inputs/README.md", "data/inputs/meta/samplesheet.csv"]);
     });
@@ -235,7 +236,7 @@ describe("the partition", () => {
 
     it("sweeps unclaimed files into a visible unclassified group and reports them", () => {
         const resolution = resolveProfileSubmission(submission([{ op: "use", setId: calls.id, group: annotation("calls") }]), detected, menu);
-        const unclassified = resolution.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID)!;
+        const unclassified = presentFind(resolution.groups, (group) => group.id === UNCLASSIFIED_GROUP_ID);
 
         expect(unclassified.unclassified).toBe(true);
         expect(resolution.unclaimed).toContain("data/inputs/README.md");
@@ -261,7 +262,7 @@ describe("the partition", () => {
 
         for (let round = 0; round < 40; round++) {
             const buckets: string[][] = [[], []];
-            for (const path of leftovers) buckets[Math.floor(random() * buckets.length)]!.push(path);
+            for (const path of leftovers) presentAt(buckets, Math.floor(random() * buckets.length), "the target bucket").push(path);
 
             const operations: MenuOperation[] = [
                 { op: "use", setId: calls.id, group: annotation("calls") },
@@ -352,9 +353,9 @@ describe("a contested file on the final round", () => {
 
     it("is removed from every claimant and swept, never awarded to one", () => {
         const resolution = resolveProfileSubmission(submission(overlapping), detected, menu, { finalRound: true });
-        const first = resolution.groups.find((group) => group.name === "calls")!;
-        const second = resolution.groups.find((group) => group.name === "calls again")!;
-        const unclassified = resolution.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID)!;
+        const first = presentFind(resolution.groups, (group) => group.name === "calls");
+        const second = presentFind(resolution.groups, (group) => group.name === "calls again");
+        const unclassified = presentFind(resolution.groups, (group) => group.id === UNCLASSIFIED_GROUP_ID);
 
         expect(first.memberPaths).toEqual([]);
         expect(second.memberPaths).toEqual([]);
@@ -365,9 +366,9 @@ describe("a contested file on the final round", () => {
     it("is recorded in the accounting as a machine finding", () => {
         const resolution = resolveProfileSubmission(submission(overlapping), detected, menu, { finalRound: true });
 
-        expect(resolution.partition.contested!.members).toBe(calls.memberCount);
-        expect(resolution.partition.contested!.sample.length).toBeGreaterThan(0);
-        expect(resolution.partition.contested!.sample.every((path) => path.includes("/calls/"))).toBe(true);
+        expect(resolution.partition.contested?.members).toBe(calls.memberCount);
+        expect(resolution.partition.contested?.sample.length).toBeGreaterThan(0);
+        expect(resolution.partition.contested?.sample.every((path) => path.includes("/calls/"))).toBe(true);
     });
 
     it("leaves the accounting summing, with no path counted twice", () => {
@@ -423,11 +424,11 @@ describe("an operation that claims the same members twice", () => {
             detected,
             menu,
         );
-        const somatic = resolution.groups.find((group) => group.name === "somatic calls")!;
+        const somatic = presentFind(resolution.groups, (group) => group.name === "somatic calls");
 
         expect(resolution.errors).toEqual([]);
         expect(somatic.count).toBe(SUBJECTS);
-        expect(resolution.recipe.find((step) => step.op === "split")!.valueMapping).toEqual([
+        expect(presentFind(resolution.recipe, (step) => step.op === "split").valueMapping).toEqual([
             { groupId: "somatic-calls", values: ["somatic"] },
             { groupId: "germline-calls", values: ["germline"] },
         ]);
@@ -437,10 +438,11 @@ describe("an operation that claims the same members twice", () => {
 describe("the swept residue is carried in the recipe", () => {
     it("records the paths it swept, so a replay can tell them from files new to the tree", () => {
         const resolution = resolveProfileSubmission(submission([{ op: "use", setId: calls.id, group: annotation("calls") }]), detected, menu);
-        const sweep = resolution.recipe.find((step) => step.op === "unclassified")!;
+        const sweep = presentFind(resolution.recipe, (step) => step.op === "unclassified");
 
         expect(sweep.groupIds).toEqual([UNCLASSIFIED_GROUP_ID]);
-        expect([...sweep.paths!].sort()).toEqual([...resolution.unclaimed].sort());
+        if (sweep.paths === undefined) throw new Error("the sweep step carries no paths");
+        expect([...sweep.paths].sort()).toEqual([...resolution.unclaimed].sort());
         expect(sweep).not.toHaveProperty("pathsTruncated");
     });
 
@@ -461,10 +463,11 @@ describe("dimensions", () => {
             detected,
             menu,
         );
-        const observation = resolution.dimensions[0]!.observations[0]!;
+        const observation = presentAt(resolution.dimensions, 0).observations[0];
+        if (observation === undefined) throw new Error("observation is absent");
 
         expect(resolution.errors).toEqual([]);
-        expect(resolution.dimensions[0]!.scope).toBe("biological");
+        expect(presentAt(resolution.dimensions, 0).scope).toBe("biological");
         expect(observation.kind).toBe("slot");
         if (observation.kind !== "slot") throw new Error("expected a slot observation");
         expect(observation.cardinality).toBe(SUBJECTS);
@@ -489,7 +492,8 @@ describe("dimensions", () => {
             detected,
             menu,
         );
-        const second = resolution.dimensions[0]!.observations[1]!;
+        const second = presentAt(resolution.dimensions, 0).observations[1];
+        if (second === undefined) throw new Error("second is absent");
         if (second.kind !== "slot") throw new Error("expected a slot observation");
         expect(second.checked).toEqual({ matched: ALIGNED, of: ALIGNED });
         expect(second.checkedAgainst).toBe(subjectSlot.id);
@@ -509,9 +513,10 @@ describe("dimensions", () => {
             detected,
             menu,
         );
-        const observation = resolution.dimensions[0]!.observations[0]!;
+        const observation = presentAt(resolution.dimensions, 0).observations[0];
+        if (observation === undefined) throw new Error("observation is absent");
         expect(observation).not.toHaveProperty("checked");
-        expect(resolution.dimensions[0]!.scope).toBe("technical");
+        expect(presentAt(resolution.dimensions, 0).scope).toBe("technical");
     });
 
     it("carries disagreeing observations side by side with the delta", () => {
@@ -532,7 +537,7 @@ describe("dimensions", () => {
             detected,
             menu,
         );
-        const dimension = resolution.dimensions[0]!;
+        const dimension = presentAt(resolution.dimensions, 0);
         expect(dimension.reconciliations).toEqual([{ note: "The document states more subjects than files exist for.", delta: 2 }]);
         expect(dimension).not.toHaveProperty("cardinality");
     });
@@ -553,8 +558,8 @@ describe("dimensions", () => {
             detected,
             menu,
         );
-        const dimension = resolution.dimensions[0]!;
-        const observation = dimension.observations[0]!;
+        const dimension = presentAt(resolution.dimensions, 0);
+        const observation = presentAt(dimension.observations, 0);
 
         expect(resolution.errors).toEqual([]);
         expect(dimension).not.toHaveProperty("categoryLabel");
@@ -582,7 +587,8 @@ describe("dimensions", () => {
             detected,
             menu,
         );
-        const observation = resolution.dimensions[0]!.observations[0]!;
+        const observation = presentAt(resolution.dimensions, 0).observations[0];
+        if (observation === undefined) throw new Error("observation is absent");
         if (observation.kind !== "slot") throw new Error("expected a slot observation");
 
         expect(observation.binding).toEqual({
@@ -606,8 +612,8 @@ describe("dimensions", () => {
             menu,
         );
 
-        expect(declared.dimensions[0]!.scope).toBe("biological");
-        expect(defaulted.dimensions[0]!.scope).toBe("technical");
+        expect(presentAt(declared.dimensions, 0).scope).toBe("biological");
+        expect(presentAt(defaulted.dimensions, 0).scope).toBe("technical");
     });
 
     it("refuses a nesting under a dimension that was not submitted", () => {
@@ -642,14 +648,17 @@ describe("two slots the scanner itself linked", () => {
     });
     const linked = detectSets(linkedTree);
     const linkedMenu = buildSetMenu(linked);
-    const linkedSet = linked.sets[0]!;
+    const linkedSet = presentAt(linked.sets, 0);
 
     it("are not intersected, so the profile never claims two corresponding id sets are disjoint", () => {
-        const dirSlot = linkedSet.slots.find((slot) => slot.location === "directory")!;
-        const stemSlot = linkedSet.slots.find((slot) => slot.location === "name")!;
+        const dirSlot = presentFind(linkedSet.slots, (slot) => slot.location === "directory");
+        const stemSlot = presentFind(linkedSet.slots, (slot) => slot.location === "name");
         // The premise: the scan linked them, and their values differ as text.
         expect(stemSlot.sameAsSlot).toBe(dirSlot.id);
-        expect(new Set(linked.slotValues.get(dirSlot.id)!)).not.toEqual(new Set(linked.slotValues.get(stemSlot.id)!));
+        const dirValues = linked.slotValues.get(dirSlot.id);
+        const stemValues = linked.slotValues.get(stemSlot.id);
+        if (dirValues === undefined || stemValues === undefined) throw new Error("the slot values are absent");
+        expect(new Set(dirValues)).not.toEqual(new Set(stemValues));
 
         const resolution = resolveProfileSubmission(
             {
@@ -671,7 +680,8 @@ describe("two slots the scanner itself linked", () => {
             linked,
             linkedMenu,
         );
-        const second = resolution.dimensions[0]!.observations[1]!;
+        const second = presentAt(resolution.dimensions, 0).observations[1];
+        if (second === undefined) throw new Error("second is absent");
         if (second.kind !== "slot") throw new Error("expected a slot observation");
 
         expect(second).not.toHaveProperty("checked");
@@ -683,7 +693,7 @@ describe("two slots the scanner itself linked", () => {
 describe("the recipe", () => {
     it("keys each step to the scanner templates rather than the menu ids", () => {
         const resolution = resolveProfileSubmission(submission(claimEverything([{ op: "use", setId: calls.id, group: annotation("calls") }])), detected, menu);
-        const use = resolution.recipe.find((step) => step.op === "use" && step.templates.includes(calls.pathTemplate))!;
+        const use = presentFind(resolution.recipe, (step) => step.op === "use" && step.templates.includes(calls.pathTemplate));
 
         expect(use.groupIds).toEqual(["calls"]);
         expect(JSON.stringify(resolution.recipe)).not.toContain(calls.id);
@@ -711,7 +721,7 @@ describe("the recipe", () => {
             detected,
             menu,
         );
-        const split = resolution.recipe.find((step) => step.op === "split")!;
+        const split = presentFind(resolution.recipe, (step) => step.op === "split");
         expect(split.slotIndex).toBe(calls.slots.findIndex((slot) => slot.id === originSlot.id));
         expect(split.valueMapping).toEqual([
             { groupId: "somatic-calls", values: ["somatic"] },

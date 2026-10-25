@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { DgidbResponseSchema, searchDgidb } from "../dgidb-client.js";
+import { presentAt, presentFind } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -29,10 +30,11 @@ runFixtureSuite("dgidb golden fixtures", [
         assertOutput: (body) => {
             const nodes = body.data?.genes?.nodes ?? [];
             expect(nodes).toHaveLength(1);
-            const node = nodes[0]!;
-            expect(node!.name).toBe("EGFR");
+            const node = presentAt(nodes, 0);
+            if (node === null) throw new Error("the EGFR node is absent");
+            expect(node.name).toBe("EGFR");
 
-            const types = (node!.interactions ?? []).flatMap((i) => i.interactionTypes ?? []);
+            const types = (node.interactions ?? []).flatMap((i) => i.interactionTypes ?? []);
             // GraphQL answers a nullable enum with an explicit null, thus the
             // fixture carries rows that a bare `.optional()` would reject.
             expect(types.filter((t) => t.directionality === null).length).toBeGreaterThan(0);
@@ -60,12 +62,11 @@ describe("the DGIdb client over the golden fixture", () => {
 
         const results = await searchDgidb(["EGFR"], "gene", { limit: 20 });
 
-        const interactions = results[0]!.interactions;
-        expect(results[0]!.found).toBe(true);
+        const interactions = presentAt(results, 0).interactions;
+        expect(presentAt(results, 0).found).toBe(true);
         expect(interactions).toHaveLength(6);
-        const modulator = interactions.find((i) => i.interactionTypes.some((t) => t.type === "modulator"));
-        expect(modulator).toBeDefined();
-        expect(modulator!.interactionTypes[0]!.directionality).toBeUndefined();
+        const modulator = presentFind(interactions, (i) => i.interactionTypes.some((t) => t.type === "modulator"), "the modulator interaction");
+        expect(presentAt(modulator.interactionTypes, 0, "the first modulator type").directionality).toBeUndefined();
     });
 
     it("skips a node whose name is null, and keeps the rest", async () => {

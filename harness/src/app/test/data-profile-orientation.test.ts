@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { presentFind } from "../../lib/present.js";
 import type { DataProfileResult } from "../../state/data-profile.js";
 import { buildDataProfileOrientation, DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../data-profile-orientation.js";
 
@@ -335,10 +336,10 @@ describe("a snapshot resolved into groups", () => {
         expect(text).toContain("- unclassified (2x, txt, unclassified)");
         expect(text).toContain("- subject: 40 · e.g. 001");
         // Two caps hold the prose down: per item, and as a share of the whole rendering.
-        const caveats = text.split("\n").find((line) => line.startsWith("Caveats: "))!;
+        const caveats = presentFind(text.split("\n"), (line) => line.startsWith("Caveats: "));
         expect(caveats).toContain("(+17 more)");
         expect(caveats.length).toBeLessThanOrEqual(Math.floor(DATA_PROFILE_ORIENTATION_MAX_CHARS * 0.25));
-        expect(text.split("\n").find((line) => line.startsWith("Design: "))!.length).toBe(208);
+        expect(presentFind(text.split("\n"), (line) => line.startsWith("Design: ")).length).toBe(208);
     });
 });
 
@@ -430,9 +431,7 @@ describe("a profile whose structure is the point", () => {
     });
 
     it("ends the design note with an ellipsis rather than a severed word", () => {
-        const design = buildDataProfileOrientation(measurementProfile(16), ANALYSIS_ID)
-            .split("\n")
-            .find((line) => line.startsWith("Design: "))!;
+        const design = presentFind(buildDataProfileOrientation(measurementProfile(16), ANALYSIS_ID).split("\n"), (line) => line.startsWith("Design: "));
 
         expect(design.startsWith("Design: Eight arms, each with paired baseline and endpoint draws")).toBe(true);
         expect(design.endsWith("…")).toBe(true);

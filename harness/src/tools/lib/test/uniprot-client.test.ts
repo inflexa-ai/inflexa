@@ -8,6 +8,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { getUniProtRecord } from "../uniprot-client.js";
+import { presentGet } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -27,7 +28,8 @@ describe("uniprot golden fixtures", () => {
     it("accepts the positive fixture and maps the EGFR entry", async () => {
         stubFetch(readFixture("uniprot", "entry_P00533_EGFR.json"));
 
-        const record = (await getUniProtRecord("P00533"))!;
+        const record = await getUniProtRecord("P00533");
+        if (record === null) throw new Error("record is absent");
 
         expect(record.primaryAccession).toBe("P00533");
         expect(record.uniProtkbId).toBe("EGFR_HUMAN");
@@ -40,7 +42,8 @@ describe("uniprot golden fixtures", () => {
     it("maps an entry that omits the genes and the comments", async () => {
         stubFetch(readFixture("uniprot", "entry_Q6ZQY7_obscure.json"));
 
-        const record = (await getUniProtRecord("Q6ZQY7"))!;
+        const record = await getUniProtRecord("Q6ZQY7");
+        if (record === null) throw new Error("record is absent");
 
         // UniProt omits the key of an absent value, and it never sends null.
         expect(record.primaryAccession).toBe("Q6ZQY7");
@@ -74,7 +77,7 @@ describe("the UniProtKB oracle", () => {
                 }),
             })
             .parse(readFixture("uniprot", "uniprotkb_openapi.json"));
-        const entry = oracle.components.schemas["UniProtKBEntry"]!;
+        const entry = presentGet(oracle.components.schemas, "UniProtKBEntry");
 
         expect(entry.required).toBeUndefined();
         expect(Object.keys(entry.properties ?? {})).toContain("genes");

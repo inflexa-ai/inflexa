@@ -20,6 +20,7 @@ import {
 } from "../../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../__fixtures__/session.js";
 import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "../prompt-cache.js";
+import { presentAt } from "../../lib/present.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -287,7 +288,7 @@ describe("the thinking binding on the wire", () => {
         const result = await provider.chat({ ...request, reasoning }, makeSession());
 
         expect(result.isOk()).toBe(true);
-        return cap.requests[0]!;
+        return presentAt(cap.requests, 0);
     }
 
     it("binds the blocks of claude-opus-5-5 in the drop_block mode by default, and keeps the thinking selection of the package", async () => {

@@ -11,6 +11,7 @@
 
 import type { MemberFile } from "./set-types.js";
 import { basenameOf, dirnameOf } from "./tokens.js";
+import { presentFirst } from "../lib/present.js";
 
 /** A marker whose presence claims the directory it sits in, and nothing below it. */
 const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: readonly RegExp[] }[] = [
@@ -40,7 +41,9 @@ export type MarkerUnit = {
 
 function hasCorroboratingChild(files: readonly MemberFile[], root: string, pattern: RegExp): boolean {
     const prefix = root === "" ? "" : `${root}/`;
-    return files.some((file) => file.path.startsWith(prefix) && pattern.test(file.path.slice(prefix.length).split("/")[0]!));
+    return files.some(
+        (file) => file.path.startsWith(prefix) && pattern.test(presentFirst(file.path.slice(prefix.length).split("/"), "the first path segment")),
+    );
 }
 
 /** The marker-claimed units of a tree, and the members no marker claimed. */

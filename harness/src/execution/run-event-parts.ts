@@ -84,11 +84,13 @@ export function foldRunEventParts(parts: readonly ChatPart[]): ChatPart[] {
 export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (entry: T) => Promise<void>, flushMs: number): Promise<void> {
     const latestByKey = new Map<string, T>();
     const pendingKeys = new Set<string>();
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    // `0` is the no-timer sentinel: `clearTimeout(0)` is a no-op on every platform, so the
+    // teardown can cancel the timer unconditionally.
+    let flushTimer: ReturnType<typeof setTimeout> | 0 = 0;
     let flushChain: Promise<void> = Promise.resolve();
 
     const flushPending = async (): Promise<void> => {
-        flushTimer = null;
+        flushTimer = 0;
         const keys = [...pendingKeys];
         pendingKeys.clear();
         for (const key of keys) {
@@ -98,7 +100,7 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
     };
 
     const scheduleFlush = (): void => {
-        if (flushTimer !== null) return;
+        if (flushTimer !== 0) return;
         flushTimer = setTimeout(() => {
             // A timed flush has no caller to report to. A lasting emit failure
             // still reaches the caller, through the next direct emit or the
@@ -120,10 +122,7 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
             scheduleFlush();
         }
     } finally {
-        if (flushTimer !== null) {
-            clearTimeout(flushTimer);
-            flushTimer = null;
-        }
+        clearTimeout(flushTimer);
         await flushChain;
         if (pendingKeys.size > 0) await flushPending();
     }

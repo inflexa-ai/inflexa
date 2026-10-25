@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { ContextFile } from "../templates.js";
 import { catchAll, describeGroup, describeSlot, mineContext, slotToken } from "../templates.js";
 import { basenameOf } from "../tokens.js";
+import { presentAt } from "../../lib/present.js";
 
 function contextFile(path: string, options: { format?: string; wrapper?: string; varValues?: readonly string[] } = {}): ContextFile {
     return {
@@ -18,7 +19,7 @@ function contextFile(path: string, options: { format?: string; wrapper?: string;
 
 function templateOf(group: Parameters<typeof describeGroup>[0]): string {
     const { slots, segments } = describeGroup(group);
-    return segments.map((segment) => (segment.kind === "literal" ? segment.text : slotToken(slots[segment.slot]!))).join("");
+    return segments.map((segment) => (segment.kind === "literal" ? segment.text : slotToken(presentAt(slots, segment.slot)))).join("");
 }
 
 describe("mineContext", () => {
@@ -36,11 +37,11 @@ describe("mineContext", () => {
 
         expect(sets).toHaveLength(1);
         expect(residue).toHaveLength(0);
-        const { slots } = describeGroup(sets[0]!);
+        const { slots } = describeGroup(presentAt(sets, 0));
         expect(slots.map((slot) => slot.distinctValues)).toEqual([3, 2, 2]);
-        expect(slots[1]!.sampleValues).toEqual(["germline", "somatic"]);
-        expect(slots[2]!.sampleValues).toEqual(["alpha", "beta"]);
-        expect(templateOf(sets[0]!)).toBe("spec-<digits:2>__calls.<word>.<word>.vcf.gz");
+        expect(presentAt(slots, 1).sampleValues).toEqual(["germline", "somatic"]);
+        expect(presentAt(slots, 2).sampleValues).toEqual(["alpha", "beta"]);
+        expect(templateOf(presentAt(sets, 0))).toBe("spec-<digits:2>__calls.<word>.<word>.vcf.gz");
     });
 
     it("keeps long machine-issued stems in one set instead of one set each", () => {
@@ -50,11 +51,11 @@ describe("mineContext", () => {
         const { sets } = mineContext(files);
 
         expect(sets).toHaveLength(1);
-        expect(sets[0]!.items).toHaveLength(4);
-        const { slots } = describeGroup(sets[0]!);
+        expect(presentAt(sets, 0).items).toHaveLength(4);
+        const { slots } = describeGroup(presentAt(sets, 0));
         expect(slots).toHaveLength(1);
-        expect(slots[0]!.tokenClass).toBe("opaque-id");
-        expect(slots[0]!.distinctValues).toBe(4);
+        expect(presentAt(slots, 0).tokenClass).toBe("opaque-id");
+        expect(presentAt(slots, 0).distinctValues).toBe(4);
     });
 
     it("reads a date position as a date", () => {
@@ -63,10 +64,10 @@ describe("mineContext", () => {
         const { sets } = mineContext(files);
 
         expect(sets).toHaveLength(1);
-        const { slots } = describeGroup(sets[0]!);
+        const { slots } = describeGroup(presentAt(sets, 0));
         expect(slots).toHaveLength(1);
-        expect(slots[0]!.tokenClass).toBe("date");
-        expect(templateOf(sets[0]!)).toBe("intake_<date>.tsv");
+        expect(presentAt(slots, 0).tokenClass).toBe("date");
+        expect(templateOf(presentAt(sets, 0))).toBe("intake_<date>.tsv");
     });
 
     it("carries extension disagreement as a census rather than splitting the set", () => {
@@ -78,12 +79,12 @@ describe("mineContext", () => {
         const { sets } = mineContext(files);
 
         expect(sets).toHaveLength(1);
-        expect(sets[0]!.items).toHaveLength(6);
-        expect([...sets[0]!.suffixes.entries()].sort()).toEqual([
+        expect(presentAt(sets, 0).items).toHaveLength(6);
+        expect([...presentAt(sets, 0).suffixes.entries()].sort()).toEqual([
             ["vcf", 3],
             ["vcf.gz", 3],
         ]);
-        expect(templateOf(sets[0]!)).toBe("panel_<digits:3>.{vcf,vcf.gz}");
+        expect(templateOf(presentAt(sets, 0))).toBe("panel_<digits:3>.{vcf,vcf.gz}");
     });
 
     it("collapses a family of one-off names into one set rather than one template each", () => {
@@ -95,8 +96,8 @@ describe("mineContext", () => {
 
         expect(residue).toHaveLength(0);
         expect(sets).toHaveLength(1);
-        expect(sets[0]!.kind).toBe("family");
-        expect(sets[0]!.items).toHaveLength(5);
+        expect(presentAt(sets, 0).kind).toBe("family");
+        expect(presentAt(sets, 0).items).toHaveLength(5);
     });
 
     it("claims residual singletons that share a literal prefix", () => {
@@ -106,8 +107,8 @@ describe("mineContext", () => {
 
         expect(residue).toHaveLength(0);
         expect(sets).toHaveLength(1);
-        expect(sets[0]!.kind).toBe("prefix");
-        expect(templateOf(sets[0]!)).toStartWith("qc_<");
+        expect(presentAt(sets, 0).kind).toBe("prefix");
+        expect(templateOf(presentAt(sets, 0))).toStartWith("qc_<");
     });
 
     it("leaves genuinely unrelated names alone", () => {
@@ -132,7 +133,7 @@ describe("catchAll", () => {
         const caught = catchAll(residue, true);
 
         expect(caught.sets).toHaveLength(1);
-        expect(caught.sets[0]!.items).toHaveLength(2);
+        expect(presentAt(caught.sets, 0).items).toHaveLength(2);
         expect(caught.rest).toHaveLength(0);
     });
 

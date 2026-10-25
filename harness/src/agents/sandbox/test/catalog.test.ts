@@ -7,6 +7,7 @@ import { dataProfilerPrompt } from "../../../prompts/sandbox/data-profiler.js";
 import { makeFakeSandboxAgentDeps } from "../__fixtures__/deps.js";
 import { createSandboxAgents, SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS, SANDBOX_AGENT_META } from "../index.js";
 import { BASE_SANDBOX_TOOLS } from "../shared.js";
+import { presentGet } from "../../../lib/present.js";
 
 describe("createSandboxAgents", () => {
     const deps = makeFakeSandboxAgentDeps();
@@ -36,7 +37,7 @@ describe("createSandboxAgents", () => {
         // rather than re-derive the dataset's facts from the raw bytes.
         const ALWAYS_ON_PROFILE = ["inspect_data_profile"];
         for (const [id, def] of Object.entries(agents)) {
-            const meta = SANDBOX_AGENT_META[id]!;
+            const meta = presentGet(SANDBOX_AGENT_META, id);
             const toolIds = new Set(def.tools.map((t) => t.id));
 
             for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE]) {
@@ -87,12 +88,12 @@ describe("createSandboxAgents", () => {
     });
 
     it("appendAnalysisStepStandards=false agents omit the analysis-step layer", () => {
-        const dataProfiler = agents["data-profiler"]!;
+        const dataProfiler = presentGet(agents, "data-profiler");
         expect(dataProfiler.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(false);
     });
 
     it("standard agents include the analysis-step layer", () => {
-        const bulk = agents["bulk-transcriptomics-agent"]!;
+        const bulk = presentGet(agents, "bulk-transcriptomics-agent");
         expect(bulk.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(true);
     });
 
@@ -105,8 +106,8 @@ describe("createSandboxAgents", () => {
     it("per-agent prompt text appears verbatim in the composed systemPrompt", () => {
         // Spot-check parity for two agents — one with appendAnalysisStepStandards
         // (bulk-transcriptomics-agent) and one without (data-profiler).
-        expect(agents["bulk-transcriptomics-agent"]!.systemPrompt.includes(bulkTranscriptomicsAgentPrompt.trim())).toBe(true);
-        expect(agents["data-profiler"]!.systemPrompt.includes(dataProfilerPrompt.trim())).toBe(true);
+        expect(presentGet(agents, "bulk-transcriptomics-agent").systemPrompt.includes(bulkTranscriptomicsAgentPrompt.trim())).toBe(true);
+        expect(presentGet(agents, "data-profiler").systemPrompt.includes(dataProfilerPrompt.trim())).toBe(true);
     });
 
     it("every agent takes the shared default cap — no per-agent override", () => {
@@ -119,7 +120,7 @@ describe("createSandboxAgents", () => {
     });
 
     it("non-plannable agents flagged in meta carry plannable=false", () => {
-        expect(SANDBOX_AGENT_META["data-profiler"]!.plannable).toBe(false);
-        expect(SANDBOX_AGENT_META["scientific-executor"]!.plannable).toBe(false);
+        expect(presentGet(SANDBOX_AGENT_META, "data-profiler").plannable).toBe(false);
+        expect(presentGet(SANDBOX_AGENT_META, "scientific-executor").plannable).toBe(false);
     });
 });

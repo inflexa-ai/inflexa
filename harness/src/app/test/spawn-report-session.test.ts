@@ -3,6 +3,7 @@ import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { DbError } from "../../lib/db-result.js";
+import { presentFirst } from "../../lib/present.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { conversationRecordTurn, createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../../memory/thread-store.js";
@@ -77,7 +78,7 @@ async function latestSeqOf(threadId: string): Promise<number | null> {
 /** The count of `report` rows in the schema — 0 says a refusal wrote nothing. */
 async function reportThreadCount(): Promise<number> {
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_type = 'report'");
-    return Number(rows[0]!.count);
+    return Number(presentFirst(rows).count);
 }
 
 /** The text of each message of a transcript, oldest first. */
@@ -151,9 +152,10 @@ describe("spawnReportSession child shape", () => {
 
         // The row is on disk, not just in the returned value.
         const read = (await store.getThread(child.threadId))._unsafeUnwrap();
-        expect(read!.threadType).toBe("report");
-        expect(read!.parentThreadId).toBe("p1");
-        expect(read!.parentSeq).toBe(anchor);
+        if (read === null) throw new Error("the thread row is absent");
+        expect(read.threadType).toBe("report");
+        expect(read.parentThreadId).toBe("p1");
+        expect(read.parentSeq).toBe(anchor);
     });
 
     it("lists the child under its parent", async () => {
@@ -189,7 +191,8 @@ describe("spawnReportSession anchor", () => {
         (await appendTurn("p1"))._unsafeUnwrap();
 
         const read = (await store.getThread(child.threadId))._unsafeUnwrap();
-        expect(read!.parentSeq).toBe(anchorAtSpawn);
+        if (read === null) throw new Error("the thread row is absent");
+        expect(read.parentSeq).toBe(anchorAtSpawn);
     });
 });
 
@@ -506,7 +509,7 @@ describe("reportSessionDelta", () => {
 
         expect(delta.newestChild?.threadId).toBe(child.threadId);
         expect(delta.newestChild?.title).toBe(child.title);
-        if (delta.newestChild === undefined || delta.newestChild === null) throw new Error("expected a newest child");
+        if (delta.newestChild === null) throw new Error("expected a newest child");
         const expectedAnchor = await latestSeqOf("p1");
         if (expectedAnchor === null) throw new Error("expected a thread anchor");
         expect(delta.newestChild.anchor).toBe(expectedAnchor);
@@ -523,13 +526,18 @@ describe("reportSessionDelta", () => {
         (await appendTurn("p1"))._unsafeUnwrap();
         const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
         expect(delta.newestChild?.threadId).toBe(child.threadId);
-        expect(delta.newestChild!.anchor).toBeLessThan((await latestSeqOf("p1"))!);
+        const newestChild = delta.newestChild;
+        if (newestChild === null) throw new Error("expected a newest child");
+        const latest = await latestSeqOf("p1");
+        if (latest === null) throw new Error("expected a thread anchor");
+        expect(newestChild.anchor).toBeLessThan(latest);
         expect(delta.userTurnsSinceAnchor).toBe(2);
     });
 
     it("finds the greatest anchor on a later page of the children listing", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        const anchor = (await latestSeqOf("p1"))!;
+        const anchor = await latestSeqOf("p1");
+        if (anchor === null) throw new Error("expected a thread anchor");
         // The listing orders by `updated_at`, thus the oldest stamp puts the child
         // with the greatest anchor on the second page, behind one full page.
         await insertReportChildren("filler", REPORT_CHILD_PAGE_SIZE, "p1", 0, 0);

@@ -344,18 +344,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                 sandboxId: identity.sandboxId,
                 cause,
             });
-        // Every caller must declare resources — a sandbox with no cpu/memory
-        // request is a semantic error, not something to paper over with a
-        // default.
-        if (!spec.resources) {
-            return err(
-                createFailed("createSandbox")(
-                    new Error(
-                        `createSandbox: ${session.scope.analysisId}/${session.runFrame.runId}/${session.runFrame.stepId} has no resources — every caller must declare cpu/memoryGb`,
-                    ),
-                ),
-            );
-        }
         // The config states an engine fact (binds preserve host ownership);
         // which remediation that fact demands — today, a world-writable step
         // write tree — is harness-owned and chosen here, not by the embedder.

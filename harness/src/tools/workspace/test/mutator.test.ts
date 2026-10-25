@@ -24,6 +24,7 @@ import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
+import { presentAt } from "../../../lib/present.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
@@ -70,7 +71,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
-        const rec = records[0]!;
+        const rec = presentAt(records, 0);
         expect(rec.producer.type).toBe("file_tool");
         if (rec.producer.type === "file_tool") {
             expect(rec.producer.tool).toBe("write_file");
@@ -128,12 +129,14 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const out = (await tool.execute({ path: "output/notes.md", content: "# notes\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        tool.foldCallRecord!(readToolCallRecord(out));
+        const foldCallRecord = tool.foldCallRecord;
+        if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
+        foldCallRecord(readToolCallRecord(out));
 
         // The key a manifest entry would use — `output/notes.md`, not a record-less leaf.
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
-        const rec = records[0]!;
+        const rec = presentAt(records, 0);
         expect(rec.outputPath).toBe("output/notes.md");
         expect(rec.producer.type).toBe("file_tool");
         if (rec.producer.type === "file_tool") {
@@ -158,7 +161,7 @@ describe("WorkspaceMutator provenance recording", () => {
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
         expect(records.every((r) => r.producer.type !== "command")).toBe(true);
-        expect(records[0]!.producer.type).toBe("file_tool");
+        expect(presentAt(records, 0).producer.type).toBe("file_tool");
     });
 });
 
@@ -347,17 +350,21 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();
         expect(written.status).toBe("ok");
-        writeTool.foldCallRecord!(readToolCallRecord(written));
+        const foldWritten = writeTool.foldCallRecord;
+        if (foldWritten === undefined) throw new Error("the write tool folds no call record");
+        foldWritten(readToolCallRecord(written));
 
         const edited = (
             await editTool.execute({ path: "notes/draft.md", old_string: "beta", new_string: "gamma", replace_all: false, regex: false }, ctx)
         )._unsafeUnwrap();
         expect(edited.status).toBe("ok");
-        editTool.foldCallRecord!(readToolCallRecord(edited));
+        const foldEdited = editTool.foldCallRecord;
+        if (foldEdited === undefined) throw new Error("the edit tool folds no call record");
+        foldEdited(readToolCallRecord(edited));
         expect(readFileSync(join(basePath, "analysis-001", "notes", "draft.md"), "utf8")).toBe("alpha gamma\n");
 
         expect(events.map((event) => (event.type === "write-file" ? event.tool : event.type))).toEqual(["write_file", "edit_file"]);
-        const editEvent = events[1]!;
+        const editEvent = presentAt(events, 1);
         if (editEvent.type === "write-file") {
             expect(editEvent.hash).toBe(computeSha256(Buffer.from("alpha gamma\n", "utf8")));
             expect(editEvent.size).toBe(Buffer.byteLength("alpha gamma\n", "utf8"));

@@ -18,6 +18,8 @@
  * The agent follows the default and deviates only with a stated reason.
  */
 
+import { presentGet } from "../lib/present.js";
+
 // ── Group roles ────────────────────────────────────────────────────────────
 
 export const GROUP_ROLE_IDS = ["data", "metadata", "index", "documentation", "reference"] as const;
@@ -489,11 +491,11 @@ const GROUP_CATEGORY_BY_ID = new Map(GROUP_CATEGORIES.map((entry) => [entry.id, 
 const DIMENSION_CATEGORY_BY_ID: Map<string, DimensionCategoryEntry> = new Map(DIMENSION_CATEGORIES.map((entry) => [entry.id, entry]));
 
 export function groupCategoryEntry(id: GroupCategory): GroupCategoryEntry {
-    return GROUP_CATEGORY_BY_ID.get(id)!;
+    return presentGet(GROUP_CATEGORY_BY_ID, id, "the group category entry");
 }
 
 export function dimensionCategoryEntry(id: DimensionCategory): DimensionCategoryEntry {
-    return DIMENSION_CATEGORY_BY_ID.get(id)!;
+    return presentGet(DIMENSION_CATEGORY_BY_ID, id, "the dimension category entry");
 }
 
 /**

@@ -12,6 +12,7 @@
  * pollute the lineage graph.
  */
 
+import { presentFirst } from "../lib/present.js";
 import type { ArtifactRecord } from "../execution/artifact-record.js";
 import type { ProvenanceRecord, InputRef, InputSource, Producer } from "./types.js";
 
@@ -50,7 +51,7 @@ function inferScriptPath(command: string, args?: string[]): string | null {
         const match = fullCommand.match(pattern);
         if (match?.[1]) {
             // Take the first token (the script path), ignoring further args
-            return match[1].split(/\s+/)[0]!;
+            return presentFirst(match[1].split(/\s+/), "the script path");
         }
     }
 

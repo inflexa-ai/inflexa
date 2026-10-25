@@ -159,15 +159,20 @@ export const chemblTool = defineTool({
     execute: async ({ action, query, searchType, chemblId, idType, activityType, limit }): Promise<Result<ChemblOutput, ToolError>> => {
         switch (action) {
             case "compounds":
-                return ok({ compounds: await searchCompounds(query!, searchType!, limit ?? LIMITS.wideDefault) });
+                if (query === undefined || searchType === undefined) throw new Error("compounds requires query and searchType");
+                return ok({ compounds: await searchCompounds(query, searchType, limit ?? LIMITS.wideDefault) });
             case "drug":
-                return ok({ drugs: await getDrugInfo(query!, limit ?? LIMITS.narrowDefault) });
+                if (query === undefined) throw new Error("drug requires query");
+                return ok({ drugs: await getDrugInfo(query, limit ?? LIMITS.narrowDefault) });
             case "mechanism":
-                return ok({ mechanisms: await getMechanism(chemblId!) });
+                if (chemblId === undefined) throw new Error("mechanism requires chemblId");
+                return ok({ mechanisms: await getMechanism(chemblId) });
             case "bioactivity":
-                return ok({ activities: await getBioactivity(chemblId!, idType!, { activityType, limit: limit ?? LIMITS.wideDefault }) });
+                if (chemblId === undefined || idType === undefined) throw new Error("bioactivity requires chemblId and idType");
+                return ok({ activities: await getBioactivity(chemblId, idType, { activityType, limit: limit ?? LIMITS.wideDefault }) });
             case "targets":
-                return ok({ targets: await searchTargets(query!, limit ?? LIMITS.narrowDefault) });
+                if (query === undefined) throw new Error("targets requires query");
+                return ok({ targets: await searchTargets(query, limit ?? LIMITS.narrowDefault) });
         }
     },
 });

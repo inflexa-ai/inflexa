@@ -1,6 +1,7 @@
 import { posix as posixPath } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
+import { presentGet } from "../lib/present.js";
 import { z } from "zod";
 
 /** Schema version for the checked-in reference-data catalog. */
@@ -2366,7 +2367,7 @@ export function resolveReferenceInstallPlanFromCatalogForTesting(
     return ok({
         catalogVersion: catalog.version,
         datasets: selectedIds.map((id) => {
-            const dataset = byId.get(id)!;
+            const dataset = presentGet(byId, id, "the selected dataset");
             return { ...dataset, installPath: `${dataset.id}/${dataset.version}` };
         }),
     });

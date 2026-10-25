@@ -88,24 +88,24 @@ describe("boundArticleDetails", () => {
     it("trims a consortium author list to the leading names, keeping the count", () => {
         const [bounded] = boundArticleDetails([article]);
 
-        expect(bounded!.authors).toHaveLength(5);
-        expect(bounded!.authors[0]).toBe("Author 0");
-        expect(bounded!.authorCount).toBe(200);
-        expect(bounded!.meshTerms).toHaveLength(10);
-        expect(bounded!.meshTermCount).toBe(40);
+        expect(bounded?.authors).toHaveLength(5);
+        expect(bounded?.authors[0]).toBe("Author 0");
+        expect(bounded?.authorCount).toBe(200);
+        expect(bounded?.meshTerms).toHaveLength(10);
+        expect(bounded?.meshTermCount).toBe(40);
     });
 
     it("drops a list entirely at 0 without losing its size", () => {
         const [bounded] = boundArticleDetails([article], { maxAuthors: 0, maxMeshTerms: 0 });
 
-        expect(bounded!.authors).toEqual([]);
-        expect(bounded!.authorCount).toBe(200);
-        expect(bounded!.meshTermCount).toBe(40);
+        expect(bounded?.authors).toEqual([]);
+        expect(bounded?.authorCount).toBe(200);
+        expect(bounded?.meshTermCount).toBe(40);
     });
 
     it("leaves the abstract untouched — it is the reason to call details", () => {
         const [bounded] = boundArticleDetails([{ ...article, abstract: "x".repeat(5000) }]);
 
-        expect(bounded!.abstract).toHaveLength(5000);
+        expect(bounded?.abstract).toHaveLength(5000);
     });
 });

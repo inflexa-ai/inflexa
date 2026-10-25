@@ -81,7 +81,7 @@ describe.skipIf(!API_KEY)("Anthropic prompt caching", () => {
             config: {
                 kind: "anthropic",
                 baseURL: BASE_URL,
-                apiKey: API_KEY!,
+                apiKey: API_KEY ?? "",
                 model: MODEL,
             },
         });

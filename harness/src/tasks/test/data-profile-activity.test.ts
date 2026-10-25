@@ -12,6 +12,7 @@ import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 import { makeFakeSandboxClient, makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "../data-profile-activity.js";
+import { presentAt } from "../../lib/present.js";
 
 // The data-profile workflow body is not reachable from a unit test — it needs a launched durability
 // engine, a sandbox, a scripted model, and an embedder. The phase-and-phrase decisions are therefore
@@ -162,9 +163,9 @@ describe("profile activity emitter — the phases and their phrases", () => {
         await emitter.failed("Data profiling failed: agent did not call submit_profile");
 
         expect(parts).toHaveLength(2);
-        expect(parts[0]!.phase).toBe("failed");
-        expect(parts[0]!.activity).toBe("Data profiling failed: agent did not call submit_profile");
-        expect(parts[1]!.activity).toBe("Data profiling failed: agent did not call submit_profile");
+        expect(presentAt(parts, 0).phase).toBe("failed");
+        expect(presentAt(parts, 0).activity).toBe("Data profiling failed: agent did not call submit_profile");
+        expect(presentAt(parts, 1).activity).toBe("Data profiling failed: agent did not call submit_profile");
     });
 });
 
@@ -174,7 +175,7 @@ describe("profile activity emitter — tool phrases come from the called tool's 
 
         await emitter.forTool("execute_command", { command: ["python3", "/analysis/runs/data-profile/profile/scripts/profile.py"] }, resolveDetail);
 
-        expect(activityParts(parts)[0]!.activity).toBe("execute_command /analysis/runs/data-profile/profile/scripts/profile.py");
+        expect(presentAt(activityParts(parts), 0).activity).toBe("execute_command /analysis/runs/data-profile/profile/scripts/profile.py");
     });
 
     it("names the file a path-bearing tool is touching", async () => {

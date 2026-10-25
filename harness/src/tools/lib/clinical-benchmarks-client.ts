@@ -36,10 +36,6 @@ type BenchmarksFile = {
 
 const dataset: BenchmarksFile = benchmarksData;
 
-if (!dataset.phase_transitions || !dataset.phase_transitions.all) {
-    throw new Error("clinical-benchmarks.json is missing phase_transitions.all baseline");
-}
-
 function loadDataset(): BenchmarksFile {
     return dataset;
 }

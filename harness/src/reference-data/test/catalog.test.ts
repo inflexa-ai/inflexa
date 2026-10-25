@@ -12,6 +12,7 @@ import {
     resolveReferenceInstallPlanFromCatalogForTesting,
 } from "../catalog.js";
 import { REFERENCE_INSTALL_RECEIPT_VERSION, parseReferenceInstallReceipt, referenceReceiptContentDigest } from "../receipt.js";
+import { presentAt } from "../../lib/present.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -338,11 +339,14 @@ describe("reference-data catalog", () => {
 
         expect(plan.catalogVersion).toBe(REFERENCE_DATA_CATALOG_VERSION);
         expect(plan.datasets.map((item) => item.id)).toEqual(["alpha", "zeta"]);
-        expect(plan.datasets[0]!.installPath).toBe("alpha/2026.07");
-        expect(plan.datasets[1]!.installPath).toBe("zeta/2026.07");
-        expect(plan.datasets[0]!.artifacts.map((artifact) => artifact.path)).toEqual(["one.parquet", "two.json"]);
-        expect(plan.datasets[0]!.artifacts.map((artifact) => artifact.url)).toEqual(["https://example.org/artifact-0", "https://example.org/artifact-1"]);
-        expect(referenceArtifactKey(plan.datasets[0]!, plan.datasets[0]!.artifacts[0]!)).toBe("alpha/2026.07/one.parquet");
+        expect(presentAt(plan.datasets, 0).installPath).toBe("alpha/2026.07");
+        expect(presentAt(plan.datasets, 1).installPath).toBe("zeta/2026.07");
+        expect(presentAt(plan.datasets, 0).artifacts.map((artifact) => artifact.path)).toEqual(["one.parquet", "two.json"]);
+        expect(presentAt(plan.datasets, 0).artifacts.map((artifact) => artifact.url)).toEqual([
+            "https://example.org/artifact-0",
+            "https://example.org/artifact-1",
+        ]);
+        expect(referenceArtifactKey(presentAt(plan.datasets, 0), presentAt(presentAt(plan.datasets, 0).artifacts, 0))).toBe("alpha/2026.07/one.parquet");
     });
 
     it("returns a typed error without a partial plan for an unknown id", () => {
@@ -469,7 +473,7 @@ describe("reference installation receipt", () => {
 
     it("changes the content digest when the content changes", () => {
         expect(referenceReceiptContentDigest({ ...content, datasetVersion: "2026.08" })).not.toBe(valid.contentDigest);
-        expect(referenceReceiptContentDigest({ ...content, artifacts: [{ ...content.artifacts[0]!, bytes: 43 }] })).not.toBe(valid.contentDigest);
+        expect(referenceReceiptContentDigest({ ...content, artifacts: [{ ...presentAt(content.artifacts, 0), bytes: 43 }] })).not.toBe(valid.contentDigest);
     });
 
     it("rejects a receipt whose content digest disagrees with its fields", () => {
@@ -500,8 +504,8 @@ describe("reference installation receipt", () => {
     });
 
     it("requires an observed size and digest on every receipt artifact", () => {
-        const { sha256: _sha256, ...noDigest } = valid.artifacts[1]!;
-        const { bytes: _bytes, ...noSize } = valid.artifacts[1]!;
+        const { sha256: _sha256, ...noDigest } = presentAt(valid.artifacts, 1);
+        const { bytes: _bytes, ...noSize } = presentAt(valid.artifacts, 1);
 
         expect(parseReferenceInstallReceipt({ ...valid, artifacts: [noDigest] })).toBeUndefined();
         expect(parseReferenceInstallReceipt({ ...valid, artifacts: [noSize] })).toBeUndefined();

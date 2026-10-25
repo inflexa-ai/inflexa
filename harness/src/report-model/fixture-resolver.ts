@@ -88,12 +88,12 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
         return fail(reference, "locator-out-of-range", "the locator selects no row");
     }
 
-    // A real table holds an empty cell, and a parser gives it back as an absent key, `undefined`, or
-    // `null`. None of the three is a value that a scalar reference can bind. An empty string is a value,
-    // thus it stays valid. The wider annotation admits the three, because the row type promises a value
-    // for each key that it holds.
-    const cell: string | number | null | undefined = selectedRow[locator.column];
-    if (cell === undefined || cell === null) {
+    // A real table holds an empty cell, and the snapshot parser gives it back as an absent
+    // key: `snapshotRows` drops a cell that parsed as `null` or `undefined`, so an absent key
+    // is the only absence. It is not a value that a scalar reference can bind. An empty
+    // string is a value, thus it stays valid.
+    const cell = selectedRow[locator.column];
+    if (cell === undefined) {
         return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
     }
 

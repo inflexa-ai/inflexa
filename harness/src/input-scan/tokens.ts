@@ -13,6 +13,7 @@
  */
 
 import { KNOWN_EXTENSIONS } from "./formats.js";
+import { presentAt, presentFirst } from "../lib/present.js";
 import {
     MAX_OPAQUE_ID_MEAN_RUN,
     MAX_OPAQUE_ID_SEPARATOR_FRACTION,
@@ -54,7 +55,7 @@ export function splitStem(fileName: string): { stem: string; suffix: string } {
     const parts = fileName.split(".");
     let cut = parts.length;
     while (cut > 1) {
-        const candidate = parts[cut - 1]!.toLowerCase();
+        const candidate = presentAt(parts, cut - 1, "the trailing extension part").toLowerCase();
         if (!KNOWN_EXTENSIONS.has(candidate) || candidate.length > MAX_SUFFIX_TOKEN_LENGTH) break;
         cut--;
     }
@@ -80,10 +81,11 @@ function meanRunLength(value: string): number {
 }
 
 function caseTransitions(value: string): number {
+    const chars = value.split("");
     let flips = 0;
-    for (let i = 1; i < value.length; i++) {
-        const before = value[i - 1]!;
-        const after = value[i]!;
+    for (let i = 1; i < chars.length; i++) {
+        const before = presentAt(chars, i - 1, "case-run characters");
+        const after = presentAt(chars, i, "case-run characters");
         if (!/[A-Za-z]/.test(before) || !/[A-Za-z]/.test(after)) continue;
         if ((before === before.toUpperCase()) !== (after === after.toUpperCase())) flips++;
     }
@@ -182,7 +184,7 @@ export function tokenizeName(fileName: string): { tokens: NameToken[]; suffix: s
     const parts = stem.split(".");
     for (let i = 0; i < parts.length; i++) {
         if (i > 0) tokens.push({ kind: "delim", value: "." });
-        tokens.push(...tokenizeSegment(parts[i]!));
+        tokens.push(...tokenizeSegment(presentAt(parts, i, "stem dot-parts")));
     }
     return { tokens, suffix };
 }
@@ -219,14 +221,14 @@ export type ValueClass = {
 export function classifyValues(values: readonly string[]): ValueClass {
     if (values.length === 0) return { tokenClass: "any" };
     if (values.length === 1) {
-        const only = values[0]!;
+        const only = presentFirst(values, "the single value");
         if (isDateToken(only)) return { tokenClass: "date" };
         if (isOpaqueId(only)) return { tokenClass: "opaque-id", minLength: only.length, maxLength: only.length };
         return { tokenClass: "constant" };
     }
     if (values.every((value) => isDateToken(value))) return { tokenClass: "date" };
     if (values.every((value) => /^[0-9]+$/.test(value))) {
-        const width = values[0]!.length;
+        const width = presentFirst(values, "digit values").length;
         return values.every((value) => value.length === width) ? { tokenClass: "digits-fixed", width } : { tokenClass: "digits" };
     }
     if (values.every((value) => /^[0-9a-fA-F]+$/.test(value) && value.length >= 4)) return { tokenClass: "hex" };
@@ -236,11 +238,9 @@ export function classifyValues(values: readonly string[]): ValueClass {
     }
     if (values.every((value) => /^[A-Za-z]+$/.test(value))) return { tokenClass: "word" };
     const skeletons = new Set(values.map((value) => maskSegment(value)));
-    if (skeletons.size === 1) {
-        const skeleton = [...skeletons][0]!;
-        if (skeleton.includes(DIGIT_SYMBOL) || skeleton.includes(ID_SYMBOL) || skeleton.includes(DATE_SYMBOL)) {
-            return { tokenClass: "pattern", skeleton };
-        }
+    const [skeleton] = skeletons;
+    if (skeleton !== undefined && skeletons.size === 1 && (skeleton.includes(DIGIT_SYMBOL) || skeleton.includes(ID_SYMBOL) || skeleton.includes(DATE_SYMBOL))) {
+        return { tokenClass: "pattern", skeleton };
     }
     return { tokenClass: "any" };
 }
@@ -253,14 +253,15 @@ export function classifyValues(values: readonly string[]): ValueClass {
  */
 export function commonAffixes(values: readonly string[]): { prefix: string; suffix: string } {
     if (values.length < 2) return { prefix: "", suffix: "" };
-    let prefix = values[0]!;
+    const head = presentFirst(values, "affix values");
+    let prefix = head;
     for (const value of values) {
         let i = 0;
         while (i < prefix.length && i < value.length && prefix[i] === value[i]) i++;
         prefix = prefix.slice(0, i);
         if (!prefix) break;
     }
-    let suffix = values[0]!.slice(prefix.length);
+    let suffix = head.slice(prefix.length);
     for (const value of values) {
         const rest = value.slice(prefix.length);
         let i = 0;

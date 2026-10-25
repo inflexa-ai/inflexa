@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { RawCancerStudySchema, RawMutationRowSchema } from "../cbioportal-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const OpenApiOracleSchema = z.object({
     definitions: z.record(z.string(), z.object({ properties: z.record(z.string(), z.unknown()) })),
@@ -24,7 +25,7 @@ runFixtureSuite("cBioPortal golden fixtures", [
         drift: "studies-SUMMARY.drift.json",
         schema: z.array(RawCancerStudySchema),
         assertOutput: (studies) => {
-            const study = studies[0]!;
+            const study = presentAt(studies, 0);
             expect(study.studyId).toBe("acc_tcga");
             expect(study.cancerTypeId).toBe("acc");
             expect(study.allSampleCount).toBe(92);
@@ -40,7 +41,7 @@ runFixtureSuite("cBioPortal golden fixtures", [
         drift: "studies-DETAILED.drift.json",
         schema: z.array(RawCancerStudySchema),
         assertOutput: (studies) => {
-            const study = studies[0]!;
+            const study = presentAt(studies, 0);
             // The nested block keys its identifier as `id`, not `cancerTypeId`.
             expect(study.cancerType?.id).toBe("prad");
             expect(study.cancerType?.name).toBe("Prostate Adenocarcinoma");
@@ -54,8 +55,8 @@ runFixtureSuite("cBioPortal golden fixtures", [
         schema: z.array(RawMutationRowSchema),
         assertOutput: (rows) => {
             expect(rows).toHaveLength(5);
-            expect(rows[0]!.studyId).toBe("acc_2019");
-            expect(rows[0]!.sampleId).toBe("ACYC-FMI-02");
+            expect(presentAt(rows, 0).studyId).toBe("acc_2019");
+            expect(presentAt(rows, 0).sampleId).toBe("ACYC-FMI-02");
         },
     }),
 ]);
@@ -74,8 +75,8 @@ describe("the cBioPortal oracle and the wire", () => {
         expect(Object.keys(oracle.properties)).toContain("cancerTypeId");
 
         const detailed = z.array(z.object({ cancerType: z.record(z.string(), z.unknown()) })).parse(readFixture("cbioportal", "studies-DETAILED.json"));
-        expect(Object.keys(detailed[0]!.cancerType)).toContain("id");
-        expect(Object.keys(detailed[0]!.cancerType)).not.toContain("cancerTypeId");
+        expect(Object.keys(presentAt(detailed, 0).cancerType)).toContain("id");
+        expect(Object.keys(presentAt(detailed, 0).cancerType)).not.toContain("cancerTypeId");
     });
 
     it("declares no mutationCount in the published Mutation definition", () => {

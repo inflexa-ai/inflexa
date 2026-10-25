@@ -1,3 +1,4 @@
+import { presentAt } from "../../lib/present.js";
 import { requestText, type SourceHttpOptions, type SourceHttpResult } from "./http.js";
 
 const BASE_URL = "https://export.arxiv.org/api/query";
@@ -42,7 +43,7 @@ function extractEntries(xml: string): string[] {
     const expression = /<entry\b[^>]*>([\s\S]*?)<\/entry>/g;
     const entries: string[] = [];
     let match: RegExpExecArray | null;
-    while ((match = expression.exec(xml)) !== null) entries.push(match[1]!);
+    while ((match = expression.exec(xml)) !== null) entries.push(presentAt(match, 1, "the captured entry"));
     return entries;
 }
 
@@ -54,7 +55,7 @@ function allMatches(entry: string, tag: string): string[] {
     const expression = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "g");
     const values: string[] = [];
     let match: RegExpExecArray | null;
-    while ((match = expression.exec(entry)) !== null) values.push(match[1]!);
+    while ((match = expression.exec(entry)) !== null) values.push(presentAt(match, 1, `the captured ${tag}`));
     return values;
 }
 
@@ -62,7 +63,7 @@ function linkAttribute(entry: string, predicate: (attributes: string) => boolean
     const expression = /<link\b([^>]*)\/>/g;
     let match: RegExpExecArray | null;
     while ((match = expression.exec(entry)) !== null) {
-        const attributes = match[1]!;
+        const attributes = presentAt(match, 1, "the link attributes");
         if (predicate(attributes)) return attributes.match(/href="([^"]+)"/)?.[1];
     }
     return undefined;
@@ -73,7 +74,7 @@ function categoryTerms(entry: string): string[] {
     const terms: string[] = [];
     let match: RegExpExecArray | null;
     while ((match = expression.exec(entry)) !== null) {
-        const term = match[1]!.match(/term="([^"]+)"/)?.[1];
+        const term = presentAt(match, 1, "the category attributes").match(/term="([^"]+)"/)?.[1];
         if (term !== undefined) terms.push(term);
     }
     return terms;

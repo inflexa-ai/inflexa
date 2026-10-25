@@ -3,6 +3,7 @@ import type { ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
+import { presentAt, presentFirst } from "../../lib/present.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../__fixtures__/scripted-provider.js";
@@ -56,11 +57,11 @@ async function callWith(tool: Tool, input: unknown): Promise<ToolResultPart> {
         runStep: passthroughStep,
     });
 
-    const toolMessage = messages[2]!;
+    const toolMessage = presentAt(messages, 2);
     expect(toolMessage.role).toBe("tool");
     const content = toolMessage.content;
     if (typeof content === "string") throw new Error("the tool message carries string content");
-    return content.filter((part): part is ToolResultPart => part.type === "tool-result")[0]!;
+    return presentFirst(content.filter((part): part is ToolResultPart => part.type === "tool-result"));
 }
 
 function errorText(result: ToolResultPart): string {

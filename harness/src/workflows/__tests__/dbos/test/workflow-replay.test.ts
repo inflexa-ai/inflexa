@@ -20,7 +20,7 @@
  *   module-level flag between runs" approach (which would skip a step on
  *   replay and change the sequence).
  *
- *   We use `DBOS.cancelWorkflow(DBOS.workflowID!)` mid-body, UNCONDITIONALLY.
+ *   We use `cancelSelf()` mid-body, UNCONDITIONALLY.
  *   The cancel call is recorded as a step on the first attempt; on
  *   `resumeWorkflow` the body re-runs, cached step results return without
  *   re-invoking their closures, the cached cancel-step returns its cached
@@ -89,6 +89,12 @@ let metaCallCounter = 0;
  * returns instead. Module-level counters incremented inside closures
  * remain unchanged across replay.
  */
+async function cancelSelf(): Promise<void> {
+    const workflowId = DBOS.workflowID;
+    if (workflowId === undefined) throw new Error("the workflow id is absent outside a DBOS execution");
+    await DBOS.cancelWorkflow(workflowId);
+}
+
 const chaosMirror = DBOS.registerWorkflow(
     async (): Promise<{ llm: string; meta: string }> => {
         const llmResult = await DBOS.runStep(
@@ -106,7 +112,7 @@ const chaosMirror = DBOS.registerWorkflow(
         // ALWAYS in the body so the step sequence on replay matches the
         // original — DBOS's determinism check rejects step sequences that
         // diverge between attempts.
-        await DBOS.cancelWorkflow(DBOS.workflowID!);
+        await cancelSelf();
 
         const metaResult = await DBOS.runStep(
             async () => {
@@ -156,7 +162,7 @@ const threeStepMirror = DBOS.registerWorkflow(
             },
             { name: "three-step.b" },
         );
-        await DBOS.cancelWorkflow(DBOS.workflowID!);
+        await cancelSelf();
         const c = await DBOS.runStep(
             async () => {
                 stepCCalls += 1;
@@ -189,7 +195,7 @@ const terminalMetricMirror = DBOS.registerWorkflow(
             },
             { name: "persist-final-status" },
         );
-        await DBOS.cancelWorkflow(DBOS.workflowID!);
+        await cancelSelf();
         await DBOS.runStep(async () => undefined, { name: "post-terminal.tail" });
         return { terminalCalls: terminalStepCalls };
     },
@@ -290,7 +296,7 @@ const idempotentSyncMirror = DBOS.registerWorkflow(
 
         // Unconditional cancel — see threeStepMirror's note on DBOS's
         // determinism requirement for step sequences across replay.
-        await DBOS.cancelWorkflow(DBOS.workflowID!);
+        await cancelSelf();
 
         const tail = await DBOS.runStep(async () => "tail-ok", { name: "post-step.tail" });
 
@@ -338,7 +344,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-    if (rig) await rig.drop();
+    await rig.drop();
 });
 
 // ── Tests ───────────────────────────────────────────────────────────────

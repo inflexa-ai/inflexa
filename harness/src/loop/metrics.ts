@@ -131,7 +131,7 @@ export function addChatUsage(total: AgentRunUsage, usage: ChatUsage | undefined)
  */
 export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | TokenUsageRollup | undefined): boolean {
     if (usage === undefined) return false;
-    return Object.values(usage).some((value) => value !== undefined);
+    return TOKEN_USAGE_FIELDS.some((field) => usage[field] !== undefined);
 }
 
 /**

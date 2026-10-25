@@ -5,6 +5,7 @@ import type { ChatFrame, EventSource } from "../chat-events.js";
 import { applyChatFrame, checkChatPart } from "../chat-frame.js";
 import type { ChatMessage } from "../message.js";
 import { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "../subagent-activity.js";
+import { presentAt } from "../../lib/present.js";
 
 const ROOT: EventSource = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
 const planner = (invocationId?: string): EventSource => ({
@@ -67,7 +68,7 @@ describe("createSubAgentActivityTracker", () => {
             if (part !== null) messages = applyChatFrame(messages, part, "asst").messages;
         }
 
-        const parts = messages[0]!.parts.filter((p) => p.type === "data-subagent-activity");
+        const parts = presentAt(messages, 0).parts.filter((p) => p.type === "data-subagent-activity");
         expect(parts).toEqual([
             {
                 type: "data-subagent-activity",
@@ -95,7 +96,7 @@ describe("createSubAgentActivityTracker", () => {
         const part = tracker.track(started(planner("t1"), "s1"), T0);
         expect(part).not.toBeNull();
         expect(part).not.toHaveProperty("source");
-        expect(checkChatPart(part!).ok).toBe(true);
+        expect(checkChatPart(part).ok).toBe(true);
     });
 
     test("a nested sub-agent belongs to the root tool call", () => {
@@ -125,7 +126,7 @@ describe("createSubAgentActivityTracker", () => {
         expect(p1.entries.map((e) => e.agentId)).toEqual(["planner", "planner"]);
         expect(p2.toolCallId).toBe("t2");
         expect(p2.entries.map((e) => e.agentId)).toEqual(["analogy"]);
-        expect(p2.entries[0]!.outcome).toBe("ok");
+        expect(presentAt(p2.entries, 0).outcome).toBe("ok");
     });
 
     test("a call id that two loops reuse does not join two lists", () => {
@@ -139,7 +140,7 @@ describe("createSubAgentActivityTracker", () => {
         expect(part.entries).toHaveLength(1);
         const finish = partOf(tracker.track(finished(planner("t1"), "same"), T0 + 1));
         expect(finish.toolCallId).toBe("t1");
-        expect(finish.entries[0]!.outcome).toBe("ok");
+        expect(presentAt(finish.entries, 0).outcome).toBe("ok");
     });
 
     test("a frame with no invocation id changes nothing", () => {
@@ -157,9 +158,9 @@ describe("createSubAgentActivityTracker", () => {
         for (let i = 0; i < SUBAGENT_ACTIVITY_MAX_ENTRIES + 1; i += 1) {
             part = partOf(tracker.track(started(planner("t1"), `s${i}`), T0 + i));
         }
-        expect(part!.entries).toHaveLength(SUBAGENT_ACTIVITY_MAX_ENTRIES);
-        expect(part!.entries[0]!.tool).toBe("search");
-        expect(part!.dropped).toBe(1);
+        expect(part?.entries).toHaveLength(SUBAGENT_ACTIVITY_MAX_ENTRIES);
+        expect(presentAt(part?.entries ?? [], 0).tool).toBe("search");
+        expect(part?.dropped).toBe(1);
         // The finish of a dropped call changes nothing.
         expect(tracker.track(finished(planner("t1"), `s${SUBAGENT_ACTIVITY_MAX_ENTRIES}`), T0)).toBeNull();
     });
@@ -181,8 +182,8 @@ describe("createSubAgentActivityTracker", () => {
         tracker.track(started(ROOT, "t1"), T0);
         tracker.track(started(planner("t1"), "s1"), T0);
         const part = partOf(tracker.track(finished(planner("t1"), "s1", { durationMs: 800 }), T0 + 5_000));
-        expect(part.entries[0]!.startedAt).toBe("2026-10-12T10:00:00.000Z");
-        expect(part.entries[0]!.endedAt).toBe("2026-10-12T10:00:00.800Z");
+        expect(presentAt(part.entries, 0).startedAt).toBe("2026-10-12T10:00:00.000Z");
+        expect(presentAt(part.entries, 0).endedAt).toBe("2026-10-12T10:00:00.800Z");
     });
 
     test("the end time is the receipt time when the finish has no duration", () => {
@@ -190,7 +191,7 @@ describe("createSubAgentActivityTracker", () => {
         tracker.track(started(ROOT, "t1"), T0);
         tracker.track(started(planner("t1"), "s1"), T0);
         const part = partOf(tracker.track(finished(planner("t1"), "s1"), T0 + 2_000));
-        expect(part.entries[0]!.endedAt).toBe("2026-10-12T10:00:02.000Z");
+        expect(presentAt(part.entries, 0).endedAt).toBe("2026-10-12T10:00:02.000Z");
     });
 
     test("the finish detail replaces the start detail, and the start detail stays otherwise", () => {
@@ -207,7 +208,7 @@ describe("createSubAgentActivityTracker", () => {
         const tracker = createSubAgentActivityTracker();
         tracker.track(started(ROOT, "t1"), T0);
         const part = partOf(tracker.track(started(planner("t1"), "s1"), T0));
-        expect(Object.hasOwn(part.entries[0]!, "label")).toBe(false);
+        expect(Object.hasOwn(presentAt(part.entries, 0), "label")).toBe(false);
     });
 
     test("a finish with no recorded entry changes nothing", () => {

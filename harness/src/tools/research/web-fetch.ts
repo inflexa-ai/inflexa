@@ -29,6 +29,7 @@ import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import { z } from "zod";
+import { presentLast } from "../../lib/present.js";
 
 import { keptTextOf, pairSafeIndex, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "../../loop/tool-output.js";
 import { AskRejectedError, type AskRequest } from "../approval/contract.js";
@@ -491,7 +492,7 @@ export function htmlNestingDepth(html: string): number {
         if (selfClosed || VOID_TAGS.has(name)) continue;
         const peers = IMPLIED_CLOSE_PEERS[name];
         if (peers !== undefined) {
-            while (stack.length > 0 && peers.has(stack[stack.length - 1]!)) stack.pop();
+            while (stack.length > 0 && peers.has(presentLast(stack, "the top of the tag stack"))) stack.pop();
         }
         stack.push(name);
         if (stack.length > max) {
@@ -506,7 +507,7 @@ function htmlToMarkdown(body: Buffer): string {
     const dom = parseHTML(body.toString("utf8"));
     const article = new Readability(dom.document).parse();
     if (article?.content) return markdownConverter.turndown(article.content).trim();
-    return (dom.document.body?.textContent ?? "").trim();
+    return dom.document.body.textContent.trim();
 }
 
 /** Hostile HTML can throw inside the extraction stack; the body text, then the status union, catch the throw. A page that nests past the bound never reaches a parser, because the parse itself is the stall. */
@@ -520,7 +521,7 @@ function htmlExtractionOf(body: Buffer): Extracted {
     } catch {
         try {
             const dom = parseHTML(html);
-            return { kind: "text", text: (dom.document.body?.textContent ?? "").trim() };
+            return { kind: "text", text: dom.document.body.textContent.trim() };
         } catch {
             return { kind: "unextractable", detail: "the HTML extraction failed" };
         }

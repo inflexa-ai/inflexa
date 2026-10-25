@@ -118,15 +118,18 @@ export const openTargetsTool = defineTool({
         const limit = input.limit ?? DEFAULT_LIMIT;
         switch (input.action) {
             case "target": {
-                const targetInfo = await searchTargetAssociations(input.ensemblId!, limit);
+                if (input.ensemblId === undefined) throw new Error("target requires ensemblId");
+                const targetInfo = await searchTargetAssociations(input.ensemblId, limit);
                 return ok({ targetInfo, associations: targetInfo?.associations ?? [] });
             }
             case "disease": {
-                const associations = await searchDiseaseAssociations(input.efoId!, limit);
+                if (input.efoId === undefined) throw new Error("disease requires efoId");
+                const associations = await searchDiseaseAssociations(input.efoId, limit);
                 return ok({ associations });
             }
             case "resolve_disease": {
-                const { total, candidates } = await searchDiseases(input.diseaseName!, limit);
+                if (input.diseaseName === undefined) throw new Error("resolve_disease requires diseaseName");
+                const { total, candidates } = await searchDiseases(input.diseaseName, limit);
                 return ok({ totalFound: total, candidates });
             }
         }

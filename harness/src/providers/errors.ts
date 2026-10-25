@@ -259,7 +259,7 @@ const CONNECTION_ERROR_PATTERN =
 function findInCauseChain<T>(err: unknown, probe: (link: object) => T | undefined): T | undefined {
     let cursor: unknown = err;
     for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        if (typeof cursor !== "object" || cursor === null) return undefined;
+        if (typeof cursor !== "object") return undefined;
         const found = probe(cursor);
         if (found !== undefined) return found;
         cursor = "cause" in cursor ? cursor.cause : undefined;
@@ -371,8 +371,9 @@ export function classifyProviderError(e: unknown, suspendOn: SuspendOn = DEFAULT
 
     const status = extractStatus(e);
 
-    if (status !== undefined && Object.hasOwn(suspendOn, status)) {
-        return { kind: "suspend", retryable: false, reason: suspendOn[status]!, status };
+    if (status !== undefined) {
+        const reason = suspendOn[status];
+        if (reason !== undefined) return { kind: "suspend", retryable: false, reason, status };
     }
 
     // `auth` is its own kind rather than a plain non-retryable 4xx because the

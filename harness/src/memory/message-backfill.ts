@@ -51,8 +51,8 @@ export async function backfillAiSdkMessageEnvelopes(client: BackfillClient<Legac
          ORDER BY thread_id, seq
          LIMIT 1`,
     );
-    if (remaining.rows.length > 0) {
-        const row = remaining.rows[0]!;
+    const [row] = remaining.rows;
+    if (row !== undefined) {
         throw new Error(`AI SDK message backfill left an unmigrated row at ${row.thread_id}/${row.seq}`);
     }
 }

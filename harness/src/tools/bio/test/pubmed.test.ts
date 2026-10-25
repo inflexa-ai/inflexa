@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createPubMedTool } from "../pubmed.js";
+import { presentAt, presentFind } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -130,8 +131,8 @@ describe("pubmed — action 'search'", () => {
 
         // The 'search' action reaches esearch, then esummary for the returned ids.
         expect(seen.map((u) => u.pathname.split("/").pop())).toEqual(["esearch.fcgi", "esummary.fcgi"]);
-        expect(seen[0]!.searchParams.get("term")).toBe('"BRCA1"[Gene]');
-        expect(seen[1]!.searchParams.get("id")).toBe("12345678");
+        expect(presentAt(seen, 0).searchParams.get("term")).toBe('"BRCA1"[Gene]');
+        expect(presentAt(seen, 1).searchParams.get("id")).toBe("12345678");
 
         expect(result).toEqual({
             totalFound: 137,
@@ -153,9 +154,9 @@ describe("pubmed — action 'search'", () => {
         const { ctx } = makeToolContext();
         await tool.execute({ action: "search", query: "BRCA1" }, ctx);
 
-        expect(defaults[0]!.searchParams.get("retmax")).toBe("10");
-        expect(defaults[0]!.searchParams.get("sort")).toBe("relevance");
-        expect(defaults[0]!.searchParams.get("mindate")).toBeNull();
+        expect(presentAt(defaults, 0).searchParams.get("retmax")).toBe("10");
+        expect(presentAt(defaults, 0).searchParams.get("sort")).toBe("relevance");
+        expect(presentAt(defaults, 0).searchParams.get("mindate")).toBeNull();
 
         const explicit = stubNcbi((url) => (url.pathname.endsWith("esearch.fcgi") ? json({ esearchresult: { idlist: [], count: "0" } }) : xml(ESUMMARY_XML)));
 
@@ -170,11 +171,11 @@ describe("pubmed — action 'search'", () => {
             ctx,
         );
 
-        expect(explicit[0]!.searchParams.get("retmax")).toBe("3");
-        expect(explicit[0]!.searchParams.get("sort")).toBe("pub+date");
-        expect(explicit[0]!.searchParams.get("mindate")).toBe("2020/01/01");
-        expect(explicit[0]!.searchParams.get("maxdate")).toBe("2021/12/31");
-        expect(explicit[0]!.searchParams.get("datetype")).toBe("pdat");
+        expect(presentAt(explicit, 0).searchParams.get("retmax")).toBe("3");
+        expect(presentAt(explicit, 0).searchParams.get("sort")).toBe("pub+date");
+        expect(presentAt(explicit, 0).searchParams.get("mindate")).toBe("2020/01/01");
+        expect(presentAt(explicit, 0).searchParams.get("maxdate")).toBe("2021/12/31");
+        expect(presentAt(explicit, 0).searchParams.get("datetype")).toBe("pdat");
     });
 
     it("returns every summary when one record carries a year-only PubDate", async () => {
@@ -237,7 +238,7 @@ describe("pubmed — action 'details'", () => {
         if (!("articles" in result)) throw new Error("expected the details variant");
 
         // The 'details' action reaches efetch (db=pubmed) and the PMC ID converter.
-        const efetch = seen.find((u) => u.pathname.endsWith("efetch.fcgi"))!;
+        const efetch = presentFind(seen, (u) => u.pathname.endsWith("efetch.fcgi"));
         expect(efetch.searchParams.get("db")).toBe("pubmed");
         expect(efetch.searchParams.get("id")).toBe("12345678,99999999");
         expect(seen.some((u) => u.pathname.includes("idconv"))).toBe(true);
@@ -270,7 +271,7 @@ describe("pubmed — action 'details'", () => {
         const result = (await tool.execute({ action: "details", pmids: ["12345678"], maxAuthors: 0, maxMeshTerms: 0 }, ctx))._unsafeUnwrap();
         if (!("articles" in result)) throw new Error("expected the details variant");
 
-        const article = result.articles[0]!;
+        const article = presentAt(result.articles, 0);
         expect(article.authors).toEqual([]);
         expect(article.authorCount).toBe(1);
         expect(article.meshTerms).toEqual([]);
@@ -307,8 +308,8 @@ describe("pubmed — action 'fulltext'", () => {
         if (!("fullText" in result)) throw new Error("expected the fulltext variant");
 
         // The 'fulltext' action reaches efetch against db=pmc with the numeric id.
-        expect(seen[0]!.searchParams.get("db")).toBe("pmc");
-        expect(seen[0]!.searchParams.get("id")).toBe("7654321");
+        expect(presentAt(seen, 0).searchParams.get("db")).toBe("pmc");
+        expect(presentAt(seen, 0).searchParams.get("id")).toBe("7654321");
 
         expect(result).toEqual({
             pmcId: "PMC7654321",

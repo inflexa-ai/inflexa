@@ -10,6 +10,7 @@ import type { ChatRequest } from "../../../providers/types.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../../loop/__fixtures__/scripted-provider.js";
 import type { ToolContext } from "../../define-tool.js";
 import { buildResearchPrompt, createGenerateAnalogyReportTool } from "../generate-analogy-report.js";
+import { presentAt } from "../../../lib/present.js";
 
 const VALID_ENVELOPE = {
     schemaVersion: "1",
@@ -75,11 +76,11 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(result).toEqual(VALID_ENVELOPE);
         // The terminal tool ends the loop itself: no call follows the submit.
         expect(provider.calls).toHaveLength(1);
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual(REASONER_TOOLS);
+        expect(Object.keys(presentAt(provider.calls, 0).tools)).toEqual(REASONER_TOOLS);
 
         // Child loop ran on a Session derived via forSubAgent — callPath
         // extended, agentId flipped.
-        const childSession = provider.sessions[0]!;
+        const childSession = presentAt(provider.sessions, 0);
         expect(childSession.provenance.agentId).toBe("analogical-reasoner");
         expect(childSession.provenance.callPath).toEqual(["conversation-agent", "analogical-reasoner"]);
 
@@ -95,7 +96,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
         (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctxFor()))._unsafeUnwrap();
 
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+        expect(Object.keys(presentAt(provider.calls, 0).tools)).toEqual([
             "search_semantic_scholar",
             "search_arxiv",
             "search_github_repos",
@@ -150,7 +151,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         for (const request of provider.calls.slice(1)) {
             expect(Object.keys(request.tools)).toEqual(REASONER_TOOLS);
         }
-        const refusal = toolResultIn(provider.calls[2]!, "s1");
+        const refusal = toolResultIn(presentAt(provider.calls, 2), "s1");
         expect(refusal?.output).toEqual({
             type: "error-text",
             value: JSON.stringify({
@@ -161,7 +162,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         // The warn of the salvage reaches the logger of the tool.
         const salvage = logger.records.filter((r) => r.level === "warn" && r.msg.includes("salvaging"));
         expect(salvage).toHaveLength(1);
-        expect(salvage[0]!.fields).toMatchObject({ agentId: "analogical-reasoner" });
+        expect(presentAt(salvage, 0).fields).toMatchObject({ agentId: "analogical-reasoner" });
     });
 
     it("gives the extraction-failed envelope when the salvage also records no outcome", async () => {
@@ -186,7 +187,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
         expect(result).toEqual(VALID_ENVELOPE);
         expect(provider.calls).toHaveLength(2);
-        const rejected = toolResultIn(provider.calls[1]!, "t1");
+        const rejected = toolResultIn(presentAt(provider.calls, 1), "t1");
         expect(rejected?.output.type).toBe("error-text");
         expect(JSON.stringify(rejected?.output)).toContain("input validation failed");
     });

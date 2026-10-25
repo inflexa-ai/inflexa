@@ -8,6 +8,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { getFamily, getFamilyHeterodimers, IupharDatabaseLinkSchema, IupharFamilySchema, IupharTargetSchema } from "../iuphar-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -31,7 +32,7 @@ runFixtureSuite("iuphar golden fixtures", [
         drift: "targets_geneSymbol_EGFR.drift.json",
         schema: z.array(IupharTargetSchema),
         assertOutput: (targets) => {
-            const target = targets[0]!;
+            const target = presentAt(targets, 0);
             expect(target.targetId).toBe(1797);
             // Shape A omits the key. The parsed value is thus `undefined`, and
             // never `[]`, which is what the read site of `getFamilyHeterodimers`
@@ -48,7 +49,7 @@ runFixtureSuite("iuphar golden fixtures", [
         drift: "targets_geneSymbol_EGFR.drift.json",
         schema: z.array(IupharTargetSchema),
         assertOutput: (targets) => {
-            const complex = targets[0]!;
+            const complex = presentAt(targets, 0);
             expect(complex.targetId).toBe(44);
             expect(complex.complexIds).toBeUndefined();
             expect(complex.subunitIds).toEqual([43, 51]);
@@ -61,7 +62,7 @@ runFixtureSuite("iuphar golden fixtures", [
         drift: "target_44_AMY1_subunits.drift.json",
         schema: z.array(IupharTargetSchema),
         assertOutput: (subunits) => {
-            const ramp1 = subunits[0]!;
+            const ramp1 = presentAt(subunits, 0);
             expect(ramp1.targetId).toBe(51);
             // Shape B is the one shape that carries `complexIds` populated, and
             // it is also the one shape that names the kind of the target in
@@ -133,9 +134,9 @@ describe("getFamilyHeterodimers", () => {
         const heterodimers = await getFamilyHeterodimers("CALCR");
 
         expect(heterodimers).toHaveLength(1);
-        expect(heterodimers[0]!.complex.name).toBe("AMY1 receptor");
-        expect(heterodimers[0]!.accessories.map((accessory) => accessory.name)).toEqual(["RAMP1"]);
-        expect(heterodimers[0]!.subunits.map((subunit) => subunit.targetId)).toEqual([51, 43]);
+        expect(presentAt(heterodimers, 0).complex.name).toBe("AMY1 receptor");
+        expect(presentAt(heterodimers, 0).accessories.map((accessory) => accessory.name)).toEqual(["RAMP1"]);
+        expect(presentAt(heterodimers, 0).subunits.map((subunit) => subunit.targetId)).toEqual([51, 43]);
     });
 });
 
@@ -147,6 +148,8 @@ describe("getFamily", () => {
 
     it("gives the record of a known family", async () => {
         stubFetch(() => json(readFixture("iuphar", "family_11.json")));
-        expect((await getFamily(11))!.targetIds).toContain(44);
+        const family = await getFamily(11);
+        if (family === null) throw new Error("the family record is absent");
+        expect(family.targetIds).toContain(44);
     });
 });

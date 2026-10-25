@@ -51,6 +51,7 @@ import {
     DERIVE_OUTPUT_ENV,
     type DeriveTableResult,
 } from "../derive-table.js";
+import { presentAt } from "../../../lib/present.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -193,7 +194,9 @@ function makeSandbox(args: {
                 throw new Error("the poll loop broke");
             }
             if (args.write !== undefined) {
-                await args.write(hostSideOf(args.root, request.env![DERIVE_OUTPUT_ENV]!));
+                const outputEnv = request.env?.[DERIVE_OUTPUT_ENV];
+                if (outputEnv === undefined) throw new Error("the derive output env is absent");
+                await args.write(hostSideOf(args.root, outputEnv));
             }
             return args.reply ?? execResult({});
         },
@@ -383,7 +386,7 @@ describe("the derived table", () => {
         await derive(tool, {});
 
         expect(sandbox.creates).toHaveLength(1);
-        const meta = sandbox.creates[0]!;
+        const meta = presentAt(sandbox.creates, 0);
         // The one writable mount of the container is the derived directory of this session. The tree stays
         // read-only under it, thus no write of the script can reach the analysis.
         expect(meta.writableTail).toBe(`${reportSessionDir("t1")}/derived`);
@@ -406,14 +409,16 @@ describe("the derived table", () => {
         await derive(tool, {});
 
         expect(sandbox.submits).toHaveLength(1);
-        const body = sandbox.submits[0]!;
+        const body = presentAt(sandbox.submits, 0);
         expect(body.command).toEqual(["python3", "-c", SCRIPT]);
         // The working directory is the write mount, thus the script writes beside where it stands.
         expect(body.cwd).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived`);
         // Each declared input rides as the path that the container reads, with the hash of the membership.
-        expect(JSON.parse(body.env![DERIVE_INPUT_ENV] ?? "")).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
+        const inputEnv = body.env?.[DERIVE_INPUT_ENV];
+        if (inputEnv === undefined) throw new Error("the derive input env is absent");
+        expect(JSON.parse(inputEnv)).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
         // The output path rides too, thus the script names no directory of its own.
-        expect(body.env![DERIVE_OUTPUT_ENV]).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`);
+        expect(body.env?.[DERIVE_OUTPUT_ENV]).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`);
     });
 
     it("gives the derived path as the result line, and the output name as the call line", async () => {
@@ -421,9 +426,9 @@ describe("the derived table", () => {
         const { tool } = makeTool({ root });
         const input = { script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" };
 
-        expect(tool.describeCall!(input)).toBe("derive yield.csv");
+        expect(tool.describeCall?.(input)).toBe("derive yield.csv");
         const result = await derive(tool, {});
-        expect(tool.describeResult!(input, result)).toBe(`${reportSessionDir("t1")}/derived/yield.csv`);
+        expect(tool.describeResult?.(input, result)).toBe(`${reportSessionDir("t1")}/derived/yield.csv`);
     });
 });
 
@@ -497,7 +502,7 @@ describe("the bounds of a derivation", () => {
         }
 
         // A repeated path names one source, thus a list of one path repeated is inside the cap.
-        const repeated = await derive(tool, { inputs: new Array<string>(30).fill(many[0]!), output: "one.csv" });
+        const repeated = await derive(tool, { inputs: new Array<string>(30).fill(presentAt(many, 0)), output: "one.csv" });
         expect(repeated.outcome).toBe("derived");
     });
 
@@ -763,7 +768,9 @@ describe("buildDerivationExec", () => {
         expect(body.command).toEqual(["python3", "-c", "print(1)"]);
         expect(body.cwd).toBe("/an-1/report-sessions/t1/derived");
         expect(body.timeoutSeconds).toBe(300);
-        expect(JSON.parse(body.env![DERIVE_INPUT_ENV] ?? "")).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
-        expect(body.env![DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
+        const inputEnv = body.env?.[DERIVE_INPUT_ENV];
+        if (inputEnv === undefined) throw new Error("the derive input env is absent");
+        expect(JSON.parse(inputEnv)).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
+        expect(body.env?.[DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
     });
 });

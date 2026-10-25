@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { createConsoleLogger, createNoopLogger } from "../console-logger.js";
 import type { Logger } from "../logger.js";
+import { presentAt } from "../present.js";
 
 /**
  * The emitted record IS this module's observable output, so the console methods
@@ -57,20 +58,20 @@ describe("createConsoleLogger", () => {
         const log = createConsoleLogger().with({ runId: "r1", stepId: "T3S1" });
         log.warn("teardown failed", { err: "boom" });
 
-        expect(captured[0]!.fields).toEqual({ runId: "r1", stepId: "T3S1", err: "boom" });
+        expect(presentAt(captured, 0).fields).toEqual({ runId: "r1", stepId: "T3S1", err: "boom" });
     });
 
     it("composes later with() calls onto earlier bindings", () => {
         const log = createConsoleLogger().with({ runId: "r1" }).with({ stepId: "T3S1" });
         log.info("registering artifacts");
 
-        expect(captured[0]!.fields).toEqual({ runId: "r1", stepId: "T3S1" });
+        expect(presentAt(captured, 0).fields).toEqual({ runId: "r1", stepId: "T3S1" });
     });
 
     it("lets a call-site field win over an inherited binding", () => {
         createConsoleLogger().with({ stepId: "T3S1" }).info("override", { stepId: "T3S2" });
 
-        expect(captured[0]!.fields).toEqual({ stepId: "T3S2" });
+        expect(presentAt(captured, 0).fields).toEqual({ stepId: "T3S2" });
     });
 
     it("leaves the parent logger's bindings untouched when deriving a child", () => {
@@ -78,25 +79,25 @@ describe("createConsoleLogger", () => {
         parent.with({ stepId: "T3S1" });
         parent.info("parent still bare");
 
-        expect(captured[0]!.fields).toEqual({ runId: "r1" });
+        expect(presentAt(captured, 0).fields).toEqual({ runId: "r1" });
     });
 
     it("renders named() as a bracketed message prefix", () => {
         createConsoleLogger().named("boot").info("harness booted");
 
-        expect(captured[0]!.msg).toBe("[boot] harness booted");
+        expect(presentAt(captured, 0).msg).toBe("[boot] harness booted");
     });
 
     it("composes nested named() segments with a dot", () => {
         createConsoleLogger().named("post-step").named("reconcile").warn("dropping phantom");
 
-        expect(captured[0]!.msg).toBe("[post-step.reconcile] dropping phantom");
+        expect(presentAt(captured, 0).msg).toBe("[post-step.reconcile] dropping phantom");
     });
 
     it("leaves the message untouched with no namespace bound", () => {
         createConsoleLogger().info("bare");
 
-        expect(captured[0]!.msg).toBe("bare");
+        expect(presentAt(captured, 0).msg).toBe("bare");
     });
 
     it("keeps namespace and fields independent across with()/named()", () => {

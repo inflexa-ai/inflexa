@@ -18,6 +18,7 @@ import type { DetectedSets } from "../../input-scan/set-types.js";
 import type { ScannedFile } from "../../input-scan/types.js";
 import { MAX_SPLIT_GROUPS, type GroupAnnotation, type MenuOperation, type ProfileSubmission } from "../../schemas/data-profile-schemas.js";
 import { UNCLASSIFIED_GROUP_ID, resolveProfileSubmission, type ProfileResolution } from "../data-profile-resolve.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 /** Trees generated per property. Enough shapes to exercise the resolver, fast enough to run every time. */
 const CASES = 60;
@@ -33,7 +34,7 @@ function rng(seed: number): () => number {
     };
 }
 
-const pick = <T>(random: () => number, values: readonly T[]): T => values[Math.floor(random() * values.length)]!;
+const pick = <T>(random: () => number, values: readonly T[]): T => presentAt(values, Math.floor(random() * values.length));
 const between = (random: () => number, low: number, high: number): number => low + Math.floor(random() * (high - low + 1));
 
 function file(path: string, format: string, extensions: string[] = [], wrapper?: string): ScannedFile {
@@ -53,7 +54,8 @@ function makeTree(random: () => number): ScannedFile[] {
     const dirs = [...FAMILY_DIRS];
 
     for (let family = between(random, 1, 4); family > 0; family--) {
-        const dir = dirs.splice(Math.floor(random() * dirs.length), 1)[0]!;
+        const dir = dirs.splice(Math.floor(random() * dirs.length), 1)[0];
+        if (dir === undefined) throw new Error("dir is absent");
         const members = between(random, 2, 7);
         const categorical = random() < 0.4;
         const companions = random() < 0.4;
@@ -67,11 +69,11 @@ function makeTree(random: () => number): ScannedFile[] {
     }
 
     for (let i = between(random, 0, LEFTOVER_NAMES.length); i > 0; i--) {
-        const name = LEFTOVER_NAMES[i - 1]!;
+        const name = presentAt(LEFTOVER_NAMES, i - 1);
         files.push(file(`data/inputs/meta/${name}`, name.endsWith(".csv") ? "csv" : "text", [name.slice(name.lastIndexOf(".") + 1)]));
     }
     for (let i = between(random, 0, JUNK_NAMES.length); i > 0; i--) {
-        files.push(file(`data/inputs/${JUNK_NAMES[i - 1]!}`, "unknown"));
+        files.push(file(`data/inputs/${presentAt(JUNK_NAMES, i - 1, "the junk name")}`, "unknown"));
     }
     return files;
 }
@@ -216,9 +218,9 @@ describe("every kept file lands in exactly one group", () => {
             expect(unclassified.length, `seed ${seed}`).toBe(resolution.unclaimed.length > 0 ? 1 : 0);
             if (unclassified.length === 1) {
                 swept++;
-                expect(unclassified[0]!.id, `seed ${seed}`).toBe(UNCLASSIFIED_GROUP_ID);
-                expect(unclassified[0]!.count, `seed ${seed}`).toBe(resolution.unclaimed.length);
-                expect(unclassified[0]!.memberPaths.length, `seed ${seed}`).toBe(resolution.unclaimed.length);
+                expect(presentAt(unclassified, 0).id, `seed ${seed}`).toBe(UNCLASSIFIED_GROUP_ID);
+                expect(presentAt(unclassified, 0).count, `seed ${seed}`).toBe(resolution.unclaimed.length);
+                expect(presentAt(unclassified, 0).memberPaths.length, `seed ${seed}`).toBe(resolution.unclaimed.length);
             }
         }
         // A property that never reaches the branch it is about proves nothing.
@@ -250,9 +252,9 @@ describe("every kept file lands in exactly one group", () => {
                     final.errors.some((error) => error.includes("claimed by both")),
                     `seed ${seed}`,
                 ).toBe(false);
-                const unclassified = final.groups.find((group) => group.id === UNCLASSIFIED_GROUP_ID)!;
+                const unclassified = presentFind(final.groups, (group) => group.id === UNCLASSIFIED_GROUP_ID);
                 for (const path of final.contested) expect(unclassified.memberPaths, `seed ${seed}`).toContain(path);
-                expect(final.partition.contested!.members, `seed ${seed}`).toBe(final.contested.length);
+                expect(final.partition.contested?.members, `seed ${seed}`).toBe(final.contested.length);
             }
         }
         expect(contested).toBeGreaterThan(0);
@@ -288,7 +290,7 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
 
     it("refuses two operations that claim the same file, naming the overlap", () => {
         const { detected, menu } = fixture();
-        const calls = menu.sets.find((set) => set.pathTemplate.includes("calls"))!;
+        const calls = presentFind(menu.sets, (set) => set.pathTemplate.includes("calls"));
         const resolution = resolveProfileSubmission(
             submission([
                 { op: "use", setId: calls.id, group: annotation("calls") },
@@ -306,8 +308,8 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
 
     it("refuses a split whose value mapping overlaps, rather than picking a winner", () => {
         const { detected, menu } = fixture();
-        const calls = menu.sets.find((set) => set.pathTemplate.includes("calls"))!;
-        const slot = calls.slots.find((candidate) => candidate.tokenClass === "word")!;
+        const calls = presentFind(menu.sets, (set) => set.pathTemplate.includes("calls"));
+        const slot = presentFind(calls.slots, (candidate) => candidate.tokenClass === "word");
         const resolution = resolveProfileSubmission(
             submission([
                 {
@@ -338,11 +340,11 @@ describe("no operation sequence produces an unaccounted or doubly-claimed file",
         // A menu whose tail is unlisted — the same shape a tree of more sets than the
         // rendered bound produces, without needing forty of them to make the point.
         const truncated: SetMenu = { ...full, sets: full.sets.slice(0, 1) };
-        const unlisted = full.sets[1]!;
+        const unlisted = presentAt(full.sets, 1);
 
         const resolution = resolveProfileSubmission(
             submission([
-                { op: "use", setId: truncated.sets[0]!.id, group: annotation("listed") },
+                { op: "use", setId: presentAt(truncated.sets, 0).id, group: annotation("listed") },
                 { op: "use", setId: unlisted.id, group: annotation("unlisted") },
             ]),
             detected,

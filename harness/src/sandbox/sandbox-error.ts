@@ -40,6 +40,7 @@
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { z, ZodError } from "zod";
 
+import { presentFirst } from "../lib/present.js";
 import { unwrapOrThrow, type DomainError } from "../lib/result.js";
 import type { FarmLockError } from "./farm.js";
 import type { SandboxRef } from "./types.js";
@@ -196,7 +197,7 @@ function causeLine(cause: unknown): string | undefined {
     } else {
         return undefined;
     }
-    const first = text.split("\n", 1)[0]!.trim();
+    const first = presentFirst(text.split("\n", 1), "the first cause line").trim();
     if (first.length === 0) return undefined;
     return first.length > CAUSE_LINE_MAX ? `${first.slice(0, CAUSE_LINE_MAX - 1)}…` : first;
 }

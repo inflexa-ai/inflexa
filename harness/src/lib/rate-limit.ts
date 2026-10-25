@@ -21,17 +21,18 @@ function abortReason(signal: AbortSignal): Error {
 
 export function sleepWithSignal(milliseconds: number, signal?: AbortSignal): Promise<void> {
     if (milliseconds <= 0) return Promise.resolve();
-    if (signal?.aborted) return Promise.reject(abortReason(signal));
+    if (signal === undefined) return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    if (signal.aborted) return Promise.reject(abortReason(signal));
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
+            signal.removeEventListener("abort", onAbort);
             resolve();
         }, milliseconds);
         const onAbort = (): void => {
             clearTimeout(timeout);
-            reject(abortReason(signal!));
+            reject(abortReason(signal));
         };
-        signal?.addEventListener("abort", onAbort, { once: true });
+        signal.addEventListener("abort", onAbort, { once: true });
     });
 }
 

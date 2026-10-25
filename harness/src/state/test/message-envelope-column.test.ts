@@ -13,6 +13,7 @@ import type { Pool } from "pg";
 
 import { forgetMigrations, withSchema } from "../../__tests__/setup/postgres.js";
 import { initCortexState } from "../init.js";
+import { presentAt } from "../../lib/present.js";
 
 let pool: Pool;
 let drop: () => Promise<void>;
@@ -30,7 +31,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-    await drop?.();
+    await drop();
 });
 
 describe("messages.message_envelope column type", () => {
@@ -71,6 +72,6 @@ describe("messages.message_envelope column type", () => {
         expect(await envelopeColumnType()).toBe("json");
         // An unchanged physical row location is the observable proof no rewrite ran.
         const { rows: after } = await pool.query<{ ctid: string }>("SELECT ctid::text FROM messages WHERE thread_id = 't'");
-        expect(after[0]?.ctid).toBe(before[0]!.ctid);
+        expect(after[0]?.ctid).toBe(presentAt(before, 0).ctid);
     });
 });

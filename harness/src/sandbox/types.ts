@@ -290,8 +290,7 @@ export type SandboxSpec = {
     image?: string;
     extraEnv?: Record<string, string>;
     /** CPU/memory/GPU request for the sandbox machine. Required of every
-     *  caller — `createSandboxClient` clamps it to cluster limits and rejects
-     *  a sandbox with none. */
+     *  caller — `createSandboxClient` clamps it to cluster limits. */
     resources: ResourceSpec;
     /** Enforced read-only: provision with no read-write step mount, only the
      *  read-only analysis tree for generic read-only agents. */

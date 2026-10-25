@@ -10,6 +10,7 @@ import type { RequestSession } from "../auth/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { type Connectable, type DbError } from "../lib/db-result.js";
+import { presentFirst } from "../lib/present.js";
 import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction.js";
@@ -282,7 +283,10 @@ async function runOpenTurn(
         // A turn that ends before its user message was sent has no rows to close.
         if (!opened() || (pending.length === 0 && close === undefined)) return;
         const closing = close === undefined ? {} : { close };
-        const write = startSeq === undefined ? { opening: pending[0]!, rounds: pending.slice(1), ...closing } : { startSeq, rounds: pending, ...closing };
+        const write =
+            startSeq === undefined
+                ? { opening: presentFirst(pending, "the pending turn"), rounds: pending.slice(1), ...closing }
+                : { startSeq, rounds: pending, ...closing };
         (await history.writeTurn(turn.threadId, write)).match(
             (written) => {
                 pending = [];

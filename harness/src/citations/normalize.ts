@@ -54,7 +54,7 @@ const SPELLED_OUT_MINIMUM = 3;
  * contributes only the initial it would abbreviate to.
  */
 function givenLetters(leftover: readonly string[], initials: readonly string[]): string[] {
-    return [...initials, ...leftover.flatMap((word) => (word.length < SPELLED_OUT_MINIMUM ? [...word] : [word[0]!]))].sort();
+    return [...initials, ...leftover.flatMap((word) => (word.length < SPELLED_OUT_MINIMUM ? [...word] : [word.charAt(0)]))].sort();
 }
 
 function containsLetters(available: readonly string[], required: readonly string[]): boolean {

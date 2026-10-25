@@ -18,6 +18,7 @@
  */
 
 import { ok } from "neverthrow";
+import { presentFirst } from "../../lib/present.js";
 import { z } from "zod";
 
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -196,13 +197,18 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
                 selected.includes("drugbank")
                     ? runSource<ProjectedDrug>("drugbank", async () => {
                           if (!deps.drugbankApiKey) throw new Error("DRUGBANK_API_KEY is not configured");
-                          const drugs = await searchDrugbank(deps.drugbankApiKey, inputs[0]!, isGeneSide ? "target" : "drug", limit);
+                          const drugs = await searchDrugbank(
+                              deps.drugbankApiKey,
+                              presentFirst(inputs, "the first input"),
+                              isGeneSide ? "target" : "drug",
+                              limit,
+                          );
                           return drugs.map((d) => projectDrug(d, input.includeDrugRecord ?? false));
                       })
                     : null,
                 selected.includes("pharmgkb")
                     ? runSource<PharmgkbAnnotation>("pharmgkb", async () => {
-                          const res = await searchPharmgkb(inputs[0]!, isGeneSide ? "gene" : "drug", limit);
+                          const res = await searchPharmgkb(presentFirst(inputs, "the first input"), isGeneSide ? "gene" : "drug", limit);
                           return res.annotations;
                       })
                     : null,

@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { pubchemTool } from "../pubchem.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -55,10 +56,10 @@ describe("pubchem tool — action 'compound'", () => {
 
         expect("results" in result && result.results).toHaveLength(1);
         if ("results" in result) {
-            expect(result.results[0]!.cid).toBe(2244);
-            expect(result.results[0]!.molecularFormula).toBe("C9H8O4");
-            expect(result.results[0]!.molecularWeight).toBe(180.16);
-            expect(result.results[0]!.canonicalSmiles).toBe("CC(=O)OC1=CC=CC=C1C(=O)O");
+            expect(presentAt(result.results, 0).cid).toBe(2244);
+            expect(presentAt(result.results, 0).molecularFormula).toBe("C9H8O4");
+            expect(presentAt(result.results, 0).molecularWeight).toBe(180.16);
+            expect(presentAt(result.results, 0).canonicalSmiles).toBe("CC(=O)OC1=CC=CC=C1C(=O)O");
         }
     });
 
@@ -199,12 +200,12 @@ describe("pubchem tool — action 'assays'", () => {
         // activeOnly defaults true, so the Inactive row is filtered out.
         expect("assays" in result && result.assays).toHaveLength(1);
         if ("assays" in result) {
-            expect(result.assays[0]!.aid).toBe(92967);
-            expect(result.assays[0]!.activityOutcome).toBe("Active");
+            expect(presentAt(result.assays, 0).aid).toBe(92967);
+            expect(presentAt(result.assays, 0).activityOutcome).toBe("Active");
             // The target name of a record is the target accession of its row.
-            expect(result.assays[0]!.targetName).toBe("P05106");
-            expect(result.assays[0]!.activityValue).toBe(5);
-            expect(result.assays[0]!.assayName).toBe("Inhibition of arachidonic acid-induced platelet aggregation");
+            expect(presentAt(result.assays, 0).targetName).toBe("P05106");
+            expect(presentAt(result.assays, 0).activityValue).toBe(5);
+            expect(presentAt(result.assays, 0).assayName).toBe("Inhibition of arachidonic acid-induced platelet aggregation");
         }
     });
 
@@ -218,7 +219,7 @@ describe("pubchem tool — action 'assays'", () => {
         if ("assays" in result) {
             expect(result.assays.map((a) => a.activityOutcome)).toEqual(["Active", "Inactive"]);
             // An empty cell carries no value.
-            expect(result.assays[1]!.activityValue).toBeNull();
+            expect(presentAt(result.assays, 1).activityValue).toBeNull();
         }
     });
 

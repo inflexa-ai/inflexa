@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 
+import { presentFirst } from "../../../lib/present.js";
 import { fixtureCase, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { UniProtSearchResponseSchema } from "../uniprot-client.js";
 
@@ -11,7 +12,7 @@ runFixtureSuite("UniProtKB search golden fixtures", [
         drift: "search_BRCA1_reviewed.drift.json",
         schema: UniProtSearchResponseSchema,
         assertOutput: (response) => {
-            const row = response.results![0]!;
+            const row = presentFirst(response.results ?? [], "the first result row");
             expect(row.primaryAccession).toBe("P38398");
             expect(row.uniProtkbId).toBe("BRCA1_HUMAN");
             // The exact string, not `toContain("reviewed")` — the unreviewed
@@ -32,7 +33,7 @@ runFixtureSuite("UniProtKB search golden fixtures", [
         drift: "search_X5D778_trembl.drift.json",
         schema: UniProtSearchResponseSchema,
         assertOutput: (response) => {
-            const row = response.results![0]!;
+            const row = presentFirst(response.results ?? [], "the first result row");
             expect(row.primaryAccession).toBe("X5D778");
             expect(row.entryType).toBe("UniProtKB unreviewed (TrEMBL)");
             // A TrEMBL row can name the protein in `submissionNames` alone.
@@ -47,7 +48,7 @@ runFixtureSuite("UniProtKB search golden fixtures", [
         drift: "search_Q6ZQY7_sparse.drift.json",
         schema: UniProtSearchResponseSchema,
         assertOutput: (response) => {
-            const row = response.results![0]!;
+            const row = presentFirst(response.results ?? [], "the first result row");
             expect(row.primaryAccession).toBe("Q6ZQY7");
             // UniProt omits the key of an absent value, and it never sends null.
             expect(row.genes).toBeUndefined();

@@ -25,6 +25,7 @@ import type { SandboxError } from "../../sandbox/sandbox-error.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps } from "../data-profile.js";
+import { presentAt } from "../../lib/present.js";
 
 const ANALYSIS_ID = "an-profile";
 const OTHER_ANALYSIS_ID = "an-profile-other";
@@ -116,7 +117,7 @@ describe("the data profile — a refused spawn", () => {
 
         const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
         expect(failed).toHaveLength(1);
-        expect(failed[0]!.values).toContain("account_frozen");
+        expect(presentAt(failed, 0).values).toContain("account_frozen");
         expect(revoked).toEqual(["data-profile-suspended"]);
         expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
     });
@@ -133,7 +134,7 @@ describe("the data profile — a refused spawn", () => {
 
         const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
         expect(failed).toHaveLength(1);
-        expect(String(failed[0]!.values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
+        expect(String(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
         expect(revoked).toEqual(["data-profile-failed"]);
         expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(false);
     });

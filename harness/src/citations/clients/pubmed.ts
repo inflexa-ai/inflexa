@@ -29,7 +29,9 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
         let pmids: string[];
 
         if (request.plan.operation === "pubmed_exact") {
-            pmids = [request.normalized.identifiers.pmid!];
+            const pmid = request.normalized.identifiers.pmid;
+            if (pmid === undefined) return sourceOutcome("pubmed", request.plan.operation, "unavailable", 0, [], "the exact plan carries no PMID");
+            pmids = [pmid];
         } else if (request.plan.operation === "pubmed_structured") {
             requestCount += 1;
             const match = await source.matchCitation(
@@ -95,7 +97,10 @@ export function createPubmedCitationClient(options: PubmedCitationClientOptions 
                 if (results[index] === undefined) results[index] = await resolve(request, signal);
             }),
         );
-        return results.map((result) => result!);
+        return results.map((result) => {
+            if (result === undefined) throw new Error("the pubmed batch left an outcome unresolved");
+            return result;
+        });
     }
 
     return { source: "pubmed", resolve, resolveMany };

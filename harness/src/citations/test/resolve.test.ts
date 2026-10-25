@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { createCrossrefClient } from "../clients/crossref.js";
 import { createCitationResolver } from "../resolve.js";
 import type { CitationRecord, CitationSource, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
+import { presentAt } from "../../lib/present.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -43,7 +44,8 @@ function realCrossref(): CitationSourceClient {
 
 async function matchingHandler(source: CitationSource, request: CitationSourceRequest): Promise<CitationSourceOutcome> {
     if (source === "doi_registry") {
-        const doi = request.normalized.identifiers.doi!;
+        const doi = request.normalized.identifiers.doi;
+        if (doi === undefined) throw new Error("doi is absent");
         return {
             source,
             operation: request.plan.operation,
@@ -94,7 +96,8 @@ describe("CitationResolver batch orchestration", () => {
             resolveMany: async (requests) => {
                 batchCalls += 1;
                 return requests.map((request) => {
-                    const pmid = request.normalized.identifiers.pmid!;
+                    const pmid = request.normalized.identifiers.pmid;
+                    if (pmid === undefined) throw new Error("pmid is absent");
                     return {
                         source: "pubmed",
                         operation: request.plan.operation,
@@ -135,7 +138,7 @@ describe("CitationResolver batch orchestration", () => {
         const pubmed: CitationSourceClient = {
             source: "pubmed",
             resolve: async (request) => noData("pubmed", request),
-            resolveMany: async (requests) => [noData("pubmed", requests[0]!)],
+            resolveMany: async (requests) => [noData("pubmed", presentAt(requests, 0))],
         };
         const others = clientSet(matchingHandler).filter((client) => client.source !== "pubmed");
         const resolver = createCitationResolver({}, { clients: [...others, pubmed] });
@@ -286,7 +289,8 @@ describe("CitationResolver canonical outcome fixtures", () => {
             {
                 clients: clientSet(async (source, request) => {
                     if (source !== "doi_registry") return noData(source, request);
-                    const doi = request.normalized.identifiers.doi!;
+                    const doi = request.normalized.identifiers.doi;
+                    if (doi === undefined) throw new Error("doi is absent");
                     return {
                         source,
                         operation: request.plan.operation,

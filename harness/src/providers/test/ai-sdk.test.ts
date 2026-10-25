@@ -30,6 +30,7 @@ import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import { isProviderError } from "../errors.js";
 import type { ChatProvider, ChatRequest, ReasoningPolicy } from "../types.js";
+import { presentAt } from "../../lib/present.js";
 
 const usage: LanguageModelV4Usage = {
     inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
@@ -231,7 +232,7 @@ describe("createAiSdkProvider", () => {
         expect(result._unsafeUnwrap().message).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
         // A header name is case-insensitive on the wire, thus the assertion folds
         // the case rather than pinning the spelling the SDK happens to forward.
-        const sent = Object.fromEntries(Object.entries(calls[0]!.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+        const sent = Object.fromEntries(Object.entries(presentAt(calls, 0).headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
         expect(sent).toMatchObject({
             "x-attribution": "a1",
             "x-no-harness-name": "v2",
@@ -248,7 +249,7 @@ describe("createAiSdkProvider", () => {
         });
 
         expect((await provider.chat(request, makeSession())).isOk()).toBe(true);
-        const sent = Object.keys(calls[0]!.headers ?? {}).map((name) => name.toLowerCase());
+        const sent = Object.keys(presentAt(calls, 0).headers ?? {}).map((name) => name.toLowerCase());
         expect(sent.filter((name) => name.startsWith("x-attribution"))).toEqual([]);
     });
 
@@ -330,7 +331,7 @@ describe("createAiSdkProvider", () => {
 
         expect(generateCalls).toHaveLength(0);
         expect(streamCalls).toHaveLength(1);
-        expect(streamCalls[0]!.headers).toMatchObject({ "x-attribution": "a1" });
+        expect(presentAt(streamCalls, 0).headers).toMatchObject({ "x-attribution": "a1" });
         expect(events).toEqual([
             { type: "text-delta", text: "he" },
             { type: "text-delta", text: "llo" },
@@ -417,12 +418,12 @@ describe("empty text block sanitization", () => {
         );
 
         expect(result.isOk()).toBe(true);
-        const textParts = calls[0]!.prompt.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === "text") : []));
+        const textParts = presentAt(calls, 0).prompt.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === "text") : []));
         for (const part of textParts) {
             expect(part.text).not.toBe("");
         }
         // The tool call survives the strip; the all-empty assistant message is dropped whole.
-        const json = JSON.stringify(calls[0]!.prompt);
+        const json = JSON.stringify(presentAt(calls, 0).prompt);
         expect(json).toContain("tc-1");
         expect(json).not.toContain('"text":""');
     });
@@ -940,7 +941,7 @@ describe("createAiSdkProvider chat retry", () => {
         expect(result.isOk()).toBe(true);
         expect(hookCalls).toBe(2);
         expect(calls).toHaveLength(2);
-        expect(calls[1]!.headers).toMatchObject({ "x-attempt": "attempt-2" });
+        expect(presentAt(calls, 1).headers).toMatchObject({ "x-attempt": "attempt-2" });
     });
 
     it("never retries a status that the map of the host holds", async () => {
@@ -1193,7 +1194,7 @@ describe("createAiSdkProvider chatStream retry", () => {
 
         expect(attempts).toBe(1);
         expect(events).toHaveLength(1);
-        expect(events[0]!.type).toBe("done");
+        expect(presentAt(events, 0).type).toBe("done");
     });
 });
 
@@ -1539,8 +1540,8 @@ describe("failure logging", () => {
 
         expect(result.isErr()).toBe(true);
         expect(errors).toHaveLength(1);
-        expect(errors[0]!.msg).toBe("provider call failed");
-        expect(errors[0]!.fields).toMatchObject({ kind: "suspend", retryable: false, error: "payment required" });
+        expect(presentAt(errors, 0).msg).toBe("provider call failed");
+        expect(presentAt(errors, 0).fields).toMatchObject({ kind: "suspend", retryable: false, error: "payment required" });
     });
 
     it("leaves a caller abort unrecorded, because a cancellation is not a failure", async () => {

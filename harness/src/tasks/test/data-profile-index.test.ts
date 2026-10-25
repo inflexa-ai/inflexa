@@ -10,6 +10,7 @@ import type { DataProfileResult } from "../../contracts/data-profile.js";
 import { buildManifest } from "../../input-scan/scan.js";
 import type { ScannedFile } from "../../input-scan/types.js";
 import { buildProfileIndexEntries } from "../data-profile-index.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 const SUBJECTS = 400;
 const ALIGNED = 398;
@@ -158,7 +159,8 @@ describe("a snapshot of the groups era", () => {
     });
 
     it("composes a group entry from its meaning, category, and description, and carries the template and counts in metadata", () => {
-        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.group === "per-subject-calls")!;
+        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.group === "per-subject-calls");
+        if (entry === undefined) throw new Error("entry is absent");
 
         expect(entry.id).toBe("/a1/group/per-subject-calls");
         expect(entry.text).toContain("one member is one subject's small-variant calls");
@@ -177,12 +179,14 @@ describe("a snapshot of the groups era", () => {
     });
 
     it("names the swept residue as a group like any other, so the sweep is searchable", () => {
-        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.group === "unclassified")!;
+        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.group === "unclassified");
+        if (entry === undefined) throw new Error("entry is absent");
         expect(entry.metadata).toMatchObject({ type: "input-group", unclassified: true, categoryLabel: "unclassified" });
     });
 
     it("composes a dimension entry from its label, category, and observation summaries", () => {
-        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.dimension === "subject")!;
+        const entry = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED }).find((e) => e.metadata.dimension === "subject");
+        if (entry === undefined) throw new Error("entry is absent");
 
         expect(entry.id).toBe("/a1/dimension/subject");
         expect(entry.text).toContain("subject — subject, a biological dimension");
@@ -195,7 +199,7 @@ describe("a snapshot of the groups era", () => {
 
     it("addresses an annotated member by its workspace path and composes its group's meaning into the text", () => {
         const entries = buildProfileIndexEntries({ analysisId: "a1", result: RESOLVED });
-        const entry = entries.find((e) => e.metadata.type === "input" && e.metadata.group === "per-subject-calls")!;
+        const entry = presentFind(entries, (e) => e.metadata.type === "input" && e.metadata.group === "per-subject-calls");
 
         expect(entry.id).toBe("/a1/data/inputs/vcf/SUBJ_0001.vcf.gz");
         expect(entry.text).toContain("The only member carrying a contig header.");
@@ -226,7 +230,7 @@ describe("a snapshot of the kinds era", () => {
 
     it("labels its entity entries with the axis the profile named", () => {
         const entries = buildProfileIndexEntries({ analysisId: "a1", result: LEGACY, scan: scanFixture() });
-        const entity = entries.find((e) => e.metadata.type === "input")!;
+        const entity = presentFind(entries, (e) => e.metadata.type === "input");
         expect(entity.metadata.axis).toBe("subject");
         expect(entity.text).toContain("one subject's somatic variant calls");
     });
@@ -241,9 +245,9 @@ describe("a snapshot of the kinds era", () => {
             },
         });
         expect(entries).toHaveLength(1);
-        expect(entries[0]!.metadata.type).toBe("input");
-        expect(entries[0]!.id).toBe("/a1/data/inputs/meta/sheet_1.csv");
-        expect(entries[0]!.metadata.path).toBe("data/inputs/meta/sheet_1.csv");
+        expect(presentAt(entries, 0).metadata.type).toBe("input");
+        expect(presentAt(entries, 0).id).toBe("/a1/data/inputs/meta/sheet_1.csv");
+        expect(presentAt(entries, 0).metadata.path).toBe("data/inputs/meta/sheet_1.csv");
     });
 
     it("marks file-addressed entries with a metadata path and pattern entries with none", () => {

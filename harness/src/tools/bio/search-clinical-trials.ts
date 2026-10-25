@@ -104,10 +104,12 @@ export const searchClinicalTrialsTool = defineTool({
         includeSummaries = false,
     }): Promise<Result<ClinicalTrialsOutput, ToolError>> => {
         if (action === "details") {
-            return ok({ trial: await getTrialDetails(nctId!) });
+            if (nctId === undefined) throw new Error("details requires nctId");
+            return ok({ trial: await getTrialDetails(nctId) });
         }
 
-        const result = await searchTrials(query!, { phase, status, limit });
+        if (query === undefined) throw new Error("search requires query");
+        const result = await searchTrials(query, { phase, status, limit });
         const trials = includeSummaries
             ? result.trials
             : result.trials.map(({ detailedDescription: _detailedDescription, ...trial }) => ({

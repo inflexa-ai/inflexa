@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { fixtureCase, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { AlphaFoldPredictionSchema } from "../alphafold-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 runFixtureSuite("AlphaFold DB golden fixtures", [
     fixtureCase({
@@ -13,7 +14,7 @@ runFixtureSuite("AlphaFold DB golden fixtures", [
         schema: z.array(AlphaFoldPredictionSchema),
         assertOutput: (entries) => {
             expect(entries).toHaveLength(1);
-            const entry = entries[0]!;
+            const entry = presentAt(entries, 0);
             expect(entry.uniprotAccession).toBe("P69905");
             expect(entry.globalMetricValue).toBe(98.06);
             expect(entry.plddtDocUrl).toBe("https://alphafold.ebi.ac.uk/files/AF-P69905-F1-confidence_v6.json");
@@ -28,10 +29,10 @@ runFixtureSuite("AlphaFold DB golden fixtures", [
         schema: z.array(AlphaFoldPredictionSchema),
         assertOutput: (entries) => {
             expect(entries).toHaveLength(2);
-            expect(entries[0]!.uniprotAccession).toBe("P38398");
-            expect(entries[1]!.uniprotAccession).toBe("P38398-8");
+            expect(presentAt(entries, 0).uniprotAccession).toBe("P38398");
+            expect(presentAt(entries, 1).uniprotAccession).toBe("P38398-8");
             // The wire omits `amAnnotationsUrl` for a non-canonical isoform entry.
-            expect(entries[1]!.amAnnotationsUrl).toBeUndefined();
+            expect(presentAt(entries, 1).amAnnotationsUrl).toBeUndefined();
         },
     }),
 ]);

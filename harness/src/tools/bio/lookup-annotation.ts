@@ -218,7 +218,8 @@ export const lookupAnnotationTool = defineTool({
                 const pathway = await getPathwayById(pathwayId);
                 return ok({ pathways: pathway ? [pathway] : [] });
             }
-            const pathways = await searchPathways(query!, {
+            if (query === undefined) throw new Error("the pathways lookup requires query");
+            const pathways = await searchPathways(query, {
                 source: vocabulary === "pathways" ? "both" : vocabulary,
                 organism: organism ?? "hsa",
                 includeGenes: includeGenes ?? false,

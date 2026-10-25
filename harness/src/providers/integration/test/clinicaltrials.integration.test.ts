@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { searchTrials } from "../../../tools/lib/clinical-trials-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 
@@ -22,7 +23,7 @@ describe.skipIf(!LIVE)("live ClinicalTrials.gov", () => {
         expect(result.trials.length).toBeGreaterThan(0);
         expect(result.totalFound).toBeGreaterThanOrEqual(result.trials.length);
 
-        const trial = result.trials[0]!;
+        const trial = presentAt(result.trials, 0);
         expect(trial.nctId).toMatch(/^NCT\d{8}$/);
         expect(trial.title.length).toBeGreaterThan(0);
         expect(trial.status.length).toBeGreaterThan(0);

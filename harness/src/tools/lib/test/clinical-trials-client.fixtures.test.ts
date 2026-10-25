@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { CtSearchResponseSchema, CtStudySchema, getTrialDetails, mapClinicalTrialStudy, searchTrials } from "../clinical-trials-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 let requested: string[] = [];
@@ -34,9 +35,9 @@ runFixtureSuite("clinicaltrials golden fixtures", [
         assertOutput: (body) => {
             const trials = (body.studies ?? []).map(mapClinicalTrialStudy);
             expect(trials).toHaveLength(5);
-            expect(trials[0]!.nctId).toBe("NCT00039364");
-            expect(trials[0]!.phase).toBe("PHASE2");
-            expect(trials[0]!.enrollmentCount).toBe(112);
+            expect(presentAt(trials, 0).nctId).toBe("NCT00039364");
+            expect(presentAt(trials, 0).phase).toBe("PHASE2");
+            expect(presentAt(trials, 0).enrollmentCount).toBe(112);
         },
     }),
     fixtureCase({
@@ -64,8 +65,9 @@ runFixtureSuite("clinicaltrials golden fixtures", [
             // The OpenAPI document types a measurement value as a string, thus the
             // client reads it with `parseFloat`.
             const value = measure?.classes?.[0]?.categories?.[0]?.measurements?.[0]?.value;
+            if (value === undefined) throw new Error("the measurement value is absent");
             expect(typeof value).toBe("string");
-            expect(parseFloat(value!)).toBe(18);
+            expect(parseFloat(value)).toBe(18);
             expect(study.resultsSection?.adverseEventsModule?.eventGroups).toHaveLength(4);
         },
     }),
@@ -98,7 +100,8 @@ describe("the ClinicalTrials.gov client over the golden fixtures", () => {
 
         const details = await getTrialDetails("NCT00760929");
 
-        expect(details!.outcomes[0]!.effect).toMatchObject({ kind: "quantitative", value: 18, units: "Participants" });
-        expect(details!.adverseEvents[0]!.counts[0]!.numAtRisk).toBe(26);
+        if (details === null) throw new Error("the trial details are absent");
+        expect(presentAt(details.outcomes, 0, "the first outcome").effect).toMatchObject({ kind: "quantitative", value: 18, units: "Participants" });
+        expect(presentAt(presentAt(details.adverseEvents, 0, "the first adverse event").counts, 0, "the first count").numAtRisk).toBe(26);
     });
 });

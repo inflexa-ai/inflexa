@@ -39,7 +39,9 @@ const errStepMirror = DBOS.registerWorkflow(
             },
             { name: "result-checkpoint.step" },
         );
-        await DBOS.cancelWorkflow(DBOS.workflowID!);
+        const workflowId = DBOS.workflowID;
+        if (workflowId === undefined) throw new Error("the workflow id is absent outside a DBOS execution");
+        await DBOS.cancelWorkflow(workflowId);
         await DBOS.runStep(async () => undefined, { name: "result-checkpoint.tail" });
         return {
             isErr: result.isErr(),
@@ -76,7 +78,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-    if (rig) await rig.drop();
+    await rig.drop();
 });
 
 describe("a Result across a DBOS checkpoint", () => {

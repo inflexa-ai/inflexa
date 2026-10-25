@@ -12,6 +12,7 @@
 import { z } from "zod";
 
 import { isUnknownArray } from "../../lib/unknown-array.js";
+import { presentGet } from "../../lib/present.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
 
@@ -140,7 +141,7 @@ export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {
         if (sex) {
             allSexes.add(sex);
             if (!mpToSexes.has(mpId)) mpToSexes.set(mpId, new Set());
-            mpToSexes.get(mpId)!.add(sex);
+            presentGet(mpToSexes, mpId, "the sex set of the phenotype").add(sex);
         }
     }
 
@@ -208,7 +209,7 @@ async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return null;
     }
-    const docs = res.value?.response?.docs ?? [];
+    const docs = res.value.response?.docs ?? [];
     if (!Array.isArray(docs) || docs.length === 0) return null;
     const doc = docs[0];
     if (doc === undefined || !doc.marker_symbol || !doc.mgi_accession_id) return null;
@@ -226,7 +227,7 @@ async function fetchPhenotypes(mouseSym: string): Promise<{ raw: unknown; numFou
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { raw: { response: { docs: [] } }, numFound: 0 };
     }
-    const numFound = Number(res.value?.response?.numFound ?? 0);
+    const numFound = Number(res.value.response?.numFound ?? 0);
     return { raw: res.value, numFound };
 }
 

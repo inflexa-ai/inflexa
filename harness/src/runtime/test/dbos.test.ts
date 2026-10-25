@@ -13,6 +13,7 @@ import { createCapturingLogger, silentLogger } from "../../__tests__/setup/logge
 import type { Querier } from "../../state/db.js";
 import type { DBOSSpan } from "@dbos-inc/dbos-sdk";
 import { __resetDbosStateForTest, __setDbosStateForTest, dbosSdkConfig, dbosSdkLogger, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "../dbos.js";
+import { presentAt } from "../../lib/present.js";
 
 const stubConfig: DbosConfig = {
     dbHost: "",
@@ -131,7 +132,9 @@ describe("dbosSdkConfig", () => {
     it("routes the SDK's own logging through the harness Logger seam", () => {
         const logger = createCapturingLogger();
         const sdk = dbosSdkConfig(fullConfig, logger);
-        sdk.logger!.info("Recovering 2 workflows");
+        const sdkLogger = sdk.logger;
+        if (sdkLogger === undefined) throw new Error("the sdk logger is absent");
+        sdkLogger.info("Recovering 2 workflows");
         expect(logger.records).toEqual([{ level: "info", msg: "[sdk] Recovering 2 workflows", fields: {} }]);
     });
 });
@@ -166,8 +169,8 @@ describe("dbosSdkLogger", () => {
         };
         sdk.error("step failed", { stack: "Error: step failed\n    at x", span });
         expect(logger.records).toHaveLength(1);
-        expect(logger.records[0]!.msg).toBe("[sdk] step failed");
-        expect(logger.records[0]!.fields).toEqual({
+        expect(presentAt(logger.records, 0).msg).toBe("[sdk] step failed");
+        expect(presentAt(logger.records, 0).fields).toEqual({
             "dbos.operation.workflow_id": "wf-1",
             "dbos.operation.name": "executeAnalysis",
             stack: "Error: step failed\n    at x",
@@ -188,9 +191,9 @@ describe("legacy ephemeral workflow migration sweep", () => {
         await sweepEphemeralWorkflows({ pool, logger: silentLogger, executorId: "executor-1" });
 
         expect(queries).toHaveLength(1);
-        expect(queries[0]!.text).toContain("status = 'PENDING'");
-        expect(queries[0]!.text).toContain("executor_id = $2");
-        expect(queries[0]!.text).toContain("workflow_uuid LIKE 'ephemeral:%'");
-        expect(queries[0]!.values?.[1]).toBe("executor-1");
+        expect(presentAt(queries, 0).text).toContain("status = 'PENDING'");
+        expect(presentAt(queries, 0).text).toContain("executor_id = $2");
+        expect(presentAt(queries, 0).text).toContain("workflow_uuid LIKE 'ephemeral:%'");
+        expect(presentAt(queries, 0).values?.[1]).toBe("executor-1");
     });
 });

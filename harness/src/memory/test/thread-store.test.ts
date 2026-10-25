@@ -8,6 +8,7 @@ import { withSchema } from "../../__tests__/setup/postgres.js";
 import { createToolOutputStore } from "../../state/tool-outputs.js";
 import { createThreadStore, type ThreadStore, type ThreadType } from "../thread-store.js";
 import { createThreadHistory } from "../thread-history.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -54,17 +55,17 @@ function appendTwoMessageTurn(threadId: string): ResultAsync<void, DbError> {
 
 async function messageCount(threadId: string): Promise<number> {
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", [threadId]);
-    return Number(rows[0]!.count);
+    return Number(presentAt(rows, 0).count);
 }
 
 async function turnRecordCount(threadId: string): Promise<number> {
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_thread_turns WHERE thread_id = $1", [threadId]);
-    return Number(rows[0]!.count);
+    return Number(presentAt(rows, 0).count);
 }
 
 async function threadRowCount(threadId: string): Promise<number> {
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", [threadId]);
-    return Number(rows[0]!.count);
+    return Number(presentAt(rows, 0).count);
 }
 
 /**
@@ -82,6 +83,12 @@ async function readRow(threadId: string): Promise<{ threadType: string; parentTh
     );
     const row = rows[0];
     return row ? { threadType: row.thread_type, parentThreadId: row.parent_thread_id, parentSeq: row.parent_seq } : null;
+}
+
+async function storedThread(threadId: string) {
+    const stored = (await store.getThread(threadId))._unsafeUnwrap();
+    if (stored === null) throw new Error(`the thread "${threadId}" is absent`);
+    return stored;
 }
 
 /**
@@ -111,7 +118,7 @@ async function readStamps(threadId: string): Promise<{ createdAt: string; update
      FROM cortex_analysis_threads WHERE thread_id = $1`,
         [threadId],
     );
-    const row = rows[0]!;
+    const row = presentAt(rows, 0);
     return { createdAt: row.created_at, updatedAt: row.updated_at, updatedAtDate: row.updated_at_date, deletedAt: row.deleted_at };
 }
 
@@ -146,10 +153,10 @@ describe("createThread + getThread", () => {
 
         const read = (await store.getThread("t1"))._unsafeUnwrap();
         expect(read).not.toBeNull();
-        expect(read!.analysisId).toBe(ANALYSIS_A);
-        expect(read!.title).toBe("Run PCA");
-        expect(read!.createdAt).toBeInstanceOf(Date);
-        expect(read!.updatedAt).toBeInstanceOf(Date);
+        expect(read?.analysisId).toBe(ANALYSIS_A);
+        expect(read?.title).toBe("Run PCA");
+        expect(read?.createdAt).toBeInstanceOf(Date);
+        expect(read?.updatedAt).toBeInstanceOf(Date);
     });
 
     it("returns null for an absent thread", async () => {
@@ -178,7 +185,7 @@ describe("createThread + getThread", () => {
         expect(second.createdAt.getTime()).toBe(first.createdAt.getTime());
 
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", ["t1"]);
-        expect(Number(rows[0]!.count)).toBe(1);
+        expect(Number(presentAt(rows, 0).count)).toBe(1);
     });
 });
 
@@ -190,11 +197,11 @@ describe("updateTitle", () => {
 
         const updated = (await store.updateTitle("t1", "New title"))._unsafeUnwrap();
         expect(updated).not.toBeNull();
-        expect(updated!.title).toBe("New title");
-        expect(updated!.analysisId).toBe(ANALYSIS_A);
+        expect(updated?.title).toBe("New title");
+        expect(updated?.analysisId).toBe(ANALYSIS_A);
 
         const read = (await store.getThread("t1"))._unsafeUnwrap();
-        expect(read!.title).toBe("New title");
+        expect(read?.title).toBe("New title");
 
         // Read the row raw so the claim covers every column, not just the two the
         // store projects: the activity clock has to have moved, and nothing else
@@ -205,7 +212,7 @@ describe("updateTitle", () => {
         expect(after.deletedAt).toBeNull();
         // The returned row is the post-update row, not the one that was read to
         // find it — its stamp is the one now on disk.
-        expect(updated!.updatedAt.getTime()).toBe(after.updatedAtDate.getTime());
+        expect(updated?.updatedAt.getTime()).toBe(after.updatedAtDate.getTime());
     });
 
     it("leaves a stamp fresher than its own clock unmoved while still renaming", async () => {
@@ -221,13 +228,13 @@ describe("updateTitle", () => {
 
         // The rename lands...
         expect(updated).not.toBeNull();
-        expect(updated!.title).toBe("Renamed");
-        expect((await store.getThread("t1"))._unsafeUnwrap()!.title).toBe("Renamed");
+        expect(updated?.title).toBe("Renamed");
+        expect((await storedThread("t1")).title).toBe("Renamed");
         // ...and the fresher stamp survives it, byte-identical on disk and in the
         // row the call hands back.
         const after = await readStamps("t1");
         expect(after.updatedAt).toBe(before.updatedAt);
-        expect(updated!.updatedAt.getTime()).toBe(before.updatedAtDate.getTime());
+        expect(updated?.updatedAt.getTime()).toBe(before.updatedAtDate.getTime());
     });
 
     it("is a no-op on a missing thread", async () => {
@@ -248,7 +255,7 @@ describe("setAutoTitle", () => {
         (await store.updateTitle("t1", "QC summary"))._unsafeUnwrap();
 
         expect((await store.setAutoTitle("t1", "Findings"))._unsafeUnwrap()).toBeNull();
-        expect((await store.getThread("t1"))._unsafeUnwrap()!.title).toBe("QC summary");
+        expect((await storedThread("t1")).title).toBe("QC summary");
     });
 
     it("is a no-op on a missing or archived thread", async () => {
@@ -275,7 +282,7 @@ describe("archiveThread (soft delete)", () => {
         // Row still exists (with deleted_at set).
         const rowResult = await pool.query<{ deleted_at: Date | null }>("SELECT deleted_at FROM cortex_analysis_threads WHERE thread_id = $1", ["t1"]);
         expect(rowResult.rows).toHaveLength(1);
-        expect(rowResult.rows[0]!.deleted_at).not.toBeNull();
+        expect(presentAt(rowResult.rows, 0).deleted_at).not.toBeNull();
 
         expect(await messageCount("t1")).toBe(2);
     });
@@ -309,7 +316,7 @@ describe("unarchiveThread", () => {
 
         const read = (await store.getThread("t1"))._unsafeUnwrap();
         expect(read).not.toBeNull();
-        expect(read!.title).toBe("Back");
+        expect(read?.title).toBe("Back");
         const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
         expect(page.threads.map((t) => t.threadId)).toContain("t1");
         expect(await readTombstone("t1")).toBeNull();
@@ -463,8 +470,8 @@ describe("listRecentThreads", () => {
             "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_analysis_threads_recent'",
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.indexdef).toContain("(updated_at DESC, thread_id)");
-        expect(rows[0]!.indexdef).toContain("WHERE (deleted_at IS NULL)");
+        expect(presentAt(rows, 0).indexdef).toContain("(updated_at DESC, thread_id)");
+        expect(presentAt(rows, 0).indexdef).toContain("WHERE (deleted_at IS NULL)");
     });
 
     it("gives the threads of two analyses in update order, with the fields of a listed thread", async () => {
@@ -476,7 +483,8 @@ describe("listRecentThreads", () => {
 
         expect(threads.map((t) => t.threadId)).toEqual(["a-late", "b-mid"]);
         const listed = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap().threads.find((t) => t.threadId === "a-late");
-        expect(threads[0]).toEqual(listed!);
+        if (listed === undefined) throw new Error("the listed thread is absent");
+        expect(threads[0]).toEqual(listed);
     });
 
     it("breaks a tie of the update time with the thread id, ascending", async () => {
@@ -545,7 +553,7 @@ describe("listThreads includeArchived", () => {
 
         expect(page.threads.map((t) => t.threadId)).toEqual(["live"]);
         expect(page.total).toBe(1);
-        expect(page.threads[0]!.deletedAt).toBeNull();
+        expect(presentAt(page.threads, 0).deletedAt).toBeNull();
     });
 
     it("returns live and archived together when asked", async () => {
@@ -557,8 +565,8 @@ describe("listThreads includeArchived", () => {
         expect(page.total).toBe(2);
         // Once both states share one result set, the tombstone is the only thing
         // that tells them apart — a caller has nothing else to render or filter on.
-        expect(page.threads.find((t) => t.threadId === "archived")!.deletedAt).toBeInstanceOf(Date);
-        expect(page.threads.find((t) => t.threadId === "live")!.deletedAt).toBeNull();
+        expect(presentFind(page.threads, (t) => t.threadId === "archived").deletedAt).toBeInstanceOf(Date);
+        expect(presentFind(page.threads, (t) => t.threadId === "live").deletedAt).toBeNull();
     });
 
     it("counts and pages the whole widened set", async () => {
@@ -603,13 +611,13 @@ describe("listThreads includeArchived", () => {
         const archived = widened.threads.filter((t) => t.deletedAt !== null);
         expect(archived).toHaveLength(1);
 
-        (await store.unarchiveThread(archived[0]!.threadId))._unsafeUnwrap();
+        (await store.unarchiveThread(presentAt(archived, 0).threadId))._unsafeUnwrap();
 
         const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
         expect(page.total).toBe(2);
         const restored = page.threads.find((t) => t.threadId === "restore-me");
         expect(restored).toBeDefined();
-        expect(restored!.deletedAt).toBeNull();
+        expect(restored?.deletedAt).toBeNull();
     });
 });
 
@@ -622,9 +630,9 @@ describe("createThread type and parent edge", () => {
         expect(created.parentSeq).toBeNull();
 
         const read = (await store.getThread("t1"))._unsafeUnwrap();
-        expect(read!.threadType).toBe("conversation");
-        expect(read!.parentThreadId).toBeNull();
-        expect(read!.parentSeq).toBeNull();
+        expect(read?.threadType).toBe("conversation");
+        expect(read?.parentThreadId).toBeNull();
+        expect(read?.parentSeq).toBeNull();
     });
 
     it("round-trips a type, a parent and its anchor", async () => {
@@ -646,21 +654,23 @@ describe("createThread type and parent edge", () => {
         expect(created.parentSeq).toBe(12);
 
         const read = (await store.getThread("spawned"))._unsafeUnwrap();
-        expect(read!.threadType).toBe("report");
-        expect(read!.parentThreadId).toBe("root");
+        expect(read?.threadType).toBe("report");
+        expect(read?.parentThreadId).toBe("root");
         // The column is a bigint the driver hands back as text, and the store is
         // the single place it becomes a number — a caller comparing the anchor
         // against a `messages.seq` needs it to have made that crossing.
-        expect(read!.parentSeq).toBe(12);
-        expect(typeof read!.parentSeq).toBe("number");
+        expect(read?.parentSeq).toBe(12);
+        expect(typeof read?.parentSeq).toBe("number");
     });
 
     it("round-trips every member of the closed type set", async () => {
         for (const threadType of THREAD_TYPES) {
             (await store.createThread({ threadId: `t-${threadType}`, analysisId: ANALYSIS_A, type: threadType }))._unsafeUnwrap();
 
-            expect((await store.getThread(`t-${threadType}`))._unsafeUnwrap()!.threadType).toBe(threadType);
-            expect((await readRow(`t-${threadType}`))!.threadType).toBe(threadType);
+            expect((await storedThread(`t-${threadType}`)).threadType).toBe(threadType);
+            const row = await readRow(`t-${threadType}`);
+            if (row === null) throw new Error(`the stored row of "${threadType}" is absent`);
+            expect(row.threadType).toBe(threadType);
         }
     });
 });
@@ -858,7 +868,7 @@ describe("listThreads type and parent filters", () => {
         const second = (await store.listThreads({ analysisId: ANALYSIS_A, type: "report", page: 1, perPage: 1 }))._unsafeUnwrap();
         expect(second.total).toBe(2);
         expect(second.threads).toHaveLength(1);
-        expect(second.threads[0]!.threadType).toBe("report");
+        expect(presentAt(second.threads, 0).threadType).toBe("report");
         expect(second.hasMore).toBe(false);
     });
 
@@ -967,7 +977,7 @@ describe("unarchiveThread across a subtree", () => {
 
         const restored = (await store.getThread("child"))._unsafeUnwrap();
         expect(restored).not.toBeNull();
-        expect(restored!.title).toBe("Child");
+        expect(restored?.title).toBe("Child");
         expect(await readTombstone("root")).not.toBeNull();
         expect(await readTombstone("grandchild")).not.toBeNull();
     });
@@ -989,7 +999,7 @@ describe("purgeThread across a subtree", () => {
 
     async function keptCount(ref: string): Promise<number> {
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_tool_outputs WHERE ref = $1", [ref]);
-        return Number(rows[0]!.count);
+        return Number(presentAt(rows, 0).count);
     }
 
     it("takes the rows and messages of every generation, leaving an unrelated thread whole", async () => {
@@ -1044,7 +1054,7 @@ describe("purgeThread across a subtree", () => {
         // transcript and its parent edge, and so does the thread beside it.
         expect(await threadRowCount("root")).toBe(1);
         expect(await messageCount("root")).toBe(2);
-        expect((await store.getThread("root"))._unsafeUnwrap()!.title).toBe("Root");
+        expect((await storedThread("root")).title).toBe("Root");
         expect(await threadRowCount("unrelated")).toBe(1);
         expect(await messageCount("unrelated")).toBe(2);
     });

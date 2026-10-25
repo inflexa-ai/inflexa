@@ -17,6 +17,7 @@ import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
 import type { Querier } from "../state/db.js";
 
 import type { LogFields, Logger } from "../lib/logger.js";
+import { presentGet } from "../lib/present.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
 import { errRecipe, okRecipe } from "./result-serialization.js";
 
@@ -136,8 +137,9 @@ const SDK_DEFAULT_LOG_LEVEL = "info";
  */
 export function dbosSdkLogger(logger: Logger, logLevel: string | undefined): DLogger {
     const sink = logger.named("sdk");
-    const threshold = SDK_LOG_LEVEL_RANK[logLevel ?? SDK_DEFAULT_LOG_LEVEL] ?? SDK_LOG_LEVEL_RANK[SDK_DEFAULT_LOG_LEVEL]!;
-    const passes = (level: keyof typeof SDK_LOG_LEVEL_RANK): boolean => SDK_LOG_LEVEL_RANK[level]! <= threshold;
+    const threshold =
+        SDK_LOG_LEVEL_RANK[logLevel ?? SDK_DEFAULT_LOG_LEVEL] ?? presentGet(SDK_LOG_LEVEL_RANK, SDK_DEFAULT_LOG_LEVEL, "the default log-level rank");
+    const passes = (level: keyof typeof SDK_LOG_LEVEL_RANK): boolean => presentGet(SDK_LOG_LEVEL_RANK, level, "the log-level rank") <= threshold;
     const fields = (metadata: Parameters<DLogger["error"]>[1]): LogFields | undefined => {
         const attributes = metadata?.span?.attributes;
         const stack = metadata?.stack;

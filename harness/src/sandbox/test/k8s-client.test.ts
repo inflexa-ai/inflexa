@@ -16,6 +16,7 @@ import { createK8sSandboxOps, waitForPodReady, type BatchJobApi, type CorePodApi
 import { mintSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
@@ -121,7 +122,8 @@ describe("k8s createSandbox", () => {
         expect(ref.port).toBe(8765);
 
         expect(stub.createdJobs).toHaveLength(1);
-        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
         const container = podSpec.containers[0];
         if (container === undefined) throw new Error("the job pod holds no container");
         const env = container.env ?? [];
@@ -140,25 +142,28 @@ describe("k8s createSandbox", () => {
 
         expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
 
-        expect(container.resources!.requests!.cpu).toBe("2");
-        expect(container.resources!.requests!.memory).toBe("4Gi");
-        expect(container.resources!.limits!.cpu).toBe("2");
-        expect(container.resources!.limits!.memory).toBe("4Gi");
+        expect(container.resources?.requests?.cpu).toBe("2");
+        expect(container.resources?.requests?.memory).toBe("4Gi");
+        expect(container.resources?.limits?.cpu).toBe("2");
+        expect(container.resources?.limits?.memory).toBe("4Gi");
 
-        const sessionVolume = podSpec.volumes!.find((v) => v.name === "session");
-        expect(sessionVolume!.persistentVolumeClaim!.claimName).toBe("cortex-sessions");
-        expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session", "libs", "refs"]);
+        const volumes = podSpec.volumes;
+        if (volumes === undefined) throw new Error("volumes is absent");
+        const sessionVolume = volumes.find((v) => v.name === "session");
+        expect(sessionVolume?.persistentVolumeClaim?.claimName).toBe("cortex-sessions");
+        expect(podSpec.volumes?.map((v) => v.name)).toEqual(["session", "libs", "refs"]);
 
-        const mounts = container.volumeMounts!;
-        const ro = mounts.find((m) => m.name === "session" && m.mountPath === "/an-1")!;
+        const mounts = container.volumeMounts;
+        if (mounts === undefined) throw new Error("mounts is absent");
+        const ro = presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1");
         expect(ro.subPath).toBe("an-1");
         expect(ro.readOnly).toBe(true);
 
-        const rw = mounts.find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a")!;
+        const rw = presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a");
         expect(rw.subPath).toBe("an-1/runs/run-1/step-a");
         expect(rw.readOnly).toBe(false);
 
-        const libs = mounts.find((m) => m.name === "libs")!;
+        const libs = presentFind(mounts, (m) => m.name === "libs");
         expect(libs.mountPath).toBe("/mnt/libs");
         expect(libs.readOnly).toBe(true);
 
@@ -190,13 +195,17 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
-        const mounts = container.volumeMounts!;
+        const container = presentAt(stub.createdJobs, 0).spec?.template.spec?.containers[0];
+        if (container === undefined) throw new Error("container is absent");
+        const mounts = container.volumeMounts;
+        if (mounts === undefined) throw new Error("mounts is absent");
 
         // Container-side paths are unchanged — the sandbox contract does not know where the tree lives.
         expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
-        expect(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1")!.subPath).toBe("tenants/acme/an-1");
-        expect(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a")!.subPath).toBe("tenants/acme/an-1/runs/run-1/step-a");
+        expect(presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1").subPath).toBe("tenants/acme/an-1");
+        expect(presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a").subPath).toBe(
+            "tenants/acme/an-1/runs/run-1/step-a",
+        );
     });
 
     test("mounts a declared write tail in place of the step directory", async () => {
@@ -229,13 +238,16 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
-        const mounts = container.volumeMounts!.filter((m) => m.name === "session");
+        const container = presentAt(stub.createdJobs, 0).spec?.template.spec?.containers[0];
+        if (container === undefined) throw new Error("container is absent");
+        const allMounts = container.volumeMounts;
+        if (allMounts === undefined) throw new Error("volumeMounts is absent");
+        const mounts = allMounts.filter((m) => m.name === "session");
 
         expect(container.workingDir).toBe("/an-1/report-sessions/thread-1/derived");
         // The tree stays read-only, and the one read-write mount covers the declared tail alone.
-        expect(mounts.find((m) => m.mountPath === "/an-1")!.readOnly).toBe(true);
-        const rw = mounts.find((m) => m.mountPath === "/an-1/report-sessions/thread-1/derived")!;
+        expect(presentFind(mounts, (m) => m.mountPath === "/an-1").readOnly).toBe(true);
+        const rw = presentFind(mounts, (m) => m.mountPath === "/an-1/report-sessions/thread-1/derived");
         expect(rw.subPath).toBe("an-1/report-sessions/thread-1/derived");
         expect(rw.readOnly).toBe(false);
         // No step directory of the coordinates reaches a mount.
@@ -305,17 +317,20 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
         const container = podSpec.containers[0];
         if (container === undefined) throw new Error("the job pod holds no container");
         expect(container.workingDir).toBe("/an-1");
 
-        const sessionMounts = container.volumeMounts!.filter((m) => m.name === "session");
+        const jobMounts = container.volumeMounts;
+        if (jobMounts === undefined) throw new Error("volumeMounts is absent");
+        const sessionMounts = jobMounts.filter((m) => m.name === "session");
         expect(sessionMounts).toHaveLength(1);
-        expect(sessionMounts[0]!.readOnly).toBe(true);
-        expect(sessionMounts[0]!.mountPath).toBe("/an-1");
+        expect(presentAt(sessionMounts, 0).readOnly).toBe(true);
+        expect(presentAt(sessionMounts, 0).mountPath).toBe("/an-1");
         // No writable session mount exists.
-        expect(container.volumeMounts!.some((m) => m.name === "session" && m.readOnly === false)).toBe(false);
+        expect(container.volumeMounts?.some((m) => m.name === "session" && m.readOnly === false)).toBe(false);
     });
 
     test("node selector, tolerations, and runtimeClass thread onto the pod spec", async () => {
@@ -361,7 +376,8 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
         expect(podSpec.nodeSelector).toEqual({ "platform.io/role": "agent-node" });
         expect(podSpec.tolerations).toEqual([
             {
@@ -407,7 +423,8 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
         expect(podSpec.nodeSelector).toBeUndefined();
         expect(podSpec.tolerations).toBeUndefined();
         expect(podSpec.runtimeClassName).toBeUndefined();
@@ -447,11 +464,13 @@ describe("k8s createSandbox", () => {
             )
         )._unsafeUnwrap();
 
-        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
-        expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session"]);
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
+        expect(podSpec.volumes?.map((v) => v.name)).toEqual(["session"]);
         const container = podSpec.containers[0];
         if (container === undefined) throw new Error("the job pod holds no container");
-        const mounts = container.volumeMounts!;
+        const mounts = container.volumeMounts;
+        if (mounts === undefined) throw new Error("mounts is absent");
         expect(mounts.some((m) => m.mountPath.startsWith("/mnt"))).toBe(false);
         const env = container.env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
@@ -493,7 +512,9 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
                 {},
             )
         )._unsafeUnwrap();
-        return stub.createdJobs[0]!.spec!.template.spec!;
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
+        return podSpec;
     }
 
     test("a farm with no usable lock drops the store mounts, and the Job is still made", async () => {
@@ -501,8 +522,8 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
         try {
             const podSpec = await createWithRoot(root);
 
-            expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session"]);
-            const env = Object.fromEntries((podSpec.containers[0]!.env ?? []).map((e) => [e.name, e.value]));
+            expect(podSpec.volumes?.map((v) => v.name)).toEqual(["session"]);
+            const env = Object.fromEntries((presentAt(podSpec.containers, 0).env ?? []).map((e) => [e.name, e.value]));
             expect(env.R_LIBS_SITE).toBeUndefined();
         } finally {
             rmSync(root, { recursive: true, force: true });
@@ -565,7 +586,7 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
 
             const podSpec = await createWithRoot(root);
 
-            expect(podSpec.volumes!.map((v) => v.name)).toEqual(["session", "libs"]);
+            expect(podSpec.volumes?.map((v) => v.name)).toEqual(["session", "libs"]);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -600,7 +621,8 @@ describe("k8s createSandbox failure cleanup", () => {
             {},
         );
         expect(result.isErr()).toBe(true);
-        const created = stub.createdJobs[0]!.metadata!.name!;
+        const created = presentAt(stub.createdJobs, 0).metadata?.name;
+        if (created === undefined) throw new Error("created is absent");
         expect(stub.deletedJobs).toEqual([created]);
     });
 
@@ -635,7 +657,8 @@ describe("k8s createSandbox failure cleanup", () => {
         if (result.isErr()) {
             expect(result.error.type).toBe("container_create_failed");
         }
-        const created = stub.createdJobs[0]!.metadata!.name!;
+        const created = presentAt(stub.createdJobs, 0).metadata?.name;
+        if (created === undefined) throw new Error("created is absent");
         expect(stub.deletedJobs).toEqual([created]);
     });
 });
@@ -789,11 +812,16 @@ describe("k8s job ownership labels", () => {
             )
         )._unsafeUnwrap();
 
-        const meta = stub.createdJobs[0]!.metadata!;
-        expect(meta.labels!["app.kubernetes.io/managed-by"]).toBe("cortex");
-        expect(meta.annotations!["cortex/owner-workflow-id"]).toBe("run-1-0");
-        expect(meta.labels!["cortex/run-id"]).toBe("run-1");
-        expect(meta.labels!["cortex/step-id"]).toBe("step-a");
+        const meta = presentAt(stub.createdJobs, 0).metadata;
+        if (meta === undefined) throw new Error("meta is absent");
+        const labels = meta.labels;
+        if (labels === undefined) throw new Error("labels is absent");
+        const annotations = meta.annotations;
+        if (annotations === undefined) throw new Error("annotations is absent");
+        expect(labels["app.kubernetes.io/managed-by"]).toBe("cortex");
+        expect(annotations["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(labels["cortex/run-id"]).toBe("run-1");
+        expect(labels["cortex/step-id"]).toBe("step-a");
     });
 
     test("an owner id that no label could hold round-trips through listManagedSandboxes", async () => {
@@ -826,12 +854,15 @@ describe("k8s job ownership labels", () => {
         )._unsafeUnwrap();
 
         const managed = (await ops.listManagedSandboxes())._unsafeUnwrap();
-        expect(managed[0]!.ownerWorkflowId).toBe(childWorkflowId);
+        expect(presentAt(managed, 0).ownerWorkflowId).toBe(childWorkflowId);
 
         // The id lives in the annotation precisely because no label could hold it:
         // every label value on the Job still has to be admissible or the API server
         // rejects the whole thing.
-        for (const value of Object.values(stub.createdJobs[0]!.metadata!.labels!)) {
+        const ownerJob = presentAt(stub.createdJobs, 0);
+        const ownerLabels = ownerJob.metadata?.labels;
+        if (ownerLabels === undefined) throw new Error("labels is absent");
+        for (const value of Object.values(ownerLabels)) {
             expect(value).toMatch(/^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/);
             expect(value.length).toBeLessThanOrEqual(63);
         }
@@ -894,7 +925,7 @@ describe("k8s label set", () => {
         const identity = mintSandboxIdentity("run-1");
         (await opsWith(stub).createSandbox(...splitSpawn(SPAWN), identity, {}))._unsafeUnwrap();
 
-        const job = stub.createdJobs[0]!;
+        const job = presentAt(stub.createdJobs, 0);
         const expected = {
             "app.kubernetes.io/managed-by": "cortex",
             role: "sandbox",
@@ -903,9 +934,11 @@ describe("k8s label set", () => {
             "cortex/run-id": "run-1",
             "cortex/step-id": "step-a",
         };
-        expect(job.metadata!.labels).toEqual(expected);
-        expect(job.spec!.template.metadata!.labels).toEqual(expected);
-        expect(job.metadata!.annotations!["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(job.metadata?.labels).toEqual(expected);
+        expect(job.spec?.template.metadata?.labels).toEqual(expected);
+        const annotations = job.metadata?.annotations;
+        if (annotations === undefined) throw new Error("annotations is absent");
+        expect(annotations["cortex/owner-workflow-id"]).toBe("run-1-0");
     });
 
     test("the host labels merge under the harness labels, thus a harness key wins a clash", async () => {
@@ -917,7 +950,11 @@ describe("k8s label set", () => {
             })
         )._unsafeUnwrap();
 
-        for (const labels of [stub.createdJobs[0]!.metadata!.labels!, stub.createdJobs[0]!.spec!.template.metadata!.labels!]) {
+        const mergedJob = presentAt(stub.createdJobs, 0);
+        const jobLabels = mergedJob.metadata?.labels;
+        const templateLabels = mergedJob.spec?.template.metadata?.labels;
+        if (jobLabels === undefined || templateLabels === undefined) throw new Error("labels is absent");
+        for (const labels of [jobLabels, templateLabels]) {
             expect(labels["cortex/run-id"]).toBe("run-1");
             expect(labels["example.com/tenant"]).toBe("acme");
         }
@@ -929,8 +966,9 @@ describe("k8s label set", () => {
         const stub = stubApis(READY_POD);
         (await opsWith(stub).createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1"), { "example.com/user": "user@example.com" }))._unsafeUnwrap();
 
-        expect(stub.createdJobs[0]!.metadata!.labels!["example.com/user"]).toBe("user@example.com");
-        expect(stub.createdJobs[0]!.spec!.template.metadata!.labels!["example.com/user"]).toBe("user@example.com");
+        const hostJob = presentAt(stub.createdJobs, 0);
+        expect(hostJob.metadata?.labels?.["example.com/user"]).toBe("user@example.com");
+        expect(hostJob.spec?.template.metadata?.labels?.["example.com/user"]).toBe("user@example.com");
     });
 
     test("a literal spawn path stamps its literal run id and step id", async () => {
@@ -949,7 +987,8 @@ describe("k8s label set", () => {
             )
         )._unsafeUnwrap();
 
-        const labels = stub.createdJobs[0]!.spec!.template.metadata!.labels!;
+        const labels = presentAt(stub.createdJobs, 0).spec?.template.metadata?.labels;
+        if (labels === undefined) throw new Error("labels is absent");
         expect(labels["cortex/run-id"]).toBe("data-profile");
         expect(labels["cortex/step-id"]).toBe("profile");
     });
@@ -1113,8 +1152,11 @@ describe("k8s createSandbox — the farm mounts", () => {
 
         (await opsWith(FIXED_FARM, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
-        const mounts = container.volumeMounts!.filter((m) => m.name === "libs");
+        const container = presentAt(stub.createdJobs, 0).spec?.template.spec?.containers[0];
+        if (container === undefined) throw new Error("container is absent");
+        const farmMounts = container.volumeMounts;
+        if (farmMounts === undefined) throw new Error("volumeMounts is absent");
+        const mounts = farmMounts.filter((m) => m.name === "libs");
         expect(mounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
             { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
             { mountPath: "/mnt/libs/current", subPath: "farms/catalog", readOnly: true },
@@ -1127,13 +1169,20 @@ describe("k8s createSandbox — the farm mounts", () => {
 
         (await opsWith(source, stub, "image").createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
-        const libsVolume = podSpec.volumes!.find((v) => v.name === "libs")!;
+        const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
+        if (podSpec === undefined) throw new Error("podSpec is absent");
+        const libsVolume = podSpec.volumes?.find((v) => v.name === "libs");
+        if (libsVolume === undefined) throw new Error("libsVolume is absent");
+        const claim = libsVolume.persistentVolumeClaim;
+        if (claim === undefined) throw new Error("persistentVolumeClaim is absent");
         // The claim carries no volume-level readOnly when the cache writes
         // through it — the per-mount flags keep the store and the farm read-only.
-        expect(libsVolume.persistentVolumeClaim!.readOnly).toBeUndefined();
+        expect(claim.readOnly).toBeUndefined();
 
-        const mounts = podSpec.containers[0]!.volumeMounts!.filter((m) => m.name === "libs");
+        const cacheContainer = presentAt(podSpec.containers, 0);
+        const cacheMounts = cacheContainer.volumeMounts;
+        if (cacheMounts === undefined) throw new Error("volumeMounts is absent");
+        const mounts = cacheMounts.filter((m) => m.name === "libs");
         expect(mounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
             { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
             { mountPath: "/mnt/libs/farm", subPath: "farms/an-1", readOnly: true },
@@ -1199,9 +1248,9 @@ describe("k8s waitForPodReady — the slow pod", () => {
         expect(result.isErr()).toBe(true);
         const warnings = logger.records.filter((r) => r.level === "warn");
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]!.msg).toBe("[k8s-client] sandbox pod is slow to reach Running");
-        expect(warnings[0]!.fields).toMatchObject({ sandboxId: "sbx-slow", phase: "Pending", conditionReason: "Unschedulable" });
-        const waitedMs = warnings[0]!.fields.waitedMs;
+        expect(presentAt(warnings, 0).msg).toBe("[k8s-client] sandbox pod is slow to reach Running");
+        expect(presentAt(warnings, 0).fields).toMatchObject({ sandboxId: "sbx-slow", phase: "Pending", conditionReason: "Unschedulable" });
+        const waitedMs = presentAt(warnings, 0).fields.waitedMs;
         if (typeof waitedMs !== "number") throw new Error("the log carries a numeric waitedMs");
         expect(waitedMs).toBeGreaterThanOrEqual(60_000);
     });

@@ -498,7 +498,9 @@ describe("composeStepBriefing", () => {
 
     it("says nothing about a contract for a step whose grounding names no template", () => {
         const step = fullyPopulatedStep();
-        const ungrounded = { ...step, grounding: { ...step.grounding!, template: undefined } };
+        const grounding = step.grounding;
+        if (grounding === undefined) throw new Error("the populated step holds no grounding");
+        const ungrounded = { ...step, grounding: { ...grounding, template: undefined } };
         const seed = composeStepBriefing({ step: ungrounded, workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain("Template contract");
     });

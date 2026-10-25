@@ -467,7 +467,7 @@ function boxesOf(svg: string, fill: string): Array<[number, number, number, numb
 function verticalInk(svg: string): Array<[number, number, number]> {
     const segments: Array<[number, number, number]> = [];
     for (const match of svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"([^>]*)>/g)) {
-        if (!match[5]?.includes(`stroke="${CHART_INK}"`) || !match[5]?.includes("ecmeta_series_index") || match[1] !== match[3]) continue;
+        if (!match[5]?.includes(`stroke="${CHART_INK}"`) || !match[5].includes("ecmeta_series_index") || match[1] !== match[3]) continue;
         segments.push([Number(match[1]), Math.min(Number(match[2]), Number(match[4])), Math.max(Number(match[2]), Number(match[4]))]);
     }
     return segments;

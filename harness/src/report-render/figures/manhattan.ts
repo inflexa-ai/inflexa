@@ -396,7 +396,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                           itemStyle: { opacity: DENSE_SIGNAL_OPACITY },
                           tooltip: BELOW_RESOLUTION_TOOLTIP,
                           data: zeroRows.map((index) => {
-                              const group = groupColumn === undefined ? undefined : rows[index]?.[groupColumn];
+                              const group = rows[index]?.[groupColumn];
                               return {
                                   name: labelColumn === undefined ? undefined : String(rows[index]?.[labelColumn]),
                                   value: [xs[index] ?? 0, zeroY],

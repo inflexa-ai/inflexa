@@ -324,7 +324,7 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>, unknown>, 
     // hook" is one property check. `typeof` is the discriminator, not equality
     // with the sentinel, so a hook that returns the string `"none"` still
     // packages as a hook.
-    if (def.describeCall !== undefined && def.describeCall !== "none") packaged.describeCall = def.describeCall;
+    if (def.describeCall !== "none") packaged.describeCall = def.describeCall;
     // The same property-presence pattern as `describeCall`: a tool that
     // declares no result hook carries no key, thus "has a hook" is one
     // property check on either side.

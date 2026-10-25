@@ -111,12 +111,15 @@ export const pubchemTool = defineTool({
     execute: async (input) => {
         switch (input.action) {
             case "compound":
-                return ok<PubchemOutput>({ results: await fetchPubchemCompounds(input.query!, input.searchBy!) });
+                if (input.query === undefined || input.searchBy === undefined) throw new Error("compound requires query and searchBy");
+                return ok<PubchemOutput>({ results: await fetchPubchemCompounds(input.query, input.searchBy) });
             case "crossrefs":
-                return ok<PubchemOutput>({ crossRefs: await fetchPubchemCrossRefs(input.cid!) });
+                if (input.cid === undefined) throw new Error("crossrefs requires cid");
+                return ok<PubchemOutput>({ crossRefs: await fetchPubchemCrossRefs(input.cid) });
             case "assays":
+                if (input.cid === undefined) throw new Error("assays requires cid");
                 return ok<PubchemOutput>({
-                    assays: await fetchPubchemAssays(input.cid!, {
+                    assays: await fetchPubchemAssays(input.cid, {
                         activeOnly: input.activeOnly ?? true,
                         limit: input.limit ?? 25,
                     }),

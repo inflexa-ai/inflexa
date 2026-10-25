@@ -10,6 +10,7 @@
 import type { QuarantineReason, QuarantineSummary } from "./set-types.js";
 import type { ScannedFile } from "./types.js";
 import { MAX_QUARANTINE_SAMPLE } from "./tuning.js";
+import { presentLast } from "../lib/present.js";
 
 const EXACT_JUNK_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
@@ -37,7 +38,7 @@ const SEGMENT_RULES: readonly { readonly pattern: RegExp; readonly reason: Quara
 /** The rule a path trips, or `undefined` when it trips none. */
 export function quarantineReason(path: string): QuarantineReason | undefined {
     const segments = path.split("/");
-    const name = segments[segments.length - 1]!;
+    const name = presentLast(segments, "the path name");
     if (EXACT_JUNK_NAMES.has(name)) return "os-junk";
     for (const rule of NAME_RULES) if (rule.pattern.test(name)) return rule.reason;
     for (const segment of segments) for (const rule of SEGMENT_RULES) if (rule.pattern.test(segment)) return rule.reason;

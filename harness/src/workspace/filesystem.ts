@@ -340,7 +340,8 @@ function collectEntries(dir: string, dirents: readonly { name: string; isDirecto
  * off-tree, re-opening the read-exfiltration hole for the length of the race
  * (CWE-367). `O_NOFOLLOW` makes the leaf open atomic — a symlinked final
  * component fails `ELOOP` in the same syscall that opens it, so there is no
- * check/use gap. `?? 0` keeps the mask valid on a platform that lacks the flag.
+ * check/use gap. On a platform that lacks the flag, the bitwise OR coerces the
+ * absent constant to 0 and the mask stays valid.
  *
  * This refuses EVERY leaf symlink, including an in-tree one the persistent check
  * would allow: pure Node cannot express "follow only if it stays in-tree" (that
@@ -350,7 +351,7 @@ function collectEntries(dir: string, dirents: readonly { name: string; isDirecto
  * exposes no `openat2`); the upstream realpath check still rejects the
  * persistent case of that.
  */
-const READ_NO_FOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+const READ_NO_FOLLOW = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
 
 type OpenedFile = { readonly kind: "ok"; readonly fh: FileHandle } | { readonly kind: "out_of_scope" };
 

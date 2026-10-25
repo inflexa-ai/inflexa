@@ -10,6 +10,7 @@ import { ProvenanceCollector } from "../collector.js";
 import { feedExecFrame } from "../exec-frame.js";
 import type { Logger, LogFields } from "../../lib/logger.js";
 import type { ProvenanceFrame } from "../../sandbox/types.js";
+import { presentAt } from "../../lib/present.js";
 
 const MOUNT = "/a1";
 
@@ -36,17 +37,17 @@ describe("feedExecFrame", () => {
 
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
-        const rec = records[0]!;
+        const rec = presentAt(records, 0);
         expect(rec.outputPath).toBe("output/tmm.csv");
         expect(rec.producer.type).toBe("command");
         expect(rec.scriptPath).toBe("scripts/tmm.py");
         expect(rec.inputs).toHaveLength(1);
-        expect(rec.inputs[0]!.source).toBe("data");
-        expect(rec.inputs[0]!.path).toBe("/a1/data/inputs/Lab/counts.csv");
+        expect(presentAt(rec.inputs, 0).source).toBe("data");
+        expect(presentAt(rec.inputs, 0).path).toBe("/a1/data/inputs/Lab/counts.csv");
 
         const dataInputs = collector.getDataInputs();
         expect(dataInputs).toHaveLength(1);
-        expect(dataInputs[0]!.fileId).toBe("uuid-1");
+        expect(presentAt(dataInputs, 0).fileId).toBe("uuid-1");
     });
 
     test("upstream read is classified by step metadata", () => {
@@ -70,10 +71,10 @@ describe("feedExecFrame", () => {
             },
         });
 
-        const rec = collector.getRecords()[0]!;
-        expect(rec.inputs[0]!.source).toBe("upstream");
-        expect(rec.inputs[0]!.stepId).toBe("qc");
-        expect(rec.inputs[0]!.runId).toBe("run-002");
+        const rec = presentAt(collector.getRecords(), 0);
+        expect(presentAt(rec.inputs, 0).source).toBe("upstream");
+        expect(presentAt(rec.inputs, 0).stepId).toBe("qc");
+        expect(presentAt(rec.inputs, 0).runId).toBe("run-002");
     });
 
     test("a read outside the mount keeps its own name on the ref", () => {
@@ -97,7 +98,7 @@ describe("feedExecFrame", () => {
         });
         const refs = collector.getTrackedInputs();
         expect(refs).toHaveLength(1);
-        expect(refs[0]!.path).toBe("/etc/passwd");
+        expect(presentAt(refs, 0).path).toBe("/etc/passwd");
     });
 
     test("separators doubled at the mount boundary collapse to the canonical name", () => {
@@ -119,8 +120,8 @@ describe("feedExecFrame", () => {
         });
         const refs = collector.getTrackedInputs();
         expect(refs).toHaveLength(1);
-        expect(refs[0]!.path).toBe("/a1/data/inputs/Lab/counts.csv");
-        expect(refs[0]!.source).toBe("data");
+        expect(presentAt(refs, 0).path).toBe("/a1/data/inputs/Lab/counts.csv");
+        expect(presentAt(refs, 0).source).toBe("data");
     });
 
     test("missing frame degrades to no inputs without throwing", () => {
@@ -167,7 +168,7 @@ describe("feedExecFrame", () => {
             logger,
         });
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]!.fields).toMatchObject({ command: "python3" });
+        expect(presentAt(warnings, 0).fields).toMatchObject({ command: "python3" });
     });
 
     test("an absent frame is not reported — nothing claims to have captured anything", () => {
@@ -216,9 +217,9 @@ describe("feedExecFrame — undeclared same-run siblings", () => {
         });
 
         expect(collector.getTrackedInputs()).toEqual([]);
-        expect(collector.getRecords()[0]!.inputs).toEqual([]);
+        expect(presentAt(collector.getRecords(), 0).inputs).toEqual([]);
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]!.fields).toMatchObject({ refStepId: "T5S1", refRunId: "run-9" });
+        expect(presentAt(warnings, 0).fields).toMatchObject({ refStepId: "T5S1", refRunId: "run-9" });
     });
 
     test("a path refused across several execs is narrated once for the step", () => {
@@ -267,7 +268,7 @@ describe("feedExecFrame — undeclared same-run siblings", () => {
             }),
         ).not.toThrow();
 
-        const rec = collector.getRecords()[0]!;
+        const rec = presentAt(collector.getRecords(), 0);
         expect(rec.outputPath).toBe("output/gsea.csv");
         expect(rec.producer.type).toBe("command");
         expect(rec.inputs).toEqual([]);
@@ -343,10 +344,10 @@ describe("feedExecFrame — undeclared same-run siblings", () => {
             },
         });
 
-        const inputs = collector.getRecords()[0]!.inputs;
+        const inputs = presentAt(collector.getRecords(), 0).inputs;
         expect(inputs).toHaveLength(1);
-        expect(inputs[0]!.source).toBe("upstream");
-        expect(inputs[0]!.stepId).toBe("qc");
-        expect(inputs[0]!.path).toBe("/a1/runs/run-9/qc/output/qc.csv");
+        expect(presentAt(inputs, 0).source).toBe("upstream");
+        expect(presentAt(inputs, 0).stepId).toBe("qc");
+        expect(presentAt(inputs, 0).path).toBe("/a1/runs/run-9/qc/output/qc.csv");
     });
 });

@@ -5,6 +5,7 @@ import type { AgentSession } from "../../auth/types.js";
 import type { FsError } from "../../lib/fs-result.js";
 import type { ListResult, ReadBytesResult, StatResult, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { MAX_SCANNED_FILES, renderInputScanManifest, scanInputTree } from "../scan.js";
+import { presentFind } from "../../lib/present.js";
 
 const SESSION: AgentSession = {
     identity: { user: "scan-test" },
@@ -63,10 +64,10 @@ describe("scanInputTree", () => {
             root: "data/inputs",
         });
 
-        const vcf = scan.files.find((f) => f.path.endsWith(".vcf.gz"))!;
+        const vcf = presentFind(scan.files, (f) => f.path.endsWith(".vcf.gz"));
         expect(vcf.format).toBe("vcf");
         expect(vcf.wrapper).toBe("gzip");
-        expect(scan.files.find((f) => f.path.endsWith(".csv"))!.format).toBe("csv");
+        expect(presentFind(scan.files, (f) => f.path.endsWith(".csv")).format).toBe("csv");
     });
 
     it("stops at its ceiling and says so, rather than sampling silently", async () => {

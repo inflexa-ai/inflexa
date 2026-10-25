@@ -8,6 +8,7 @@ import { AskRejectedError, type AskRequest } from "../contract.js";
 import { createAskGateway, type AskContext, type AskGateway } from "../gateway.js";
 import { insertPendingAsk, type AskRow } from "../queries.js";
 import { uuidv7 } from "../uuidv7.js";
+import { presentAt, presentLast } from "../../../lib/present.js";
 
 // The `data-ask` payload the gateway emits inside a `ChatDataPart` — the flat
 // fields without the part-envelope `type`, as a surface would read them.
@@ -125,10 +126,10 @@ describe("createAskGateway — deferred round-trip", () => {
         // the same id — the out-of-band path a surface renders and folds latest-wins.
         expect(started.parts.map((p) => p.status)).toEqual(["pending", "resolved"]);
         expect(started.parts.map((p) => p.id)).toEqual([id, id]);
-        expect(started.parts[0]!.command).toBe(REQUEST.command);
+        expect(presentAt(started.parts, 0).command).toBe(REQUEST.command);
         // Only the terminal part names the reply kind.
         expect(started.parts[0]).not.toHaveProperty("reply");
-        expect(started.parts[1]!.reply).toBe("once");
+        expect(presentAt(started.parts, 1).reply).toBe("once");
     });
 
     it("resolves with the always reply an out-of-band answer writes", async () => {
@@ -154,7 +155,7 @@ describe("createAskGateway — deferred round-trip", () => {
         if (!(caught instanceof AskRejectedError)) throw new Error("the denial rejects with AskRejectedError");
         expect(caught.feedback).toBe("not this time");
         // The part shows the kind of the reply, and never the feedback, which is for the model.
-        const terminal = started.parts.at(-1)!;
+        const terminal = presentLast(started.parts);
         expect(terminal).toMatchObject({ status: "rejected", reply: "reject" });
         expect(JSON.stringify(terminal)).not.toContain("not this time");
     });
@@ -166,7 +167,7 @@ describe("createAskGateway — deferred round-trip", () => {
         started.controller.abort();
         await started.promise.catch(() => {});
 
-        const terminal = started.parts.at(-1)!;
+        const terminal = presentLast(started.parts);
         expect(terminal.status).toBe("aborted");
         expect(terminal).not.toHaveProperty("reply");
     });

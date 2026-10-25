@@ -4,6 +4,7 @@ import { okAsync } from "neverthrow";
 
 import { assembleMessages, type AssembleMessagesArgs } from "../message-assembly.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { presentAt, presentFirst, presentLast } from "../../lib/present.js";
 import { contextRecordOf, isSyntheticUserMessage } from "../../memory/ai-sdk-message-storage.js";
 import type { ThreadHistory } from "../../memory/thread-history.js";
 import { NOT_RUN_TOOL_RESULT } from "../../memory/tool-call-integrity.js";
@@ -98,8 +99,8 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
         const messages = [...history, userMessage, ...contextRecords];
-        expect(messages[0]!.role).toBe("user");
-        expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
+        expect(presentFirst(messages).role).toBe("user");
+        expect(isSyntheticUserMessage(presentFirst(messages))).toBe(false);
         expect(messages.length).toBe(3);
         expect(messages.every((m) => m.role === "user" || m.role === "assistant")).toBe(true);
     });
@@ -148,8 +149,8 @@ describe("assembleMessages", () => {
         });
 
         expect(contextRecords.length).toBe(2);
-        expect(contentText(contextRecords[0]!)).toContain("[Analysis Context]");
-        expect(contentText(contextRecords[1]!)).toBe(RUN_ACTIVITY);
+        expect(contentText(presentFirst(contextRecords))).toContain("[Analysis Context]");
+        expect(contentText(presentAt(contextRecords, 1))).toBe(RUN_ACTIVITY);
     });
 
     test("a report thread loads a view that keeps the seed", async () => {
@@ -164,7 +165,7 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        expect(contentText(history[0]!)).toBe(SEED);
+        expect(contentText(presentFirst(history))).toBe(SEED);
     });
 
     test("a conversation thread loads a view without the seed", async () => {
@@ -211,8 +212,8 @@ describe("assembleMessages", () => {
             history: stubHistory(window),
             workingMemory: stubWorkingMemory(),
         });
-        expect(contentText(history[0]!)).toContain(secret);
-        expect(contentText(contextRecords[0]!)).toContain(secret);
+        expect(contentText(presentFirst(history))).toContain(secret);
+        expect(contentText(presentFirst(contextRecords))).toContain(secret);
     });
 
     /** {@link stubHistory} typed over the AI SDK shape, for a window that carries tool parts. */
@@ -257,7 +258,7 @@ describe("assembleMessages", () => {
 
         const { history } = await assembleDangling(logger);
 
-        expect(history[1]).toEqual(danglingWindow()[1]!);
+        expect(history[1]).toEqual(presentAt(danglingWindow(), 1));
         expect(history[2]).toEqual({
             role: "tool",
             content: [
@@ -353,7 +354,7 @@ describe("assembleMessages — context records", () => {
         const { contextRecords } = await assembleMessages(argsOver(window, { workingMemory: stubWorkingMemory("# Working Memory\n\n## Goal\n\nmap BRCA1\n") }));
 
         expect(kindsOf(contextRecords)).toEqual(["working-memory"]);
-        expect(contextRecords[0]!.content).toContain("map BRCA1");
+        expect(presentFirst(contextRecords).content).toContain("map BRCA1");
     });
 
     test("compares with the latest record of a kind only", async () => {
@@ -363,7 +364,7 @@ describe("assembleMessages — context records", () => {
         const { contextRecords } = await assembleMessages(argsOver(window));
 
         expect(kindsOf(contextRecords)).toEqual(["working-memory"]);
-        expect(contextRecords[0]!.content).toBe(`[Working Memory]\n${WM_RENDER}`);
+        expect(presentFirst(contextRecords).content).toBe(`[Working Memory]\n${WM_RENDER}`);
     });
 
     test("gives no working-memory record on a report thread", async () => {
@@ -375,7 +376,7 @@ describe("assembleMessages — context records", () => {
     test("gives the empty-state text for an empty working memory", async () => {
         const { contextRecords } = await assembleMessages(argsOver([], { workingMemory: stubWorkingMemory("") }));
 
-        expect(contextRecords.at(-1)!.content).toBe("[Working Memory]\nThe working memory is empty.");
+        expect(presentLast(contextRecords).content).toBe("[Working Memory]\nThe working memory is empty.");
     });
 
     test("gives no analysis-context record for a null context", async () => {

@@ -16,9 +16,10 @@ import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../../reference-data/receipt.js";
 import { createInspectCapabilityDataTool } from "../capability-data.js";
 import type { ToolContext } from "../define-tool.js";
+import { presentFind } from "../../lib/present.js";
 
 const SAFETY_AGENT = "translational-safety-agent";
-const CAPABILITY = declaredDataRequirements().find((entry) => entry.agentId === SAFETY_AGENT)!.capability;
+const CAPABILITY = presentFind(declaredDataRequirements(), (entry) => entry.agentId === SAFETY_AGENT).capability;
 const DECLARED = [...capabilityDataRequirement(SAFETY_AGENT, CAPABILITY)].sort();
 
 function toolContext(): ToolContext {
@@ -39,7 +40,7 @@ async function storeWith(ids: readonly string[]): Promise<string> {
     const receipts = join(root, ".inflexa", "receipts");
     await mkdir(receipts, { recursive: true });
     for (const id of ids) {
-        const dataset = REFERENCE_DATA_CATALOG.datasets.find((candidate) => candidate.id === id)!;
+        const dataset = presentFind(REFERENCE_DATA_CATALOG.datasets, (candidate) => candidate.id === id);
         const content = {
             datasetId: id,
             datasetVersion: dataset.version,
@@ -67,7 +68,7 @@ describe("inspect_capability_data", () => {
     it("names every absent dataset of a capability by its catalog id", async () => {
         const answer = await answerFor(await storeWith([]));
 
-        const row = answer.rows.find((candidate) => candidate.agentId === SAFETY_AGENT)!;
+        const row = presentFind(answer.rows, (candidate) => candidate.agentId === SAFETY_AGENT);
         expect(answer.storeReadable).toBe(true);
         expect([...row.absent]).toEqual(DECLARED);
         expect(row.installed).toEqual([]);
@@ -77,7 +78,7 @@ describe("inspect_capability_data", () => {
     it("separates the installed from the absent", async () => {
         const answer = await answerFor(await storeWith(DECLARED.slice(0, 2)));
 
-        const row = answer.rows.find((candidate) => candidate.agentId === SAFETY_AGENT)!;
+        const row = presentFind(answer.rows, (candidate) => candidate.agentId === SAFETY_AGENT);
         expect([...row.installed]).toEqual(DECLARED.slice(0, 2));
         expect([...row.absent]).toEqual(DECLARED.slice(2));
     });
@@ -85,7 +86,7 @@ describe("inspect_capability_data", () => {
     it("reports nothing absent once every declared dataset is installed", async () => {
         const answer = await answerFor(await storeWith(DECLARED));
 
-        const row = answer.rows.find((candidate) => candidate.agentId === SAFETY_AGENT)!;
+        const row = presentFind(answer.rows, (candidate) => candidate.agentId === SAFETY_AGENT);
         expect(row.absent).toEqual([]);
         expect([...row.installed]).toEqual(DECLARED);
     });

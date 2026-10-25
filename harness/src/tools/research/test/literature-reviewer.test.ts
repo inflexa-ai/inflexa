@@ -10,6 +10,7 @@ import type { ToolContext } from "../../define-tool.js";
 import { createLiteratureReviewerTool } from "../literature-reviewer.js";
 import { unusedCitationResolver } from "../../../citations/__fixtures__/resolver.js";
 import { literatureReviewerPrompt } from "../../../prompts/literature-reviewer.js";
+import { presentAt } from "../../../lib/present.js";
 
 describe("literatureReviewer sub-agent tool", () => {
     it("runs runAgent on a derived child Session and surfaces the report", async () => {
@@ -46,7 +47,7 @@ describe("literatureReviewer sub-agent tool", () => {
 
         // The child loop ran on a Session derived via forSubAgent:
         // agentId flipped, callPath extended.
-        const childSession = provider.sessions[0]!;
+        const childSession = presentAt(provider.sessions, 0);
         expect(childSession.provenance.agentId).toBe("literature-reviewer");
         expect(childSession.provenance.callPath).toEqual(["conversation-agent", "literature-reviewer"]);
 
@@ -56,7 +57,7 @@ describe("literatureReviewer sub-agent tool", () => {
 
         // The child ran the literature-reviewer agent: its own research tool set,
         // and nothing of the parent's (no planning, no workspace mutate surface).
-        expect(Object.keys(provider.calls[0]!.tools).sort()).toEqual([
+        expect(Object.keys(presentAt(provider.calls, 0).tools).sort()).toEqual([
             "drug_gene_interactions",
             "gene_preclinical_profile",
             "lookup_annotation",
@@ -84,7 +85,7 @@ describe("literatureReviewer sub-agent tool", () => {
 
         (await tool.execute({ brief: "Investigate BRCA1." }, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+        expect(Object.keys(presentAt(provider.calls, 0).tools)).toEqual([
             "search_gene",
             "search_protein",
             "lookup_annotation",

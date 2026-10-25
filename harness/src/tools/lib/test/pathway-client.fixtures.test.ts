@@ -18,6 +18,7 @@ import {
     ReactomeSearchResponseSchema,
     selectKeggGeneId,
 } from "../pathway-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -43,7 +44,7 @@ describe("KEGG golden fixtures", () => {
     it("resolves the gene identifier by an exact alias match, not by rank", () => {
         const rows = parseTSV(readTextFixture("kegg", "find-hsa-TP53.txt"));
         // The provider ranks `TP53BP2` first, thus the first row is a different gene.
-        expect(rows[0]![0]).toBe("hsa:7159");
+        expect(presentAt(rows, 0)[0]).toBe("hsa:7159");
         expect(selectKeggGeneId(rows, "TP53")).toBe("hsa:7157");
         expect(selectKeggGeneId(rows, "tp53")).toBe("hsa:7157");
     });
@@ -62,7 +63,7 @@ describe("KEGG golden fixtures", () => {
     });
 
     it("names a pathway from the organism list", () => {
-        const names = new Map(parseTSV(readTextFixture("kegg", "list-pathway-hsa.txt")).map((cols) => [cols[0]!, cols[1]!]));
+        const names = new Map(parseTSV(readTextFixture("kegg", "list-pathway-hsa.txt")).map((cols) => [presentAt(cols, 0), presentAt(cols, 1)]));
         expect(names.get("hsa04010")).toBe("MAPK signaling pathway - Homo sapiens (human)");
     });
 
@@ -116,7 +117,7 @@ runFixtureSuite("Reactome golden fixtures", [
         drift: "data-participants.drift.json",
         schema: ReactomeParticipantsSchema,
         assertOutput: (participants) => {
-            expect(participants[0]!.displayName).toBe("p-T389/412-RPS6KB1 [cytosol]");
+            expect(presentAt(participants, 0).displayName).toBe("p-T389/412-RPS6KB1 [cytosol]");
         },
     }),
     fixtureCase({

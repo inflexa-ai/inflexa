@@ -6,6 +6,7 @@
  */
 
 import type { ModelMessage } from "ai";
+import { presentAt, presentLast } from "../lib/present.js";
 
 import { compactionExchangeOf, compactionMarkerOf, isSyntheticUserMessage, requestInputTokensOf } from "./ai-sdk-message-storage.js";
 
@@ -47,7 +48,7 @@ export function groupTurns<T>(rows: readonly T[], isStart: (row: T) => boolean):
         if (turns.length === 0 || isStart(row)) {
             turns.push([row]);
         } else {
-            turns[turns.length - 1]!.push(row);
+            presentLast(turns, "the open turn").push(row);
         }
     }
     return turns;
@@ -96,7 +97,7 @@ function viewParts(messages: readonly ModelMessage[], options: ConversationViewO
     let headEnd = 0;
     if (options.keepFirstTurn === true) {
         while (headEnd < messages.length) {
-            const message = messages[headEnd]!;
+            const message = presentAt(messages, headEnd, "the head message");
             if (isCompactionMessage(message) || (headEnd > 0 && isGenuineUserStart(message))) break;
             headEnd++;
         }
@@ -105,7 +106,7 @@ function viewParts(messages: readonly ModelMessage[], options: ConversationViewO
     let front: ViewEntry | undefined;
     let body: ViewEntry[] = [];
     for (let source = headEnd; source < messages.length; source++) {
-        const message = messages[source]!;
+        const message = presentAt(messages, source, "the message at the source index");
         if (compactionExchangeOf(message) !== undefined) continue;
         const marker = compactionMarkerOf(message);
         if (marker?.kind === "summary") {
@@ -142,7 +143,7 @@ export function withoutReasoning(message: ModelMessage): ModelMessage | undefine
  */
 export function lastRequestInputTokens(messages: readonly ModelMessage[]): number | undefined {
     for (let at = messages.length - 1; at >= 0; at--) {
-        const message = messages[at]!;
+        const message = presentAt(messages, at, "the message at the index");
         if (compactionMarkerOf(message) !== undefined) return undefined;
         const tokens = requestInputTokensOf(message);
         if (tokens !== undefined) return tokens;

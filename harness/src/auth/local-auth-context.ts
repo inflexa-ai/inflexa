@@ -17,8 +17,5 @@ import type { AuthContext } from "./types.js";
  * Returned as `AuthContext` so callers stay credential-blind.
  */
 export function makeLocalAuth(): AuthContext {
-    // SAFETY: the auth brand is an optional phantom with no runtime member, so the
-    // empty literal carries every real field the interface holds; no caller may
-    // mint one outside this constructor.
-    return {} as AuthContext;
+    return {};
 }

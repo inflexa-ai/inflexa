@@ -21,6 +21,7 @@
  */
 
 import { ok, type Result } from "neverthrow";
+import { presentGet } from "../../lib/present.js";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
@@ -268,7 +269,7 @@ const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
 function matchesLanguage(section: Section, language: PackagesQuery["language"]): boolean {
     if (language === undefined) return true;
     if (language === "r" || language === "python") return section.track === language;
-    return LANGUAGE_MATCHERS[language]!(section.title);
+    return presentGet(LANGUAGE_MATCHERS, language, `the heading matcher for ${language}`)(section.title);
 }
 
 /**

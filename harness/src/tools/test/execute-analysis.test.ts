@@ -71,6 +71,7 @@ import {
     launchPlanRun,
     type LaunchPlanRunDeps,
 } from "../execute-analysis.js";
+import { presentAt, presentFind, presentGet } from "../../lib/present.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -142,7 +143,7 @@ function fakePool(rowsByPrefix: Record<string, Row[]>): {
         queries.push({ text, values: typeof q === "string" ? (params ?? []) : (q.values ?? []) });
         for (const prefix of Object.keys(rowsByPrefix)) {
             if (text.includes(prefix)) {
-                return Promise.resolve({ rows: rowsByPrefix[prefix]! });
+                return Promise.resolve({ rows: presentGet(rowsByPrefix, prefix) });
             }
         }
         return Promise.resolve({ rows: [] });
@@ -499,7 +500,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
         expect(launches).toHaveLength(1);
-        expect(launches[0]!.workflowId).toBe(result.runId);
+        expect(presentAt(launches, 0).workflowId).toBe(result.runId);
         expect(result.status).toBe("in_progress");
         expect(revokes).toHaveLength(0);
     });
@@ -524,8 +525,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
         await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
         const workflowInput = launchedInput(inputs[0]);
-        expect(workflowInput.planStepById["step-a"]!.question).toBe("do step-a");
-        expect(workflowInput.planStepById["step-a"]!.acceptance_criteria).toEqual(["completes"]);
+        expect(presentGet(workflowInput.planStepById, "step-a").question).toBe("do step-a");
+        expect(presentGet(workflowInput.planStepById, "step-a").acceptance_criteria).toEqual(["completes"]);
         // No pre-rendered prompt string is frozen into the durable input.
         expect(workflowInput).not.toHaveProperty("promptByStepId");
     });
@@ -577,7 +578,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         )._unsafeUnwrap();
         // Simulate a terminal DBOS outcome. A duplicate tool delivery must still
         // return this exact run instead of launching it again.
-        runs.get(first.runId)!.status = "completed";
+        presentGet(runs, first.runId, "the launched run").status = "completed";
         const replay = (
             await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
         )._unsafeUnwrap();
@@ -643,8 +644,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         )._unsafeUnwrap();
 
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.analysisId).toBe(ANALYSIS_ID);
-        expect(seamCalls[0]!.queries).toEqual([{ spelling: "scanpy" }, { spelling: "igraph", track: "python" }]);
+        expect(presentAt(seamCalls, 0).analysisId).toBe(ANALYSIS_ID);
+        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "scanpy" }, { spelling: "igraph", track: "python" }]);
         expect(launches).toHaveLength(1);
         expect(result.status).toBe("in_progress");
     });
@@ -704,10 +705,10 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         (await tool.execute({ mode: "adhoc", request: "Summarize the staged table" }, fakeContext("call-adhoc-no-packages")))._unsafeUnwrap();
 
         const stored = storedAdHocPlan([...plans.values()][0]);
-        expect(stored.steps[0]!.packages).toEqual([]);
+        expect(presentAt(stored.steps, 0).packages).toEqual([]);
         // The step agent must learn that nothing was linked for it, because the
         // link pass is silent when a step declares no package.
-        expect(stored.steps[0]!.caveats).toEqual([expect.stringContaining("declares no packages")]);
+        expect(presentAt(stored.steps, 0).caveats).toEqual([expect.stringContaining("declares no packages")]);
         expect(seamCalled).toBe(false);
         expect(launches).toHaveLength(1);
     });
@@ -726,8 +727,8 @@ describe("buildAdHocPlan", () => {
     it("writes the validated packages onto the one step", () => {
         const plan = buildAdHocPlan("Compare the clusters", { ...route, packages: ["scanpy", "r:Seurat"] }, CREATED_AT);
 
-        expect(plan.steps[0]!.packages).toEqual(["scanpy", "r:Seurat"]);
-        expect(plan.steps[0]!.caveats).toBeUndefined();
+        expect(presentAt(plan.steps, 0).packages).toEqual(["scanpy", "r:Seurat"]);
+        expect(presentAt(plan.steps, 0).caveats).toBeUndefined();
     });
 
     it("names each dropped entry with its reason, after the routing fallback", () => {
@@ -745,7 +746,7 @@ describe("buildAdHocPlan", () => {
             CREATED_AT,
         );
 
-        const caveats = plan.steps[0]!.caveats ?? [];
+        const caveats = presentAt(plan.steps, 0).caveats ?? [];
         expect(caveats[0]).toContain("Automatic routing fallback: timeout");
         expect(caveats[1]).toContain("./wheels/mofa.whl");
         expect(caveats[1]).toContain("does not parse");
@@ -758,8 +759,8 @@ describe("buildAdHocPlan", () => {
     it("says that a step with no packages was linked nothing", () => {
         const plan = buildAdHocPlan("Compare the clusters", route, CREATED_AT);
 
-        expect(plan.steps[0]!.packages).toEqual([]);
-        expect(plan.steps[0]!.caveats).toEqual([expect.stringContaining("declares no packages")]);
+        expect(presentAt(plan.steps, 0).packages).toEqual([]);
+        expect(presentAt(plan.steps, 0).caveats).toEqual([expect.stringContaining("declares no packages")]);
     });
 });
 
@@ -799,8 +800,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 
         // One call, with the union: "scanpy" appears in two steps and links once.
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.analysisId).toBe(ANALYSIS_ID);
-        expect(seamCalls[0]!.queries).toEqual([{ spelling: "scanpy" }, { spelling: "numpy", version: "1.26.4" }]);
+        expect(presentAt(seamCalls, 0).analysisId).toBe(ANALYSIS_ID);
+        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "scanpy" }, { spelling: "numpy", version: "1.26.4" }]);
         expect(launches).toHaveLength(1);
         expect(result.status).toBe("in_progress");
     });
@@ -906,7 +907,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         // pool answers each one. An outcome echoes the requested spelling, and
         // a fold would send a remedy after a package that no repository holds.
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.queries).toEqual([{ spelling: "Seurat" }, { spelling: "seurat" }]);
+        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "Seurat" }, { spelling: "seurat" }]);
     });
 
     it("a prefixed entry reaches the seam with its track", async () => {
@@ -943,7 +944,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         // Two prefixes of one spelling make TWO queries: the plan names two
         // packages. The union dedupes equal queries, in first-occurrence order.
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.queries).toEqual([
+        expect(presentAt(seamCalls, 0).queries).toEqual([
             { spelling: "igraph", track: "python" },
             { spelling: "decoupleR", track: "r" },
             { spelling: "igraph", track: "r" },
@@ -985,7 +986,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.queries).toEqual([{ spelling: "decoupler" }, { spelling: "decoupleR" }]);
+        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "decoupler" }, { spelling: "decoupleR" }]);
     });
 
     it("equal queries make one request", async () => {
@@ -1020,7 +1021,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
 
         expect(seamCalls).toHaveLength(1);
-        expect(seamCalls[0]!.queries).toEqual([{ spelling: "scanpy" }]);
+        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "scanpy" }]);
     });
 
     it("a bare entry beside a qualified entry keeps its own refusal", async () => {
@@ -1066,7 +1067,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/python:igraph/);
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/r:igraph/);
-        expect(seamCalls[0]!.queries).toEqual([{ spelling: "igraph", track: "python" }, { spelling: "igraph" }]);
+        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "igraph", track: "python" }, { spelling: "igraph" }]);
         expect(launches).toHaveLength(0);
     });
 
@@ -1289,7 +1290,8 @@ describe("the launch of a stored plan, over a real database", () => {
          */
         describe("the declared reference data of a capability", () => {
             const SAFETY_AGENT = "translational-safety-agent";
-            const CAPABILITY = SANDBOX_AGENT_META[SAFETY_AGENT]!.capabilities.find((phrase) => phrase.includes("matched negative gene set"))!;
+            const CAPABILITY = presentGet(SANDBOX_AGENT_META, SAFETY_AGENT).capabilities.find((phrase) => phrase.includes("matched negative gene set"));
+            if (CAPABILITY === undefined) throw new Error("CAPABILITY is absent");
             const DECLARED = [...capabilityDataRequirement(SAFETY_AGENT, CAPABILITY)];
 
             function planDeclaring(capability?: string) {
@@ -1305,7 +1307,7 @@ describe("the launch of a stored plan, over a real database", () => {
                 const receipts = join(root, ".inflexa", "receipts");
                 await mkdir(receipts, { recursive: true });
                 for (const id of ids) {
-                    const dataset = REFERENCE_DATA_CATALOG.datasets.find((candidate) => candidate.id === id)!;
+                    const dataset = presentFind(REFERENCE_DATA_CATALOG.datasets, (candidate) => candidate.id === id);
                     const artifacts = dataset.artifacts.map((artifact) => ({ path: artifact.path, bytes: 1, sha256: "a".repeat(64) }));
                     const content = { datasetId: id, datasetVersion: dataset.version, artifacts };
                     await writeFile(
@@ -1337,7 +1339,7 @@ describe("the launch of a stored plan, over a real database", () => {
 
                 const refusal = (await launchPlanRun(deps({ refStorePath }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
-                expect(refusal).toEqual({ type: "references_missing", missing: [DECLARED[0]!] });
+                expect(refusal).toEqual({ type: "references_missing", missing: [presentAt(DECLARED, 0)] });
             });
 
             it("launches when the store holds every declared dataset", async () => {
@@ -1716,7 +1718,9 @@ describe("the launch of a stored plan, over a real database", () => {
                 expect(launch.started).toBe(true);
                 const newest = (await queryNewestPlanRun(pool, { analysisId: ANALYSIS_ID, planId: PLAN_ID }))._unsafeUnwrap();
                 expect(newest?.runId).toBe(launch.runId);
-                expect(newest!.startedAt > future).toBe(true);
+                const newestStartedAt = newest?.startedAt;
+                if (newestStartedAt === undefined) throw new Error("the newest run start is absent");
+                expect(newestStartedAt > future).toBe(true);
             });
         });
     });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createSearchPatentsTool } from "../search-patents.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -62,13 +63,13 @@ describe("search_patents — action 'search'", () => {
 
         const result = (await run({ query: "imatinib mesylate crystal", assignee: ["Novartis", "Natco"], countryCode: ["US", "CN"] }))._unsafeUnwrap();
 
-        const params = seen[0]!.url.searchParams;
+        const params = presentAt(seen, 0).url.searchParams;
         expect(params.getAll("include")).toEqual([]);
         expect(params.get("assignee")).toBe("Novartis,Natco");
         expect(params.get("countryCode")).toBe("US,CN");
         expect(params.get("limit")).toBe("10");
         if (!("patents" in result)) throw new Error("expected a search answer");
-        expect(result.patents[0]!.publicationNumber).toBe("CN-103570677-A");
+        expect(presentAt(result.patents, 0).publicationNumber).toBe("CN-103570677-A");
         expect(result.patents[0]).not.toHaveProperty("claims");
     });
 
@@ -87,8 +88,8 @@ describe("search_patents — action 'details'", () => {
 
         const result = (await run({ action: "details", publicationNumber: "CN-103570677-A", includeClaims: true }))._unsafeUnwrap();
 
-        expect(seen[0]!.body).toEqual({ items: [{ publicationNumber: "CN-103570677-A" }] });
-        expect(seen[1]!.url.searchParams.getAll("include")).toEqual(["claims"]);
+        expect(presentAt(seen, 0).body).toEqual({ items: [{ publicationNumber: "CN-103570677-A" }] });
+        expect(presentAt(seen, 1).url.searchParams.getAll("include")).toEqual(["claims"]);
         expect(result).toMatchObject({ status: "found", patent: { amassId: PATENT, claims: "" } });
     });
 

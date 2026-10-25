@@ -10,6 +10,7 @@ import { describe, expect, it } from "bun:test";
 
 import { createCitationResolver, type CitationResolverConfig } from "../../../citations/resolve.js";
 import type { CitationSource } from "../../../citations/types.js";
+import { presentFind } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 const SOURCES: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed", "arxiv", "semantic_scholar"];
@@ -37,8 +38,8 @@ function liveResolver(enabled: readonly CitationSource[]) {
 describe.skipIf(!LIVE)("live citation resolution", () => {
     it("resolves a canonical Crossref DOI through the DOI registry and Crossref", async () => {
         const result = await liveResolver(["doi_registry", "crossref"]).resolveOne({ citation: "10.1038/s41586-020-2649-2" });
-        const registry = result.sourceOutcomes.find((outcome) => outcome.source === "doi_registry")!;
-        const crossref = result.sourceOutcomes.find((outcome) => outcome.source === "crossref")!;
+        const registry = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "doi_registry");
+        const crossref = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "crossref");
 
         expect(registry.identifierEvidence).toMatchObject({ exists: true, registrationAgency: "Crossref" });
         expect(crossref.status).toBe("ok");
@@ -48,8 +49,8 @@ describe.skipIf(!LIVE)("live citation resolution", () => {
 
     it("verifies a DOI owned by a non-Crossref registration agency", async () => {
         const result = await liveResolver(["doi_registry", "crossref"]).resolveOne({ citation: "10.5240/B1FA-0EEC-C316-3316-3A73-L" });
-        const registry = result.sourceOutcomes.find((outcome) => outcome.source === "doi_registry")!;
-        const crossref = result.sourceOutcomes.find((outcome) => outcome.source === "crossref")!;
+        const registry = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "doi_registry");
+        const crossref = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "crossref");
 
         expect(registry.identifierEvidence?.exists).toBe(true);
         expect(registry.identifierEvidence?.registrationAgency?.toLowerCase()).not.toBe("crossref");
@@ -59,7 +60,7 @@ describe.skipIf(!LIVE)("live citation resolution", () => {
 
     it("retrieves a canonical PMID", async () => {
         const result = await liveResolver(["pubmed"]).resolveOne({ citation: "PMID: 22745249" });
-        const pubmed = result.sourceOutcomes.find((outcome) => outcome.source === "pubmed")!;
+        const pubmed = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "pubmed");
 
         expect(pubmed.status).toBe("ok");
         expect(pubmed.records.some((record) => record.identifiers.pmid === "22745249")).toBe(true);
@@ -68,7 +69,7 @@ describe.skipIf(!LIVE)("live citation resolution", () => {
 
     it("retrieves a canonical arXiv identifier", async () => {
         const result = await liveResolver(["arxiv"]).resolveOne({ citation: "arXiv:1706.03762" });
-        const arxiv = result.sourceOutcomes.find((outcome) => outcome.source === "arxiv")!;
+        const arxiv = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "arxiv");
 
         expect(arxiv.status).toBe("ok");
         expect(arxiv.records.some((record) => record.identifiers.arxiv === "1706.03762")).toBe(true);
@@ -83,7 +84,7 @@ describe.skipIf(!LIVE)("live citation resolution", () => {
             year: 2000,
             venue: "Cell",
         });
-        const crossref = result.sourceOutcomes.find((outcome) => outcome.source === "crossref")!;
+        const crossref = presentFind(result.sourceOutcomes, (outcome) => outcome.source === "crossref");
 
         expect(crossref.status).toBe("ok");
         expect(crossref.records.some((record) => record.title?.toLowerCase().includes("hallmarks of cancer"))).toBe(true);

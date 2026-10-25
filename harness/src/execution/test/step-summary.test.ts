@@ -19,6 +19,7 @@ import { createGrepTool, createReadFileTool } from "../../tools/workspace/index.
 import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 import { generateStepSummary, type GenerateStepSummaryOptions } from "../step-summary.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 type RecordedCall = {
     readonly req: ChatRequest;
@@ -144,7 +145,7 @@ describe("generateStepSummary", () => {
 
         await generateStepSummary(options(provider, { agent, conversation }));
 
-        const request = calls[0]!.req;
+        const request = presentAt(calls, 0).req;
         expect(request.system).toMatchObject({ content: "You are a test step agent." });
         expect(Object.keys(request.tools)).toEqual(agent.tools.map((t) => t.id));
         expect(JSON.stringify(request.messages.slice(0, conversation.length))).toBe(JSON.stringify(conversation));
@@ -155,7 +156,7 @@ describe("generateStepSummary", () => {
     it("appends the artifact list to the summary request", async () => {
         const { provider, calls } = makeProvider([textMessage("summary")]);
         await generateStepSummary(options(provider));
-        const last = lastTextOf(calls[0]!.req);
+        const last = lastTextOf(presentAt(calls, 0).req);
         for (const path of ARTIFACT_PATHS) {
             expect(last).toContain(path);
         }
@@ -176,7 +177,7 @@ describe("generateStepSummary", () => {
         expect(out?.markdown).toContain("TP53");
         // The second request must have seen the actual file contents in the
         // tool_result the loop fed back.
-        const wire = JSON.stringify(calls[1]!.req.messages);
+        const wire = JSON.stringify(presentAt(calls, 1).req.messages);
         expect(wire).toContain("TP53");
         expect(wire).toContain("0.001");
     });
@@ -212,11 +213,11 @@ describe("generateStepSummary", () => {
         const out = await generateStepSummary(options(provider, { agent: stepAgent(fs, stepDir, [writeProbe]) }));
 
         expect(out?.markdown).toContain("TP53");
-        const [read, write] = toolResults(calls[1]!.req);
-        expect(JSON.stringify(read!.output)).toContain("TP53");
-        expect(write!.output.type).toBe("error-text");
-        expect(JSON.stringify(write!.output)).toContain("The tool write_file is not available for this request");
-        expect(JSON.stringify(write!.output)).toContain("The tools that can run now: read_file, grep, read_tool_output.");
+        const [read, write] = toolResults(presentAt(calls, 1).req);
+        expect(JSON.stringify(read?.output)).toContain("TP53");
+        expect(write?.output.type).toBe("error-text");
+        expect(JSON.stringify(write?.output)).toContain("The tool write_file is not available for this request");
+        expect(JSON.stringify(write?.output)).toContain("The tools that can run now: read_file, grep, read_tool_output.");
         expect(
             await access(target).then(
                 () => true,
@@ -246,10 +247,12 @@ describe("generateStepSummary", () => {
                 requests.push({ ...req, messages: [...req.messages] });
                 if (requests.length === 1) return okAsync(readFileCall("r1", "output/long.txt"));
                 if (requests.length === 2) {
-                    const found = toolResults(req).find((r) => r.toolCallId === "r1")!;
+                    const found = presentFind(toolResults(req), (r) => r.toolCallId === "r1");
                     const outputValue = "value" in found.output ? found.output.value : undefined;
                     if (typeof outputValue !== "string") throw new Error("expected a string read output");
-                    const ref = /reference "(to_[0-9a-f]{20})"/.exec(outputValue)![1]!;
+                    const match = /reference "(to_[0-9a-f]{20})"/.exec(outputValue);
+                    if (match === null) throw new Error("the reference marker is absent from the read output");
+                    const ref = presentAt(match, 1, "the captured reference id");
                     return okAsync(makeMessage([toolUseBlock("k1", "read_tool_output", { ref, offset: 60_000 })], "tool_use"));
                 }
                 return okAsync(textMessage("# Long\n\n- all read"));
@@ -265,7 +268,8 @@ describe("generateStepSummary", () => {
 
         expect(out?.markdown).toContain("all read");
         expect(kept).toHaveLength(1);
-        const page = toolResults(requests[2]!).find((r) => r.toolCallId === "k1")!;
+        const page = toolResults(presentAt(requests, 2)).find((r) => r.toolCallId === "k1");
+        if (page === undefined) throw new Error("page is absent");
         expect(page.output.type).toBe("json");
         if (page.output.type !== "json") throw new Error("expected the json output arm");
         expect(page.output.value).toMatchObject({ status: "ok", offset: 60_000 });
@@ -278,7 +282,7 @@ describe("generateStepSummary", () => {
         const out = await generateStepSummary(options(provider, { artifactPaths: [] }));
         expect(out?.markdown).toContain("no output files");
         // The request must signal the empty state to the model.
-        expect(lastTextOf(calls[0]!.req)).toContain("none");
+        expect(lastTextOf(presentAt(calls, 0).req)).toContain("none");
     });
 
     it("returns undefined and does not throw when the provider throws", async () => {

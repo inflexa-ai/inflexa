@@ -13,6 +13,7 @@
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
+import { presentAt } from "../lib/present.js";
 import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
 import { fetchIchListing, fetchAndExtractIchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
 import { chunkText, upsertChunks, type ChunkRow } from "../lib/regulatory-corpus.js";
@@ -144,7 +145,7 @@ async function indexSource(
                 const batchResults = await Promise.all(batch.map((c) => embedder(c.text)));
                 embeddings.push(...batchResults);
             }
-            const chunks = rawChunks.map((c, i) => ({ ...c, embedding: embeddings[i]! }));
+            const chunks = rawChunks.map((c, i) => ({ ...c, embedding: presentAt(embeddings, i, "the embedding of the chunk") }));
             const row: ChunkRow = {
                 source,
                 doc_id: doc.doc_id,

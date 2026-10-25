@@ -8,6 +8,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { upsertArtifacts, queryInputArtifacts } from "../index.js";
+import { presentAt } from "../../lib/present.js";
 
 let fx: { pool: Pool; drop: () => Promise<void> } | undefined;
 
@@ -34,7 +35,7 @@ describe("input artifact file_id", () => {
 
         const meta = (await queryInputArtifacts(fx.pool, "a-1", ["data/inputs/Lab/counts.csv"]))._unsafeUnwrap();
         expect(meta).toHaveLength(1);
-        expect(meta[0]!.fileId).toBe("uuid-1");
+        expect(presentAt(meta, 0).fileId).toBe("uuid-1");
     });
 
     it("COALESCE preserves file_id when a later upsert omits it", async () => {
@@ -46,7 +47,7 @@ describe("input artifact file_id", () => {
         (await upsertArtifacts(fx.pool, [{ resourceId: "a-1", path: "data/inputs/x.csv", hash: "h2", size: 20, role: "input" }]))._unsafeUnwrap();
 
         const meta = (await queryInputArtifacts(fx.pool, "a-1", ["data/inputs/x.csv"]))._unsafeUnwrap();
-        expect(meta[0]!.fileId).toBe("uuid-9");
-        expect(meta[0]!.hash).toBe("h2");
+        expect(presentAt(meta, 0).fileId).toBe("uuid-9");
+        expect(presentAt(meta, 0).hash).toBe("h2");
     });
 });

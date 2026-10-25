@@ -17,6 +17,7 @@ import { okAsync, ResultAsync } from "neverthrow";
 import type { Querier } from "./db.js";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
+import { presentAt } from "../lib/present.js";
 
 /**
  * The identifier shape and length the harness may interpolate into a statement.
@@ -120,11 +121,8 @@ export function createVectorStore(pool: Querier): VectorStore {
             });
         },
 
-        buildIndex({ indexName, indexConfig }) {
+        buildIndex({ indexName }) {
             assertIdent(indexName);
-            if (indexConfig.type !== "hnsw") {
-                throw new Error(`vector-store: unsupported index type "${indexConfig.type}"`);
-            }
             // m/ef_construction default to 8/32.
             return tryMutation("vectorStore.buildIndex", async () => {
                 await pool.query(
@@ -142,7 +140,7 @@ export function createVectorStore(pool: Querier): VectorStore {
             const finalIds = ids ?? vectors.map(() => crypto.randomUUID());
             return tryMutation("vectorStore.upsert", async () => {
                 for (let i = 0; i < vectors.length; i++) {
-                    const vec = toVectorLiteral(vectors[i]!);
+                    const vec = toVectorLiteral(presentAt(vectors, i, "the vector at the index"));
                     const meta = JSON.stringify(metadata?.[i] ?? {});
                     await pool.query(
                         `INSERT INTO "${indexName}" (vector_id, embedding, metadata)

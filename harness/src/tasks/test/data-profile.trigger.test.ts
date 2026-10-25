@@ -337,7 +337,7 @@ describe("triggerDataProfile seed-first guard", () => {
                 // Wipe the seed the instant the guard finishes reading it, before the CAS runs.
                 query: async (...args: Parameters<Querier["query"]>) => {
                     const res = await pool.query(...args);
-                    const first = args[0]!;
+                    const first = args[0];
                     const text = typeof first === "string" ? first : first.text;
                     if (text.includes("SELECT seed_input_file_ids")) await setSeed(pool, "a-raced", null);
                     return res;

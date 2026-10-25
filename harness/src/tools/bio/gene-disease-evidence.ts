@@ -241,7 +241,8 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
             const [gwas, disgenet, clinvar, cbioportal] = await Promise.all([
                 selected.includes("gwas")
                     ? runSource<GwasAssociation>("gwas", async () => {
-                          const searchType = GWAS_SEARCH_TYPES[input.queryType]!;
+                          const searchType = GWAS_SEARCH_TYPES[input.queryType];
+                          if (searchType === undefined) throw new Error(`the gwas source has no search type for "${input.queryType}"`);
                           const res = await searchGwasCatalog(input.query, searchType, {
                               limit,
                               pValueThreshold: input.pValueThreshold,

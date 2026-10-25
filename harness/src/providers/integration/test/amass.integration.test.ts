@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { makeToolContext } from "../../../tools/__fixtures__/tool-context.js";
 import { createSearchPatentsTool } from "../../../tools/bio/search-patents.js";
 import { createSearchRegulatoryApprovalsTool } from "../../../tools/bio/search-regulatory-approvals.js";
+import { presentAt } from "../../../lib/present.js";
 
 const KEY = process.env.AMASS_API_KEY;
 
@@ -26,8 +27,8 @@ describe.skipIf(!KEY)("live Amass", () => {
 
         if (!("authorizations" in result)) throw new Error("expected a search answer");
         expect(result.authorizations).toHaveLength(1);
-        expect(result.authorizations[0]!.amassId).toMatch(/^AMRC_/);
-        expect(result.authorizations[0]!.matchedSectionCount).toBeGreaterThanOrEqual(0);
+        expect(presentAt(result.authorizations, 0).amassId).toMatch(/^AMRC_/);
+        expect(presentAt(result.authorizations, 0).matchedSectionCount).toBeGreaterThanOrEqual(0);
     }, 60_000);
 
     test("a bare FDA application number resolves to one record with its table of contents", async () => {
@@ -47,7 +48,7 @@ describe.skipIf(!KEY)("live Amass", () => {
 
         if (!("patents" in result)) throw new Error("expected a search answer");
         expect(result.patents).toHaveLength(1);
-        expect(result.patents[0]!.amassId).toMatch(/^AMPC_/);
+        expect(presentAt(result.patents, 0).amassId).toMatch(/^AMPC_/);
         expect(result.patents[0]).not.toHaveProperty("claims");
     }, 60_000);
 });

@@ -13,6 +13,7 @@
  */
 
 import { ok, type Result } from "neverthrow";
+import { presentFirst } from "../../lib/present.js";
 import { z } from "zod";
 
 import { buildFileReferenceCardData, deriveRunId, fileGroupHash, MAX_FILES } from "../../memory/card-builders.js";
@@ -53,7 +54,7 @@ export const showFileTool = defineTool({
         "(markdown image syntax pointing at a workspace file does NOT render — this tool is the only way to show one).",
     inputSchema: ShowFileInputSchema,
     // `.min(1)` on `files` makes index 0 total after the parse.
-    describeCall: ({ files }) => (files.length === 1 ? files[0]!.path : `${files.length} files`),
+    describeCall: ({ files }) => (files.length === 1 ? presentFirst(files, "the shown file").path : `${files.length} files`),
     execute: async (input, ctx): Promise<Result<ShowFileOutput, ToolError>> => {
         const card = buildFileReferenceCardData(input);
         // A malformed/traversal path yields no card — an expected outcome the model can self-correct

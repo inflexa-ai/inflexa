@@ -23,6 +23,7 @@ import { describeSandboxError, keepSuspendingRefusal, SandboxFailure, type Sandb
 import type { FarmSource, SandboxLabels, SandboxSpec } from "../types.js";
 import type { RunSession, SpawnSession } from "../../auth/types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
+import { presentAt } from "../../lib/present.js";
 
 /** The composed client never drives the backend ops in these tests; each member throws, so a surprise call fails the test. */
 function unusedOps(): ReturnType<typeof k8sClient.createK8sSandboxOps> {
@@ -150,6 +151,7 @@ describe("createSandboxClient — the k8s libs root threading", () => {
             // The client is never used — the test ends at the composed config.
             return unusedOps();
         });
+        const readCaptured = (): k8sClient.K8sClientConfig | null => captured;
         try {
             createSandboxClient({
                 pool: unusedPool,
@@ -165,12 +167,13 @@ describe("createSandboxClient — the k8s libs root threading", () => {
                 logger,
             });
 
-            expect(captured).not.toBeNull();
-            expect(captured!.libStorePvcRoot).toBe("/mnt/libs");
-            expect(captured!.libStorePvc).toBe("cortex-libs");
+            const composed = readCaptured();
+            if (composed === null) throw new Error("the composed k8s config is absent");
+            expect(composed.libStorePvcRoot).toBe("/mnt/libs");
+            expect(composed.libStorePvc).toBe("cortex-libs");
             // The same reference, not a copy: the lock-gate warning must reach
             // the embedder's sink, never the no-op fallback.
-            expect(captured!.logger).toBe(logger);
+            expect(composed.logger).toBe(logger);
         } finally {
             spy.mockRestore();
         }
@@ -199,6 +202,8 @@ describe("createSandboxClient — the required-store fact", () => {
             dockerConfig = cfg;
             return unusedOps();
         });
+        const readK8s = (): k8sClient.K8sClientConfig | null => k8sConfig;
+        const readDocker = (): dockerClient.DockerClientConfig | null => dockerConfig;
         try {
             createSandboxClient({
                 ...base,
@@ -218,10 +223,12 @@ describe("createSandboxClient — the required-store fact", () => {
                 packageStore: "required",
             });
 
-            expect(k8sConfig).not.toBeNull();
-            expect(k8sConfig!.packageStore).toBe("required");
-            expect(dockerConfig).not.toBeNull();
-            expect(dockerConfig!.packageStore).toBe("required");
+            const k8sObserved = readK8s();
+            if (k8sObserved === null) throw new Error("the composed k8s config is absent");
+            expect(k8sObserved.packageStore).toBe("required");
+            const dockerObserved = readDocker();
+            if (dockerObserved === null) throw new Error("the composed docker config is absent");
+            expect(dockerObserved.packageStore).toBe("required");
         } finally {
             k8sSpy.mockRestore();
             dockerSpy.mockRestore();
@@ -387,7 +394,7 @@ describe("createSandboxClient — the label hook", () => {
     test("a client with no hook gives the backend no host labels", async () => {
         (await clientWith().createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1")))._unsafeUnwrap();
         expect(calls).toHaveLength(1);
-        expect(calls[0]!.hostLabels).toEqual({});
+        expect(presentAt(calls, 0).hostLabels).toEqual({});
     });
 
     test("the hook gets the session of the spawn, and its labels reach the backend as the hook gives them", async () => {
@@ -401,8 +408,8 @@ describe("createSandboxClient — the label hook", () => {
         (await client.createSandbox(session, spec, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
         expect(seen).toEqual([session]);
-        expect(calls[0]!.session).toBe(session);
-        expect(calls[0]!.hostLabels).toEqual({ "example.com/tenant": "acme" });
+        expect(presentAt(calls, 0).session).toBe(session);
+        expect(presentAt(calls, 0).hostLabels).toEqual({ "example.com/tenant": "acme" });
     });
 
     test("a refused spawn gives labels_refused with the reason and the flag, makes no step tree, and calls no backend", async () => {

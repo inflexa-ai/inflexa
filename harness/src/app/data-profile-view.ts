@@ -13,6 +13,7 @@
  */
 
 import type { DataProfileDimension, DataProfileFile, DataProfileGroup, DataProfileResult } from "../contracts/data-profile.js";
+import { presentFirst } from "../lib/present.js";
 
 /** A group as consumers read it, whether it was authored as a group or as a kind. */
 export type ProfileGroupView = {
@@ -68,7 +69,7 @@ function examplesOf(dimension: DataProfileDimension): string[] {
 }
 
 function fromGroup(group: DataProfileGroup): ProfileGroupView {
-    const format = group.formats.length === 1 ? group.formats[0]!.format : undefined;
+    const format = group.formats.length === 1 ? presentFirst(group.formats, "the single group format").format : undefined;
     return {
         id: group.id,
         name: group.name,
@@ -127,7 +128,7 @@ export function profileFileRecords(result: DataProfileResult): DataProfileFile[]
             (group.memberAnnotations ?? []).map((annotation) => ({
                 path: annotation.path,
                 description: annotation.note,
-                format: group.formats.length === 1 ? group.formats[0]!.format : undefined,
+                format: group.formats.length === 1 ? presentFirst(group.formats, "the single group format").format : undefined,
             })),
         );
     }

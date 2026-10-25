@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { searchPharmgkb } from "../../../tools/lib/pharmgkb-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 
@@ -22,7 +23,7 @@ describe.skipIf(!LIVE)("live ClinPGx", () => {
         expect(result.totalFound).toBeGreaterThan(0);
         expect(result.annotations.length).toBeGreaterThan(0);
 
-        const annotation = result.annotations[0]!;
+        const annotation = presentAt(result.annotations, 0);
         expect(annotation.gene).toContain("CYP2C19");
         expect(typeof annotation.drug).toBe("string");
         expect(annotation.levelOfEvidence.length).toBeGreaterThan(0);

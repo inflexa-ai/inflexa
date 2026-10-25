@@ -53,7 +53,8 @@ async function walk(args: ScanInputTreeArgs): Promise<{ files: ScannedFile[]; tr
 
     while (queue.length > 0) {
         signal?.throwIfAborted();
-        const dir = queue.shift()!;
+        const dir = queue.shift();
+        if (dir === undefined) break;
         const listing = unwrapOrThrow(await fs.list({ session, path: dir }));
         // A directory that vanished mid-walk, or one the seam refuses, is not a scan
         // failure — the tree is being described, not validated.

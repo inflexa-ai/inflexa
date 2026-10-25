@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 
 import { describeSandboxError, SandboxFailure, sandboxStatusOf, trySandbox, type SandboxError } from "../sandbox-error.js";
+import { presentAt } from "../../lib/present.js";
 
 /** An unusable farm, as the two lock gates raise it. */
 function farmUnusable(over: Partial<Extract<SandboxError, { type: "farm_unusable" }>> = {}): SandboxError {
@@ -196,7 +197,7 @@ describe("sandbox-error", () => {
             // multi-line JSON whose first line is `[` — which names nothing.
             const parsed = z.object({ schema: z.literal(1) }).safeParse({ schema: 99 });
             if (parsed.success) throw new Error("the fixture must fail to parse");
-            const issue = parsed.error.issues[0]!;
+            const issue = presentAt(parsed.error.issues, 0);
 
             const description = describeSandboxError(farmUnusable({ cause: parsed.error }));
 
@@ -207,7 +208,7 @@ describe("sandbox-error", () => {
         it("a zod issue with no path renders its message alone", () => {
             const parsed = z.number().safeParse("not a number");
             if (parsed.success) throw new Error("the fixture must fail to parse");
-            const issue = parsed.error.issues[0]!;
+            const issue = presentAt(parsed.error.issues, 0);
 
             expect(describeSandboxError(farmUnusable({ cause: parsed.error })).endsWith(` — ${issue.message}`)).toBe(true);
         });

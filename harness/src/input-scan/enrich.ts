@@ -28,6 +28,7 @@ import type { ExecResult } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
 
 import { READOUT_PREFIX_BYTES, readPrefix } from "./readout.js";
+import { presentAt } from "../lib/present.js";
 import type { FileShape, HeaderReadout } from "./types.js";
 
 /** Members decoded per shape. One is enough to characterise a set whose names already match. */
@@ -108,7 +109,7 @@ export async function readHeaders(args: ReadHeadersArgs): Promise<Map<string, He
     await Promise.all(
         Array.from({ length: Math.min(READOUT_CONCURRENCY, prefixed.length) }, async () => {
             for (let i = next++; i < prefixed.length; i = next++) {
-                const target = prefixed[i]!;
+                const target = presentAt(prefixed, i, "readout targets");
                 readouts.set(target.path, await readFromPrefix(args, target));
             }
         }),

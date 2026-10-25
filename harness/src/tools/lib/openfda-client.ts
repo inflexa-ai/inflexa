@@ -118,14 +118,14 @@ export async function getFaersByDrug(
         if (res.error.type === "http_status" && res.error.status === 404) return { totalReports: 0, adverseEvents: [] };
         throw new Error(describeApiError(res.error));
     }
-    const adverseEvents: AdverseEventCount[] = (res.value?.results ?? []).map((r) => ({
+    const adverseEvents: AdverseEventCount[] = (res.value.results ?? []).map((r) => ({
         reaction: r.term ?? "Unknown",
         count: r.count ?? 0,
     }));
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
     const totalRes = await apiFetchValidated(totalUrl, FaersMetaResponseSchema);
-    const totalReports = totalRes.isOk() ? totalRes.value?.meta?.results?.total : undefined;
+    const totalReports = totalRes.isOk() ? totalRes.value.meta?.results?.total : undefined;
 
     return { totalReports, adverseEvents };
 }
@@ -145,7 +145,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
         if (totalRes.error.type === "http_status" && totalRes.error.status === 404) return null;
         throw new Error(describeApiError(totalRes.error));
     }
-    const totalReports: number = totalRes.value?.meta?.results?.total ?? 0;
+    const totalReports: number = totalRes.value.meta?.results?.total ?? 0;
     if (totalReports === 0) {
         return {
             totalReports: 0,
@@ -163,7 +163,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
         const url = `${OPENFDA_BASE}?search=${encodeURIComponent(q)}&limit=1`;
         const res = await apiFetchValidated(url, FaersMetaResponseSchema);
         if (res.isErr()) return 0;
-        return res.value?.meta?.results?.total ?? 0;
+        return res.value.meta?.results?.total ?? 0;
     }
 
     const [fatal, hosp, lifeT, dis, cong, other] = await Promise.all([
@@ -211,9 +211,9 @@ function joinSection(value: unknown): string | null {
  * keyed by application number when only that is available.
  */
 function buildLabelSourceUrl(label: OpenFdaLabel): string {
-    const setId = typeof label?.set_id === "string" ? label.set_id : null;
+    const setId = typeof label.set_id === "string" ? label.set_id : null;
     if (setId) return `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${setId}`;
-    const appNum = firstString(label?.openfda?.application_number);
+    const appNum = firstString(label.openfda?.application_number);
     if (appNum) {
         return `https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo=${encodeURIComponent(appNum)}`;
     }
@@ -221,21 +221,21 @@ function buildLabelSourceUrl(label: OpenFdaLabel): string {
 }
 
 function mapLabel(raw: OpenFdaLabel): DrugLabelAction {
-    const openfda: OpenFdaLabelMeta = raw?.openfda ?? {};
+    const openfda: OpenFdaLabelMeta = raw.openfda ?? {};
     // The label reference carries no REMS field, thus the signal is the word
     // itself in one of the three sections that a REMS program writes to. The
     // presence of a medication guide alone is not the signal: many labels with no
     // REMS carry one, and a presence test would report a REMS that does not exist.
-    const remsTextCandidates = [raw?.boxed_warning, raw?.spl_medguide, raw?.patient_medication_information];
+    const remsTextCandidates = [raw.boxed_warning, raw.spl_medguide, raw.patient_medication_information];
     const hasRems = remsTextCandidates.some((v) => joinSection(v)?.toLowerCase().includes("rems") ?? false);
 
     return {
         applicationNumber: firstString(openfda.application_number),
         brandName: firstString(openfda.brand_name),
         genericName: firstString(openfda.generic_name),
-        effectiveTime: typeof raw?.effective_time === "string" ? raw.effective_time : null,
-        boxedWarning: joinSection(raw?.boxed_warning),
-        warningsAndCautions: joinSection(raw?.warnings_and_cautions) ?? joinSection(raw?.warnings),
+        effectiveTime: typeof raw.effective_time === "string" ? raw.effective_time : null,
+        boxedWarning: joinSection(raw.boxed_warning),
+        warningsAndCautions: joinSection(raw.warnings_and_cautions) ?? joinSection(raw.warnings),
         hasRems,
         sourceUrl: buildLabelSourceUrl(raw),
     };

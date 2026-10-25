@@ -139,6 +139,7 @@ import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag
 import { recordCancelledChild } from "./metrics.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, type Suspension } from "./suspension.js";
+import { presentGet } from "../lib/present.js";
 
 /** Registered child sandbox-step callable the parent's child-dispatch closes over. */
 type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -1357,8 +1358,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const markDependentsSkipped = (failedStepId: string): void => {
         const stack = [...(dependentsByStepId.get(failedStepId) ?? [])];
         while (stack.length > 0) {
-            const id = stack.pop()!;
-            if (stepRuntime.get(id)!.status === "pending") {
+            const id = stack.pop();
+            if (id === undefined) break;
+            if (presentGet(stepRuntime, id, "the runtime of the step").status === "pending") {
                 stepRuntime.set(id, { status: "skipped" });
                 stack.push(...(dependentsByStepId.get(id) ?? []));
             }
@@ -1389,7 +1391,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             id: `dag-${runId}`,
             runId,
             steps: input.steps.map((s) => {
-                const rt = stepRuntime.get(s.id)!;
+                const rt = presentGet(stepRuntime, s.id, "the runtime of the step");
                 const entry: Record<string, unknown> = {
                     id: s.id,
                     // `input.steps` is the SCHEDULER's projection — `{id, depends_on}` and nothing
@@ -1460,7 +1462,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 return;
             }
             for (const stepId of scheduled.heldForCapacity) {
-                if (stepRuntime.get(stepId)!.status !== "queued") {
+                if (presentGet(stepRuntime, stepId, "the runtime of the step").status !== "queued") {
                     stepRuntime.set(stepId, { status: "queued" });
                     queuedChanged = true;
                 }
@@ -1474,7 +1476,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             return;
         }
         for (const stepId of admit) {
-            const idx = stepIndexById.get(stepId)!;
+            const idx = presentGet(stepIndexById, stepId, "the index of the step");
             const childWorkflowId = `${workflowId}-${idx}`;
             // Compose the seed HERE — the dependencies of `stepId` are all in
             // `completed`, so this is the first (and only) moment their results
@@ -1523,7 +1525,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         // function-ID-consuming ops and diverge the counter on replay.
         const winner = await DBOS.waitFirst([...inFlight.values()].map((e) => e.handle));
         const childId = winner.workflowID;
-        const entry = inFlight.get(childId)!;
+        const entry = presentGet(inFlight, childId, "the in-flight entry of the winning child");
         inFlight.delete(childId);
 
         let settled:
@@ -1552,10 +1554,10 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 completed.add(settled.stepId);
                 stepRuntime.set(settled.stepId, {
                     status: "completed",
-                    durationMs: r.durationMs ?? undefined,
+                    durationMs: r.durationMs,
                 });
                 stepStatus = "completed";
-                stepDurationMs = r.durationMs ?? undefined;
+                stepDurationMs = r.durationMs;
                 await emitDagSnapshot();
                 await dispatchReady();
             } else if (r.status === "canceled") {
@@ -1563,11 +1565,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 if (childSuspension !== undefined) await haltForSuspension(childSuspension);
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
-                    durationMs: r.durationMs ?? undefined,
+                    durationMs: r.durationMs,
                     error: r.error ?? "canceled",
                 });
                 stepStatus = "canceled";
-                stepDurationMs = r.durationMs ?? undefined;
+                stepDurationMs = r.durationMs;
                 await emitDagSnapshot();
             } else {
                 // failed or blocked — a blocker (see the harness-sandbox-agents spec)
@@ -1579,12 +1581,12 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 failureReason ??= r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
-                    durationMs: r.durationMs ?? undefined,
+                    durationMs: r.durationMs,
                     error: r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed"),
                 });
                 markDependentsSkipped(settled.stepId);
                 stepStatus = "failed";
-                stepDurationMs = r.durationMs ?? undefined;
+                stepDurationMs = r.durationMs;
                 await emitDagSnapshot();
                 await dispatchReady();
             }
@@ -1669,10 +1671,10 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 }
 
 async function drainChildSuspensions(suspensions: Map<string, ChildSuspended>): Promise<void> {
-    while (true) {
+    for (;;) {
         const msg = await DBOS.recv<ChildSuspended>(CHILD_SUSPENDED_TOPIC, 0);
         if (!msg) return;
-        if (msg.kind === "suspended" && !suspensions.has(msg.childWorkflowId)) suspensions.set(msg.childWorkflowId, msg);
+        if (!suspensions.has(msg.childWorkflowId)) suspensions.set(msg.childWorkflowId, msg);
     }
 }
 
@@ -1807,7 +1809,8 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // The last attempt returns "failed" instead: the body takes the failed path with no `try`, and a
     // failure of DBOS to record a won step cannot be mistaken for a failed write. A commit can fail
     // after the emit, so `emittedInStep` keeps the later attempts from emitting again.
-    let emittedInStep = false;
+    // The `undefined` in the annotation exists only because control-flow analysis cannot see the closure assignment; no code may depend on the initial state.
+    let emittedInStep: boolean | undefined;
     const finalWrite = await DBOS.runStep(
         async (): Promise<"won" | "refused" | "failed"> => {
             const stepLog = logger.with({ status }).named("persist-final-status");

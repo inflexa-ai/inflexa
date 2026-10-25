@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { applyMarkers } from "../markers.js";
 import type { MemberFile } from "../set-types.js";
 import { basenameOf } from "../tokens.js";
+import { presentAt } from "../../lib/present.js";
 
 function member(path: string): MemberFile {
     return { path, name: basenameOf(path), size: 1024, format: "unknown", companions: [] };
@@ -20,9 +21,9 @@ describe("applyMarkers", () => {
         const { units, unclaimed } = applyMarkers(files);
 
         expect(units).toHaveLength(1);
-        expect(units[0]!.label).toBe("feature-barcode-matrix");
-        expect(units[0]!.root).toBe("data/inputs/counts");
-        expect(units[0]!.members).toHaveLength(3);
+        expect(presentAt(units, 0).label).toBe("feature-barcode-matrix");
+        expect(presentAt(units, 0).root).toBe("data/inputs/counts");
+        expect(presentAt(units, 0).members).toHaveLength(3);
         expect(unclaimed.map((f) => f.path)).toEqual(["data/inputs/panel.csv"]);
     });
 
@@ -46,8 +47,8 @@ describe("applyMarkers", () => {
         const { units, unclaimed } = applyMarkers(files);
 
         expect(units).toHaveLength(1);
-        expect(units[0]!.label).toBe("study-manifest");
-        expect(units[0]!.members).toHaveLength(3);
+        expect(presentAt(units, 0).label).toBe("study-manifest");
+        expect(presentAt(units, 0).members).toHaveLength(3);
         expect(unclaimed.map((f) => f.path)).toEqual(["data/inputs/elsewhere/panel.csv"]);
     });
 
@@ -70,7 +71,7 @@ describe("applyMarkers", () => {
         const { units, unclaimed } = applyMarkers(files);
 
         expect(units).toHaveLength(1);
-        expect(units[0]!.label).toBe("dataset-descriptor");
+        expect(presentAt(units, 0).label).toBe("dataset-descriptor");
         expect(unclaimed).toHaveLength(0);
     });
 
@@ -84,7 +85,7 @@ describe("applyMarkers", () => {
         const { units } = applyMarkers(files);
 
         expect(units).toHaveLength(1);
-        expect(units[0]!.label).toBe("study-manifest");
-        expect(units[0]!.members).toHaveLength(3);
+        expect(presentAt(units, 0).label).toBe("study-manifest");
+        expect(presentAt(units, 0).members).toHaveLength(3);
     });
 });

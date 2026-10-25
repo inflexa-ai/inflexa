@@ -14,6 +14,7 @@
 import { z } from "zod";
 
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
+import { presentGet } from "../../lib/present.js";
 
 const CBIOPORTAL_BASE = "https://www.cbioportal.org/api";
 const HEADERS = { Accept: "application/json" } as const;
@@ -78,7 +79,7 @@ async function listStudies(): Promise<RawCancerStudy[]> {
     const url = `${CBIOPORTAL_BASE}/studies?projection=SUMMARY&pageSize=10000`;
     const res = await apiFetchValidated(url, z.array(RawCancerStudySchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value ?? [];
+    return res.value;
 }
 
 /**
@@ -91,7 +92,7 @@ async function cancerTypeNames(): Promise<Map<string, string>> {
     const res = await apiFetchValidated(url, z.array(z.object({ cancerTypeId: z.string().optional(), name: z.string().optional() })), { headers: HEADERS });
     const names = new Map<string, string>();
     if (res.isErr()) return names;
-    for (const row of res.value ?? []) {
+    for (const row of res.value) {
         if (row.cancerTypeId && row.name) names.set(row.cancerTypeId, row.name);
     }
     return names;
@@ -101,14 +102,14 @@ async function listAllSampleLists(): Promise<RawSampleList[]> {
     const url = `${CBIOPORTAL_BASE}/sample-lists?projection=SUMMARY&pageSize=10000`;
     const res = await apiFetchValidated(url, z.array(RawSampleListSchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value ?? [];
+    return res.value;
 }
 
 async function listMutationProfiles(): Promise<RawMolecularProfile[]> {
     const url = `${CBIOPORTAL_BASE}/molecular-profiles?projection=SUMMARY&pageSize=10000`;
     const res = await apiFetchValidated(url, z.array(RawMolecularProfileSchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return (res.value ?? []).filter((p) => p.molecularAlterationType === "MUTATION_EXTENDED");
+    return res.value.filter((p) => p.molecularAlterationType === "MUTATION_EXTENDED");
 }
 
 async function fetchMutationRowsForGene(entrezGeneId: number, profileIds: string[]): Promise<RawMutationRow[]> {
@@ -123,7 +124,7 @@ async function fetchMutationRowsForGene(entrezGeneId: number, profileIds: string
         }),
     });
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value ?? [];
+    return res.value;
 }
 
 /**
@@ -135,7 +136,7 @@ async function resolveEntrezId(symbol: string): Promise<number | null> {
     const url = `${CBIOPORTAL_BASE}/genes/${encodeURIComponent(symbol)}`;
     const res = await apiFetchValidated(url, z.object({ entrezGeneId: z.number().optional() }), { headers: HEADERS });
     if (res.isErr()) return null;
-    return res.value?.entrezGeneId ?? null;
+    return res.value.entrezGeneId ?? null;
 }
 
 /**
@@ -176,7 +177,7 @@ export async function getSomaticMutationFrequencies(
     const mutatedStudySamples = new Map<string, Set<string>>();
     for (const m of mutations) {
         if (!mutatedStudySamples.has(m.studyId)) mutatedStudySamples.set(m.studyId, new Set());
-        mutatedStudySamples.get(m.studyId)!.add(m.sampleId);
+        presentGet(mutatedStudySamples, m.studyId, "the sample set of the study").add(m.sampleId);
     }
 
     const byCancerType = new Map<string, { name: string; total: number; mutated: number; studies: Set<string> }>();
@@ -194,7 +195,7 @@ export async function getSomaticMutationFrequencies(
                 studies: new Set(),
             });
         }
-        const bucket = byCancerType.get(cancerTypeId)!;
+        const bucket = presentGet(byCancerType, cancerTypeId, "the aggregate bucket");
         bucket.total += sampleCount;
         bucket.mutated += mutatedStudySamples.get(studyId)?.size ?? 0;
         bucket.studies.add(studyId);

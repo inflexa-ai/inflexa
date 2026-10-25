@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 
 import { fixtureCase, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { GwasEmbeddedSchema, GwasSnpSearchResponseSchema, GwasTraitSearchResponseSchema, mapAssociation } from "../gwas-catalog-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 runFixtureSuite("GWAS Catalog golden fixtures", [
     fixtureCase({
@@ -26,7 +27,7 @@ runFixtureSuite("GWAS Catalog golden fixtures", [
         assertOutput: (res) => {
             const associations = res._embedded?.associations ?? [];
             expect(associations.length).toBeGreaterThan(0);
-            const mapped = mapAssociation(associations[0]!);
+            const mapped = mapAssociation(presentAt(associations, 0));
             // The PubMed id comes from `study.publicationInfo`, and the read at
             // the level of `study` gives an empty string forever.
             expect(mapped.pubmedId).toBe("19430480");

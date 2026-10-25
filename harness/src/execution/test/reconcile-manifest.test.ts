@@ -20,6 +20,7 @@ import { feedExecFrame } from "../../provenance/exec-frame.js";
 import { reconcileManifestWithDisk } from "../reconcile-manifest.js";
 import { computeSha256File } from "../../lib/fs-helpers.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
+import { presentAt } from "../../lib/present.js";
 
 const RID = "a1";
 
@@ -183,8 +184,8 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             // Dropping lineage is never silent — the warn names the ref and the bound.
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
-            expect(warns[0]!.msg).toBe("[reconcile-manifest] dropping out-of-tree input from lineage");
-            expect(warns[0]!.fields).toMatchObject({
+            expect(presentAt(warns, 0).msg).toBe("[reconcile-manifest] dropping out-of-tree input from lineage");
+            expect(presentAt(warns, 0).fields).toMatchObject({
                 runId: "run-001",
                 stepId: "de",
                 path: `/${RID}/..`,
@@ -242,7 +243,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
 
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
-            expect(warns[0]!.fields).toMatchObject({ path: "/etc/passwd", boundSite: "container-prefix" });
+            expect(presentAt(warns, 0).fields).toMatchObject({ path: "/etc/passwd", boundSite: "container-prefix" });
             expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
@@ -304,8 +305,8 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
 
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
-            expect(warns[0]!.msg).toBe("[reconcile-manifest] skipping symlink-escape entry");
-            expect(warns[0]!.fields).toMatchObject({ path: "output/leak.csv" });
+            expect(presentAt(warns, 0).msg).toBe("[reconcile-manifest] skipping symlink-escape entry");
+            expect(presentAt(warns, 0).fields).toMatchObject({ path: "output/leak.csv" });
             // A skip is not a failure: the reconcile completes without an error.
             expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
         } finally {
@@ -364,8 +365,8 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
 
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
-            expect(warns[0]!.msg).toBe("[reconcile-manifest] dropping out-of-tree input from lineage");
-            expect(warns[0]!.fields).toMatchObject({ path: `/${RID}/${upstreamRel}`, boundSite: "realpath" });
+            expect(presentAt(warns, 0).msg).toBe("[reconcile-manifest] dropping out-of-tree input from lineage");
+            expect(presentAt(warns, 0).fields).toMatchObject({ path: `/${RID}/${upstreamRel}`, boundSite: "realpath" });
             expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
@@ -417,8 +418,8 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
 
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
-            expect(warns[0]!.msg).toBe("[reconcile-manifest] dropping input not present at reconcile from lineage");
-            expect(warns[0]!.fields).toMatchObject({
+            expect(presentAt(warns, 0).msg).toBe("[reconcile-manifest] dropping input not present at reconcile from lineage");
+            expect(presentAt(warns, 0).fields).toMatchObject({
                 // Which step, which input, and how it was classified — the read's
                 // `source` is what says whether the step ever declared this input.
                 runId: "run-001",
@@ -490,7 +491,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             // survives, attested.
             const tracked = collector.getTrackedInputs();
             expect(tracked.map((r) => r.path)).toEqual([`/${RID}/${scriptRel}`]);
-            expect(tracked[0]!.hash).toBe(await computeSha256File(join(root, scriptRel)));
+            expect(presentAt(tracked, 0).hash).toBe(await computeSha256File(join(root, scriptRel)));
             expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
@@ -560,7 +561,7 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
 
             expect(collector.getTrackedInputs()).toEqual([]);
             expect(result.manifest).toHaveLength(1);
-            expect(result.manifest[0]!.hash).not.toBe("");
+            expect(presentAt(result.manifest, 0).hash).not.toBe("");
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
         }
@@ -605,7 +606,7 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
             expect(collector.getTrackedInputs()).toEqual([]);
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
-            expect(warns[0]!.fields).toMatchObject({ path: `/${RID}/${scratchRel}`, dropSite: "input-enoent" });
+            expect(presentAt(warns, 0).fields).toMatchObject({ path: `/${RID}/${scratchRel}`, dropSite: "input-enoent" });
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
         }

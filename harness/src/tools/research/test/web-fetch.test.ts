@@ -36,6 +36,7 @@ import {
     type WebFetchOutput,
     type WebFetchToolDeps,
 } from "../web-fetch.js";
+import { presentAt } from "../../../lib/present.js";
 
 type RecordedHop = {
     readonly status: number;
@@ -130,7 +131,7 @@ function emptyHopLog(): HopLog {
 function lookupAnswering(perCall: ReadonlyArray<readonly { address: string; family: number }[]>): WebFetchLookup {
     let call = 0;
     return (hostname, _options, callback) => {
-        const addresses = perCall[Math.min(call, perCall.length - 1)]!;
+        const addresses = presentAt(perCall, Math.min(call, perCall.length - 1));
         call += 1;
         setImmediate(() => callback(null, [...addresses]));
     };
@@ -304,7 +305,7 @@ describe("web_fetch — the guard", () => {
             {
                 hopRequest: recordedHopRequest({ "http://shape.test/a": { status: 200, headers: { "content-type": "text/plain" }, body: "shaped" } }, hop),
                 lookup: (_hostname, options, callback) => {
-                    askedForAll.push(options.all === true);
+                    askedForAll.push(options.all);
                     setImmediate(() => callback(null, [...PUBLIC]));
                 },
             },

@@ -809,8 +809,10 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
 
         // A real table holds an empty cell, and a parse gives it back as an absent key. An absent key is
         // not a value that a scalar reference can bind. An empty string is a value, thus it stays valid.
+        // A cell that parsed as `null` never lands in a row: `coerceCell` drops it, so `null` is not
+        // an absence the resolver can meet here.
         const cell: string | number | undefined = selectedRow[locator.column];
-        if (cell === undefined || cell === null) {
+        if (cell === undefined) {
             return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
         }
         const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, cell);

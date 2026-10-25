@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { classifyProviderError, findSuspendError, isProviderError, RequestTimeoutError, toProviderError } from "../errors.js";
+import { presentAt } from "../../lib/present.js";
 
 /** Build a synthetic API error carrying an HTTP status, SDK-shaped. */
 function apiError(status: number): Error {
@@ -258,7 +259,7 @@ describe("the provider arm's composed message", () => {
         const body = "x".repeat(500);
         const wrapped = toProviderError(nonConformingApiError(400, "Bad Request", body), "analysis:abc");
 
-        const excerpt = wrapped.message.split("response body: ")[1]!;
+        const excerpt = presentAt(wrapped.message.split("response body: "), 1);
         expect(excerpt.length).toBe(120);
         expect(excerpt.endsWith("…")).toBe(true);
         // The lead survives, and leads: truncation downstream eats the excerpt first.

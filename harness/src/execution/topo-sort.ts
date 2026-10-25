@@ -5,6 +5,7 @@
  * a wave have no inter-dependencies and can run in parallel.
  */
 
+import { presentGet } from "../lib/present.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 
 /** A wave is a group of steps with no inter-dependencies that can run in parallel. */
@@ -80,7 +81,7 @@ export function topoSortIntoWaves(steps: AnalysisStep[]): ExecutionWave[] {
     for (const step of steps) {
         for (const dep of step.depends_on) {
             inDegree.set(step.id, (inDegree.get(step.id) ?? 0) + 1);
-            dependents.get(dep)!.push(step.id);
+            presentGet(dependents, dep, "the dependents list of the dependency").push(step.id);
         }
     }
 
@@ -93,14 +94,14 @@ export function topoSortIntoWaves(steps: AnalysisStep[]): ExecutionWave[] {
 
     while (frontier.length > 0) {
         // Current frontier forms a wave
-        const wave: ExecutionWave = frontier.map((id) => stepById.get(id)!);
+        const wave: ExecutionWave = frontier.map((id) => presentGet(stepById, id, "the step of the frontier id"));
         waves.push(wave);
         remaining -= frontier.length;
 
         // Compute next frontier
         const nextFrontier: string[] = [];
         for (const id of frontier) {
-            for (const dep of dependents.get(id)!) {
+            for (const dep of presentGet(dependents, id, "the dependents list of the wave id")) {
                 const newDeg = (inDegree.get(dep) ?? 1) - 1;
                 inDegree.set(dep, newDeg);
                 if (newDeg === 0) {

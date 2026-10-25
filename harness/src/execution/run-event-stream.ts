@@ -228,6 +228,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                     while (pending.length > 0 && !signal.aborted) {
                         const batch = pending.splice(0, pending.length);
                         for (const part of foldRunEventParts(batch)) {
+                            // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the event wiring that aborts the signal; the re-check after each part is live (cancel stops delivery).
                             if (signal.aborted) return;
                             try {
                                 await onPart(part);
@@ -318,6 +319,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 for (;;) {
                     if (signal.aborted) return;
                     await discoverChildren();
+                    // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the event-wired abort or the parentRead .finally that sets parentDrained; both checks are live (discovery stops on cancel or a drained parent).
                     if (signal.aborted || parentDrained) return;
                     await Promise.race([sleep(CHILD_DISCOVERY_INTERVAL_MS), aborted, parentRead]);
                 }
@@ -374,6 +376,7 @@ export function createRunEventStream(deps: RunEventStreamDeps): RunEventStream {
                 await discovery;
                 await parentRead;
                 await Promise.all(childReads);
+                // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the readWorkflowStream closure that sets sawTerminal or the event-wired abort; the fallback that mints the missing terminal part is live.
                 if (!sawTerminal && !signal.aborted) {
                     const terminal = await missingTerminalPart();
                     if (terminal !== null) pending.push(terminal);

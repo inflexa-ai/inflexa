@@ -349,7 +349,8 @@ describe("the seen-stamp copy", () => {
         expect(JSON.stringify(result)).not.toContain("BASE64PNG");
         // The tool navigates to the page file through a file URL.
         expect(capturedUrl).toBeDefined();
-        expect(fileURLToPath(capturedUrl!)).toBe(join(root, "report-sessions", threadId, "index.html"));
+        if (capturedUrl === undefined) throw new Error("the captured url is absent");
+        expect(fileURLToPath(capturedUrl)).toBe(join(root, "report-sessions", threadId, "index.html"));
         // The look copies the rendered hash onto the seen hash, thus the record lets the current draft record.
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
     });
@@ -521,8 +522,10 @@ describe("the block look", () => {
         const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: async () => "/unused", chrome: {} });
 
         expect(tool.describeCall).toBeDefined();
-        expect(tool.describeCall!({ blockId: "sec-results" })).toBe("look at sec-results");
-        expect(tool.describeCall!({})).toBe("look at the page");
+        const describeCall = tool.describeCall;
+        if (describeCall === undefined) throw new Error("the tool declares no call detail");
+        expect(describeCall({ blockId: "sec-results" })).toBe("look at sec-results");
+        expect(describeCall({})).toBe("look at the page");
     });
 });
 
@@ -729,7 +732,9 @@ describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string | undefined {
         expect(tool.describeResult).toBeDefined();
-        return tool.describeResult!({}, result);
+        const describeResult = tool.describeResult;
+        if (describeResult === undefined) throw new Error("the tool declares no result detail");
+        return describeResult({}, result);
     }
 
     it("names the look outcome of a capture", async () => {

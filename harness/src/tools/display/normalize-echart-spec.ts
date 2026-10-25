@@ -197,6 +197,7 @@ export function normalizeEchartSpec(spec: Record<string, unknown>, opts: Normali
         const authored = isRecord(grid) ? grid : {};
         const filled: Record<string, unknown> = { ...authored };
         if (authored.top === undefined) filled.top = out.graphic !== undefined ? "12%" : "8%";
+        // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the normalizeAxis closure that sets rotated; the check is live (rotated labels get the larger bottom margin).
         if (authored.bottom === undefined) filled.bottom = rotated ? (bottomLegend ? "30%" : "25%") : "20%";
         if (authored.left === undefined) filled.left = "10%";
         if (authored.right === undefined) filled.right = "5%";

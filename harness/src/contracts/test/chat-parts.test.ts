@@ -9,6 +9,7 @@ import {
     PresentationPartSchema,
     RunSynthesisPartSchema,
 } from "../schemas/chat-parts.js";
+import { presentAt } from "../../lib/present.js";
 
 describe("PresentationContentSchema — echart dataPath", () => {
     test("accepts an echart content carrying dataPath and round-trips it (does not strip it)", () => {
@@ -200,7 +201,7 @@ describe("the finding of the run synthesis part", () => {
     };
 
     test("a parse keeps the references of each finding", () => {
-        expect(RunSynthesisPartSchema.parse(part).findings[0]!.references).toEqual(finding.references);
+        expect(presentAt(RunSynthesisPartSchema.parse(part).findings, 0).references).toEqual(finding.references);
     });
 
     test("a finding with no references fails the parse", () => {
@@ -209,7 +210,7 @@ describe("the finding of the run synthesis part", () => {
     });
 
     test("a concordance outside the four values fails the parse", () => {
-        const odd = { ...finding, references: [{ ...finding.references[0]!, concordance: "agrees" }] };
+        const odd = { ...finding, references: [{ ...presentAt(finding.references, 0), concordance: "agrees" }] };
         expect(RunSynthesisPartSchema.safeParse({ ...part, findings: [odd] }).success).toBe(false);
     });
 });

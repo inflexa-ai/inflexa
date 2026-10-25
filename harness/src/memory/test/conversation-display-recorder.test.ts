@@ -6,6 +6,7 @@ import type { EmitFn } from "../../loop/types.js";
 import { dropMarkerMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "../ai-sdk-message-storage.js";
 import { createConversationDisplayRecorder } from "../conversation-display-recorder.js";
 import type { ConversationUIMessage } from "../conversation-display-storage.js";
+import { presentAt } from "../../lib/present.js";
 
 const TOP = { agentId: "conversation", callPath: ["conversation"] };
 const SUB = { agentId: "child", callPath: ["conversation", "child"] };
@@ -37,7 +38,7 @@ describe("conversation display recorder", () => {
         await recorder.emit({ type: "text-delta", text: "after" });
 
         const display = recorder.finish();
-        expect(display[1]!.parts).toEqual([
+        expect(presentAt(display, 1).parts).toEqual([
             { type: "text", text: "before", state: "done" },
             { type: "data-presentation", id: "p1", data: { id: "p1", content: { kind: "markdown", body: "card" } } },
             { type: "text", text: "after", state: "done" },
@@ -64,7 +65,7 @@ describe("conversation display recorder", () => {
         await recorder.emit({ type: "data-plan", source: TOP, data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } });
 
         const display = recorder.finish();
-        expect(display[1]!.parts).toEqual([{ type: "data-plan", id: "pres-1", data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } }]);
+        expect(presentAt(display, 1).parts).toEqual([{ type: "data-plan", id: "pres-1", data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } }]);
     });
 
     it("keeps observed concurrent card order rather than tool declaration order", async () => {
@@ -86,7 +87,7 @@ describe("conversation display recorder", () => {
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "b", name: "tool_b", outcome: "ok" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "a", name: "tool_a", outcome: "ok" });
 
-        expect(recorder.finish()[1]!.parts.map((part) => ("id" in part ? part.id : part.type))).toEqual(["a", "b", "from-b", "from-a"]);
+        expect(presentAt(recorder.finish(), 1).parts.map((part) => ("id" in part ? part.id : part.type))).toEqual(["a", "b", "from-b", "from-a"]);
     });
 
     it("records a child-session-started part in the position of its emission", async () => {
@@ -98,7 +99,7 @@ describe("conversation display recorder", () => {
         // The part is durable conversation display, thus the recorder keeps it
         // between the two text runs and a reload shows it where the spawn ran.
         const display = recorder.finish();
-        expect(display[1]!.parts).toEqual([
+        expect(presentAt(display, 1).parts).toEqual([
             { type: "text", text: "starting", state: "done" },
             { type: "data-child-session-started", data: { threadId: "r1", parentThreadId: "p1", threadType: "report" } },
             { type: "text", text: "done", state: "done" },
@@ -118,7 +119,7 @@ describe("conversation display recorder", () => {
         // The part is durable conversation display, thus the recorder keeps it
         // between the two text runs and a reload shows it where the render ran.
         const display = recorder.finish();
-        expect(display[1]!.parts).toEqual([
+        expect(presentAt(display, 1).parts).toEqual([
             { type: "text", text: "rendering", state: "done" },
             { type: "data-report-rendered", id: "rr1", data: { id: "rr1", renderedAt: "2026-08-18T00:00:00.000Z", title: "Report" } },
             { type: "text", text: "done", state: "done" },
@@ -150,7 +151,7 @@ describe("conversation display recorder", () => {
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "e", name: "grep", input: {} });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "e", name: "grep", outcome: "error" });
 
-        expect(recorder.finish()[1]!.parts).toEqual([
+        expect(presentAt(recorder.finish(), 1).parts).toEqual([
             { type: "data-tool-call", id: "r", data: { toolCallId: "r", toolName: "read_file", outcome: "ok", detail: "scripts/run.py" } },
             { type: "data-tool-call", id: "x", data: { toolCallId: "x", toolName: "execute_command", outcome: "denied" } },
             { type: "data-tool-call", id: "e", data: { toolCallId: "e", toolName: "grep", outcome: "error" } },
@@ -168,7 +169,7 @@ describe("conversation display recorder", () => {
         });
         await recorder.emit({ type: "data-ask", source: TOP, data: { ...base, status: "resolved" } });
 
-        expect(recorder.finish()[1]!.parts).toEqual([{ type: "data-ask", id: "ask-1", data: { ...base, status: "resolved" } }]);
+        expect(presentAt(recorder.finish(), 1).parts).toEqual([{ type: "data-ask", id: "ask-1", data: { ...base, status: "resolved" } }]);
     });
 
     it("leaves an unfinished call incomplete on interruption", async () => {
@@ -180,7 +181,8 @@ describe("conversation display recorder", () => {
             data: { id: "ask-interrupted", title: "Run?", command: "inflexa run", status: "pending" },
         });
 
-        const assistant = recorder.finish({ interrupted: true })[1]!;
+        const assistant = recorder.finish({ interrupted: true })[1];
+        if (assistant === undefined) throw new Error("assistant is absent");
         expect(assistant.metadata).toEqual({ interrupted: true });
         // The call never finished, so it still holds the `incomplete` it was recorded with
         // at dispatch. An interrupted call is neither a success nor a failure, and one field
@@ -199,11 +201,11 @@ describe("conversation display recorder", () => {
 
     it("uses final text only when the provider emitted no deltas", async () => {
         const { recorder } = harness();
-        expect(recorder.finish({ fallbackText: "whole answer" })[1]!.parts).toEqual([{ type: "text", text: "whole answer", state: "done" }]);
+        expect(presentAt(recorder.finish({ fallbackText: "whole answer" }), 1).parts).toEqual([{ type: "text", text: "whole answer", state: "done" }]);
 
         const streamed = harness().recorder;
         await streamed.emit({ type: "text-delta", text: "streamed" });
-        expect(streamed.finish({ fallbackText: "streamed in full" })[1]!.parts).toEqual([{ type: "text", text: "streamed", state: "done" }]);
+        expect(presentAt(streamed.finish({ fallbackText: "streamed in full" }), 1).parts).toEqual([{ type: "text", text: "streamed", state: "done" }]);
     });
 });
 
@@ -230,7 +232,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-finished", source: PLANNER, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 250 });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
 
-        const parts = recorder.finish()[1]!.parts;
+        const parts = presentAt(recorder.finish(), 1).parts;
         const stored = parts.find((part) => part.type === "data-subagent-activity");
         expect(stored).toEqual({
             type: "data-subagent-activity",
@@ -261,7 +263,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
         await recorder.emit({ type: "data-presentation", source: PLANNER, data: { id: "hidden", content: { kind: "markdown", body: "child" } } });
 
-        expect(recorder.finish()[1]!.parts).toEqual([
+        expect(presentAt(recorder.finish(), 1).parts).toEqual([
             { type: "data-tool-call", id: "t1", data: { toolCallId: "t1", toolName: "generate_plan", outcome: "incomplete" } },
         ]);
     });
@@ -273,7 +275,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-started", source: compaction, toolUseId: "c1", name: "read_file", input: {} });
         await recorder.emit({ type: "tool-finished", source: compaction, toolUseId: "c1", name: "read_file", outcome: "ok" });
 
-        expect(recorder.finish()[1]!.parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+        expect(presentAt(recorder.finish(), 1).parts.map((part) => part.type)).toEqual(["data-tool-call"]);
     });
 
     it("closes an unfinished entry as incomplete", async () => {
@@ -281,7 +283,7 @@ describe("conversation display recorder — sub-agent activity", () => {
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
         await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: {} });
 
-        const stored = recorder.takeRound([{ role: "assistant", content: "" }])[0]!.parts.find((part) => part.type === "data-subagent-activity");
+        const stored = presentAt(recorder.takeRound([{ role: "assistant", content: "" }]), 0).parts.find((part) => part.type === "data-subagent-activity");
         expect(stored).toMatchObject({
             data: { toolCallId: "t1", entries: [{ tool: "search_pubmed", outcome: "incomplete", startedAt: new Date(T0 + 1000).toISOString() }] },
         });
@@ -337,14 +339,14 @@ describe("conversation display recorder — rounds", () => {
             { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "read_file", output: { type: "text", value: "x" } }] },
         ]);
 
-        expect(round[0]!.parts.at(-1)).toEqual({ type: "text", text: "whole answer", state: "done" });
+        expect(presentAt(round, 0).parts.at(-1)).toEqual({ type: "text", text: "whole answer", state: "done" });
     });
 
     it("marks a pending approval aborted at the take", async () => {
         const { recorder } = harness();
         await recorder.emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run?", command: "inflexa run", status: "pending" } });
 
-        expect(recorder.takeRound([])[0]!.parts).toEqual([
+        expect(presentAt(recorder.takeRound([]), 0).parts).toEqual([
             { type: "data-ask", id: "ask-1", data: { id: "ask-1", title: "Run?", command: "inflexa run", status: "aborted" } },
         ]);
     });
@@ -371,7 +373,7 @@ describe("conversation display recorder — compaction rounds", () => {
 
         expect(recorder.takeRound(exchange)).toEqual([]);
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c2", name: "read_file", input: {} });
-        expect(recorder.takeRound(exchange)[0]!.parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+        expect(presentAt(recorder.takeRound(exchange), 0).parts.map((part) => part.type)).toEqual(["data-tool-call"]);
     });
 
     it("gives the divider of a marker round with the figures of the marker", () => {
@@ -387,7 +389,7 @@ describe("conversation display recorder — compaction rounds", () => {
 
         const round = recorder.takeRound([summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures, trigger: "turn-start" })]);
 
-        expect(round[0]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done", trigger: "turn-start" } }]);
+        expect(presentAt(round, 0).parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done", trigger: "turn-start" } }]);
     });
 
     it("gives the divider of a drop marker with the status failed, after the assistant message of the parts", async () => {
@@ -400,7 +402,7 @@ describe("conversation display recorder — compaction rounds", () => {
             [announced("assistant")[0] ?? "", "assistant"],
             ["c-1", "system"],
         ]);
-        expect(round[1]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "failed" } }]);
+        expect(presentAt(round, 1).parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "failed" } }]);
     });
 
     it("gives a round after a marker round a new assistant id", async () => {
@@ -411,9 +413,9 @@ describe("conversation display recorder — compaction rounds", () => {
         await recorder.emit({ type: "text-delta", text: "second" });
         const second = recorder.takeRound([]);
 
-        expect(second[0]!.id).not.toBe(first[0]!.id);
-        expect([first[0]!.id, second[0]!.id]).toEqual(announced("assistant"));
-        expect(second[0]!.parts).toEqual([{ type: "text", text: "second", state: "done" }]);
+        expect(presentAt(second, 0).id).not.toBe(presentAt(first, 0).id);
+        expect([presentAt(first, 0).id, presentAt(second, 0).id]).toEqual(announced("assistant"));
+        expect(presentAt(second, 0).parts).toEqual([{ type: "text", text: "second", state: "done" }]);
     });
 });
 

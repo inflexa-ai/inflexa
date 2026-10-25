@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { StringEnrichmentSchema, StringInteractionSchema } from "../string-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 runFixtureSuite("string golden fixtures", [
     fixtureCase({
@@ -12,7 +13,7 @@ runFixtureSuite("string golden fixtures", [
         drift: "partners_ACE.drift.json",
         schema: z.array(StringInteractionSchema),
         assertOutput: (rows) => {
-            const first = rows[0]!;
+            const first = presentAt(rows, 0);
             expect(first.proteinA).toBe("ACE");
             expect(first.proteinB).toBe("AGT");
             // STRING serializes each score as a JSON number, never as a string.
@@ -28,7 +29,7 @@ runFixtureSuite("string golden fixtures", [
         drift: "enrichment_gabaa.drift.json",
         schema: z.array(StringEnrichmentSchema),
         assertOutput: (rows) => {
-            expect(rows[0]!.genes).toEqual(["GABRB2", "GABRB1", "GABRA1", "GABRG2", "GABRA2"]);
+            expect(presentAt(rows, 0).genes).toEqual(["GABRB2", "GABRB1", "GABRA1", "GABRG2", "GABRA2"]);
             expect(rows.every((row) => Array.isArray(row.genes))).toBe(true);
             expect(rows.every((row) => row.genes.length === row.geneCount)).toBe(true);
         },
@@ -42,6 +43,6 @@ describe("the STRING enrichment twin", () => {
         // against a widening back onto a union.
         const drift = z.array(z.object({ preferredNames: z.unknown() }).passthrough()).parse(readFixture("string", "enrichment_gabaa.drift.json"));
 
-        expect(typeof drift[0]!.preferredNames).toBe("string");
+        expect(typeof presentAt(drift, 0).preferredNames).toBe("string");
     });
 });

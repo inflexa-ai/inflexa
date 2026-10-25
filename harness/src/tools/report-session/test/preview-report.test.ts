@@ -37,6 +37,7 @@ import type { ToolContext } from "../../define-tool.js";
 import type { ProvenanceSeam, SessionProvenanceEvent } from "../../../provenance/seam.js";
 import { createPreviewReportTool, type PreviewReportResult } from "../preview-report.js";
 import { UnavailableSessionPagePublisher, type SessionPagePublisher } from "../session-page-publisher.js";
+import { presentAt } from "../../../lib/present.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -260,7 +261,7 @@ describe("the pass path", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         const draft = metricDoc();
-        const intro = draft.sections[0]!;
+        const intro = presentAt(draft.sections, 0);
         intro.blocks.push({ kind: "text", id: "t1", content: { prose: "The cohort holds 48 samples." } });
         gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
         const tool = createPreviewReportTool({ gateway, makeResolver: async () => createFixtureResolver(), resolveWorkspaceRoot: async () => root });
@@ -642,13 +643,14 @@ describe("the staged table data", () => {
             const sidecar = tableSidecarName(TABLE_HASH, TABLE_PATH);
 
             expect(dataAsset).toBeDefined();
+            if (dataAsset === undefined) throw new Error("dataAsset is absent");
             // The sidecar is the pinned bytes themselves, thus the reader downloads the file and never a
             // re-serialization of it.
             expect(await readFile(join(assetsDir, sidecar), "utf8")).toBe(TABLE_CSV);
-            expect(await readFile(join(assetsDir, dataAsset!), "utf8")).toContain("TP53");
+            expect(await readFile(join(assetsDir, dataAsset), "utf8")).toContain("TP53");
 
             const page = await readFile(result.pagePath, "utf8");
-            expect(page).toContain(`assets/${dataAsset!}`);
+            expect(page).toContain(`assets/${dataAsset}`);
             expect(page).toContain(`assets/${sidecar}`);
         }
         assertNoLegacyDirs(root);
@@ -1121,7 +1123,9 @@ describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createPreviewReportTool>, result: PreviewReportResult): string | undefined {
         expect(tool.describeResult).toBeDefined();
-        return tool.describeResult!({}, result);
+        const describeResult = tool.describeResult;
+        if (describeResult === undefined) throw new Error("the tool declares no result detail");
+        return describeResult({}, result);
     }
 
     it("names the page path of a render", async () => {

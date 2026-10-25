@@ -22,13 +22,15 @@ describe.skipIf(!LIVE)("live Open Targets", () => {
         const info = await searchTargetAssociations(TP53_ENSEMBL_ID, 5);
 
         expect(info).not.toBe(null);
-        expect(info!.ensemblId).toBe(TP53_ENSEMBL_ID);
-        expect(info!.approvedSymbol).toBe("TP53");
-        expect(info!.approvedName.length).toBeGreaterThan(0);
-        expect(info!.tractability).not.toBe(null);
-        expect(info!.associations.length).toBeGreaterThan(0);
+        if (info === null) throw new Error("the target info is absent");
+        expect(info.ensemblId).toBe(TP53_ENSEMBL_ID);
+        expect(info.approvedSymbol).toBe("TP53");
+        expect(info.approvedName.length).toBeGreaterThan(0);
+        expect(info.tractability).not.toBe(null);
+        expect(info.associations.length).toBeGreaterThan(0);
 
-        const association = info!.associations[0]!;
+        const association = info.associations[0];
+        if (association === undefined) throw new Error("association is absent");
         expect(association.diseaseId.length).toBeGreaterThan(0);
         expect(typeof association.score).toBe("number");
     }, 60_000);

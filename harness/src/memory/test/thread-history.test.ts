@@ -31,6 +31,7 @@ import {
     type ThreadHistory,
 } from "../thread-history.js";
 import { createThreadStore } from "../thread-store.js";
+import { presentAt, presentFind, presentLast } from "../../lib/present.js";
 
 const THREAD = "analysis-thread-1";
 const ANALYSIS = "analysis-1";
@@ -60,7 +61,7 @@ function assistantThinking(thinking: string, signature: string): ModelMessage {
 function assertValidSequence(messages: readonly ModelMessage[]): void {
     const first = messages[0];
     expect(first).toBeDefined();
-    expect(first!.role).toBe("user");
+    expect(first?.role).toBe("user");
     const seenToolUse = new Set<string>();
     for (const m of messages) {
         if (typeof m.content === "string") continue;
@@ -95,7 +96,7 @@ async function collectMetrics(): Promise<MetricData[]> {
 /** The histogram sum of the first data point, or a failed test when the point is not a histogram. */
 function sumOf(point: MetricData["dataPoints"][number]): number {
     const value = point.value;
-    if (typeof value !== "object" || value === null || !("sum" in value) || typeof value.sum !== "number") {
+    if (typeof value !== "object" || !("sum" in value) || typeof value.sum !== "number") {
         throw new Error("expected a histogram data point with a numeric sum");
     }
     return value.sum;
@@ -117,6 +118,11 @@ function append(threadId: string, modelMessages: readonly ModelMessage[]): Resul
     return history.appendTurn(threadId, { modelMessages, displayMessages: [] });
 }
 
+function cursorOf(page: { before: number | null }): number {
+    if (page.before === null) throw new Error("the page cursor is absent");
+    return page.before;
+}
+
 beforeEach(async () => {
     ({ pool, drop } = await withSchema("thread-history"));
     history = createThreadHistory(pool);
@@ -132,10 +138,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-    await meterProvider?.shutdown();
+    await meterProvider.shutdown();
     metrics.disable();
     __resetThreadHistoryMetricsForTest();
-    await drop?.();
+    await drop();
 });
 
 // --- round-trip -------------------------------------------------------------
@@ -154,7 +160,7 @@ describe("appendTurn / loadRecent round-trip", () => {
         const seqs = rows.map((r) => Number(r.seq));
         expect(seqs).toEqual([0, 1, 2, 3]);
         for (let i = 1; i < seqs.length; i++) {
-            expect(seqs[i]!).toBeGreaterThan(seqs[i - 1]!);
+            expect(presentAt(seqs, i)).toBeGreaterThan(presentAt(seqs, i - 1));
         }
     });
 
@@ -302,8 +308,8 @@ describe("appendTurn thread activity", () => {
         // the post-append order below a real reorder rather than a coincidence.
         const before = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
         expect(before.threads.map((t) => t.threadId)).toEqual(["newer", "older"]);
-        const newerUpdatedAt = before.threads.find((t) => t.threadId === "newer")!.updatedAt;
-        const olderBefore = before.threads.find((t) => t.threadId === "older")!.updatedAt;
+        const newerUpdatedAt = presentFind(before.threads, (t) => t.threadId === "newer").updatedAt;
+        const olderBefore = presentFind(before.threads, (t) => t.threadId === "older").updatedAt;
 
         (await append("older", [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
 
@@ -312,7 +318,7 @@ describe("appendTurn thread activity", () => {
         // Assert on the touched row itself. Reading the head of the listing
         // instead compares "older" against a bound it already cleared before the
         // append — a touch that did nothing at all would still satisfy it.
-        const olderAfter = after.threads.find((t) => t.threadId === "older")!.updatedAt;
+        const olderAfter = presentFind(after.threads, (t) => t.threadId === "older").updatedAt;
         expect(olderAfter.getTime()).toBeGreaterThan(olderBefore.getTime());
         expect(olderAfter.getTime()).toBeGreaterThan(newerUpdatedAt.getTime());
     });
@@ -335,7 +341,7 @@ describe("appendTurn thread activity", () => {
         // alongside it: both rows are readable.
         expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn);
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", [THREAD]);
-        expect(Number(rows[0]!.count)).toBe(turn.length);
+        expect(Number(presentAt(rows, 0).count)).toBe(turn.length);
     });
 
     it("leaves a soft-deleted thread's tombstone unmoved while persisting the turn", async () => {
@@ -352,8 +358,9 @@ describe("appendTurn thread activity", () => {
                     "SELECT deleted_at, updated_at::text AS updated_at FROM cortex_analysis_threads WHERE thread_id = $1",
                     [THREAD],
                 )
-            ).rows[0]!;
+            ).rows[0];
         const before = await readTombstone();
+        if (before === undefined) throw new Error("the tombstone row is absent");
 
         const turn = [userText("question one"), assistantText("answer one")];
         (await append(THREAD, turn))._unsafeUnwrap();
@@ -363,6 +370,7 @@ describe("appendTurn thread activity", () => {
         // advance its activity clock.
         expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn);
         const after = await readTombstone();
+        if (after === undefined) throw new Error("the tombstone row is absent");
         expect(after.deleted_at).not.toBeNull();
         expect(after.updated_at).toBe(before.updated_at);
     });
@@ -374,7 +382,7 @@ describe("appendTurn thread activity", () => {
         expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn);
 
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", [THREAD]);
-        expect(Number(rows[0]!.count)).toBe(0);
+        expect(Number(presentAt(rows, 0).count)).toBe(0);
     });
 });
 
@@ -535,14 +543,17 @@ describe("loadRecent overflow metric", () => {
 
         const collected = await collectMetrics();
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
-        expect(evicted).toBeDefined();
-        const evictedPoint = evicted!.dataPoints[0]!;
+        if (evicted === undefined) throw new Error("the turns_evicted metric is absent");
+        const evictedPoint = evicted.dataPoints[0];
+        if (evictedPoint === undefined) throw new Error("evictedPoint is absent");
         expect(sumOf(evictedPoint)).toBe(0);
         expect(evictedPoint.attributes.eviction).toBe(false);
 
         const total = collected.find((m) => m.descriptor.name === "cortex.harness.thread.total_tokens");
         expect(total).toBeDefined();
-        expect(sumOf(total!.dataPoints[0]!)).toBeGreaterThan(0);
+        const totalPoint = total?.dataPoints[0];
+        if (totalPoint === undefined) throw new Error("the total_tokens data point is absent");
+        expect(sumOf(totalPoint)).toBeGreaterThan(0);
     });
 
     it("reports the turns before a summary marker in the sixth of eight turns", async () => {
@@ -559,8 +570,9 @@ describe("loadRecent overflow metric", () => {
 
         const collected = await collectMetrics();
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
-        expect(evicted).toBeDefined();
-        const evictedPoint = evicted!.dataPoints[0]!;
+        if (evicted === undefined) throw new Error("the turns_evicted metric is absent");
+        const evictedPoint = evicted.dataPoints[0];
+        if (evictedPoint === undefined) throw new Error("evictedPoint is absent");
         expect(sumOf(evictedPoint)).toBe(5);
         expect(evictedPoint.attributes.eviction).toBe(true);
     });
@@ -763,8 +775,8 @@ describe("interruption marker round-trip", () => {
         // The marker survives the store round-trip byte-identically...
         expect(loaded[1]).toEqual(marked);
         // ...and the helper reports interrupted on the assistant row, not the user row.
-        expect(isInterruptedMessage(loaded[1]!)).toBe(true);
-        expect(isInterruptedMessage(loaded[0]!)).toBe(false);
+        expect(isInterruptedMessage(presentAt(loaded, 1))).toBe(true);
+        expect(isInterruptedMessage(presentAt(loaded, 0))).toBe(false);
     });
 
     it("keeps a marked-tail turn through a drop exactly as an unmarked one", async () => {
@@ -785,7 +797,7 @@ describe("interruption marker round-trip", () => {
 
         expect(loaded).toEqual([...turn2, userText("question three")]);
         assertValidSequence(loaded);
-        expect(isInterruptedMessage(loaded[1]!)).toBe(true);
+        expect(isInterruptedMessage(presentAt(loaded, 1))).toBe(true);
     });
 
     it("retracts a marked-tail turn identically to an unmarked one", async () => {
@@ -879,11 +891,12 @@ describe("conversationRecordTurn display parts", () => {
 
         expect(turn.modelMessages).toEqual([syntheticRecordMessage(text)]);
         expect(turn.displayMessages).toHaveLength(1);
-        expect(turn.displayMessages[0]!.role).toBe("system");
-        expect(turn.displayMessages[0]!.parts.map((part) => part.type)).toEqual(["data-plan-approval", "data-run-card"]);
+        expect(presentAt(turn.displayMessages, 0).role).toBe("system");
+        expect(presentAt(turn.displayMessages, 0).parts.map((part) => part.type)).toEqual(["data-plan-approval", "data-run-card"]);
 
         (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
-        const row = (await history.loadAll(THREAD))._unsafeUnwrap().flat()[0]!;
+        const row = (await history.loadAll(THREAD))._unsafeUnwrap().flat()[0];
+        if (row === undefined) throw new Error("row is absent");
         expect(row.displayEnvelope?.messages).toEqual([...turn.displayMessages]);
         expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([...turn.modelMessages]);
     });
@@ -892,7 +905,7 @@ describe("conversationRecordTurn display parts", () => {
         const text = "Run run-1 completed.";
 
         for (const turn of [conversationRecordTurn(text), conversationRecordTurn(text, [])]) {
-            expect(turn.displayMessages[0]!.parts).toEqual([{ type: "text", text, state: "done" }]);
+            expect(presentAt(turn.displayMessages, 0).parts).toEqual([{ type: "text", text, state: "done" }]);
         }
     });
 });
@@ -920,16 +933,16 @@ describe("dual model/display turn persistence", () => {
 
         expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(modelMessages);
         const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat()[0]!.displayEnvelope?.messages).toEqual(displayMessages);
-        expect(page.flat()[1]!.displayEnvelope).toBeUndefined();
+        expect(presentAt(page.flat(), 0).displayEnvelope?.messages).toEqual(displayMessages);
+        expect(presentAt(page.flat(), 1).displayEnvelope).toBeUndefined();
 
         const { rows } = await pool.query<{ tokens: number; display_envelope: unknown }>(
             "SELECT tokens, display_envelope FROM messages WHERE thread_id = $1 ORDER BY seq",
             [THREAD],
         );
-        expect(rows[0]!.tokens).toBe(countTokens(modelMessages[0]!.content));
-        expect(rows[0]!.display_envelope).not.toBeNull();
-        expect(rows[1]!.display_envelope).toBeNull();
+        expect(presentAt(rows, 0).tokens).toBe(countTokens(presentAt(modelMessages, 0).content));
+        expect(presentAt(rows, 0).display_envelope).not.toBeNull();
+        expect(presentAt(rows, 1).display_envelope).toBeNull();
     });
 
     it("retract removes the model rows and their turn-head display envelope together", async () => {
@@ -981,8 +994,8 @@ describe("the figures on the rows of an older turn", () => {
 
         expect(rows.map((row) => row.usage)).toEqual([undefined, rollup]);
         expect(rows.map((row) => row.durationMs)).toEqual([undefined, 8412]);
-        expect("usage" in rows[0]!).toBe(false);
-        expect("durationMs" in rows[0]!).toBe(false);
+        expect("usage" in presentAt(rows, 0)).toBe(false);
+        expect("durationMs" in presentAt(rows, 0)).toBe(false);
     });
 
     it("stores no figure on a row of appendTurn", async () => {
@@ -1059,8 +1072,8 @@ describe("writeTurn", () => {
         expect(startSeq).toBe(2);
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3]);
-        expect(rows[2]!.author).toBe("dr.chen@lab.example");
-        expect(rows[3]!.author).toBeUndefined();
+        expect(presentAt(rows, 2).author).toBe("dr.chen@lab.example");
+        expect(presentAt(rows, 3).author).toBeUndefined();
         expect(await turnRecords()).toEqual([{ start_seq: "2", status: "open", reason: null, reported_usage: null, turn_duration_ms: null, closed: false }]);
     });
 
@@ -1072,8 +1085,8 @@ describe("writeTurn", () => {
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
         expect(rows.map((row) => row.displayEnvelope !== undefined)).toEqual([true, false, true, false, false, true, false, false]);
-        expect(rows[2]!.displayEnvelope!.messages[0]!.parts).toEqual([{ type: "text", text: "first round", state: "done" }]);
-        expect(rows[5]!.displayEnvelope!.messages[0]!.parts).toEqual([{ type: "text", text: "second round", state: "done" }]);
+        expect(presentAt(rows, 2).displayEnvelope?.messages[0]?.parts).toEqual([{ type: "text", text: "first round", state: "done" }]);
+        expect(presentAt(rows, 5).displayEnvelope?.messages[0]?.parts).toEqual([{ type: "text", text: "second round", state: "done" }]);
     });
 
     it("lands the opening, two rounds, and the close of one write in order", async () => {
@@ -1105,7 +1118,7 @@ describe("writeTurn", () => {
             { start_seq: "0", status: "failed", reason: "The model request failed.", reported_usage: ROLLUP, turn_duration_ms: "8412", closed: true },
         ]);
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
-        expect(rows.at(-1)!.message).toEqual(note.modelMessages[0]!);
+        expect(presentLast(rows).message).toEqual(presentAt(note.modelMessages, 0));
     });
 
     it("stores a rollup with no quantity as absent, and a second close changes nothing", async () => {
@@ -1168,7 +1181,7 @@ describe("writeTurn", () => {
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
 
         expect(rows.map((row) => row.turn !== undefined)).toEqual([true, false, false, false, false, false]);
-        expect(rows[0]!.turn).toEqual({ status: "done", usage: ROLLUP, durationMs: 8412 });
+        expect(presentAt(rows, 0).turn).toEqual({ status: "done", usage: ROLLUP, durationMs: 8412 });
         expect(await turnRecords()).toHaveLength(1);
     });
 });
@@ -1214,7 +1227,7 @@ describe("appendTurn turn author", () => {
         const page = (await history.loadAll(THREAD))._unsafeUnwrap();
         // Absent, not present-and-undefined: a consumer that spreads the row must
         // not acquire an `author` key that overwrites one.
-        expect("author" in page.flat()[0]!).toBe(false);
+        expect("author" in presentAt(page.flat(), 0)).toBe(false);
     });
 
     it("leaves a mid-turn synthetic nudge without an author", async () => {
@@ -1260,8 +1273,8 @@ describe("appendTurn turn author", () => {
         ]);
 
         const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat()[0]!.author).toBeUndefined();
-        expect("author" in page.flat()[0]!).toBe(false);
+        expect(presentAt(page.flat(), 0).author).toBeUndefined();
+        expect("author" in presentAt(page.flat(), 0)).toBe(false);
     });
 
     it("leaves the model read untouched", async () => {
@@ -1290,7 +1303,7 @@ describe("appendTurn turn author", () => {
         )._unsafeUnwrap();
 
         const { rows } = await pool.query<{ display_envelope: unknown }>("SELECT display_envelope FROM messages WHERE thread_id = $1 AND seq = 0", [THREAD]);
-        const serialized = JSON.stringify(rows[0]!.display_envelope);
+        const serialized = JSON.stringify(presentAt(rows, 0).display_envelope);
         expect(serialized).not.toContain("author");
         expect(serialized).not.toContain("createdAt");
     });
@@ -1323,12 +1336,14 @@ describe("loadAll row creation time", () => {
         const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
         const times = rows.map((m) => m.createdAt);
         expect(times.every((t) => t instanceof Date)).toBe(true);
-        expect(new Set(times.map((t) => t!.getTime())).size).toBe(1);
+        expect(new Set(times.map((t) => t?.getTime())).size).toBe(1);
         // `created_at` is the Postgres clock, and the test process runs on its own clock.
         // The 60-second slack on each side absorbs that skew. The bounds still reject a
         // zero, an epoch default, and a reading far in the future.
-        expect(times[0]!.getTime()).toBeGreaterThanOrEqual(before - 60_000);
-        expect(times[0]!.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+        const firstCreatedAt = presentAt(times, 0);
+        if (firstCreatedAt === undefined) throw new Error("the first created_at is absent");
+        expect(firstCreatedAt.getTime()).toBeGreaterThanOrEqual(before - 60_000);
+        expect(firstCreatedAt.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
     });
 });
 
@@ -1437,9 +1452,9 @@ describe("loadAll", () => {
         const turns = (await history.loadAll(THREAD))._unsafeUnwrap();
         expect(turns).toHaveLength(TURNS);
         expect(turns.flat()).toHaveLength(TURNS * 2);
-        expect(turns.at(-1)!.map((m) => m.message)).toEqual([userText(`ask ${TURNS - 1}`), assistantText(`answer ${TURNS - 1}`)]);
+        expect(presentLast(turns).map((m) => m.message)).toEqual([userText(`ask ${TURNS - 1}`), assistantText(`answer ${TURNS - 1}`)]);
         // Past 200 deliberately: the read that this replaced clamped there and dropped the rest.
-        expect(turns[200]!.map((m) => m.message)).toEqual([userText("ask 200"), assistantText("answer 200")]);
+        expect(presentAt(turns, 200).map((m) => m.message)).toEqual([userText("ask 200"), assistantText("answer 200")]);
     });
 
     it("flattens back to the thread's rows in seq order", async () => {
@@ -1472,11 +1487,13 @@ describe("latestTurnAt", () => {
     it("moves forward as turns land", async () => {
         (await append(THREAD, [userText("one"), assistantText("first")]))._unsafeUnwrap();
         const first = (await history.latestTurnAt(THREAD))._unsafeUnwrap();
+        if (first === null) throw new Error("the first turn timestamp is absent");
         expect(first).not.toBeNull();
 
         (await append(THREAD, [userText("two"), assistantText("second")]))._unsafeUnwrap();
         const second = (await history.latestTurnAt(THREAD))._unsafeUnwrap();
-        expect(second!.getTime()).toBeGreaterThanOrEqual(first!.getTime());
+        if (second === null) throw new Error("the second turn timestamp is absent");
+        expect(second.getTime()).toBeGreaterThanOrEqual(first.getTime());
     });
 
     it("is scoped to its own thread", async () => {
@@ -1490,12 +1507,12 @@ describe("latestTurnAt", () => {
 describe("loadPage", () => {
     /** The user text of each turn of a page, which names the turn without its rows. */
     function asks(turns: readonly { message: ModelMessage }[][]): string[] {
-        return turns.map((turn) => JSON.stringify(turn[0]!.message.content));
+        return turns.map((turn) => JSON.stringify(presentAt(turn, 0).message.content));
     }
 
     /** The expected `asks` entry of the turn `label`, as `labeledTurn` writes it. */
     function ask(label: string): string {
-        return JSON.stringify(labeledTurn(label)[0]!.content);
+        return JSON.stringify(presentAt(labeledTurn(label), 0).content);
     }
 
     /** Append `count` two-row turns, labeled `0` to `count - 1`. The turn `i` opens at `seq` `2 * i`. */
@@ -1520,11 +1537,11 @@ describe("loadPage", () => {
         await appendLabeled(5);
         const newest = (await history.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
 
-        const middle = (await history.loadPage(THREAD, { limit: 2, before: newest.before! }))._unsafeUnwrap();
+        const middle = (await history.loadPage(THREAD, { limit: 2, before: cursorOf(newest) }))._unsafeUnwrap();
         expect(asks(middle.turns)).toEqual([ask("1"), ask("2")]);
         expect(middle.before).toBe(2);
 
-        const last = (await history.loadPage(THREAD, { limit: 2, before: middle.before! }))._unsafeUnwrap();
+        const last = (await history.loadPage(THREAD, { limit: 2, before: cursorOf(middle) }))._unsafeUnwrap();
         expect(asks(last.turns)).toEqual([ask("0")]);
         expect(last.before).toBeNull();
     });
@@ -1554,7 +1571,7 @@ describe("loadPage", () => {
         const newest = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
         expect(newest.turns.map((turn) => turn.map((m) => m.seq))).toEqual([[1, 2]]);
         expect(newest.before).toBe(1);
-        const oldest = (await history.loadPage(THREAD, { limit: 1, before: newest.before! }))._unsafeUnwrap();
+        const oldest = (await history.loadPage(THREAD, { limit: 1, before: cursorOf(newest) }))._unsafeUnwrap();
         expect(oldest.turns.map((turn) => turn.map((m) => m.seq))).toEqual([[0]]);
         expect(oldest.before).toBeNull();
     });
@@ -1573,7 +1590,7 @@ describe("loadPage", () => {
         const page = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
 
         expect(page.turns).toHaveLength(1);
-        expect(page.turns[0]!.map((m) => m.message)).toEqual(turn);
+        expect(presentAt(page.turns, 0).map((m) => m.message)).toEqual(turn);
         expect(page.before).toBe(2);
     });
 
@@ -1602,8 +1619,9 @@ describe("loadPage", () => {
         const all = (await history.loadAll(THREAD))._unsafeUnwrap();
         const page = (await history.loadPage(THREAD, { limit: 1 }))._unsafeUnwrap();
 
-        expect(page.turns).toEqual([all.at(-1)!]);
-        const opened = page.turns[0]![0]!;
+        expect(page.turns).toEqual([presentLast(all)]);
+        const opened = presentAt(page.turns, 0)[0];
+        if (opened === undefined) throw new Error("opened is absent");
         expect(opened.author).toBe("dr.chen@lab.example");
         expect(opened.displayEnvelope).toBeDefined();
         expect(opened.turn).toEqual({ status: "done", usage: { inputTokens: 1200, outputTokens: 340 }, durationMs: 8412 });
@@ -1677,7 +1695,7 @@ describe("loadPage", () => {
 
         expect(pages).toHaveLength(Math.ceil(TURNS / LIMIT));
         // The fourth page from the newest holds the turns 32 to 38.
-        expect(asks(pages[3]!)).toEqual(Array.from({ length: LIMIT }, (_, i) => ask(String(32 + i))));
+        expect(asks(presentAt(pages, 3))).toEqual(Array.from({ length: LIMIT }, (_, i) => ask(String(32 + i))));
         const rebuilt = [...pages].reverse().flat();
         expect(rebuilt).toEqual((await history.loadAll(THREAD))._unsafeUnwrap());
     });
@@ -1690,7 +1708,7 @@ describe("loadPage", () => {
         (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         (await history.retractLastTurn(THREAD))._unsafeUnwrap();
 
-        const older = (await history.loadPage(THREAD, { limit: 2, before: newest.before! }))._unsafeUnwrap();
+        const older = (await history.loadPage(THREAD, { limit: 2, before: cursorOf(newest) }))._unsafeUnwrap();
         expect(asks(older.turns)).toEqual([ask("0"), ask("1")]);
         expect(older.before).toBeNull();
     });
@@ -1701,7 +1719,7 @@ describe("loadPage", () => {
 
         (await append(THREAD, labeledTurn("3")))._unsafeUnwrap();
 
-        const older = (await history.loadPage(THREAD, { limit: 1, before: newest.before! }))._unsafeUnwrap();
+        const older = (await history.loadPage(THREAD, { limit: 1, before: cursorOf(newest) }))._unsafeUnwrap();
         expect(asks(older.turns)).toEqual([ask("1")]);
         expect(older.before).toBe(2);
     });
@@ -1739,7 +1757,7 @@ describe("loadPage", () => {
         const newest = (await counting.loadPage(THREAD, { limit: 2 }))._unsafeUnwrap();
         expect(counted.calls()).toBe(1);
 
-        (await counting.loadPage(THREAD, { limit: 2, before: newest.before! }))._unsafeUnwrap();
+        (await counting.loadPage(THREAD, { limit: 2, before: cursorOf(newest) }))._unsafeUnwrap();
         expect(counted.calls()).toBe(2);
 
         (await counting.loadPage("thread-with-no-rows", { limit: 2 }))._unsafeUnwrap();

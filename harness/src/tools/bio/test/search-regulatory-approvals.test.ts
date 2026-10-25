@@ -4,6 +4,7 @@ import { z } from "zod";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createSearchRegulatoryApprovalsTool } from "../search-regulatory-approvals.js";
+import { presentAt, presentFind } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -72,7 +73,7 @@ describe("search_regulatory_approvals — the key", () => {
     it("sends the key as a Bearer token", async () => {
         const seen = stubFetch([["/regulatorycore/records?", () => json({ data: [] })]]);
         await run({ query: "imatinib" });
-        expect(seen[0]!.authorization).toBe("Bearer amass_test");
+        expect(presentAt(seen, 0).authorization).toBe("Bearer amass_test");
     });
 
     it("throws terminally with no key, before a request goes to Amass", async () => {
@@ -87,7 +88,8 @@ describe("search_regulatory_approvals — the key", () => {
 
 describe("search_regulatory_approvals — action 'search'", () => {
     it("keeps 5 matched sections of a record, grouped by document, with the true count", async () => {
-        const base = z.object({ data: z.array(z.record(z.string(), z.unknown())) }).parse(readFixture("amass", "regulatory-search.json")).data[0]!;
+        const base = z.object({ data: z.array(z.record(z.string(), z.unknown())) }).parse(readFixture("amass", "regulatory-search.json")).data[0];
+        if (base === undefined) throw new Error("base is absent");
         const label = { docType: "FDA_LABEL", textType: "Label", sourceUrl: "https://example.test/label.pdf", sourceDate: "2026-07-15" };
         const sections = Array.from({ length: 16 }, (_, i) => ({
             ...label,
@@ -102,12 +104,17 @@ describe("search_regulatory_approvals — action 'search'", () => {
         const result = (await run({ query: "imatinib" }))._unsafeUnwrap();
 
         if (!("authorizations" in result)) throw new Error("expected a search answer");
-        const row = result.authorizations[0]!;
+        const row = presentAt(result.authorizations, 0);
         expect(row.matchedSectionCount).toBe(16);
         expect(row.matchedDocuments).toHaveLength(1);
-        expect(row.matchedDocuments[0]!.sourceUrl).toBe(label.sourceUrl);
-        expect(row.matchedDocuments[0]!.sections).toHaveLength(5);
-        expect(row.matchedDocuments[0]!.sections[0]).toEqual({ documentSectionId: "AMRCDS_0", path: "1", title: "Section 1", matchedText: "excerpt 1" });
+        expect(presentAt(row.matchedDocuments, 0).sourceUrl).toBe(label.sourceUrl);
+        expect(presentAt(row.matchedDocuments, 0).sections).toHaveLength(5);
+        expect(presentAt(row.matchedDocuments, 0).sections[0]).toEqual({
+            documentSectionId: "AMRCDS_0",
+            path: "1",
+            title: "Section 1",
+            matchedText: "excerpt 1",
+        });
     });
 
     it("sends the filters, repeats a list filter, and scopes the match to one record", async () => {
@@ -116,7 +123,7 @@ describe("search_regulatory_approvals — action 'search'", () => {
         const result = (await run({ query: "hepatotoxicity", agency: ["FDA", "EMA"], isOrphan: true, amassId: GLEEVEC }))._unsafeUnwrap();
 
         expect(result).toEqual({ authorizations: [] });
-        const params = seen[0]!.url.searchParams;
+        const params = presentAt(seen, 0).url.searchParams;
         expect(params.get("query")).toBe("hepatotoxicity");
         expect(params.getAll("agency")).toEqual(["FDA", "EMA"]);
         expect(params.get("isOrphan")).toBe("true");
@@ -153,12 +160,12 @@ describe("search_regulatory_approvals — action 'details'", () => {
 
         const lookups = seen.filter((request) => request.url.pathname.endsWith("/lookup"));
         expect(lookups).toHaveLength(1);
-        expect(lookups[0]!.method).toBe("POST");
-        expect(lookups[0]!.body).toEqual({
+        expect(presentAt(lookups, 0).method).toBe("POST");
+        expect(presentAt(lookups, 0).body).toEqual({
             items: [{ fdaApplicationNumber: "NDA021588" }, { fdaApplicationNumber: "BLA021588" }, { fdaApplicationNumber: "ANDA021588" }],
         });
         expect(result).toMatchObject({ status: "found", authorization: { amassId: GLEEVEC, sectionCount: 120 } });
-        const get = seen.find((request) => request.url.pathname.endsWith(GLEEVEC))!;
+        const get = presentFind(seen, (request) => request.url.pathname.endsWith(GLEEVEC));
         expect(get.url.searchParams.getAll("include")).toEqual(["fdaDetails", "emaDetails"]);
     });
 
@@ -168,7 +175,8 @@ describe("search_regulatory_approvals — action 'details'", () => {
         const result = (await run({ action: "details", amassId: GLEEVEC }))._unsafeUnwrap();
 
         if (!("authorization" in result)) throw new Error("expected an authorization");
-        const entry = result.authorization.documents[0]!.sections[0]!;
+        const entry = presentAt(result.authorization.documents, 0).sections[0];
+        if (entry === undefined) throw new Error("entry is absent");
         expect(Object.keys(entry).sort()).toEqual(["documentSectionId", "path", "title"]);
     });
 
@@ -177,7 +185,7 @@ describe("search_regulatory_approvals — action 'details'", () => {
 
         await run({ action: "details", ndc: "0078-0401-05" });
 
-        expect(seen[0]!.body).toEqual({ items: [{ ndc: "0078-0401" }] });
+        expect(presentAt(seen, 0).body).toEqual({ items: [{ ndc: "0078-0401" }] });
     });
 
     it("gives not_found for an in-band lookup miss, with no get request", async () => {

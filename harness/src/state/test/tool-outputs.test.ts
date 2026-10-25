@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
 import { createToolOutputStore } from "../tool-outputs.js";
+import { presentAt } from "../../lib/present.js";
 
 function kept(overrides: Partial<KeptToolOutput> & Pick<KeptToolOutput, "ref">): KeptToolOutput {
     return { analysisId: "analysis-a", toolName: "read_file", toolCallId: "toolu_01", content: "text", totalLength: 4, ...overrides };
@@ -32,7 +33,7 @@ describe("createToolOutputStore", () => {
         const read = (await store.get("analysis-a", "to_3f9a2c41b8d605e7a1c0"))._unsafeUnwrap();
         expect(content.length).toBe(300_000);
         expect(read).toEqual(record);
-        expect(Buffer.from(read!.content, "utf8").equals(Buffer.from(content, "utf8"))).toBe(true);
+        expect(Buffer.from(read?.content ?? "", "utf8").equals(Buffer.from(content, "utf8"))).toBe(true);
     });
 
     it("gives back the thread id of a record, and no thread id for a record of a run", async () => {
@@ -53,7 +54,7 @@ describe("createToolOutputStore", () => {
 
         expect((await store.get("analysis-a", "to_twice"))._unsafeUnwrap()).toMatchObject({ content: "second", totalLength: 6 });
         const { rows } = await pool.query<{ created_at: Date }>("SELECT created_at FROM cortex_tool_outputs WHERE ref = 'to_twice'");
-        expect(rows[0]!.created_at.toISOString()).toBe("2020-01-01T00:00:00.000Z");
+        expect(presentAt(rows, 0).created_at.toISOString()).toBe("2020-01-01T00:00:00.000Z");
     });
 
     it("gives null for the reference of a different analysis", async () => {

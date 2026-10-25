@@ -25,6 +25,7 @@ import { BASE_SANDBOX_TOOLS, createSandboxAgent } from "../shared.js";
 import type { AgentMeta } from "../types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "../types.js";
 import type { CitationResolver } from "../../../citations/types.js";
+import { presentFind, presentLast } from "../../../lib/present.js";
 
 const meta: AgentMeta = {
     id: "test-agent",
@@ -145,7 +146,7 @@ describe("createSandboxAgent", () => {
         const root = await mkdtemp(join(tmpdir(), "shared-refs-"));
         const base = makeFakeSandboxAgentDeps();
         const def = createSandboxAgent({ ...base, sandboxClient, refStorePath: root }, meta, body);
-        const tool = def.tools.find((candidate) => candidate.id === "list_available_refs")!;
+        const tool = presentFind(def.tools, (candidate) => candidate.id === "list_available_refs");
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
         expect(result).toMatchObject({ available: true, state: "empty" });
@@ -284,7 +285,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         // of a two-track collision, thus a description that calls every
         // collision terminal contradicts the grammar the tool reads.
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
-        const description = def.tools.find((tool) => tool.id === "link_packages")!.description;
+        const description = presentFind(def.tools, (tool) => tool.id === "link_packages").description;
 
         expect(description).toContain("call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`");
         expect(description).toContain("terminal only after that second call also refuses");
@@ -293,7 +294,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
     it("the description of list_available_packages stops at absent only when the seam is bound", () => {
         const closedWorld = "only what this tool reports is importable";
         const descriptionOf = (def: ReturnType<typeof createSandboxAgent>): string =>
-            def.tools.find((tool) => tool.id === "list_available_packages")!.description;
+            presentFind(def.tools, (tool) => tool.id === "list_available_packages").description;
         const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
         const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
 
@@ -328,7 +329,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
             meta,
             body,
         );
-        const tool = def.tools.find((t) => t.id === "link_packages")!;
+        const tool = presentFind(def.tools, (t) => t.id === "link_packages");
 
         const result = (await tool.execute({ packages: ["scanpy", "Seurat"] }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -356,7 +357,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
             meta,
             body,
         );
-        const tool = def.tools.find((t) => t.id === "link_packages")!;
+        const tool = presentFind(def.tools, (t) => t.id === "link_packages");
 
         const result = (await tool.execute({ packages: ["scanpy", "nonesuch"] }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -398,7 +399,7 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
 
     it("the output tool refuses a call before the cell knows the files of the step", async () => {
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, meta, body);
-        const tool = def.tools.at(-1)!;
+        const tool = presentLast(def.tools);
 
         const result = await tool.execute({ files: [{ path: "output/a.csv", description: "d", dataType: "table", format: "csv" }] }, makeToolContext().ctx);
 

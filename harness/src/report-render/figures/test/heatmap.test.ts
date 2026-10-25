@@ -155,7 +155,6 @@ describe("the heatmap with annotation tracks", () => {
     it("gives the track legends a band of their own, one line apart, clear of the strips", () => {
         const legends = maps.slice(1).map((map) => optionNumber(map.top));
         const strips = gridAt(option, 1);
-        if (strips === undefined) throw new Error("the option holds no strip grid");
         const [firstLegend, secondLegend] = legends;
         if (firstLegend === undefined || secondLegend === undefined) throw new Error("the option holds no track legends");
         expect(secondLegend - firstLegend).toBe(TRACK_LEGEND_LINE_PX);

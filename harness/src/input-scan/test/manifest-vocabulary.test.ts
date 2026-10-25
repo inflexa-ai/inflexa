@@ -14,6 +14,7 @@ import { detectSets } from "../detect-sets.js";
 import { buildSetMenu } from "../menu.js";
 import { buildManifest } from "../scan.js";
 import type { InputScanManifest, ScannedFile } from "../types.js";
+import { presentAt } from "../../lib/present.js";
 
 function file(path: string): ScannedFile {
     return { path, size: 10, extensions: ["vcf", "gz"], format: "vcf", wrapper: "bgzip" };
@@ -62,9 +63,9 @@ describe("the scan speaks its own vocabulary only", () => {
     });
 
     it("presents sets as observations of path structure", () => {
-        const set = menu.sets[0]!;
+        const set = presentAt(menu.sets, 0);
         expect(set.pathTemplate).toContain("<");
-        expect(set.slots[0]!.sampleValues.length).toBeGreaterThan(0);
+        expect(presentAt(set.slots, 0).sampleValues.length).toBeGreaterThan(0);
         expect(Object.keys(set)).not.toContain("memberRepresents");
     });
 });

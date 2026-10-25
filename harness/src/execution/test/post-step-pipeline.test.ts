@@ -30,6 +30,7 @@ import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.j
 import type { FileMetadataEntry } from "../artifact-metadata.js";
 import { vectorIndexStepOutputs, type PostStepPipelineDeps } from "../post-step-pipeline.js";
 import type { PostStepArtifacts, PostStepContext, SandboxStepInput } from "../../workflows/sandbox-step.js";
+import { presentAt } from "../../lib/present.js";
 
 const RUN_ID = "run-vec";
 const STEP_ID = "T1S1";
@@ -245,9 +246,9 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
         // no indexed/failed summary count, since nothing was attempted.
         const warns = logger.records.filter((r) => r.level === "warn");
         expect(warns).toHaveLength(1);
-        expect(warns[0]!.msg).toBe("[post-step.vector-index] indexing failed");
-        expect(warns[0]!.fields).not.toHaveProperty("id");
-        expect(warns[0]!.fields).not.toHaveProperty("indexed");
+        expect(presentAt(warns, 0).msg).toBe("[post-step.vector-index] indexing failed");
+        expect(presentAt(warns, 0).fields).not.toHaveProperty("id");
+        expect(presentAt(warns, 0).fields).not.toHaveProperty("indexed");
     });
 
     it("logs each per-item failure with its id and text length, and a summary with the counts", async () => {
@@ -274,13 +275,13 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
 
         const itemWarn = warns.find((r) => r.msg === "[post-step.vector-index] indexing failed");
         expect(itemWarn).toBeDefined();
-        expect(itemWarn!.fields.id).toBe(vectorId(analysisId, "output/bad.csv"));
-        expect(itemWarn!.fields.textLength).toBe(poisonDesc.length);
+        expect(itemWarn?.fields.id).toBe(vectorId(analysisId, "output/bad.csv"));
+        expect(itemWarn?.fields.textLength).toBe(poisonDesc.length);
 
         // ok.csv + summary.md landed; bad.csv did not.
         const summaryWarn = warns.find((r) => r.msg === "[post-step.vector-index] indexed with failures");
         expect(summaryWarn).toBeDefined();
-        expect(summaryWarn!.fields.indexed).toBe(2);
-        expect(summaryWarn!.fields.failed).toBe(1);
+        expect(summaryWarn?.fields.indexed).toBe(2);
+        expect(summaryWarn?.fields.failed).toBe(1);
     });
 });

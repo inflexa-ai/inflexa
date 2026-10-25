@@ -16,6 +16,7 @@ import { nullProtoRecord } from "../../lib/null-proto.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
 import { createReportVersionStore, type ReportVersionStore } from "../report-versions.js";
+import { presentAt } from "../../lib/present.js";
 
 const validDocument: ReportDocument = {
     title: "A report",
@@ -69,14 +70,14 @@ describe("createReportVersionStore", () => {
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         expect(version).not.toBeNull();
-        expect(version!.document).toEqual(validDocument);
-        expect(version!.snapshot).toEqual(snapshot);
-        expect(version!.analysisId).toBe(analysisId);
-        expect(version!.threadId).toBe(threadId);
-        expect(version!.parentThreadId).toBe("conv-anchor");
-        expect(version!.parentSeq).toBe(7);
-        expect(version!.parentVersionId).toBeNull();
-        expect(version!.createdAt).toBeInstanceOf(Date);
+        expect(version?.document).toEqual(validDocument);
+        expect(version?.snapshot).toEqual(snapshot);
+        expect(version?.analysisId).toBe(analysisId);
+        expect(version?.threadId).toBe(threadId);
+        expect(version?.parentThreadId).toBe("conv-anchor");
+        expect(version?.parentSeq).toBe(7);
+        expect(version?.parentVersionId).toBeNull();
+        expect(version?.createdAt).toBeInstanceOf(Date);
     });
 
     it("replaces the triple of one thread on a later record, and holds one row", async () => {
@@ -119,17 +120,17 @@ describe("createReportVersionStore", () => {
         // The whole triple carries the second record: the document, the snapshot, and the anchor.
         const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
         expect(version).not.toBeNull();
-        expect(version!.versionId).toBe(first.versionId);
-        expect(version!.document).toEqual(amendedDocument);
-        expect(version!.snapshot).toEqual(amendedSnapshot);
-        expect(version!.parentThreadId).toBe("second-anchor");
-        expect(version!.parentSeq).toBe(9);
+        expect(version?.versionId).toBe(first.versionId);
+        expect(version?.document).toEqual(amendedDocument);
+        expect(version?.snapshot).toEqual(amendedSnapshot);
+        expect(version?.parentThreadId).toBe("second-anchor");
+        expect(version?.parentSeq).toBe(9);
 
         const { rows } = await pool.query<{ n: number }>({
             text: "SELECT COUNT(*)::int AS n FROM cortex_report_versions WHERE thread_id = $1",
             values: [threadId],
         });
-        expect(rows[0]!.n).toBe(1);
+        expect(presentAt(rows, 0).n).toBe(1);
     });
 
     it("names a creation, then a replacement, on the two records of one thread", async () => {
@@ -151,12 +152,16 @@ describe("createReportVersionStore", () => {
         const threadId = "thread-replace-time";
 
         const ref = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
-        const created = (await store.getVersion(ref.versionId))._unsafeUnwrap()!.createdAt;
+        const stored = (await store.getVersion(ref.versionId))._unsafeUnwrap();
+        if (stored === null) throw new Error("the stored version is absent");
+        const created = stored.createdAt;
 
         (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
 
         // The row keeps the time of its first record, thus the column reads as its name states.
-        const replaced = (await store.getVersion(ref.versionId))._unsafeUnwrap()!.createdAt;
+        const replacedRow = (await store.getVersion(ref.versionId))._unsafeUnwrap();
+        if (replacedRow === null) throw new Error("the replaced version is absent");
+        const replaced = replacedRow.createdAt;
         expect(replaced.getTime()).toBe(created.getTime());
     });
 
@@ -174,12 +179,12 @@ describe("createReportVersionStore", () => {
         )._unsafeUnwrap();
 
         const versionA = (await store.getThreadVersion(threadA))._unsafeUnwrap();
-        expect(versionA!.versionId).toBe(refA.versionId);
-        expect(versionA!.threadId).toBe(threadA);
+        expect(versionA?.versionId).toBe(refA.versionId);
+        expect(versionA?.threadId).toBe(threadA);
 
         const versionB = (await store.getThreadVersion(threadB))._unsafeUnwrap();
-        expect(versionB!.versionId).toBe(refB.versionId);
-        expect(versionB!.threadId).toBe(threadB);
+        expect(versionB?.versionId).toBe(refB.versionId);
+        expect(versionB?.threadId).toBe(threadB);
     });
 
     it("nulls the parent link when the parent row goes", async () => {
@@ -204,13 +209,13 @@ describe("createReportVersionStore", () => {
         )._unsafeUnwrap();
 
         const linked = (await store.getVersion(child.versionId))._unsafeUnwrap();
-        expect(linked!.parentVersionId).toBe(parent.versionId);
+        expect(linked?.parentVersionId).toBe(parent.versionId);
 
         await pool.query({ text: "DELETE FROM cortex_report_versions WHERE version_id = $1", values: [parent.versionId] });
 
         const unlinked = (await store.getVersion(child.versionId))._unsafeUnwrap();
         expect(unlinked).not.toBeNull();
-        expect(unlinked!.parentVersionId).toBeNull();
+        expect(unlinked?.parentVersionId).toBeNull();
     });
 
     it("leaves the version when the thread row is deleted", async () => {
@@ -229,7 +234,7 @@ describe("createReportVersionStore", () => {
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         expect(version).not.toBeNull();
-        expect(version!.versionId).toBe(ref.versionId);
+        expect(version?.versionId).toBe(ref.versionId);
     });
 
     it("refuses a malformed document with no row", async () => {
@@ -294,7 +299,7 @@ describe("createReportVersionStore", () => {
         });
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
-        expect(version!.snapshot).toEqual(pinned);
+        expect(version?.snapshot).toEqual(pinned);
     });
 
     it("keeps a `__proto__` artifact key an ordinary snapshot entry across the round trip", async () => {
@@ -312,8 +317,9 @@ describe("createReportVersionStore", () => {
         )._unsafeUnwrap();
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
-        expect(Object.hasOwn(version!.snapshot.artifacts, "__proto__")).toBe(true);
-        expect(version!.snapshot.artifacts["__proto__"]).toEqual({ hash: "sha256:eee", fileType: "output" });
+        if (version === null) throw new Error("the recorded version is absent");
+        expect(Object.hasOwn(version.snapshot.artifacts, "__proto__")).toBe(true);
+        expect(version.snapshot.artifacts["__proto__"]).toEqual({ hash: "sha256:eee", fileType: "output" });
     });
 
     it("reads a corrupted row as a typed error", async () => {

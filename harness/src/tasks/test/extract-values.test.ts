@@ -81,7 +81,9 @@ describe("buildExtractionExec", () => {
 
         // The request list rides in one environment variable. Each request carries its pinned hash, thus
         // the script can refuse a file that drifted from the pin.
-        const parsed: unknown = JSON.parse(body.env![EXTRACTION_INPUT_ENV] ?? "");
+        const execEnv = body.env;
+        if (execEnv === undefined) throw new Error("the exec carries no environment");
+        const parsed: unknown = JSON.parse(execEnv[EXTRACTION_INPUT_ENV] ?? "");
         if (!isUnknownArray(parsed)) throw new Error("the exec carries no request list");
         expect(parsed).toEqual([
             { path: "data/x.tsv", format: "tsv", hash: "h1" },
@@ -95,7 +97,9 @@ describe("buildExtractionExec", () => {
         // that this arm repeats no mapping of its own.
         const body = buildExtractionExec("an-1", [{ path: "data/x.csv", hash: "h1", format: "tsv" }]);
 
-        const parsed: unknown = JSON.parse(body.env![EXTRACTION_INPUT_ENV] ?? "");
+        const execEnv = body.env;
+        if (execEnv === undefined) throw new Error("the exec carries no environment");
+        const parsed: unknown = JSON.parse(execEnv[EXTRACTION_INPUT_ENV] ?? "");
         if (!isUnknownArray(parsed)) throw new Error("the exec carries no request list");
         expect(parsed).toEqual([{ path: "data/x.csv", format: "tsv", hash: "h1" }]);
     });
