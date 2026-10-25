@@ -23,9 +23,9 @@ function submitTool(cell: { value: string | null }): Tool {
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
         describeCall: "none",
-        execute: async ({ answer }) => {
+        execute: ({ answer }) => {
             cell.value = answer;
-            return ok({ accepted: true });
+            return Promise.resolve(ok({ accepted: true }));
         },
     });
 }
@@ -37,9 +37,9 @@ function countedTool(id: string): { tool: Tool; runs: () => number } {
         description: `The ${id} tool.`,
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: async () => {
+        execute: () => {
             runs++;
-            return ok({ ran: id });
+            return Promise.resolve(ok({ ran: id }));
         },
     });
     return { tool, runs: () => runs };
@@ -138,7 +138,7 @@ describe("runToTerminal", () => {
             description: "A search tool the first run keeps calling.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
         let probeCalls = 0;
         const provider = scriptedProvider((i, request) => {

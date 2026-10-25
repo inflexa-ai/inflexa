@@ -27,12 +27,12 @@ describe("resolve_citation tool", () => {
     it("exposes the flat citation input schema and returns the resolver result unchanged", async () => {
         const calls: Array<{ input: CitationInput; signal: AbortSignal | undefined }> = [];
         const resolver: CitationResolver = {
-            async resolveOne(input, options) {
+            resolveOne(input, options) {
                 calls.push({ input, signal: options?.signal });
-                return resultFor(input);
+                return Promise.resolve(resultFor(input));
             },
-            async resolveMany(inputs) {
-                return inputs.map(resultFor);
+            resolveMany(inputs) {
+                return Promise.resolve(inputs.map(resultFor));
             },
         };
         const tool = createResolveCitationTool(resolver);

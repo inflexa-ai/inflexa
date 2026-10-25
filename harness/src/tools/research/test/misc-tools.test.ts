@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = fetchDouble(async () => response());
+    globalThis.fetch = fetchDouble(() => Promise.resolve(response()));
 }
 
 describe("resolveLibraryId (remaining-leaf family)", () => {
@@ -92,13 +92,13 @@ describe("inspectRun (dependency-bearing factory)", () => {
     /** A pool that answers the count and row queries used by list mode. */
     function poolReturning(rows: Array<Record<string, unknown>>): InspectRunQuerier {
         return {
-            query: async (queryOrConfig, values) => {
+            query: (queryOrConfig, values) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (text.includes("COUNT(*)")) return { rows: [{ total: rows.length }], rowCount: 1 };
+                if (text.includes("COUNT(*)")) return Promise.resolve({ rows: [{ total: rows.length }], rowCount: 1 });
                 const limit = Number(values?.[1] ?? rows.length);
                 const offset = Number(values?.[2] ?? 0);
                 const page = rows.slice(offset, offset + limit);
-                return { rows: page, rowCount: page.length };
+                return Promise.resolve({ rows: page, rowCount: page.length });
             },
         };
     }
@@ -113,9 +113,9 @@ describe("inspectRun (dependency-bearing factory)", () => {
 
     it("derives the analysis id from the Session and lists runs via the injected pool", async () => {
         const fakePool: InspectRunQuerier = {
-            query: async (queryOrConfig) => {
+            query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                return text.includes("COUNT(*)") ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+                return Promise.resolve(text.includes("COUNT(*)") ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 });
             },
         };
 
@@ -210,10 +210,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
     /** A pool that answers the run lookup and the step lookup separately, keyed by the target table. */
     function poolForRunDetail(run: Record<string, unknown>, steps: Array<Record<string, unknown>>): InspectRunQuerier {
         return {
-            query: async (queryOrConfig) => {
+            query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (text.includes("cortex_step_executions")) return { rows: steps, rowCount: steps.length };
-                return { rows: [run], rowCount: 1 };
+                if (text.includes("cortex_step_executions")) return Promise.resolve({ rows: steps, rowCount: steps.length });
+                return Promise.resolve({ rows: [run], rowCount: 1 });
             },
         };
     }
@@ -275,7 +275,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
 
     it("reports a missing run as an explicit success state", async () => {
         const { ctx } = makeToolContext();
-        const missingPool: Querier = { query: async () => ({ rows: [], rowCount: 0 }) };
+        const missingPool: Querier = { query: () => Promise.resolve({ rows: [], rowCount: 0 }) };
         const missing = (await createInspectRunTool(missingPool).execute({ runId: "missing" }, ctx))._unsafeUnwrap();
         expect(missing).toMatchObject({ inspectionState: "not_found" });
     });
@@ -285,11 +285,11 @@ describe("inspectRun (dependency-bearing factory)", () => {
         let reads = 0;
         let now = 0;
         const pool: InspectRunQuerier = {
-            query: async (queryOrConfig) => {
+            query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (text.includes("cortex_step_executions")) return { rows: [], rowCount: 0 };
+                if (text.includes("cortex_step_executions")) return Promise.resolve({ rows: [], rowCount: 0 });
                 const row = presentAt(rows, Math.min(reads++, rows.length - 1));
-                return { rows: [row], rowCount: 1 };
+                return Promise.resolve({ rows: [row], rowCount: 1 });
             },
         };
         const { ctx } = makeToolContext();
@@ -297,8 +297,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const result = (
             await createInspectRunTool(pool, {
                 now: () => now,
-                wait: async (ms) => {
+                wait: (ms) => {
                     now += ms;
+
+                    return Promise.resolve();
                 },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
         )._unsafeUnwrap();
@@ -318,8 +320,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const result = (
             await createInspectRunTool(pool, {
                 now: () => now,
-                wait: async (ms) => {
+                wait: (ms) => {
                     now += ms;
+
+                    return Promise.resolve();
                 },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx)
         )._unsafeUnwrap();
@@ -338,8 +342,8 @@ describe("inspectRun (dependency-bearing factory)", () => {
         await expect(
             createInspectRunTool(pool, {
                 now: () => 0,
-                wait: async () => {
-                    throw aborted;
+                wait: () => {
+                    return Promise.reject(aborted);
                 },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx),
         ).rejects.toBe(aborted);
@@ -354,8 +358,10 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const result = (
             await createInspectRunTool(pool, {
                 now: () => 0,
-                wait: async () => {
+                wait: () => {
                     waits++;
+
+                    return Promise.resolve();
                 },
             }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
         )._unsafeUnwrap();

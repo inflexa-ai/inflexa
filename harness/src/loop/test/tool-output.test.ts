@@ -58,7 +58,7 @@ const readToolStub: Tool = defineTool({
     description: "Read a kept text.",
     inputSchema: z.object({ ref: z.string() }),
     describeCall: "none",
-    execute: async () => ok({ status: "not_found" }),
+    execute: () => Promise.resolve(ok({ status: "not_found" })),
 });
 
 /** A deterministic text of `length` characters, thus a test can find each part of an excerpt. */
@@ -76,7 +76,7 @@ function sizedTool(executionMode: "step" | "inline" = "step"): Tool {
         executionMode,
         inputSchema: z.object({ length: z.number().int() }),
         describeCall: "none",
-        execute: async ({ length }) => ok(fill(length - 2)),
+        execute: ({ length }) => Promise.resolve(ok(fill(length - 2))),
     });
 }
 
@@ -156,8 +156,8 @@ describe("runAgent — long tool results", () => {
             description: "Fail with a long message.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw new Error("E".repeat(50_000));
+            execute: () => {
+                return Promise.reject(new Error("E".repeat(50_000)));
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "thrower", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
@@ -186,7 +186,7 @@ describe("runAgent — long tool results", () => {
             description: "Give a picture beside a long text.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok(withToolResultImage({ text: fill(40_000) }, { base64: "PNGBYTES", mediaType: "image/png" })),
+            execute: () => Promise.resolve(ok(withToolResultImage({ text: fill(40_000) }, { base64: "PNGBYTES", mediaType: "image/png" }))),
         });
         const provider: ScriptedProvider = {
             ...scriptedProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]),
@@ -400,7 +400,7 @@ describe("runAgent — long tool results", () => {
             description: "Give a text with a surrogate pair at each cut point.",
             inputSchema: z.object({ length: z.number().int() }),
             describeCall: "none",
-            execute: async () => ok(value),
+            execute: () => Promise.resolve(ok(value)),
         });
 
         const { messages } = await runAgent(agentDef([emojiTool]), GO, makeSession(), opts(scriptedProvider(callBig(length))));

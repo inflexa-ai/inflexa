@@ -27,9 +27,9 @@ function gqlResponse(data: unknown): Response {
 /** Record every Open Targets GraphQL call so a test can assert what was queried. */
 function stubOpenTargets(responder: () => Response): Record<string, unknown>[] {
     const seen: Record<string, unknown>[] = [];
-    globalThis.fetch = fetchDouble(async (_url: unknown, init?: RequestInit) => {
+    globalThis.fetch = fetchDouble((_url: unknown, init?: RequestInit) => {
         seen.push(parseJsonAs(String(init?.body ?? "{}"), GqlVariablesSchema).variables);
-        return responder();
+        return Promise.resolve(responder());
     });
     return seen;
 }
@@ -118,13 +118,13 @@ describe("targetSafety — Open Targets liabilities", () => {
 
     it("resolves a gene symbol that is not on the panel", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble(async (url: unknown, init?: RequestInit) => {
+        globalThis.fetch = fetchDouble((url: unknown, init?: RequestInit) => {
             const u = String(url);
             seen.push(u);
-            if (u.includes("ensembl")) return new Response(JSON.stringify({ id: "ENSG00000141510" }), { status: 200 });
+            if (u.includes("ensembl")) return Promise.resolve(new Response(JSON.stringify({ id: "ENSG00000141510" }), { status: 200 }));
             const body = parseJsonAs(String(init?.body ?? "{}"), GqlVariablesSchema);
             expect(body.variables).toEqual({ ensemblId: "ENSG00000141510" });
-            return gqlResponse({ target: { id: "ENSG00000141510", approvedSymbol: "TP53", safetyLiabilities: [] } });
+            return Promise.resolve(gqlResponse({ target: { id: "ENSG00000141510", approvedSymbol: "TP53", safetyLiabilities: [] } }));
         });
 
         const { ctx } = makeToolContext();
@@ -156,7 +156,7 @@ describe("targetSafety — Open Targets liabilities", () => {
     });
 
     it("keeps the panel half when Open Targets is unreachable", async () => {
-        globalThis.fetch = fetchDouble(async () => new Response("upstream down", { status: 500 }));
+        globalThis.fetch = fetchDouble(() => Promise.resolve(new Response("upstream down", { status: 500 })));
 
         const { ctx } = makeToolContext();
         const result = (await targetSafetyTool.execute({ identifiers: [HTR2B.gene] }, ctx))._unsafeUnwrap();

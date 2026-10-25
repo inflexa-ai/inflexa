@@ -100,9 +100,9 @@ async function cancelSelf(): Promise<void> {
 const chaosMirror = DBOS.registerWorkflow(
     async (): Promise<{ llm: string; meta: string }> => {
         const llmResult = await DBOS.runStep(
-            async () => {
+            () => {
                 llmCallCounter += 1;
-                return `llm-${llmCallCounter}`;
+                return Promise.resolve(`llm-${llmCallCounter}`);
             },
             { name: "llm:0:0" },
         );
@@ -117,9 +117,9 @@ const chaosMirror = DBOS.registerWorkflow(
         await cancelSelf();
 
         const metaResult = await DBOS.runStep(
-            async () => {
+            () => {
                 metaCallCounter += 1;
-                return `meta-${metaCallCounter}`;
+                return Promise.resolve(`meta-${metaCallCounter}`);
             },
             { name: "post-step.metadata" },
         );
@@ -151,24 +151,24 @@ let stepCCalls = 0;
 const threeStepMirror = DBOS.registerWorkflow(
     async (): Promise<{ a: number; b: number; c: number }> => {
         const a = await DBOS.runStep(
-            async () => {
+            () => {
                 stepACalls += 1;
-                return stepACalls;
+                return Promise.resolve(stepACalls);
             },
             { name: "three-step.a" },
         );
         const b = await DBOS.runStep(
-            async () => {
+            () => {
                 stepBCalls += 1;
-                return stepBCalls;
+                return Promise.resolve(stepBCalls);
             },
             { name: "three-step.b" },
         );
         await cancelSelf();
         const c = await DBOS.runStep(
-            async () => {
+            () => {
                 stepCCalls += 1;
-                return stepCCalls;
+                return Promise.resolve(stepCCalls);
             },
             { name: "three-step.c" },
         );
@@ -190,15 +190,17 @@ let terminalStepCalls = 0;
 const terminalMetricMirror = DBOS.registerWorkflow(
     async (): Promise<{ terminalCalls: number }> => {
         await DBOS.runStep(
-            async () => {
+            () => {
                 terminalStepCalls += 1;
                 recordStepCompleted({ agentId: "mirror-agent", status: "completed", durationMs: 1_500 });
                 recordRunCompleted({ workflow: "analysis", status: "completed", durationMs: 30_000 });
+
+                return Promise.resolve();
             },
             { name: "persist-final-status" },
         );
         await cancelSelf();
-        await DBOS.runStep(async () => undefined, { name: "post-terminal.tail" });
+        await DBOS.runStep(() => Promise.resolve(undefined), { name: "post-terminal.tail" });
         return { terminalCalls: terminalStepCalls };
     },
     { name: "terminal-metric-mirror" },
@@ -214,9 +216,9 @@ let rejectionSyncCalls = 0;
 let rejectionMarkFailedCalls = 0;
 
 /** Stands in for `deps.artifactRegistry.sync`, which throws on a persistent failure. */
-async function unreachableSync(): Promise<void> {
+function unreachableSync(): Promise<void> {
     rejectionSyncCalls += 1;
-    throw new Error(SYNC_UNREACHABLE);
+    return Promise.reject(new Error(SYNC_UNREACHABLE));
 }
 
 const registrationRejectionMirror = DBOS.registerWorkflow(
@@ -247,8 +249,10 @@ const registrationRejectionMirror = DBOS.registerWorkflow(
                     .warn("failed after a registration rejection (non-fatal)", silentLogger.errorFields(syncErr));
             }
             await DBOS.runStep(
-                async () => {
+                () => {
                     rejectionMarkFailedCalls += 1;
+
+                    return Promise.resolve();
                 },
                 { name: "mark-failed-attestation" },
             );
@@ -280,11 +284,13 @@ let syncUploads: number[] = [];
  * queue only until an upload stamps it with a `file_id`; a row the registry
  * rejected never enters it at all, having no `artifact_id`.
  */
-async function syncStepArtifacts(): Promise<void> {
+function syncStepArtifacts(): Promise<void> {
     syncCalls += 1;
     const unsynced = syncLedger.filter((r) => r.role === "step_output" && r.artifactId !== null && r.fileId === null);
     for (const row of unsynced) row.fileId = `file-${row.path}`;
     syncUploads.push(unsynced.length);
+
+    return Promise.resolve();
 }
 
 const idempotentSyncMirror = DBOS.registerWorkflow(
@@ -300,7 +306,7 @@ const idempotentSyncMirror = DBOS.registerWorkflow(
         // determinism requirement for step sequences across replay.
         await cancelSelf();
 
-        const tail = await DBOS.runStep(async () => "tail-ok", { name: "post-step.tail" });
+        const tail = await DBOS.runStep(() => Promise.resolve("tail-ok"), { name: "post-step.tail" });
 
         return { uploads: [...syncUploads], tail };
     },

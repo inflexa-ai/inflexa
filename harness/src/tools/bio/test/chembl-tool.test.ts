@@ -28,22 +28,22 @@ afterEach(() => {
  * answers 404, which ChEMBL's client reads as an expected empty.
  */
 function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
-    globalThis.fetch = fetchDouble(async (input) => {
+    globalThis.fetch = fetchDouble((input) => {
         const url = String(input);
         requestedUrls.push(url);
         for (const [pattern, body] of routes) {
             if (url.includes(pattern)) {
-                return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+                return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
             }
         }
-        return new Response("not found", { status: 404 });
+        return Promise.resolve(new Response("not found", { status: 404 }));
     });
 }
 
 function stubStatus(status: number, body = "upstream said no"): void {
-    globalThis.fetch = fetchDouble(async (input) => {
+    globalThis.fetch = fetchDouble((input) => {
         requestedUrls.push(String(input));
-        return new Response(body, { status });
+        return Promise.resolve(new Response(body, { status }));
     });
 }
 

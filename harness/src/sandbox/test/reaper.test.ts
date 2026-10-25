@@ -76,9 +76,9 @@ type FakePool = {
 function fakePool(): FakePool {
     const reconciled: string[] = [];
     const pool: Querier = {
-        query: async (query) => {
+        query: (query) => {
             if (typeof query !== "string") reconciled.push(String(query.values?.[0]));
-            return { rows: [], rowCount: 1 };
+            return Promise.resolve({ rows: [], rowCount: 1 });
         },
     };
     return { pool, reconciled };
@@ -102,13 +102,15 @@ describe("reapOnce", () => {
         const summary = await reapOnce({
             pool,
             sandboxClient: {
-                listManagedSandboxes: async () => managedList,
-                isAliveById: async () => DEAD,
-                teardownById: async (id) => {
+                listManagedSandboxes: () => Promise.resolve(managedList),
+                isAliveById: () => Promise.resolve(DEAD),
+                teardownById: (id) => {
                     tornDown.push(id);
+
+                    return Promise.resolve();
                 },
             },
-            getStatus: async (wf) => (statuses[wf] ? { status: presentGet(statuses, wf) } : null),
+            getStatus: (wf) => Promise.resolve(statuses[wf] ? { status: presentGet(statuses, wf) } : null),
             graceMs: GRACE,
             nowMs: () => NOW,
         });
@@ -134,13 +136,15 @@ describe("reapOnce", () => {
         const summary = await reapOnce({
             pool,
             sandboxClient: {
-                listManagedSandboxes: async () => [managed("sbx-live-orphan", "wf-unresolvable", NOW - GRACE * 10)],
-                isAliveById: async () => ALIVE,
-                teardownById: async (id) => {
+                listManagedSandboxes: () => Promise.resolve([managed("sbx-live-orphan", "wf-unresolvable", NOW - GRACE * 10)]),
+                isAliveById: () => Promise.resolve(ALIVE),
+                teardownById: (id) => {
                     tornDown.push(id);
+
+                    return Promise.resolve();
                 },
             },
-            getStatus: async () => null,
+            getStatus: () => Promise.resolve(null),
             graceMs: GRACE,
             nowMs: () => NOW,
         });
@@ -159,15 +163,17 @@ describe("reapOnce", () => {
         const summary = await reapOnce({
             pool,
             sandboxClient: {
-                listManagedSandboxes: async () => [managed("sbx-unknown", null, NOW - GRACE - 1)],
-                isAliveById: async () => {
-                    throw new Error("API server unreachable");
+                listManagedSandboxes: () => Promise.resolve([managed("sbx-unknown", null, NOW - GRACE - 1)]),
+                isAliveById: () => {
+                    return Promise.reject(new Error("API server unreachable"));
                 },
-                teardownById: async (id) => {
+                teardownById: (id) => {
                     tornDown.push(id);
+
+                    return Promise.resolve();
                 },
             },
-            getStatus: async () => null,
+            getStatus: () => Promise.resolve(null),
             graceMs: GRACE,
             nowMs: () => NOW,
         });
@@ -185,14 +191,15 @@ describe("reapOnce", () => {
         const summary = await reapOnce({
             pool,
             sandboxClient: {
-                listManagedSandboxes: async () => managedList,
-                isAliveById: async () => DEAD,
-                teardownById: async (id) => {
-                    if (id === "sbx-a") throw new Error("delete failed");
+                listManagedSandboxes: () => Promise.resolve(managedList),
+                isAliveById: () => Promise.resolve(DEAD),
+                teardownById: (id) => {
+                    if (id === "sbx-a") return Promise.reject(new Error("delete failed"));
                     tornDown.push(id);
+                    return Promise.resolve();
                 },
             },
-            getStatus: async () => ({ status: "ERROR" }),
+            getStatus: () => Promise.resolve({ status: "ERROR" }),
             graceMs: GRACE,
             nowMs: () => NOW,
         });

@@ -66,9 +66,10 @@ function doubles(over: { launchFails?: boolean } = {}) {
     const authorizations: AuthorizeRunInput[] = [];
     const events: SessionProvenanceEvent[] = [];
     const runLauncher: RunLauncher = {
-        launch: async (_workflow, options) => {
-            if (over.launchFails) throw new Error("launch boom");
+        launch: (_workflow, options) => {
+            if (over.launchFails) return Promise.reject(new Error("launch boom"));
             launches.push({ workflowId: options.workflowId, atMs: Date.now() });
+            return Promise.resolve();
         },
     };
     const runAuthorizer: RunAuthorizer = {
@@ -95,8 +96,8 @@ function doubles(over: { launchFails?: boolean } = {}) {
 function depsOf(d: ReturnType<typeof doubles>, over: Partial<ApprovePlanDeps> = {}): ApprovePlanDeps {
     return {
         pool,
-        executeAnalysisWorkflow: async () => {
-            throw new Error("the launcher starts the workflow");
+        executeAnalysisWorkflow: () => {
+            return Promise.reject(new Error("the launcher starts the workflow"));
         },
         runAuthorizer: d.runAuthorizer,
         runLauncher: d.runLauncher,

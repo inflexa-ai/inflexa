@@ -44,14 +44,14 @@ afterAll(async () => {
 
 describe("passthroughStep", () => {
     it("invokes the function and returns its result", async () => {
-        const result = await passthroughStep("llm-0", async () => 42);
+        const result = await passthroughStep("llm-0", () => Promise.resolve(42));
         expect(result).toBe(42);
     });
 
     it("propagates errors", async () => {
         await expect(
-            passthroughStep("tool-add-id-1", async () => {
-                throw new Error("step-failure");
+            passthroughStep("tool-add-id-1", () => {
+                return Promise.reject(new Error("step-failure"));
             }),
         ).rejects.toThrow("step-failure");
     });
@@ -61,7 +61,7 @@ describe("durableStep", () => {
     it("forwards to DBOS.runStep with the supplied name", async () => {
         const stub = await stubRunStep();
 
-        const result = await durableStep("llm-3", async () => "ok");
+        const result = await durableStep("llm-3", () => Promise.resolve("ok"));
 
         expect(result).toBe("ok");
         expect(stub).toHaveBeenCalledTimes(1);
@@ -72,7 +72,7 @@ describe("durableStep", () => {
     it("preserves the step-naming contract for tool calls", async () => {
         const stub = await stubRunStep();
 
-        await durableStep("tool-add-toolu_abc123", async () => "1");
+        await durableStep("tool-add-toolu_abc123", () => Promise.resolve("1"));
 
         const [, config] = presentFirst(stub.mock.calls);
         expect(config).toEqual({ name: "tool-add-toolu_abc123" });
@@ -83,16 +83,16 @@ describe("resultStep", () => {
     const step = resultStep(passthroughStep);
 
     it("returns the value of an ok body", async () => {
-        expect(await step("llm-0", async () => ok(7))).toBe(7);
+        expect(await step("llm-0", () => Promise.resolve(ok(7)))).toBe(7);
     });
 
     it("throws at the boundary on an err body so durability records failure", async () => {
-        await expect(step("llm-0", async () => err({ type: "db_query_failed" }))).rejects.toBeInstanceOf(ResultError);
+        await expect(step("llm-0", () => Promise.resolve(err({ type: "db_query_failed" })))).rejects.toBeInstanceOf(ResultError);
     });
 
     it("rethrows an Error err value verbatim, preserving its cause chain", async () => {
         const cause = new Error("ECONNREFUSED");
         const original = new Error("provider down", { cause });
-        await expect(step("llm-0", async () => err(original))).rejects.toBe(original);
+        await expect(step("llm-0", () => Promise.resolve(err(original)))).rejects.toBe(original);
     });
 });

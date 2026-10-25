@@ -29,9 +29,9 @@ afterEach(() => {
 /** Answer every request with one JSON body, and record the URL the engine asked for. */
 function serve(body: unknown, status = 200): void {
     const text = typeof body === "string" ? body : JSON.stringify(body);
-    globalThis.fetch = fetchDouble(async (url) => {
+    globalThis.fetch = fetchDouble((url) => {
         requested.push(String(url));
-        return new Response(text, { status, headers: { "content-type": "application/json" } });
+        return Promise.resolve(new Response(text, { status, headers: { "content-type": "application/json" } }));
     });
 }
 
@@ -127,7 +127,7 @@ describe("createSearxngEngine — the error variants", () => {
     });
 
     it("names that a body was not valid JSON, distinct from the HTTP error text", async () => {
-        globalThis.fetch = fetchDouble(async () => new Response("<html>not json</html>", { status: 200, headers: { "content-type": "text/html" } }));
+        globalThis.fetch = fetchDouble(() => Promise.resolve(new Response("<html>not json</html>", { status: 200, headers: { "content-type": "text/html" } })));
 
         const outcome = await engine.search({ query: "q" });
         const error = outcome._unsafeUnwrapErr();

@@ -11,6 +11,7 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { ChartRow } from "../chart.js";
 import { encodeTablePayload, tableDataAsset, TABLE_DATA_GLOBAL, type ColumnDisplay } from "../table-data.js";
 import { optionList, optionOf, optionStrings } from "./options.js";
+import { runPageScript } from "./page-function.js";
 
 /**
  * The display of a plain column list. The encode never reads a display entry, thus a test that states
@@ -141,7 +142,7 @@ describe("tableDataAsset", () => {
     /** Run one asset as the page runs it, and give back the registry that it wrote. */
     function registryOf(bytes: string): Record<string, unknown> {
         const window: Record<string, unknown> = {};
-        new Function("window", bytes).call(undefined, window);
+        runPageScript(["window"], [window], bytes);
         const registry = parseUnknownRecord(window[TABLE_DATA_GLOBAL]);
         if (registry === undefined) throw new Error("the asset registered no table registry");
         return registry;

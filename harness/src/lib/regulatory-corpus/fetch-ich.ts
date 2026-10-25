@@ -153,14 +153,16 @@ const ICH_GUIDELINES: ReadonlyArray<{
  * function exists for parity with `fetchFdaGuidanceListing()` and as the
  * seam where a future contributor can swap in dynamic discovery.
  */
-export async function fetchIchListing(): Promise<IchStub[]> {
-    return ICH_GUIDELINES.map((g) => ({
-        doc_id: `ich-${slugify(g.code)}`,
-        doc_title: g.doc_title,
-        doc_url: g.url,
-        code: g.code,
-        series: g.series,
-    }));
+export function fetchIchListing(): Promise<IchStub[]> {
+    return Promise.resolve(
+        ICH_GUIDELINES.map((g) => ({
+            doc_id: `ich-${slugify(g.code)}`,
+            doc_title: g.doc_title,
+            doc_url: g.url,
+            code: g.code,
+            series: g.series,
+        })),
+    );
 }
 
 /**

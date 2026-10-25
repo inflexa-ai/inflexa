@@ -53,7 +53,7 @@ const resolveDetail = createDetailResolver([
         description: "Submit the profiling results. Declares no hook.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: async () => ok({ status: "accepted" }),
+        execute: () => Promise.resolve(ok({ status: "accepted" })),
     }),
 ]);
 
@@ -77,15 +77,17 @@ const CLOCK_START = Date.parse("2026-10-12T10:00:00.000Z");
 /** A checkpointed clock stand-in: each read gives one second more than the read before. */
 function stepClock(): () => Promise<number> {
     let reads = 0;
-    return async () => CLOCK_START + 1000 * reads++;
+    return () => Promise.resolve(CLOCK_START + 1000 * reads++);
 }
 
 /** Collect what a profile would have reported, in order, without a durability engine. */
 function recorder(): { parts: Recorded[]; emitter: ProfileActivityEmitter } {
     const parts: Recorded[] = [];
     const emitter = createProfileActivityEmitter(
-        async (part) => {
+        (part) => {
             parts.push(RecordedSchema.parse(part));
+
+            return Promise.resolve();
         },
         FRAME,
         createNoopLogger(),
@@ -219,12 +221,13 @@ describe("profile activity emitter — a failed write never fails the profile", 
         const parts: unknown[] = [];
         let firstCall = true;
         const emitter = createProfileActivityEmitter(
-            async (part) => {
+            (part) => {
                 if (firstCall) {
                     firstCall = false;
-                    throw new Error("transient");
+                    return Promise.reject(new Error("transient"));
                 }
                 parts.push(part);
+                return Promise.resolve();
             },
             FRAME,
             createNoopLogger(),
@@ -242,13 +245,14 @@ describe("profile activity emitter — a failed write never fails the profile", 
         const parts: Recorded[] = [];
         let rejectActivity = true;
         const emitter = createProfileActivityEmitter(
-            async (part) => {
+            (part) => {
                 const recorded = RecordedSchema.parse(part);
                 if (rejectActivity && recorded.type === "data-step-activity") {
                     rejectActivity = false;
-                    throw new Error("transient");
+                    return Promise.reject(new Error("transient"));
                 }
                 parts.push(recorded);
+                return Promise.resolve();
             },
             FRAME,
             createNoopLogger(),
@@ -265,13 +269,14 @@ describe("profile activity emitter — a failed write never fails the profile", 
         const parts: Recorded[] = [];
         let rejectEntry = true;
         const emitter = createProfileActivityEmitter(
-            async (part) => {
+            (part) => {
                 const recorded = RecordedSchema.parse(part);
                 if (rejectEntry && recorded.type === "data-activity-entry") {
                     rejectEntry = false;
-                    throw new Error("transient");
+                    return Promise.reject(new Error("transient"));
                 }
                 parts.push(recorded);
+                return Promise.resolve();
             },
             FRAME,
             createNoopLogger(),

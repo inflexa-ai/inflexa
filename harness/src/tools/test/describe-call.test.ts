@@ -47,8 +47,8 @@ function refuse(dep: string): never {
 }
 
 const notDrivenQuerier = {
-    async query() {
-        return { rows: [], rowCount: 0 };
+    query() {
+        return Promise.resolve({ rows: [], rowCount: 0 });
     },
 };
 

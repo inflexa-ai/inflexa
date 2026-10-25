@@ -81,14 +81,16 @@ const FDA_GUIDANCES: ReadonlyArray<{
  * the seam where a future contributor can swap in dynamic discovery
  * (e.g., headless-browser scraping or a vetted third-party index).
  */
-export async function fetchFdaGuidanceListing(center: FdaCenter): Promise<FdaDocStub[]> {
-    return FDA_GUIDANCES.filter((g) => g.center === center).map((g) => ({
-        doc_id: g.doc_id,
-        doc_title: g.doc_title,
-        doc_url: `https://www.fda.gov/media/${g.media_id}/download`,
-        center: g.center,
-        metadata: { year: g.year },
-    }));
+export function fetchFdaGuidanceListing(center: FdaCenter): Promise<FdaDocStub[]> {
+    return Promise.resolve(
+        FDA_GUIDANCES.filter((g) => g.center === center).map((g) => ({
+            doc_id: g.doc_id,
+            doc_title: g.doc_title,
+            doc_url: `https://www.fda.gov/media/${g.media_id}/download`,
+            center: g.center,
+            metadata: { year: g.year },
+        })),
+    );
 }
 
 /**

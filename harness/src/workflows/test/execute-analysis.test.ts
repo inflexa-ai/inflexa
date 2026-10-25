@@ -219,10 +219,11 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "setEvent",
-        mock(async (key: string, value: unknown) => {
-            if (dbosState.setEventError !== null) throw dbosState.setEventError;
+        mock((key: string, value: unknown) => {
+            if (dbosState.setEventError !== null) return Promise.reject(dbosState.setEventError);
             dbosState.events.push({ key, value });
             dbosState.timeline.push(`setEvent ${key}`);
+            return Promise.resolve();
         }),
     );
 
@@ -231,15 +232,15 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "startWorkflow",
-        mock((_callable: unknown, opts: { workflowID: string }) => async (input: SandboxStepInput) => {
+        mock((_callable: unknown, opts: { workflowID: string }) => (input: SandboxStepInput) => {
             dbosState.childInputs.push(input);
             const result = dbosState.childResults.get(input.stepId);
             if (!result) {
-                throw new Error(`no fake result for step ${input.stepId}`);
+                return Promise.reject(new Error(`no fake result for step ${input.stepId}`));
             }
             const handle = handleFor(opts.workflowID, result);
             dbosState.pendingHandles.set(opts.workflowID, handle);
-            return handle;
+            return Promise.resolve(handle);
         }),
     );
 
@@ -247,10 +248,10 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "writeStream",
-        mock(async (_name: string, part: unknown) => {
+        mock((_name: string, part: unknown) => {
             const written = parseUnknownRecord(part);
             if (written) dbosState.emittedParts.push(written);
-            return undefined;
+            return Promise.resolve(undefined);
         }),
     );
 
@@ -258,9 +259,9 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "cancelWorkflow",
-        mock(async (workflowID: string) => {
+        mock((workflowID: string) => {
             dbosState.cancelled.add(workflowID);
-            return undefined;
+            return Promise.resolve(undefined);
         }),
     );
 
@@ -270,9 +271,9 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "waitFirst",
-        mock(async (handles: FakeWorkflowHandle[]) => {
-            if (handles.length === 0) throw new Error("waitFirst: empty handles");
-            return handles[0];
+        mock((handles: FakeWorkflowHandle[]) => {
+            if (handles.length === 0) return Promise.reject(new Error("waitFirst: empty handles"));
+            return Promise.resolve(handles[0]);
         }),
     );
 
@@ -282,7 +283,7 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "recv",
-        mock(async (topic: string) => (topic === CHILD_SUSPENDED_TOPIC ? (dbosState.childMessages.shift() ?? null) : null)),
+        mock((topic: string) => Promise.resolve(topic === CHILD_SUSPENDED_TOPIC ? (dbosState.childMessages.shift() ?? null) : null)),
     );
 
     // `DBOS.now()` — a checkpointed clock in the real engine; here a deterministic
@@ -291,10 +292,10 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "now",
-        mock(async () => {
+        mock(() => {
             const t = dbosState.nowMs;
             dbosState.nowMs += FAKE_CLOCK_STEP_MS;
-            return t;
+            return Promise.resolve(t);
         }),
     );
 }
@@ -371,7 +372,7 @@ type FakeAnswer = unknown[] | Error;
 function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => FakeAnswer)> = {}): FakePool {
     const queries: FakePool["queries"] = [];
     const callsByPrefix = new Map<string, number>();
-    const answer = async (q: { text: string; values?: readonly unknown[] }) => {
+    const answer = (q: { text: string; values?: readonly unknown[] }) => {
         queries.push(q);
         // Crude prefix match on the whitespace-normalized text — returns the configured
         // rows for the first prefix that hits, otherwise an empty rowset.
@@ -382,19 +383,20 @@ function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => 
                 callsByPrefix.set(prefix, call + 1);
                 const configured = presentGet(rowByText, prefix);
                 const rows = typeof configured === "function" ? configured(call) : configured;
-                if (rows instanceof Error) throw rows;
-                return { rows, rowCount: rows.length };
+                if (rows instanceof Error) return Promise.reject(rows);
+                return Promise.resolve({ rows, rowCount: rows.length });
             }
         }
-        return { rows: [], rowCount: 0 };
+        return Promise.resolve({ rows: [], rowCount: 0 });
     };
     const query = async (q: string | { text: string; values?: readonly unknown[] }, values?: unknown[]) =>
         answer(typeof q === "string" ? { text: q, values: values ?? [] } : q);
     // A transaction client answers from the same map and records into the same timeline as the pool.
-    const connect = async () => ({
-        query,
-        release: () => undefined,
-    });
+    const connect = () =>
+        Promise.resolve({
+            query,
+            release: () => undefined,
+        });
     return { queries, pool: Object.assign(new Pool(), { query, connect }) };
 }
 
@@ -431,9 +433,9 @@ function suspendWrites(pool: FakePool): Array<{ text: string; values?: readonly 
 function handleFor(workflowID: string, result: SandboxStepResult | Error): FakeWorkflowHandle {
     return {
         workflowID,
-        async getResult(): Promise<SandboxStepResult> {
-            if (result instanceof Error) throw result;
-            return result;
+        getResult(): Promise<SandboxStepResult> {
+            if (result instanceof Error) return Promise.reject(result);
+            return Promise.resolve(result);
         },
     };
 }
@@ -472,14 +474,14 @@ function makeDeps(opts: {
         pool: opts.pool.pool,
         provider: unusedChatProvider(),
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
-        sandboxStepCallable: async () => {
-            throw new Error("sandboxStepCallable should not be invoked directly");
+        sandboxStepCallable: () => {
+            return Promise.reject(new Error("sandboxStepCallable should not be invoked directly"));
         },
-        resolveWorkspaceRoot: async (id: string) => join("/tmp/cortex-execute-analysis-test", id),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/tmp/cortex-execute-analysis-test", id)),
         workingMemory: createWorkingMemory({
-            query: async () => ({ rows: [], rowCount: 0 }),
-            connect: async () => {
-                throw new Error("workingMemory: no transaction in the execute-analysis tests");
+            query: () => Promise.resolve({ rows: [], rowCount: 0 }),
+            connect: () => {
+                return Promise.reject(new Error("workingMemory: no transaction in the execute-analysis tests"));
             },
         }),
         synthesisModel: "test-synthesis-model",
@@ -2578,7 +2580,7 @@ describe("synthesizeFindings run stream", () => {
                     ...deps,
                     provider,
                     embedding: { dimensions: 4, embed: (texts) => okAsync(texts.map(() => [0, 0, 0, 0])) },
-                    resolveWorkspaceRoot: async (id) => join(base, id),
+                    resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
                 },
             });
 

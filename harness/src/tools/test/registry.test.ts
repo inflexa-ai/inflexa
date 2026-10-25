@@ -11,7 +11,7 @@ const alpha = defineTool({
     description: "The alpha tool.",
     inputSchema: z.object({ x: z.string() }),
     describeCall: "none",
-    execute: async (input) => ok({ echoed: input.x }),
+    execute: (input) => Promise.resolve(ok({ echoed: input.x })),
 });
 
 const beta = defineTool({
@@ -19,7 +19,7 @@ const beta = defineTool({
     description: "The beta tool.",
     inputSchema: z.object({ y: z.number() }),
     describeCall: "none",
-    execute: async (input) => ok({ doubled: input.y * 2 }),
+    execute: (input) => Promise.resolve(ok({ doubled: input.y * 2 })),
 });
 
 describe("createRegistry", () => {

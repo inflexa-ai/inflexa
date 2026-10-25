@@ -16,12 +16,12 @@ type Captured = { text: string; values: unknown[] };
 function capturingQuerier(): { querier: Querier; captured: Captured[] } {
     const captured: Captured[] = [];
     const querier: Querier = {
-        query: async (q, values) => {
+        query: (q, values) => {
             captured.push({
                 text: typeof q === "string" ? q : q.text,
                 values: values ?? (typeof q === "string" ? [] : (q.values ?? [])),
             });
-            return { rows: [], rowCount: 0 };
+            return Promise.resolve({ rows: [], rowCount: 0 });
         },
     };
     return { querier, captured };

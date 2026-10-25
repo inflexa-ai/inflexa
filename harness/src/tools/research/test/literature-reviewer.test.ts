@@ -34,8 +34,8 @@ describe("literatureReviewer sub-agent tool", () => {
             emit: (event) => {
                 emitted.push(event);
             },
-            ask: async () => {
-                throw new Error("ask should not be reached");
+            ask: () => {
+                return Promise.reject(new Error("ask should not be reached"));
             },
         };
 

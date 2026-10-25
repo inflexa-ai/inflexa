@@ -22,16 +22,18 @@ function fakeEmbeddingFetch(data: FakeEmbedding[]): {
     lastHeaders: () => Headers;
 } {
     let captured: Headers | undefined;
-    const fetchImpl: FetchLike = async (_input, init) => {
+    const fetchImpl: FetchLike = (_input, init) => {
         captured = new Headers(init?.headers);
-        return new Response(
-            JSON.stringify({
-                object: "list",
-                model: "text-embedding-3-small",
-                data,
-                usage: { prompt_tokens: 6, total_tokens: 6 },
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
+        return Promise.resolve(
+            new Response(
+                JSON.stringify({
+                    object: "list",
+                    model: "text-embedding-3-small",
+                    data,
+                    usage: { prompt_tokens: 6, total_tokens: 6 },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+            ),
         );
     };
     return {
@@ -162,9 +164,9 @@ describe("createEmbeddingProvider.embed", () => {
             baseURL: "http://gateway.test/openai",
             token: "test-token",
             suspendOn: { 429: "quota_exhausted" },
-            fetch: async () => {
+            fetch: () => {
                 fetches += 1;
-                return new Response(JSON.stringify({ error: { message: "slow down" } }), { status: 429 });
+                return Promise.resolve(new Response(JSON.stringify({ error: { message: "slow down" } }), { status: 429 }));
             },
         });
 

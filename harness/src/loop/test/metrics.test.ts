@@ -64,7 +64,7 @@ const echoTool = defineTool({
     description: "A no-op tool.",
     inputSchema: z.object({}),
     describeCall: "none",
-    execute: async () => ok({ ok: true }),
+    execute: () => Promise.resolve(ok({ ok: true })),
 });
 
 function agentDef(maxIterations: number): AgentDefinition {

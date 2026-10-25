@@ -215,7 +215,7 @@ describe("generateFileMetadata", () => {
         const outDir = join(stepDir, "output");
         await mkdir(outDir, { recursive: true });
         await writeFile(join(outDir, "a.csv"), "gene,count\nTP53,42\n");
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
 
         const { provider, calls } = makeProvider([
             // Inspect the real file before describing.
@@ -253,9 +253,9 @@ describe("generateFileMetadata", () => {
             description: "Run a command.",
             inputSchema: z.object({ command: z.array(z.string()) }),
             describeCall: "none",
-            execute: async () => {
+            execute: () => {
                 ran = true;
-                return ok({ exitCode: 0 });
+                return Promise.resolve(ok({ exitCode: 0 }));
             },
         });
         const { provider, calls } = makeProvider([

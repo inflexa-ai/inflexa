@@ -27,9 +27,9 @@ afterEach(() => {
 
 /** Answer every request with the given payload, and record each URL. */
 function stubFetch(body: unknown): void {
-    globalThis.fetch = fetchDouble(async (input) => {
+    globalThis.fetch = fetchDouble((input) => {
         requested.push(String(input));
-        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
     });
 }
 

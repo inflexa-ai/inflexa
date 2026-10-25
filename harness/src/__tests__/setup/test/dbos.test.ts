@@ -31,8 +31,8 @@ if (DBOS.isInitialized()) {
 }
 
 const incrementAndWait = DBOS.registerWorkflow(
-    async (x: number): Promise<number> => {
-        return x + 1;
+    (x: number): Promise<number> => {
+        return Promise.resolve(x + 1);
     },
     { name: "rig-smoke-increment" },
 );

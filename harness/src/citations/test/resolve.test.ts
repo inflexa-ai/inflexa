@@ -36,26 +36,26 @@ function clientSet(
 /** The real Crossref client over a fetch that would fail the test if it were ever reached. */
 function realCrossref(): CitationSourceClient {
     return createCrossrefClient({
-        fetch: fetchDouble(async () => {
-            throw new Error("Crossref must not be called without an established registration agency");
+        fetch: fetchDouble(() => {
+            return Promise.reject(new Error("Crossref must not be called without an established registration agency"));
         }),
     });
 }
 
-async function matchingHandler(source: CitationSource, request: CitationSourceRequest): Promise<CitationSourceOutcome> {
+function matchingHandler(source: CitationSource, request: CitationSourceRequest): Promise<CitationSourceOutcome> {
     if (source === "doi_registry") {
         const doi = request.normalized.identifiers.doi;
-        if (doi === undefined) throw new Error("doi is absent");
-        return {
+        if (doi === undefined) return Promise.reject(new Error("doi is absent"));
+        return Promise.resolve({
             source,
             operation: request.plan.operation,
             status: "ok",
             requestCount: 1,
             records: [doiRecord(doi)],
             identifierEvidence: { type: "doi", identifier: doi, exists: true, registrationAgency: "Crossref", metadataAvailable: true },
-        };
+        });
     }
-    return noData(source, request);
+    return Promise.resolve(noData(source, request));
 }
 
 describe("CitationResolver batch orchestration", () => {
@@ -92,23 +92,29 @@ describe("CitationResolver batch orchestration", () => {
         let batchCalls = 0;
         const pubmed: CitationSourceClient = {
             source: "pubmed",
-            resolve: async (request) => noData("pubmed", request),
-            resolveMany: async (requests) => {
+            resolve: (request) => Promise.resolve(noData("pubmed", request)),
+            resolveMany: (requests) => {
                 batchCalls += 1;
-                return requests.map((request) => {
-                    const pmid = request.normalized.identifiers.pmid;
-                    if (pmid === undefined) throw new Error("pmid is absent");
-                    return {
-                        source: "pubmed",
-                        operation: request.plan.operation,
-                        status: "ok",
-                        requestCount: 1,
-                        records: [{ source: "pubmed", sourceRecordId: pmid, identifiers: { pmid }, title: `Paper ${pmid}` }],
-                    };
-                });
+                try {
+                    return Promise.resolve(
+                        requests.map((request) => {
+                            const pmid = request.normalized.identifiers.pmid;
+                            if (pmid === undefined) throw new Error("pmid is absent");
+                            return {
+                                source: "pubmed",
+                                operation: request.plan.operation,
+                                status: "ok",
+                                requestCount: 1,
+                                records: [{ source: "pubmed", sourceRecordId: pmid, identifiers: { pmid }, title: `Paper ${pmid}` }],
+                            };
+                        }),
+                    );
+                } catch (err) {
+                    return Promise.reject(err);
+                }
             },
         };
-        const others = clientSet(async (source, request) => noData(source, request)).filter((client) => client.source !== "pubmed");
+        const others = clientSet((source, request) => Promise.resolve(noData(source, request))).filter((client) => client.source !== "pubmed");
         const resolver = createCitationResolver({}, { clients: [...others, pubmed] });
         const results = await resolver.resolveMany([{ citation: "PMID: 111" }, { citation: "PMID: 222" }]);
 
@@ -137,8 +143,8 @@ describe("CitationResolver batch orchestration", () => {
     it("contains a source that answers a batch with the wrong number of outcomes", async () => {
         const pubmed: CitationSourceClient = {
             source: "pubmed",
-            resolve: async (request) => noData("pubmed", request),
-            resolveMany: async (requests) => [noData("pubmed", presentAt(requests, 0))],
+            resolve: (request) => Promise.resolve(noData("pubmed", request)),
+            resolveMany: (requests) => Promise.resolve([noData("pubmed", presentAt(requests, 0))]),
         };
         const others = clientSet(matchingHandler).filter((client) => client.source !== "pubmed");
         const resolver = createCitationResolver({}, { clients: [...others, pubmed] });
@@ -211,7 +217,7 @@ describe("CitationResolver cache policy", () => {
     it("expires negative entries on their shorter TTL", async () => {
         let now = 0;
         const counts: Partial<Record<CitationSource, number>> = {};
-        const clients = clientSet(async (source, request) => noData(source, request), counts);
+        const clients = clientSet((source, request) => Promise.resolve(noData(source, request)), counts);
         const resolver = createCitationResolver({ cache: { negativeTtlMs: 10 } }, { clients, now: () => now });
         const input = { citation: "No such bibliographic work" };
         await resolver.resolveOne(input);
@@ -225,10 +231,12 @@ describe("CitationResolver cache policy", () => {
     it("does not cache a result containing unavailable coverage", async () => {
         const counts: Partial<Record<CitationSource, number>> = {};
         const clients = clientSet(
-            async (source, request) =>
-                source === "crossref"
-                    ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
-                    : noData(source, request),
+            (source, request) =>
+                Promise.resolve(
+                    source === "crossref"
+                        ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
+                        : noData(source, request),
+                ),
             counts,
         );
         const resolver = createCitationResolver({}, { clients });
@@ -244,7 +252,12 @@ describe("CitationResolver cache policy", () => {
         // DOI has spoken, so absence of evidence must not read as evidence of absence.
         const resolver = createCitationResolver(
             { sources: { doi_registry: { enabled: false } } },
-            { clients: [...clientSet(async (source, request) => noData(source, request)).filter((client) => client.source !== "crossref"), realCrossref()] },
+            {
+                clients: [
+                    ...clientSet((source, request) => Promise.resolve(noData(source, request))).filter((client) => client.source !== "crossref"),
+                    realCrossref(),
+                ],
+            },
         );
 
         const result = await resolver.resolveOne({ citation: "10.1000/example" });
@@ -259,10 +272,12 @@ describe("CitationResolver cache policy", () => {
         const resolver = createCitationResolver(
             {},
             {
-                clients: clientSet(async (source, request) =>
-                    source === "doi_registry"
-                        ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
-                        : noData(source, request),
+                clients: clientSet((source, request) =>
+                    Promise.resolve(
+                        source === "doi_registry"
+                            ? { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" }
+                            : noData(source, request),
+                    ),
                 ),
             },
         );
@@ -275,7 +290,7 @@ describe("CitationResolver cache policy", () => {
 
 describe("CitationResolver canonical outcome fixtures", () => {
     it("returns not_found only after every applicable source completes with no data", async () => {
-        const resolver = createCitationResolver({}, { clients: clientSet(async (source, request) => noData(source, request)) });
+        const resolver = createCitationResolver({}, { clients: clientSet((source, request) => Promise.resolve(noData(source, request))) });
 
         const result = await resolver.resolveOne({ citation: "A canonical work that does not exist anywhere" });
 
@@ -287,18 +302,18 @@ describe("CitationResolver canonical outcome fixtures", () => {
         const resolver = createCitationResolver(
             {},
             {
-                clients: clientSet(async (source, request) => {
-                    if (source !== "doi_registry") return noData(source, request);
+                clients: clientSet((source, request) => {
+                    if (source !== "doi_registry") return Promise.resolve(noData(source, request));
                     const doi = request.normalized.identifiers.doi;
-                    if (doi === undefined) throw new Error("doi is absent");
-                    return {
+                    if (doi === undefined) return Promise.reject(new Error("doi is absent"));
+                    return Promise.resolve({
                         source,
                         operation: request.plan.operation,
                         status: "ok",
                         requestCount: 1,
                         records: [{ ...doiRecord(doi), title: "Canonical title", year: 2021 }],
                         identifierEvidence: { type: "doi", identifier: doi, exists: true, registrationAgency: "Crossref", metadataAvailable: true },
-                    };
+                    });
                 }),
             },
         );
@@ -317,12 +332,19 @@ describe("CitationResolver canonical outcome fixtures", () => {
         const resolver = createCitationResolver(
             {},
             {
-                clients: clientSet(async (source, request) => {
+                clients: clientSet((source, request) => {
                     if (source === "crossref") {
-                        return { source, operation: request.plan.operation, status: "unavailable", requestCount: 1, records: [], detail: "HTTP 503" };
+                        return Promise.resolve({
+                            source,
+                            operation: request.plan.operation,
+                            status: "unavailable",
+                            requestCount: 1,
+                            records: [],
+                            detail: "HTTP 503",
+                        });
                     }
                     if (source === "semantic_scholar") {
-                        return {
+                        return Promise.resolve({
                             source,
                             operation: request.plan.operation,
                             status: "ok",
@@ -337,9 +359,9 @@ describe("CitationResolver canonical outcome fixtures", () => {
                                     year: 2024,
                                 },
                             ],
-                        };
+                        });
                     }
-                    return noData(source, request);
+                    return Promise.resolve(noData(source, request));
                 }),
             },
         );

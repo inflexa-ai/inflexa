@@ -16,15 +16,15 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = fetchDouble(async (input) => response(String(input)));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
 }
 
 function stubFetchSequence(responses: (() => Response)[]): void {
     let i = 0;
-    globalThis.fetch = fetchDouble(async () => {
+    globalThis.fetch = fetchDouble(() => {
         const make = presentAt(responses, Math.min(i, responses.length - 1), "the stubbed response");
         i += 1;
-        return make();
+        return Promise.resolve(make());
     });
 }
 

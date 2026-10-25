@@ -149,12 +149,14 @@ describe("extractionArtifactsFromResult", () => {
 describe("createExtractionArm", () => {
     it("forwards every request to the runner and maps the outcome", async () => {
         let received: readonly ExtractionRequest[] | undefined;
-        const arm = createExtractionArm(async (requests) => {
+        const arm = createExtractionArm((requests) => {
             received = requests;
-            return ok({
-                "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] },
-                "data/b.parquet": { error: { type: "read-fault", message: "boom" } },
-            });
+            return Promise.resolve(
+                ok({
+                    "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] },
+                    "data/b.parquet": { error: { type: "read-fault", message: "boom" } },
+                }),
+            );
         });
 
         const requests: ExtractionRequest[] = [
@@ -170,7 +172,7 @@ describe("createExtractionArm", () => {
     });
 
     it("gives the suspension of the pass as its err", async () => {
-        const arm = createExtractionArm(async () => err({ kind: "suspended" as const, reason: "quota_exhausted" }));
+        const arm = createExtractionArm(() => Promise.resolve(err({ kind: "suspended" as const, reason: "quota_exhausted" })));
         expect((await arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }]))._unsafeUnwrapErr()).toEqual({
             kind: "suspended",
             reason: "quota_exhausted",
@@ -178,8 +180,8 @@ describe("createExtractionArm", () => {
     });
 
     it("rejects when the runner faults", async () => {
-        const arm = createExtractionArm(async () => {
-            throw new Error("the workflow faulted");
+        const arm = createExtractionArm(() => {
+            return Promise.reject(new Error("the workflow faulted"));
         });
         await expect(arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }])).rejects.toThrow("the workflow faulted");
     });

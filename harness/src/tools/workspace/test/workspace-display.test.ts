@@ -36,13 +36,14 @@ const fakeEmbedding: EmbeddingProvider = {
 describe("createWorkspaceSearchTool (dependency-bearing factory)", () => {
     it("ranks results from the injected pool + embedding", async () => {
         const fakePool: WorkspaceSearchQuerier = {
-            query: async () => ({
-                rows: [
-                    { id: "v1", score: 0.92, metadata: { path: "out/a.csv", type: "output" } },
-                    { id: "v2", score: 0.71, metadata: { path: "out/b.csv", type: "output" } },
-                ],
-                rowCount: 2,
-            }),
+            query: () =>
+                Promise.resolve({
+                    rows: [
+                        { id: "v1", score: 0.92, metadata: { path: "out/a.csv", type: "output" } },
+                        { id: "v2", score: 0.71, metadata: { path: "out/b.csv", type: "output" } },
+                    ],
+                    rowCount: 2,
+                }),
         };
 
         const tool = createWorkspaceSearchTool(fakePool, fakeEmbedding);
@@ -56,10 +57,12 @@ describe("createWorkspaceSearchTool (dependency-bearing factory)", () => {
 
     it("returns an empty list when the index table does not exist yet", async () => {
         const fakePool: WorkspaceSearchQuerier = {
-            query: async () => {
-                throw Object.assign(new Error('relation "search_x" does not exist'), {
-                    code: "42P01",
-                });
+            query: () => {
+                return Promise.reject(
+                    Object.assign(new Error('relation "search_x" does not exist'), {
+                        code: "42P01",
+                    }),
+                );
             },
         };
 
@@ -180,7 +183,7 @@ describe("showFile", () => {
 describe("createShowPlanTool (dependency-bearing factory)", () => {
     it("returns the plan_not_found variant when the plan is absent", async () => {
         const fakePool: PlanRowQuerier = {
-            query: async () => ({ rows: [], rowCount: 0 }),
+            query: () => Promise.resolve({ rows: [], rowCount: 0 }),
         };
 
         const tool = createShowPlanTool(fakePool);
@@ -201,10 +204,11 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
 
     function poolWithPlanRow(parentPlanId: string | null): PlanRowQuerier {
         return {
-            query: async () => ({
-                rows: [{ plan: storedPlan, parent_plan_id: parentPlanId, created_at: "2026-10-02T00:00:00.000Z", superseded_by: null }],
-                rowCount: 1,
-            }),
+            query: () =>
+                Promise.resolve({
+                    rows: [{ plan: storedPlan, parent_plan_id: parentPlanId, created_at: "2026-10-02T00:00:00.000Z", superseded_by: null }],
+                    rowCount: 1,
+                }),
         };
     }
 

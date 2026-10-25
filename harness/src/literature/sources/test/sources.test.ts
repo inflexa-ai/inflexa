@@ -36,9 +36,9 @@ describe("shared literature authority sources", () => {
     it("uses one arXiv URL builder and Atom parser for search and exact lookup", async () => {
         const seen: URL[] = [];
         const source = createArxivSource({
-            fetch: fetchDouble(async (url) => {
+            fetch: fetchDouble((url) => {
                 seen.push(new URL(String(url)));
-                return new Response(ARXIV_XML);
+                return Promise.resolve(new Response(ARXIV_XML));
             }),
         });
 
@@ -55,7 +55,7 @@ describe("shared literature authority sources", () => {
         const seen: Array<{ url: URL; apiKey: string | null }> = [];
         const source = createSemanticScholarSource({
             apiKey: "test-key",
-            fetch: fetchDouble(async (url, init) => {
+            fetch: fetchDouble((url, init) => {
                 const parsed = new URL(String(url));
                 seen.push({ url: parsed, apiKey: new Headers(init?.headers).get("x-api-key") });
                 const paper = {
@@ -65,7 +65,7 @@ describe("shared literature authority sources", () => {
                     authors: [{ name: "Jane Smith" }],
                     externalIds: { DOI: "10.1000/example" },
                 };
-                return Response.json(parsed.pathname.endsWith("/paper/search") ? { data: [paper] } : paper);
+                return Promise.resolve(Response.json(parsed.pathname.endsWith("/paper/search") ? { data: [paper] } : paper));
             }),
         });
 
@@ -83,12 +83,14 @@ describe("shared literature authority sources", () => {
         const seen: URL[] = [];
         const source = createPubmedSource({
             apiKey: "ncbi-key",
-            fetch: fetchDouble(async (url) => {
+            fetch: fetchDouble((url) => {
                 const parsed = new URL(String(url));
                 seen.push(parsed);
-                return parsed.pathname.endsWith("esearch.fcgi")
-                    ? Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } })
-                    : new Response(PUBMED_XML);
+                return Promise.resolve(
+                    parsed.pathname.endsWith("esearch.fcgi")
+                        ? Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } })
+                        : new Response(PUBMED_XML),
+                );
             }),
         });
 
@@ -105,9 +107,9 @@ describe("shared literature authority sources", () => {
         const seen: URL[] = [];
         const source = createPubmedSource({
             apiKey: "",
-            fetch: fetchDouble(async (url) => {
+            fetch: fetchDouble((url) => {
                 seen.push(new URL(String(url)));
-                return Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } });
+                return Promise.resolve(Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } }));
             }),
         });
 

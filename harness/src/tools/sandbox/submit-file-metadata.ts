@@ -67,13 +67,15 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
             "the unknownPaths and describe the remaining files.",
         inputSchema: SubmitFileMetadataInputSchema,
         describeCall: "none",
-        execute: async (input): Promise<Result<SubmitFileMetadataOutcome, ToolError>> => {
+        execute: (input): Promise<Result<SubmitFileMetadataOutcome, ToolError>> => {
             const knownPaths = cell.knownPaths;
             if (knownPaths === null) {
-                return err({
-                    error: "No list of files is known yet. The harness asks for the file metadata after the task, with the list of the files.",
-                    retryable: false,
-                });
+                return Promise.resolve(
+                    err({
+                        error: "No list of files is known yet. The harness asks for the file metadata after the task, with the list of the files.",
+                        retryable: false,
+                    }),
+                );
             }
             const unknownPaths: string[] = [];
             for (const entry of input.files) {
@@ -84,11 +86,13 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
                 cell.descriptions.set(entry.path, entry);
             }
             const remaining = [...knownPaths].filter((path) => !cell.descriptions.has(path));
-            return ok({
-                accepted: unknownPaths.length === 0 && remaining.length === 0,
-                unknownPaths,
-                remaining,
-            });
+            return Promise.resolve(
+                ok({
+                    accepted: unknownPaths.length === 0 && remaining.length === 0,
+                    unknownPaths,
+                    remaining,
+                }),
+            );
         },
     });
 }

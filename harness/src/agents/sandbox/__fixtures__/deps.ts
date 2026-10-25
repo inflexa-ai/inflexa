@@ -26,26 +26,26 @@ export function makeFakeSandboxClient(): SandboxClient {
         createSandbox() {
             return okAsync(ref);
         },
-        async exec(): Promise<ExecResult> {
-            return {
+        exec(): Promise<ExecResult> {
+            return Promise.resolve({
                 execId: "wf-001:1",
                 exitCode: 0,
                 stdout: "",
                 stderr: "",
                 durationMs: 1,
                 timedOut: false,
-            };
+            });
         },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
+        isAlive() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
-        async isAliveById() {
-            return { alive: true, oomKilled: false };
+        isAliveById() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
         async teardown() {},
         async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
+        listManagedSandboxes() {
+            return Promise.resolve([]);
         },
     };
 }

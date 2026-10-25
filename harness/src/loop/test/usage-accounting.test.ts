@@ -107,7 +107,7 @@ const echoTool: Tool = defineTool({
     description: "Echo the label back.",
     inputSchema: z.object({ label: z.string() }),
     describeCall: "none",
-    execute: async ({ label }) => ok({ label }),
+    execute: ({ label }) => Promise.resolve(ok({ label })),
 });
 
 /** Never stops asking for tools — only the text reply to the wrap-up request ends the run. */

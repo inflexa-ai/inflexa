@@ -52,8 +52,8 @@ const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
     }),
     signal: new AbortController().signal,
     emit: () => {},
-    ask: async () => {
-        throw new Error("ask should not be reached");
+    ask: () => {
+        return Promise.reject(new Error("ask should not be reached"));
     },
 });
 
@@ -192,11 +192,13 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(JSON.stringify(rejected?.output)).toContain("input validation failed");
     });
 
-    it("rejects empty problem at the input-schema boundary", async () => {
+    it("rejects empty problem at the input-schema boundary", () => {
         const provider = scriptedProvider([]);
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
         const parse = tool.inputSchema.safeParse({ problem: "" });
         expect(parse.success).toBe(false);
+
+        return Promise.resolve();
     });
 });
 

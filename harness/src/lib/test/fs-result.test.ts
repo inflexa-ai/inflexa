@@ -25,7 +25,7 @@ describe("fs-result", () => {
 
     describe("tryFs", () => {
         it("returns ok with the mapped value on a successful read", async () => {
-            const result = await tryFs("ws.readFile", async () => "contents");
+            const result = await tryFs("ws.readFile", () => Promise.resolve("contents"));
             expect(result.isOk()).toBe(true);
             expect(result._unsafeUnwrap()).toBe("contents");
         });
@@ -33,8 +33,8 @@ describe("fs-result", () => {
         it("absence with onAbsent stays in the ok channel as the sentinel, never err", async () => {
             const result = await tryFs<string | null>(
                 "ws.readFile",
-                async () => {
-                    throw errnoThrow("ENOENT");
+                () => {
+                    return Promise.reject(errnoThrow("ENOENT"));
                 },
                 { path: "/missing.txt", onAbsent: () => null },
             );
@@ -45,8 +45,8 @@ describe("fs-result", () => {
         it("ENOTDIR with onAbsent also routes to the sentinel", async () => {
             const result = await tryFs<string[]>(
                 "ws.listFiles",
-                async () => {
-                    throw errnoThrow("ENOTDIR");
+                () => {
+                    return Promise.reject(errnoThrow("ENOTDIR"));
                 },
                 { onAbsent: () => [] },
             );
@@ -55,8 +55,8 @@ describe("fs-result", () => {
         });
 
         it("absence WITHOUT onAbsent falls through as err(read_failed)", async () => {
-            const result = await tryFs("ws.readFile", async () => {
-                throw errnoThrow("ENOENT");
+            const result = await tryFs("ws.readFile", () => {
+                return Promise.reject(errnoThrow("ENOENT"));
             });
             expect(result.isErr()).toBe(true);
             if (result.isErr()) {
@@ -68,8 +68,8 @@ describe("fs-result", () => {
             const cause = errnoThrow("EACCES");
             const result = await tryFs(
                 "ws.readFile",
-                async () => {
-                    throw cause;
+                () => {
+                    return Promise.reject(cause);
                 },
                 { path: "/locked.txt", onAbsent: () => null },
             );
@@ -84,8 +84,8 @@ describe("fs-result", () => {
         });
 
         it("maps EPERM to err(permission_denied)", async () => {
-            const result = await tryFs("ws.readFile", async () => {
-                throw errnoThrow("EPERM");
+            const result = await tryFs("ws.readFile", () => {
+                return Promise.reject(errnoThrow("EPERM"));
             });
             expect(result.isErr()).toBe(true);
             if (result.isErr()) {
@@ -94,8 +94,8 @@ describe("fs-result", () => {
         });
 
         it("maps EISDIR to err(is_a_directory)", async () => {
-            const result = await tryFs("ws.readFile", async () => {
-                throw errnoThrow("EISDIR");
+            const result = await tryFs("ws.readFile", () => {
+                return Promise.reject(errnoThrow("EISDIR"));
             });
             expect(result.isErr()).toBe(true);
             if (result.isErr()) {
@@ -104,8 +104,8 @@ describe("fs-result", () => {
         });
 
         it("maps an unclassified throw (EMFILE) to err(read_failed)", async () => {
-            const result = await tryFs("ws.readFile", async () => {
-                throw errnoThrow("EMFILE");
+            const result = await tryFs("ws.readFile", () => {
+                return Promise.reject(errnoThrow("EMFILE"));
             });
             expect(result.isErr()).toBe(true);
             if (result.isErr()) {
@@ -118,14 +118,14 @@ describe("fs-result", () => {
 
     describe("tryFsWrite", () => {
         it("returns ok on a successful write", async () => {
-            const result = await tryFsWrite("ws.writeFile", async () => 42);
+            const result = await tryFsWrite("ws.writeFile", () => Promise.resolve(42));
             expect(result.isOk()).toBe(true);
             expect(result._unsafeUnwrap()).toBe(42);
         });
 
         it("maps EACCES to err(permission_denied)", async () => {
-            const result = await tryFsWrite("ws.writeFile", async () => {
-                throw errnoThrow("EACCES");
+            const result = await tryFsWrite("ws.writeFile", () => {
+                return Promise.reject(errnoThrow("EACCES"));
             });
             expect(result.isErr()).toBe(true);
             if (result.isErr()) {
@@ -136,8 +136,8 @@ describe("fs-result", () => {
         it("maps an unclassified throw (ENOSPC) to err(write_failed)", async () => {
             const result = await tryFsWrite(
                 "ws.writeFile",
-                async () => {
-                    throw errnoThrow("ENOSPC");
+                () => {
+                    return Promise.reject(errnoThrow("ENOSPC"));
                 },
                 { path: "/full" },
             );
@@ -152,8 +152,8 @@ describe("fs-result", () => {
         it("absence with onAbsent stays in the ok channel", async () => {
             const result = await tryFsWrite<number>(
                 "ws.mkdir",
-                async () => {
-                    throw errnoThrow("ENOENT");
+                () => {
+                    return Promise.reject(errnoThrow("ENOENT"));
                 },
                 { onAbsent: () => 0 },
             );
@@ -164,7 +164,7 @@ describe("fs-result", () => {
 
     describe("tryFetch", () => {
         it("a null return (file not present remotely) stays in the ok channel", async () => {
-            const result = await tryFetch("presigned.fetch", async () => null);
+            const result = await tryFetch("presigned.fetch", () => Promise.resolve(null));
             expect(result.isOk()).toBe(true);
             expect(result._unsafeUnwrap()).toBeNull();
         });
@@ -173,8 +173,8 @@ describe("fs-result", () => {
             const cause = new Error("network down");
             const result = await tryFetch(
                 "presigned.fetch",
-                async () => {
-                    throw cause;
+                () => {
+                    return Promise.reject(cause);
                 },
                 "/remote/file",
             );

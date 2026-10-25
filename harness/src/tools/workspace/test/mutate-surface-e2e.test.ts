@@ -43,26 +43,26 @@ function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } 
         createSandbox() {
             return okAsync(makeSandboxRef());
         },
-        async exec(): Promise<ExecResult> {
-            return {
+        exec(): Promise<ExecResult> {
+            return Promise.resolve({
                 execId: "wf1:7",
                 exitCode: 0,
                 stdout: opts.lsResult?.stdout ?? "",
                 stderr: opts.lsResult?.stderr ?? "",
                 durationMs: 1,
                 timedOut: false,
-            };
+            });
         },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
+        isAlive() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
-        async isAliveById() {
-            return { alive: true, oomKilled: false };
+        isAliveById() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
         async teardown() {},
         async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
+        listManagedSandboxes() {
+            return Promise.resolve([]);
         },
     };
 }
@@ -85,7 +85,7 @@ describe("mutate surface — end-to-end", () => {
             runId: RUN,
             stepId: STEP,
         });
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessionsBasePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         return { sandbox, workspaceRoot, workingDir, fs };
     }
 

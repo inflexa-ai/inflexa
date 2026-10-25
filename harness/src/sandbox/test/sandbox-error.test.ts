@@ -59,7 +59,7 @@ describe("sandbox-error", () => {
     describe("trySandbox", () => {
         it("returns ok with the mapped value on a successful op", async () => {
             const result = await trySandbox(
-                async () => true,
+                () => Promise.resolve(true),
                 (status, cause) => ({
                     type: "liveness_failed",
                     op: "docker.isAlive",
@@ -74,8 +74,8 @@ describe("sandbox-error", () => {
         it("a throw is classified by the caller's toError, receiving the parsed status + cause", async () => {
             const cause = dockerodeThrow(500);
             const result = await trySandbox(
-                async () => {
-                    throw cause;
+                () => {
+                    return Promise.reject(cause);
                 },
                 (status, c) => ({
                     type: "container_create_failed",
@@ -100,8 +100,8 @@ describe("sandbox-error", () => {
 
         it("the caller can special-case a 409 into a name_conflict err", async () => {
             const result = await trySandbox(
-                async () => {
-                    throw dockerodeThrow(409);
+                () => {
+                    return Promise.reject(dockerodeThrow(409));
                 },
                 (status, cause) =>
                     status === 409
@@ -121,8 +121,8 @@ describe("sandbox-error", () => {
 
         it("a k8s numeric .code is parsed and handed to toError as the status", async () => {
             const result = await trySandbox(
-                async () => {
-                    throw k8sThrow(404);
+                () => {
+                    return Promise.reject(k8sThrow(404));
                 },
                 (status, cause) => ({ type: "teardown_failed", op: "k8s.teardown", status, cause }),
             );

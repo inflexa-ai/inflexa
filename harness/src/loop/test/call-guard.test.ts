@@ -14,9 +14,9 @@ function makeTool(id: string) {
         description: `the ${id} tool`,
         inputSchema: z.object({ query: z.string().optional(), limit: z.number().optional() }),
         describeCall: ({ query }) => `query ${query ?? "(none)"}`,
-        execute: async () => {
+        execute: () => {
             served += 1;
-            return ok({ served });
+            return Promise.resolve(ok({ served }));
         },
     });
     return { tool, count: () => served };

@@ -24,10 +24,10 @@ const tool = createPubMedTool({});
  */
 function stubNcbi(responder: (url: URL) => Response): URL[] {
     const seen: URL[] = [];
-    globalThis.fetch = fetchDouble(async (url) => {
+    globalThis.fetch = fetchDouble((url) => {
         const parsed = new URL(String(url));
         seen.push(parsed);
-        return responder(parsed);
+        return Promise.resolve(responder(parsed));
     });
     return seen;
 }

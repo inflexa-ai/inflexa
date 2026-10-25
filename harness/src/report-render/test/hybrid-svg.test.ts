@@ -12,6 +12,7 @@ import { CHART_RENDERERS_SOURCE } from "../chart-renderers.js";
 import { CHART_EXPORT_SIZES, CHART_PRINT_THEME_NAME, CHART_PRINT_TEXT_PX, chartTheme } from "../design.js";
 import { composeHybridSvg, holdsPointLayer, HYBRID_SVG_SOURCE, isPointLayer, millimeterRoot, type PointLayerImage, type SvgRootSize } from "../hybrid-svg.js";
 import { optionList, optionNumber, optionOf, optionsOf } from "./options.js";
+import { pageExports } from "./page-function.js";
 
 /** The page functions of the fragment, as the bootstrap runs them. The export option comes from the renderer fragment. */
 function pageTwin(document?: unknown): {
@@ -23,10 +24,15 @@ function pageTwin(document?: unknown): {
     box: (chart: unknown, option: Record<string, unknown>, width: number, height: number) => LayerBox | null;
     hybrid: (runtime: unknown, option: Record<string, unknown>, size: Record<string, unknown>) => string | null;
 } {
-    const made: unknown = new Function(
-        "document",
-        `${SOURCE}\nreturn { isPointLayer: reportIsPointLayer, millimeterRoot: reportMillimeterRoot, compose: reportComposeHybridSvg, vector: reportHybridVectorOption, raster: reportHybridRasterOption, box: reportPointLayerBox, hybrid: reportHybridSvg };`,
-    ).call(undefined, document);
+    const made: unknown = pageExports(["document"], [document], SOURCE, [
+        ["isPointLayer", "reportIsPointLayer"],
+        ["millimeterRoot", "reportMillimeterRoot"],
+        ["compose", "reportComposeHybridSvg"],
+        ["vector", "reportHybridVectorOption"],
+        ["raster", "reportHybridRasterOption"],
+        ["box", "reportPointLayerBox"],
+        ["hybrid", "reportHybridSvg"],
+    ]);
     const page = optionOf(made);
     const fn = (name: string): ((...args: unknown[]) => unknown) => {
         const member = page[name];

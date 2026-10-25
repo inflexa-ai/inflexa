@@ -79,14 +79,16 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool<z.infe
         description: `Terminal. ${deps.blockedWhen} Pass a clear reason. Stop immediately after calling — take no further actions.`,
         inputSchema: ReportBlockerInputSchema,
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             const degenerate = degenerateTerminalText(input.reason);
-            if (degenerate) return err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true });
+            if (degenerate) return Promise.resolve(err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true }));
             deps.record({ kind: "blocker", reason: input.reason });
-            return ok({
-                recorded: true as const,
-                message: "Blocker recorded. You are done — stop now and do not take further actions.",
-            });
+            return Promise.resolve(
+                ok({
+                    recorded: true as const,
+                    message: "Blocker recorded. You are done — stop now and do not take further actions.",
+                }),
+            );
         },
     });
 }

@@ -148,18 +148,18 @@ type AskLog = {
 };
 
 function askApproving(log: AskLog, reply: "once" | "always" = "once") {
-    return async (request: AskRequest): Promise<AskApproval> => {
+    return (request: AskRequest): Promise<AskApproval> => {
         log.requests.push(request);
         log.events.push("ask");
-        return { kind: reply };
+        return Promise.resolve({ kind: reply });
     };
 }
 
 function askDenying(log: AskLog, feedback?: string) {
-    return async (request: AskRequest): Promise<AskApproval> => {
+    return (request: AskRequest): Promise<AskApproval> => {
         log.requests.push(request);
         log.events.push("ask");
-        throw new AskRejectedError(feedback);
+        return Promise.reject(new AskRejectedError(feedback));
     };
 }
 
@@ -168,11 +168,11 @@ function askWithStandingGrants(): { ask: (request: AskRequest) => Promise<AskApp
     const grants = new Set<string>();
     const prompts: AskRequest[] = [];
     return {
-        ask: async (request) => {
-            if (request.grantKey !== undefined && grants.has(request.grantKey)) return { kind: "once" };
+        ask: (request) => {
+            if (request.grantKey !== undefined && grants.has(request.grantKey)) return Promise.resolve({ kind: "once" });
             grants.add(request.grantKey ?? "");
             prompts.push(request);
-            return { kind: "always" };
+            return Promise.resolve({ kind: "always" });
         },
         prompts,
     };

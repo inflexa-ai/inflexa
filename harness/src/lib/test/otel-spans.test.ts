@@ -186,9 +186,9 @@ describe("stableSpan", () => {
 describe("untracedFetch", () => {
     it("sends the active span's traceparent to sandbox-server and runs the fetch with tracing suppressed", async () => {
         let sent: { headers: Headers; suppressed: boolean } | undefined;
-        const accepted = fetchDouble(async (_url, init) => {
+        const accepted = fetchDouble((_url, init) => {
             sent = { headers: new Headers(init?.headers), suppressed: isTracingSuppressed(context.active()) };
-            return new Response("{}", { status: 202 });
+            return Promise.resolve(new Response("{}", { status: 202 }));
         });
 
         const step = tracer().startSpan("sandbox.exec");

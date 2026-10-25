@@ -23,7 +23,7 @@ import { presentAt, presentFind } from "../../lib/present.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
-const resolveWorkspaceRoot = async (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
+const resolveWorkspaceRoot = (analysisId: string) => Promise.resolve(`${SESSION_PVC_ROOT}/${analysisId}`);
 
 /** The managed shape: one farm location, PVC-relative, for every analysis. */
 const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
@@ -38,34 +38,35 @@ function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existin
     const existingOwner = opts.existingOwner ?? "run-1-0";
 
     const batchApi: BatchJobApi = {
-        createNamespacedJob: async ({ body }: { namespace: string; body: V1Job }) => {
+        createNamespacedJob: ({ body }: { namespace: string; body: V1Job }) => {
             if (pending409 > 0) {
                 pending409--;
                 // Mirror `@kubernetes/client-node` `ApiException`: status on `.code`.
-                throw Object.assign(new Error("jobs.batch already exists"), { code: 409 });
+                return Promise.reject(Object.assign(new Error("jobs.batch already exists"), { code: 409 }));
             }
             createdJobs.push(body);
-            return { metadata: { name: body.metadata?.name, uid: "job-uid-1" } };
+            return Promise.resolve({ metadata: { name: body.metadata?.name, uid: "job-uid-1" } });
         },
-        deleteNamespacedJob: async ({ name }: { namespace: string; name: string }) => {
-            if (deletedError) throw deletedError;
+        deleteNamespacedJob: ({ name }: { namespace: string; name: string }) => {
+            if (deletedError) return Promise.reject(deletedError);
             existingDeleted = true;
             deletedJobs.push(name);
+            return Promise.resolve();
         },
-        listNamespacedJob: async (_args: { namespace: string; labelSelector?: string }) => ({ items: createdJobs }),
-        readNamespacedJob: async ({ name }: { namespace: string; name: string }) => {
+        listNamespacedJob: (_args: { namespace: string; labelSelector?: string }) => Promise.resolve({ items: createdJobs }),
+        readNamespacedJob: ({ name }: { namespace: string; name: string }) => {
             if (existingDeleted) {
-                throw Object.assign(new Error("not found"), { code: 404 });
+                return Promise.reject(Object.assign(new Error("not found"), { code: 404 }));
             }
-            return { metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } };
+            return Promise.resolve({ metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } });
         },
     };
 
     const coreApi: CorePodApi = {
-        listNamespacedPod: async (_args: { namespace: string; labelSelector?: string }) => {
+        listNamespacedPod: (_args: { namespace: string; labelSelector?: string }) => {
             const pod = podSequence[Math.min(podIdx, podSequence.length - 1)];
             podIdx++;
-            return { items: pod ? [pod] : [] };
+            return Promise.resolve({ items: pod ? [pod] : [] });
         },
     };
 
@@ -101,8 +102,10 @@ describe("k8s createSandbox", () => {
             refStorePvc: "cortex-refs",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox: async (_session, _spec, ref) => {
+            registerSandbox: (_session, _spec, ref) => {
                 registered.push(ref.sandboxId);
+
+                return Promise.resolve();
             },
         });
 
@@ -183,7 +186,7 @@ describe("k8s createSandbox", () => {
             sessionPvcRoot: SESSION_PVC_ROOT,
             // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
             // directory the harness pre-creates under this root, not a same-named sibling of it.
-            resolveWorkspaceRoot: async (id) => `${SESSION_PVC_ROOT}/tenants/acme/${id}`,
+            resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/tenants/acme/${id}`),
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -219,7 +222,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: async (id) => `${SESSION_PVC_ROOT}/${id}`,
+            resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/${id}`),
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -266,7 +269,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             farmSource: FIXED_FARM,
             sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: async () => "/elsewhere/an-1",
+            resolveWorkspaceRoot: () => Promise.resolve("/elsewhere/an-1"),
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -640,8 +643,8 @@ describe("k8s createSandbox failure cleanup", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox: async () => {
-                throw new Error("registry write failed");
+            registerSandbox: () => {
+                return Promise.reject(new Error("registry write failed"));
             },
         });
 
@@ -681,8 +684,10 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox: async (_session, _spec, ref) => {
+            registerSandbox: (_session, _spec, ref) => {
                 registered.push(ref.sandboxId);
+
+                return Promise.resolve();
             },
         });
 
@@ -1195,7 +1200,7 @@ describe("k8s createSandbox — the farm mounts", () => {
 
     test("a resolver refusal returns farm_unavailable and creates no Job", async () => {
         const stub = stubApis([]);
-        const source: FarmSource = { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "no store yet" }) };
+        const source: FarmSource = { kind: "per-analysis", resolve: () => Promise.resolve({ kind: "unavailable", reason: "no store yet" }) };
 
         const result = await opsWith(source, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
@@ -1224,13 +1229,15 @@ describe("k8s waitForPodReady — the slow pod", () => {
     function pendingPod(pod: V1Pod) {
         let clock = 0;
         const coreApi: CorePodApi = {
-            listNamespacedPod: async () => ({ items: [pod] }),
+            listNamespacedPod: () => Promise.resolve({ items: [pod] }),
         };
         return {
             coreApi,
             now: () => clock,
-            sleep: async (ms: number) => {
+            sleep: (ms: number) => {
                 clock += ms;
+
+                return Promise.resolve();
             },
         };
     }

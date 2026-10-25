@@ -21,7 +21,7 @@ import { createRunCanceler as createRunCancelerWithReads, UnknownRunError, type 
 
 /** The read of the recorded run end gives `null` unless a test binds its own, so a test with no record keeps its meaning. */
 function createRunCanceler(deps: RunCancelerDeps) {
-    return createRunCancelerWithReads({ readRecordedRunEnd: async () => null, ...deps });
+    return createRunCancelerWithReads({ readRecordedRunEnd: () => Promise.resolve(null), ...deps });
 }
 
 const session: AgentSession = {
@@ -95,16 +95,16 @@ function fakeDb(
     const state = { run, swept: 0, ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })) };
     let stepReads = 0;
     const pool = Object.assign(new Pool(), {
-        query: async ({ text, values }: { text: string; values?: unknown[] }) => {
+        query: ({ text, values }: { text: string; values?: unknown[] }) => {
             if (text.includes("UPDATE cortex_step_executions")) {
                 if (text.includes("SET status = 'skipped'")) {
-                    if (opts.sweepFails) throw new Error("sweep exploded");
+                    if (opts.sweepFails) return Promise.reject(new Error("sweep exploded"));
                     state.swept += 1;
                     for (const row of state.ledger) if (row.status === "pending") Object.assign(row, { status: "skipped", completed_at: values?.[1] });
-                    return { rowCount: 0 };
+                    return Promise.resolve({ rowCount: 0 });
                 }
                 if (text.includes("SET status = 'canceled'") && text.includes("status = 'running'")) {
-                    if (opts.settleFails) throw new Error("settle exploded");
+                    if (opts.settleFails) return Promise.reject(new Error("settle exploded"));
                     // The statement's guard: only a row that is still running changes.
                     for (const row of state.ledger) {
                         if (row.status !== "running") continue;
@@ -113,31 +113,32 @@ function fakeDb(
                             typeof row.started_at === "string" && typeof finishedAt === "string" ? Date.parse(finishedAt) - Date.parse(row.started_at) : null;
                         Object.assign(row, { status: "canceled", completed_at: finishedAt, duration_ms: durationMs, error: values?.[2] });
                     }
-                    return { rowCount: 0 };
+                    return Promise.resolve({ rowCount: 0 });
                 }
-                throw new Error(`unexpected step write: ${text}`);
+                return Promise.reject(new Error(`unexpected step write: ${text}`));
             }
-            if (text.includes("FROM cortex_runs")) return { rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 };
+            if (text.includes("FROM cortex_runs"))
+                return Promise.resolve({ rows: state.run === null ? [] : [state.run], rowCount: state.run === null ? 0 : 1 });
             if (text.includes("SET status = $1")) {
-                if (opts.runWriteFails) throw new Error("run write exploded");
-                if (state.run === null || state.run.status !== "running") return { rowCount: 0 };
+                if (opts.runWriteFails) return Promise.reject(new Error("run write exploded"));
+                if (state.run === null || state.run.status !== "running") return Promise.resolve({ rowCount: 0 });
                 state.run = { ...state.run, status: values?.[0], completed_at: values?.[1], error: values?.[2] };
-                return { rowCount: 1 };
+                return Promise.resolve({ rowCount: 1 });
             }
             if (text.includes("SET status = 'canceled'")) {
-                if (opts.runWriteFails) throw new Error("run write exploded");
+                if (opts.runWriteFails) return Promise.reject(new Error("run write exploded"));
                 const active = state.run !== null && state.run.status === "running";
-                if (!active || state.run === null) return { rowCount: 0 };
+                if (!active || state.run === null) return Promise.resolve({ rowCount: 0 });
                 state.run = { ...state.run, status: "canceled", completed_at: values?.[1], error: values?.[2] };
-                return { rowCount: 1 };
+                return Promise.resolve({ rowCount: 1 });
             }
             if (text.includes("FROM cortex_step_executions")) {
-                if (opts.failStepReadsAfter !== undefined && stepReads >= opts.failStepReadsAfter) throw new Error("step read exploded");
+                if (opts.failStepReadsAfter !== undefined && stepReads >= opts.failStepReadsAfter) return Promise.reject(new Error("step read exploded"));
                 const batch = stepBatches[Math.min(stepReads, stepBatches.length - 1)] ?? [];
                 stepReads += 1;
-                return { rows: batch };
+                return Promise.resolve({ rows: batch });
             }
-            throw new Error(`unexpected query: ${text}`);
+            return Promise.reject(new Error(`unexpected query: ${text}`));
         },
     });
     return { pool, state };
@@ -182,9 +183,11 @@ function recordingCancel(onCall?: (ids: readonly string[]) => void): { cancelWor
     const cancelled: string[][] = [];
     return {
         cancelled,
-        cancelWorkflows: async (ids) => {
+        cancelWorkflows: (ids) => {
             cancelled.push([...ids]);
             onCall?.(ids);
+
+            return Promise.resolve();
         },
     };
 }
@@ -468,8 +471,8 @@ describe("createRunCanceler", () => {
             pool: db.pool,
             runCharge: charge,
             runAuthorizer: authorizer,
-            cancelWorkflows: async () => {
-                throw new Error("engine unreachable");
+            cancelWorkflows: () => {
+                return Promise.reject(new Error("engine unreachable"));
             },
         });
 
@@ -731,10 +734,10 @@ describe("createRunCanceler recorded run end", () => {
             cancelWorkflows,
             provenance: { emitRunEvent: (event) => received.push(event) },
             logger,
-            readRecordedRunEnd: async () => {
+            readRecordedRunEnd: () => {
                 opts.onRead?.(db);
-                if (opts.readFails) throw new Error("event read exploded");
-                return opts.record ?? null;
+                if (opts.readFails) return Promise.reject(new Error("event read exploded"));
+                return Promise.resolve(opts.record ?? null);
             },
         });
         return { db, canceler, closes, revoked, received, errors };

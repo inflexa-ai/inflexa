@@ -35,7 +35,7 @@ function makeProfileDeps(over: Partial<DataProfileDeps> = {}): DataProfileDeps {
         pool: makeFakePool(),
         sandboxClient: makeFakeSandboxClient(),
         workspaceFs: makeFakeWorkspaceFs(),
-        resolveWorkspaceRoot: async (resourceId: string) => `/tmp/sessions/${resourceId}`,
+        resolveWorkspaceRoot: (resourceId: string) => Promise.resolve(`/tmp/sessions/${resourceId}`),
         model: "claude-opus-4-7",
         // The projection copies fields and calls nothing, so an empty stub is safe.
         runAuthorizer: createLocalRunAuthorizer(),

@@ -26,11 +26,11 @@ let requests: WebSearchRequest[] = [];
 /** An engine that answers each composed query from a table, and records what the tool asked. */
 function stubEngine(byQuery: Record<string, WebSearchPage | WebSearchEngineError>): WebSearchEngine {
     return {
-        async search(request) {
+        search(request) {
             requests.push(request);
             const answer = byQuery[request.query];
-            if (answer === undefined) throw new Error(`no stubbed page for query ${request.query}`);
-            return "status" in answer ? err(answer) : ok(answer);
+            if (answer === undefined) return Promise.reject(new Error(`no stubbed page for query ${request.query}`));
+            return Promise.resolve("status" in answer ? err(answer) : ok(answer));
         },
     };
 }

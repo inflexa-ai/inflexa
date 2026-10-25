@@ -53,21 +53,21 @@ describe("createEscalationPolicy", () => {
 
 describe("probeLiveness", () => {
     test("alive machine maps to an alive verdict", async () => {
-        const verdict = await probeLiveness(async () => ({ alive: true, oomKilled: false }), REF);
+        const verdict = await probeLiveness(() => Promise.resolve({ alive: true, oomKilled: false }), REF);
         expect(verdict).toEqual({ kind: "alive" });
     });
 
     test("dead machine maps to dead and carries the OOM attribution", async () => {
-        const dead = await probeLiveness(async () => ({ alive: false, oomKilled: false }), REF);
+        const dead = await probeLiveness(() => Promise.resolve({ alive: false, oomKilled: false }), REF);
         expect(dead).toEqual({ kind: "dead", oomKilled: false });
 
-        const oom = await probeLiveness(async () => ({ alive: false, oomKilled: true }), REF);
+        const oom = await probeLiveness(() => Promise.resolve({ alive: false, oomKilled: true }), REF);
         expect(oom).toEqual({ kind: "dead", oomKilled: true });
     });
 
     test("a thrown inspect is inconclusive, never a throw", async () => {
-        const verdict = await probeLiveness(async () => {
-            throw new Error("docker daemon unreachable");
+        const verdict = await probeLiveness(() => {
+            return Promise.reject(new Error("docker daemon unreachable"));
         }, REF);
         expect(verdict.kind).toBe("inconclusive");
         if (verdict.kind === "inconclusive") {

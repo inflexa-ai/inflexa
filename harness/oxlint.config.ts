@@ -134,9 +134,6 @@ export default typescript({
             // rules whose few reports the harness keeps deliberately.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #710 adds the missing awaits and rewrites the implied evals.
-                "typescript/no-implied-eval": "off",
-                "typescript/require-await": "off",
                 // #709 owns each remaining rule with reports on the pinned run.
                 // `await-thenable` and `no-confusing-void-expression` also report outside
                 // the test globs (src/tasks/data-profile.ts,

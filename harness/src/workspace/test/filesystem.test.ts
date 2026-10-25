@@ -23,7 +23,7 @@ describe("createWorkspaceFilesystem", () => {
 
     beforeEach(async () => {
         sessions = await makeRoot();
-        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessions, id) });
+        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)) });
     });
 
     afterEach(async () => {
@@ -43,8 +43,8 @@ describe("createWorkspaceFilesystem", () => {
     // seam promises `Result` and its tools run inside live chat turns. The throw must not escape.
     describe("an unresolvable workspace root", () => {
         const unresolvable = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: async () => {
-                throw new Error("analysis folder is gone");
+            resolveWorkspaceRoot: () => {
+                return Promise.reject(new Error("analysis folder is gone"));
             },
         });
 
@@ -169,13 +169,13 @@ describe("createWorkspaceFilesystem", () => {
 
     it("falls back to presigned fetch when local is missing", async () => {
         const fallback: PresignedFallback = {
-            async fetch({ relativePath }) {
+            fetch({ relativePath }) {
                 expect(relativePath).toBe("data/inputs/cold.csv");
-                return Buffer.from("from-nexus");
+                return Promise.resolve(Buffer.from("from-nexus"));
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: async (id) => join(sessions, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)),
             presignedFallback: fallback,
         });
         const r = (await fs2.readFile({ session, path: "data/inputs/cold.csv" }))._unsafeUnwrap();
@@ -187,12 +187,12 @@ describe("createWorkspaceFilesystem", () => {
 
     it("reports an unexpected presigned-fetch failure as err(fetch_failed)", async () => {
         const fallback: PresignedFallback = {
-            async fetch() {
-                throw new Error("upstream 502");
+            fetch() {
+                return Promise.reject(new Error("upstream 502"));
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            resolveWorkspaceRoot: async (id) => join(sessions, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)),
             presignedFallback: fallback,
         });
         const result = await fs2.readFile({ session, path: "data/inputs/cold.csv" });

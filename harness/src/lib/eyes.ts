@@ -70,10 +70,11 @@ export function createStaticEyes(chrome: ChromeConfig): AcquireEyes {
     }
     const browserUrl = chrome.browserUrl;
 
-    return async (_scope: EyesScope): Promise<EyesLease> => ({
-        browserUrl,
-        release: async () => {
-            // The standing sidecar outlives every look, thus nothing ends here.
-        },
-    });
+    return (_scope: EyesScope): Promise<EyesLease> =>
+        Promise.resolve({
+            browserUrl,
+            release: async () => {
+                // The standing sidecar outlives every look, thus nothing ends here.
+            },
+        });
 }

@@ -69,6 +69,21 @@ function textDeltas(response: ChatResponse): string[] {
     return content.filter((part) => part.type === "text").map((part) => part.text);
 }
 
+function streamOf(events: ChatStreamEvent[]): AsyncIterable<ChatStreamEvent> {
+    let i = 0;
+    return {
+        [Symbol.asyncIterator]: () => ({
+            next: (): Promise<IteratorResult<ChatStreamEvent>> => {
+                if (i >= events.length) return Promise.resolve({ done: true, value: undefined });
+                const value = events[i];
+                if (value === undefined) return Promise.resolve({ done: true, value: undefined });
+                i += 1;
+                return Promise.resolve({ done: false, value });
+            },
+        }),
+    };
+}
+
 export type ScriptedProvider = ChatProvider & {
     readonly calls: ChatRequest[];
     readonly sessions: Session[];
@@ -105,10 +120,11 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
             calls.push(request);
             sessions.push(session);
             const response = reply(i, request);
-            return (async function* () {
-                for (const text of textDeltas(response)) yield { type: "text-delta", text };
-                yield { type: "done", response };
-            })();
+            const events: ChatStreamEvent[] = [
+                ...textDeltas(response).map((text): ChatStreamEvent => ({ type: "text-delta", text })),
+                { type: "done", response },
+            ];
+            return streamOf(events);
         },
     };
 }

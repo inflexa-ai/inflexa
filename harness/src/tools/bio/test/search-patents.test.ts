@@ -32,16 +32,16 @@ const PatentLookupSchema = z.object({ data: z.array(z.unknown()) });
 
 function stubFetch(routes: Array<[string, () => Response]>): SeenRequest[] {
     const seen: SeenRequest[] = [];
-    globalThis.fetch = fetchDouble(async (input, init) => {
+    globalThis.fetch = fetchDouble((input, init) => {
         const request: SeenRequest = {
             url: new URL(String(input)),
             body: typeof init?.body === "string" ? parseJsonAs(init.body, z.unknown()) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {
-            if (request.url.toString().includes(needle)) return make();
+            if (request.url.toString().includes(needle)) return Promise.resolve(make());
         }
-        return json({ error: { status: 404, code: "NOT_FOUND", message: "unrouted" } }, 404);
+        return Promise.resolve(json({ error: { status: 404, code: "NOT_FOUND", message: "unrouted" } }, 404));
     });
     return seen;
 }

@@ -39,7 +39,7 @@ function echoTool(): Tool {
         description: "Echo the label back.",
         inputSchema: z.object({ label: z.string() }),
         describeCall: "none",
-        execute: async ({ label }) => ok({ label }),
+        execute: ({ label }) => Promise.resolve(ok({ label })),
     });
 }
 
@@ -49,9 +49,9 @@ function submitTool(cell: { value: string | null }): Tool {
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
         describeCall: "none",
-        execute: async ({ answer }) => {
+        execute: ({ answer }) => {
             cell.value = answer;
-            return ok({ accepted: true });
+            return Promise.resolve(ok({ accepted: true }));
         },
     });
 }
@@ -170,8 +170,8 @@ describe("runAgent — level follows the outcome class", () => {
             description: "Needs approval.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw new AskRejectedError("nope");
+            execute: () => {
+                return Promise.reject(new AskRejectedError("nope"));
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("t1", "risky", {})], "tool_use")]);

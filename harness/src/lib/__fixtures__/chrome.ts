@@ -31,9 +31,10 @@ export function fakeLookBrowser(pageOverrides: Partial<LookPage> = {}): Connecte
         connected: true,
         on: () => {},
         wsEndpoint: () => "ws://fake.test",
-        createBrowserContext: async () => ({
-            newPage: async () => fakeLookPage(pageOverrides),
-            close: async () => {},
-        }),
+        createBrowserContext: () =>
+            Promise.resolve({
+                newPage: () => Promise.resolve(fakeLookPage(pageOverrides)),
+                close: () => Promise.resolve(),
+            }),
     };
 }

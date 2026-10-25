@@ -115,19 +115,15 @@ import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, 
 import { DOWNLOAD_CONTROL_LABEL, HYBRID_FAULT_NOTE } from "../views/chart-view.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "../views/values.js";
 import { optionArray, optionAt, optionList, optionMaybe, optionNumber, optionOf, optionStrings, seriesOf } from "./options.js";
+import { runPageScript } from "./page-function.js";
 
-/**
- * Run compiled page source against the declared `window` global. `new Function`
- * yields `Function`, which carries no call signature, so the invocation goes
- * through `call`.
- */
 function runWindowScript(script: string, window: Record<string, unknown>): void {
-    new Function("window", script).call(undefined, window);
+    runPageScript(["window"], [window], script);
 }
 
 /** Run the chart page bootstrap against the doubles that stand in for the browser globals. */
 function runChartBootstrap(window: Record<string, unknown>, doc: object, echarts: object, pageConsole: { error: (line: string) => void }): void {
-    new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP).call(undefined, window, doc, echarts, pageConsole);
+    runPageScript(["window", "document", "echarts", "console"], [window, doc, echarts, pageConsole], CHART_BOOTSTRAP);
 }
 
 /**
@@ -1052,6 +1048,7 @@ describe("the lineage stamp and the popover control", () => {
     it("parses as browser source", () => {
         // The script rides the page as text. Thus a syntax fault would show in a browser alone, and the
         // parse here catches it at build time.
+        // oxlint-disable-next-line typescript/no-implied-eval -- the check tests the parse itself and executes nothing
         expect(() => new Function(LINEAGE_POPOVER)).not.toThrow();
     });
 
@@ -2238,7 +2235,7 @@ describe("the section scrollspy", () => {
                   return { observe: () => undefined };
               }
             : undefined;
-        new Function("document", "IntersectionObserver", SECTION_SPY).call(undefined, doc, observer);
+        runPageScript(["document", "IntersectionObserver"], [doc, observer], SECTION_SPY);
         return {
             active: () => links.filter((link) => link.classes.has(ACTIVE_CLASS)).map((link) => link.getAttribute()),
             intersect: (visible: boolean[]) => callback?.(sections.map((target, index) => ({ target, isIntersecting: visible[index] ?? false }))),
@@ -2551,7 +2548,7 @@ describe("the grid boot", () => {
                 errors.push(message);
             },
         };
-        new Function("window", "document", "agGrid", "console", GRID_BOOTSTRAP).call(undefined, window, document, agGrid, console);
+        runPageScript(["window", "document", "agGrid", "console"], [window, document, agGrid, console], GRID_BOOTSTRAP);
         return {
             created,
             grids,

@@ -27,10 +27,10 @@ beforeEach(async () => {
     originalStartWorkflow ??= dbos.DBOS.startWorkflow;
     contextAtStart = undefined;
     inputAtStart = undefined;
-    Reflect.set(dbos.DBOS, "startWorkflow", () => async (input: unknown) => {
+    Reflect.set(dbos.DBOS, "startWorkflow", () => (input: unknown) => {
         contextAtStart = context.active();
         inputAtStart = input;
-        return {};
+        return Promise.resolve({});
     });
 });
 
@@ -47,7 +47,7 @@ afterAll(async () => {
     Reflect.set(dbos.DBOS, "startWorkflow", originalStartWorkflow);
 });
 
-const workflow = async (_input: { readonly planId: string }): Promise<unknown> => undefined;
+const workflow = (_input: { readonly planId: string }): Promise<unknown> => Promise.resolve(undefined);
 
 describe("createDbosRunLauncher", () => {
     it("starts the workflow in a new trace, linked to the originating span", async () => {
@@ -91,8 +91,8 @@ describe("createDbosRunLauncher", () => {
 
     it("ends the root span and rethrows when the start fails", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
-        Reflect.set(dbos.DBOS, "startWorkflow", () => async () => {
-            throw new Error("system database down");
+        Reflect.set(dbos.DBOS, "startWorkflow", () => () => {
+            return Promise.reject(new Error("system database down"));
         });
         const launcher = createDbosRunLauncher();
 

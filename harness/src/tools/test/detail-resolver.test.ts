@@ -10,7 +10,7 @@ const describedTool: Tool = defineTool({
     description: "Read a workspace file.",
     inputSchema: z.object({ path: z.string(), headLines: z.number().optional() }),
     describeCall: ({ path, headLines }) => (headLines === undefined ? path : `${path} (first ${headLines} lines)`),
-    execute: async () => ok({}),
+    execute: () => Promise.resolve(ok({})),
 });
 
 const hooklessTool: Tool = defineTool({
@@ -18,7 +18,7 @@ const hooklessTool: Tool = defineTool({
     description: "List files.",
     inputSchema: z.object({ dir: z.string() }),
     describeCall: "none",
-    execute: async () => ok({}),
+    execute: () => Promise.resolve(ok({})),
 });
 
 describe("createDetailResolver", () => {
@@ -49,7 +49,7 @@ describe("createDetailResolver", () => {
             description: "Run an inflexa command.",
             inputSchema: z.object({ argv: z.array(z.string()) }),
             describeCall: ({ argv }) => argv.join(" "),
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
 
         const withHostTools = createDetailResolver([describedTool, hostTool]);
@@ -63,7 +63,7 @@ describe("createDetailResolver", () => {
             description: "Returns an unnormalized detail.",
             inputSchema: z.object({ text: z.string() }),
             describeCall: ({ text }) => text,
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
 
         expect(createDetailResolver([noisy])("noisy", { text: "one\ntwo" })).toBe("one two");

@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function stubResponse(status: number, body: unknown): void {
-    globalThis.fetch = fetchDouble(async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
+    globalThis.fetch = fetchDouble(() => Promise.resolve(new Response(typeof body === "string" ? body : JSON.stringify(body), { status })));
 }
 
 describe("alphafoldPrediction — an accession with a model", () => {

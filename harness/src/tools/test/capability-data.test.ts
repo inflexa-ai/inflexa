@@ -28,8 +28,8 @@ function toolContext(): ToolContext {
         session: makeSession({ scope: { kind: "analysis", analysisId: "analysis-001" }, agentId: "conversation-agent", callPath: ["conversation-agent"] }),
         signal: new AbortController().signal,
         emit: () => {},
-        ask: async () => {
-            throw new Error("ask should not be reached");
+        ask: () => {
+            return Promise.reject(new Error("ask should not be reached"));
         },
     };
 }

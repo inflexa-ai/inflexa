@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = fetchDouble(async () => response());
+    globalThis.fetch = fetchDouble(() => Promise.resolve(response()));
 }
 
 function json(body: unknown, status = 200): Response {
@@ -156,8 +156,10 @@ describe("apiFetchValidated", () => {
         const res = await apiFetchValidated("https://example.test/x", ListSchema, {
             retryDelayMs: 0,
             maxRetryDelayMs: 50,
-            sleep: async (ms: number): Promise<void> => {
+            sleep: (ms: number): Promise<void> => {
                 waits.push(ms);
+
+                return Promise.resolve();
             },
         });
 
@@ -181,8 +183,10 @@ describe("apiFetchValidated", () => {
 
         const res = await apiFetchValidated("https://example.test/x", ListSchema, {
             retryDelayMs: 0,
-            sleep: async (ms: number): Promise<void> => {
+            sleep: (ms: number): Promise<void> => {
                 waits.push(ms);
+
+                return Promise.resolve();
             },
         });
 
@@ -201,8 +205,10 @@ describe("apiFetchValidated", () => {
 
         const res = await apiFetchValidated("https://example.test/x", ListSchema, {
             retryDelayMs: 100,
-            sleep: async (ms: number): Promise<void> => {
+            sleep: (ms: number): Promise<void> => {
                 waits.push(ms);
+
+                return Promise.resolve();
             },
         });
 
@@ -217,9 +223,9 @@ describe("apiFetchValidated", () => {
 describe("apiFetch — the User-Agent", () => {
     function recordHeaders(): Headers[] {
         const seen: Headers[] = [];
-        globalThis.fetch = fetchDouble(async (_url, init) => {
+        globalThis.fetch = fetchDouble((_url, init) => {
             seen.push(new Headers(init?.headers));
-            return json({});
+            return Promise.resolve(json({}));
         });
         return seen;
     }

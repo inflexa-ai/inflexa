@@ -25,15 +25,15 @@ function fakeBackfillClient<Row extends LegacyRow>(
         legacyRows,
         updates,
         queries,
-        async query(text: string, values?: unknown[]): Promise<{ rows: Row[] }> {
+        query(text: string, values?: unknown[]): Promise<{ rows: Row[] }> {
             queries.push(text);
             if (text.startsWith("UPDATE messages SET message_envelope")) {
                 updates.push(values ?? []);
-                return { rows: [] };
+                return Promise.resolve({ rows: [] });
             }
-            if (text.includes("LIMIT 1")) return { rows: [] };
-            if (text.includes("FROM messages") && text.includes("message_envelope IS NULL")) return { rows: client.legacyRows };
-            throw new Error(`unexpected query: ${text}`);
+            if (text.includes("LIMIT 1")) return Promise.resolve({ rows: [] });
+            if (text.includes("FROM messages") && text.includes("message_envelope IS NULL")) return Promise.resolve({ rows: client.legacyRows });
+            return Promise.reject(new Error(`unexpected query: ${text}`));
         },
     };
     return client;

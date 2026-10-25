@@ -8,6 +8,7 @@
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { CHART_SOURCE_MEMBER, type EchartOption } from "../chart.js";
+import { pageExports } from "./page-function.js";
 
 /** The JSON text of a value, or `undefined` when the value holds no JSON form. The lib signature types
  * the result `string`, but it gives back `undefined` for a value it cannot hold. */
@@ -127,9 +128,10 @@ export function optionPair(value: unknown): [number, number] {
 
 /** The function that the page source builds under the given name, called with unknown arguments. */
 export function pageCall(source: string, name: string): (...args: unknown[]) => unknown {
+    const page = pageExports([], [], source, [[name, name]]);
+    const made = page[name];
+    if (typeof made !== "function") throw new Error(`the page source holds no ${name}`);
     return (...args: unknown[]) => {
-        const made: unknown = new Function(`${source}\nreturn ${name};`).call(undefined);
-        if (typeof made !== "function") throw new Error(`the page source holds no ${name}`);
         const given: unknown = Reflect.apply(made, undefined, args);
         return given;
     };

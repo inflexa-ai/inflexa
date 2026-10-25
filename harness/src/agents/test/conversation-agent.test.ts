@@ -25,16 +25,16 @@ import { presentFind } from "../../lib/present.js";
 
 // Composition never calls the engine — a bare stub shapes the deps bag.
 const unusedWebSearchEngine: WebSearchEngine = {
-    async search() {
-        throw new Error("not used at composition time");
+    search() {
+        return Promise.reject(new Error("not used at composition time"));
     },
 };
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
 // for asserting the assembled `AgentDefinition`'s shape.
-const refuseExecuteAnalysis = async (): Promise<ExecuteAnalysisResult> => {
-    throw new Error("not used at composition time");
+const refuseExecuteAnalysis = (): Promise<ExecuteAnalysisResult> => {
+    return Promise.reject(new Error("not used at composition time"));
 };
 const refuseAnchorReportSession: (threadId: string) => Promise<EnsureSessionStateResult> = () => {
     throw new Error("not used at composition time");
@@ -62,7 +62,7 @@ function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputSto
         utilityModel: "anthropic/claude-haiku-4-5",
         executeAnalysisWorkflow: refuseExecuteAnalysis,
         anchorReportSession: refuseAnchorReportSession,
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: refuseRunLauncher,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -217,7 +217,7 @@ describe("createConversationAgent", () => {
             description: "A host-contributed tool.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({ done: true }),
+            execute: () => Promise.resolve(ok({ done: true })),
         });
         const agent = buildAgent([hostTool]);
         const ids = agent.tools.map((t) => t.id);

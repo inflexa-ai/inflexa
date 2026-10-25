@@ -143,36 +143,40 @@ async function mockDbos(): Promise<void> {
     Reflect.set(
         dbos.DBOS,
         "send",
-        mock(async (destination: string, message: unknown, topic?: string) => {
+        mock((destination: string, message: unknown, topic?: string) => {
             dbosState.sent.push({ destination, message, topic });
+
+            return Promise.resolve();
         }),
     );
 
     Reflect.set(
         dbos.DBOS,
         "cancelWorkflow",
-        mock(async (workflowId: string | undefined) => {
+        mock((workflowId: string | undefined) => {
             dbosState.cancelled.push(workflowId);
+
+            return Promise.resolve();
         }),
     );
 
     Reflect.set(
         dbos.DBOS,
         "writeStream",
-        mock(async (_name: string, part: unknown) => {
+        mock((_name: string, part: unknown) => {
             const written = parseUnknownRecord(part);
             if (written) dbosState.emittedParts.push(written);
-            return undefined;
+            return Promise.resolve(undefined);
         }),
     );
 
     Reflect.set(
         dbos.DBOS,
         "now",
-        mock(async () => {
+        mock(() => {
             const t = dbosState.nowMs;
             dbosState.nowMs += FAKE_CLOCK_STEP_MS;
-            return t;
+            return Promise.resolve(t);
         }),
     );
 }
@@ -213,7 +217,7 @@ const STEP_MODEL_ID = "test-step-model";
 
 /** A pool that answers every query with an empty rowset — no ledger assertions here. */
 function makeFakePool(): Querier {
-    return { query: async () => ({ rows: [], rowCount: 0 }) };
+    return { query: () => Promise.resolve({ rows: [], rowCount: 0 }) };
 }
 
 const SANDBOX_REF: SandboxRef = {
@@ -229,14 +233,14 @@ function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxS
             spawns.push({ session, spec });
             return okAsync(SANDBOX_REF);
         },
-        exec: async () => {
-            throw new Error("exec: the usage tests run a tool-less agent");
+        exec: () => {
+            return Promise.reject(new Error("exec: the usage tests run a tool-less agent"));
         },
-        isAlive: async () => ({ alive: true, oomKilled: false }),
-        isAliveById: async () => ({ alive: true, oomKilled: false }),
-        teardown: async () => undefined,
-        teardownById: async () => undefined,
-        listManagedSandboxes: async () => [],
+        isAlive: () => Promise.resolve({ alive: true, oomKilled: false }),
+        isAliveById: () => Promise.resolve({ alive: true, oomKilled: false }),
+        teardown: () => Promise.resolve(undefined),
+        teardownById: () => Promise.resolve(undefined),
+        listManagedSandboxes: () => Promise.resolve([]),
         toolchainSource: "store",
     };
 }
@@ -311,10 +315,10 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
             sync: () => okAsync(undefined),
         },
         workspaceFs: makeFakeWorkspaceFs(),
-        resolveWorkspaceRoot: async () => workspaceRoot,
+        resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         model: STEP_MODEL_ID,
-        buildAgent: async ({ fileMetadata }) => stepAgent(fileMetadata),
-        resolveWritePrefix: async (stepInput) => join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId),
+        buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata)),
+        resolveWritePrefix: (stepInput) => Promise.resolve(join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId)),
     };
 }
 
@@ -481,14 +485,15 @@ describe("sandbox-step activity history", () => {
         Reflect.set(
             dbos.DBOS,
             "writeStream",
-            mock(async (_name: string, part: unknown) => {
+            mock((_name: string, part: unknown) => {
                 const recorded = parseUnknownRecord(part);
-                if (recorded === undefined) return;
+                if (recorded === undefined) return Promise.resolve();
                 if (!rejected && recorded.type === "data-activity-entry") {
                     rejected = true;
-                    throw new Error("stream unavailable");
+                    return Promise.reject(new Error("stream unavailable"));
                 }
                 dbosState.emittedParts.push(recorded);
+                return Promise.resolve();
             }),
         );
         const logger = createCapturingLogger();
@@ -529,9 +534,9 @@ describe("sandbox-step file-metadata output tool", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
-            buildAgent: async ({ fileMetadata }) => {
+            buildAgent: ({ fileMetadata }) => {
                 cell = fileMetadata;
-                return stepAgent(fileMetadata);
+                return Promise.resolve(stepAgent(fileMetadata));
             },
         };
 
@@ -642,14 +647,15 @@ describe("sandbox-step kept tool outputs", () => {
         const stderr = "Traceback (most recent call last):\nValueError: no batch column";
         const sandboxClient = {
             ...makeSandboxClient(),
-            exec: async () => ({
-                execId: "wf-1:3",
-                exitCode: 1,
-                stdout: "row\n".repeat(50_000),
-                stderr,
-                durationMs: 5,
-                timedOut: false,
-            }),
+            exec: () =>
+                Promise.resolve({
+                    execId: "wf-1:3",
+                    exitCode: 1,
+                    stdout: "row\n".repeat(50_000),
+                    stderr,
+                    durationMs: 5,
+                    timedOut: false,
+                }),
         };
         const provider = scriptedProvider((i) =>
             i === 0
@@ -661,17 +667,19 @@ describe("sandbox-step kept tool outputs", () => {
             provider,
             sandboxClient,
             toolOutputStore: store,
-            buildAgent: async (ctx) => {
-                if (ctx.toolOutputStore === undefined) throw new Error("the tool output store is absent");
-                return stepAgent(ctx.fileMetadata, [
-                    createExecuteCommandTool({
-                        sandboxClient,
-                        sandbox: ctx.sandbox,
-                        deadlineMs: ctx.deadlineMs,
-                        defaultCwd: `/${ANALYSIS_ID}`,
-                    }),
-                    createReadToolOutputTool(ctx.toolOutputStore),
-                ]);
+            buildAgent: (ctx) => {
+                if (ctx.toolOutputStore === undefined) return Promise.reject(new Error("the tool output store is absent"));
+                return Promise.resolve(
+                    stepAgent(ctx.fileMetadata, [
+                        createExecuteCommandTool({
+                            sandboxClient,
+                            sandbox: ctx.sandbox,
+                            deadlineMs: ctx.deadlineMs,
+                            defaultCwd: `/${ANALYSIS_ID}`,
+                        }),
+                        createReadToolOutputTool(ctx.toolOutputStore),
+                    ]),
+                );
             },
         };
 
@@ -697,7 +705,7 @@ describe("sandbox-step kept tool outputs", () => {
             description: "Give a long text.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok("x".repeat(40_000)),
+            execute: () => Promise.resolve(ok("x".repeat(40_000))),
         });
         const provider = scriptedProvider((i, request) => {
             if (i === 0) return makeMessage([toolUseBlock("tu-big", "big", {})], "tool_use");
@@ -709,9 +717,9 @@ describe("sandbox-step kept tool outputs", () => {
             ...usageStepDeps(undefined),
             provider,
             toolOutputStore: store,
-            buildAgent: async (ctx) => {
-                if (ctx.toolOutputStore === undefined) throw new Error("the tool output store is absent");
-                return stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore)]);
+            buildAgent: (ctx) => {
+                if (ctx.toolOutputStore === undefined) return Promise.reject(new Error("the tool output store is absent"));
+                return Promise.resolve(stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore)]));
             },
         };
 
@@ -757,9 +765,9 @@ describe("sandbox-step blocker replay", () => {
         const blockerDeps = (provider: AgentChat): SandboxStepDeps => ({
             ...usageStepDeps(undefined),
             provider,
-            buildAgent: async ({ blockerHolder, fileMetadata }) => {
+            buildAgent: ({ blockerHolder, fileMetadata }) => {
                 holders.push(blockerHolder);
-                return stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]);
+                return Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]));
             },
         });
 
@@ -768,9 +776,9 @@ describe("sandbox-step blocker replay", () => {
         Reflect.set(
             dbos.DBOS,
             "runStep",
-            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
-                if (config?.name === undefined) throw new Error("the step name is absent");
-                return cache.has(config.name) ? cache.get(config.name) : fn();
+            mock((fn: () => Promise<unknown>, config?: { name?: string }) => {
+                if (config?.name === undefined) return Promise.reject(new Error("the step name is absent"));
+                return Promise.resolve(cache.has(config.name) ? cache.get(config.name) : fn());
             }),
         );
         const replayProvider = scriptedProvider(() => {
@@ -794,7 +802,7 @@ describe("sandbox-step blocker replay", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider: scriptedProvider((i) => presentAt(replies, i)),
-            buildAgent: async ({ blockerHolder, fileMetadata }) => stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]),
+            buildAgent: ({ blockerHolder, fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)])),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -827,11 +835,11 @@ describe("sandbox-step suspension", () => {
     function statementPool(): { pool: Querier; statements: Array<{ text: string; values: readonly unknown[] }> } {
         const statements: Array<{ text: string; values: readonly unknown[] }> = [];
         const pool: Querier = {
-            query: async (arg, params) => {
+            query: (arg, params) => {
                 const text = typeof arg === "string" ? arg : arg.text;
                 const values = typeof arg === "object" && "values" in arg ? (arg.values ?? []) : (params ?? []);
                 statements.push({ text, values });
-                return { rows: [], rowCount: 0 };
+                return Promise.resolve({ rows: [], rowCount: 0 });
             },
         };
         return { pool, statements };
@@ -873,8 +881,10 @@ describe("sandbox-step suspension", () => {
         const refusing = {
             ...makeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
-            teardown: async (ref: SandboxRef) => {
+            teardown: (ref: SandboxRef) => {
                 teardowns.push(ref.sandboxId);
+
+                return Promise.resolve();
             },
         };
 
@@ -1076,13 +1086,13 @@ describe("sandbox-step capped-out empty manifest", () => {
     function makeRecordingPool(): { pool: Querier; values: unknown[] } {
         const values: unknown[] = [];
         const pool: Querier = {
-            query: async (arg, params) => {
+            query: (arg, params) => {
                 if (typeof arg === "object" && "values" in arg) {
                     const fromConfig: readonly unknown[] = arg.values ?? [];
                     values.push(...fromConfig);
                 }
                 values.push(...(params ?? []));
-                return { rows: [], rowCount: 0 };
+                return Promise.resolve({ rows: [], rowCount: 0 });
             },
         };
         return { pool, values };
@@ -1103,24 +1113,26 @@ describe("sandbox-step capped-out empty manifest", () => {
             ...usageStepDeps(undefined),
             pool,
             provider,
-            buildAgent: async ({ blockerHolder, fileMetadata }) =>
-                stepAgent(
-                    fileMetadata,
-                    [
-                        defineTool({
-                            id: "echo",
-                            description: "Echo the label back.",
-                            inputSchema: z.object({ label: z.string() }),
-                            describeCall: "none",
-                            execute: async ({ label }) => {
-                                if (args.blockerReason !== undefined) {
-                                    blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
-                                }
-                                return ok({ label });
-                            },
-                        }),
-                    ],
-                    1,
+            buildAgent: ({ blockerHolder, fileMetadata }) =>
+                Promise.resolve(
+                    stepAgent(
+                        fileMetadata,
+                        [
+                            defineTool({
+                                id: "echo",
+                                description: "Echo the label back.",
+                                inputSchema: z.object({ label: z.string() }),
+                                describeCall: "none",
+                                execute: ({ label }) => {
+                                    if (args.blockerReason !== undefined) {
+                                        blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
+                                    }
+                                    return Promise.resolve(ok({ label }));
+                                },
+                            }),
+                        ],
+                        1,
+                    ),
                 ),
         };
         return { deps, values };

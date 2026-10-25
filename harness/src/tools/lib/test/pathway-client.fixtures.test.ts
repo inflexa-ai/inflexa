@@ -69,13 +69,13 @@ describe("KEGG golden fixtures", () => {
 
     it("gives the pathway memberships of a gene over the three golden bodies", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble(async (input) => {
+        globalThis.fetch = fetchDouble((input) => {
             const url = String(input);
             seen.push(url);
-            if (url.includes("/find/hsa/")) return new Response(readTextFixture("kegg", "find-hsa-TP53.txt"));
-            if (url.includes("/link/pathway/")) return new Response(readTextFixture("kegg", "link-pathway-hsa7157.txt"));
-            if (url.includes("/list/pathway/")) return new Response(readTextFixture("kegg", "list-pathway-hsa.txt"));
-            return new Response("unrouted", { status: 404 });
+            if (url.includes("/find/hsa/")) return Promise.resolve(new Response(readTextFixture("kegg", "find-hsa-TP53.txt")));
+            if (url.includes("/link/pathway/")) return Promise.resolve(new Response(readTextFixture("kegg", "link-pathway-hsa7157.txt")));
+            if (url.includes("/list/pathway/")) return Promise.resolve(new Response(readTextFixture("kegg", "list-pathway-hsa.txt")));
+            return Promise.resolve(new Response("unrouted", { status: 404 }));
         });
 
         const pathways = await keggPathwaysForGene("TP53", "hsa", 25);

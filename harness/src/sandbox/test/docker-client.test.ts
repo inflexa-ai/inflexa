@@ -139,31 +139,37 @@ function stubDocker(): {
 
     const makeContainer = (id: string) => ({
         id,
-        start: async () => {
+        start: () => {
             running.set(id, true);
+
+            return Promise.resolve();
         },
-        inspect: async () => {
-            if (!running.has(id)) throw notFound();
+        inspect: () => {
+            if (!running.has(id)) return Promise.reject(notFound());
             // The sandbox publishes its own exec port to loopback — there is no gateway.
-            return {
+            return Promise.resolve({
                 Config: { Labels: labelsByName.get(id) ?? {} },
                 NetworkSettings: {
                     Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] },
                 },
                 State: { Running: running.get(id) === true, OOMKilled: oomKilled.has(id) },
-            };
+            });
         },
-        stop: async () => {
+        stop: () => {
             running.set(id, false);
+
+            return Promise.resolve();
         },
-        remove: async () => {
+        remove: () => {
             removed.push(id);
             running.delete(id);
+
+            return Promise.resolve();
         },
     });
 
     const docker: DockerEngine = {
-        createContainer: async (opts: CreateOpts) => {
+        createContainer: (opts: CreateOpts) => {
             created.push({
                 name: opts.name,
                 image: opts.Image,
@@ -182,24 +188,24 @@ function stubDocker(): {
                 memorySwap: opts.HostConfig?.MemorySwap,
             });
             labelsByName.set(opts.name, opts.Labels ?? {});
-            return makeContainer(opts.name);
+            return Promise.resolve(makeContainer(opts.name));
         },
         getContainer: (id: string) => makeContainer(id),
-        listContainers: async () => [],
+        listContainers: () => Promise.resolve([]),
     };
 
     return { docker, created, removed, running, oomKilled, createdNetworks, labelsByName };
 }
 
 const META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } } as const;
-const okFetch = fetchDouble(async () => new Response("ok", { status: 200 }));
+const okFetch = fetchDouble(() => Promise.resolve(new Response("ok", { status: 200 })));
 
 describe("docker createSandbox — confinement", () => {
     test("a root entrypoint with NET_ADMIN and the firewall flag, and no egress target", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -230,7 +236,7 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created, createdNetworks } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -255,14 +261,16 @@ describe("docker createSandbox — confinement", () => {
         const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             refStorePath: refsRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async (session, _spec, ref) => {
+            registerSandbox: (session, _spec, ref) => {
                 registered.push({ runId: session.runFrame.runId, stepId: session.runFrame.stepId, sandboxId: ref.sandboxId });
+
+                return Promise.resolve();
             },
         });
 
@@ -293,7 +301,7 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -318,7 +326,7 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -343,7 +351,7 @@ describe("docker createSandbox — confinement", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -365,8 +373,8 @@ describe("docker createSandbox — confinement", () => {
         const hostCpuinfo = [0, 1, 2, 3].map((n) => `processor\t: ${n}\nmodel name\t: Test CPU\n\n`).join("");
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
-            readHostCpuinfo: async () => hostCpuinfo,
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, id)),
+            readHostCpuinfo: () => Promise.resolve(hostCpuinfo),
             farmSource,
             docker,
             fetch: okFetch,
@@ -400,8 +408,8 @@ describe("docker createSandbox — confinement", () => {
         const logger = createCapturingLogger();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
-            readHostCpuinfo: async () => undefined,
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, id)),
+            readHostCpuinfo: () => Promise.resolve(undefined),
             farmSource,
             docker,
             fetch: okFetch,
@@ -422,8 +430,8 @@ describe("docker createSandbox — confinement", () => {
         const logger = createCapturingLogger();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, "absent", id),
-            readHostCpuinfo: async () => "processor\t: 0\n\n",
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, "absent", id)),
+            readHostCpuinfo: () => Promise.resolve("processor\t: 0\n\n"),
             farmSource,
             docker,
             fetch: okFetch,
@@ -446,23 +454,28 @@ describe("docker createSandbox — confinement", () => {
         docker.getContainer = (id: string) => ({
             start: async () => {},
             stop: async () => {},
-            remove: async () => {
+            remove: () => {
                 removed.push(id);
+
+                return Promise.resolve();
             },
-            inspect: async () => ({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
+            inspect: () => Promise.resolve({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
         });
-        docker.createContainer = async (opts: CreateOpts) => ({
-            start: async () => {},
-            stop: async () => {},
-            remove: async () => {
-                removed.push(opts.name);
-            },
-            inspect: async () => ({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
-        });
+        docker.createContainer = (opts: CreateOpts) =>
+            Promise.resolve({
+                start: async () => {},
+                stop: async () => {},
+                remove: () => {
+                    removed.push(opts.name);
+
+                    return Promise.resolve();
+                },
+                inspect: () => Promise.resolve({ Config: { Labels: {} }, NetworkSettings: { Ports: {} }, State: { Running: true } }),
+            });
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -481,7 +494,7 @@ describe("docker createSandbox — the label set", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -531,7 +544,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -554,7 +567,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             platform: "linux/arm64",
             docker,
@@ -572,7 +585,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -589,7 +602,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
@@ -621,7 +634,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -649,7 +662,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -671,7 +684,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
@@ -693,7 +706,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, id)),
             farmSource,
             libStorePath: libRoot,
             docker,
@@ -717,7 +730,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
@@ -736,7 +749,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
@@ -756,7 +769,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             packageStore: "required",
@@ -790,7 +803,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             packageStore: "required",
@@ -815,7 +828,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             libStorePath: libRoot,
             docker,
@@ -834,12 +847,12 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: {
                 kind: "per-analysis",
-                resolve: async () => {
+                resolve: () => {
                     resolverCalls += 1;
-                    return { kind: "available", location: { farmPath: farmDir } };
+                    return Promise.resolve({ kind: "available", location: { farmPath: farmDir } });
                 },
             },
             docker,
@@ -858,8 +871,8 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
-            farmSource: { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "the store download is in progress" }) },
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
+            farmSource: { kind: "per-analysis", resolve: () => Promise.resolve({ kind: "unavailable", reason: "the store download is in progress" }) },
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -881,11 +894,11 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: {
                 kind: "per-analysis",
-                resolve: async () => {
-                    throw new Error("boom");
+                resolve: () => {
+                    return Promise.reject(new Error("boom"));
                 },
             },
             libStorePath: libRoot,
@@ -907,12 +920,12 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: {
                 kind: "per-analysis",
-                resolve: async (analysisId) => {
+                resolve: (analysisId) => {
                     resolvedFor.push(analysisId);
-                    return { kind: "available", location: { farmPath: farmDir } };
+                    return Promise.resolve({ kind: "available", location: { farmPath: farmDir } });
                 },
             },
             libStorePath: libRoot,
@@ -934,7 +947,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource: { kind: "fixed", location: { farmPath: farmDir, cachePath: cacheDir } },
             toolchainSource: "image",
             libStorePath: libRoot,
@@ -964,7 +977,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             toolchainSource: "image",
             libStorePath: libRoot,
@@ -998,7 +1011,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join(wsRoot, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(wsRoot, id)),
             farmSource,
             refStorePath: missing,
             docker,
@@ -1024,7 +1037,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             refStorePath: installedLater,
             docker,
@@ -1050,7 +1063,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             refStorePath: link,
             docker,
@@ -1069,7 +1082,7 @@ describe("docker teardown / isAlive", () => {
         const { docker, removed } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -1085,7 +1098,7 @@ describe("docker teardown / isAlive", () => {
         const { docker } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             registerSandbox: async () => {},
@@ -1098,7 +1111,7 @@ describe("docker teardown / isAlive", () => {
         const { docker, running } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             registerSandbox: async () => {},
@@ -1127,7 +1140,7 @@ describe("docker teardown / isAlive", () => {
         const { docker, running, oomKilled } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             registerSandbox: async () => {},
@@ -1143,28 +1156,29 @@ describe("docker teardown / isAlive", () => {
 
     test("isAlive errs on non-404 errors so callers can retry", async () => {
         const erroringDocker: DockerEngine = {
-            createContainer: async () => ({
-                start: async () => {},
-                stop: async () => {},
-                remove: async () => {},
-                inspect: async () => {
-                    throw new Error("create is not expected in this test");
-                },
-            }),
+            createContainer: () =>
+                Promise.resolve({
+                    start: async () => {},
+                    stop: async () => {},
+                    remove: async () => {},
+                    inspect: () => {
+                        return Promise.reject(new Error("create is not expected in this test"));
+                    },
+                }),
             getContainer: () => ({
                 start: async () => {},
                 stop: async () => {},
                 remove: async () => {},
-                inspect: async () => {
-                    throw Object.assign(new Error("server unavailable"), { statusCode: 503 });
+                inspect: () => {
+                    return Promise.reject(Object.assign(new Error("server unavailable"), { statusCode: 503 }));
                 },
             }),
-            listContainers: async () => [],
+            listContainers: () => Promise.resolve([]),
         };
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker: erroringDocker,
             registerSandbox: async () => {},
@@ -1198,40 +1212,46 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
 
     const container = (id: string) => ({
         id,
-        start: async () => {
+        start: () => {
             if (standing) standing.running = true;
+
+            return Promise.resolve();
         },
-        stop: async () => {
+        stop: () => {
             if (standing) standing.running = false;
+
+            return Promise.resolve();
         },
-        remove: async () => {
+        remove: () => {
             removed.push(id);
             standing = null;
+
+            return Promise.resolve();
         },
-        inspect: async () => {
-            if (!standing) throw notFound();
-            return {
+        inspect: () => {
+            if (!standing) return Promise.reject(notFound());
+            return Promise.resolve({
                 Config: { Labels: standing.labels },
                 NetworkSettings: { Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] } },
                 State: { Running: standing.running, OOMKilled: false },
-            };
+            });
         },
     });
 
     const docker: DockerEngine = {
-        createContainer: async (o: CreateOpts) => {
+        createContainer: (o: CreateOpts) => {
             attempts += 1;
             // The first create is the one that races the standing container; a
             // later attempt is a post-removal recreate and lands cleanly.
             if (attempts === 1) {
-                throw Object.assign(new Error("that name is already in use"), { statusCode: opts.createStatus });
+                return Promise.reject(Object.assign(new Error("that name is already in use"), { statusCode: opts.createStatus }));
             }
             created.push(o.name);
             standing = { labels: o.Labels ?? {}, running: false };
-            return container(o.name);
+            return Promise.resolve(container(o.name));
         },
         getContainer: (id: string) => container(id),
-        listContainers: async () => [],
+        listContainers: () => Promise.resolve([]),
     };
 
     return { docker, created, removed };
@@ -1243,7 +1263,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     const reconcileOps = (docker: DockerEngine) =>
         createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: okFetch,
@@ -1345,14 +1365,14 @@ describe("docker createSandbox — recovery reconciliation", () => {
         // The running owned container is adopted, then its /health is polled afresh. This
         // stub keeps /health unhealthy AND jumps the mocked clock past the poll deadline on
         // the first probe, so the loop ends after a single tick instead of the real 30s wait.
-        const unhealthyFetch = fetchDouble(async () => {
+        const unhealthyFetch = fetchDouble(() => {
             setSystemTime(new Date(Date.now() + 10 * 60_000));
-            return new Response("unhealthy", { status: 503 });
+            return Promise.resolve(new Response("unhealthy", { status: 503 }));
         });
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
             fetch: unhealthyFetch,
@@ -1387,7 +1407,7 @@ describe("docker createSandbox — engine connection", () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
-            resolveWorkspaceRoot: async (id) => join("/sessions", id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             engineSocketPath: "/nonexistent/should-not-be-dialed.sock",
             docker,

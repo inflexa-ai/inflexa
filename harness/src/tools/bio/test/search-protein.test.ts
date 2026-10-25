@@ -25,9 +25,9 @@ afterEach(() => {
 });
 
 function stubResponse(status: number, body: unknown): void {
-    globalThis.fetch = fetchDouble(async (input) => {
+    globalThis.fetch = fetchDouble((input) => {
         requestedUrls.push(String(input));
-        return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
+        return Promise.resolve(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
     });
 }
 

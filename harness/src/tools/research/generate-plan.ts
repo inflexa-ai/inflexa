@@ -786,11 +786,11 @@ function buildInnerTools(
             questionContext: z.string().optional().describe("Optional context: why the plan needs the fact, and what the inputs already say about it."),
         }),
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             const degenerate = degenerateTerminalText(input.question);
             if (degenerate) {
                 logger.warn("request_clarification refused a placeholder question", { question: input.question.slice(0, 80) });
-                return err({ error: `${degenerate} Ask the real question, or continue: submit the plan you have.`, retryable: true });
+                return Promise.resolve(err({ error: `${degenerate} Ask the real question, or continue: submit the plan you have.`, retryable: true }));
             }
             if (holder.outcome !== null) {
                 trace.duplicateTerminalCalls++;
@@ -798,7 +798,7 @@ function buildInnerTools(
                     recordedOutcome: holder.outcome.kind,
                     duplicateTerminalCalls: trace.duplicateTerminalCalls,
                 });
-                return ok({ recorded: true as const });
+                return Promise.resolve(ok({ recorded: true as const }));
             }
             holder.outcome = {
                 kind: "clarification",
@@ -812,7 +812,7 @@ function buildInnerTools(
                 submitAttempts: trace.submitAttempts,
                 ...modelAuthored({ clarificationQuestion: bounded(input.question, MAX_LOGGED_PROSE_CHARS) }),
             });
-            return ok({ recorded: true as const });
+            return Promise.resolve(ok({ recorded: true as const }));
         },
     });
 

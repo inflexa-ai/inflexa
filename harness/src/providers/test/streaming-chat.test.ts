@@ -8,15 +8,31 @@ import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent } from ".
 
 const REQUEST: ChatRequest = { system: "test", messages: [], tools: {} };
 
+function streamOf(events: ChatStreamEvent[], toThrow?: unknown): AsyncIterable<ChatStreamEvent> {
+    let i = 0;
+    return {
+        [Symbol.asyncIterator]: () => ({
+            next: (): Promise<IteratorResult<ChatStreamEvent>> => {
+                if (i < events.length) {
+                    const value = events[i];
+                    if (value === undefined) return Promise.resolve({ done: true, value: undefined });
+                    i += 1;
+                    return Promise.resolve({ done: false, value });
+                }
+                if (toThrow !== undefined) return Promise.reject(toThrow);
+                return Promise.resolve({ done: true, value: undefined });
+            },
+        }),
+    };
+}
+
 /** A `ChatProvider` whose `chatStream` yields the given deltas, then `done`. */
 function streamingFake(deltas: readonly string[], final: ChatResponse, options: { omitDone?: boolean } = {}): ChatProvider {
     return {
         capabilities: { toolCalling: true },
         chat: () => okAsync(final),
-        chatStream: async function* (): AsyncIterable<ChatStreamEvent> {
-            for (const text of deltas) yield { type: "text-delta", text };
-            if (!options.omitDone) yield { type: "done", response: final };
-        },
+        chatStream: () =>
+            streamOf(deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })).concat(options.omitDone ? [] : [{ type: "done", response: final }])),
     };
 }
 
@@ -25,10 +41,11 @@ function throwingStreamFake(deltas: readonly string[], toThrow: unknown): ChatPr
     return {
         capabilities: { toolCalling: true },
         chat: () => okAsync(makeMessage([textBlock("unused")], "end_turn")),
-        chatStream: async function* (): AsyncIterable<ChatStreamEvent> {
-            for (const text of deltas) yield { type: "text-delta", text };
-            throw toThrow;
-        },
+        chatStream: () =>
+            streamOf(
+                deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })),
+                toThrow,
+            ),
     };
 }
 
@@ -37,11 +54,7 @@ function doneThenThrowStreamFake(deltas: readonly string[], final: ChatResponse,
     return {
         capabilities: { toolCalling: true },
         chat: () => okAsync(final),
-        chatStream: async function* (): AsyncIterable<ChatStreamEvent> {
-            for (const text of deltas) yield { type: "text-delta", text };
-            yield { type: "done", response: final };
-            throw toThrow;
-        },
+        chatStream: () => streamOf(deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })).concat([{ type: "done", response: final }]), toThrow),
     };
 }
 

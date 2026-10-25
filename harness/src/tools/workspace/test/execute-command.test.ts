@@ -69,16 +69,16 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
             if (opts.execError) throw opts.execError;
             return result;
         },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
+        isAlive() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
-        async isAliveById() {
-            return { alive: true, oomKilled: false };
+        isAliveById() {
+            return Promise.resolve({ alive: true, oomKilled: false });
         },
         async teardown() {},
         async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
+        listManagedSandboxes() {
+            return Promise.resolve([]);
         },
     };
 }
@@ -118,7 +118,7 @@ describe("execute_command and the decision record of a script", () => {
             sandbox: makeSandboxRef(),
             deadlineMs: () => 9_999_999,
             defaultCwd: DEFAULT_CWD,
-            workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(base, id) }),
+            workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
             mutator: createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir }),
         });
         return { tool, client };

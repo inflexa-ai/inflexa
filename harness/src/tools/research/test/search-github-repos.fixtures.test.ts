@@ -34,7 +34,7 @@ type SearchOutput = { success: false; error: string; repos: GithubRepo[] } | { s
 /** Run the tool over one fixture file, served as the whole HTTP answer. */
 async function searchOver(file: string): Promise<SearchOutput> {
     const body = JSON.stringify(readFixture("github", file));
-    globalThis.fetch = fetchDouble(async () => new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+    globalThis.fetch = fetchDouble(() => Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "application/json" } })));
     const { ctx } = makeToolContext();
     const result = await createSearchGithubReposTool({}).execute({ query: "created:>2026-08-25", limit: 10 }, ctx);
     return result._unsafeUnwrap();

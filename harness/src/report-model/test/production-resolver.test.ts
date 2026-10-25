@@ -94,7 +94,7 @@ function snapshotOf(entries: Array<{ path: string; hash: string; fileType?: stri
 function stubArm(rowsByPath: Record<string, Row[]>): { arm: ExtractionArm; batches: ExtractionRequest[][] } {
     const batches: ExtractionRequest[][] = [];
     const arm: ExtractionArm = {
-        async extract(requests) {
+        extract(requests) {
             batches.push([...requests]);
             const out = new Map<string, ExtractionArtifact>();
             for (const request of requests) {
@@ -103,7 +103,7 @@ function stubArm(rowsByPath: Record<string, Row[]>): { arm: ExtractionArm; batch
                     out.set(request.path, { rows });
                 }
             }
-            return ok(out);
+            return Promise.resolve(ok(out));
         },
     };
     return { arm, batches };
@@ -245,7 +245,7 @@ describe("production resolver, the fall-through", () => {
 
     test("a suspended pass reports the reason of the host on the reference", async () => {
         const hash = await writeArtifact("odd-suspended.csv", "gene;pvalue;score\nBRCA1;0.01;0.9\nTP53;0.02;0,8\n");
-        const arm: ExtractionArm = { extract: async () => err({ kind: "suspended", reason: "quota_exhausted" }) };
+        const arm: ExtractionArm = { extract: () => Promise.resolve(err({ kind: "suspended", reason: "quota_exhausted" })) };
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
         const reference = valueRef("odd-suspended.csv", hash, "score", "gene", "TP53");
 

@@ -73,10 +73,10 @@ if (DBOS.isInitialized()) {
 const testCChild = DBOS.registerWorkflow(
     async (_input: SandboxStepInput): Promise<SandboxStepResult> => {
         await DBOS.runStep(
-            async () => {
+            () => {
                 const err: Error & { statusCode?: number } = new Error("billing gateway: budget_exceeded for VK vk_test");
                 err.statusCode = 402;
-                throw err;
+                return Promise.reject(err);
             },
             { name: "llm" },
         );
@@ -141,7 +141,7 @@ const testDChild = DBOS.registerWorkflow(
         await DBOS.cancelWorkflow(childWorkflowId);
         // Post-cancel runStep raises DBOSWorkflowCancelledError — the same
         // cancellation that production children surface.
-        await DBOS.runStep(async () => null, { name: "self-cancel-suspended" });
+        await DBOS.runStep(() => Promise.resolve(null), { name: "self-cancel-suspended" });
         // Unreachable.
         return {
             status: "canceled",
@@ -217,7 +217,7 @@ describe("the suspension cascade — parent self-cancel", () => {
             provider: unusedChatProvider(),
             embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
             sandboxStepCallable: testCChild,
-            resolveWorkspaceRoot: async (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join(SUSPENSION_TEST_SESSIONS_DIR, id)),
             workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -285,7 +285,7 @@ describe("the suspension cascade — parent self-cancel", () => {
             provider: unusedChatProvider(),
             embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
             sandboxStepCallable: testDChild,
-            resolveWorkspaceRoot: async (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join(SUSPENSION_TEST_SESSIONS_DIR, id)),
             workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

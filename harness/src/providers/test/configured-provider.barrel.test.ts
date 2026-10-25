@@ -87,13 +87,13 @@ type CapturedRequest = {
 /** Captures each request so a test can assert on the wire model, since the request itself carries no model field. */
 function capturingFetch(respond: (text: string, model: string) => Response): { fetch: typeof fetch; requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
-    const fetch = fetchDouble(async (_input, init) => {
+    const fetch = fetchDouble((_input, init) => {
         const body = init?.body ? (parseUnknownRecord(parseJsonAs(String(init.body), z.unknown())) ?? {}) : {};
         // `Headers` folds each name to lowercase, thus an assertion does not
         // depend on the spelling that the SDK forwards.
         const headers = Object.fromEntries(new Headers(init?.headers));
         requests.push({ body, headers });
-        return respond("Hello, world", typeof body["model"] === "string" ? body["model"] : "");
+        return Promise.resolve(respond("Hello, world", typeof body["model"] === "string" ? body["model"] : ""));
     });
     return { fetch, requests };
 }

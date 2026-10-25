@@ -365,10 +365,10 @@ function buildValidateTool(ctx: InnerToolContext): Tool<{ synthesis: unknown }, 
             synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
             const noIssues: ValidationIssue[] = [];
-            return ok(result.valid ? { valid: true as const, issues: noIssues } : { valid: false as const, issues: result.issues });
+            return Promise.resolve(ok(result.valid ? { valid: true as const, issues: noIssues } : { valid: false as const, issues: result.issues }));
         },
     });
 }
@@ -388,16 +388,16 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool<{ s
             "supersedes an earlier one.",
         inputSchema: z.object({ synthesis: RunSynthesisSchema }),
         describeCall: "none",
-        execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
+        execute: (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
                 // A rejection is not terminal — submission is last-valid-wins, so this
                 // leaves any already-recorded outcome intact and the model may fix the
                 // cited paths and submit again.
-                return ok({ accepted: false as const, issues: result.issues });
+                return Promise.resolve(ok({ accepted: false as const, issues: result.issues }));
             }
             holder.outcome = { kind: "submitted", synthesis: result.synthesis };
-            return ok({ accepted: true as const });
+            return Promise.resolve(ok({ accepted: true as const }));
         },
     });
 }

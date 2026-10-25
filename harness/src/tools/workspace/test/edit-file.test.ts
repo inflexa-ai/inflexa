@@ -39,7 +39,7 @@ describe("edit_file tool", () => {
 
     function buildTool() {
         const workspaceRoot = join(sessionsBasePath, ANALYSIS);
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessionsBasePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         const workingDir = stepWritePrefix({
             workspaceRoot,
             runId: RUN,
