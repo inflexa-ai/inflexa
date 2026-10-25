@@ -67,11 +67,13 @@ function layerNumber(value: number): number {
 
 /** One attribute value with each character that can close it written as an entity. */
 function attributeText(value: string): string {
-    return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 }
 
 /** The root tag of an SVG file, and the transparent background rectangle that the chart runtime writes first. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SVG root tag of the chart output, read host-side and interpolated into the page script that locates the same tag.
 const ROOT_TAG = /^<svg\b[^>]*>/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the transparent background rectangle that the chart runtime writes first; the fixed attribute shape is the contract between the two sides.
 const BACKGROUND_RECT = /^\s*<rect width="[^"]*" height="[^"]*" x="0" y="0"[^>]*><\/rect>/;
 
 /**

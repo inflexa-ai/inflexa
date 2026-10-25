@@ -51,9 +51,10 @@ function stubService() {
                     { status: 409 },
                 );
             }
-            const templateMatch = url.pathname.match(/^\/v1\/templates\/(.+)$/);
-            if (request.method === "GET" && templateMatch) {
-                const id = decodeURIComponent(presentAt(templateMatch, 1));
+            const templatePath = "/v1/templates/";
+            const templateId = url.pathname.startsWith(templatePath) ? url.pathname.slice(templatePath.length) : undefined;
+            if (request.method === "GET" && templateId !== undefined && templateId.length > 0) {
+                const id = decodeURIComponent(templateId);
                 if (id === "tpl-boom") return Response.json({ error: "server", message: "boom" }, { status: 500 });
                 if (id !== "tpl-deseq2-two-group") return Response.json({ error: "not_found", message: "no such template in this snapshot" }, { status: 404 });
                 return Response.json({ ...contractAnswer(), step_types: ["model_design"], environment: [] });

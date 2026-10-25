@@ -55,7 +55,7 @@ describe("uniprot golden fixtures", () => {
     it("rejects the drift twin", async () => {
         stubFetch(readFixture("uniprot", "entry_P00533_EGFR.drift.json"));
 
-        await expect(getUniProtRecord("P00533")).rejects.toThrow(/schema/);
+        await expect(getUniProtRecord("P00533")).rejects.toThrow("schema");
     });
 });
 

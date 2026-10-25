@@ -12,12 +12,15 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { safeParseJsonAs } from "../lib/parse-json.js";
+
 /**
  * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
  * resolver compares this text against a fresh read with exact string equality, and the producer emits
  * lowercase only. Thus the pattern rejects an uppercase hex digit, which would pass a case-insensitive
  * match here but never resolve against the lowercase producer.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the hash shape is algorithm:hex with lowercase hex only; the case rule is what makes the exact equality comparison resolve.
 const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/;
 
 /**
@@ -307,6 +310,7 @@ const REFERENCE_URI_PREFIX = "inflexa-ref:v1:";
  * Thus a corrupt payload would otherwise decode to mojibake and report as malformed JSON, which names
  * the wrong failure.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the base64url alphabet check; Buffer.from never throws, so this explicit shape check is the only malformed-payload guard.
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 /**
@@ -366,13 +370,11 @@ export function parseReference(uri: string): Result<Reference, ParseReferenceErr
         return err({ kind: "invalid-payload" });
     }
     const json = Buffer.from(payload, "base64url").toString("utf8");
-    let candidate: unknown;
+    let parsed;
     try {
-        candidate = JSON.parse(json);
+        parsed = safeParseJsonAs(json, ReferenceSchema);
     } catch {
-        // `JSON.parse` throws on malformed input. The boundary turns the throw into an `Err`.
         return err({ kind: "invalid-json" });
     }
-    const result = ReferenceSchema.safeParse(candidate);
-    return result.success ? ok(result.data) : err({ kind: "schema-mismatch" });
+    return parsed.success ? ok(parsed.data) : err({ kind: "schema-mismatch" });
 }

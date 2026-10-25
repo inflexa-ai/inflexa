@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 export type RateLimitConfig = {
     readonly maxConcurrency: number;
     readonly requestsPerSecond: number;
@@ -20,19 +22,14 @@ function abortReason(signal: AbortSignal): Error {
 }
 
 export function sleepWithSignal(milliseconds: number, signal?: AbortSignal): Promise<void> {
+    // The node wait consults the signal before any duration elapses, and its abort
+    // rejection is a fresh AbortError instead of `signal.reason` under the Bun test
+    // runtime, so the gates and the catch carry the reasons of this contract.
     if (milliseconds <= 0) return Promise.resolve();
-    if (signal === undefined) return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    if (signal === undefined) return sleep(milliseconds);
     if (signal.aborted) return Promise.reject(abortReason(signal));
-    return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-        }, milliseconds);
-        const onAbort = (): void => {
-            clearTimeout(timeout);
-            reject(abortReason(signal));
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
+    return sleep(milliseconds, undefined, { signal }).catch(() => {
+        throw abortReason(signal);
     });
 }
 

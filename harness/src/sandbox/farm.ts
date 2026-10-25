@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { safeParseJsonAs } from "../lib/parse-json.js";
 import type { SandboxError } from "./sandbox-error.js";
 import type { FarmLocation, FarmSource } from "./types.js";
 
@@ -113,13 +114,12 @@ export function readFarmLockFile(lockPath: string): Result<FarmLock, FarmLockErr
     } catch (cause) {
         return err({ type: "lock_unreadable", lockPath, cause });
     }
-    let parsed: unknown;
+    let lock;
     try {
-        parsed = JSON.parse(raw);
+        lock = safeParseJsonAs(raw, FarmLockSchema);
     } catch (cause) {
         return err({ type: "lock_invalid", lockPath, cause });
     }
-    const lock = FarmLockSchema.safeParse(parsed);
     if (!lock.success) {
         return err({ type: "lock_invalid", lockPath, cause: lock.error });
     }

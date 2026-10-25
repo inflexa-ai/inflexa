@@ -1,8 +1,12 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the refusal that names the code and then the credit state, in that order
+const PAYMENT_REFUSAL = /PAYMENT_REQUIRED.*No credits left/;
+
 import { afterEach, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { createSearchRegulatoryApprovalsTool } from "../search-regulatory-approvals.js";
 import { presentAt, presentFind } from "../../../lib/present.js";
 
@@ -40,7 +44,7 @@ function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>):
             url: new URL(String(input)),
             method: init?.method ?? "GET",
             authorization: new Headers(init?.headers).get("authorization"),
-            body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+            body: typeof init?.body === "string" ? parseJsonAs(init.body, z.unknown()) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {
@@ -81,7 +85,7 @@ describe("search_regulatory_approvals — the key", () => {
         const keyless = createSearchRegulatoryApprovalsTool({ apiKey: "" });
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(/AMASS_API_KEY/);
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow("AMASS_API_KEY");
         expect(seen).toHaveLength(0);
     });
 });
@@ -138,6 +142,12 @@ describe("search_regulatory_approvals — action 'search'", () => {
 
     it("requires a query", () => {
         expect(tool.inputSchema.safeParse({ action: "search" }).success).toBe(false);
+    });
+
+    it("accepts a YYYY-MM-DD authorization date and rejects any other text shape", () => {
+        expect(tool.inputSchema.safeParse({ query: "imatinib", minAuthorizationDate: "2026-08-24" }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ query: "imatinib", minAuthorizationDate: "2026-8-24" }).success).toBe(false);
+        expect(tool.inputSchema.safeParse({ query: "imatinib", maxAuthorizationDate: "2026-08-24x" }).success).toBe(false);
     });
 });
 
@@ -251,12 +261,12 @@ describe("search_regulatory_approvals — action 'section'", () => {
 describe("search_regulatory_approvals — the status of an answer", () => {
     it("throws on a rejected key and names AMASS_API_KEY, never an empty result", async () => {
         stubFetch([["/regulatorycore/records?", () => envelope(401, "UNAUTHORIZED", "Unauthorized")]]);
-        await expect(run({ query: "imatinib" })).rejects.toThrow(/AMASS_API_KEY/);
+        await expect(run({ query: "imatinib" })).rejects.toThrow("AMASS_API_KEY");
     });
 
     it("throws on a 403 and names the credits", async () => {
         stubFetch([["/regulatorycore/records?", () => envelope(403, "FORBIDDEN", "Forbidden")]]);
-        await expect(run({ query: "imatinib" })).rejects.toThrow(/credits/);
+        await expect(run({ query: "imatinib" })).rejects.toThrow("credits");
     });
 
     it("gives a tool error with the message of Amass for a 422, which the caller can repair", async () => {
@@ -284,11 +294,11 @@ describe("search_regulatory_approvals — the status of an answer", () => {
 
     it("throws with the code and the message of an undocumented 4xx", async () => {
         stubFetch([["/regulatorycore/records?", () => envelope(402, "PAYMENT_REQUIRED", "No credits left")]]);
-        await expect(run({ query: "imatinib" })).rejects.toThrow(/PAYMENT_REQUIRED.*No credits left/);
+        await expect(run({ query: "imatinib" })).rejects.toThrow(PAYMENT_REFUSAL);
     });
 
     it("throws on a lookup item with an error code other than NOT_FOUND", async () => {
         stubFetch([["/records/lookup", () => json({ data: [{ input: { ndc: "x" }, error: { code: "INVALID_IDENTIFIER", message: "Bad NDC" } }] })]]);
-        await expect(run({ action: "details", ndc: "x" })).rejects.toThrow(/INVALID_IDENTIFIER/);
+        await expect(run({ action: "details", ndc: "x" })).rejects.toThrow("INVALID_IDENTIFIER");
     });
 });

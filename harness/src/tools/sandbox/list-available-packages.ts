@@ -261,7 +261,9 @@ export type PackagesResult =
  */
 const LANGUAGE_MATCHERS: Record<string, (title: string) => boolean> = {
     // `CLI_TITLE` — the conda-installed bioinformatics executables.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the section heading names the executables section or the standalone word CLI, matched in display text.
     cli: (t) => /system tools|\bcli\b/i.test(t),
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the heading opens with the word node, the display form of the section name.
     node: (t) => /^node\b/i.test(t),
 };
 

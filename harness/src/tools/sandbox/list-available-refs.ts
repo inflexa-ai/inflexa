@@ -37,6 +37,7 @@ import { z } from "zod";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { errnoOf } from "../../lib/fs-result.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
@@ -280,7 +281,7 @@ async function readReceipts(root: string): Promise<unknown[]> {
         // A shared try would abandon the loop and silently drop every receipt sorting
         // after the bad one, quietly stripping metadata from datasets that are fine.
         try {
-            receipts.push(JSON.parse(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8")));
+            receipts.push(parseJsonAs(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8"), z.unknown()));
             totalBytes += entry.bytes;
         } catch {
             continue;
@@ -323,7 +324,7 @@ export async function readInstalledDatasetIds(deps: ListAvailableRefsDeps): Prom
         // Per-file, so one malformed receipt costs only its own dataset. A shared try would drop
         // every receipt after the bad one and read as a store that holds almost nothing.
         try {
-            const receipt = parseReferenceInstallReceipt(JSON.parse(await readFile(hostJoin(receiptsDirectory, name), "utf-8")));
+            const receipt = parseReferenceInstallReceipt(parseJsonAs(await readFile(hostJoin(receiptsDirectory, name), "utf-8"), z.unknown()));
             if (receipt) ids.add(receipt.datasetId);
         } catch {
             continue;
@@ -339,7 +340,7 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
         if (await crossesSymlink(root, "registry.json")) return [];
         const registryPath = hostJoin(root, "registry.json");
         if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
-        const registry: unknown = JSON.parse(await readFile(registryPath, "utf-8"));
+        const registry = parseJsonAs(await readFile(registryPath, "utf-8"), z.unknown());
         const registryRecord = parseUnknownRecord(registry);
         if (!registryRecord) return [];
         const files = parseUnknownRecord(registryRecord.files);

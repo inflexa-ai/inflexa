@@ -29,6 +29,7 @@
  */
 
 import type { ColumnMeaning } from "../contracts/report-reference.js";
+import { hasWhitespace, isAllDigits } from "../lib/text.js";
 
 /** The five number kinds that the renderer shows. */
 export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier" | "below-resolution";
@@ -77,20 +78,21 @@ const P_VALUE_TOKENS = new Set(["p", "pval", "pvalue", "padj", "fdr", "q", "qval
 /** The whole tokens of a column name that name an identifier. Such a value is a name, not a magnitude. */
 const IDENTIFIER_TOKENS = new Set(["id", "pmid", "doi", "entrez", "taxid", "year", "accession"]);
 
-/** The boundary between a lowercase or numeric character and an uppercase character. */
-const CASE_BOUNDARY = /([a-z0-9])([A-Z])/g;
-
-/** The separators of a column name: whitespace, an underscore, a point, and a hyphen. */
-const SEPARATORS = /[\s_.-]+/;
-
-/** A text that holds decimal digits alone. */
-const DIGIT_RUN = /^[0-9]+$/;
-
-/** Each group comma of a compact form. */
-const GROUP_COMMAS = /,/g;
-
-/** The exponent of one written or shown form, for example the `-05` of `4.3e-05`. */
-const EXPONENT_PART = /[eE]([+-]?\d+)$/;
+/**
+ * The exponent of one written or shown form, for example the `-05` of `4.3e-05`.
+ * `null` when the text ends in no `e` or `E` marker and its digits.
+ */
+function trailingExponentOf(text: string): string | null {
+    let end = text.length;
+    while (end > 0 && text.charAt(end - 1) >= "0" && text.charAt(end - 1) <= "9") end--;
+    if (end === text.length) return null;
+    let start = end;
+    if (start > 0 && (text.charAt(start - 1) === "+" || text.charAt(start - 1) === "-")) start--;
+    if (start === 0) return null;
+    const marker = text.charAt(start - 1);
+    if (marker !== "e" && marker !== "E") return null;
+    return text.slice(start);
+}
 
 /**
  * The form of a stored zero that no positive neighbor bounds. It claims nearness, and it claims no bound,
@@ -109,9 +111,6 @@ const NAME_DELIMITER = "%";
 
 /** The count of segments that an encoded set name holds: the name, the collection, and the accession. */
 const NAME_SEGMENTS = 3;
-
-/** One whitespace character. A segment of an encoded name holds none. */
-const WHITESPACE = /\s/;
 
 /**
  * Format one cell in one kind.
@@ -270,7 +269,7 @@ function firstNameSegment(text: string): string | undefined {
     if (segments.length < NAME_SEGMENTS) {
         return undefined;
     }
-    const encoded = segments.every((segment) => segment.length > 0 && !WHITESPACE.test(segment));
+    const encoded = segments.every((segment) => segment.length > 0 && !hasWhitespace(segment));
     return encoded ? segments[0] : undefined;
 }
 
@@ -349,7 +348,7 @@ export function smallestPositiveValue(cells: readonly (string | number | undefin
  * A text that carries no exponent, and a text that holds no finite number, both give false.
  */
 export function holdsADriftedExponent(text: string): boolean {
-    const written = EXPONENT_PART.exec(text.trim());
+    const written = trailingExponentOf(text.trim());
     if (written === null) {
         return false;
     }
@@ -357,14 +356,15 @@ export function holdsADriftedExponent(text: string): boolean {
     if (value === null) {
         return false;
     }
-    const shown = EXPONENT_PART.exec(formatNumberCell(value, "scientific").text);
-    return shown !== null && shown[1] !== written[1];
+    const shown = trailingExponentOf(formatNumberCell(value, "scientific").text);
+    return shown !== null && shown !== written;
 }
 
 /**
  * One scientific form inside a text: a coefficient with its sign, and an exponent. The coefficient stands
  * alone, thus a name such as `rs1e5` holds no scientific form.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the coefficient and exponent captures with the boundary lookarounds keep a name such as `rs1e5` outside the match.
 const SCIENTIFIC_IN_TEXT = /(?<![\w.])([−-]?\d+(?:\.\d+)?)e([+-]?\d+)(?![\w.])/g;
 
 /** The superscript form of each decimal digit, in digit order. */
@@ -488,7 +488,7 @@ function compactForm(value: number): string {
  * thus a magnitude that `toFixed` gives in the exponential form stays whole.
  */
 function groupDigits(digits: string): string {
-    if (!DIGIT_RUN.test(digits)) {
+    if (!isAllDigits(digits)) {
         return digits;
     }
     let grouped = "";
@@ -532,7 +532,7 @@ function trimTrailingZeros(text: string): string {
 
 /** One shown form without its group commas, thus the grouping alone never counts as a hidden digit. */
 function ungrouped(text: string): string {
-    return text.replace(GROUP_COMMAS, "");
+    return text.replaceAll(",", "");
 }
 
 /** True when the shown text no longer parses back to the value. */
@@ -555,9 +555,29 @@ function isIdentifierColumn(column: string): boolean {
  * gives `padj` and `bh`, and `p_value` gives `p` and `value`.
  */
 function columnTokens(column: string): string[] {
-    return column
-        .replace(CASE_BOUNDARY, "$1 $2")
-        .split(SEPARATORS)
-        .filter((token) => token.length > 0)
-        .map((token) => token.toLowerCase());
+    const tokens: string[] = [];
+    let token = "";
+    for (const char of column) {
+        const atCaseBoundary = token.length > 0 && isLowerOrDigit(token.charAt(token.length - 1)) && isAsciiUpper(char);
+        if (isNameSeparator(char) || atCaseBoundary) {
+            if (token.length > 0) tokens.push(token);
+            token = "";
+            if (isNameSeparator(char)) continue;
+        }
+        token += char;
+    }
+    if (token.length > 0) tokens.push(token);
+    return tokens.map((token) => token.toLowerCase());
+}
+
+function isLowerOrDigit(char: string): boolean {
+    return (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+}
+
+function isAsciiUpper(char: string): boolean {
+    return char >= "A" && char <= "Z";
+}
+
+function isNameSeparator(char: string): boolean {
+    return char === "_" || char === "." || char === "-" || hasWhitespace(char);
 }

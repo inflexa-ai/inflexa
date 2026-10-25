@@ -16,6 +16,7 @@
 import type { MemberFile, SlotLocation } from "./set-types.js";
 import { DATE_SYMBOL, DIGIT_SYMBOL, ID_SYMBOL, classifyValues, commonAffixes, isDateToken, maskAffix, skeletonOf, tokenizeName } from "./tokens.js";
 import { presentAt, presentFirst } from "../lib/present.js";
+import { isAllDigits } from "../lib/text.js";
 import type { NameToken, SlotTokenClass, TokenKind } from "./tokens.js";
 import { MAX_SLOT_SAMPLE_VALUES, MIN_AFFIX_LENGTH, MIN_CATCH_ALL_MEMBERS, MIN_FAMILY_SET_MEMBERS, MIN_PREFIX_SET_MEMBERS } from "./tuning.js";
 
@@ -330,7 +331,7 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
     if (suffix.length < MIN_AFFIX_LENGTH) suffix = "";
     // A number and a date are each one value: slicing a shared year off them would
     // report a date as a literal prefix plus a pattern.
-    if (distinct.every((value) => /^[0-9]*$/.test(value)) || distinct.every((value) => isDateToken(value))) {
+    if (distinct.every(isAllDigits) || distinct.every((value) => isDateToken(value))) {
         prefix = "";
         suffix = "";
     }

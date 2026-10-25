@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
@@ -701,9 +702,8 @@ describe("runChatTurn", () => {
         const excerpt = output.value;
         expect(excerpt.startsWith("[Tool result cut: 50002 characters")).toBe(true);
         expect(excerpt.length).toBeLessThan(text.length);
-        const match = /reference "(to_[0-9a-f]{20})"/.exec(excerpt);
-        if (match === null) throw new Error("the excerpt names no stored tool output");
-        const ref = presentAt(match, 1);
+        const ref = referencedToolOutput(excerpt);
+        if (ref === undefined) throw new Error("the excerpt names no stored tool output");
         const { rows } = await pool.query<{ thread_id: string | null; content: string; total_length: number }>(
             "SELECT thread_id, content, total_length FROM cortex_tool_outputs WHERE analysis_id = $1 AND ref = $2",
             [ANALYSIS_A, ref],
@@ -1137,6 +1137,7 @@ describe("runChatTurn — compaction", () => {
     /** The stored display of the thread with no random id, no time, and no measured duration, thus two runs of one script compare equal. */
     async function storedDisplay(): Promise<unknown> {
         const varying = new Set(["id", "createdAt", "durationMs"]);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the replacer masks the fields that vary between runs, and the schema-parse helper takes no replacer.
         return JSON.parse(JSON.stringify(storedMessagesToChat(await storedRows()), (key, value: unknown) => (varying.has(key) ? `<${key}>` : value)));
     }
 

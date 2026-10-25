@@ -14,13 +14,15 @@
 
 import { isIP } from "node:net";
 
+import { isAllDigits, isAllHex } from "../../lib/text.js";
+
 /** Parse a dotted-quad IPv4 address into its 32-bit value. Anything else gives null. */
 function ipv4ToNumber(ip: string): number | null {
     const parts = ip.split(".");
     if (parts.length !== 4) return null;
     let value = 0;
     for (const part of parts) {
-        if (!/^\d{1,3}$/.test(part)) return null;
+        if (part.length === 0 || part.length > 3 || !isAllDigits(part)) return null;
         const octet = Number(part);
         if (octet > 255) return null;
         value = (value << 8) | octet;
@@ -45,7 +47,7 @@ function ipv6ToBigInt(ip: string): bigint | null {
         if (half === "") return [];
         const groups: bigint[] = [];
         for (const group of half.split(":")) {
-            if (!/^[0-9a-f]{1,4}$/.test(group)) return null;
+            if (group.length === 0 || group.length > 4 || !isAllHex(group)) return null;
             groups.push(BigInt(`0x${group}`));
         }
         return groups;

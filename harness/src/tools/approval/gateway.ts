@@ -223,6 +223,7 @@ function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
             clearTimeout(timer);
             resolve();
         };
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- this wait resolves on abort by contract — the poll loop emits the aborted event after the resolve — and the node wait rejects instead.
         const timer = setTimeout(() => {
             signal.removeEventListener("abort", onAbort);
             resolve();

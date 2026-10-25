@@ -46,7 +46,7 @@ runFixtureSuite("ClinVar golden fixtures", [
             expect(variants.length).toBe(5);
             for (const variant of variants) {
                 expect(variant.clinicalSignificance).not.toBe("");
-                expect(variant.accession).toMatch(/^VCV/);
+                expect(variant.accession.startsWith("VCV")).toBe(true);
                 // `variant_type` sits on `variation_set`, thus the fallback of a
                 // record with no molecular consequence carries data.
                 expect(variant.molecularConsequence).not.toBe("");

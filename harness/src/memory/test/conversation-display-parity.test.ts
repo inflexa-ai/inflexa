@@ -103,7 +103,11 @@ async function bothPaths(rounds: readonly Round[], options: { readonly turnUsage
         const displayEnvelope =
             group.display.length === 0
                 ? undefined
-                : await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages(group.display))), `parity/${rows.length}/display`);
+                : await parseStoredDisplayEnvelope(
+                      // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
+                      JSON.parse(JSON.stringify(envelopeDisplayMessages(group.display))),
+                      `parity/${rows.length}/display`,
+                  );
         for (const [index, message] of group.model.entries()) {
             const opening = rows.length === 0;
             rows.push({

@@ -19,6 +19,7 @@
  */
 
 import { redactSecrets } from "../input-sanitization.js";
+import { collapseWhitespace } from "../lib/text.js";
 
 /**
  * The sentinel that the request-timeout guard uses as an abort reason. The guard
@@ -211,7 +212,7 @@ const PROVIDER_BODY_EXCERPT_MAX_LEN = 120;
  * strings) and is safe on biological data, so a legitimate error body passes through intact.
  */
 function excerptResponseBody(body: string): string {
-    const singleLine = redactSecrets(body).replace(/\s+/g, " ").trim();
+    const singleLine = collapseWhitespace(redactSecrets(body));
     // Slice by CODE POINT, not UTF-16 unit: a raw byte body can carry astral characters, and a plain
     // `.slice` could bisect a surrogate pair into a lone half that renders as U+FFFD.
     const chars = [...singleLine];
@@ -245,8 +246,20 @@ const CONNECTION_ERROR_CODES = new Set([
     "UND_ERR_SOCKET",
 ]);
 
-const CONNECTION_ERROR_PATTERN =
-    /fetch failed|socket hang up|network error|connection (?:refused|reset|error|closed)|econnrefused|enotfound|etimedout|terminated/i;
+/** The transport-failure phrases of the fetch stack, as the providers write them; the compare lowercases the link message. */
+const CONNECTION_ERROR_PHRASES = [
+    "fetch failed",
+    "socket hang up",
+    "network error",
+    "connection refused",
+    "connection reset",
+    "connection error",
+    "connection closed",
+    "econnrefused",
+    "enotfound",
+    "etimedout",
+    "terminated",
+];
 
 /**
  * Walk the `cause` chain up to {@link MAX_CAUSE_HOPS} links, and return the first
@@ -344,8 +357,11 @@ function looksLikeConnectionError(err: unknown): boolean {
     return (
         findInCauseChain(err, (link) => {
             if ("code" in link && typeof link.code === "string" && CONNECTION_ERROR_CODES.has(link.code)) return true;
-            if ("name" in link && typeof link.name === "string" && /^APIConnection/.test(link.name)) return true;
-            if ("message" in link && typeof link.message === "string" && CONNECTION_ERROR_PATTERN.test(link.message)) return true;
+            if ("name" in link && typeof link.name === "string" && link.name.startsWith("APIConnection")) return true;
+            if ("message" in link && typeof link.message === "string") {
+                const message = link.message.toLowerCase();
+                if (CONNECTION_ERROR_PHRASES.some((phrase) => message.includes(phrase))) return true;
+            }
             return undefined;
         }) ?? false
     );

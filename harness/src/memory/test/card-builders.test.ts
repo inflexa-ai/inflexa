@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { PlanRecord } from "../../state/index.js";
@@ -108,7 +109,8 @@ describe("buildPresentationCardData", () => {
         if (b === null) throw new Error("the card is absent");
 
         expect(a?.id).toBe(b.id);
-        expect(a?.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        const cardId = a?.id;
+        expect(cardId !== undefined && cardId.startsWith("pres-") && isLowerHexOfLength(cardId.slice(5), 16)).toBe(true);
     });
 
     it("carries a non-echart kind through untouched", () => {
@@ -146,6 +148,7 @@ describe("buildPresentationCardData — structure", () => {
         const a = buildPresentationCardData(input);
         const b = buildPresentationCardData(structuredClone(input));
         expect(a).toEqual(b);
-        expect(a?.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        const cardId = a?.id;
+        expect(cardId !== undefined && cardId.startsWith("pres-") && isLowerHexOfLength(cardId.slice(5), 16)).toBe(true);
     });
 });

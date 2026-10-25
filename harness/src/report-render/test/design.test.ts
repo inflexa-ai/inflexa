@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isHexColor } from "../../lib/test/text-shapes.js";
 
 import {
     CHART_BODY_PX,
@@ -85,7 +86,7 @@ describe("the figure rules of the design source", () => {
         expect(CHART_WIDE_PALETTE).toHaveLength(24);
         expect(new Set(CHART_WIDE_PALETTE).size).toBe(24);
         expect(CHART_WIDE_PALETTE.slice(0, 8)).toEqual([...CHART_PALETTE]);
-        for (const color of CHART_WIDE_PALETTE) expect(color).toMatch(/^#[0-9a-f]{6}$/);
+        for (const color of CHART_WIDE_PALETTE) expect(isHexColor(color)).toBe(true);
     });
 });
 

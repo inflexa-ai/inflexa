@@ -217,6 +217,7 @@ describe("the faithful copy", () => {
     it("copies an own key that names the prototype, and it keeps the copy a plain object", () => {
         // `JSON.parse` makes an own `__proto__` key, and a stored payload arrives through it. An object
         // literal cannot express the same key, because the literal sets the prototype.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the text gives `__proto__` as an own key, which an object literal cannot express.
         const payload: unknown = JSON.parse(
             `{"kind":"table","id":"table-1","__proto__":{"note":"an own key"},"binding":{"kind":"artifact-table","path":"${OUTPUT_PATH}"}}`,
         );

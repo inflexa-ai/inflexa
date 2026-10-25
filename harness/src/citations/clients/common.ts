@@ -1,5 +1,8 @@
 import type { CitationRecord, CitationSource, CitationSourceOperation, CitationSourceOutcome, CitationSourcePlanItem } from "../types.js";
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a publication year stands alone in untyped metadata; the boundaries keep the tail of a longer number out.
+const YEAR_PATTERN = /\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b/;
+
 export function notApplicableOutcome(plan: CitationSourcePlanItem): CitationSourceOutcome {
     return {
         source: plan.source,
@@ -41,7 +44,7 @@ export function encodeDoiPath(doi: string): string {
 export function parseYear(value: unknown): number | undefined {
     if (typeof value === "number" && Number.isInteger(value)) return value;
     if (typeof value !== "string") return undefined;
-    const match = value.match(/\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b/);
+    const match = value.match(YEAR_PATTERN);
     return match?.[1] === undefined ? undefined : Number(match[1]);
 }
 

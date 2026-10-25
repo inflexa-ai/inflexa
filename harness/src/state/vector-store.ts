@@ -30,7 +30,12 @@ import { presentAt } from "../lib/present.js";
  * a name that matches it has one byte per character and `length` is the byte count
  * the limit is measured in.
  */
-const SQL_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+function isSqlIdentifierShape(name: string): boolean {
+    if (name.length === 0) return false;
+    const isLowerOrUnderscore = (char: string) => (char >= "a" && char <= "z") || char === "_";
+    const isWordChar = (char: string) => isLowerOrUnderscore(char) || (char >= "0" && char <= "9");
+    return isLowerOrUnderscore(name.charAt(0)) && [...name].every(isWordChar);
+}
 const MAX_SQL_IDENTIFIER_BYTES = 63;
 
 /**
@@ -39,7 +44,7 @@ const MAX_SQL_IDENTIFIER_BYTES = 63;
  * shape — one invariant, one place to read it.
  */
 export function isSqlIdentifier(name: string): boolean {
-    return SQL_IDENTIFIER.test(name) && name.length <= MAX_SQL_IDENTIFIER_BYTES;
+    return isSqlIdentifierShape(name) && name.length <= MAX_SQL_IDENTIFIER_BYTES;
 }
 
 export type CreateIndexInput = {

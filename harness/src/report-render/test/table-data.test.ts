@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { ChartRow } from "../chart.js";
@@ -158,6 +159,7 @@ describe("tableDataAsset", () => {
 
     it("parses the payload instead of writing an object literal, thus a prototype key stays a column", () => {
         const columns = ["__proto__", "constructor"];
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the text gives `__proto__` as an own key, which an object literal cannot express.
         const rows: ChartRow[] = optionList(JSON.parse('[{"__proto__":"a","constructor":"b"}]')).map((row) => cellRow(row));
         const asset = tableDataAsset(["tbl-1"], encodeTablePayload(columns, rows, displayOf(columns)));
 
@@ -173,7 +175,8 @@ describe("tableDataAsset", () => {
     it("names the file by the content hash of its bytes", () => {
         const asset = tableDataAsset(["tbl-1"], payload);
 
-        expect(asset.name).toMatch(/^t-[0-9a-f]{12}\.data\.js$/);
+        const name = asset.name;
+        expect(name.startsWith("t-") && name.endsWith(".data.js") && isLowerHexOfLength(name.slice(2, -8), 12)).toBe(true);
         // The name is the address of the bytes, thus one payload gives one name.
         expect(tableDataAsset(["tbl-1"], payload).name).toBe(asset.name);
     });

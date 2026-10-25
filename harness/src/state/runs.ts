@@ -16,6 +16,7 @@ import type { QueryConfig } from "pg";
 import { stripNulCharacters } from "../input-sanitization.js";
 import type { DbError } from "../lib/db-result.js";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
+import { parseJsonAs } from "../lib/parse-json.js";
 import { UnknownArraySchema } from "../lib/unknown-containers.js";
 import { z } from "zod";
 import type { Querier } from "./db.js";
@@ -581,7 +582,7 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
     let parts: unknown = row.parts;
     if (typeof parts === "string") {
         try {
-            parts = JSON.parse(parts);
+            parts = parseJsonAs(parts, z.unknown());
         } catch {
             parts = null;
         }

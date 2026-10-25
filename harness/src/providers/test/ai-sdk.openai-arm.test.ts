@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, type AiSdkProviderConfig } from "../ai-sdk.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../prompt-cache.js";
@@ -44,7 +45,7 @@ type ResponsesRequestBody = z.infer<typeof ResponsesRequestBodySchema>;
 function capturingFetch(respond: () => Response): { readonly fetch: typeof fetch; readonly bodies: ResponsesRequestBody[] } {
     const bodies: ResponsesRequestBody[] = [];
     const fetch = fetchDouble((_input, init) => {
-        bodies.push(init?.body === undefined || init.body === null ? {} : ResponsesRequestBodySchema.parse(JSON.parse(String(init.body))));
+        bodies.push(init?.body === undefined || init.body === null ? {} : ResponsesRequestBodySchema.parse(parseJsonAs(String(init.body), z.unknown())));
         return Promise.resolve(respond());
     });
     return { fetch, bodies };

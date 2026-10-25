@@ -66,11 +66,11 @@ const ExecuteCommandInputSchema = z.object({
 });
 
 /** Extensions that mark an argv token as the thing being run, not a flag or a data path. */
-const SCRIPT_EXTENSIONS = /\.(py|R|r|sh|js|ts|ipynb)$/;
+const SCRIPT_EXTENSIONS = [".py", ".R", ".r", ".sh", ".js", ".ts", ".ipynb"];
 
 /** The first script-like token in an argv, or `undefined` when none looks like one. */
 function scriptToken(command: readonly string[]): string | undefined {
-    return command.find((arg) => SCRIPT_EXTENSIONS.test(arg));
+    return command.find((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)));
 }
 
 /** What one exec leaves for the lineage collector of the step. */
@@ -164,7 +164,7 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
             // command, which is a `/{analysisId}/...` path, thus the workspace filesystem resolves it the same way.
             const recordWrites: WriteRecord[] = [];
             if (deps.workspaceFilesystem && deps.mutator) {
-                for (const token of command.filter((arg) => SCRIPT_EXTENSIONS.test(arg))) {
+                for (const token of command.filter((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)))) {
                     const noted = await reconcileScriptRecord({
                         filesystem: deps.workspaceFilesystem,
                         mutator: deps.mutator,

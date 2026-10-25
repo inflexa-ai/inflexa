@@ -33,6 +33,7 @@ import type { DataAsset } from "./table-data.js";
 import type { RenderProblem } from "./types.js";
 
 /** One instance token of the chart runtime: a class, a clip path, or a gradient, for example `zr1-cls-2`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the chart-runtime token grammar (zr<digits>-<family>-<n>); the renumbering rewrites exactly these tokens and nothing else.
 const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
 
 /**
@@ -40,6 +41,7 @@ const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
  * a `url(#...)` reference, and the style block. A text node is none of them, thus a category name that
  * reads as a token keeps its text.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the three attribute and reference places carry the tokens; the alternation bounds the rewrite to them.
 const TOKEN_PLACES = /\s(?:id|class)="[^"]*"|url\(#[^)]*\)|<style[^>]*>[\s\S]*?<\/style>/g;
 
 /** The count of hash characters in an asset name. It matches the name of a table asset. */
@@ -149,7 +151,9 @@ function finishedSvg(svg: string, size: ChartExportSize): string {
     const renumber = (token: string): string => {
         let next = tokens.get(token);
         if (next === undefined) {
-            const family = /^zr\d+-([a-z]+)/.exec(token)?.[1] ?? "t";
+            const family =
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the token family (zr<digits>-<letters>) is the runtime's own naming scheme, read verbatim from the token it renumbers.
+                /^zr\d+-([a-z]+)/.exec(token)?.[1] ?? "t";
             next = `zr0-${family}-${tokens.size}`;
             tokens.set(token, next);
         }

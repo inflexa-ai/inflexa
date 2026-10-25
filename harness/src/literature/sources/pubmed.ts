@@ -2,6 +2,10 @@ import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
 import { requestJson, requestText, type SourceHttpOptions, type SourceHttpResult } from "./http.js";
+import { isAllDigits, splitLines } from "../../lib/text.js";
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PubmedArticleSet envelope probe; the word boundary keeps a longer element name from passing.
+const PUBMED_ARTICLE_SET_ELEMENT = /<PubmedArticleSet\b/;
 
 export const NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 export const NCBI_IDCONV = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0";
@@ -310,7 +314,7 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             signal,
         );
         if (result.status !== "ok") return result;
-        if (!/<PubmedArticleSet\b/.test(result.value)) return { status: "unavailable", detail: "response schema mismatch: missing PubmedArticleSet" };
+        if (!PUBMED_ARTICLE_SET_ELEMENT.test(result.value)) return { status: "unavailable", detail: "response schema mismatch: missing PubmedArticleSet" };
         return { status: "ok", value: parseEfetch(result.value) };
     }
 
@@ -337,13 +341,10 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
             );
             const result = await requestText(url(`${NCBI_BASE}/ecitmatch.cgi`, { db: "pubmed", rettype: "xml", bdata }), options, signal);
             if (result.status !== "ok") return result;
-            const pmids = result.value
-                .trim()
-                .split(/\r?\n/)
-                .flatMap((line) => {
-                    const value = line.split("|").at(-1)?.trim();
-                    return value !== undefined && /^\d+$/.test(value) ? [value] : [];
-                });
+            const pmids = splitLines(result.value.trim()).flatMap((line) => {
+                const value = line.split("|").at(-1)?.trim();
+                return value !== undefined && value.length > 0 && isAllDigits(value) ? [value] : [];
+            });
             return { status: "ok", value: pmids };
         },
         fetchArticles,
@@ -362,7 +363,12 @@ export function createPubmedSource(options: PubmedSourceOptions = {}): PubmedSou
         },
         async fetchFullText(pmcId, signal) {
             const result = await requestText(
-                url(`${NCBI_BASE}/efetch.fcgi`, { db: "pmc", id: pmcId.replace(/^PMC/i, ""), rettype: "xml", retmode: "xml" }),
+                url(`${NCBI_BASE}/efetch.fcgi`, {
+                    db: "pmc",
+                    id: pmcId.slice(0, 3).toLowerCase() === "pmc" ? pmcId.slice(3) : pmcId,
+                    rettype: "xml",
+                    retmode: "xml",
+                }),
                 options,
                 signal,
             );

@@ -1,3 +1,5 @@
+import { setTimeout as timerSleep } from "node:timers/promises";
+
 import { z } from "zod";
 
 export type SourceHttpOptions = {
@@ -29,21 +31,14 @@ function cancellationReason(signal: AbortSignal): Error {
 
 async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
     if (signal === undefined) {
-        await new Promise<void>((resolve) => setTimeout(resolve, ms));
+        await timerSleep(ms);
         return;
     }
     if (signal.aborted) throw cancellationReason(signal);
-    const abortSignal = signal;
-    await new Promise<void>((resolve, reject) => {
-        const onAbort = (): void => {
-            clearTimeout(timeout);
-            reject(cancellationReason(abortSignal));
-        };
-        const timeout = setTimeout(() => {
-            abortSignal.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        abortSignal.addEventListener("abort", onAbort, { once: true });
+    // The node wait's abort rejection is a fresh AbortError instead of the signal's
+    // reason under the Bun test runtime, so the catch restores this contract's reason.
+    await timerSleep(ms, undefined, { signal }).catch(() => {
+        throw cancellationReason(signal);
     });
 }
 

@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { collapseWhitespace } from "../../lib/text.js";
 import { join } from "node:path";
 import { okAsync } from "neverthrow";
 import { Pool } from "pg";
@@ -229,7 +230,7 @@ describe("createReportSessionAgent", () => {
         }
         // The block schema lists each chart type and each preset, thus the prompt keeps no list of its own that
         // can drift from the schema.
-        expect(reportSessionPrompt.replace(/\s+/g, " ")).toContain("the block schema of `add_block` names each chart type and each preset");
+        expect(collapseWhitespace(reportSessionPrompt)).toContain("the block schema of `add_block` names each chart type and each preset");
         for (const plot of ["a volcano", "a dot plot", "an embedding", "a forest plot", "a radar"]) {
             expect(reportSessionPrompt).not.toContain(plot);
         }
@@ -241,7 +242,7 @@ describe("createReportSessionAgent", () => {
     test("the prompt teaches the preset of a field plot, its statistics, its track, and its trees", () => {
         const rule = reportSessionPrompt.slice(reportSessionPrompt.indexOf("A plot of a field takes its preset"));
         expect(rule).toStartWith("A plot of a field takes its preset");
-        const paragraph = rule.slice(0, rule.indexOf("\n\n")).replace(/\s+/g, " ");
+        const paragraph = collapseWhitespace(rule.slice(0, rule.indexOf("\n\n")));
         // A printed statistic is grounded, thus it binds one cell as a statistic of the chart block.
         expect(paragraph).toContain("binds as a statistic of the chart block");
         // A second table of the figure resolves as the binding does.
@@ -249,7 +250,7 @@ describe("createReportSessionAgent", () => {
         // A clustered heatmap carries its dendrograms, thus the edge table of each clustered axis binds as a tree.
         expect(paragraph).toContain("binds as the tree of that axis");
         // The paragraph names the mechanism and no dataset, and it states no count.
-        expect(paragraph).not.toMatch(/\d/);
+        expect([...paragraph].some((char) => char >= "0" && char <= "9")).toBe(false);
     });
 
     test("the prompt teaches the headline derivation", () => {

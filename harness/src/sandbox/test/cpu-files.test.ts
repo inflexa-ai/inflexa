@@ -14,8 +14,12 @@ function block(n: number): string {
 /** Four processor blocks in the x86 layout: a blank line after each block. */
 const HOST_CPUINFO = [0, 1, 2, 3].map((n) => `${block(n)}\n`).join("");
 
+function isWordChar(char: string): boolean {
+    return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_";
+}
+
 function processorCount(cpuinfo: string | undefined): number {
-    return cpuinfo?.match(/^processor\b/gm)?.length ?? 0;
+    return (cpuinfo ?? "").split("\n").filter((line) => line.startsWith("processor") && !isWordChar(line.charAt("processor".length))).length;
 }
 
 describe("cpuFiles", () => {

@@ -94,7 +94,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         return {
             query: async (queryOrConfig, values) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (/COUNT\(\*\)/i.test(text)) return { rows: [{ total: rows.length }], rowCount: 1 };
+                if (text.includes("COUNT(*)")) return { rows: [{ total: rows.length }], rowCount: 1 };
                 const limit = Number(values?.[1] ?? rows.length);
                 const offset = Number(values?.[2] ?? 0);
                 const page = rows.slice(offset, offset + limit);
@@ -115,7 +115,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const fakePool: InspectRunQuerier = {
             query: async (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                return /COUNT\(\*\)/i.test(text) ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+                return text.includes("COUNT(*)") ? { rows: [{ total: 0 }], rowCount: 1 } : { rows: [], rowCount: 0 };
             },
         };
 
@@ -212,7 +212,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         return {
             query: async (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (/cortex_step_executions/i.test(text)) return { rows: steps, rowCount: steps.length };
+                if (text.includes("cortex_step_executions")) return { rows: steps, rowCount: steps.length };
                 return { rows: [run], rowCount: 1 };
             },
         };
@@ -287,7 +287,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const pool: InspectRunQuerier = {
             query: async (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (/cortex_step_executions/i.test(text)) return { rows: [], rowCount: 0 };
+                if (text.includes("cortex_step_executions")) return { rows: [], rowCount: 0 };
                 const row = presentAt(rows, Math.min(reads++, rows.length - 1));
                 return { rows: [row], rowCount: 1 };
             },

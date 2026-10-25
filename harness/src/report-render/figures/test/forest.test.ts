@@ -1,3 +1,8 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the inner text of each text element of a chart SVG
+const SVG_TEXT_CONTENT = /<text[^>]*>([^<]*)<\/text>/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the translated title line of an export SVG, read for its y
+const EXPORT_TITLE_LINE = /<text[^>]*transform="translate\([\d.]+ ([\d.]+)\)"[^>]*>pvalue<\/text>/;
+
 /**
  * The forest figure: the rows in table order, the log axis at nice ratios, the line at no effect, the squares,
  * the interval lines, and the two text columns.
@@ -129,7 +134,7 @@ describe("the forest figure", () => {
             { term: "b", hr: -20, lower: -40, upper: -15, pvalue: 0.02 },
         ];
         const svg = renderChartSvg(echarts, derive(forestBlock(), rows), CHART_EXPORT_SIZES.single)._unsafeUnwrap();
-        const texts = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+        const texts = [...svg.matchAll(SVG_TEXT_CONTENT)].map((match) => match[1] ?? "");
         expect(texts).toContain("0");
     });
 
@@ -242,7 +247,7 @@ describe("the forest figure", () => {
 
     it("keeps the column titles of an export at its top edge, because an export has no toolbox", () => {
         const svg = renderChartSvg(echarts, derive(forestBlock()), CHART_EXPORT_SIZES.single)._unsafeUnwrap();
-        const title = /<text[^>]*transform="translate\([\d.]+ ([\d.]+)\)"[^>]*>pvalue<\/text>/.exec(svg);
+        const title = EXPORT_TITLE_LINE.exec(svg);
         expect(title).not.toBeNull();
         expect(Number(title?.[1])).toBeLessThan(TOOLBOX_BAND_PX);
     });

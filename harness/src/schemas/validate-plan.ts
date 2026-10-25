@@ -82,10 +82,19 @@ function describeParseError(stepId: string, entry: string, error: ParseQueryErro
 
 /** Derive a filesystem-safe output prefix from a step ID. */
 export function deriveOutputPrefix(stepId: string): string {
-    return stepId
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
+    let out = "";
+    let inRun = false;
+    for (const char of stepId.toLowerCase()) {
+        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+        if (!isSlugChar) {
+            inRun = true;
+            continue;
+        }
+        if (inRun && out.length > 0) out += "-";
+        inRun = false;
+        out += char;
+    }
+    return out;
 }
 
 /**

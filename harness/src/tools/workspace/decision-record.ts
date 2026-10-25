@@ -16,8 +16,9 @@ import { z } from "zod";
 
 import type { AgentSession } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { safeParseJsonAs } from "../../lib/parse-json.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
-import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import { UnknownRecordSchema } from "../../lib/unknown-containers.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { MutateToolName, WorkspaceMutator, WriteRecord } from "./mutator.js";
 
@@ -27,7 +28,13 @@ import type { MutateToolName, WorkspaceMutator, WriteRecord } from "./mutator.js
  * step that renders two scripts keeps both records.
  */
 export function decisionRecordPath(scriptFile: string): string {
-    const stem = scriptFile.replace(/\.[A-Za-z0-9]+$/, "");
+    const dot = scriptFile.lastIndexOf(".");
+    const suffix = scriptFile.slice(dot + 1);
+    const isSuffixAlnum =
+        dot !== -1 &&
+        suffix.length > 0 &&
+        [...suffix].every((char) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9"));
+    const stem = isSuffixAlnum ? scriptFile.slice(0, dot) : scriptFile;
     return `output/decision_record_${stem}.json`;
 }
 
@@ -104,9 +111,9 @@ export async function noteScriptChange(args: NoteScriptChangeArgs): Promise<Scri
     if (read.kind !== "ok") return { status: "no_record" };
     let record: Record<string, unknown>;
     try {
-        const parsedRecord = parseUnknownRecord(JSON.parse(read.content.toString("utf8")));
-        if (!parsedRecord) return { status: "no_record" };
-        record = parsedRecord;
+        const parsed = safeParseJsonAs(read.content.toString("utf8"), UnknownRecordSchema);
+        if (!parsed.success) return { status: "no_record" };
+        record = parsed.data;
     } catch {
         return { status: "no_record" };
     }
@@ -139,9 +146,9 @@ export async function reconcileScriptRecord(args: ReconcileScriptRecordArgs): Pr
     if (record.kind !== "ok") return { status: "no_record" };
     let expected: string | undefined;
     try {
-        const parsedRecord = parseUnknownRecord(JSON.parse(record.content.toString("utf8")));
-        if (!parsedRecord) return { status: "no_record" };
-        expected = expectedScriptSha256(parsedRecord);
+        const parsed = safeParseJsonAs(record.content.toString("utf8"), UnknownRecordSchema);
+        if (!parsed.success) return { status: "no_record" };
+        expected = expectedScriptSha256(parsed.data);
     } catch {
         return { status: "no_record" };
     }

@@ -1,4 +1,7 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
@@ -404,7 +407,7 @@ describe("triggerDataProfile — a refused authorization", () => {
         const deadline = Date.now() + 5_000;
         let status = await rawStatus(pool, analysisId);
         while (status === "running" && Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
+            await sleep(20);
             status = await rawStatus(pool, analysisId);
         }
         return status;
@@ -442,7 +445,7 @@ describe("triggerDataProfile — a refused authorization", () => {
         expect(await settledStatus("a-suspended")).toBe("failed");
         const deadline = Date.now() + 5_000;
         while ((await analysisStatus("a-suspended")) !== "suspended_insufficient_funds" && Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
+            await sleep(20);
         }
         expect(await analysisStatus("a-suspended")).toBe("suspended_insufficient_funds");
     });
@@ -456,7 +459,7 @@ describe("computeInputSignature over a recovered legacy manifest", () => {
     it("still produces a comparand when an entry lacks mtimeMs", () => {
         const sig = computeInputSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);
         expect(sig.count).toBe(2);
-        expect(sig.digest).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHexOfLength(sig.digest, 64)).toBe(true);
     });
 
     it("differs from the same set with its mtimes intact, so the gap is not silently equal", () => {

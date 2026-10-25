@@ -284,7 +284,7 @@ describe("comptox tool — chemical resolution", () => {
         stubFetch([["/chemical/search/equal/", () => new Response("Forbidden", { status: 403 })]]);
 
         const { ctx } = makeToolContext();
-        await expect(comptox.execute({ dataset: "hazard", query: "bisphenol A" }, ctx)).rejects.toThrow(/403/);
+        await expect(comptox.execute({ dataset: "hazard", query: "bisphenol A" }, ctx)).rejects.toThrow("403");
     });
 });
 
@@ -292,7 +292,7 @@ describe("comptox tool — missing EPA key", () => {
     it("throws terminally when the key is empty", async () => {
         const keyless = createComptoxTool({ apiKey: "" });
         const { ctx } = makeToolContext();
-        await expect(keyless.execute({ dataset: "chemical", query: DTXSID }, ctx)).rejects.toThrow(/EPA_CCTE_API_KEY/);
+        await expect(keyless.execute({ dataset: "chemical", query: DTXSID }, ctx)).rejects.toThrow("EPA_CCTE_API_KEY");
     });
 });
 

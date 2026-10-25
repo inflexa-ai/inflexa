@@ -27,7 +27,7 @@ describe.skipIf(!KEY)("live Amass", () => {
 
         if (!("authorizations" in result)) throw new Error("expected a search answer");
         expect(result.authorizations).toHaveLength(1);
-        expect(presentAt(result.authorizations, 0).amassId).toMatch(/^AMRC_/);
+        expect(presentAt(result.authorizations, 0).amassId.startsWith("AMRC_")).toBe(true);
         expect(presentAt(result.authorizations, 0).matchedSectionCount).toBeGreaterThanOrEqual(0);
     }, 60_000);
 
@@ -48,7 +48,7 @@ describe.skipIf(!KEY)("live Amass", () => {
 
         if (!("patents" in result)) throw new Error("expected a search answer");
         expect(result.patents).toHaveLength(1);
-        expect(presentAt(result.patents, 0).amassId).toMatch(/^AMPC_/);
+        expect(presentAt(result.patents, 0).amassId.startsWith("AMPC_")).toBe(true);
         expect(result.patents[0]).not.toHaveProperty("claims");
     }, 60_000);
 });

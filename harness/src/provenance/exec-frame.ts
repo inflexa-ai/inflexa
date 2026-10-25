@@ -37,7 +37,10 @@ import type { InputRef } from "./types.js";
  */
 export function stripMountPrefix(mountRoot: string, absPath: string): string {
     const prefix = mountRoot.endsWith("/") ? mountRoot : `${mountRoot}/`;
-    return absPath.startsWith(prefix) ? absPath.slice(prefix.length).replace(/^\/+/, "") : absPath;
+    if (!absPath.startsWith(prefix)) return absPath;
+    let start = prefix.length;
+    while (start < absPath.length && absPath.charAt(start) === "/") start++;
+    return absPath.slice(start);
 }
 
 export type FeedExecFrameArgs = {

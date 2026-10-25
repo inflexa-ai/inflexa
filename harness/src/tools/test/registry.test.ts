@@ -44,6 +44,6 @@ describe("createRegistry", () => {
     });
 
     it("rejects duplicate tool ids", () => {
-        expect(() => createRegistry([alpha, alpha])).toThrow(/duplicate tool id/);
+        expect(() => createRegistry([alpha, alpha])).toThrow("duplicate tool id");
     });
 });

@@ -141,6 +141,7 @@ const inputSchema = z
             ),
         goId: z
             .string()
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the GO term id shape: the GO: prefix plus seven digits.
             .regex(/^GO:\d{7}$/)
             .optional()
             .describe("'go' only. A specific GO term ID, e.g. 'GO:0008150'."),

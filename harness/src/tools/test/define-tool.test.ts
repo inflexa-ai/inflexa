@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the refusal that names the tool, then its type, then the expected object type, in that order
+const UNION_TOOL_REFUSAL = /union-tool.*type.*object/s;
+
 import { describe, expect, it } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
@@ -69,7 +72,7 @@ describe("defineTool", () => {
                 describeCall: "none",
                 execute: async () => ok({}),
             }),
-        ).toThrow(/union-tool.*type.*object/s);
+        ).toThrow(UNION_TOOL_REFUSAL);
     });
 
     describe("describeCall", () => {

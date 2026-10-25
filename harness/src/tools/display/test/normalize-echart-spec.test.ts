@@ -283,6 +283,11 @@ describe("kebabFilename", () => {
         expect(kebabFilename(undefined)).toBe("chart");
         expect(kebabFilename("x".repeat(200)).length).toBeLessThanOrEqual(64);
     });
+
+    it("caps the length when a separator sits at the cutoff", () => {
+        expect(kebabFilename("a".repeat(63) + " b")).toBe("a".repeat(63));
+        expect(kebabFilename("a".repeat(63) + "-b").endsWith("-")).toBe(false);
+    });
 });
 
 describe("normalizeEchartSpec — invariants", () => {

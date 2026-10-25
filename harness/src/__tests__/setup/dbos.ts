@@ -57,6 +57,16 @@ const shared: SharedDbosState = {
     shutdownRegistered: false,
 };
 
+function sanitizeWorkflowIdPrefix(prefix: string): string {
+    let out = "";
+    for (const char of prefix) {
+        const safe =
+            (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_" || char === "." || char === "-";
+        out += safe ? char : "-";
+    }
+    return out;
+}
+
 export type DbosTestRig = {
     /** Per-test pool scoped to a fresh cortex schema via `search_path`. */
     pool: Pool;
@@ -92,7 +102,7 @@ function parseConnectionStringToEnv(url: string): {
         port: u.port || "5432",
         user: decodeURIComponent(u.username),
         password: decodeURIComponent(u.password),
-        database: decodeURIComponent(u.pathname.replace(/^\//, "")),
+        database: decodeURIComponent(u.pathname.startsWith("/") ? u.pathname.slice(1) : u.pathname),
     };
 }
 
@@ -193,7 +203,7 @@ export async function setupDbosForTests(testName: string): Promise<DbosTestRig> 
         pool,
         schemaName,
         nextWorkflowId(prefix?: string): string {
-            const p = (prefix ?? "wf-").replace(/[^a-zA-Z0-9_.-]/g, "-");
+            const p = sanitizeWorkflowIdPrefix(prefix ?? "wf-");
             return `${p}${randomUUID()}`;
         },
         drop: safeDrop,

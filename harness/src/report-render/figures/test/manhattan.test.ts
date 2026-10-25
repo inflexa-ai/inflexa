@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
 import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
@@ -539,9 +540,11 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
     }
 
     /** A text that names chromosome 2, bare or with a `chr` prefix, alone or before a position. */
-    const CHROMOSOME_TWO = /^\s*(chr)?2(?![\d.,])/i;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the chromosome-2 text form, bare or with a chr prefix, that the axis labels spell
+    const CHROMOSOME_TWO = /^\s*(chr)?2(?!([\d.,]))/i;
 
     /** A text of a genome position on the x axis. */
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the genome position line of the x axis, whose shape is a pattern
     const POSITION = /^chr\w+: [\d.]+ Mb$/;
 
     it("draws the chromosome names under the plot before a zoom", () => {
@@ -570,7 +573,7 @@ describe("the Manhattan chromosome names after a zoom of the page toolbox", () =
         // Chromosome 2 starts at the last drawn position of chromosome 1, 248.9 Mb, and chromosome 3 starts at 491 Mb.
         const { under } = textsAfter([{ x: [100e6, 600e6], y: [0, 15] }]);
         expect(under.filter((text) => POSITION.test(text))).toEqual(["chr1: 200 Mb", "chr2: 51.1 Mb", "chr2: 151.1 Mb", "chr3: 9 Mb"]);
-        expect(under.filter((text) => /^\d$/.test(text))).toEqual([]);
+        expect(under.filter((text) => text.length === 1 && isAllDigits(text))).toEqual([]);
     });
 
     it("draws the chromosome names again and hides the positions after the undo of the zoom", () => {

@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a heading whose body is blank before the next heading or the end, whose shape is a pattern
+const EMPTY_HEADING = /##[^\n]*\n\s*(\n|$)/;
+
 import { describe, expect, it } from "bun:test";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../../app/data-profile-orientation.js";
@@ -137,7 +140,7 @@ describe("renderTask", () => {
         });
         expect(prompt).toContain("SENTINEL_QUESTION");
         // No heading should be emitted with an empty body.
-        expect(prompt).not.toMatch(/##[^\n]*\n\s*(\n|$)/);
+        expect(EMPTY_HEADING.test(prompt)).toBe(false);
     });
 
     it("does not silently drop multi-element array fields", () => {
@@ -198,7 +201,7 @@ describe("renderTemplateContract", () => {
         const rendered = renderTemplateContract(brief({ bound: [], unbound_settings: [] }));
         expect(rendered).not.toContain("Bound by the plan");
         expect(rendered).not.toContain("Unbound settings");
-        expect(rendered).not.toMatch(/\n{3,}/);
+        expect(rendered).not.toContain("\n\n\n");
     });
 
     it("renders nothing when no contract was retrieved", () => {
@@ -227,7 +230,16 @@ describe("renderTemplateContract", () => {
         for (let i = 0; i < MAX_TEMPLATE_SLOTS; i++) expect(rendered).toContain(`\`slot_${i}\``);
         expect(rendered).not.toContain(`\`slot_${MAX_TEMPLATE_SLOTS}\``);
         expect(rendered).toContain("+16 more");
-        const longestRun = Math.max(...(rendered.match(/x+/g) ?? [""]).map((run) => run.length));
+        let longestRun = 0;
+        let run = 0;
+        for (const char of rendered) {
+            if (char === "x") {
+                run++;
+                longestRun = Math.max(longestRun, run);
+            } else {
+                run = 0;
+            }
+        }
         expect(longestRun).toBeLessThan(TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS);
         expect(rendered.length).toBeLessThan(MAX_TEMPLATE_SLOTS * (TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS + 80) + 600);
     });
@@ -292,7 +304,11 @@ describe("renderUpstream", () => {
 
     it("clamps each dependency's summary to the excerpt budget and points at the full document", () => {
         const rendered = renderUpstream([handoff({ summaryMarkdown: "M".repeat(5_000) })]);
-        const excerptLength = (rendered.match(/M+…?/)?.[0] ?? "").length;
+        const excerptStart = rendered.indexOf("M");
+        let excerptEnd = Math.max(excerptStart, 0);
+        while (excerptEnd < rendered.length && rendered.charAt(excerptEnd) === "M") excerptEnd++;
+        if (rendered.charAt(excerptEnd) === "…") excerptEnd++;
+        const excerptLength = excerptStart < 0 ? 0 : excerptEnd - excerptStart;
         expect(excerptLength).toBeLessThanOrEqual(UPSTREAM_SUMMARY_MAX_CHARS);
         expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
     });
@@ -403,7 +419,7 @@ describe("composeStepBriefing", () => {
         expect(seed).toContain("SENTINEL_QUESTION");
         expect(seed).not.toContain("Upstream results");
         // Sections collapse out — no blank heading, no double-blank gap.
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("includes the data orientation when a profile exists and omits it cleanly when it does not", () => {
@@ -411,7 +427,7 @@ describe("composeStepBriefing", () => {
         const without = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(withProfile).toContain("transcriptomics");
         expect(without).not.toContain("Data orientation");
-        expect(without).not.toMatch(/\n{3,}/);
+        expect(without).not.toContain("\n\n\n");
     });
 
     it("names the step's writable working directory and the read-only analysis root", () => {
@@ -430,7 +446,7 @@ describe("composeStepBriefing", () => {
         const step = { ...fullyPopulatedStep(), resources: undefined };
         const seed = composeStepBriefing({ step, workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain("Resources (hard limits)");
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("carries the analysis memory apart from the constraints of the plan step", () => {
@@ -447,7 +463,7 @@ describe("composeStepBriefing", () => {
     it("omits the analysis-memory section cleanly when the memory is empty", () => {
         const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain(ANALYSIS_MEMORY_HEADING);
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("is byte-identical when recomposed from the same data (replay stability)", () => {
@@ -479,7 +495,7 @@ describe("composeStepBriefing", () => {
         // The section sits between the task and the workspace, and no gap opens.
         expect(seed.indexOf("## Template contract")).toBeGreaterThan(seed.indexOf("## Grounding"));
         expect(seed.indexOf("## Template contract")).toBeLessThan(seed.indexOf("## Workspace"));
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("says the contract was not retrieved, with the reason, when the grounding names a template and the seed carries none", () => {
@@ -493,7 +509,7 @@ describe("composeStepBriefing", () => {
         });
         expect(seed).toContain("- Template contract: not retrieved (the knowledge service did not answer: timeout)");
         expect(seed).not.toContain("## Template contract");
-        expect(seed).not.toMatch(/\n{3,}/);
+        expect(seed).not.toContain("\n\n\n");
     });
 
     it("says nothing about a contract for a step whose grounding names no template", () => {

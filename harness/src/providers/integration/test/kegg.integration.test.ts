@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
 
 import { keggPathwaysForGene } from "../../../tools/lib/pathway-client.js";
 
@@ -22,7 +23,7 @@ describe.skipIf(!LIVE)("live KEGG", () => {
         expect(pathways.length).toBeGreaterThan(0);
         for (const pathway of pathways) {
             expect(pathway.source).toBe("kegg");
-            expect(pathway.id).toMatch(/^hsa\d{5}$/);
+            expect(pathway.id.startsWith("hsa") && pathway.id.length === 6 && isAllDigits(pathway.id.slice(3))).toBe(true);
             // A row that keeps the identifier as its name means that the name
             // lookup gave nothing, thus the parse path is broken.
             expect(pathway.name).not.toBe(pathway.id);

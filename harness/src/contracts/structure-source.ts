@@ -32,6 +32,7 @@ export type StructureSource = {
 const ALPHAFOLD_ORIGIN = "https://alphafold.ebi.ac.uk";
 
 /** `/files/AF-{accession}-F{fragment}-model_v{version}.{pdb|cif}` — the AlphaFold DB file path shape. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the AlphaFold file-path grammar with its accession, fragment, and version captures; the captures name the fields the source record carries.
 const ALPHAFOLD_FILE_PATH = /^\/files\/AF-([A-Z0-9]+(?:-\d+)?)-F\d+-model_v(\d+)\.(pdb|cif)$/;
 
 /**

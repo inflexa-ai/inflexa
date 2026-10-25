@@ -1,3 +1,8 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- each path and text element of a chart SVG with its attributes and inner text
+const SVG_ELEMENT = /<(path|text)\b([^>]*)>([^<]*)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the width segment of the box path, drawn from x=0 as one horizontal run
+const BOX_PATH_WIDTH = /^M0 [-\d.]+l([\d.]+) 0/;
+
 /**
  * The Sankey figure: the nodes in table order, the computed stage of each node, the node and flow colors, the
  * labels beside the nodes, the export text, the group colors, and each refusal. The small rows are made up: they
@@ -161,7 +166,7 @@ describe("the sankey labels over the flows", () => {
         const svgs = chartSvgAssets(echarts, "flows", option)._unsafeUnwrap();
         if (svgs === undefined) throw new Error("the render staged no chart SVGs");
         for (const svg of [svgs.single, svgs.double]) {
-            const elements = [...svg.bytes.matchAll(/<(path|text)\b([^>]*)>([^<]*)/g)].map((match) => ({
+            const elements = [...svg.bytes.matchAll(SVG_ELEMENT)].map((match) => ({
                 tag: match[1] ?? "",
                 attributes: match[2] ?? "",
                 text: match[3] ?? "",
@@ -178,7 +183,9 @@ describe("the sankey labels over the flows", () => {
             expect(box.tag).toBe("path");
             expect(box.attributes).toContain('fill="#ffffff"');
             // The box fits the text, and never the wrap width of the label.
-            const boxWidth = Number(/^M0 [-\d.]+l([\d.]+) 0/.exec(/d="([^"]*)"/.exec(box.attributes)?.[1] ?? "")?.[1]);
+            const dAt = box.attributes.indexOf('d="');
+            const pathData = dAt < 0 ? "" : box.attributes.slice(dAt + 3, box.attributes.indexOf('"', dAt + 3));
+            const boxWidth = Number(BOX_PATH_WIDTH.exec(pathData)?.[1]);
             expect(boxWidth).toBeGreaterThan(0);
             expect(boxWidth).toBeLessThan(30);
         }

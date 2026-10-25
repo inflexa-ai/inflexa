@@ -3,6 +3,7 @@ import type { ToolResultPart } from "ai";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { presentAt, presentFind, presentFirst } from "../../lib/present.js";
 import { isSyntheticUserMessage } from "../../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
@@ -358,7 +359,7 @@ describe("runToTerminal", () => {
         expect(refused.output.type).toBe("error-text");
         const refusedOutput = refused.output;
         if (refusedOutput.type !== "error-text") throw new Error("the refused call holds no error text");
-        expect(JSON.parse(refusedOutput.value)).toEqual({
+        expect(parseJsonAs(refusedOutput.value, z.unknown())).toEqual({
             error: "The tool search is not available for this request, thus it did not run. The tools that can run now: submit.",
             retryable: false,
         });

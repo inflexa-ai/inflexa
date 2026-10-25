@@ -14,6 +14,7 @@ import { raw } from "hono/html";
 import type { ClaimBlock, SectionBlock, TextBlock, TextList } from "../../contracts/report-blocks.js";
 import type { ReferenceLedger } from "../references.js";
 import { blockMark } from "./block-mark.js";
+import { splitLines } from "../../lib/text.js";
 import { DEFAULT_VIEW_OPTIONS, lineagePlace, lineageStamp, type ViewOptions } from "./lineage.js";
 import { Marker } from "./references-view.js";
 
@@ -31,15 +32,26 @@ const BRAND_HREF = "https://inflexa.ai/";
  * out, thus a leading or a trailing blank line adds no empty paragraph.
  */
 function splitParagraphs(prose: string): string[] {
-    const parts = prose.split(/\n[ \t]*\n/);
     const paragraphs: string[] = [];
-    for (const part of parts) {
-        const trimmed = part.trim();
-        if (trimmed.length > 0) {
-            paragraphs.push(trimmed);
+    let paragraph: string[] = [];
+    for (const line of splitLines(prose)) {
+        if (isBlankLine(line)) {
+            if (paragraph.length > 0) paragraphs.push(paragraph.join("\n").trim());
+            paragraph = [];
+            continue;
         }
+        paragraph.push(line);
     }
+    if (paragraph.length > 0) paragraphs.push(paragraph.join("\n").trim());
     return paragraphs;
+}
+
+/** A line of spaces and tabs alone. Only those two end a paragraph split. */
+function isBlankLine(line: string): boolean {
+    for (const char of line) {
+        if (char !== " " && char !== "\t") return false;
+    }
+    return true;
 }
 
 /**

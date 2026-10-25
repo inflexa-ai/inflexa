@@ -13,6 +13,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { createServer, type Server } from "node:http";
 import { metrics, trace } from "@opentelemetry/api";
+import { z } from "zod";
 
 import {
     __otelMeterProviderRegisteredForTest,
@@ -25,6 +26,7 @@ import {
     shutdownOtel,
 } from "../otel.js";
 import { untracedWorkflow } from "../otel-spans.js";
+import { parseJsonAs } from "../parse-json.js";
 import { parseUnknownRecord } from "../unknown-containers.js";
 import { presentAt } from "../present.js";
 
@@ -92,7 +94,7 @@ function registeredResourceAttributes(): Record<string, unknown> {
 /** The resource attributes on the metrics the exporter posted to the collector. */
 function exportedMetricResourceAttributes(): Record<string, unknown> {
     expect(metricBodies.length).toBeGreaterThan(0);
-    const payload = parseUnknownRecord(JSON.parse(presentAt(metricBodies, 0)));
+    const payload = parseUnknownRecord(parseJsonAs(presentAt(metricBodies, 0), z.unknown()));
     const resourceMetrics = Array.isArray(payload?.resourceMetrics) ? payload.resourceMetrics : [];
     const first = parseUnknownRecord(resourceMetrics[0]);
     const resource = parseUnknownRecord(first?.resource);

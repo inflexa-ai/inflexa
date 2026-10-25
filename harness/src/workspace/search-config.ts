@@ -13,7 +13,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 
 /** Derive the vector index name for an analysis. */
 export function searchIndexName(resourceId: string): string {
-    return `search_${resourceId.replace(/-/g, "_")}`;
+    return `search_${resourceId.replaceAll("-", "_")}`;
 }
 
 const _ensuredIndexes = new Set<string>();

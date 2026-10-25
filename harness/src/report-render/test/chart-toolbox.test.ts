@@ -177,6 +177,7 @@ describe("the toolbox of a page chart", () => {
 
     it("stays JSON: each handler is the name of a page function", () => {
         const toolbox = chartToolbox("manhattan");
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip is the assertion: the toolbox must survive a JSON cycle verbatim.
         expect(JSON.parse(JSON.stringify(toolbox))).toEqual(toolbox);
     });
 

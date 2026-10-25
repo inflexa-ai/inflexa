@@ -114,18 +114,26 @@ export const PubChemXrefResponseSchema = z.object({
  * A loose pattern runs last, thus a specific registry claims its own id first.
  */
 const REGISTRY_PATTERNS: ReadonlyArray<readonly [source: string, pattern: RegExp]> = [
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ChEMBL id format: the CHEMBL prefix plus digits.
     ["ChEMBL", /^CHEMBL\d+$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ChEBI id format: the CHEBI: prefix plus digits.
     ["ChEBI", /^CHEBI:\d+$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the DrugBank id format: the DB prefix plus five digits.
     ["DrugBank", /^DB\d{5}$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the KEGG id format: one C or D compound letter plus five digits.
     ["KEGG", /^[CD]\d{5}$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the HMDB id format: the HMDB prefix plus digits.
     ["HMDB", /^HMDB\d+$/],
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the CAS registry format: two to seven digits, a dash pair, and one check digit.
     ["CAS", /^\d{2,7}-\d{2}-\d$/],
     // A PDB id is four characters that start with a digit. The lookahead demands a
     // letter as well, thus a plain registry number does not read as a structure.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the PDB id format: a digit, then three alphanumerics, with the lookahead that demands a letter among them.
     ["PDB", /^[1-9](?=.*[A-Za-z])[0-9A-Za-z]{3}$/],
     // A UNII is ten alphanumeric characters, and the lookahead demands a letter
     // among them. A plain ten-digit registry number, such as `0000050782`, matches
     // the pattern without it, and the row then names the wrong registry.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the UNII format: ten uppercase alphanumerics, with the lookahead that demands a letter among them.
     ["UNII", /^(?=.*[A-Z])[A-Z0-9]{10}$/],
 ];
 

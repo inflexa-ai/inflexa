@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { hasLoneHighSurrogate } from "../../lib/test/text-shapes.js";
 
 import type { ArtifactFileReference, ArtifactTableReference, ArtifactValueReference, CitationReference } from "../../contracts/report-reference.js";
 import type { DraftDocument } from "../draft.js";
@@ -121,7 +122,7 @@ describe("buildOutline", () => {
         };
         const label = buildOutline(draft).find((entry) => entry.id === "t1")?.label ?? "";
         expect(label).toBe(`${"y".repeat(78)}\u{1F600}…`);
-        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(label)).toBe(false);
+        expect(hasLoneHighSurrogate(label)).toBe(false);
     });
 
     it("labels a list-only text block with its first item", () => {

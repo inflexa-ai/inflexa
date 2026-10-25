@@ -13,9 +13,12 @@
  * the caller gets the events of the exec again.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { DBOS, Error as DBOSErrors, StatusString } from "@dbos-inc/dbos-sdk";
 
 import { untracedFetch } from "../lib/otel-spans.js";
+import { parseJsonAs } from "../lib/parse-json.js";
 import { presentFirst } from "../lib/present.js";
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
@@ -40,6 +43,11 @@ const SLOW_POLL_INTERVAL_MS = 10_000;
  */
 const CANCEL_CHECK_INTERVAL_MS = 10_000;
 
+const systemClock = {
+    now: Date.now,
+    wait: (ms: number, signal?: AbortSignal): Promise<void> => sleep(ms, undefined, { signal }),
+};
+
 export class ExecTimeoutError extends Error {
     readonly execId: string;
     constructor(execId: string) {
@@ -52,10 +60,14 @@ export class ExecTimeoutError extends Error {
 export type ExecDeps = {
     /** Defaults to `globalThis.fetch`. */
     readonly fetch?: typeof fetch;
-    /** The clock of the deadline and of the cancel reads. Defaults to `Date.now`. */
-    readonly now?: () => number;
-    /** The pause between two polls. Defaults to a timer. */
-    readonly sleep?: (ms: number) => Promise<void>;
+    /**
+     * The clock of the deadline, of the cancel reads, and of the pause between
+     * two polls. Defaults to the system clock and a timer.
+     */
+    readonly clock?: {
+        now(): number;
+        wait(ms: number, signal?: AbortSignal): Promise<void>;
+    };
     /**
      * Sink for advisory warnings: events that the sandbox ring shed. Defaults to
      * `DBOS.logger.warn`. The terminal result, not the event stream, is the
@@ -125,6 +137,7 @@ export async function runExec(
  */
 async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitExecBody): Promise<void> {
     const controller = new AbortController();
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a deadline guard, not a wait: it aborts the controller of the in-flight submit, and the finally clears it.
     const timer = setTimeout(() => controller.abort(), SUBMIT_HTTP_TIMEOUT_MS);
     try {
         const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
@@ -154,6 +167,7 @@ type PolledSnapshot = { readonly kind: "ok"; readonly raw: string } | { readonly
 
 async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string, cursor: number): Promise<PolledSnapshot> {
     const controller = new AbortController();
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a deadline guard, not a wait: it aborts the controller of the in-flight poll, and the finally clears it.
     const timer = setTimeout(() => controller.abort(), POLL_HTTP_TIMEOUT_MS);
     try {
         const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
@@ -183,8 +197,8 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
  */
 async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, deps: ExecDeps): Promise<ExecResult> {
     const fetchImpl = deps.fetch ?? fetch;
-    const now = deps.now ?? Date.now;
-    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const now = deps.clock?.now ?? systemClock.now;
+    const wait = deps.clock?.wait ?? systemClock.wait;
     const warn = deps.warn ?? ((message: string) => DBOS.logger.warn(message));
     const isCancelled = deps.isCancelled ?? workflowCancelled;
 
@@ -198,7 +212,7 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
         const polled = await pollOnce(fetchImpl, ref, execId, cursor);
 
         if (polled.kind === "ok") {
-            const resp = PollResponseSchema.parse(JSON.parse(polled.raw));
+            const resp = parseJsonAs(polled.raw, PollResponseSchema);
             // Each event is emitted at most once, whatever `since` the server applied.
             const newEvents = resp.events.filter((ev) => ev.seq > cursor);
             // Sequence numbers are contiguous per exec, thus a hole between the local
@@ -240,7 +254,7 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
         }
 
         const intervalMs = pollAttempt <= FAST_POLL_ATTEMPTS ? FAST_POLL_INTERVAL_MS : SLOW_POLL_INTERVAL_MS;
-        await sleep(Math.min(intervalMs, remainingMs));
+        await wait(Math.min(intervalMs, remainingMs));
     }
 }
 

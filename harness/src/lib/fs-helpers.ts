@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { access, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
+import { isAllHex } from "./text.js";
 
 /**
  * Compute SHA-256 hash of in-memory content.
@@ -38,7 +39,12 @@ export async function computeSha256File(filePath: string): Promise<string> {
  * an attestation invariant violation, not something to paper over.
  */
 export function hasValidContentHash(hash: string | undefined): boolean {
-    return !!hash && /^[a-z0-9]+:[0-9a-f]+$/i.test(hash);
+    if (!hash) return false;
+    const colon = hash.indexOf(":");
+    if (colon === -1) return false;
+    const algorithm = hash.slice(0, colon).toLowerCase();
+    const isAlgorithmChar = (char: string) => (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+    return algorithm.length > 0 && [...algorithm].every(isAlgorithmChar) && colon + 1 < hash.length && isAllHex(hash.slice(colon + 1));
 }
 
 /**

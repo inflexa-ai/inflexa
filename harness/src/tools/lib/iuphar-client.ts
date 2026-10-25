@@ -13,6 +13,7 @@ import { z } from "zod";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { presentAt } from "../../lib/present.js";
+import { stripHtmlTags } from "./html-text.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError, type ApiError } from "./api-utils.js";
 import { IUPHAR_BASE, IUPHAR_HEADERS as HEADERS } from "./iuphar-config.js";
 
@@ -52,20 +53,8 @@ export type IupharHeterodimer = {
     accessories: IupharTarget[];
 };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the issued UniProt accession shape is the identifier rule of the target records.
 const UNIPROT_ACCESSION_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
-
-function stripHtml(name: string): string {
-    // Strip tags to a fixpoint: a single pass can leave a `<…>` behind when
-    // removing an inner tag lets the surrounding angle brackets form a new one,
-    // so repeat until the string stops changing.
-    let out = name;
-    let prev: string;
-    do {
-        prev = out;
-        out = out.replace(/<[^>]+>/g, "");
-    } while (out !== prev);
-    return out;
-}
 
 function notFound(error: ApiError): boolean {
     return error.type === "http_status" && (error.status === 404 || error.status === 204);
@@ -146,7 +135,7 @@ export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promis
         for (let j = 0; j < batch.length; j++) {
             const complex = presentAt(batch, j, "the complex of the batch");
             const subunits = presentAt(subunitLists, j, "the subunits of the complex");
-            const cleanedSubunits = subunits.map((s) => ({ ...s, name: stripHtml(s.name) }));
+            const cleanedSubunits = subunits.map((s) => ({ ...s, name: stripHtmlTags(s.name) }));
             // Only a shape B row reaches this filter, because `getSubunits`
             // calls `/targets/{id}/subunits`. Shape B is the one shape that
             // names the kind of a target as `AccessoryProtein`, and the
@@ -155,7 +144,7 @@ export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promis
             // row or a single-target row would match nothing.
             const accessories = cleanedSubunits.filter((s) => (s.type ?? "").toLowerCase() === "accessoryprotein");
             results.push({
-                complex: { ...complex, name: stripHtml(complex.name) },
+                complex: { ...complex, name: stripHtmlTags(complex.name) },
                 subunits: cleanedSubunits,
                 accessories,
             });

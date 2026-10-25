@@ -33,9 +33,11 @@ const MAX_FAULT_TEXT = 300;
 const MAX_FAULT_ENTRIES = 20;
 
 /** A data URI. A fault text quotes a URI in quotes or parentheses, thus those characters end the data. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the data-URI grammar of an inlined fault (media type, parameters, payload) with the quote and bracket characters that end it.
 const DATA_URI = /data:([a-z0-9.+-]+\/[a-z0-9.+-]+)?((?:;[^,;\s'"()<>]*)*),([^\s'"()<>]*)/gi;
 
 /** A base64 run of 100 characters or more. A content hash in hex is 64 characters, thus a hash stays. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the base64 charset run with its padding; the length floor keeps a 64-character hex hash outside the match.
 const BASE64_RUN = /[A-Za-z0-9+/]{100,}={0,2}/g;
 
 /** Shorten one fault text: the inline data becomes placeholders, and the text stops at the cap. */

@@ -28,7 +28,7 @@ describe("writeFileWithinRoot", () => {
     });
 
     it("refuses a lexically out-of-root target", async () => {
-        await expect(writeFileWithinRoot(root, join(outside, "x.md"), "nope")).rejects.toThrow(/outside the workspace root/);
+        await expect(writeFileWithinRoot(root, join(outside, "x.md"), "nope")).rejects.toThrow("outside the workspace root");
     });
 
     it("refuses to write through a symlinked leaf a step planted", async () => {
@@ -51,7 +51,7 @@ describe("writeFileWithinRoot", () => {
         // output -> <outside>/evil, so output/summary.md would land outside the tree.
         await symlink(evilDir, join(stepDir, "output"));
 
-        await expect(writeFileWithinRoot(root, join(stepDir, "output", "summary.md"), "pwned")).rejects.toThrow(/symlink/);
+        await expect(writeFileWithinRoot(root, join(stepDir, "output", "summary.md"), "pwned")).rejects.toThrow("symlink");
         await expect(readFile(join(evilDir, "summary.md"), "utf8")).rejects.toThrow();
     });
 

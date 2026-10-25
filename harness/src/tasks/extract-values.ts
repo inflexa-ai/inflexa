@@ -22,6 +22,7 @@ import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorize
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
+import { safeParseJsonAs } from "../lib/parse-json.js";
 import type { ExtractionArm, ExtractionArtifact, ExtractionRequest } from "../report-model/production-resolver.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
@@ -122,13 +123,14 @@ export function parseExtractionOutput(result: ExecResult): ExtractValuesResult {
     if (result.exitCode !== 0) {
         throw new Error(`the extraction script exited with code ${String(result.exitCode)}`);
     }
-    let parsed: unknown;
+    let parsed;
     try {
-        parsed = JSON.parse(result.stdout);
+        parsed = safeParseJsonAs(result.stdout, ExtractValuesResultSchema);
     } catch {
         throw new Error("the extraction script did not emit valid JSON");
     }
-    return ExtractValuesResultSchema.parse(parsed);
+    if (!parsed.success) throw parsed.error;
+    return parsed.data;
 }
 
 /**

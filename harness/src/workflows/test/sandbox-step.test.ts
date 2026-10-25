@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the ISO instant shape of a recorded activity timestamp
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T.*Z$/;
+
 /**
  * Body-level tests for the `sandbox-step` child workflow.
  *
@@ -18,6 +21,8 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
+import { STEP_EXECUTIONS_UPDATE } from "./sql-writes.js";
+import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -440,7 +445,7 @@ describe("sandbox-step activity history", () => {
         const stream = dbosState.emittedParts.filter((part) => part.type === "data-step-activity" || part.type === "data-activity-entry");
         const activities = partsOf("data-step-activity");
         expect(activities.length).toBeGreaterThan(1);
-        for (const activity of activities) expect(activity.at).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/));
+        for (const activity of activities) expect(typeof activity.at === "string" && ISO_INSTANT.test(activity.at)).toBe(true);
         // Pairs in write order: the activity part, then its entry.
         expect(stream.map((part) => part.type)).toEqual(activities.flatMap(() => ["data-step-activity", "data-activity-entry"]));
         for (const [index, part] of stream.entries()) {
@@ -627,9 +632,9 @@ describe("sandbox-step kept tool outputs", () => {
             .flatMap((message) => (message.role === "tool" ? message.content : []))
             .map((part) => (part.type === "tool-result" && part.output.type === "text" ? part.output.value : ""))
             .find((text) => text.startsWith("[Tool result cut: "));
-        const match = /reference "(to_[0-9a-f]{20})"/.exec(excerpt ?? "");
-        if (match === null) throw new Error("the tool-result cut notice is absent");
-        return presentAt(match, 1);
+        const ref = referencedToolOutput(excerpt ?? "");
+        if (ref === undefined) throw new Error("the tool-result cut notice is absent");
+        return ref;
     }
 
     it("keeps the text of a long execute_command result of the task in the store of the step", async () => {
@@ -835,7 +840,7 @@ describe("sandbox-step suspension", () => {
     const CHILD_ID = `${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
 
     function expectSuspended(statements: Array<{ text: string; values: readonly unknown[] }>, reason: string): void {
-        const marked = statements.filter((q) => /UPDATE\s+cortex_step_executions/i.test(q.text) && q.values.includes("canceled"));
+        const marked = statements.filter((q) => STEP_EXECUTIONS_UPDATE.test(q.text) && q.values.includes("canceled"));
         expect(marked).toHaveLength(1);
         // The error and the last error class of the row both carry the reason of the host.
         expect(presentAt(marked, 0).values.filter((v) => v === reason)).toHaveLength(2);

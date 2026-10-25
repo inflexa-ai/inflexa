@@ -115,11 +115,11 @@ describe("the data profile — a refused spawn", () => {
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
-        const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
+        const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
         expect(failed).toHaveLength(1);
         expect(presentAt(failed, 0).values).toContain("account_frozen");
         expect(revoked).toEqual(["data-profile-suspended"]);
-        expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
+        expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(true);
     });
 
     it("without the suspend flag, fails the row with the reason and does not mark the analysis", async () => {
@@ -132,11 +132,11 @@ describe("the data profile — a refused spawn", () => {
 
         await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
-        const failed = statements.filter((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text));
+        const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
         expect(failed).toHaveLength(1);
         expect(String(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
         expect(revoked).toEqual(["data-profile-failed"]);
-        expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(false);
+        expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(false);
     });
 
     it("passes a cancel from DBOS through with no change, and runs no failure path", async () => {
@@ -154,7 +154,7 @@ describe("the data profile — a refused spawn", () => {
         );
 
         expect(outcome).toBe(cancel);
-        expect(statements.some((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text))).toBe(false);
+        expect(statements.some((q) => q.text.includes("data_profile_status = 'failed'"))).toBe(false);
         expect(revoked).toEqual([]);
     });
 });

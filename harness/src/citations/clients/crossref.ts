@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
 import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
+import { firstSegmentOf } from "../../lib/text.js";
 import { requestJson, type SourceHttpOptions, type SourceHttpResult } from "../../literature/sources/http.js";
 
 const CrossrefItemSchema = z
@@ -45,7 +46,7 @@ function crossrefRecord(item: z.infer<typeof CrossrefItemSchema>, index: number)
         year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0]),
         venue,
         volume: item.volume,
-        firstPage: item.page?.split(/[-–]/)[0],
+        firstPage: firstSegmentOf(item.page, "-–"),
         url: item.URL,
     };
 }

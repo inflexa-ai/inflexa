@@ -58,9 +58,35 @@ const HASH_CHARS = 12;
  * The head takes the hex alone, and the basename takes each unsafe run as one dash.
  */
 export function tableSidecarName(hash: string, path: string): string {
-    const hex = hash.slice(hash.lastIndexOf(":") + 1).replace(/[^a-z0-9]+/gi, "");
-    const base = path.slice(path.lastIndexOf("/") + 1).replace(/[^a-z0-9._-]+/gi, "-");
+    const hex = keepAlphanumeric(hash.slice(hash.lastIndexOf(":") + 1));
+    const base = keepFileSafe(path.slice(path.lastIndexOf("/") + 1));
     return `${hex.slice(0, HASH_CHARS)}-${base}`;
+}
+
+/** Each character outside the letters and digits leaves the text. */
+function keepAlphanumeric(text: string): string {
+    return [...text].filter(isNameChar).join("");
+}
+
+/** Each run of characters outside `[a-zA-Z0-9._-]` becomes one dash. */
+function keepFileSafe(text: string): string {
+    let out = "";
+    let inRun = false;
+    for (const char of text) {
+        const safe = isNameChar(char) || char === "." || char === "_" || char === "-";
+        if (safe) {
+            out += char;
+            inRun = false;
+        } else if (!inRun) {
+            out += "-";
+            inRun = true;
+        }
+    }
+    return out;
+}
+
+function isNameChar(char: string): boolean {
+    return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9");
 }
 
 /**
@@ -75,7 +101,7 @@ export function tableSidecarName(hash: string, path: string): string {
  * container.
  */
 export function derivationScriptName(scriptHash: string): string {
-    const hex = scriptHash.slice(scriptHash.lastIndexOf(":") + 1).replace(/[^a-z0-9]+/gi, "");
+    const hex = keepAlphanumeric(scriptHash.slice(scriptHash.lastIndexOf(":") + 1));
     return `d-${hex.slice(0, HASH_CHARS)}.py`;
 }
 

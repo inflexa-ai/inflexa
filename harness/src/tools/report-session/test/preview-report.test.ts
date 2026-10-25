@@ -8,6 +8,7 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../../lib/test/text-shapes.js";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { existsSync } from "node:fs";
@@ -359,7 +360,8 @@ describe("the pass path", () => {
         expect(part.type).toBe("data-report-rendered");
         expect(part.data.title).toBe("Report");
         // The id is one UUID per emission, and the timestamp is a valid ISO instant.
-        expect(part.data.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+        const idSegments = part.data.id.split("-");
+        expect(idSegments.length === 5 && [8, 4, 4, 4, 12].every((n, i) => isLowerHexOfLength(idSegments[i] ?? "", n))).toBe(true);
         expect(new Date(part.data.renderedAt).toISOString()).toBe(part.data.renderedAt);
     });
 
@@ -1057,7 +1059,7 @@ describe("the trees of a heatmap", () => {
             // The sample tree puts treated1 first, and the gene tree puts Treh first.
             expect(content).toContain('"data":["treated1","untreated2","untreated1"]');
             expect(content).toContain('"data":["Treh","Kal1"]');
-            expect(content.match(/"type":"lines"/g)?.length).toBe(2);
+            expect(content.split('"type":"lines"').length - 1).toBe(2);
             // The appendix lists the binding and each tree.
             for (const path of [CHART_PATH, SAMPLE_TREE, GENE_TREE]) expect(content).toContain(path);
         }

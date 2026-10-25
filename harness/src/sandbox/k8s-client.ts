@@ -15,6 +15,7 @@
  */
 
 import { join, relative as relativePath, sep } from "node:path";
+import { setTimeout as timerSleep } from "node:timers/promises";
 
 import {
     BatchV1Api,
@@ -448,7 +449,7 @@ export function waitForPodReady(
         cause,
     });
     const now = deps.now ?? (() => Date.now());
-    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleep = deps.sleep ?? timerSleep;
     const logger = (deps.logger ?? createNoopLogger()).named("k8s-client");
     return new ResultAsync(
         (async () => {
@@ -549,7 +550,7 @@ function waitForJobGone(batchApi: BatchJobApi, namespace: string, name: string):
                     if (statusOf(read.error) === 404) return ok(undefined);
                     return err(read.error);
                 }
-                await new Promise((r) => setTimeout(r, 500));
+                await timerSleep(500);
             }
             return err(createFailed(undefined, new Error(`K8sSandbox ${name}: prior Job did not delete within 60s`)));
         })(),

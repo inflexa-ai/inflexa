@@ -13,6 +13,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { z } from "zod";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,6 +23,7 @@ import type { Scope } from "../../../auth/types.js";
 import { createLocalRunAuthorizer } from "../../../auth/local-run-authorizer.js";
 import type { RunAuthorizer } from "../../../execution/run-authorizer.js";
 import type { DbError } from "../../../lib/db-result.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
@@ -416,7 +418,7 @@ describe("the derived table", () => {
         // Each declared input rides as the path that the container reads, with the hash of the membership.
         const inputEnv = body.env?.[DERIVE_INPUT_ENV];
         if (inputEnv === undefined) throw new Error("the derive input env is absent");
-        expect(JSON.parse(inputEnv)).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
+        expect(parseJsonAs(inputEnv, z.unknown())).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
         // The output path rides too, thus the script names no directory of its own.
         expect(body.env?.[DERIVE_OUTPUT_ENV]).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`);
     });
@@ -624,7 +626,7 @@ describe("a derivation that gives no table", () => {
             (await tool.execute({ script: SCRIPT, inputs: [hostile], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
         };
 
-        await expect(attempt()).rejects.toThrow(/escapes the workspace root/);
+        await expect(attempt()).rejects.toThrow("escapes the workspace root");
         expect(auth.revoked).toEqual(["derive-table-failed"]);
         expect(sandbox.creates).toHaveLength(0);
     });
@@ -770,7 +772,7 @@ describe("buildDerivationExec", () => {
         expect(body.timeoutSeconds).toBe(300);
         const inputEnv = body.env?.[DERIVE_INPUT_ENV];
         if (inputEnv === undefined) throw new Error("the derive input env is absent");
-        expect(JSON.parse(inputEnv)).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
+        expect(parseJsonAs(inputEnv, z.unknown())).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
         expect(body.env?.[DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
     });
 });

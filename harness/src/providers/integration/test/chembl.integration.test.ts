@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
 
 import { searchCompounds } from "../../../tools/lib/chembl-client.js";
 import { presentAt } from "../../../lib/present.js";
@@ -21,7 +22,7 @@ describe.skipIf(!LIVE)("live ChEMBL", () => {
 
         expect(compounds.length).toBeGreaterThan(0);
         const first = presentAt(compounds, 0);
-        expect(first.chemblId).toMatch(/^CHEMBL\d+$/);
+        expect(first.chemblId.startsWith("CHEMBL") && first.chemblId.slice(6).length > 0 && isAllDigits(first.chemblId.slice(6))).toBe(true);
         expect(first).toHaveProperty("preferredCompoundName");
         expect(first).toHaveProperty("canonicalSmiles");
         expect(first).toHaveProperty("molecularWeight");

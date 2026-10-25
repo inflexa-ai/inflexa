@@ -132,8 +132,8 @@ describe("precreateStepTree — step-tree access mode", () => {
     });
 
     test("a crafted tail escapes nothing, because the builder refuses it first", async () => {
-        await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: "../escape" })).rejects.toThrow(/Invalid writableTail/);
-        await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: TAIL, readOnly: true })).rejects.toThrow(/read-only sandbox cannot/);
+        await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: "../escape" })).rejects.toThrow("Invalid writableTail");
+        await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: TAIL, readOnly: true })).rejects.toThrow("read-only sandbox cannot");
         await expect(stat(join(root, "..", "escape"))).rejects.toThrow();
     });
 });
@@ -243,7 +243,7 @@ describe("createSandboxClient — the required-store fact", () => {
                 farmSource: FIXED,
                 packageStore: "required",
             }),
-        ).toThrow(/libStorePath/);
+        ).toThrow("libStorePath");
     });
 
     test("a k8s client with no libs PVC cannot prove the fact, and composition refuses", () => {
@@ -256,7 +256,7 @@ describe("createSandboxClient — the required-store fact", () => {
                 farmSource: FIXED,
                 packageStore: "required",
             }),
-        ).toThrow(/libStorePvc/);
+        ).toThrow("libStorePvc");
     });
 
     test("a k8s fixed farm source with no libs mountpoint has no gate at all, and composition refuses", () => {
@@ -270,7 +270,7 @@ describe("createSandboxClient — the required-store fact", () => {
                 farmSource: FIXED,
                 packageStore: "required",
             }),
-        ).toThrow(/libStorePvcRoot/);
+        ).toThrow("libStorePvcRoot");
     });
 
     test("a k8s per-analysis source with no libs mountpoint composes, because the resolver owes the proof", () => {

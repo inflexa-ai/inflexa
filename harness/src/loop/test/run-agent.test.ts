@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
@@ -7,6 +9,7 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { AgentSession } from "../../auth/types.js";
 import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { presentAt, presentFind, presentFirst, presentLast } from "../../lib/present.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import {
     compactionExchangeOf,
@@ -106,7 +109,7 @@ function echoTool(): Tool {
         }),
         describeCall: "none",
         execute: async ({ label, ms }) => {
-            if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+            if (ms > 0) await sleep(ms);
             return ok({ label });
         },
     });
@@ -225,7 +228,7 @@ describe("runAgent — provider capability gate", () => {
             capabilities: { toolCalling: false },
         };
 
-        await expect(runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider))).rejects.toThrow(/cannot run tool-required agent/);
+        await expect(runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider))).rejects.toThrow("cannot run tool-required agent");
         expect(provider.calls).toHaveLength(0);
     });
 });
@@ -241,7 +244,7 @@ describe("runAgent — call records", () => {
             inputSchema: z.object({ label: z.string(), ms: z.number().default(0) }),
             describeCall: "none",
             execute: async ({ label, ms }) => {
-                if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+                if (ms > 0) await sleep(ms);
                 executed.push(label);
                 return ok(withToolCallRecord({ label }, { label }));
             },
@@ -265,6 +268,7 @@ describe("runAgent — call records", () => {
         async function step(name: string, fn: () => Promise<unknown>): Promise<unknown> {
             if (cache.has(name)) return cache.get(name);
             const value = await fn();
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the fake step cache mirrors the durable step cache, which re-parses each serialized tool result.
             cache.set(name, name.startsWith("tool-") ? JSON.parse(JSON.stringify(value)) : value);
             return value;
         }
@@ -514,7 +518,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
-        expect(JSON.parse(String(outputValue(result)))).toEqual({
+        expect(parseJsonAs(String(outputValue(result)), z.unknown())).toEqual({
             error: "upstream down",
             retryable: true,
         });
@@ -538,7 +542,7 @@ describe("runAgent — tool-error boundary", () => {
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
         expect(String(outputValue(result))).not.toContain("[object Object]");
-        expect(JSON.parse(String(outputValue(result)))).toEqual({
+        expect(parseJsonAs(String(outputValue(result)), z.unknown())).toEqual({
             error: "sandbox refused the exec",
             retryable: false,
         });
@@ -660,7 +664,7 @@ describe("runAgent — a picture on a tool result", () => {
         // The text part carries the faults, and it holds no bytes.
         const textPart = parts.find((p) => p.type === "text");
         if (textPart === undefined) throw new Error("the content holds no text part");
-        expect(JSON.parse(textPart.text)).toEqual({ faults: ["boom"] });
+        expect(parseJsonAs(textPart.text, z.unknown())).toEqual({ faults: ["boom"] });
         expect(textPart.text).not.toContain("PNGBYTES");
         // The file part carries the picture bytes and the media type.
         const filePart = parts.find((p) => p.type === "file");
@@ -761,7 +765,7 @@ function pagingEyesTool(): Tool {
         inputSchema: z.object({ page: z.string(), ms: z.number().default(0) }),
         describeCall: "none",
         execute: async ({ page, ms }) => {
-            if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+            if (ms > 0) await sleep(ms);
             return ok(withToolResultImage({ page }, { base64: `BYTES-${page}`, mediaType: "image/png" }));
         },
     });
@@ -2062,7 +2066,7 @@ function inlineEchoTool(): Tool {
         inputSchema: z.object({ label: z.string(), ms: z.number().default(0) }),
         describeCall: "none",
         execute: async ({ label, ms }) => {
-            if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+            if (ms > 0) await sleep(ms);
             return ok({ label });
         },
     });

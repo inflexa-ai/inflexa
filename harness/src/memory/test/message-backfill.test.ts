@@ -1,7 +1,12 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the refusal names the thread and the redacted_thinking part in that order
+const THREAD_REDACTED_REFUSAL = /thread-1\/5.*redacted_thinking/;
+
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "../ai-sdk-message-storage.js";
 import { type BackfillClient, backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { presentAt } from "../../lib/present.js";
 
 type LegacyRow = {
@@ -22,12 +27,12 @@ function fakeBackfillClient<Row extends LegacyRow>(
         queries,
         async query(text: string, values?: unknown[]): Promise<{ rows: Row[] }> {
             queries.push(text);
-            if (/^UPDATE messages SET message_envelope/.test(text)) {
+            if (text.startsWith("UPDATE messages SET message_envelope")) {
                 updates.push(values ?? []);
                 return { rows: [] };
             }
-            if (/LIMIT 1/.test(text)) return { rows: [] };
-            if (/FROM messages/.test(text) && /message_envelope IS NULL/.test(text)) return { rows: client.legacyRows };
+            if (text.includes("LIMIT 1")) return { rows: [] };
+            if (text.includes("FROM messages") && text.includes("message_envelope IS NULL")) return { rows: client.legacyRows };
             throw new Error(`unexpected query: ${text}`);
         },
     };
@@ -104,7 +109,7 @@ describe("legacyAnthropicToModelMessage", () => {
                     { type: "redacted_thinking", data: "signed-opaque-blob" },
                 ],
             }),
-        ).toThrow(/thread-1\/5.*redacted_thinking/);
+        ).toThrow(THREAD_REDACTED_REFUSAL);
     });
 
     it("fails the row when a user turn mixes tool_result with other blocks", () => {
@@ -118,7 +123,7 @@ describe("legacyAnthropicToModelMessage", () => {
                     { type: "text", text: "also this" },
                 ],
             }),
-        ).toThrow(/thread-1\/6/);
+        ).toThrow("thread-1/6");
     });
 });
 
@@ -135,7 +140,7 @@ describe("backfillAiSdkMessageEnvelopes", () => {
 
         await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
-        expect(JSON.parse(String(presentAt(fake.updates, 0)[0]))).toEqual(
+        expect(parseJsonAs(String(presentAt(fake.updates, 0)[0]), z.unknown())).toEqual(
             envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
         );
 
@@ -154,7 +159,7 @@ describe("backfillAiSdkMessageEnvelopes", () => {
             },
         ]);
 
-        await expect(backfillAiSdkMessageEnvelopes(fake)).rejects.toThrow(/thread-bad\/7/);
+        await expect(backfillAiSdkMessageEnvelopes(fake)).rejects.toThrow("thread-bad/7");
     });
 
     it("does not query DBOS operation outputs while migrating conversation messages", async () => {
@@ -168,6 +173,6 @@ describe("backfillAiSdkMessageEnvelopes", () => {
 
 describe("AI SDK message envelope runtime path", () => {
     it("rejects old-format rows without a message envelope", () => {
-        expect(() => parseStoredMessageEnvelope([{ type: "text", text: "legacy" }], "thread-1/0")).toThrow(/Invalid stored AI SDK message envelope/);
+        expect(() => parseStoredMessageEnvelope([{ type: "text", text: "legacy" }], "thread-1/0")).toThrow("Invalid stored AI SDK message envelope");
     });
 });

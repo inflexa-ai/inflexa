@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the DNS-1123 subdomain grammar that an ownership label value must obey, whose shape is a pattern
+const DNS_SUBDOMAIN = /^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/;
+
 /**
  * K8s `createSandbox` / `teardown` / `isAlive` shape tests against
  * stubbed BatchV1Api / CoreV1Api. Verifies the Job spec carries the
@@ -278,7 +281,7 @@ describe("k8s createSandbox", () => {
                 mintSandboxIdentity("run-1"),
                 {},
             );
-        await expect(attempt()).rejects.toThrow(/does not live under sessionPvcRoot/);
+        await expect(attempt()).rejects.toThrow("does not live under sessionPvcRoot");
     });
 
     test("readOnly omits the rw volumeMount and pins workingDir to the RO tree", async () => {
@@ -863,7 +866,7 @@ describe("k8s job ownership labels", () => {
         const ownerLabels = ownerJob.metadata?.labels;
         if (ownerLabels === undefined) throw new Error("labels is absent");
         for (const value of Object.values(ownerLabels)) {
-            expect(value).toMatch(/^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$/);
+            expect(DNS_SUBDOMAIN.test(value)).toBe(true);
             expect(value.length).toBeLessThanOrEqual(63);
         }
     });
@@ -1211,7 +1214,7 @@ describe("k8s createSandbox — the farm mounts", () => {
         const attempt = async (): Promise<void> => {
             (await opsWith(source, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
         };
-        await expect(attempt()).rejects.toThrow(/PVC-relative/);
+        await expect(attempt()).rejects.toThrow("PVC-relative");
         expect(stub.createdJobs).toHaveLength(0);
     });
 });

@@ -40,6 +40,18 @@ function entry(i: number): RegisterArtifactInput {
 
 const WIRE_PARAM_LIMIT = 65_535;
 
+/** The `$n` placeholder numbers of one SQL statement, left to right. */
+function placeholders(text: string): number[] {
+    const numbers: number[] = [];
+    for (let i = 0; i < text.length; i++) {
+        if (text.charAt(i) !== "$") continue;
+        let end = i + 1;
+        while (end < text.length && text.charAt(end) >= "0" && text.charAt(end) <= "9") end++;
+        if (end > i + 1) numbers.push(Number(text.slice(i + 1, end)));
+    }
+    return numbers;
+}
+
 describe("upsertArtifacts chunking", () => {
     it("keeps every statement under the wire-protocol parameter cap for huge manifests", async () => {
         const { querier, captured } = capturingQuerier();
@@ -71,7 +83,7 @@ describe("upsertArtifacts chunking", () => {
         for (const q of captured) {
             expect(q.text).toContain("($1, $2, $3");
             // The highest placeholder must match the statement's own value count.
-            const max = Math.max(...[...q.text.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+            const max = Math.max(...placeholders(q.text));
             expect(max).toBe(q.values.length);
         }
     });

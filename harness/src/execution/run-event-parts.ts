@@ -8,6 +8,8 @@
  * through a subscription.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { reconcileKey } from "../contracts/chat-frame.js";
 import type { ChatPart } from "../contracts/chat-parts.js";
 import { PART_REGISTRY } from "../contracts/part-registry.js";
@@ -84,13 +86,13 @@ export function foldRunEventParts(parts: readonly ChatPart[]): ChatPart[] {
 export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (entry: T) => Promise<void>, flushMs: number): Promise<void> {
     const latestByKey = new Map<string, T>();
     const pendingKeys = new Set<string>();
-    // `0` is the no-timer sentinel: `clearTimeout(0)` is a no-op on every platform, so the
-    // teardown can cancel the timer unconditionally.
-    let flushTimer: ReturnType<typeof setTimeout> | 0 = 0;
+    // The gate of the one armed flush wait: present while a window is open, so a
+    // second entry in the window reuses it instead of arming a second flush.
+    let flushGate: AbortController | undefined;
     let flushChain: Promise<void> = Promise.resolve();
 
     const flushPending = async (): Promise<void> => {
-        flushTimer = 0;
+        flushGate = undefined;
         const keys = [...pendingKeys];
         pendingKeys.clear();
         for (const key of keys) {
@@ -100,13 +102,17 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
     };
 
     const scheduleFlush = (): void => {
-        if (flushTimer !== 0) return;
-        flushTimer = setTimeout(() => {
-            // A timed flush has no caller to report to. A lasting emit failure
-            // still reaches the caller, through the next direct emit or the
-            // final flush.
-            flushChain = flushChain.then(flushPending).catch(() => undefined);
-        }, flushMs);
+        if (flushGate !== undefined) return;
+        flushGate = new AbortController();
+        sleep(flushMs, undefined, { signal: flushGate.signal }).then(
+            () => {
+                // A timed flush has no caller to report to. A lasting emit failure
+                // still reaches the caller, through the next direct emit or the
+                // final flush.
+                flushChain = flushChain.then(flushPending).catch(() => undefined);
+            },
+            () => undefined,
+        );
     };
 
     try {
@@ -122,7 +128,9 @@ export async function pipeFoldedRunEvents<T>(entries: AsyncIterable<T>, emit: (e
             scheduleFlush();
         }
     } finally {
-        clearTimeout(flushTimer);
+        // The abort ends the armed wait, whose rejection the second arm swallows,
+        // so the teardown does not wait out the window.
+        flushGate?.abort();
         await flushChain;
         if (pendingKeys.size > 0) await flushPending();
     }

@@ -43,8 +43,9 @@
  * not be pattern-matched.
  */
 
-import type { z } from "zod";
+import { z } from "zod";
 
+import { parseJsonAs } from "./parse-json.js";
 import { isUnknownArray } from "./unknown-array.js";
 
 /**
@@ -58,6 +59,7 @@ const MAX_REPAIRABLE_STRING_LENGTH = 1_000_000;
 const HINT_SNIPPET_LENGTH = 40;
 
 /** A trailing `</parameter>`, optionally followed by `</invoke>`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the two call-tag closers of the model wire format, stripped from a repaired tool-call text.
 const TRAILING_CALL_TAGS = /<\/parameter>\s*(?:<\/invoke>\s*)?$/;
 
 /**
@@ -198,7 +200,7 @@ function repairableExpectation(issue: z.core.$ZodIssue): "object" | "array" | un
 function parseAs(raw: string, expected: "object" | "array"): { readonly value: unknown } | undefined {
     let parsed: unknown;
     try {
-        parsed = JSON.parse(raw);
+        parsed = parseJsonAs(raw, z.unknown());
     } catch {
         return undefined;
     }
@@ -226,12 +228,16 @@ function stripWrappers(raw: string): { readonly text: string; readonly removed: 
     }
 
     if (text.startsWith("```")) {
-        const open = /^```(?:json)?\s*\n/i.exec(text);
+        const open =
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the markdown fence opener with its optional json tag and leading whitespace; the whitespace-to-newline rule is the fence grammar.
+            /^```(?:json)?\s*\n/i.exec(text);
         if (open !== null) {
             removed.push(open[0].trim());
             text = text.slice(open[0].length);
         }
-        const close = /\n```\s*$/.exec(text);
+        const close =
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the closing fence of a repaired block, with whatever whitespace the model left after it.
+            /\n```\s*$/.exec(text);
         if (close !== null) {
             removed.push("```");
             text = text.slice(0, close.index);

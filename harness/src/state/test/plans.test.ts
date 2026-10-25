@@ -1,3 +1,8 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the parent index definition that the migration declares, over the qualified table name
+const PARENT_INDEX_DDL = /ON \S*cortex_plans USING btree \(parent_plan_id\)$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the runs index definition that the migration declares, over the qualified table name
+const RUNS_INDEX_DDL = /ON \S*cortex_runs USING btree \(analysis_id, plan_id, started_at DESC, run_id DESC\)$/;
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
@@ -55,7 +60,7 @@ describe("upsertPlan", () => {
     });
 
     it("rejects an id that is not the pln-<8hex> shape before any write", () => {
-        expect(() => upsertPlan(pool, { planId: "not-a-plan-id", analysisId: "analysis-1", plan: {} })).toThrow(/pln-<8hex>/);
+        expect(() => upsertPlan(pool, { planId: "not-a-plan-id", analysisId: "analysis-1", plan: {} })).toThrow("pln-<8hex>");
     });
 
     it("enforces the parent-scope check when the parent belongs to another analysis", async () => {
@@ -191,10 +196,12 @@ describe("the plan and run indexes", () => {
     }
 
     it("indexes the plans by their parent", async () => {
-        expect(await indexDefinition("idx_cortex_plans_parent")).toMatch(/ON \S*cortex_plans USING btree \(parent_plan_id\)$/);
+        const parentDef = await indexDefinition("idx_cortex_plans_parent");
+        expect(parentDef !== undefined && PARENT_INDEX_DDL.test(parentDef)).toBe(true);
     });
 
     it("indexes the runs by analysis, plan, start time, and run id", async () => {
-        expect(await indexDefinition("idx_cortex_runs_plan")).toMatch(/ON \S*cortex_runs USING btree \(analysis_id, plan_id, started_at DESC, run_id DESC\)$/);
+        const runsDef = await indexDefinition("idx_cortex_runs_plan");
+        expect(runsDef !== undefined && RUNS_INDEX_DDL.test(runsDef)).toBe(true);
     });
 });

@@ -74,6 +74,7 @@ describe("context records", () => {
     const text = "[Working Memory]\nThe working memory is empty.";
 
     it("round-trips the kind and the hash through the stored envelope", () => {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         const stored: unknown = JSON.parse(JSON.stringify(envelopeMessage(contextRecordMessage("working-memory", text))));
 
         const { message } = parseStoredMessageEnvelope(stored, "thread/0");
@@ -101,6 +102,7 @@ describe("compaction marks", () => {
     const drop = dropMarkerMessage({ kind: "drop", id: "c-2", tokensBefore: 170_000, durationMs: 3_000, keptTurns: 4 });
 
     function throughStorage(message: ModelMessage): ModelMessage {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         return parseStoredMessageEnvelope(JSON.parse(JSON.stringify(envelopeMessage(message))), "thread/0").message;
     }
 
@@ -198,6 +200,7 @@ describe("the input tokens of a request", () => {
             providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
         };
 
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         const stored = parseStoredMessageEnvelope(JSON.parse(JSON.stringify(envelopeMessage(withRequestInputTokens(reply, 302_000)))), "thread/0").message;
 
         expect(requestInputTokensOf(stored)).toBe(302_000);

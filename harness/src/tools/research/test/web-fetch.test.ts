@@ -10,6 +10,8 @@
  * test needs a controlled address set. No test reaches the network.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { createServer, type Server } from "node:http";
 import { EventEmitter } from "node:events";
 import { isIP } from "node:net";
@@ -606,7 +608,7 @@ describe("web_fetch — the guard", () => {
             { hopRequest: recordedHopRequest({ "http://silent.test/x": { status: 200, silent: true } }, emptyHopLog()), lookup: lookupAnswering([PUBLIC]) },
             makeCtx(undefined, controller.signal),
         );
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await sleep(10);
         controller.abort();
 
         await expect(promise).rejects.toMatchObject({ name: "AbortError" });
@@ -828,6 +830,9 @@ describe("web_fetch — the extractors", () => {
         const withScript = `<html><body><script>if (1 < 2) { document.write("</div>"); }</script><p>after</p></body></html>`;
         expect(htmlNestingDepth(withScript)).toBe(3);
         expect(htmlNestingDepth(`${"<section>".repeat(513)}x`)).toBe(513);
+        // The raw-text close repeats the name in any letter case, and ends at whitespace or the bracket.
+        expect(htmlNestingDepth(`<html><body><style>a</STYLE><div>x</div></style></body></html>`)).toBe(3);
+        expect(htmlNestingDepth(`<html><body><style>a</style ><div>x</div></style></body></html>`)).toBe(3);
     });
 
     it("turns a PDF into text, whole when it holds at most 100 pages", async () => {

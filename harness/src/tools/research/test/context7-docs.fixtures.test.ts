@@ -131,9 +131,9 @@ describe("the Context7 routes", () => {
         const { ctx } = makeToolContext();
 
         serve(readFixture("context7", "01-search-scanpy.drift.json"));
-        await expect(resolveLibraryIdTool.execute({ libraryName: "scanpy", query: "anything" }, ctx)).rejects.toThrow(/did not match the expected schema/);
+        await expect(resolveLibraryIdTool.execute({ libraryName: "scanpy", query: "anything" }, ctx)).rejects.toThrow("did not match the expected schema");
 
         serve(readFixture("context7", "08-docs-path-form.drift.json"));
-        await expect(queryDocsTool.execute({ libraryId: "/scverse/scanpy", query: "anything" }, ctx)).rejects.toThrow(/did not match the expected schema/);
+        await expect(queryDocsTool.execute({ libraryId: "/scverse/scanpy", query: "anything" }, ctx)).rejects.toThrow("did not match the expected schema");
     });
 });

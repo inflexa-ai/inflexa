@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { isSha256Hash } from "../../../lib/test/text-shapes.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createWorkspaceMutator } from "../../workspace/mutator.js";
@@ -427,7 +430,7 @@ describe("the release pin of one plan", () => {
 
     it("the tool definition hash is stable and names the three tools", () => {
         const first = knowledgeToolDefinitionHash();
-        expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(isSha256Hash(first)).toBe(true);
         expect(knowledgeToolDefinitionHash()).toBe(first);
     });
 });
@@ -552,8 +555,8 @@ describe("knowledge_template", () => {
         const script = await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8");
         expect(script).toBe('COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n');
         expect(out.local_slots).toEqual(["counts_path"]);
-        expect(out.written_sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
-        const record = asRecord(JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8")));
+        expect(isSha256Hash(out.written_sha256)).toBe(true);
+        const record = asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.unknown()));
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",
             version: "1.0.0",

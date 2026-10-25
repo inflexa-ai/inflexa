@@ -45,7 +45,7 @@ describe("stored conversation display envelope", () => {
         ["display version", { ...envelopeDisplayMessages(messages), schemaVersion: 2 }],
         ["messages", { ...envelopeDisplayMessages(messages), messages: [{ id: "x", role: "assistant", parts: [{ type: "text" }] }] }],
     ])("rejects an unsupported or malformed %s", async (_label, value) => {
-        expect(parseStoredDisplayEnvelope(value, "thread-1/0/display")).rejects.toThrow(/Invalid stored conversation display envelope/);
+        expect(parseStoredDisplayEnvelope(value, "thread-1/0/display")).rejects.toThrow("Invalid stored conversation display envelope");
     });
 
     it("keeps a stale field inside a known data payload rather than failing the read", async () => {
@@ -111,7 +111,7 @@ describe("a stored display part the vocabulary can no longer render", () => {
 
     it("leaves structural corruption to fail, having no part it can identify", async () => {
         const value = { ...envelopeDisplayMessages(messages), messages: [{ id: "a1", role: "assistant", parts: [{ data: { x: 1 } }] }] };
-        expect(parseStoredDisplayEnvelope(value, "t/0/display")).rejects.toThrow(/Invalid stored conversation display envelope/);
+        expect(parseStoredDisplayEnvelope(value, "t/0/display")).rejects.toThrow("Invalid stored conversation display envelope");
     });
 });
 
@@ -136,6 +136,7 @@ describe("a stored compaction divider", () => {
         const figures = { id: "c-1", status: "done" as const, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
         const divider: ConversationUIMessage = { id: "c-1", role: "system", parts: [{ type: "data-compaction", id: "c-1", data: figures }] };
 
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([divider]))), "t/0/display");
 
         expect(parsed.messages).toEqual([divider]);
@@ -158,6 +159,7 @@ describe("a stored sub-agent activity part", () => {
     it("round-trips field for field", async () => {
         const stored: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
 
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
 
         expect(parsed.messages).toEqual([stored]);
@@ -205,6 +207,7 @@ describe("a stored plan-approval part", () => {
     it("round-trips field for field", async () => {
         const stored: ConversationUIMessage = { id: "s1", role: "system", parts: [conversationDisplayPart(part)] };
 
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
 
         expect(parsed.messages).toEqual([stored]);

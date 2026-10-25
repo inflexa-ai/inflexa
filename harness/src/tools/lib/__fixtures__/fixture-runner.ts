@@ -21,6 +21,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+import { parseJsonAs } from "../../../lib/parse-json.js";
+
 export type { FixtureManifest, FixtureManifestEntry } from "./manifest.js";
 
 const FIXTURES_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -65,7 +67,7 @@ export function fixtureCase<S extends z.ZodType>(testCase: FixtureCase<S>): Eras
 
 /** Read one fixture file of a provider directory and parse it as JSON. */
 export function readFixture(provider: string, file: string): unknown {
-    return JSON.parse(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"));
+    return parseJsonAs(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"), z.unknown());
 }
 
 /** Register the accept, map, and reject assertions for each row of a fixture table. */

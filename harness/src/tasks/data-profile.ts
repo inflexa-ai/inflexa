@@ -24,6 +24,7 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { forStep, forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
 import { presentFirst } from "../lib/present.js";
+import { collapseWhitespace } from "../lib/text.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
@@ -1201,6 +1202,6 @@ export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfile
 const PROFILE_ERROR_MAX_LEN = 200;
 function profileFailureReason(err: unknown): string {
     const raw = err instanceof Error ? err.message : String(err);
-    const firstLine = presentFirst(raw.split("\n", 1), "the first line of the error").replace(/\s+/g, " ").trim();
+    const firstLine = collapseWhitespace(presentFirst(raw.split("\n", 1), "the first line of the error"));
     return firstLine.length > PROFILE_ERROR_MAX_LEN ? firstLine.slice(0, PROFILE_ERROR_MAX_LEN - 1) + "…" : firstLine || "Data profiling failed";
 }

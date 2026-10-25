@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
 import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
+import { firstSegmentOf } from "../../lib/text.js";
 import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
 
 const HandleResponseSchema = z.object({ responseCode: z.number() }).passthrough();
@@ -41,7 +42,7 @@ function cslRecord(doi: string, registrationAgency: string | undefined, metadata
         year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0]),
         venue,
         volume: metadata?.volume,
-        firstPage: metadata?.page?.split(/[-–]/)[0],
+        firstPage: firstSegmentOf(metadata?.page, "-–"),
         registrationAgency,
         url: metadata?.URL,
     };

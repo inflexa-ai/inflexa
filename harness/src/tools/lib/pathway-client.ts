@@ -11,6 +11,8 @@
 import { z } from "zod";
 
 import { apiFetchText, apiFetchValidated, parseTSV } from "./api-utils.js";
+import { collapseWhitespace } from "../../lib/text.js";
+import { stripHtmlTags } from "./html-text.js";
 
 const KEGG_BASE = "https://rest.kegg.jp";
 // Both `reactome.org/ContentService` and `release.reactome.org/ContentService`
@@ -21,16 +23,7 @@ const KEGG_BASE = "https://rest.kegg.jp";
 const REACTOME_BASE = "https://release.reactome.org/ContentService";
 
 export function stripHtmlAndCollapseWs(s: string): string {
-    // Strip tags to a fixpoint: a single pass can leave a `<…>` behind when
-    // removing an inner tag lets the surrounding angle brackets form a new one,
-    // so repeat until the string stops changing.
-    let out = s;
-    let prev: string;
-    do {
-        prev = out;
-        out = out.replace(/<[^>]+>/g, "");
-    } while (out !== prev);
-    return out.replace(/\s+/g, " ").trim();
+    return collapseWhitespace(stripHtmlTags(s));
 }
 
 const ORGANISM_MAP: Record<string, string> = {
@@ -256,13 +249,16 @@ export async function searchPathways(query: string, options: PathwaySearchOption
 }
 
 /** A Reactome stable identifier, for example `R-HSA-109581`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Reactome stable-id grammar: R-, three letters, digits, and an optional dotted subnumber.
 const REACTOME_ID_RE = /^R-[A-Z]{3}-\d+(\.\d+)?$/;
 
 /** A KEGG pathway identifier, for example `hsa04010` or `map04010`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the KEGG pathway-id grammar: three or four lowercase organism letters plus five digits.
 const KEGG_ID_RE = /^[a-z]{3,4}\d{5}$/;
 
 /** Read one field out of a KEGG flat-file record. */
 function keggField(record: string, field: string): string | null {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the field name is a caller literal ("NAME", "DESCRIPTION"); the anchored multiline form reads the KEGG flat-file grammar.
     const match = new RegExp(`^${field}\\s+(.*)$`, "m").exec(record);
     return match?.[1]?.trim() || null;
 }

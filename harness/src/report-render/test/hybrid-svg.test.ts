@@ -1,3 +1,10 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the background rectangle element that the runtime SVG carries on its own line
+const BACKGROUND_RECT_LINE = /<rect[^>]*><\/rect>\n/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the vector text element of one labeled axis, read for its inner text
+const AXIS_TITLE_TEXT = (label: string): RegExp => new RegExp(`<text[^>]*>${label}</text>`);
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the drawn image element of the raster layer, read for its placed rectangle
+const IMAGE_GEOMETRY = /<image [^>]*x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/;
+
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
@@ -114,7 +121,7 @@ const LAYER: PointLayerImage = { href: "data:image/png;base64,iVBORw0KGgo=", x: 
 /** The shared vector of the composition: each entry runs through both twins. */
 const COMPOSE_VECTOR: readonly { svg: string; layer: PointLayerImage; size: SvgRootSize }[] = [
     { svg: RUNTIME_SVG, layer: LAYER, size: SINGLE },
-    { svg: RUNTIME_SVG.replace(/<rect[^>]*><\/rect>\n/, ""), layer: LAYER, size: SINGLE },
+    { svg: RUNTIME_SVG.replace(BACKGROUND_RECT_LINE, ""), layer: LAYER, size: SINGLE },
     { svg: RUNTIME_SVG.replace('width="336" height="253"', 'width="1920" height="1080"'), layer: LAYER, size: SLIDE },
     { svg: RUNTIME_SVG, layer: { ...LAYER, href: 'data:x"><script>&' }, size: SINGLE },
     { svg: "<g>no root</g>", layer: LAYER, size: SINGLE },
@@ -136,7 +143,7 @@ const SERIES_VECTOR: readonly unknown[] = [
 describe("the composition of a hybrid SVG", () => {
     it("puts one image of the point layer after the background rectangle, under each vector mark", () => {
         const svg = composeHybridSvg(RUNTIME_SVG, LAYER, SINGLE);
-        expect(svg.match(/<image /g)?.length).toBe(1);
+        expect(svg.split("<image ").length - 1).toBe(1);
         const image = svg.indexOf("<image ");
         expect(image).toBeGreaterThan(svg.indexOf("<rect "));
         expect(image).toBeLessThan(svg.indexOf("<path "));
@@ -153,7 +160,7 @@ describe("the composition of a hybrid SVG", () => {
     });
 
     it("puts the image right after the root when the file holds no background rectangle", () => {
-        const svg = composeHybridSvg(RUNTIME_SVG.replace(/<rect[^>]*><\/rect>\n/, ""), LAYER, SINGLE);
+        const svg = composeHybridSvg(RUNTIME_SVG.replace(BACKGROUND_RECT_LINE, ""), LAYER, SINGLE);
         expect(svg.indexOf("<image ")).toBe(svg.indexOf(">") + 2);
     });
 
@@ -526,11 +533,11 @@ describe("the page build of a hybrid SVG", () => {
         expect(svg).not.toBeNull();
         const text = svg ?? "";
         expect(text.startsWith('<svg width="89mm" height="67mm" ')).toBe(true);
-        expect(text.match(/<image /g)?.length).toBe(1);
+        expect(text.split("<image ").length - 1).toBe(1);
         expect(text).toContain('href="data:image/png;base64,AAAA"');
         // The axis names and the name of the labeled row stay vector text.
-        expect(text).toMatch(/<text[^>]*>Chromosome<\/text>/);
-        expect(text).toMatch(/<text[^>]*>rs2<\/text>/);
+        expect(AXIS_TITLE_TEXT("Chromosome").test(text)).toBe(true);
+        expect(AXIS_TITLE_TEXT("rs2").test(text)).toBe(true);
         // The raster draws at 300 DPI in the print theme, and the crop reads the grid rectangle at that ratio.
         expect(raster.init).toMatchObject({ theme: CHART_PRINT_THEME_NAME, renderer: "canvas", width: 336, height: 253, devicePixelRatio: 300 / 96 });
         if (raster.ratio === undefined) throw new Error("expected a raster ratio");
@@ -538,7 +545,7 @@ describe("the page build of a hybrid SVG", () => {
         const crop = drawn[0];
         if (crop === undefined) throw new Error("the raster holds no drawn image");
         const [sx, sy, sw, sh] = crop;
-        const image = /<image [^>]*x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(text);
+        const image = IMAGE_GEOMETRY.exec(text);
         if (image === null) throw new Error("the raster holds no image element");
         const pixels = image.slice(1).map(Number);
         const ix = pixels[0] ?? Number.NaN;

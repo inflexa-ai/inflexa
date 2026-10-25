@@ -36,6 +36,7 @@
 import { lstatSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import Docker from "dockerode";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -245,7 +246,7 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
         } catch (err) {
             lastErr = err;
         }
-        await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
+        await sleep(HEALTH_POLL_MS);
     }
     throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }

@@ -38,6 +38,7 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
 import { formatNumberCell, typographicExponent } from "../number-format.js";
+import { isAllDigits } from "../../lib/text.js";
 import type { RenderProblem } from "../types.js";
 import { categoryName, transformColumn } from "./common.js";
 import {
@@ -186,7 +187,7 @@ function genomeAxis(found: readonly Chromosome[]): GenomeAxis {
     const starts: Array<[number, string]> = [];
     let previous: Chromosome | undefined;
     for (const chromosome of byPlace) {
-        starts.push([previous === undefined ? 0 : previous.high, `chr${categoryName(chromosome.name).trim().replace(CHROMOSOME_PREFIX, "")}`]);
+        starts.push([previous === undefined ? 0 : previous.high, `chr${withoutChrPrefix(categoryName(chromosome.name).trim())}`]);
         previous = chromosome;
     }
     return { names: CHROMOSOME_NAMES, starts };
@@ -206,17 +207,18 @@ type Chromosome = {
 /** The place of the three named chromosomes after the numbered ones, in genome order. */
 const NAMED_CHROMOSOMES: Readonly<Record<string, number>> = { X: 0, Y: 1, MT: 2, M: 2 };
 
-/** The text prefix of a chromosome name that some tables carry, for example `chr1`. */
-const CHROMOSOME_PREFIX = /^chr/i;
+/** The chromosome name without its leading `chr`, in either case. */
+function withoutChrPrefix(name: string): string {
+    return name.toLowerCase().startsWith("chr") ? name.slice(3) : name;
+}
 
-/**
- * The genome order of two chromosome names: the numbered chromosomes in numeric order, then X, Y, and MT, then
+/** The genome order of two chromosome names: the numbered chromosomes in numeric order, then X, Y, and MT, then
  * each other name in text order. A `chr` prefix takes no part in the order.
  */
 export function compareChromosomes(a: Cell, b: Cell): number {
     const rank = (cell: Cell): [number, number, string] => {
-        const name = String(cell).trim().replace(CHROMOSOME_PREFIX, "");
-        if (/^\d+$/.test(name)) return [0, Number(name), name];
+        const name = withoutChrPrefix(String(cell).trim());
+        if (name.length > 0 && isAllDigits(name)) return [0, Number(name), name];
         const named = NAMED_CHROMOSOMES[name.toUpperCase()];
         return named !== undefined ? [1, named, name] : [2, 0, name];
     };

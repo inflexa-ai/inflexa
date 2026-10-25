@@ -22,6 +22,7 @@ import { err, ok, type Result } from "neverthrow";
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import { parquetReadObjects, type AsyncBuffer } from "hyparquet";
+import { z } from "zod";
 
 import type {
     ArtifactFileReference,
@@ -37,7 +38,7 @@ import type {
 import type { Suspension } from "../workflows/suspension.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
-import { parseUnknownRecord } from "../lib/unknown-containers.js";
+import { parseJsonAs } from "../lib/parse-json.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import {
@@ -429,25 +430,15 @@ export function parseDelimited(text: string, delimiter: string): Row[] | undefin
  * the file falls through.
  */
 function parseJsonTable(text: string): Row[] | undefined {
-    let value: unknown;
+    let table: readonly Record<string, unknown>[];
     try {
-        value = JSON.parse(text);
+        table = parseJsonAs(text, z.array(z.record(z.string(), z.unknown())));
     } catch {
         return undefined;
     }
-    if (!Array.isArray(value)) {
-        return undefined;
-    }
     const rows: Row[] = [];
-    for (const item of value) {
-        if (item === null || typeof item !== "object" || Array.isArray(item)) {
-            return undefined;
-        }
+    for (const fields of table) {
         const row: Row = {};
-        const fields = parseUnknownRecord(item);
-        if (fields === undefined) {
-            return undefined;
-        }
         for (const [key, cell] of Object.entries(fields)) {
             if (cell !== null && typeof cell === "object") {
                 return undefined;

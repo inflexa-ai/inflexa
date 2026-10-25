@@ -25,6 +25,7 @@
 import { z } from "zod";
 
 import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { apiFetchValidated, describeApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
 
@@ -54,7 +55,7 @@ export const CtxChemicalSearchRowSchema = z.object({
 function isNoMatchProblemDetail(error: ApiError): boolean {
     if (error.type !== "http_status" || error.status !== 400) return false;
     try {
-        const body: unknown = JSON.parse(error.body);
+        const body = parseJsonAs(error.body, z.unknown());
         // `suggestions` separates the no-match answer from a generic 400
         // `ProblemDetail`, which carries `title` and `detail` alone. Without it,
         // a malformed request reads as a clean no-match.

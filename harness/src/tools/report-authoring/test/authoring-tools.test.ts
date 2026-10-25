@@ -9,6 +9,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Scope } from "../../../auth/types.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { normalizeDetail } from "../../../loop/tool-detail.js";
 import type { DraftDocument } from "../../../report-model/draft.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
@@ -441,7 +442,7 @@ describe("change_block", () => {
         const tools = createReportAuthoringTools(gateway);
         // The loop validates against `inputSchema` before it runs `execute`, thus the retitle call must
         // pass the schema with the `block` key absent.
-        const input = tools.change_block.inputSchema.parse(JSON.parse('{"targetId":"s1","title":"Results"}'));
+        const input = parseJsonAs('{"targetId":"s1","title":"Results"}', tools.change_block.inputSchema);
         const value = (await tools.change_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);

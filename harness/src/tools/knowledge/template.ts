@@ -129,7 +129,11 @@ export type KnowledgeTemplateOutput =
 /** The result of a `knowledge_template` call: each landed write rides as the call record, for the fold. */
 type KnowledgeTemplateResult = KnowledgeTemplateOutput | WithToolCallRecord<KnowledgeTemplateOutput, readonly WriteRecord[]>;
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the template reference grammar: the tpl- prefix, an id, and an optional @version tail.
 const TEMPLATE_REF = /^tpl-[a-z0-9-]+(@\d+\.\d+\.\d+)?$/;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a script file name is one segment of the safe file-name charset; the shape is the path-safety rule.
+const SCRIPT_NAME_RE = /^[A-Za-z0-9_.-]+$/;
 
 /** A model value equals a bound value when the scalars are identical, or when two lists hold the same strings in order. */
 function sameValue(bound: TemplateBindingValue, value: unknown): boolean {
@@ -235,7 +239,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                 .describe("One entry per bound slot whose value you change from the plan value. Absent when you send every bound value as it is."),
             script_name: z
                 .string()
-                .regex(/^[A-Za-z0-9_.-]+$/)
+                .regex(SCRIPT_NAME_RE)
                 .optional()
                 .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
         }),

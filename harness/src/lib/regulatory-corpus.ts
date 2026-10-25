@@ -18,6 +18,7 @@ import { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { tryMutation, tryQuery, withTransaction, type DbError } from "./db-result.js";
+import { collapseWhitespace } from "./text.js";
 
 export type ChunkOptions = {
     maxTokens?: number; // default 1000
@@ -53,6 +54,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     // This ensures a heading at position 0 (no preceding newline) is caught
     // the same way as headings mid-document.
     const normalised = text.startsWith("##") ? `\n${text}` : text;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the split marker is a level-2 heading (newline, two hashes, whitespace); the whitespace run may cross the heading's own newline, which the string split cannot express.
     const parts = normalised.split(/\n##\s+/);
 
     // parts[0] is always the lead-in text before the first heading (may be
@@ -71,7 +73,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): RawChunk[] {
     let globalIdx = 0;
 
     for (const sec of sections) {
-        const tokens = sec.body.split(/\s+/).filter(Boolean);
+        const tokens = collapseWhitespace(sec.body).split(" ").filter(Boolean);
         if (tokens.length === 0) continue;
 
         // Slide a window of maxTokens tokens with advance = maxTokens - overlapTokens.

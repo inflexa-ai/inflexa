@@ -17,19 +17,26 @@ const FAMILIES: CanonicalFamily[] = [
     {
         canonical: "g protein-coupled receptor",
         patterns: [
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the hyphen-variant spellings of the GPCR name, matched as whole words.
             /\bg[-\s]?protein[-\s]?coupled\s+receptor\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the GPCR abbreviation as a whole word.
             /\bgpcr\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the seven-transmembrane spelling of the family name.
             /\b7tm\s+receptor\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the rhodopsin-like subfamily spelling.
             /\brhodopsin-like\s+receptor\b/i,
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the secretin-like subfamily spelling.
             /\bsecretin-like\s+receptor\b/i,
         ],
     },
     {
         canonical: "serine/threonine-protein kinase",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the hyphen-variant spellings of the serine/threonine kinase name.
         patterns: [/\bserine\/threonine[-\s]?protein\s+kinase\b/i],
     },
     {
         canonical: "tyrosine-protein kinase",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the hyphen-variant spellings of the tyrosine kinase name.
         patterns: [/\btyrosine[-\s]?protein\s+kinase\b/i],
     },
     // Extend as additional hyphen-style mismatches surface. The default branch

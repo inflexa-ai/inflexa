@@ -77,10 +77,10 @@ const SIG_MAP: Record<ClinicalSignificance, string> = {
 
 /** Filter out uninformative ClinVar entries (literal "not provided", placeholders). */
 export function filterInformative(variants: ClinvarVariant[]): ClinvarVariant[] {
-    const noise = /^(not provided|not specified|reclassified)$/i;
+    const noise = new Set(["not provided", "not specified", "reclassified"]);
     return variants.filter((v) => {
         const sig = v.clinicalSignificance.trim();
-        if (!sig || noise.test(sig)) return false;
+        if (!sig || noise.has(sig.toLowerCase())) return false;
         return true;
     });
 }

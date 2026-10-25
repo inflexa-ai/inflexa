@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
+import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { ExtractionRequest } from "../../report-model/production-resolver.js";
 import type { ExecResult } from "../../sandbox/types.js";
@@ -47,8 +49,8 @@ describe("the extraction script", () => {
         // keep_default_na=False keeps a literal cell such as "NA" or an empty string as its text, thus a
         // text cell survives the extraction the same as the host parser keeps it. The two text reads each
         // set the flag, thus the regex anchors on the closing paren of the read call.
-        const matches = EXTRACTION_SCRIPT.match(/keep_default_na=False\)/g);
-        expect(matches).toHaveLength(2);
+        const matches = EXTRACTION_SCRIPT.split("keep_default_na=False)").length - 1;
+        expect(matches).toBe(2);
     });
 
     it("reads a JSON file by the strict host shape, and it infers no table", () => {
@@ -83,7 +85,7 @@ describe("buildExtractionExec", () => {
         // the script can refuse a file that drifted from the pin.
         const execEnv = body.env;
         if (execEnv === undefined) throw new Error("the exec carries no environment");
-        const parsed: unknown = JSON.parse(execEnv[EXTRACTION_INPUT_ENV] ?? "");
+        const parsed = parseJsonAs(execEnv[EXTRACTION_INPUT_ENV] ?? "", z.unknown());
         if (!isUnknownArray(parsed)) throw new Error("the exec carries no request list");
         expect(parsed).toEqual([
             { path: "data/x.tsv", format: "tsv", hash: "h1" },
@@ -99,7 +101,7 @@ describe("buildExtractionExec", () => {
 
         const execEnv = body.env;
         if (execEnv === undefined) throw new Error("the exec carries no environment");
-        const parsed: unknown = JSON.parse(execEnv[EXTRACTION_INPUT_ENV] ?? "");
+        const parsed = parseJsonAs(execEnv[EXTRACTION_INPUT_ENV] ?? "", z.unknown());
         if (!isUnknownArray(parsed)) throw new Error("the exec carries no request list");
         expect(parsed).toEqual([{ path: "data/x.csv", format: "tsv", hash: "h1" }]);
     });

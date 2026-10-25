@@ -151,7 +151,7 @@ describe("the lollipop figure", () => {
         expect(sam?.name).toBe("SAM-dependent MTase C5-type");
         const formatter = sam === undefined ? undefined : optionMaybe(sam, "label")?.formatter;
         if (typeof formatter !== "string") throw new Error("the band label holds no formatter text");
-        expect(formatter).toMatch(/^SAM-dependent/);
+        expect(formatter.startsWith("SAM-dependent")).toBe(true);
         // The band axis carries the position title, and the stem axis above it carries no tick label.
         const [stemAxis, bandAxis] = axisList(option, "xAxis");
         if (stemAxis === undefined || bandAxis === undefined) throw new Error("the lollipop holds two x axes");
@@ -169,7 +169,8 @@ describe("the lollipop figure", () => {
         const labels = bandAreas(option)
             .slice(1)
             .map(([from]) => optionAt(from, "label").formatter);
-        expect(labels[0]).toMatch(/^Interaction.*…$/);
+        const firstLabel = typeof labels[0] === "string" ? labels[0] : undefined;
+        expect(firstLabel !== undefined && firstLabel.startsWith("Interaction") && firstLabel.endsWith("…")).toBe(true);
         expect(labels[1]).toBe("PWWP");
         const tiny = derive(lollipop(), { track: { rows: [{ start: 591, end: 597, name: "Juxtamembrane", protein_length: 993 }] } });
         const tinyBox = bandAreas(tiny)[1]?.[0];

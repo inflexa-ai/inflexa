@@ -11,7 +11,7 @@
  * C0/C1 control characters and DEL, excluding `\t` (U+0009) and `\n`
  * (U+000A) which are legitimate whitespace in user prose.
  */
-// oxlint-disable-next-line no-control-regex -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below).
+// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- matching control characters is the intent: this pattern strips invisible C0/C1 bytes and DEL from untrusted user input (see `normalizeUnicode` below).
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 
 /**
@@ -34,7 +34,7 @@ export function normalizeUnicode(text: string): string {
  * arrives through no fault of the model: tool results carry raw command output
  * and file bytes, which is why they are otherwise left unsanitized.
  */
-// oxlint-disable-next-line no-control-regex -- matching NUL is the intent; see above.
+// oxlint-disable-next-line no-control-regex, eslint-js/no-restricted-syntax -- matching NUL is the intent; see above.
 const NUL = /\u0000/g;
 
 /**
@@ -63,17 +63,24 @@ export function stripNulCharacters(text: string): string {
  * Anthropic label wins; `sk-(?!ant-)` additionally excludes it by lookahead.
  */
 const SECRET_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the AWS access-key format with its fixed AKIA prefix and 16-character id body.
     { name: "AWS Access Key", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Anthropic key format with its sk-ant- prefix and base64url body.
     { name: "Anthropic API Key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the generic OpenAI sk- format; the (?!ant-) lookahead keeps the Anthropic label ahead of it.
     { name: "OpenAI API Key", pattern: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/g },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the GitHub token format with its gh*_ prefix and 36-character body.
     { name: "GitHub Token", pattern: /\bgh[psoru]_[A-Za-z0-9_]{36,}\b/g },
     {
         name: "JWT Token",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the three dot-separated base64url JWT segments after the eyJ signature prefix.
         pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
     },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Bearer scheme with its token characters and padding, the header form of a leaked credential.
     { name: "Bearer Token", pattern: /\bBearer\s+[A-Za-z0-9_\-.~+/]+=*/gi },
     {
         name: "Connection String",
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the DB connection schemes with their :// and unquoted authority, the connection-string form of a leaked credential.
         pattern: /\b(?:postgres|postgresql|mysql|mongodb|redis|amqp|mssql):\/\/[^\s"'`]+/gi,
     },
 ];

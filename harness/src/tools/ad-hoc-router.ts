@@ -247,6 +247,7 @@ export async function routeAdHocRequest(
     ).join("\n");
     const orientation = await profileOrientation(deps.pool, input.analysisId, logger);
     const controller = new AbortController();
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a guard, not a wait: it aborts the routing controller at the deadline while the provider call runs, and the finally clears it.
     const timer = setTimeout(
         () => controller.abort(new Error("ad hoc routing timed out")),
         effectiveDeadlineMs(deps.provider, AD_HOC_ROUTER_TIMEOUT_MS, deps.timeoutMs),

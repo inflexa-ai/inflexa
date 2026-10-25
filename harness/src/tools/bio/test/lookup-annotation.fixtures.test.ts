@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
 
 import { fixtureCase, runFixtureSuite } from "../../lib/__fixtures__/fixture-runner.js";
 import { GoAnnotationResponseSchema, GoTermResponseSchema } from "../lookup-annotation.js";
@@ -28,7 +29,7 @@ runFixtureSuite("QuickGO golden fixtures", [
             // The request names `goName`, thus each row carries the real label.
             for (const annotation of annotations) {
                 expect(annotation.goName).not.toBe("");
-                expect(annotation.goId).toMatch(/^GO:\d{7}$/);
+                expect(annotation.goId.startsWith("GO:") && annotation.goId.length === 10 && isAllDigits(annotation.goId.slice(3))).toBe(true);
             }
         },
     }),

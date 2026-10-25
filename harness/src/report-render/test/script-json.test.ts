@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { scriptJson } from "../script-json.js";
 
 describe("scriptJson", () => {
@@ -15,7 +17,7 @@ describe("scriptJson", () => {
     it("keeps the JSON value identical", () => {
         // The browser reads `<` as `<`, thus the parsed value matches the source value.
         const value = { rows: [{ k: "a</script>b" }], count: 3 };
-        const parsed: unknown = JSON.parse(scriptJson(value));
+        const parsed = parseJsonAs(scriptJson(value), z.unknown());
         expect(parsed).toEqual(value);
     });
 });

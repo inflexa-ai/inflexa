@@ -5,6 +5,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import { PLAN_ID_RE } from "../contracts/schemas/chat-parts.js";
+
 import type { ResultAsync } from "neverthrow";
 import type { QueryConfig } from "pg";
 import { z } from "zod";
@@ -25,9 +27,9 @@ export type PlanRowQuerier = {
  * `cortex_plans.plan_id` shape contract — `pln-` followed by 8 lowercase hex
  * chars. The chat trigger (`tools/execute-analysis.ts`) enforces the same regex on
  * its tool input; `upsertPlan` re-asserts it because it accepts a caller-derived
- * id rather than minting one.
+ * id rather than minting one. The shape itself is the `PLAN_ID_RE` home in
+ * `contracts/schemas/chat-parts.ts`.
  */
-const PLAN_ID_PATTERN = /^pln-[a-f0-9]{8}$/;
 
 export type InsertPlanInput = {
     analysisId: string;
@@ -116,7 +118,7 @@ export type UpsertPlanInput = {
  * (mirroring the parent-scope violations, which throw before the INSERT).
  */
 export function upsertPlan(pool: Querier, input: UpsertPlanInput): ResultAsync<void, DbError> {
-    if (!PLAN_ID_PATTERN.test(input.planId)) {
+    if (!PLAN_ID_RE.test(input.planId)) {
         throw new Error(`upsertPlan: invalid plan id "${input.planId}" — expected the pln-<8hex> shape`);
     }
 

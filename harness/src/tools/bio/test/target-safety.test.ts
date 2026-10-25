@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { z } from "zod";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -26,7 +28,7 @@ function gqlResponse(data: unknown): Response {
 function stubOpenTargets(responder: () => Response): Record<string, unknown>[] {
     const seen: Record<string, unknown>[] = [];
     globalThis.fetch = fetchDouble(async (_url: unknown, init?: RequestInit) => {
-        seen.push(GqlVariablesSchema.parse(JSON.parse(String(init?.body ?? "{}"))).variables);
+        seen.push(parseJsonAs(String(init?.body ?? "{}"), GqlVariablesSchema).variables);
         return responder();
     });
     return seen;
@@ -57,7 +59,8 @@ describe("targetSafety — curated panel", () => {
         expect(result.summary.bySeverity.high).toBe(1);
         expect(result.summary.byOrgan.cardiac).toBe(1);
         expect(presentAt(result.targets, 0).panelEntry?.clinical_consequence).toContain("valvulopathy");
-        expect(result.panelVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        const versionParts = result.panelVersion.split(".");
+        expect(versionParts.length === 3 && versionParts.every((part) => isAllDigits(part))).toBe(true);
     });
 
     it("detects each identifier shape without being told", async () => {
@@ -119,7 +122,7 @@ describe("targetSafety — Open Targets liabilities", () => {
             const u = String(url);
             seen.push(u);
             if (u.includes("ensembl")) return new Response(JSON.stringify({ id: "ENSG00000141510" }), { status: 200 });
-            const body = GqlVariablesSchema.parse(JSON.parse(String(init?.body ?? "{}")));
+            const body = parseJsonAs(String(init?.body ?? "{}"), GqlVariablesSchema);
             expect(body.variables).toEqual({ ensemblId: "ENSG00000141510" });
             return gqlResponse({ target: { id: "ENSG00000141510", approvedSymbol: "TP53", safetyLiabilities: [] } });
         });

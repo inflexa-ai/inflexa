@@ -15,6 +15,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { splitLines } from "../lib/text.js";
 
 /** The two container paths that the cpu files cover. */
 export const CPU_ONLINE_PATH = "/sys/devices/system/cpu/online";
@@ -47,10 +48,26 @@ export type CpuFiles = {
  * trailer of an ARM kernel, is not a processor and is dropped.
  */
 function processorBlocks(cpuinfo: string): string[] {
-    return cpuinfo
-        .split(/\n\s*\n/)
-        .map((block) => block.trim())
-        .filter((block) => /^processor\b/m.test(block));
+    const blocks: string[] = [];
+    let block: string[] = [];
+    for (const line of splitLines(cpuinfo)) {
+        if (line.trim() === "") {
+            if (block.length > 0) blocks.push(block.join("\n"));
+            block = [];
+            continue;
+        }
+        block.push(line);
+    }
+    if (block.length > 0) blocks.push(block.join("\n"));
+    return blocks.filter(hasProcessorLine);
+}
+
+function hasProcessorLine(block: string): boolean {
+    return splitLines(block).some((line) => line.startsWith("processor") && !isWordChar(line.charAt("processor".length)));
+}
+
+function isWordChar(char: string): boolean {
+    return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_";
 }
 
 /**

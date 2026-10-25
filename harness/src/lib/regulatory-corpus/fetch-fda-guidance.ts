@@ -1,6 +1,8 @@
 import { load } from "cheerio";
 import { PDFParse } from "pdf-parse";
 
+import { normalizeWhitespace } from "./normalize-whitespace.js";
+
 export type FdaCenter = "CDER" | "CBER";
 
 export type FdaDocStub = {
@@ -125,12 +127,4 @@ export async function fetchAndExtractFdaDoc(stub: FdaDocStub): Promise<FdaDoc> {
             category: stub.metadata?.category,
         },
     };
-}
-
-function normalizeWhitespace(s: string): string {
-    return s
-        .replace(/[ \t]+/g, " ")
-        .replace(/\r/g, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
 }

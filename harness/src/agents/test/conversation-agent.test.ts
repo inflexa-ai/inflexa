@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { collapseWhitespace } from "../../lib/text.js";
 import { join } from "node:path";
 import { ok, okAsync } from "neverthrow";
 import { z } from "zod";
@@ -129,7 +130,7 @@ describe("createConversationAgent", () => {
         const { systemPrompt } = buildAgent();
 
         // The prompt wraps its lines, thus the match reads the prompt with one space between words.
-        expect(systemPrompt.replace(/\s+/g, " ")).toContain(
+        expect(collapseWhitespace(systemPrompt)).toContain(
             "A record in the thread that says that the person approved a plan means that the run of that plan started",
         );
         expect(buildAgent().systemPrompt).toBe(systemPrompt);
@@ -182,7 +183,8 @@ describe("createConversationAgent", () => {
 
     test("the prompt names the structure card and keeps an artifact structure on show_file", () => {
         expect(conversationPrompt).toContain('show_user(kind: "structure")');
-        expect(conversationPrompt).toMatch(/\.pdb[^\n]*show_file|show_file[^\n]*\.pdb/);
+        const promptLines = conversationPrompt.split("\n");
+        expect(promptLines.some((line) => line.includes(".pdb") && line.includes("show_file"))).toBe(true);
     });
 
     test("places citation verification beside literature discovery", () => {

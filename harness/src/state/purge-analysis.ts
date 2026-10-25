@@ -62,7 +62,10 @@ import { isSqlIdentifier } from "./vector-store.js";
  * Empty is outside the shape too: it derives the bare table prefix, which is a
  * perfectly legal identifier and belongs to no analysis.
  */
-const PURGEABLE_ANALYSIS_ID = /^[a-z0-9_-]+$/;
+function isPurgeableAnalysisIdShape(analysisId: string): boolean {
+    if (analysisId.length === 0) return false;
+    return [...analysisId].every((char) => (char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "_" || char === "-");
+}
 
 /**
  * The analysis-keyed deletes that follow the thread/message pair, in the order
@@ -247,7 +250,7 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
         );
 
     const purgeAnalysis = (analysisId: string): ResultAsync<AnalysisPurgeOutcome, DbError> => {
-        if (!PURGEABLE_ANALYSIS_ID.test(analysisId)) {
+        if (!isPurgeableAnalysisIdShape(analysisId)) {
             return refuse("purgeAnalysis.analysisId", `purge-analysis: refusing unpurgeable analysis id "${analysisId}"`);
         }
         const indexName = searchIndexName(analysisId);

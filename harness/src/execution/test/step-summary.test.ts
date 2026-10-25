@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
+import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import { errAsync, ok, okAsync } from "neverthrow";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { z } from "zod";
@@ -250,9 +251,8 @@ describe("generateStepSummary", () => {
                     const found = presentFind(toolResults(req), (r) => r.toolCallId === "r1");
                     const outputValue = "value" in found.output ? found.output.value : undefined;
                     if (typeof outputValue !== "string") throw new Error("expected a string read output");
-                    const match = /reference "(to_[0-9a-f]{20})"/.exec(outputValue);
-                    if (match === null) throw new Error("the reference marker is absent from the read output");
-                    const ref = presentAt(match, 1, "the captured reference id");
+                    const ref = referencedToolOutput(outputValue);
+                    if (ref === undefined) throw new Error("the reference marker is absent from the read output");
                     return okAsync(makeMessage([toolUseBlock("k1", "read_tool_output", { ref, offset: 60_000 })], "tool_use"));
                 }
                 return okAsync(textMessage("# Long\n\n- all read"));

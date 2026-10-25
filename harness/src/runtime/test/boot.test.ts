@@ -97,7 +97,7 @@ describe("bootHarness", () => {
                     },
                 }),
             ),
-        ).rejects.toThrow(/skills/i);
+        ).rejects.toThrow("SKILLS_DIR");
 
         // Skill validation is step 2 — it throws before state-init (pool) and the
         // beforeLaunch hook (which precedes DBOS launch).
@@ -117,7 +117,7 @@ describe("bootHarness", () => {
                     }),
                 }),
             ),
-        ).rejects.toThrow(/boot reached state init/);
+        ).rejects.toThrow("boot reached state init");
 
         expect(poolUsed).toBe(true);
     });

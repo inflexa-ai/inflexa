@@ -20,7 +20,8 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { readSynthesisText } from "../execution/run-synthesis.js";
-import { parseUnknownRecord } from "../lib/unknown-containers.js";
+import { parseJsonAs } from "../lib/parse-json.js";
+import { parseUnknownRecord, UnknownRecordSchema } from "../lib/unknown-containers.js";
 import { nullProtoRecord } from "../lib/null-proto.js";
 import { queryAnalysisArtifacts } from "../state/artifacts.js";
 import type { Querier } from "../state/db.js";
@@ -122,17 +123,10 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
  * description sits there.
  */
 function citationsOf(text: string): CitationEntry[] {
-    let parsed: unknown;
+    let fields: Record<string, unknown>;
     try {
-        parsed = JSON.parse(text);
+        fields = parseJsonAs(text, UnknownRecordSchema);
     } catch {
-        return [];
-    }
-    if (typeof parsed !== "object" || parsed === null) {
-        return [];
-    }
-    const fields = parseUnknownRecord(parsed);
-    if (fields === undefined) {
         return [];
     }
     const entries: CitationEntry[] = [];

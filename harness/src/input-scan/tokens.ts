@@ -13,6 +13,7 @@
  */
 
 import { KNOWN_EXTENSIONS } from "./formats.js";
+import { isAllDigits, isAllHex } from "../lib/text.js";
 import { presentAt, presentFirst } from "../lib/present.js";
 import {
     MAX_OPAQUE_ID_MEAN_RUN,
@@ -62,20 +63,87 @@ export function splitStem(fileName: string): { stem: string; suffix: string } {
     return { stem: parts.slice(0, cut).join("."), suffix: parts.slice(cut).join(".").toLowerCase() };
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the fixed 8-4-4-4-12 hex groups are what make an identifier machine-issued rather than written.
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const HEX_DIGEST_PATTERN = /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
-const BASE64URL_PATTERN = /^[A-Za-z0-9\-_=]+$/;
+const DIGEST_HEX_LENGTHS = new Set([32, 40, 64]);
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- captures year, month, and day out of `2026-08-24` or `2026_08_24` for the calendar range check below.
 const DELIMITED_DATE_PATTERN = /^(\d{4})[-_](\d{2})[-_](\d{2})$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the same capture for the compact `20260824` form.
 const COMPACT_DATE_PATTERN = /^(\d{4})(\d{2})(\d{2})$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- finds a date fused inside a longer run; the lookarounds keep digits outside the date in their own runs.
+const EMBEDDED_DATE_PATTERN = /(?<![0-9])(?:\d{4}[-_]\d{2}[-_]\d{2}|\d{8})(?![0-9])/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- letter and digit runs are the shape whose mean length separates written words from random class-mixed tokens.
+const ALPHA_DIGIT_RUN_PATTERN = /[A-Za-z]+|[0-9]+/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- splits a run into letter, digit, and `-_=` separator tokens; the three classes are the token lattice below.
+const TOKEN_RUN_PATTERN = /[A-Za-z]+|[0-9]+|[-_=]+/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- splits a path segment into base64url-charset runs and the runs outside that charset, each whole.
+const SEGMENT_RUN_PATTERN = /[A-Za-z0-9\-_=]+|[^A-Za-z0-9\-_=]+/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- an alphanumeric run of three or more characters inside a shared affix is identifier material to mask.
+const MASKABLE_RUN_PATTERN = /[A-Za-z0-9]{3,}/g;
+
+function isAsciiUpper(char: string): boolean {
+    return char >= "A" && char <= "Z";
+}
+
+function isAsciiLower(char: string): boolean {
+    return char >= "a" && char <= "z";
+}
+
+export function isAsciiLetter(char: string): boolean {
+    return isAsciiUpper(char) || isAsciiLower(char);
+}
+
+export function isAsciiDigit(char: string): boolean {
+    return char >= "0" && char <= "9";
+}
+
+function isBase64UrlSymbol(char: string): boolean {
+    return char === "-" || char === "_" || char === "=";
+}
+
+function isAlphanumeric(char: string): boolean {
+    return isAsciiLetter(char) || isAsciiDigit(char);
+}
+
+function hasAsciiUpper(value: string): boolean {
+    return [...value].some(isAsciiUpper);
+}
+
+function hasAsciiLower(value: string): boolean {
+    return [...value].some(isAsciiLower);
+}
+
+function hasAsciiLetter(value: string): boolean {
+    return [...value].some(isAsciiLetter);
+}
+
+function hasAsciiDigit(value: string): boolean {
+    return [...value].some(isAsciiDigit);
+}
+
+function hasAlphanumeric(value: string): boolean {
+    return [...value].some(isAlphanumeric);
+}
+
+function isBase64UrlRun(value: string): boolean {
+    return value.length > 0 && [...value].every((char) => isAlphanumeric(char) || isBase64UrlSymbol(char));
+}
+
+function isHexRun(value: string): boolean {
+    return value.length > 0 && isAllHex(value);
+}
 
 function charClassCount(value: string): number {
     let classes = 0;
-    for (const pattern of [/[A-Z]/, /[a-z]/, /[0-9]/, /[-_=]/]) if (pattern.test(value)) classes++;
+    if (hasAsciiUpper(value)) classes++;
+    if (hasAsciiLower(value)) classes++;
+    if (hasAsciiDigit(value)) classes++;
+    if ([...value].some(isBase64UrlSymbol)) classes++;
     return classes;
 }
 
 function meanRunLength(value: string): number {
-    const runs = value.match(/[A-Za-z]+|[0-9]+/g) ?? [];
+    const runs = value.match(ALPHA_DIGIT_RUN_PATTERN) ?? [];
     if (runs.length === 0) return 0;
     return runs.reduce((total, run) => total + run.length, 0) / runs.length;
 }
@@ -86,14 +154,16 @@ function caseTransitions(value: string): number {
     for (let i = 1; i < chars.length; i++) {
         const before = presentAt(chars, i - 1, "case-run characters");
         const after = presentAt(chars, i, "case-run characters");
-        if (!/[A-Za-z]/.test(before) || !/[A-Za-z]/.test(after)) continue;
+        if (!isAsciiLetter(before) || !isAsciiLetter(after)) continue;
         if ((before === before.toUpperCase()) !== (after === after.toUpperCase())) flips++;
     }
     return flips;
 }
 
-function fractionOf(value: string, pattern: RegExp): number {
-    return (value.match(pattern) ?? []).length / value.length;
+function charFraction(value: string, matches: (char: string) => boolean): number {
+    let count = 0;
+    for (const char of value) if (matches(char)) count++;
+    return count / value.length;
 }
 
 /**
@@ -108,16 +178,16 @@ function fractionOf(value: string, pattern: RegExp): number {
  */
 export function isOpaqueId(value: string): boolean {
     if (UUID_PATTERN.test(value)) return true;
-    if (HEX_DIGEST_PATTERN.test(value)) return true;
+    if (isHexRun(value) && DIGEST_HEX_LENGTHS.has(value.length)) return true;
     if (value.length < MIN_OPAQUE_ID_LENGTH) return false;
-    if (!BASE64URL_PATTERN.test(value)) return false;
+    if (!isBase64UrlRun(value)) return false;
     if (charClassCount(value) < MIN_OPAQUE_ID_CHAR_CLASSES) return false;
 
     const flipBudget = Math.max(MIN_OPAQUE_ID_CASE_FLIPS, Math.floor(value.length / OPAQUE_ID_CASE_FLIP_DIVISOR));
     if (caseTransitions(value) >= flipBudget) return true;
 
-    if (fractionOf(value, /[-_=]/g) > MAX_OPAQUE_ID_SEPARATOR_FRACTION) return false;
-    return meanRunLength(value) <= MAX_OPAQUE_ID_MEAN_RUN && fractionOf(value, /[0-9]/g) >= MIN_OPAQUE_ID_DIGIT_FRACTION;
+    if (charFraction(value, isBase64UrlSymbol) > MAX_OPAQUE_ID_SEPARATOR_FRACTION) return false;
+    return meanRunLength(value) <= MAX_OPAQUE_ID_MEAN_RUN && charFraction(value, isAsciiDigit) >= MIN_OPAQUE_ID_DIGIT_FRACTION;
 }
 
 /** A calendar date written compactly or with a single separator: `20260824`, `2026-08-24`. */
@@ -130,12 +200,11 @@ export function isDateToken(value: string): boolean {
     return year >= 1900 && year <= 2999 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
 }
 
-const EMBEDDED_DATE_PATTERN = /(?<![0-9])(?:\d{4}[-_]\d{2}[-_]\d{2}|\d{8})(?![0-9])/g;
-
 function pushRuns(text: string, into: NameToken[]): void {
-    for (const run of text.matchAll(/[A-Za-z]+|[0-9]+|[-_=]+/g)) {
+    for (const run of text.matchAll(TOKEN_RUN_PATTERN)) {
         const value = run[0];
-        const kind: TokenKind = /^[0-9]/.test(value) ? "digit" : /^[A-Za-z]/.test(value) ? "alpha" : "delim";
+        const head = value.charAt(0);
+        const kind: TokenKind = isAsciiDigit(head) ? "digit" : isAsciiLetter(head) ? "alpha" : "delim";
         into.push({ kind, value });
     }
 }
@@ -151,9 +220,9 @@ function pushRuns(text: string, into: NameToken[]): void {
  */
 export function tokenizeSegment(segment: string): NameToken[] {
     const tokens: NameToken[] = [];
-    for (const match of segment.matchAll(/[A-Za-z0-9\-_=]+|[^A-Za-z0-9\-_=]+/g)) {
+    for (const match of segment.matchAll(SEGMENT_RUN_PATTERN)) {
         const value = match[0];
-        if (!/[A-Za-z0-9]/.test(value)) {
+        if (!hasAlphanumeric(value)) {
             tokens.push({ kind: "delim", value });
             continue;
         }
@@ -227,16 +296,16 @@ export function classifyValues(values: readonly string[]): ValueClass {
         return { tokenClass: "constant" };
     }
     if (values.every((value) => isDateToken(value))) return { tokenClass: "date" };
-    if (values.every((value) => /^[0-9]+$/.test(value))) {
+    if (values.every((value) => value.length > 0 && isAllDigits(value))) {
         const width = presentFirst(values, "digit values").length;
         return values.every((value) => value.length === width) ? { tokenClass: "digits-fixed", width } : { tokenClass: "digits" };
     }
-    if (values.every((value) => /^[0-9a-fA-F]+$/.test(value) && value.length >= 4)) return { tokenClass: "hex" };
+    if (values.every((value) => isHexRun(value) && value.length >= 4)) return { tokenClass: "hex" };
     if (values.every((value) => isOpaqueId(value))) {
         const lengths = values.map((value) => value.length);
         return { tokenClass: "opaque-id", minLength: Math.min(...lengths), maxLength: Math.max(...lengths) };
     }
-    if (values.every((value) => /^[A-Za-z]+$/.test(value))) return { tokenClass: "word" };
+    if (values.every((value) => value.length > 0 && [...value].every(isAsciiLetter))) return { tokenClass: "word" };
     const skeletons = new Set(values.map((value) => maskSegment(value)));
     const [skeleton] = skeletons;
     if (skeleton !== undefined && skeletons.size === 1 && (skeleton.includes(DIGIT_SYMBOL) || skeleton.includes(ID_SYMBOL) || skeleton.includes(DATE_SYMBOL))) {
@@ -280,9 +349,9 @@ export function commonAffixes(values: readonly string[]): { prefix: string; suff
  * member happened to share it.
  */
 export function maskAffix(affix: string): string {
-    return affix.replace(/[A-Za-z0-9]{3,}/g, (run) => {
-        const mixedCase = /[A-Z]/.test(run) && /[a-z]/.test(run);
-        const alphanumeric = /[A-Za-z]/.test(run) && /[0-9]/.test(run);
+    return affix.replace(MASKABLE_RUN_PATTERN, (run) => {
+        const mixedCase = hasAsciiUpper(run) && hasAsciiLower(run);
+        const alphanumeric = hasAsciiLetter(run) && hasAsciiDigit(run);
         return mixedCase || alphanumeric ? `<x${run.length}>` : run;
     });
 }
