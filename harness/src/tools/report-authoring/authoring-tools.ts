@@ -313,7 +313,7 @@ export type OpenedThread = {
  * same thread id and map a load outcome onto a refusal the same way.
  */
 export async function openReportThread(gateway: ReportSessionStateGateway, scope: Scope): Promise<Result<OpenedThread, SessionRefusal>> {
-    if (scope.kind !== "analysis" || scope.threadId === undefined || !isSafeId(scope.threadId)) {
+    if (scope.threadId === undefined || !isSafeId(scope.threadId)) {
         return err({ reason: "no-thread-scope", detail: "the scope of the call names no usable report thread id" });
     }
     const { threadId, analysisId } = scope;

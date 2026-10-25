@@ -126,11 +126,9 @@ describe("mutate surface — end-to-end", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ command: ["ls", "-la"] }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        if (out.status === "ok") {
-            expect(out.stdoutTruncated).toBe(true);
-            expect(out.stdoutTotalLength).toBe(big.length);
-            expect(out.stdout.length).toBe(EXEC_STREAM_BYTE_CAP);
-        }
+        expect(out.stdoutTruncated).toBe(true);
+        expect(out.stdoutTotalLength).toBe(big.length);
+        expect(out.stdout.length).toBe(EXEC_STREAM_BYTE_CAP);
         void workingDir;
     });
 

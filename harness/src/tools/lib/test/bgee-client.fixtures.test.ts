@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { bucketRank, parseExpressionResponse } from "../bgee-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 describe("Bgee golden fixtures", () => {
     it("reads the observed wire shape of an expression call", () => {
@@ -36,12 +37,12 @@ describe("Bgee golden fixtures", () => {
                 }),
             })
             .parse(readFixture("bgee", "expr-TP53-human.json"));
-        expect(typeof body.data.calls[0]!.expressionScore!.expressionScore).toBe("string");
+        expect(typeof presentAt(body.data.calls, 0).expressionScore?.expressionScore).toBe("string");
     });
 
     it("gives a null score when the drift twin breaks the score type", () => {
         const rows = parseExpressionResponse(readFixture("bgee", "expr-TP53-human.drift.json"));
-        expect(rows[0]!.expressionScore).toBeNull();
+        expect(presentAt(rows, 0).expressionScore).toBeNull();
     });
 
     it("buckets a score into the declared rank", () => {

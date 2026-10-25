@@ -5,6 +5,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createLinkPackagesTool } from "../link-packages.js";
 import type { PackageQuery } from "../../../sandbox/package-identity.js";
 import type { ExtendAnalysisFarm } from "../../../sandbox/types.js";
+import { presentAt } from "../../../lib/present.js";
 
 /** A seam that records what it received and links every query it is given. */
 function recordingSeam(): {
@@ -38,7 +39,7 @@ describe("link_packages — the query grammar", () => {
 
         (await tool.execute({ packages: ["scanpy", "numpy==1.26.4", "python:igraph==1.0.0"] }, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(seam.calls[0]!.queries).toEqual([
+        expect(presentAt(seam.calls, 0).queries).toEqual([
             { spelling: "scanpy" },
             { spelling: "numpy", version: "1.26.4" },
             { spelling: "igraph", track: "python", version: "1.0.0" },

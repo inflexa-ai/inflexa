@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { envelopeMessage, legacyAnthropicToModelMessage, parseStoredMessageEnvelope } from "../ai-sdk-message-storage.js";
 import { type BackfillClient, backfillAiSdkMessageEnvelopes } from "../message-backfill.js";
+import { presentAt } from "../../lib/present.js";
 
 type LegacyRow = {
     readonly thread_id: string;
@@ -134,7 +135,7 @@ describe("backfillAiSdkMessageEnvelopes", () => {
 
         await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
-        expect(JSON.parse(String(fake.updates[0]![0]))).toEqual(
+        expect(JSON.parse(String(presentAt(fake.updates, 0)[0]))).toEqual(
             envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
         );
 

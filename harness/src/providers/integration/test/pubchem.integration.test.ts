@@ -23,9 +23,9 @@ describe.skipIf(!LIVE)("live PubChem", () => {
         const props = await getCompoundPropertiesByCID(ASPIRIN_CID);
 
         expect(props).not.toBe(null);
-        expect(props!.cid).toBe(ASPIRIN_CID);
-        expect(typeof props!.molecularWeight).toBe("number");
-        expect(props!.inchiKey).toMatch(/^[A-Z]{14}-[A-Z]{10}-[A-Z]$/);
-        expect(props!).toHaveProperty("canonicalSmiles");
+        expect(props?.cid).toBe(ASPIRIN_CID);
+        expect(typeof props?.molecularWeight).toBe("number");
+        expect(props?.inchiKey).toMatch(/^[A-Z]{14}-[A-Z]{10}-[A-Z]$/);
+        expect(props).toHaveProperty("canonicalSmiles");
     }, 60_000);
 });

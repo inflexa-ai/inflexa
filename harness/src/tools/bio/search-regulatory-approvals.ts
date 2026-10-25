@@ -13,6 +13,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { presentFirst } from "../../lib/present.js";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
@@ -148,9 +149,10 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             const headers = getAmassHeaders(deps.apiKey);
 
             if (input.action === "search") {
+                if (input.query === undefined) throw new Error("search requires query");
                 const rows = await searchRegulatoryRecords(
                     {
-                        query: input.query!,
+                        query: input.query,
                         limit: input.limit,
                         agency: input.agency ? input.agency : undefined,
                         authorizationStatus: input.authorizationStatus ? input.authorizationStatus : undefined,
@@ -168,7 +170,8 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
             }
 
             if (input.action === "section") {
-                const section = await getRegulatorySection(input.amassId!, input.documentSectionId!, headers);
+                if (input.amassId === undefined || input.documentSectionId === undefined) throw new Error("section requires amassId and documentSectionId");
+                const section = await getRegulatorySection(input.amassId, input.documentSectionId, headers);
                 if (section.isErr()) return failure(section.error);
                 return ok(section.value ? { status: "found" as const, section: section.value } : { status: "not_found" as const });
             }
@@ -187,7 +190,7 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
                 if (ids.isErr()) return failure(ids.error);
                 if (ids.value.length === 0) return ok({ status: "not_found" as const });
                 if (ids.value.length > 1) return ok({ status: "ambiguous" as const, candidates: ids.value });
-                amassId = ids.value[0]!;
+                amassId = presentFirst(ids.value, "the single regulatory id");
             }
 
             const record = await getRegulatoryRecord(amassId, headers);

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { presentAt } from "../lib/present.js";
 import { authorNamesMatch, normalizeAuthor, normalizeComparable } from "./normalize.js";
 import type { CitationCandidateCluster, CitationIdentifiers, CitationInput, CitationRecord, NormalizedCitation } from "./types.js";
 
@@ -49,7 +50,11 @@ function authorSimilarity(left: readonly string[] | undefined, right: readonly s
 }
 
 function identifierEntries(identifiers: CitationIdentifiers): string[] {
-    return Object.entries(identifiers).flatMap(([kind, value]) => (value === undefined ? [] : [`${kind}:${value.toLocaleLowerCase("en-US")}`]));
+    // Object.entries types the values as `string`, but a record can carry a key set to
+    // `undefined` (the clients build `identifiers: { doi }` verbatim), so the entry value
+    // is widened to keep the skip of undefined values.
+    const entries: Array<readonly [string, string | undefined]> = Object.entries(identifiers);
+    return entries.flatMap(([kind, value]) => (value === undefined ? [] : [`${kind}:${value.toLocaleLowerCase("en-US")}`]));
 }
 
 function sharesStrongIdentifier(left: CitationRecord, right: CitationRecord): boolean {
@@ -87,7 +92,7 @@ class UnionFind {
     }
 
     find(index: number): number {
-        const parent = this.parent[index]!;
+        const parent = presentAt(this.parent, index, "the parent link");
         if (parent === index) return index;
         const root = this.find(parent);
         this.parent[index] = root;
@@ -128,8 +133,8 @@ function containsId(cluster: CitationCandidateCluster, key: keyof CitationIdenti
 function addRelatedVersions(clusters: CitationCandidateCluster[], config: CitationMatchConfig): void {
     for (let left = 0; left < clusters.length; left += 1) {
         for (let right = left + 1; right < clusters.length; right += 1) {
-            const a = clusters[left]!;
-            const b = clusters[right]!;
+            const a = presentAt(clusters, left, "the left cluster");
+            const b = presentAt(clusters, right, "the right cluster");
             const similarity = Math.max(...a.records.flatMap((one) => b.records.map((two) => recordSimilarity(one, two))));
             if (similarity < config.relatedVersionSimilarity) continue;
             const aArxiv = containsId(a, "arxiv");
@@ -159,8 +164,8 @@ export function clusterCitationRecords(
     const union = new UnionFind(records.length);
     for (let left = 0; left < records.length; left += 1) {
         for (let right = left + 1; right < records.length; right += 1) {
-            const a = records[left]!;
-            const b = records[right]!;
+            const a = presentAt(records, left, "the left record");
+            const b = presentAt(records, right, "the right record");
             if (sharesStrongIdentifier(a, b)) union.union(left, right);
             else if ((!hasStrongIdentifier(a) || !hasStrongIdentifier(b)) && recordSimilarity(a, b) >= config.clusterSimilarity) union.union(left, right);
         }
@@ -169,7 +174,7 @@ export function clusterCitationRecords(
     const grouped = new Map<number, CitationRecord[]>();
     for (let index = 0; index < records.length; index += 1) {
         const root = union.find(index);
-        grouped.set(root, [...(grouped.get(root) ?? []), records[index]!]);
+        grouped.set(root, [...(grouped.get(root) ?? []), presentAt(records, index, "the record")]);
     }
     const clusters = [...grouped.values()].map((members) => ({
         id: stableClusterId(members),

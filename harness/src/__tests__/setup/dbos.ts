@@ -144,16 +144,16 @@ async function ensureDbosLaunched(basePool: Pool): Promise<void> {
         }
         await launchDbos({
             config: {
-                dbHost: process.env.DB_PG_HOST!,
-                dbPort: process.env.DB_PG_PORT ?? "5432",
-                dbName: process.env.DB_PG_NAME!,
-                dbUser: process.env.DB_PG_USER!,
-                dbPassword: process.env.DB_PG_PASSWORD!,
+                dbHost: process.env.DB_PG_HOST,
+                dbPort: process.env.DB_PG_PORT,
+                dbName: process.env.DB_PG_NAME,
+                dbUser: process.env.DB_PG_USER,
+                dbPassword: process.env.DB_PG_PASSWORD,
                 dbSslMode: "disable",
-                appName: process.env.DBOS_APP_NAME!,
+                appName: process.env.DBOS_APP_NAME,
                 applicationVersion: process.env.DBOS_APPLICATION_VERSION,
-                adminPort: process.env.DBOS_ADMIN_PORT ?? "3001",
-                executorId: process.env.HOSTNAME ?? "local-dev",
+                adminPort: process.env.DBOS_ADMIN_PORT,
+                executorId: process.env.HOSTNAME,
             },
             logger: silentLogger,
         });

@@ -16,6 +16,7 @@
 import { DBOS, Error as DBOSErrors, StatusString } from "@dbos-inc/dbos-sdk";
 
 import { untracedFetch } from "../lib/otel-spans.js";
+import { presentFirst } from "../lib/present.js";
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
 import { PollResponseSchema, type ExecEmit, type ExecRequest, type ExecResult, type SandboxLiveness, type SandboxRef, type SubmitExecBody } from "./types.js";
@@ -192,7 +193,7 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
     let lastCancelCheckMs = now();
     const escalation = createEscalationPolicy();
 
-    while (true) {
+    for (;;) {
         pollAttempt += 1;
         const polled = await pollOnce(fetchImpl, ref, execId, cursor);
 
@@ -203,7 +204,7 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
             // Sequence numbers are contiguous per exec, thus a hole between the local
             // cursor and the next delivered (or high-water) seq proves that the ring
             // shed events before the host saw them.
-            const nextSeq = newEvents.length > 0 ? newEvents[0]!.seq : resp.cursor > cursor ? resp.cursor + 1 : cursor + 1;
+            const nextSeq = newEvents.length > 0 ? presentFirst(newEvents, "the new sandbox event").seq : resp.cursor > cursor ? resp.cursor + 1 : cursor + 1;
             const lost = nextSeq - cursor - 1;
             if (lost > 0) {
                 warn(

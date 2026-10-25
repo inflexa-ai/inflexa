@@ -12,6 +12,7 @@ import { createWorkspaceMutator } from "../../workspace/mutator.js";
 import { contractAnswer, fakeKnowledgeClient, renderAnswer, SNAPSHOT, substituteRenderAnswer } from "../__fixtures__/fake-client.js";
 import { decisionRecordPath } from "../../workspace/decision-record.js";
 import { createKnowledgeTemplateTool, type TemplateBinding } from "../template.js";
+import { presentAt, presentFind, presentGet } from "../../../lib/present.js";
 
 const ANALYSIS = "analysis-001";
 const TEMPLATE = "tpl-deseq2-two-group@1.0.0";
@@ -130,7 +131,7 @@ describe("knowledge_template with a binding", () => {
         expect(out).toMatchObject({ match: "rejected" });
         if (!("match" in out) || out.match !== "rejected") return;
         expect(out.issues).toHaveLength(1);
-        const issue = out.issues[0]!;
+        const issue = presentAt(out.issues, 0);
         expect(issue.slot).toBe("lfc_shrink");
         expect(issue.message).toContain('"apeglm"');
         expect(issue.message).toContain("doi:10.1093/bioinformatics/bty895");
@@ -222,7 +223,9 @@ describe("knowledge_template with a binding", () => {
         const out = (await tool.execute({ template: "tpl-decoupler-scores@1.0.0", slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
         if (!("status" in out) || out.status !== "ok") throw new Error("expected a render");
         expect(out.template.method).toEqual(substitute.template.method);
-        expect(out.template.substitute_for).toEqual(substitute.template.substitute_for!);
+        const substituteFor = substitute.template.substitute_for;
+        if (substituteFor === undefined) throw new Error("the substitute_for reference is absent");
+        expect(out.template.substitute_for).toEqual(substituteFor);
         expect(out.run_with).toBe("python3 scripts/tpl-decoupler-scores.py");
 
         const plain = build(binding(), { render: renderAnswer() });
@@ -238,10 +241,14 @@ describe("the binding rides the step coordinates into the template tool", () => 
         const fake = fakeKnowledgeClient();
         const base = makeFakeSandboxAgentDeps();
         const agents = createSandboxAgents({ ...base, knowledge: fake.client, step: { ...base.step, templateBinding: binding() } });
-        const tool = agents["bulk-transcriptomics-agent"]!.tools.find((candidate) => candidate.id === "knowledge_template");
+        const tool = presentFind(
+            presentGet(agents, "bulk-transcriptomics-agent").tools,
+            (candidate) => candidate.id === "knowledge_template",
+            "the knowledge_template tool",
+        );
         expect(tool).toBeDefined();
         const { ctx } = makeToolContext();
-        const out = (await tool!.execute({ template: TEMPLATE, slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ template: TEMPLATE, slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
         expect(out).toMatchObject({ match: "rejected" });
         expect(fake.calls.render).toHaveLength(0);
     });
@@ -250,9 +257,13 @@ describe("the binding rides the step coordinates into the template tool", () => 
         // The fake answers unavailable, thus the call reaches the service and the tool writes nothing.
         const fake = fakeKnowledgeClient({ render: { match: "unavailable", reason: "off" } });
         const agents = createSandboxAgents({ ...makeFakeSandboxAgentDeps(), knowledge: fake.client });
-        const tool = agents["bulk-transcriptomics-agent"]!.tools.find((candidate) => candidate.id === "knowledge_template");
+        const tool = presentFind(
+            presentGet(agents, "bulk-transcriptomics-agent").tools,
+            (candidate) => candidate.id === "knowledge_template",
+            "the knowledge_template tool",
+        );
         const { ctx } = makeToolContext();
-        const out = (await tool!.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
         expect(out).toEqual({ match: "unavailable", reason: "off" });
         expect(fake.calls.render).toHaveLength(1);
         expect(fake.calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr" });

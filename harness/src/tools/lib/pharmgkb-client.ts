@@ -61,7 +61,7 @@ export async function searchPharmgkb(
         throw new Error(describeApiError(res.error));
     }
 
-    const data = res.value?.data ?? [];
+    const data = res.value.data ?? [];
     const annotations = data.slice(0, limit).map((ann) => ({
         gene: ann.location?.genes?.map((g) => g.symbol).join(", ") ?? query,
         drug: ann.relatedChemicals?.map((c) => c.name).join(", ") ?? "",

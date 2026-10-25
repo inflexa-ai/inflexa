@@ -19,6 +19,7 @@ import { loadPlan, type DataProfileResult } from "../../../state/index.js";
 import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
 import { createGeneratePlanTool } from "../generate-plan.js";
+import { presentAt, presentFirst, presentGet } from "../../../lib/present.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
 const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
@@ -57,6 +58,12 @@ function planResultOf(value: unknown): PlanningAgentOutput {
     return PlanningAgentOutputSchema.parse(value);
 }
 
+/** The plan id the accepted run reported; absence fails the test by name. */
+function planIdOf(result: PlanningAgentOutput): string {
+    if (result.planId === undefined) throw new Error("the plan id is absent");
+    return result.planId;
+}
+
 /**
  * The stored plan, parsed out of the state layer's `unknown` payload. The
  * grounding fields are the ones the restore tests read; the parse fails the
@@ -86,9 +93,9 @@ function storedPlan(stored: unknown): {
 
 /** The seed the planner was actually handed — the bytes the model saw, not what the caller passed. */
 function plannerSeed(provider: ScriptedProvider): string {
-    const first = provider.calls[0]?.messages[0];
-    expect(first?.role).toBe("user");
-    const content = first!.content;
+    const first = presentFirst(presentFirst(provider.calls, "the first provider call").messages, "the first message");
+    expect(first.role).toBe("user");
+    const content = first.content;
     return typeof content === "string" ? content : JSON.stringify(content);
 }
 
@@ -110,7 +117,8 @@ function blockImmediately(): ScriptedProvider {
 }
 
 /** One phrase the first plannable agent really advertises — the planner schema takes nothing else. */
-const FIRST_AGENT_CAPABILITY = SANDBOX_AGENT_META[PLANNABLE_AGENT_IDS[0]!]!.capabilities[0]!;
+const FIRST_AGENT_CAPABILITY = presentGet(SANDBOX_AGENT_META, PLANNABLE_AGENT_IDS[0]).capabilities[0];
+if (FIRST_AGENT_CAPABILITY === undefined) throw new Error("FIRST_AGENT_CAPABILITY is absent");
 
 /** A schema-valid planner plan — one step, on a real plannable agent. */
 function validCandidate(stepOverrides: Record<string, unknown> = {}) {
@@ -224,16 +232,16 @@ describe("generatePlan loop-driving tool", () => {
         expect(result.event).toBe("error");
         expect(result.error).toBe("Data is incompatible with every available agent.");
         expect(provider.calls).toHaveLength(1);
-        expect(provider.calls[0]!.toolChoice).toBeUndefined();
+        expect(presentAt(provider.calls, 0).toolChoice).toBeUndefined();
 
         // The planner ran on a derived child Session, offered every terminal tool. Only the
         // terminal set is asserted: those are what can record an outcome, so a missing one
         // is a planner that can run to completion with nothing to show for it. The rest of
         // the roster is deliberately not pinned here — an exact list turns every tool added
         // to the planner into an unrelated failure in a test about blocker outcomes.
-        expect(provider.sessions[0]!.provenance.agentId).toBe("planner");
-        expect(provider.sessions[0]!.provenance.callPath).toEqual(["conversation-agent", "planner"]);
-        const offered = Object.keys(provider.calls[0]!.tools);
+        expect(presentAt(provider.sessions, 0).provenance.agentId).toBe("planner");
+        expect(presentAt(provider.sessions, 0).provenance.callPath).toEqual(["conversation-agent", "planner"]);
+        const offered = Object.keys(presentAt(provider.calls, 0).tools);
         expect(offered).toContain("submit_plan");
         expect(offered).toContain("request_clarification");
         expect(offered).toContain("report_blocker");
@@ -270,7 +278,7 @@ describe("generatePlan loop-driving tool", () => {
             toolContext(),
         );
 
-        const offered = Object.keys(provider.calls[0]!.tools);
+        const offered = Object.keys(presentAt(provider.calls, 0).tools);
         expect(offered).toContain("submit_plan");
         expect(offered).toContain("request_clarification");
         expect(offered).toContain("report_blocker");
@@ -291,7 +299,7 @@ describe("generatePlan loop-driving tool", () => {
             toolContext(),
         );
 
-        const ids = Object.keys(provider.calls[0]!.tools);
+        const ids = Object.keys(presentAt(provider.calls, 0).tools);
         expect(ids.slice(-4)).toEqual(["read_tool_output", "submit_plan", "request_clarification", "report_blocker"]);
         expect(ids.indexOf("list_available_packages")).toBe(ids.indexOf("read_tool_output") - 1);
     });
@@ -418,7 +426,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
         });
 
@@ -453,7 +461,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             expect(stored.steps[0]?.grounding?.snapshot).toBe(SNAPSHOT.digest);
             expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
         });
@@ -481,7 +489,7 @@ describe("generatePlan loop-driving tool", () => {
                 id: "T1S2",
                 grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
             });
-            const first = base.steps[0]!;
+            const first = presentAt(base.steps, 0);
             const typed = `${SNAPSHOT.digest.slice(0, 60)}0000`;
             const plan = {
                 ...base,
@@ -517,7 +525,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             const digestOf = (id: string) => stored.steps.find((step) => step.id === id)?.grounding?.snapshot;
             expect(digestOf("T1S2")).toBe(SNAPSHOT.digest);
             expect(digestOf("T2S1")).toBe(SNAPSHOT.digest);
@@ -561,7 +569,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             expect(stored.steps[0]?.grounding?.status).toBe("ungrounded");
             expect(stored.steps[0]?.grounding?.snapshot).toBe(SNAPSHOT.digest);
             expect(stored.steps[0]?.grounding?.template).toBeUndefined();
@@ -602,7 +610,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             expect(stored.steps[0]?.grounding?.claims).toEqual(["R-0001@e7d0", "R-0166@4d5e"]);
         });
 
@@ -647,8 +655,8 @@ describe("generatePlan loop-driving tool", () => {
             expect(result.event).toBe("plan_complete");
             const rejections = logger.records.filter((r) => r.level === "warn" && r.msg.includes("submit_plan rejected"));
             expect(rejections).toHaveLength(1);
-            expect(JSON.stringify(rejections[0]!.fields)).toContain("R-0999@abcd");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            expect(JSON.stringify(presentAt(rejections, 0).fields)).toContain("R-0999@abcd");
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             expect(stored.steps[0]?.grounding?.claims).toEqual(["R-0001@e7d0"]);
         });
 
@@ -680,7 +688,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            const stored = storedPlan((await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap());
+            const stored = storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
             expect(stored.steps[0]?.grounding?.snapshot).toBe("none");
             expect(stored.steps[0]?.grounding?.template).toBeUndefined();
         });
@@ -836,7 +844,7 @@ describe("generatePlan loop-driving tool", () => {
         function outcomeRecord(logger: CapturingLogger): CapturedLog {
             const records = logger.records.filter((r) => r.msg.endsWith("plan generation finished"));
             expect(records).toHaveLength(1);
-            return records[0]!;
+            return presentAt(records, 0);
         }
 
         it("records a submitted plan once, at info, with the elapsed time and analysis", async () => {
@@ -907,7 +915,10 @@ describe("generatePlan loop-driving tool", () => {
                 signal: aborted.signal,
             });
 
-            const cancelledRecord = cancelled.records.filter((r) => r.msg.endsWith("plan generation finished"))[0]!;
+            const cancelledRecord = presentAt(
+                cancelled.records.filter((r) => r.msg.endsWith("plan generation finished")),
+                0,
+            );
             expect(cancelledRecord.fields.outcome).toBe("cancelled");
             expect(cancelledRecord.fields.outcome).not.toBe(record.fields.outcome);
         });
@@ -929,10 +940,10 @@ describe("generatePlan loop-driving tool", () => {
             // so it must survive the default level a host actually runs at.
             const rejection = logger.records.filter((r) => r.level === "warn" && r.msg.includes("submit_plan rejected"));
             expect(rejection).toHaveLength(1);
-            expect(rejection[0]!.fields).toMatchObject({ attempt: 1, codes: { schema: 0, semantic: 1 } });
-            expect(rejection[0]!.fields.issueCount).toBeGreaterThan(0);
-            expect(rejection[0]!.fields.paths).toEqual(["plan"]);
-            expect(rejection[0]!.fields.messages).toBeArrayOfSize(1);
+            expect(presentAt(rejection, 0).fields).toMatchObject({ attempt: 1, codes: { schema: 0, semantic: 1 } });
+            expect(presentAt(rejection, 0).fields.issueCount).toBeGreaterThan(0);
+            expect(presentAt(rejection, 0).fields.paths).toEqual(["plan"]);
+            expect(presentAt(rejection, 0).fields.messages).toBeArrayOfSize(1);
         });
 
         it("records no rejection when the first submit is accepted", async () => {
@@ -957,17 +968,17 @@ describe("generatePlan loop-driving tool", () => {
 
             const started = logger.records.filter((r) => r.msg.endsWith("plan generation started"));
             expect(started).toHaveLength(1);
-            expect(started[0]!.level).toBe("info");
-            expect(started[0]!.fields).toMatchObject({ grounding: "ready", analysisId });
+            expect(presentAt(started, 0).level).toBe("info");
+            expect(presentAt(started, 0).fields).toMatchObject({ grounding: "ready", analysisId });
 
             // Sizes, never content: the seed carries the research question and the dataset's
             // facts, which belong in the model's context and not in a log file.
-            const seedChars = z.record(z.string(), z.number()).parse(started[0]!.fields.seedChars);
+            const seedChars = z.record(z.string(), z.number()).parse(presentAt(started, 0).fields.seedChars);
             expect(seedChars.total).toBeGreaterThan(0);
             expect(seedChars.dataContext).toBeGreaterThan(0);
             expect(seedChars.userConstraints).toBe("Use limma-voom.".length);
             expect(seedChars.priorRuns).toBe(0);
-            const census = JSON.stringify(started[0]!.fields);
+            const census = JSON.stringify(presentAt(started, 0).fields);
             expect(census).not.toContain(INPUT.researchQuestion);
             expect(census).not.toContain("limma-voom");
         });
@@ -1045,8 +1056,8 @@ describe("generatePlan loop-driving tool", () => {
             // difference between "give it more budget" and "the plan can never be made valid".
             const rejections = z.array(z.object({ attempt: z.number(), paths: z.array(z.string()) })).parse(record.fields.rejections);
             expect(rejections.length).toBeGreaterThan(1);
-            expect(rejections[0]!.attempt).toBe(1);
-            expect(rejections[0]!.paths).toEqual(rejections[1]!.paths);
+            expect(presentAt(rejections, 0).attempt).toBe(1);
+            expect(presentAt(rejections, 0).paths).toEqual(presentAt(rejections, 1).paths);
 
             // The kept rejections are capped, the COUNT is not. A record pairing 16 attempts
             // with 6 rejections reads as ten accepted plans — the opposite of what happened —
@@ -1071,7 +1082,7 @@ describe("generatePlan loop-driving tool", () => {
 
             const accepted = logger.records.filter((r) => r.msg.endsWith("submit_plan accepted a plan"));
             expect(accepted).toHaveLength(1);
-            expect(accepted[0]!.fields).toMatchObject({ attempt: 2, stepCount: 1 });
+            expect(presentAt(accepted, 0).fields).toMatchObject({ attempt: 2, stepCount: 1 });
 
             const record = outcomeRecord(logger);
             expect(record.fields).toMatchObject({ outcome: "plan_submitted", submitAttempts: 2, rejectedAttempts: 1 });
@@ -1084,13 +1095,13 @@ describe("generatePlan loop-driving tool", () => {
 
             const blocker = logger.records.filter((r) => r.msg.endsWith("planner reported a blocker"));
             expect(blocker).toHaveLength(1);
-            expect(blocker[0]!.level).toBe("warn");
-            expect(blocker[0]!.fields.submitAttempts).toBe(0);
+            expect(presentAt(blocker, 0).level).toBe("warn");
+            expect(presentAt(blocker, 0).fields.submitAttempts).toBe(0);
             // The reason is the planner's own prose, so it rides under the key an embedder
             // can act on wholesale. A loose `reason` would also collide with the loop's
             // structural `reason` (its finish reason) in any sink that filters by name.
-            expect(blocker[0]!.fields).not.toHaveProperty("reason");
-            expect(blocker[0]!.fields.modelAuthored).toMatchObject({ blockerReason: "measurement complete" });
+            expect(presentAt(blocker, 0).fields).not.toHaveProperty("reason");
+            expect(presentAt(blocker, 0).fields.modelAuthored).toMatchObject({ blockerReason: "measurement complete" });
         });
     });
 });

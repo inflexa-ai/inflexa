@@ -52,13 +52,15 @@ function newNode(name: string): DirectoryNode {
     return { name, children: new Map(), files: [], fineSignature: new Set(), coarseSignature: new Set(), childNames: new Set() };
 }
 
+import { presentAt, presentFirst } from "../lib/present.js";
+
 export function buildTree(files: readonly MemberFile[]): DirectoryNode {
     const root = newNode("");
     for (const file of files) {
         const segments = file.path.split("/");
         let node = root;
         for (let i = 0; i < segments.length - 1; i++) {
-            const name = segments[i]!;
+            const name = presentAt(segments, i, "path segments");
             let child = node.children.get(name);
             if (!child) {
                 child = newNode(name);
@@ -124,8 +126,8 @@ function hasMask(skeleton: string): boolean {
  */
 function skeletonKin(a: string, b: string): boolean {
     if (a === b && hasMask(a)) return true;
-    const head = a.split(/[_\-.]/)[0]!;
-    return head === b.split(/[_\-.]/)[0]! && hasMask(head);
+    const head = presentFirst(a.split(/[_\-.]/), "kinship heads");
+    return head === presentFirst(b.split(/[_\-.]/), "kinship heads") && hasMask(head);
 }
 
 type Candidate = {
@@ -222,8 +224,10 @@ export function clusterChildren(entries: readonly DirectoryEntry[], contentSimil
         let merged = false;
         for (let i = 0; i < clusters.length && !merged; i++) {
             for (let j = i + 1; j < clusters.length; j++) {
-                if (!agrees(clusters[i]!, clusters[j]!, contentSimilarity)) continue;
-                absorb(clusters[i]!, clusters[j]!);
+                const left = presentAt(clusters, i, "directory clusters");
+                const right = presentAt(clusters, j, "directory clusters");
+                if (!agrees(left, right, contentSimilarity)) continue;
+                absorb(left, right);
                 clusters.splice(j, 1);
                 merged = true;
                 break;

@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { classifyManaged, reapOnce, terminalStepStatus } from "../reaper.js";
 import type { Querier } from "../../state/db.js";
 import type { ManagedSandbox, SandboxLiveness } from "../types.js";
+import { presentGet } from "../../lib/present.js";
 
 const GRACE = 10 * 60_000;
 const NOW = 1_000_000_000;
@@ -107,7 +108,7 @@ describe("reapOnce", () => {
                     tornDown.push(id);
                 },
             },
-            getStatus: async (wf) => (statuses[wf] ? { status: statuses[wf]! } : null),
+            getStatus: async (wf) => (statuses[wf] ? { status: presentGet(statuses, wf) } : null),
             graceMs: GRACE,
             nowMs: () => NOW,
         });

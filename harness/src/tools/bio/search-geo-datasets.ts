@@ -67,7 +67,7 @@ export const GeoEsummaryResponseSchema = z.object({
  * payload.
  */
 export function mapGeoDatasets(ids: string[], summary: z.infer<typeof GeoEsummaryResponseSchema>): GeoDataset[] {
-    const result: Record<string, GeoDatasetSummary | undefined> = summary?.result ?? {};
+    const result: Record<string, GeoDatasetSummary | undefined> = summary.result ?? {};
     const datasets: GeoDataset[] = [];
     for (const id of ids) {
         const r = result[id];
@@ -137,7 +137,7 @@ export const searchGeoDatasetsTool = defineTool({
         const searchRes = await apiFetchValidated(searchUrl, GeoEsearchResponseSchema);
         if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
 
-        const ids: string[] = searchRes.value?.esearchresult?.idlist ?? [];
+        const ids: string[] = searchRes.value.esearchresult?.idlist ?? [];
         if (ids.length === 0) return ok({ totalFound: 0, datasets: [] });
 
         const summaryUrl = `${ESEARCH_BASE}/esummary.fcgi?db=${db}&id=${ids.join(",")}&retmode=json`;
@@ -146,7 +146,7 @@ export const searchGeoDatasetsTool = defineTool({
 
         const datasets = mapGeoDatasets(ids, summaryRes.value);
 
-        const totalFound = Number(searchRes.value?.esearchresult?.count) || datasets.length;
+        const totalFound = Number(searchRes.value.esearchresult?.count) || datasets.length;
 
         return ok({ totalFound, datasets });
     },

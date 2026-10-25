@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { PharmgkbResponseSchema, searchPharmgkb } from "../pharmgkb-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -30,11 +31,12 @@ runFixtureSuite("clinpgx golden fixtures", [
         drift: "clinicalAnnotation_gene_CYP2C19.drift.json",
         schema: PharmgkbResponseSchema,
         assertOutput: (response) => {
-            const rows = response.data!;
+            const rows = response.data;
+            if (rows === undefined) throw new Error("rows is absent");
             // The excerpt keeps the first row of each level-of-evidence term.
             expect(rows.map((row) => row.levelOfEvidence?.term)).toEqual(["3", "4", "2A", "1A"]);
-            expect(rows[0]!.location?.genes?.[0]?.symbol).toBe("CYP2C19");
-            expect(rows[0]!.relatedChemicals?.length).toBeGreaterThan(0);
+            expect(presentAt(rows, 0).location?.genes?.[0]?.symbol).toBe("CYP2C19");
+            expect(presentAt(rows, 0).relatedChemicals?.length).toBeGreaterThan(0);
         },
     }),
     fixtureCase({
@@ -44,10 +46,11 @@ runFixtureSuite("clinpgx golden fixtures", [
         drift: "clinicalAnnotation_gene_CYP2C19.drift.json",
         schema: PharmgkbResponseSchema,
         assertOutput: (response) => {
-            const rows = response.data!;
+            const rows = response.data;
+            if (rows === undefined) throw new Error("rows is absent");
             // An annotation of a variant that no gene carries sends the empty
             // array, and not an omitted key.
-            expect(rows[1]!.location?.genes).toEqual([]);
+            expect(presentAt(rows, 1).location?.genes).toEqual([]);
         },
     }),
 ]);
@@ -59,8 +62,8 @@ describe("searchPharmgkb", () => {
         const { annotations, totalFound } = await searchPharmgkb("CYP2C19", "gene");
 
         expect(totalFound).toBe(4);
-        expect(annotations[0]!.gene).toBe("CYP2C19");
-        expect(annotations[0]!.levelOfEvidence).toBe("3");
+        expect(presentAt(annotations, 0).gene).toBe("CYP2C19");
+        expect(presentAt(annotations, 0).levelOfEvidence).toBe("3");
         expect(annotations.map((annotation) => annotation.levelOfEvidence)).toEqual(["3", "4", "2A", "1A"]);
     });
 

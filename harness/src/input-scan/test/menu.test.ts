@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { detectSets } from "../detect-sets.js";
 import { MAX_FULLY_LISTED_SET_MEMBERS, MAX_MENU_SETS, buildCorrespondences, buildSetMenu, renderSetMenu } from "../menu.js";
 import type { HeaderReadout, ScannedFile } from "../types.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 function file(path: string, format: string, extensions: string[] = [], wrapper?: string): ScannedFile {
     return { path, size: 100, extensions, format, wrapper };
@@ -37,17 +38,17 @@ describe("the rendered menu", () => {
     });
 
     it("names each set by its addressable id, with its origin, template, and counts", () => {
-        const set = menu.sets[0]!;
+        const set = presentAt(menu.sets, 0);
         expect(text).toContain(`- ${set.id} — ${set.memberCount} members, ${set.fileCount} files`);
         expect(text).toContain(`template: ${set.pathTemplate}`);
     });
 
     it("reports every slot's class, cardinality, and bounded value sample", () => {
-        const set = menu.sets.find((candidate) => candidate.slots.length >= 2)!;
+        const set = presentFind(menu.sets, (candidate) => candidate.slots.length >= 2);
         for (const slot of set.slots) {
             expect(text).toContain(`slot ${slot.id}`);
             expect(text).toContain(`${slot.distinctValues} distinct`);
-            expect(text).toContain(slot.sampleValues[0]!);
+            expect(text).toContain(presentAt(slot.sampleValues, 0));
         }
     });
 
@@ -69,7 +70,7 @@ describe("the rendered menu", () => {
     });
 
     it("reports slot overlap as measurement with its gaps, never as a shared dimension", () => {
-        const overlap = menu.correspondences.find((entry) => entry.sets[0] !== entry.sets[1])!;
+        const overlap = presentFind(menu.correspondences, (entry) => entry.sets[0] !== entry.sets[1]);
         expect(overlap.shared).toBe(5);
         expect(overlap.onlyInFirst + overlap.onlyInSecond).toBeGreaterThan(0);
         expect(text).toContain("NOT an assertion that they share a dimension");
@@ -78,13 +79,13 @@ describe("the rendered menu", () => {
     });
 
     it("attaches a header readout to the set its member was read from", () => {
-        const target = menu.sets[0]!.members[0]!.path;
+        const target = presentAt(presentAt(menu.sets, 0).members, 0).path;
         const headers = new Map<string, HeaderReadout>([[target, { path: target, fields: { columns: 12, delimiter: "," } }]]);
         expect(renderSetMenu(buildSetMenu(detected, { headers }), "data/inputs")).toContain(`readout (${target}): columns=12, delimiter=,`);
     });
 
     it("reports how a multi-slot set's slots vary TOGETHER, not only their margins", () => {
-        const crossed = menu.crossings.find((crossing) => crossing.slotIds.length === 2)!;
+        const crossed = presentFind(menu.crossings, (crossing) => crossing.slotIds.length === 2);
         expect(crossed.observedCombinations).toBe(12);
         expect(crossed.possibleCombinations).toBe(12);
         expect(text).toContain(`crossing ${crossed.slotIds.join(" × ")}: 12 combinations observed of 12 — fully crossed`);
@@ -134,13 +135,13 @@ describe("menu bounds", () => {
     it("lists at most the bound and folds the tail into a counted line", () => {
         const overflowing = {
             ...base,
-            sets: Array.from({ length: MAX_MENU_SETS + 5 }, (_, i) => ({ ...base.sets[0]!, id: `set-${i + 1}` })),
+            sets: Array.from({ length: MAX_MENU_SETS + 5 }, (_, i) => ({ ...presentAt(base.sets, 0), id: `set-${i + 1}` })),
         };
 
         const menu = buildSetMenu(overflowing);
         expect(menu.sets).toHaveLength(MAX_MENU_SETS);
         expect(menu.unlisted.sets).toBe(5);
-        expect(menu.unlisted.members).toBe(base.sets[0]!.memberCount * 5);
+        expect(menu.unlisted.members).toBe(presentAt(base.sets, 0).memberCount * 5);
 
         const text = renderSetMenu(menu, "data/inputs");
         expect(text).toContain("… 5 more sets not listed");
@@ -149,7 +150,7 @@ describe("menu bounds", () => {
 
     it("nudges toward a split for every residue-shaped set, not just the catch-all", () => {
         for (const origin of ["catch-all", "prefix"] as const) {
-            const residue = { ...base, sets: [{ ...base.sets[0]!, origin }] };
+            const residue = { ...base, sets: [{ ...presentAt(base.sets, 0), origin }] };
             expect(renderSetMenu(buildSetMenu(residue), "data/inputs")).toContain("Consider a split before you use or merge it");
         }
     });
@@ -159,7 +160,7 @@ describe("menu bounds", () => {
             ...base,
             sets: [
                 {
-                    ...base.sets[0]!,
+                    ...presentAt(base.sets, 0),
                     origin: "mined" as const,
                     formats: [
                         { format: "vcf", count: 8 },

@@ -344,9 +344,7 @@ describe("addBlock", () => {
         expect(block?.kind).toBe("table");
         if (block?.kind === "table") {
             expect(block.binding.kind).toBe("artifact-table");
-            if (block.binding.kind === "artifact-table") {
-                expect(block.binding.hash).toBe(OUTPUT_HASH);
-            }
+            expect(block.binding.hash).toBe(OUTPUT_HASH);
         }
     });
 
@@ -403,7 +401,7 @@ describe("addBlock", () => {
         // The snapshot owns the hash, thus an echoed stored binding lands and it cannot mismatch.
         const block = findById(landed, "table-2");
         expect(block?.kind).toBe("table");
-        if (block?.kind === "table" && block.binding.kind === "artifact-table") {
+        if (block?.kind === "table") {
             expect(block.binding.hash).toBe(OUTPUT_HASH);
         }
     });
@@ -530,7 +528,7 @@ describe("changeBlock", () => {
 
         const block = findById(landed, "table-1");
         expect(block?.kind).toBe("table");
-        if (block?.kind === "table" && block.binding.kind === "artifact-table") {
+        if (block?.kind === "table") {
             expect(block.binding.hash).toBe(OUTPUT_HASH);
         }
     });
@@ -561,7 +559,7 @@ describe("changeBlock", () => {
         // An agent that reads a block and sends it back must land, thus the stamp decides the hash.
         const block = findById(landed, "table-1");
         expect(block?.kind).toBe("table");
-        if (block?.kind === "table" && block.binding.kind === "artifact-table") {
+        if (block?.kind === "table") {
             expect(block.binding.hash).toBe(OUTPUT_HASH);
         }
     });

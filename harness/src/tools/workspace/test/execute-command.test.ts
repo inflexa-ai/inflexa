@@ -18,6 +18,7 @@ import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../sandbox/types.js";
 import { createExecuteCommandTool } from "../execute-command.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
+import { presentAt } from "../../../lib/present.js";
 
 const DEFAULT_CWD = "/analysis-001/runs/run-abc/step1";
 
@@ -193,8 +194,8 @@ describe("execute_command tool", () => {
         const out = (await makeTool(client).execute({ command: ["echo", "hi"] }, ctx))._unsafeUnwrap();
 
         expect(client.execs).toHaveLength(1);
-        expect(client.execs[0]!.request.command).toEqual(["echo", "hi"]);
-        expect(client.execs[0]!.deadlineMs).toBe(9_999_999);
+        expect(presentAt(client.execs, 0).request.command).toEqual(["echo", "hi"]);
+        expect(presentAt(client.execs, 0).deadlineMs).toBe(9_999_999);
         expect(out.status).toBe("ok");
         expect(out.exitCode).toBe(0);
         expect(out.stdout).toBe("hello\n");
@@ -283,16 +284,16 @@ describe("execute_command tool", () => {
         const client = makeFakeClient();
         const { ctx } = makeToolContext();
         await makeTool(client).execute({ command: ["pwd"], cwd: "/workspace", env: { FOO: "bar" }, timeoutSeconds: 30 }, ctx);
-        expect(client.execs[0]!.request.cwd).toBe("/workspace");
-        expect(client.execs[0]!.request.env).toEqual({ FOO: "bar" });
-        expect(client.execs[0]!.request.timeoutSeconds).toBe(30);
+        expect(presentAt(client.execs, 0).request.cwd).toBe("/workspace");
+        expect(presentAt(client.execs, 0).request.env).toEqual({ FOO: "bar" });
+        expect(presentAt(client.execs, 0).request.timeoutSeconds).toBe(30);
     });
 
     it("sends defaultCwd when no cwd is supplied", async () => {
         const client = makeFakeClient();
         const { ctx } = makeToolContext();
         await makeTool(client).execute({ command: ["pwd"] }, ctx);
-        expect(client.execs[0]!.request.cwd).toBe(DEFAULT_CWD);
+        expect(presentAt(client.execs, 0).request.cwd).toBe(DEFAULT_CWD);
     });
 
     it("joins a relative cwd onto defaultCwd; uses an absolute cwd as-is", async () => {
@@ -300,10 +301,10 @@ describe("execute_command tool", () => {
         const tool = makeTool(client);
         const { ctx } = makeToolContext();
         await tool.execute({ command: ["ls"], cwd: "output" }, ctx);
-        expect(client.execs[0]!.request.cwd).toBe(`${DEFAULT_CWD}/output`);
+        expect(presentAt(client.execs, 0).request.cwd).toBe(`${DEFAULT_CWD}/output`);
 
         await tool.execute({ command: ["ls"], cwd: "/analysis-001/data" }, ctx);
-        expect(client.execs[1]!.request.cwd).toBe("/analysis-001/data");
+        expect(presentAt(client.execs, 1).request.cwd).toBe("/analysis-001/data");
     });
 });
 
@@ -337,7 +338,9 @@ describe("execute_command lineage", () => {
         const { ctx } = makeToolContext();
 
         const out = (await tool.execute({ command: ["python", "scripts/de.py"] }, ctx))._unsafeUnwrap();
-        tool.foldCallRecord!(readToolCallRecord(out));
+        const foldCallRecord = tool.foldCallRecord;
+        if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
+        foldCallRecord(readToolCallRecord(out));
 
         expect(collector.getRecords().map((record) => record.outputPath)).toEqual(["output/de.csv"]);
     });

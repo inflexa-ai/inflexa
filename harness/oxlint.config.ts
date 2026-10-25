@@ -137,10 +137,6 @@ export default typescript({
             // rules whose few reports the harness keeps deliberately.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #706 turns the non-null and unnecessary-assertion set back on.
-                "typescript/no-non-null-assertion": "off",
-                "typescript/no-unnecessary-condition": "off",
-                "typescript/no-unnecessary-type-assertion": "off",
                 // #710 adds the missing awaits and rewrites the implied evals.
                 "typescript/no-implied-eval": "off",
                 "typescript/require-await": "off",

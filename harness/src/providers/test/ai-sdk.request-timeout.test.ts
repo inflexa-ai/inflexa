@@ -5,6 +5,7 @@ import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, wrapFetchWithRequestTimeout, type AiSdkProviderConfig } from "../ai-sdk.js";
 import { isProviderError } from "../errors.js";
 import type { ChatRequest, ChatStreamEvent } from "../types.js";
+import { presentAt } from "../../lib/present.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -394,14 +395,14 @@ function emitEvery(chunks: readonly string[], gapMs: number, end: boolean): (res
         const push = (): void => {
             if (res.writableEnded || res.destroyed) return;
             if (index < chunks.length) {
-                res.write(chunks[index]!);
+                res.write(presentAt(chunks, index));
                 index += 1;
-                setTimeout(push, gapMs).unref?.();
+                setTimeout(push, gapMs).unref();
                 return;
             }
             if (end) res.end();
         };
-        setTimeout(push, gapMs).unref?.();
+        setTimeout(push, gapMs).unref();
     };
 }
 

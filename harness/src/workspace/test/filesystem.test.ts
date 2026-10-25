@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createWorkspaceFilesystem, type PresignedFallback, type WorkspaceFilesystem } from "../filesystem.js";
+import { presentFind } from "../../lib/present.js";
 
 const ANALYSIS = "analysis-001";
 
@@ -219,9 +220,9 @@ describe("createWorkspaceFilesystem", () => {
         if (r.kind === "ok") {
             const names = r.entries.map((e) => e.name).sort();
             expect(names).toEqual(["a.csv", "b.csv", "sub"]);
-            const sub = r.entries.find((e) => e.name === "sub")!;
+            const sub = presentFind(r.entries, (e) => e.name === "sub");
             expect(sub.type).toBe("directory");
-            const a = r.entries.find((e) => e.name === "a.csv")!;
+            const a = presentFind(r.entries, (e) => e.name === "a.csv");
             expect(a.type).toBe("file");
             expect(a.size).toBe(1);
         }

@@ -207,8 +207,9 @@ export type FileReferenceCardData = {
 /** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
 export function deriveRunId(path: string): string | undefined {
     const segments = path.split("/");
-    if (segments.length >= 2 && segments[0] === "runs" && segments[1]!.length > 0) {
-        return segments[1];
+    const runId = segments[1];
+    if (segments.length >= 2 && segments[0] === "runs" && runId !== undefined && runId.length > 0) {
+        return runId;
     }
     return undefined;
 }

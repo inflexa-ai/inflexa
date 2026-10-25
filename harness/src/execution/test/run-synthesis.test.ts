@@ -42,6 +42,7 @@ import type { ToolContext } from "../../tools/define-tool.js";
 import type { ChatRequest } from "../../providers/types.js";
 import { synthesisAgentPrompt } from "../../prompts/synthesis-agent.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
+import { presentAt, presentLast } from "../../lib/present.js";
 
 const RUN_ID = "run-001";
 
@@ -140,7 +141,7 @@ describe("submit_synthesis inner tool", () => {
         });
 
         const bad = validSynthesisPayload();
-        bad.findings[0]!.stepId = "T9S9";
+        presentAt(bad.findings, 0).stepId = "T9S9";
 
         const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
@@ -156,8 +157,8 @@ describe("submit_synthesis inner tool", () => {
             runId: RUN_ID,
         });
         const bad = validSynthesisPayload();
-        bad.findings[0]!.references[0]!.pmid = "PMC123";
-        bad.keyReferences[0]!.pmid = "PMC123";
+        presentAt(presentAt(bad.findings, 0).references, 0).pmid = "PMC123";
+        presentAt(bad.keyReferences, 0).pmid = "PMC123";
 
         const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
@@ -174,7 +175,7 @@ describe("submit_synthesis inner tool", () => {
         await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
 
         const bad = validSynthesisPayload();
-        bad.findings[0]!.stepId = "T9S9";
+        presentAt(bad.findings, 0).stepId = "T9S9";
         bad.overview = "clobbered";
 
         const second = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
@@ -293,7 +294,7 @@ describe("validate_synthesis inner tool", () => {
 
         const bad = validSynthesisPayload();
         const broken = { ...bad, conclusions: undefined };
-        broken.findings[0]!.references[0]!.pmid = "PMC123";
+        presentAt(presentAt(broken.findings, 0).references, 0).pmid = "PMC123";
         void bad;
 
         const result = (await validate.execute({ synthesis: broken }, makeToolCtx()))._unsafeUnwrap();
@@ -321,7 +322,7 @@ describe("validate_synthesis inner tool", () => {
 
         const bad = validSynthesisPayload();
         const broken = { ...bad, overview: undefined };
-        broken.findings[0]!.stepId = "T9S9";
+        presentAt(broken.findings, 0).stepId = "T9S9";
         void bad;
 
         const result = (await validate.execute({ synthesis: broken }, makeToolCtx()))._unsafeUnwrap();
@@ -344,7 +345,7 @@ describe("validate_synthesis inner tool", () => {
 
         const bad = { ...validSynthesisPayload(), findings: [{ stepId: 7 }] };
         bad.findings = [{ stepId: 7 }];
-        bad.keyReferences[0]!.pmid = "PMC999";
+        presentAt(bad.keyReferences, 0).pmid = "PMC999";
 
         const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
@@ -375,9 +376,9 @@ describe("validate_synthesis inner tool", () => {
 
         const bad = validSynthesisPayload();
         bad.runId = "run-999";
-        bad.findings[0]!.stepId = "T9S9";
-        bad.findings[0]!.references[0]!.pmid = "PMC1";
-        bad.keyReferences[0]!.pmid = "PMC2";
+        presentAt(bad.findings, 0).stepId = "T9S9";
+        presentAt(presentAt(bad.findings, 0).references, 0).pmid = "PMC1";
+        presentAt(bad.keyReferences, 0).pmid = "PMC2";
 
         const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
@@ -402,7 +403,7 @@ describe("validate_synthesis inner tool", () => {
         await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
 
         const bad = validSynthesisPayload();
-        bad.findings[0]!.stepId = "T9S9";
+        presentAt(bad.findings, 0).stepId = "T9S9";
 
         const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
@@ -476,7 +477,7 @@ describe("generateRunSynthesis — happy path", () => {
         if (result.kind === "synthesis") {
             expect(result.synthesis.runId).toBe(RUN_ID);
             expect(result.synthesis.findings).toHaveLength(1);
-            expect(result.synthesis.findings[0]!.title).toBe("Upregulation of FOXP3");
+            expect(presentAt(result.synthesis.findings, 0).title).toBe("Upregulation of FOXP3");
         }
     });
 
@@ -500,7 +501,7 @@ describe("generateRunSynthesis — happy path", () => {
             runId: RUN_ID,
         });
 
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+        expect(Object.keys(presentAt(provider.calls, 0).tools)).toEqual([
             "validate_synthesis",
             "submit_synthesis",
             "report_blocker",
@@ -639,7 +640,7 @@ describe("generateRunSynthesis — happy path", () => {
         expect(result.kind).toBe("synthesis");
         // One reviewer loop of one request for each of the first 3 calls, and none for the fourth.
         expect(provider.calls.filter((request) => !isSynthesizer(request))).toHaveLength(3);
-        const lastSynthesizerRequest = provider.calls.filter(isSynthesizer).at(-1)!;
+        const lastSynthesizerRequest = presentLast(provider.calls.filter(isSynthesizer));
         const results = lastSynthesizerRequest.messages.flatMap((message) => (message.role === "tool" ? message.content : []));
         const fourth = results.find((part) => part.type === "tool-result" && part.toolCallId === "rv-4");
         expect(fourth).toMatchObject({
@@ -707,8 +708,8 @@ describe("loadStepSummariesFromDisk", () => {
             completedSteps: ["T1S1", "T1S2", "T1S3-missing"],
         });
         expect(out).toHaveLength(1);
-        expect(out[0]!.stepId).toBe("T1S1");
-        expect(out[0]!.markdown).toContain("step one");
+        expect(presentAt(out, 0).stepId).toBe("T1S1");
+        expect(presentAt(out, 0).markdown).toContain("step one");
     });
 });
 
@@ -821,7 +822,7 @@ describe("readRunSynthesis", () => {
         expect(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis))).toEqual(part);
         expect(part).toMatchObject({ type: "data-run-synthesis", id: `synthesis-${RUN_ID}` });
         expect(RunSynthesisPartSchema.safeParse(part).success).toBe(true);
-        expect(part?.findings[0]?.references).toEqual(synthesis.findings[0]!.references);
+        expect(part.findings[0]?.references).toEqual(presentAt(synthesis.findings, 0).references);
     });
 
     it("gives null when no record is on disk", async () => {
@@ -829,7 +830,7 @@ describe("readRunSynthesis", () => {
     });
 
     it("gives null for a record whose findings have no references", async () => {
-        const finding = { ...synthesis.findings[0]!, references: undefined };
+        const finding = { ...presentAt(synthesis.findings, 0, "the first finding"), references: undefined };
         await writeRecord("run-no-refs", JSON.stringify({ ...synthesis, runId: "run-no-refs", findings: [finding] }));
 
         expect(await readRunSynthesis({ workspaceRoot: root, runId: "run-no-refs" })).toBeNull();

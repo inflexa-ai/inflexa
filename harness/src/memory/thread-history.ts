@@ -31,6 +31,7 @@ import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { type Connectable, type DbError, type TransactionQuerier, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import { presentFirst } from "../lib/present.js";
 import type { Querier } from "../state/db.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
@@ -410,7 +411,7 @@ function nextSeq(client: TransactionQuerier, threadId: string, op: string): Resu
         const { rows } = await client.query<{ max_seq: string }>("SELECT COALESCE(MAX(seq), -1)::text AS max_seq FROM messages WHERE thread_id = $1", [
             threadId,
         ]);
-        return Number(rows[0]!.max_seq) + 1;
+        return Number(presentFirst(rows, "the max-seq row").max_seq) + 1;
     });
 }
 
@@ -871,7 +872,7 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
                          AND ${GENUINE_USER_START_SQL}) AS boundary`,
                             [threadId],
                         );
-                        return rows[0]!;
+                        return presentFirst(rows, "the thread boundary row");
                     }),
                 )
                 .andThen(({ has_rows, boundary }) => {
@@ -934,7 +935,7 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
                 AND ${GENUINE_USER_START_SQL}`,
                 [threadId, seq],
             ),
-        ).map(({ rows }) => Number(rows[0]!.turns));
+        ).map(({ rows }) => Number(presentFirst(rows, "the user-turn count row").turns));
     }
 
     return { appendTurn, writeTurn, loadRecent, loadAll, loadPage, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };

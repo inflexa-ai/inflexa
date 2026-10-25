@@ -41,6 +41,7 @@ import { createThreadStore } from "../../memory/thread-store.js";
 import { searchIndexName } from "../../workspace/search-config.js";
 import { createVectorStore } from "../vector-store.js";
 import { createAnalysisPurge, type AnalysisPurge } from "../purge-analysis.js";
+import { presentAt } from "../../lib/present.js";
 
 /**
  * Stamped on every `dbos.workflow_status` row this file writes, and read back by
@@ -531,7 +532,7 @@ describe("createAnalysisPurge", () => {
                 parentSeq: 2,
             })
         )._unsafeUnwrap();
-        const threadIds = [doomed.threadIds[0]!, child];
+        const threadIds = [presentAt(doomed.threadIds, 0), child];
         for (const threadId of threadIds) {
             await rig.pool.query({
                 text: `INSERT INTO cortex_thread_turns (thread_id, start_seq, status, closed_at) VALUES ($1, 1, 'done', NOW())`,

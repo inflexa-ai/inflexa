@@ -12,6 +12,7 @@ import { storedMessagesToChat } from "../conversation-display-replay.js";
 import { createConversationDisplayRecorder } from "../conversation-display-recorder.js";
 import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage } from "../conversation-display-storage.js";
 import type { StoredMessage, StoredTurnRecord } from "../thread-history.js";
+import { presentAt } from "../../lib/present.js";
 
 type TurnEvent = Parameters<EmitFn>[0];
 
@@ -173,7 +174,7 @@ describe("the live path and the replay of one turn", () => {
     it("gives the same messages", async () => {
         const { shown, replayed } = await bothPaths(rounds, { turnUsage: USAGE, facts: { turn: { status: "done", usage: USAGE } } });
 
-        expect(shown[1]!.parts).toEqual([
+        expect(presentAt(shown, 1).parts).toEqual([
             { type: "text", text: "I read the counts and ask the reviewer." },
             { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "ok", detail: "data/counts.csv", durationMs: 12 },
             { type: "tool-call", toolCallId: "t2", toolName: "literature_review", outcome: "ok", detail: "TP53 in colorectal cancer", durationMs: 4200 },
@@ -204,7 +205,7 @@ describe("the live path and the replay of one turn", () => {
             { type: "data-run-card", id: "run-card", runId: "run-1", planId: "pln-0a1b2c3d", title: "Differential expression", stepCount: 3 },
             { type: "text", text: "The run started. I report the result when it ends." },
         ]);
-        expect(shown[1]!.usage).toEqual(USAGE);
+        expect(presentAt(shown, 1).usage).toEqual(USAGE);
         expect(replayed).toEqual(shown);
     });
 });
@@ -216,8 +217,8 @@ describe("the known differences between the live path and the replay", () => {
         const call = { type: "tool-call", toolCallId: "t1", toolName: "read_file", detail: "data/counts.csv" } satisfies MessagePart;
 
         const { shown, replayed } = await bothPaths(rounds);
-        expect(shown[1]!.parts).toEqual([call]);
-        expect(replayed[1]!.parts).toEqual([{ ...call, outcome: "incomplete" }]);
+        expect(presentAt(shown, 1).parts).toEqual([call]);
+        expect(presentAt(replayed, 1).parts).toEqual([{ ...call, outcome: "incomplete" }]);
     });
 
     it("a sub-agent call that never finished: the replay gives incomplete, and the live entry gives no outcome", async () => {
@@ -241,7 +242,7 @@ describe("the known differences between the live path and the replay", () => {
             entries,
             dropped: 0,
         });
-        const part = (messages: ChatMessage[]): unknown[] => messages[1]!.parts.filter((p) => p.type === "data-subagent-activity");
+        const part = (messages: ChatMessage[]): unknown[] => presentAt(messages, 1).parts.filter((p) => p.type === "data-subagent-activity");
 
         const { shown, replayed } = await bothPaths(rounds);
         expect(part(shown)).toEqual([activity([entry])]);
@@ -252,8 +253,8 @@ describe("the known differences between the live path and the replay", () => {
         const rounds = [round([{ type: "data-ask", data: { ...ASK, status: "pending" } }])];
 
         const { shown, replayed } = await bothPaths(rounds);
-        expect(shown[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "pending" }]);
-        expect(replayed[1]!.parts).toEqual([{ type: "data-ask", ...ASK, status: "aborted" }]);
+        expect(presentAt(shown, 1).parts).toEqual([{ type: "data-ask", ...ASK, status: "pending" }]);
+        expect(presentAt(replayed, 1).parts).toEqual([{ type: "data-ask", ...ASK, status: "aborted" }]);
     });
 
     it("a compaction: the replay gives a divider between the two assistant messages, and the first live message holds the part", async () => {
@@ -297,7 +298,7 @@ describe("the known differences between the live path and the replay", () => {
         const { shown, replayed } = await bothPaths(rounds);
         // The turn forwards no event, thus no `message-start` gives the user message the id of the harness.
         expect(shown).toEqual([{ id: CLIENT_USER_ID, role: "user", parts: [{ type: "text", text: USER_TEXT }] }]);
-        expect(replayed[1]!.parts).toEqual([{ type: "text", text: "The whole answer." }]);
+        expect(presentAt(replayed, 1).parts).toEqual([{ type: "text", text: "The whole answer." }]);
     });
 
     it("the text of two rounds with no part between them: the replay keeps two text parts, and the live message joins them", async () => {
@@ -305,8 +306,8 @@ describe("the known differences between the live path and the replay", () => {
         const rounds = [round([{ type: "text-delta", text: "First half, " }]), round([{ type: "text-delta", text: "second half." }])];
 
         const { shown, replayed } = await bothPaths(rounds);
-        expect(shown[1]!.parts).toEqual([{ type: "text", text: "First half, second half." }]);
-        expect(replayed[1]!.parts).toEqual([
+        expect(presentAt(shown, 1).parts).toEqual([{ type: "text", text: "First half, second half." }]);
+        expect(presentAt(replayed, 1).parts).toEqual([
             { type: "text", text: "First half, " },
             { type: "text", text: "second half." },
         ]);
@@ -319,11 +320,12 @@ describe("the known differences between the live path and the replay", () => {
             turnUsage: USAGE,
             facts: { turn: { status: "aborted", usage: USAGE, durationMs: 4321 }, author: "dr.chen@lab.example", createdAt },
         });
-        const [user, reply] = shown;
+        const user = presentAt(shown, 0, "the shown user message");
+        const reply = presentAt(shown, 1, "the shown reply message");
 
         expect(replayed).toEqual([
-            { ...user!, author: "dr.chen@lab.example", createdAt: createdAt.toISOString() },
-            { ...reply!, durationMs: 4321, interrupted: true, createdAt: createdAt.toISOString() },
+            { ...user, author: "dr.chen@lab.example", createdAt: createdAt.toISOString() },
+            { ...reply, durationMs: 4321, interrupted: true, createdAt: createdAt.toISOString() },
         ]);
     });
 });

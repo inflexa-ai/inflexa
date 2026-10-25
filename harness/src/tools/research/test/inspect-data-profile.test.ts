@@ -6,6 +6,7 @@ import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { completeDataProfile, failDataProfile, tryRerunDataProfile, tryStartDataProfile, type DataProfileResult } from "../../../state/index.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createInspectDataProfileTool, type InspectDataProfileOutput } from "../inspect-data-profile.js";
+import { presentAt } from "../../../lib/present.js";
 
 // `makeToolContext` builds a session scoped to this analysis.
 const ANALYSIS = "analysis-001";
@@ -584,7 +585,7 @@ describe("scope: groups — a snapshot resolved into groups", () => {
         const groups = out.groups;
         expect(groups.map((g) => g.id)).toEqual(["per-subject-calls", "unclassified"]);
         expect(groups[0]).toMatchObject({ count: 40, fileCount: 80, displayPattern: `/${ANALYSIS}/data/inputs/vcf/<id>.vcf.gz` });
-        expect(groups[0]!.slots).toHaveLength(1);
+        expect(presentAt(groups, 0).slots).toHaveLength(1);
     });
 
     it("returns the dimensions with their observations, reconciliations, and probe outcomes", async () => {
@@ -607,7 +608,7 @@ describe("scope: groups — a snapshot resolved into groups", () => {
         // Both observations stand: nothing here resolves 40 against 42.
         if (!("dimensions" in out) || out.dimensions === undefined) throw new Error("the overview carries the dimensions");
         const dimensions = out.dimensions;
-        expect(dimensions[0]!.observations).toHaveLength(2);
+        expect(presentAt(dimensions, 0).observations).toHaveLength(2);
     });
 
     it("carries the partition accounting on the overview, alongside the classification", async () => {

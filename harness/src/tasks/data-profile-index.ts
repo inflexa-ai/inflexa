@@ -22,6 +22,7 @@
  */
 
 import type { ProfileDimensionView, ProfileGroupView } from "../app/data-profile-view.js";
+import { presentFirst } from "../lib/present.js";
 import { dimensionCardinalities, profileDimensions, profileFileRecords, profileGroups } from "../app/data-profile-view.js";
 import type {
     DataProfileDimension,
@@ -139,7 +140,7 @@ function dimensionEntry(analysisId: string, dimension: DataProfileDimension): Pr
  * resolves to a file that exists rather than to a synthetic key.
  */
 function memberEntry(analysisId: string, group: DataProfileGroup, annotation: DataProfileMemberAnnotation): ProfileIndexEntry {
-    const format = group.formats.length === 1 ? group.formats[0]!.format : undefined;
+    const format = group.formats.length === 1 ? presentFirst(group.formats, "the single format").format : undefined;
     return {
         id: `/${analysisId}/${annotation.path}`,
         text: `${annotation.path} — ${annotation.note} In ${group.name}, where one member is ${group.memberRepresents}.`,

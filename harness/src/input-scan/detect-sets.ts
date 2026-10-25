@@ -23,6 +23,7 @@ import { selectReadouts } from "./readout-budget.js";
 import type { DetectedSet, DetectedSets, LeftoverFiles, MemberFile, SetOrigin, SetSlot, TemplateSegment, WrapperCount } from "./set-types.js";
 import type { ContextFile, DraftSegment, DraftSlot, MinedGroup, MinedItem } from "./templates.js";
 import { catchAll, describeGroup, describeSlot, mineContext, slotToken } from "./templates.js";
+import { presentAt } from "../lib/present.js";
 import type { FormatCount, ScannedFile, UnstructuredEntry } from "./types.js";
 import { IDENTITY_CROSS_CHECK_RATIO, MAX_EXAMPLE_PATHS, MAX_LEFTOVER_SAMPLE, MAX_SETS_PER_CONTEXT, MIN_IDENTITY_TOKEN_LENGTH } from "./tuning.js";
 
@@ -67,7 +68,7 @@ function wrapperCensus(members: readonly MemberFile[]): WrapperCount[] {
 }
 
 function renderTemplate(segments: readonly DraftSegment[], slots: readonly DraftSlot[]): string {
-    return segments.map((segment) => (segment.kind === "literal" ? segment.text : slotToken(slots[segment.slot]!))).join("");
+    return segments.map((segment) => (segment.kind === "literal" ? segment.text : slotToken(presentAt(slots, segment.slot, "template slots")))).join("");
 }
 
 /** The token value at a slot's position, with the literal affixes the template shows stripped off. */
@@ -96,12 +97,11 @@ function crossCheckIdentity(
     if (group.kind !== "tokens" && group.kind !== "family") return;
     for (const slot of nameSlots) {
         if (slot.distinctValues < 2) continue;
-        for (let k = 0; k < directoryValues.length; k++) {
-            const values = directoryValues[k]!;
-            const paired = directorySlots[k]!.distinctValues === slot.distinctValues;
+        for (const [k, values] of directoryValues.entries()) {
+            const paired = presentAt(directorySlots, k, "directory slots").distinctValues === slot.distinctValues;
             let matches = 0;
-            for (let i = 0; i < group.items.length; i++) {
-                const core = coreAt(group.items[i]!, slot);
+            for (const [i, item] of group.items.entries()) {
+                const core = coreAt(item, slot);
                 const segment = values[i] ?? "";
                 const alike =
                     core === segment ||
@@ -133,8 +133,9 @@ function assembleMinedSet(group: MinedGroup, path: readonly PathSegment[]): Draf
         const at = variablePosition++;
         const values = members.map((member) => member.varValues[at] ?? "");
         const distinct = new Set(values);
-        if (distinct.size === 1) {
-            directorySegments.push({ kind: "literal", text: `${[...distinct][0]!}/` });
+        const [only] = distinct;
+        if (only !== undefined && distinct.size === 1) {
+            directorySegments.push({ kind: "literal", text: `${only}/` });
             continue;
         }
         const slot = describeSlot(values, "directory", segment.index);
@@ -162,7 +163,7 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
     const id = `set-${index + 1}`;
     const slotIds = draft.slots.map((_, position) => `${id}.slot-${position + 1}`);
     const slots: SetSlot[] = draft.slots.map((slot, position) => ({
-        id: slotIds[position]!,
+        id: presentAt(slotIds, position, "slot ids"),
         location: slot.location,
         index: slot.index,
         tokenClass: slot.tokenClass,
@@ -174,12 +175,12 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
         suffix: slot.suffix,
         distinctValues: slot.distinctValues,
         sampleValues: slot.sampleValues,
-        sameAsSlot: slot.sameAs === undefined ? undefined : slotIds[slot.sameAs]!,
+        sameAsSlot: slot.sameAs === undefined ? undefined : presentAt(slotIds, slot.sameAs, "slot ids"),
         crossCheckMismatches: slot.sameAs === undefined ? undefined : (slot.crossCheckMismatches ?? 0),
     }));
 
     const segments: TemplateSegment[] = draft.segments.map((segment) =>
-        segment.kind === "literal" ? { kind: "literal", text: segment.text } : { kind: "slot", slotId: slotIds[segment.slot]! },
+        segment.kind === "literal" ? { kind: "literal", text: segment.text } : { kind: "slot", slotId: presentAt(slotIds, segment.slot, "slot ids") },
     );
     const { members, completeness } = assessCompleteness(draft.members);
 
@@ -200,8 +201,8 @@ function finalizeSet(draft: DraftSet, index: number): { set: DetectedSet; values
             examplePaths: members.slice(0, MAX_EXAMPLE_PATHS).map((member) => member.path),
             members,
         },
-        values: draft.slots.map((slot, position) => [slotIds[position]!, slot.values]),
-        memberValues: draft.slots.map((slot, position) => [slotIds[position]!, slot.memberValues]),
+        values: draft.slots.map((slot, position) => [presentAt(slotIds, position, "slot ids"), slot.values]),
+        memberValues: draft.slots.map((slot, position) => [presentAt(slotIds, position, "slot ids"), slot.memberValues]),
     };
 }
 
@@ -273,8 +274,9 @@ export function detectSets(files: readonly ScannedFile[], options: DetectSetsOpt
         const children = entries.flatMap((entry) => [...entry.node.children.values()].map((node) => ({ node, varValues: entry.varValues })));
         if (children.length === 0) return;
         for (const cluster of clusterChildren(children, options.contentSimilarity)) {
-            if (cluster.names.length === 1) {
-                descend(cluster.entries, [...path, { kind: "literal", name: cluster.names[0]! }]);
+            const [name] = cluster.names;
+            if (name !== undefined && cluster.names.length === 1) {
+                descend(cluster.entries, [...path, { kind: "literal", name }]);
                 continue;
             }
             const next = cluster.entries.map((entry) => ({ node: entry.node, varValues: [...entry.varValues, entry.node.name] }));

@@ -59,9 +59,7 @@ function refusal(block: ChartBlock, rows: readonly ChartRow[] = ROWS): string {
 
 /** The series of one option. */
 function firstGrid(option: EchartOption): EchartOption {
-    const grid = gridAt(option, 0);
-    if (grid === undefined) throw new Error("the roc chart holds no grid");
-    return grid;
+    return gridAt(option, 0);
 }
 
 describe("the roc figure", () => {

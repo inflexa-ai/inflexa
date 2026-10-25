@@ -241,7 +241,9 @@ describe("the band of the toolbox", () => {
     };
 
     /** One element that the runtime draws. */
-    type Drawn = ReturnType<ReturnType<echarts.ECharts["getZr"]>["storage"]["getDisplayList"]>[number];
+    type DrawnElement = ReturnType<ReturnType<echarts.ECharts["getZr"]>["storage"]["getDisplayList"]>[number];
+    /** The drawn element with the transform as zrender holds it: null on an untransformed element, where the lib type says always present. */
+    type Drawn = Omit<DrawnElement, "transform"> & { transform: DrawnElement["transform"] | null };
 
     /** The box of one drawn element in the pixels of the chart body. */
     function drawnBox(element: Drawn): Box {

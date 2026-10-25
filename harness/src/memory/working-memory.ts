@@ -33,6 +33,7 @@ import { type Result, type ResultAsync, err, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { type Connectable, type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import { presentGet } from "../lib/present.js";
 import type { Querier } from "../state/db.js";
 
 /**
@@ -241,7 +242,7 @@ function countFindings(findings: Findings): number {
 
 /** The run a finding id hangs under, or `undefined` if no run holds it. */
 function runOfFinding(findings: Findings, id: string): string | undefined {
-    return Object.keys(findings).find((runId) => findings[runId]!.some((f) => f.id === id));
+    return Object.keys(findings).find((runId) => presentGet(findings, runId, "the run's findings").some((f) => f.id === id));
 }
 
 function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, WorkingMemoryRejection> {
@@ -260,13 +261,13 @@ function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, Wor
             if (runId === undefined) return rejectUnknownId("finding", op.id);
             return checkEntryText("finding", op.text).map((text) => ({
                 ...findings,
-                [runId]: findings[runId]!.map((f) => (f.id === op.id ? { ...f, text } : f)),
+                [runId]: presentGet(findings, runId, "the run's findings").map((f) => (f.id === op.id ? { ...f, text } : f)),
             }));
         }
         case "retire": {
             const runId = runOfFinding(findings, op.id);
             if (runId === undefined) return rejectUnknownId("finding", op.id);
-            const kept = findings[runId]!.filter((f) => f.id !== op.id);
+            const kept = presentGet(findings, runId, "the run's findings").filter((f) => f.id !== op.id);
             const next = { ...findings };
             // An emptied run bucket is dropped whole: memory references a run only
             // for as long as it holds a finding from it.
@@ -401,7 +402,10 @@ export function createWorkingMemory(pool: Querier & Connectable): WorkingMemoryS
         // than being miscaptured as a `DbError`.
         return tryQuery("working-memory.load", () =>
             pool.query<{ data: unknown }>("SELECT data FROM cortex_working_memory WHERE analysis_id = $1", [analysisId]),
-        ).map(({ rows }) => (rows.length === 0 ? emptyWorkingMemory() : workingMemorySchema.parse(rows[0]!.data)));
+        ).map(({ rows }) => {
+            const [stored] = rows;
+            return stored === undefined ? emptyWorkingMemory() : workingMemorySchema.parse(stored.data);
+        });
     }
 
     function updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): ResultAsync<void, WorkingMemoryError> {
@@ -420,7 +424,8 @@ export function createWorkingMemory(pool: Querier & Connectable): WorkingMemoryS
                 .map(({ rows }) => {
                     // Schema parse stays outside the driver wrapper — a validation throw
                     // propagates verbatim (and `withTransaction` still rolls back).
-                    const current = rows.length === 0 ? emptyWorkingMemory() : workingMemorySchema.parse(rows[0]!.data);
+                    const [stored] = rows;
+                    const current = stored === undefined ? emptyWorkingMemory() : workingMemorySchema.parse(stored.data);
                     return applySectionUpdate(current, section, value);
                 })
                 .andThen((amended) =>

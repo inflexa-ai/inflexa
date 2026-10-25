@@ -18,6 +18,7 @@ import {
     scheduleReady,
     validatePlanDag,
 } from "../execute-analysis-scheduler.js";
+import { presentGet } from "../../lib/present.js";
 
 function step(id: string, ...deps: string[]): PlanStep {
     return { id, depends_on: deps };
@@ -196,7 +197,7 @@ describe("validatePlanDag", () => {
         const plan = [step("A"), step("B", "A"), step("C", "A", "B")];
         const stepMap = validatePlanDag(plan);
         expect(stepMap.size).toBe(3);
-        expect(stepMap.get("C")!.depends_on).toEqual(["A", "B"]);
+        expect(presentGet(stepMap, "C").depends_on).toEqual(["A", "B"]);
     });
 });
 

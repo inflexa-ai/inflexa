@@ -19,8 +19,8 @@ describe.skipIf(!LIVE)("live IUPHAR", () => {
         const target = await findTargetByGeneSymbol("EGFR");
 
         expect(target).not.toBe(null);
-        expect(typeof target!.targetId).toBe("number");
-        expect(target!.name.length).toBeGreaterThan(0);
-        expect(Array.isArray(target!.familyIds)).toBe(true);
+        expect(typeof target?.targetId).toBe("number");
+        expect(target?.name.length).toBeGreaterThan(0);
+        expect(Array.isArray(target?.familyIds)).toBe(true);
     }, 60_000);
 });

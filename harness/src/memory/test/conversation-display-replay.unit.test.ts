@@ -6,6 +6,7 @@ import { createConversationDisplayRecorder } from "../conversation-display-recor
 import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage } from "../conversation-display-storage.js";
 import { planCardOf } from "../card-builders.js";
 import type { StoredMessage, StoredTurnRecord } from "../thread-history.js";
+import { presentAt } from "../../lib/present.js";
 
 const SOURCE = { agentId: "conversation", callPath: ["conversation"] };
 
@@ -17,7 +18,8 @@ describe("the stored card of a revised plan", () => {
             parentPlanId: "pln-0000000a",
             supersededBy: null,
             createdAt: "2026-10-02T00:00:00.000Z",
-        })!;
+        });
+        if (card === null) throw new Error("card is absent");
         const recorder = createConversationDisplayRecorder({
             userText: "show the plan",
             agentId: SOURCE.agentId,
@@ -27,7 +29,7 @@ describe("the stored card of a revised plan", () => {
 
         const stored = await parseStoredDisplayEnvelope(envelopeDisplayMessages(recorder.finish()), "test");
 
-        const part = stored.messages[1]!.parts.find((candidate) => candidate.type === "data-plan");
+        const part = presentAt(stored.messages, 1).parts.find((candidate) => candidate.type === "data-plan");
         expect(part).toMatchObject({ type: "data-plan", data: { planId: "pln-0000000b", parentPlanId: "pln-0000000a" } });
     });
 });
@@ -79,7 +81,7 @@ describe("recorded conversation display replay", () => {
             },
         ]);
 
-        expect(replay[1]!.parts.map((part) => part.type)).toEqual([
+        expect(presentAt(replay, 1).parts.map((part) => part.type)).toEqual([
             "text",
             "data-plan",
             "data-run-card",
@@ -107,7 +109,7 @@ describe("recorded conversation display replay", () => {
         ]);
 
         // A denial is the user's decision, not a fault — it must not read back as one.
-        expect(replay[1]!.parts).toEqual([
+        expect(presentAt(replay, 1).parts).toEqual([
             { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "ok", detail: "scripts/run.py" },
             { type: "tool-call", toolCallId: "t2", toolName: "execute_command", outcome: "denied" },
         ]);
@@ -128,8 +130,10 @@ describe("recorded conversation display replay", () => {
 
         // One field, four states: a reader switches on it and the compiler catches a missed
         // case. Nothing here is left for a consumer to infer from an absent value.
-        expect(replay[1]!.parts).toEqual([{ type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" }]);
-        expect(replay[1]!.interrupted).toBe(true);
+        expect(presentAt(replay, 1).parts).toEqual([
+            { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" },
+        ]);
+        expect(presentAt(replay, 1).interrupted).toBe(true);
     });
 
     it("replays a sub-agent activity part field for field", async () => {
@@ -150,7 +154,7 @@ describe("recorded conversation display replay", () => {
             { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
         ]);
 
-        expect(replay[1]!.parts.filter((part) => part.type === "data-subagent-activity")).toEqual([
+        expect(presentAt(replay, 1).parts.filter((part) => part.type === "data-subagent-activity")).toEqual([
             {
                 type: "data-subagent-activity",
                 id: "subagent-activity-t1",
@@ -186,7 +190,7 @@ describe("recorded conversation display replay", () => {
             { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(recorder.finish()) },
         ]);
 
-        expect(replay[1]!.parts).toEqual([{ type: "data-ask", ...base, status: "resolved", reply: "always" }]);
+        expect(presentAt(replay, 1).parts).toEqual([{ type: "data-ask", ...base, status: "resolved", reply: "always" }]);
     });
 
     it("folds a stored rollup onto the append's assistant reply", () => {
@@ -248,8 +252,8 @@ describe("recorded conversation display replay", () => {
 
         // A turn that reported no quantity still took time, thus the two figures are
         // independent. A measured zero is a figure, and it never reads as an absence.
-        expect(replay[1]!.durationMs).toBe(0);
-        expect("usage" in replay[1]!).toBe(false);
+        expect(presentAt(replay, 1).durationMs).toBe(0);
+        expect("usage" in presentAt(replay, 1)).toBe(false);
     });
 
     it("folds the author and the creation time of the opening row onto the append", () => {
@@ -274,8 +278,8 @@ describe("recorded conversation display replay", () => {
         // Every message of the append carries the time, because every row of the
         // append shares it. The author rides the user message alone.
         expect(replay.map((m) => m.createdAt)).toEqual(["2026-02-03T10:15:30.000Z", "2026-02-03T10:15:30.000Z"]);
-        expect(replay[0]!.author).toBe("dr.chen@lab.example");
-        expect("author" in replay[1]!).toBe(false);
+        expect(presentAt(replay, 0).author).toBe("dr.chen@lab.example");
+        expect("author" in presentAt(replay, 1)).toBe(false);
     });
 
     it("replays a turn stored without an author with no author key", () => {
@@ -311,7 +315,7 @@ describe("recorded conversation display replay", () => {
             },
         ]);
 
-        expect("createdAt" in replay[0]!).toBe(false);
+        expect("createdAt" in presentAt(replay, 0)).toBe(false);
     });
 
     it("keeps the author and the time out of the display projection it reads", () => {
@@ -373,7 +377,7 @@ describe("replay of a turn stored in rounds", () => {
         const replay = storedMessagesToChat([openingRow(0), roundRow(1, [{ type: "text", text: "first" }]), roundRow(4, [{ type: "text", text: "second" }])]);
 
         expect(replay.map((m) => m.role)).toEqual(["user", "assistant"]);
-        expect(replay[1]!.parts).toEqual([
+        expect(presentAt(replay, 1).parts).toEqual([
             { type: "text", text: "first" },
             { type: "text", text: "second" },
         ]);
@@ -386,7 +390,7 @@ describe("replay of a turn stored in rounds", () => {
             roundRow(4, [ask("resolved"), { type: "text", text: "after" }]),
         ]);
 
-        expect(replay[1]!.parts).toEqual([
+        expect(presentAt(replay, 1).parts).toEqual([
             { type: "text", text: "before" },
             { type: "data-ask", id: "ask-1", title: "Run?", command: "inflexa run", status: "resolved" },
             { type: "text", text: "after" },
@@ -401,7 +405,7 @@ describe("replay of a turn stored in rounds", () => {
         ]);
 
         expect(replay[1]).toMatchObject({ usage, durationMs: 4321, interrupted: true });
-        expect("usage" in replay[0]!).toBe(false);
+        expect("usage" in presentAt(replay, 0)).toBe(false);
     });
 
     it("keeps the fold of the row figures for an older turn with no record", () => {
@@ -449,16 +453,16 @@ describe("replay of a turn stored in rounds", () => {
             ["system", "c-1"],
             ["assistant", "a-2"],
         ]);
-        expect(replay[2]!.parts).toEqual([
+        expect(presentAt(replay, 2).parts).toEqual([
             { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
         ]);
-        expect(replay[3]!.usage).toEqual(usage);
+        expect(presentAt(replay, 3).usage).toEqual(usage);
     });
 
     it("gives the divider of a drop with the status failed", () => {
         const replay = storedMessagesToChat([openingRow(0), roundRow(3, [{ type: "text", text: "first" }]), dividerRow(9, "failed")]);
 
-        expect(replay[2]!.parts).toEqual([
+        expect(presentAt(replay, 2).parts).toEqual([
             { type: "data-compaction", id: "c-1", status: "failed", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
         ]);
     });
@@ -478,8 +482,8 @@ describe("replay of a turn stored in rounds", () => {
         ]);
 
         expect(replay.map((m) => m.role)).toEqual(["user", "assistant", "system"]);
-        expect(replay[2]!.parts).toEqual([{ type: "text", text: noteText }]);
-        expect(replay[1]!.usage).toEqual(usage);
-        expect(replay[1]!.interrupted).toBeUndefined();
+        expect(presentAt(replay, 2).parts).toEqual([{ type: "text", text: noteText }]);
+        expect(presentAt(replay, 1).usage).toEqual(usage);
+        expect(presentAt(replay, 1).interrupted).toBeUndefined();
     });
 });

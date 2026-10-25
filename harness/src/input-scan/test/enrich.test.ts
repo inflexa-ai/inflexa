@@ -9,6 +9,7 @@ import { enrichShapes, type EnrichShapesArgs } from "../enrich.js";
 import { observeShapes } from "../shapes.js";
 import type { ScannedFile } from "../types.js";
 import type { AgentSession } from "../../auth/types.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 const SESSION: AgentSession = {
     identity: { user: "tester" },
@@ -115,7 +116,7 @@ describe("enrichShapes", () => {
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs }));
 
-        expect(shapes[0]!.header!.fields).toMatchObject({ delimiter: "comma", columnCount: 3, columns: "subject, arm, dose" });
+        expect(presentAt(shapes, 0).header?.fields).toMatchObject({ delimiter: "comma", columnCount: 3, columns: "subject, arm, dose" });
     });
 
     it("bounds the read it issues per member", async () => {
@@ -124,7 +125,7 @@ describe("enrichShapes", () => {
 
         await enrichShapes(enrichArgs({ shapes: observed.shapes, fs }));
 
-        expect(reads[0]!.length).toBe(262_144);
+        expect(presentAt(reads, 0).length).toBe(262_144);
     });
 
     it("notes an unreadable member instead of dropping its shape", async () => {
@@ -133,7 +134,7 @@ describe("enrichShapes", () => {
 
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs }));
 
-        expect(shapes[0]!.header!.unavailable).toBe("prefix unreadable (not_found)");
+        expect(presentAt(shapes, 0).header?.unavailable).toBe("prefix unreadable (not_found)");
     });
 
     it("sends only footer-indexed containers to the sandbox decoder", async () => {
@@ -151,11 +152,11 @@ describe("enrichShapes", () => {
         );
 
         expect(submitted.map((body) => body.command.slice(3))).toEqual([["/a1/data/inputs/tables/counts_1.parquet"]]);
-        expect(submitted[0]!.command[0]).toBe("python3");
-        expect(submitted[0]!.command[2]).toContain("def parquet_fields(");
-        const parquet = shapes.find((shape) => shape.format === "parquet")!;
-        expect(parquet.header!.fields).toEqual({ columnCount: 7 });
-        expect(parquet.header!.path).toBe("data/inputs/tables/counts_1.parquet");
+        expect(presentAt(submitted, 0).command[0]).toBe("python3");
+        expect(presentAt(submitted, 0).command[2]).toContain("def parquet_fields(");
+        const parquet = presentFind(shapes, (shape) => shape.format === "parquet");
+        expect(parquet.header?.fields).toEqual({ columnCount: 7 });
+        expect(parquet.header?.path).toBe("data/inputs/tables/counts_1.parquet");
     });
 
     it("skips the container readout when no sandbox is wired, keeping the shape", async () => {
@@ -165,7 +166,7 @@ describe("enrichShapes", () => {
         const shapes = await enrichShapes(enrichArgs({ shapes: observed.shapes, fs }));
 
         expect(shapes).toHaveLength(1);
-        expect(shapes[0]!.header).toBeUndefined();
+        expect(presentAt(shapes, 0).header).toBeUndefined();
     });
 
     it("names the exec's own failure when the decoder produced no line for a container", async () => {
@@ -177,7 +178,7 @@ describe("enrichShapes", () => {
             enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
         );
 
-        expect(shapes[0]!.header!.unavailable).toBe("container decoder exited 1: python3: not found");
+        expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder exited 1: python3: not found");
     });
 
     it("names a decoder timeout rather than reporting silence", async () => {
@@ -189,7 +190,7 @@ describe("enrichShapes", () => {
             enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
         );
 
-        expect(shapes[0]!.header!.unavailable).toBe("container decoder timed out after 120s");
+        expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder timed out after 120s");
     });
 
     it("reports silence as silence when the decoder exited cleanly", async () => {
@@ -201,7 +202,7 @@ describe("enrichShapes", () => {
             enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
         );
 
-        expect(shapes[0]!.header!.unavailable).toBe("container decoder reported nothing for this member");
+        expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder reported nothing for this member");
     });
 
     it("issues nothing when there is nothing to read", async () => {

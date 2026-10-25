@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { readFixture } from "../__fixtures__/fixture-runner.js";
 import { buildViabilityCalls, derivedViability, parsePhenotypeResponse } from "../impc-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const SolrEnvelopeSchema = z.object({
     response: z.object({ numFound: z.number().optional(), docs: z.array(z.record(z.string(), z.unknown())) }),
@@ -22,16 +23,16 @@ describe("IMPC golden fixtures", () => {
     it("resolves the mouse marker of a human symbol", () => {
         const body = SolrEnvelopeSchema.parse(readFixture("impc", "gene-select-TP53.json"));
         expect(body.response.numFound).toBe(1);
-        expect(body.response.docs[0]!.marker_symbol).toBe("Trp53");
-        expect(body.response.docs[0]!.mgi_accession_id).toBe("MGI:98834");
+        expect(presentAt(body.response.docs, 0).marker_symbol).toBe("Trp53");
+        expect(presentAt(body.response.docs, 0).mgi_accession_id).toBe("MGI:98834");
     });
 
     it("reads the phenotype profile of the genotype-phenotype core", () => {
         const profile = parsePhenotypeResponse(readFixture("impc", "gp-select-Trp53-rows5.json"));
 
         expect(profile.phenotypeCount).toBeGreaterThan(0);
-        expect(profile.mpTerms[0]!.id).toStartWith("MP:");
-        expect(typeof profile.mpTerms[0]!.bestPValue).toBe("number");
+        expect(presentAt(profile.mpTerms, 0).id).toStartWith("MP:");
+        expect(typeof presentAt(profile.mpTerms, 0).bestPValue).toBe("number");
         expect(profile.organSystems.length).toBeGreaterThan(0);
     });
 
@@ -54,7 +55,7 @@ describe("IMPC golden fixtures", () => {
     it("reads the viability calls of the primary screen", () => {
         const calls = buildViabilityCalls(readFixture("impc", "gp-viability-Trp53.json"), { response: { docs: [] } });
         expect(calls.length).toBeGreaterThan(0);
-        expect(calls[0]!.parameterStableId).toStartWith("IMPC_VIA_");
+        expect(presentAt(calls, 0).parameterStableId).toStartWith("IMPC_VIA_");
         expect(derivedViability(calls)).not.toBeNull();
     });
 });

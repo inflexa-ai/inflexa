@@ -14,6 +14,7 @@ import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
 import { createReportSessionStateStore, type DerivationRecord, type ReportSessionStateStore } from "../report-session-state.js";
+import { presentAt } from "../../lib/present.js";
 
 const validDraft: DraftDocument = {
     title: "A report",
@@ -75,8 +76,8 @@ describe("createReportSessionStateStore", () => {
         const reader = createReportSessionStateStore({ pool });
         const state = (await reader.readState(threadId))._unsafeUnwrap();
         expect(state).not.toBeNull();
-        expect(state!.document).toEqual(validDraft);
-        expect(state!.snapshot).toEqual(snapshot);
+        expect(state?.document).toEqual(validDraft);
+        expect(state?.snapshot).toEqual(snapshot);
     });
 
     it("keeps the citation records of a pin, and reads a pin with no record map as it stands", async () => {
@@ -91,7 +92,7 @@ describe("createReportSessionStateStore", () => {
         };
         (await store.writeSnapshot({ threadId: withRecords, analysisId, snapshot: pinned }))._unsafeUnwrap();
         const read = (await store.readState(withRecords))._unsafeUnwrap();
-        expect(read!.snapshot).toEqual(pinned);
+        expect(read?.snapshot).toEqual(pinned);
 
         // A stored pin that predates the map carries the key list alone. It loads with no map, thus each
         // reader falls back to the bare key.
@@ -101,7 +102,10 @@ describe("createReportSessionStateStore", () => {
             values: [legacy, JSON.stringify({ artifacts: snapshot.artifacts, citations: ["pmid:12345"] })],
         });
 
-        const legacySnapshot = (await store.readState(legacy))._unsafeUnwrap()!.snapshot!;
+        const legacyState = (await store.readState(legacy))._unsafeUnwrap();
+        if (legacyState === null) throw new Error("the legacy state row is absent");
+        const legacySnapshot = legacyState.snapshot;
+        if (legacySnapshot === null) throw new Error("legacySnapshot is absent");
         expect(legacySnapshot.citations).toEqual(["pmid:12345"]);
         expect(legacySnapshot.citationRecords).toBeUndefined();
     });
@@ -130,7 +134,7 @@ describe("createReportSessionStateStore", () => {
             text: "SELECT COUNT(*)::int AS n FROM cortex_report_session_state WHERE thread_id = $1",
             values: [threadId],
         });
-        expect(rows[0]!.n).toBe(1);
+        expect(presentAt(rows, 0).n).toBe(1);
     });
 
     it("refuses the second of two interleaved persists, and keeps the first landing", async () => {
@@ -155,7 +159,7 @@ describe("createReportSessionStateStore", () => {
 
         // The row holds the first landing, and the second turn did not overwrite it.
         const state = (await store.readState(threadId))._unsafeUnwrap();
-        expect(state!.document).toEqual(validDraft);
+        expect(state?.document).toEqual(validDraft);
     });
 
     it("lands a second persist that carries the prior document as its token", async () => {
@@ -174,10 +178,10 @@ describe("createReportSessionStateStore", () => {
             title: "A second landing",
             sections: [{ kind: "section", id: "s3", title: "Notes", blocks: [{ kind: "text", id: "t3", content: { prose: "More." } }] }],
         };
-        expect((await store.persistDocument({ threadId, document: nextDoc, expected: read!.document }))._unsafeUnwrap()).toBe("persisted");
+        expect((await store.persistDocument({ threadId, document: nextDoc, expected: read?.document ?? null }))._unsafeUnwrap()).toBe("persisted");
 
         const after = (await store.readState(threadId))._unsafeUnwrap();
-        expect(after!.document).toEqual(nextDoc);
+        expect(after?.document).toEqual(nextDoc);
     });
 
     it("gives an absence for a persist against a thread with no row", async () => {
@@ -252,20 +256,20 @@ describe("createReportSessionStateStore", () => {
 
         // A fresh row carries neither marker.
         const fresh = (await store.readState(threadId))._unsafeUnwrap();
-        expect(fresh!.renderedDocumentHash).toBeNull();
-        expect(fresh!.seenDocumentHash).toBeNull();
+        expect(fresh?.renderedDocumentHash).toBeNull();
+        expect(fresh?.seenDocumentHash).toBeNull();
 
         // The rendered stamp lands the hash, and the seen hash stays null until a look.
         expect((await store.stampRendered(threadId, "hash-rendered"))._unsafeUnwrap()).toBe("stamped");
         const afterRendered = (await store.readState(threadId))._unsafeUnwrap();
-        expect(afterRendered!.renderedDocumentHash).toBe("hash-rendered");
-        expect(afterRendered!.seenDocumentHash).toBeNull();
+        expect(afterRendered?.renderedDocumentHash).toBe("hash-rendered");
+        expect(afterRendered?.seenDocumentHash).toBeNull();
 
         // The seen stamp copies the rendered hash, thus the two markers agree.
         expect((await store.stampSeen(threadId))._unsafeUnwrap()).toBe("stamped");
         const afterSeen = (await store.readState(threadId))._unsafeUnwrap();
-        expect(afterSeen!.seenDocumentHash).toBe("hash-rendered");
-        expect(afterSeen!.renderedDocumentHash).toBe("hash-rendered");
+        expect(afterSeen?.seenDocumentHash).toBe("hash-rendered");
+        expect(afterSeen?.renderedDocumentHash).toBe("hash-rendered");
     });
 
     it("gives a no-rendered outcome when the seen stamp finds no rendered hash", async () => {
@@ -278,7 +282,7 @@ describe("createReportSessionStateStore", () => {
         expect((await store.stampSeen(threadId))._unsafeUnwrap()).toBe("no-rendered");
         // The seen hash stays null, because the copy had no rendered hash to take.
         const after = (await store.readState(threadId))._unsafeUnwrap();
-        expect(after!.seenDocumentHash).toBeNull();
+        expect(after?.seenDocumentHash).toBeNull();
     });
 
     it("gives an absence for a stamp against a thread with no row", async () => {
@@ -304,7 +308,9 @@ describe("createReportSessionStateStore", () => {
         (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
 
         // A fresh row holds no list at all, thus the read gives an empty list.
-        expect((await store.readState(threadId))._unsafeUnwrap()!.derivations).toEqual([]);
+        const empty = (await store.readState(threadId))._unsafeUnwrap();
+        if (empty === null) throw new Error("the state row is absent");
+        expect(empty.derivations).toEqual([]);
 
         const first = derivation("a.csv");
         const second = derivation("b.csv", "runs/r1/output/counts.csv");
@@ -313,10 +319,12 @@ describe("createReportSessionStateStore", () => {
 
         // A second store instance reads the same durable list, with each record whole.
         const read = (await createReportSessionStateStore({ pool }).readState(threadId))._unsafeUnwrap();
-        expect(read!.derivations).toEqual([first, second]);
+        if (read === null) throw new Error("the state row is absent");
+        expect(read.derivations).toEqual([first, second]);
         // The record carries what a second run needs: the script, the sources, and the output hash.
-        expect(read!.derivations[0]!.script).toBe("import pandas\n");
-        expect(read!.derivations[0]!.sources).toEqual([{ path: "runs/r1/output/de.csv", hash: "abc123" }]);
+        const landed = presentAt(read.derivations, 0, "the first derivation");
+        expect(landed.script).toBe("import pandas\n");
+        expect(landed.sources).toEqual([{ path: "runs/r1/output/de.csv", hash: "abc123" }]);
     });
 
     it("refuses a second record that holds an output path of the list", async () => {
@@ -334,7 +342,7 @@ describe("createReportSessionStateStore", () => {
 
         // The stored list keeps the first record, thus the refusal changed nothing.
         const read = (await store.readState(threadId))._unsafeUnwrap();
-        expect(read!.derivations).toEqual([landed]);
+        expect(read?.derivations).toEqual([landed]);
     });
 
     /**
@@ -391,7 +399,7 @@ describe("createReportSessionStateStore", () => {
 
         // The thread holds the record of the winner, and it holds it one time.
         const read = (await store.readState(threadId))._unsafeUnwrap();
-        expect(read!.derivations).toEqual([derivation("race.csv")]);
+        expect(read?.derivations).toEqual([derivation("race.csv")]);
     });
 
     it("gives an absence for an append against a thread with no row", async () => {
@@ -408,8 +416,8 @@ describe("createReportSessionStateStore", () => {
         // gives no error, because a session that derived nothing holds none.
         await pool.query({ text: "UPDATE cortex_report_session_state SET derivations = NULL WHERE thread_id = $1", values: [threadId] });
         const read = (await store.readState(threadId))._unsafeUnwrap();
-        expect(read!.derivations).toEqual([]);
-        expect(read!.snapshot).toEqual(snapshot);
+        expect(read?.derivations).toEqual([]);
+        expect(read?.snapshot).toEqual(snapshot);
     });
 
     it("reads a corrupted derivation list as a typed error", async () => {

@@ -18,6 +18,7 @@
  */
 
 import { assessCompleteness } from "../input-scan/companions.js";
+import { presentAt, presentFirst, presentGet } from "../lib/present.js";
 import type { SetMenu } from "../input-scan/menu.js";
 import { buildSetMenu } from "../input-scan/menu.js";
 import type { DetectedSet, DetectedSets, MemberFile, SetSlot } from "../input-scan/set-types.js";
@@ -155,7 +156,7 @@ function narrowSlot(slot: SetSlot, values: readonly string[]): DataProfileGroupS
 function groupSlots(detected: DetectedSets, draft: DraftGroup, claims: readonly Claim[]): DataProfileGroupSlot[] {
     const slots: DataProfileGroupSlot[] = [];
     for (const set of draft.sets) {
-        const indices = claims.filter((claim) => claim.set?.id === set.id && claim.memberIndex !== undefined).map((claim) => claim.memberIndex!);
+        const indices = claims.flatMap((claim) => (claim.set?.id === set.id && claim.memberIndex !== undefined ? [claim.memberIndex] : []));
         for (const slot of set.slots) {
             const values = detected.memberSlotValues.get(slot.id);
             if (!values) continue;
@@ -267,7 +268,7 @@ function allClaims(set: DetectedSet): Claim[] {
 }
 
 function claimsAt(set: DetectedSet, indices: readonly number[]): Claim[] {
-    return indices.map((index) => ({ member: set.members[index]!, set, memberIndex: index }));
+    return indices.map((index) => ({ member: presentAt(set.members, index, "the claimed member"), set, memberIndex: index }));
 }
 
 function applyUse(ctx: OperationContext, op: Extract<MenuOperationInput, { op: "use" }>): void {
@@ -312,7 +313,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperationInput, { op:
                 reason: op.reason,
                 displayPattern: set.pathTemplate,
                 sets: [set],
-                claims: claimsAt(set, byValue.get(value)!),
+                claims: claimsAt(set, presentGet(byValue, value, `the members with value "${value}"`)),
                 splitValues: [value],
             });
         }
@@ -357,7 +358,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperationInput, { op:
     const restValues = [...byValue.keys()].filter((value) => !claimedValues.has(value));
     if (restValues.length === 0) return;
     if (!op.by.rest) {
-        const restMembers = restValues.reduce((total, value) => total + byValue.get(value)!.length, 0);
+        const restMembers = restValues.reduce((total, value) => total + presentGet(byValue, value, `the members with value "${value}"`).length, 0);
         ctx.errors.push(
             `split ${op.setId} by ${slot.id}: ${restMembers} members take a value the mapping did not name. ` +
                 'Name the remaining values, or add a "rest" group for them.',
@@ -371,7 +372,7 @@ function applySplit(ctx: OperationContext, op: Extract<MenuOperationInput, { op:
         sets: [set],
         claims: claimsAt(
             set,
-            restValues.flatMap((value) => byValue.get(value)!),
+            restValues.flatMap((value) => presentGet(byValue, value, `the members with value "${value}"`)),
         ),
         splitValues: restValues,
     });
@@ -418,7 +419,7 @@ function applyGroup(ctx: OperationContext, op: Extract<MenuOperationInput, { op:
     const entry = openStep(ctx, { op: "group", templates: [], paths: [...op.paths], groupIds: [] });
     emit(ctx, entry, {
         annotation: op.group,
-        displayPattern: paths.length === 1 ? paths[0]! : `${commonDirectory(paths) || "."}/… (${paths.length} paths)`,
+        displayPattern: paths.length === 1 ? presentFirst(paths, "the single path") : `${commonDirectory(paths) || "."}/… (${paths.length} paths)`,
         sets: [],
         claims,
     });
@@ -495,7 +496,7 @@ function slotsById(detected: DetectedSets): Map<string, SetSlot> {
  */
 function crossCheckSlots(detected: DetectedSets, observations: readonly DataProfileObservation[]): DataProfileObservation[] {
     const reference = observations.find((observation) => observation.kind === "slot");
-    if (!reference || reference.kind !== "slot") return [...observations];
+    if (!reference) return [...observations];
     const byId = slotsById(detected);
     const referenceSlot = byId.get(reference.slotId);
     const referenceValues = new Set(detected.slotValues.get(reference.slotId) ?? []);
@@ -635,7 +636,7 @@ export function resolveProfileSubmission(
     const claimsByDraft = new Map<DraftGroup, Claim[]>();
     const claimants = new Map<string, string[]>();
     for (const draft of ctx.drafts) {
-        const id = ids.get(draft)!;
+        const id = presentGet(ids, draft, "the group id of the draft");
         const seen = new Set<string>();
         const kept: Claim[] = [];
         for (const claim of draft.claims) {
@@ -673,16 +674,19 @@ export function resolveProfileSubmission(
                 );
         } else {
             for (const path of contested) {
-                const owners = claimants.get(path)!;
+                const owners = presentGet(claimants, path, `the claimants of "${path}"`);
                 errors.push(`"${path}" is claimed by both "${owners[0]}" and "${owners[1]}". A kept file belongs to exactly one group.`);
             }
             // The repair round decides who keeps it. Until then the first claimant holds it,
             // so the accounting handed back to the agent still sums.
             for (const [draft, kept] of claimsByDraft) {
-                const id = ids.get(draft)!;
+                const id = presentGet(ids, draft, "the group id of the draft");
                 claimsByDraft.set(
                     draft,
-                    kept.filter((claim) => !disputed.has(claim.member.path) || claimants.get(claim.member.path)![0] === id),
+                    kept.filter(
+                        (claim) =>
+                            !disputed.has(claim.member.path) || presentGet(claimants, claim.member.path, `the claimants of "${claim.member.path}"`)[0] === id,
+                    ),
                 );
             }
         }
@@ -694,16 +698,19 @@ export function resolveProfileSubmission(
     const unclaimed = [...byPath.keys()].filter((path) => !claimed.has(path)).sort((a, b) => a.localeCompare(b, "en"));
     const drafts = [...ctx.drafts];
     if (unclaimed.length > 0) {
-        const residue = unclassifiedDraft(unclaimed.map((path) => byPath.get(path)!));
+        const residue = unclassifiedDraft(unclaimed.map((path) => presentGet(byPath, path, `the entry for "${path}"`)));
         drafts.push(residue);
         ids.set(residue, UNCLASSIFIED_GROUP_ID);
         claimsByDraft.set(residue, [...residue.claims]);
     }
 
     for (const entry of ctx.recipe) {
-        entry.step.groupIds = entry.drafts.map((draft) => ids.get(draft)!);
+        entry.step.groupIds = entry.drafts.map((draft) => presentGet(ids, draft, "the group id of the draft"));
         if (entry.step.op === "split") {
-            entry.step.valueMapping = entry.drafts.map((draft) => ({ groupId: ids.get(draft)!, values: [...(draft.splitValues ?? [])] }));
+            entry.step.valueMapping = entry.drafts.map((draft) => ({
+                groupId: presentGet(ids, draft, "the group id of the draft"),
+                values: [...(draft.splitValues ?? [])],
+            }));
         }
     }
 
@@ -720,7 +727,7 @@ export function resolveProfileSubmission(
         recipe.push(sweep);
     }
 
-    const groups = drafts.map((draft) => finalizeGroup(detected, draft, ids.get(draft)!, claimsByDraft.get(draft) ?? []));
+    const groups = drafts.map((draft) => finalizeGroup(detected, draft, presentGet(ids, draft, "the group id of the draft"), claimsByDraft.get(draft) ?? []));
     const unclassifiedGroup = groups.find((group) => group.unclassified);
 
     const partition: DataProfilePartition = {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { observeShapes } from "../shapes.js";
 import type { ScannedFile } from "../types.js";
+import { presentAt } from "../../lib/present.js";
 
 function file(path: string, opts: { format?: string; size?: number } = {}): ScannedFile {
     const base = path.slice(path.lastIndexOf("/") + 1);
@@ -26,12 +27,12 @@ describe("observeShapes", () => {
         const observed = observeShapes(files);
 
         expect(observed.shapes).toHaveLength(1);
-        const shape = observed.shapes[0]!;
+        const shape = presentAt(observed.shapes, 0);
         expect(shape.fileCount).toBe(800);
         expect(shape.variablePositions).toHaveLength(1);
-        expect(shape.variablePositions[0]!.distinctValues).toBe(800);
-        expect(shape.variablePositions[0]!.sampleValues.length).toBeGreaterThan(0);
-        expect(shape.variablePositions[0]!.sampleValues).toContain("0001");
+        expect(presentAt(shape.variablePositions, 0).distinctValues).toBe(800);
+        expect(presentAt(shape.variablePositions, 0).sampleValues.length).toBeGreaterThan(0);
+        expect(presentAt(shape.variablePositions, 0).sampleValues).toContain("0001");
         expect(observed.unstructured.count).toBe(0);
     });
 
@@ -48,7 +49,7 @@ describe("observeShapes", () => {
         const observed = observeShapes(files);
 
         expect(observed.shapes).toHaveLength(1);
-        const shape = observed.shapes[0]!;
+        const shape = presentAt(observed.shapes, 0);
         expect(shape.fileCount).toBe(120);
         expect(shape.variablePositions.map((p) => p.distinctValues)).toEqual([20, 3, 2]);
         // The design is fully crossed, and the manifest says so rather than reporting 120.
@@ -64,9 +65,9 @@ describe("observeShapes", () => {
         const observed = observeShapes(files);
 
         expect(observed.shapes).toHaveLength(1);
-        const categorical = observed.shapes[0]!.variablePositions.find((p) => p.distinctValues === 2);
-        expect(categorical).toBeDefined();
-        expect([...categorical!.sampleValues].sort()).toEqual(["normal", "tumor"]);
+        const categorical = presentAt(observed.shapes, 0).variablePositions.find((p) => p.distinctValues === 2);
+        if (categorical === undefined) throw new Error("the categorical position is absent");
+        expect([...categorical.sampleValues].sort()).toEqual(["normal", "tumor"]);
     });
 
     it("collapses files sharing no name structure into one aggregate", () => {
@@ -91,7 +92,7 @@ describe("observeShapes", () => {
 
         expect(observed.shapes).toHaveLength(2);
         expect(observed.valueOverlaps).toHaveLength(1);
-        const overlap = observed.valueOverlaps[0]!;
+        const overlap = presentAt(observed.valueOverlaps, 0);
         expect(overlap.sharedValues).toBe(17);
         expect(overlap.onlyInFirst + overlap.onlyInSecond).toBe(3);
         expect(overlap.onlyInFirstSample).toContain("018");
@@ -103,9 +104,9 @@ describe("observeShapes", () => {
         const observed = observeShapes(files);
 
         expect(observed.shapes).toHaveLength(1);
-        expect(observed.shapes[0]!.format).toBe("unknown");
-        expect(observed.shapes[0]!.extensions).toEqual(["qqq"]);
-        expect(observed.shapes[0]!.variablePositions).toHaveLength(1);
+        expect(presentAt(observed.shapes, 0).format).toBe("unknown");
+        expect(presentAt(observed.shapes, 0).extensions).toEqual(["qqq"]);
+        expect(presentAt(observed.shapes, 0).variablePositions).toHaveLength(1);
     });
 
     it("does not merge shapes that differ in more than one alphabetic position", () => {

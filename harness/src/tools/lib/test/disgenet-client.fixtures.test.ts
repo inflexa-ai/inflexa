@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { GdaResponseSchema } from "../disgenet-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 runFixtureSuite("DisGeNET golden fixtures", [
     fixtureCase({
@@ -43,8 +44,8 @@ runFixtureSuite("DisGeNET golden fixtures", [
                 nPmids: 142,
             });
             // A record carries no `gene_name` and no record-level `source`.
-            expect(Object.keys(records[0]!)).not.toContain("geneName");
-            expect(Object.keys(records[0]!)).not.toContain("source");
+            expect(Object.keys(presentAt(records, 0))).not.toContain("geneName");
+            expect(Object.keys(presentAt(records, 0))).not.toContain("source");
         },
     }),
     fixtureCase({

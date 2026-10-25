@@ -16,6 +16,7 @@ import { createKnowledgeRecommendTool } from "../recommend.js";
 import { buildPlanSkeleton } from "../skeleton.js";
 import { decisionRecordPath } from "../../workspace/decision-record.js";
 import { createKnowledgeTemplateTool } from "../template.js";
+import { presentAt, presentFind } from "../../../lib/present.js";
 
 const SITUATION = {
     question: "differential_expression" as const,
@@ -61,7 +62,7 @@ describe("knowledge_recommend", () => {
         expect(out.snapshot.digest).toBe(SNAPSHOT.digest);
         expect(out.plan_skeleton.map((step) => step.grounding.template)).toContain("tpl-deseq2-two-group@1.0.0");
         expect(calls.recommend[0]?.situation).toEqual(SITUATION);
-        expect(Object.keys(calls.recommend[0]!.situation)).not.toContain("covariates");
+        expect(Object.keys(presentAt(calls.recommend, 0).situation)).not.toContain("covariates");
     });
 
     it("gives the planner one representation: the skeleton and the claims, never the procedure", async () => {
@@ -92,10 +93,16 @@ describe("knowledge_recommend", () => {
     });
 
     it("keeps the covered skeleton steps of a none answer beside the nearest rules", async () => {
-        const [qc] = recommendAnswer().procedure;
         const nearest = [{ claim: "R-0001@e7d0", title: "Replicates", failed: ["n_per_group_min gte 2"] }];
         const { client } = fakeKnowledgeClient({
-            recommend: { ...recommendAnswer(), match: "none", procedure: [qc!], claims: [], nearest, reason: "no rule" },
+            recommend: {
+                ...recommendAnswer(),
+                match: "none",
+                procedure: [presentAt(recommendAnswer().procedure, 0, "the procedure step")],
+                claims: [],
+                nearest,
+                reason: "no rule",
+            },
         });
         const tool = createKnowledgeRecommendTool({ client });
         const { ctx } = makeToolContext();
@@ -122,7 +129,7 @@ describe("knowledge_recommend", () => {
         const { ctx } = makeToolContext();
         await tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }), ctx);
         expect(calls.recommend[0]?.preferences).toEqual({ language: "python" });
-        expect(Object.keys(calls.recommend[0]!.situation)).not.toContain("preferred_language");
+        expect(Object.keys(presentAt(calls.recommend, 0).situation)).not.toContain("preferred_language");
     });
 
     it("passes an unavailable answer through as data, never as an error", async () => {
@@ -173,7 +180,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
         const skeleton = out.plan_skeleton;
         expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T2S1"]);
-        const analysis = skeleton[1]!;
+        const analysis = presentAt(skeleton, 1);
         expect(analysis.agent).toBe("bulk-transcriptomics-agent");
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.depends_on).toEqual(["T1S1"]);
@@ -191,7 +198,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             settings: [{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" }],
             reason: "Count-model Wald test with effect shrinkage per R-0001@e7d0",
         });
-        const gsea = skeleton[2]!;
+        const gsea = presentAt(skeleton, 2);
         expect(gsea.agent).toBe("enrichment-agent");
         expect(gsea.depends_on).toEqual(["T1S2"]);
         expect(gsea.caveats).toEqual(["Few DE genes: ORA has no power."]);
@@ -222,7 +229,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
+        const analysis = presentFind(out.plan_skeleton, (step) => step.id === "T1S2");
         expect(analysis.forbids).toEqual(["M-0002", "M-0004"]);
         expect(analysis.disputed).toEqual({ rule: "R-0010@2b3c", sides: ["independent filtering on", "independent filtering off"] });
         expect(analysis.grounding.settings).toEqual([
@@ -237,7 +244,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
+        const analysis = presentFind(out.plan_skeleton, (step) => step.id === "T1S2");
         expect(analysis.caveats).toEqual(["multiple_testing: independent_filtering conflicts between R-0010@2b3c and R-0166@4d5e"]);
         expect(analysis.grounding.settings.some((setting) => setting.name === "independent_filtering")).toBe(false);
         expect(analysis.grounding.settings).toEqual([{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" }]);
@@ -254,7 +261,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             )
         )._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        const enrichment = out.plan_skeleton.find((step) => step.id === "T2S1")!;
+        const enrichment = presentFind(out.plan_skeleton, (step) => step.id === "T2S1");
         expect(enrichment.name).toBe("Per-sample activity scores with a two-sample test");
         expect(enrichment.packages).toEqual(["decoupler"]);
         expect(enrichment.grounding.template).toBe("tpl-decoupler-scores@1.0.0");
@@ -268,7 +275,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
+        const analysis = presentFind(out.plan_skeleton, (step) => step.id === "T1S2");
         expect(analysis.grounding.template).toBe("tpl-deseq2-blocked@1.0.0");
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.caveats).toEqual([
@@ -299,7 +306,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
+        const analysis = presentFind(out.plan_skeleton, (step) => step.id === "T1S2");
         expect(analysis.caveats).toEqual([
             `the requested language has no template that realizes Count-model Wald test with effect shrinkage because tpl-pydeseq2-two-group@1.0.0: ${refused}; tpl-pydeseq2-blocked@1.0.0 does not honor pairing; the R template is named`,
         ]);
@@ -324,7 +331,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             const { ctx } = makeToolContext();
             const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
             if (out.match !== "applicable") throw new Error(out.match);
-            return out.plan_skeleton.find((step) => step.id === id)!;
+            return presentFind(out.plan_skeleton, (step) => step.id === id);
         };
         // The report step of the service carries the reporting rules and no
         // method: the rules cover it, thus the step is grounded by them.
@@ -355,7 +362,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
         expect(out.unrealized).toEqual(["differential_expression"]);
-        const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
+        const analysis = presentFind(out.plan_skeleton, (step) => step.id === "T1S2");
         // The method and the claims stay: the knowledge covers the step, and the caveat names the absent script.
         expect(analysis.grounding.status).toBe("grounded");
         expect(analysis.grounding.template).toBeUndefined();
@@ -377,7 +384,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         };
         const skeleton = buildPlanSkeleton({ ...answer, procedure: [cohort, ...answer.procedure] });
         expect(skeleton.map((step) => step.id)).toEqual(["T0S1", "T1S1", "T1S2", "T2S1"]);
-        const assembly = skeleton[0]!;
+        const assembly = presentAt(skeleton, 0);
         expect(assembly.step_type).toBe("data_preparation");
         expect(assembly.agent).toBe("bulk-transcriptomics-agent");
         expect(assembly.depends_on).toEqual([]);
@@ -385,35 +392,37 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(assembly.grounding.settings).toEqual([
             { step: "cohort_assembly", name: "unit_count", value: "counted_per_group_from_the_sample_table_after_the_step", source: "rule:R-0194" },
         ]);
-        expect(skeleton[1]!.depends_on).toEqual(["T0S1"]);
-        expect(skeleton[2]!.depends_on).toEqual(["T1S1"]);
+        expect(presentAt(skeleton, 1).depends_on).toEqual(["T0S1"]);
+        expect(presentAt(skeleton, 2).depends_on).toEqual(["T1S1"]);
         // Without the step the QC depends on nothing, as before.
-        expect(buildPlanSkeleton(answer)[0]!.depends_on).toEqual([]);
+        expect(presentAt(buildPlanSkeleton(answer), 0).depends_on).toEqual([]);
     });
 });
 
 describe("the release pin of one plan", () => {
     it("the first recommend answer pins the release, and every later call of the two tools carries it", async () => {
         const fake = fakeKnowledgeClient();
-        const [recommend, check] = createKnowledgeTools({ client: fake.client });
+        const tools = createKnowledgeTools({ client: fake.client });
+        const recommend = presentAt(tools, 0, "the recommend tool");
+        const check = presentAt(tools, 1, "the check tool");
         const { ctx } = makeToolContext();
-        await recommend!.execute(SITUATION, ctx);
+        await recommend.execute(SITUATION, ctx);
         expect(fake.calls.recommend[0]?.expected_snapshot).toBeUndefined();
-        await recommend!.execute(SITUATION, ctx);
+        await recommend.execute(SITUATION, ctx);
         expect(fake.calls.recommend[1]?.expected_snapshot).toBe(SNAPSHOT.digest);
-        await check!.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx);
+        await check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx);
         expect(fake.calls.check[0]?.expected_snapshot).toBe(SNAPSHOT.digest);
     });
 
     it("a check before any answer carries no pin, and a mismatch answer passes through as data", async () => {
         const mismatch = { match: "snapshot_mismatch" as const, message: "another release", expected: "sha256:aa", served: SNAPSHOT };
         const fake = fakeKnowledgeClient({ check: mismatch });
-        const [, check] = createKnowledgeTools({ client: fake.client });
+        const check = presentAt(createKnowledgeTools({ client: fake.client }), 1, "the check tool");
         const { ctx } = makeToolContext();
-        const out = (await check!.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx))._unsafeUnwrap();
+        const out = (await check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx))._unsafeUnwrap();
         expect(fake.calls.check[0]?.expected_snapshot).toBeUndefined();
         expect(out).toEqual(mismatch);
-        expect(check!.describeResult?.({ ...SITUATION, steps: [] }, out)).toBe("snapshot_mismatch");
+        expect(check.describeResult?.({ ...SITUATION, steps: [] }, out)).toBe("snapshot_mismatch");
     });
 
     it("the tool definition hash is stable and names the three tools", () => {
@@ -587,12 +596,12 @@ describe("knowledge_template", () => {
 
     it("refuses a column name where the situation takes a role", () => {
         const [recommend] = createKnowledgeTools({ client: fakeKnowledgeClient().client });
-        expect(recommend!.inputSchema.safeParse({ ...SITUATION, blocking_factor: "donor_id" }).success).toBe(false);
+        expect(recommend?.inputSchema.safeParse({ ...SITUATION, blocking_factor: "donor_id" }).success).toBe(false);
         expect(
-            recommend!.inputSchema.safeParse({ ...SITUATION, blocking_factor: "individual", covariates: ["sex", "clinical"], continuous_predictor: null })
+            recommend?.inputSchema.safeParse({ ...SITUATION, blocking_factor: "individual", covariates: ["sex", "clinical"], continuous_predictor: null })
                 .success,
         ).toBe(true);
-        expect(recommend!.inputSchema.safeParse({ ...SITUATION, covariates: ["age_years"] }).success).toBe(false);
+        expect(recommend?.inputSchema.safeParse({ ...SITUATION, covariates: ["age_years"] }).success).toBe(false);
     });
 
     it("passes a snapshot mismatch through as data, and writes nothing", async () => {

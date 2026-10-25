@@ -15,6 +15,7 @@
 
 import type { MemberFile, SlotLocation } from "./set-types.js";
 import { DATE_SYMBOL, DIGIT_SYMBOL, ID_SYMBOL, classifyValues, commonAffixes, isDateToken, maskAffix, skeletonOf, tokenizeName } from "./tokens.js";
+import { presentAt, presentFirst } from "../lib/present.js";
 import type { NameToken, SlotTokenClass, TokenKind } from "./tokens.js";
 import { MAX_SLOT_SAMPLE_VALUES, MIN_AFFIX_LENGTH, MIN_CATCH_ALL_MEMBERS, MIN_FAMILY_SET_MEMBERS, MIN_PREFIX_SET_MEMBERS } from "./tuning.js";
 
@@ -104,11 +105,11 @@ function distinctCounts(group: MinedGroup): number[] {
 
 function isVariable(group: MinedGroup, position: number): boolean {
     if (group.tokenKinds[position] === "id") return true;
-    return distinctCounts(group)[position]! > 1;
+    return presentAt(distinctCounts(group), position, "distinct counts") > 1;
 }
 
 function mergeGroups(groups: readonly MinedGroup[]): MinedGroup {
-    const head = groups[0]!;
+    const head = presentFirst(groups, "merged template group");
     const suffixes = new Map<string, number>();
     const items: MinedItem[] = [];
     for (const group of groups) {
@@ -141,27 +142,28 @@ function mergeVariants(groups: readonly MinedGroup[]): MinedGroup[] {
         const next: MinedGroup[] = [];
         let merged = false;
         for (const family of families.values()) {
+            const head = presentFirst(family, "template family");
             if (family.length === 1) {
-                next.push(family[0]!);
+                next.push(head);
                 continue;
             }
-            const positions = family[0]!.tokenKinds.length;
+            const positions = head.tokenKinds.length;
             let mergedHere = false;
             for (let p = 0; p < positions && !mergedHere; p++) {
-                const kind = family[0]!.tokenKinds[p];
+                const kind = head.tokenKinds[p];
                 if (kind !== "alpha" && kind !== "digit") continue;
                 const buckets = new Map<string, MinedGroup[]>();
                 for (const group of family) {
                     // Every member of a group shares its literal tokens, so the first row
                     // identifies the whole group at this position.
-                    const row = group.items[0]!.tokens;
+                    const row = presentFirst(group.items, "group items").tokens;
                     const key = row.map((token, i) => (i === p || isVariable(group, i) ? "" : token.value)).join(" ");
                     const bucket = buckets.get(key);
                     if (bucket) bucket.push(group);
                     else buckets.set(key, [group]);
                 }
                 if ([...buckets.values()].every((bucket) => bucket.length === 1)) continue;
-                for (const bucket of buckets.values()) next.push(bucket.length === 1 ? bucket[0]! : mergeGroups(bucket));
+                for (const bucket of buckets.values()) next.push(bucket.length === 1 ? presentFirst(bucket, "variant bucket") : mergeGroups(bucket));
                 mergedHere = true;
                 merged = true;
             }
@@ -174,13 +176,13 @@ function mergeVariants(groups: readonly MinedGroup[]): MinedGroup[] {
 
     const byStem = new Map<string, MinedGroup[]>();
     for (const group of current) {
-        const row = group.items[0]!.tokens;
+        const row = presentFirst(group.items, "group items").tokens;
         const key = `${group.tokenKinds.join(",")} ${row.map((token, i) => (isVariable(group, i) ? "" : token.value)).join(" ")}`;
         const bucket = byStem.get(key);
         if (bucket) bucket.push(group);
         else byStem.set(key, [group]);
     }
-    return [...byStem.values()].map((bucket) => (bucket.length === 1 ? bucket[0]! : mergeGroups(bucket)));
+    return [...byStem.values()].map((bucket) => (bucket.length === 1 ? presentFirst(bucket, "stem bucket") : mergeGroups(bucket)));
 }
 
 function symbolOf(token: NameToken): string {
@@ -199,10 +201,10 @@ function symbolOf(token: NameToken): string {
  */
 function minePrefixes(residue: readonly MinedItem[]): { sets: MinedGroup[]; rest: MinedItem[] } {
     type TrieNode = {
-        readonly children: Map<string, TrieNode>;
+        readonly children: Map<string, TrieChild>;
         readonly items: MinedItem[];
-        readonly token?: NameToken;
     };
+    type TrieChild = TrieNode & { readonly token: NameToken };
 
     const bySuffix = new Map<string, MinedItem[]>();
     for (const item of residue) {
@@ -236,7 +238,7 @@ function minePrefixes(residue: readonly MinedItem[]): { sets: MinedGroup[]; rest
 
         const taken = new Set<MinedItem>();
         const claim = (node: TrieNode, prefixTokens: readonly NameToken[]): void => {
-            for (const child of node.children.values()) claim(child, [...prefixTokens, child.token!]);
+            for (const child of node.children.values()) claim(child, [...prefixTokens, child.token]);
             const free = node.items.filter((item) => !taken.has(item));
             const literals = prefixTokens.filter((token) => token.kind === "alpha").length;
             if (free.length < MIN_PREFIX_SET_MEMBERS || literals < 1) return;
@@ -274,7 +276,7 @@ function collapseFamilies(residue: readonly MinedItem[]): { sets: MinedGroup[]; 
             rest.push(...items);
             continue;
         }
-        const head = items[0]!;
+        const head = presentFirst(items, "family items");
         sets.push(
             newGroup("family", {
                 tokenKinds: head.tokens.map((token) => token.kind),
@@ -311,7 +313,7 @@ export function mineContext(files: readonly ContextFile[]): { sets: MinedGroup[]
     const singletons: MinedItem[] = [];
     for (const group of groups) {
         if (group.items.length >= 2) sets.push(group);
-        else singletons.push(group.items[0]!);
+        else singletons.push(presentFirst(group.items, "template group items"));
     }
     const prefixes = minePrefixes(singletons);
     sets.push(...prefixes.sets);
@@ -419,8 +421,9 @@ export function describeGroup(group: MinedGroup): { slots: DraftSlot[]; segments
     for (let i = 0; i < group.tokenKinds.length; i++) {
         const values = group.items.map((item) => item.tokens[i]?.value ?? "");
         const distinct = new Set(values);
-        if (distinct.size === 1 && group.tokenKinds[i] !== "id") {
-            segments.push({ kind: "literal", text: [...distinct][0]! });
+        const [literal] = distinct;
+        if (literal !== undefined && distinct.size === 1 && group.tokenKinds[i] !== "id") {
+            segments.push({ kind: "literal", text: literal });
             continue;
         }
         pushSlot(describeSlot(values, "name", i));

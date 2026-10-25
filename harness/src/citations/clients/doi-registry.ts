@@ -38,7 +38,7 @@ function cslRecord(doi: string, registrationAgency: string | undefined, metadata
         identifiers: { doi },
         title,
         authors: authors !== undefined && authors.length > 0 ? authors : undefined,
-        year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0])!,
+        year: dateParts?.[0] === undefined ? undefined : parseYear(dateParts[0]),
         venue,
         volume: metadata?.volume,
         firstPage: metadata?.page?.split(/[-–]/)[0],

@@ -11,6 +11,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { searchCompounds } from "../../../tools/lib/chembl-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 
@@ -19,7 +20,7 @@ describe.skipIf(!LIVE)("live ChEMBL", () => {
         const compounds = await searchCompounds("imatinib", "compound", 5);
 
         expect(compounds.length).toBeGreaterThan(0);
-        const first = compounds[0]!;
+        const first = presentAt(compounds, 0);
         expect(first.chemblId).toMatch(/^CHEMBL\d+$/);
         expect(first).toHaveProperty("preferredCompoundName");
         expect(first).toHaveProperty("canonicalSmiles");

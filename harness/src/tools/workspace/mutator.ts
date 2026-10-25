@@ -320,10 +320,7 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
     const observe = bindSessionEmit(deps.provenance, logger);
     return {
         async writeFile({ path, content, toolName, invocationId, session }) {
-            // Only an analysis scope has a workspace tree; under any other
-            // scope there is nothing in scope to write.
             const scope = session.scope;
-            if (scope.kind !== "analysis") return { status: "out_of_scope", path };
 
             // Rejects on an unknown analysis — the loop's dispatch catch maps
             // it to an error tool result, like any unexpected host failure.

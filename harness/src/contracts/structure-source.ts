@@ -11,8 +11,10 @@
  * parse over a persisted `url` before it fetches, so a card the harness would
  * refuse today is refused at render time too.
  *
- * This module is browser-safe: it imports nothing.
+ * This module is browser-safe: it imports no platform API.
  */
+
+import { presentAt } from "../lib/present.js";
 
 export type StructureFormat = "pdb" | "mmcif";
 
@@ -57,7 +59,7 @@ export function parseStructureUrl(url: string): StructureSource | null {
 
     return {
         provider: "alphafold",
-        accession: match[1]!,
+        accession: presentAt(match, 1, "the AlphaFold accession"),
         version,
         format: match[3] === "pdb" ? "pdb" : "mmcif",
         url: parsed.href,

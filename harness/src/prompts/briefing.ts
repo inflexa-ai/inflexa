@@ -137,7 +137,7 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
     if (step.constraints && step.constraints.length > 0) {
         parts.push(section("Constraints (each one is a requirement of this step)", bullets(step.constraints)));
     }
-    if (step.acceptance_criteria && step.acceptance_criteria.length > 0) {
+    if (step.acceptance_criteria.length > 0) {
         parts.push(section("Acceptance criteria (the result must satisfy all of these)", bullets(step.acceptance_criteria)));
     }
     if (step.caveats && step.caveats.length > 0) {

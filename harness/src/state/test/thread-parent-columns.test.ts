@@ -48,7 +48,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-    await drop?.();
+    await drop();
 });
 
 describe("cortex_analysis_threads parent and type columns", () => {

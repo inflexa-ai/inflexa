@@ -9,6 +9,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchProteinTool } from "../search-protein.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -32,7 +33,9 @@ function stubResponse(status: number, body: unknown): void {
 
 /** The `query` parameter of the one request the tool made, decoded. */
 function sentQuery(): string {
-    return new URL(requestedUrls[0]!).searchParams.get("query")!;
+    const query = new URL(presentAt(requestedUrls, 0)).searchParams.get("query");
+    if (query === null) throw new Error("the query parameter is absent");
+    return query;
 }
 
 type SearchProteinInput = Parameters<typeof searchProteinTool.execute>[0];
@@ -51,7 +54,7 @@ describe("searchProtein — a resolved symbol", () => {
         const out = await callSearchProtein({ query: "BRCA1" });
 
         expect(out.proteins).toHaveLength(1);
-        const protein = out.proteins[0]!;
+        const protein = presentAt(out.proteins, 0);
         expect(protein.accession).toBe("P38398");
         expect(protein.uniProtkbId).toBe("BRCA1_HUMAN");
         expect(protein.proteinName).toBe("Breast cancer type 1 susceptibility protein");
@@ -151,7 +154,7 @@ describe("searchProtein — a TrEMBL entry", () => {
 
         const out = await callSearchProtein({ query: "X5D778", reviewedOnly: false });
 
-        const protein = out.proteins[0]!;
+        const protein = presentAt(out.proteins, 0);
         expect(protein.accession).toBe("X5D778");
         expect(protein.reviewed).toBe(false);
         expect(protein.proteinName).toBe("Ankyrin repeat domain 11 isoform A");
@@ -162,7 +165,7 @@ describe("searchProtein — a TrEMBL entry", () => {
 
         const out = await callSearchProtein({ query: "BRCA1" });
 
-        expect(out.proteins[0]!.reviewed).toBe(true);
+        expect(presentAt(out.proteins, 0).reviewed).toBe(true);
     });
 });
 
@@ -172,7 +175,7 @@ describe("searchProtein — an entry that omits the optional keys", () => {
 
         const out = await callSearchProtein({ query: "Q6ZQY7" });
 
-        const protein = out.proteins[0]!;
+        const protein = presentAt(out.proteins, 0);
         expect(protein.accession).toBe("Q6ZQY7");
         expect(protein.geneNames).toEqual([]);
         expect(protein.function).toBeNull();
@@ -194,7 +197,8 @@ describe("searchProtein — no match", () => {
 
 describe("searchProtein — the bound on the answer", () => {
     it("trims to the limit and reports that more rows existed", async () => {
-        const row = z.object({ results: z.array(z.unknown()) }).parse(readFixture("uniprot", "search_BRCA1_reviewed.json")).results[0]!;
+        const row = z.object({ results: z.array(z.unknown()) }).parse(readFixture("uniprot", "search_BRCA1_reviewed.json")).results[0];
+        if (row === undefined) throw new Error("row is absent");
         // The client asks for `limit + 1` rows, thus three rows for a limit of 2
         // is what "UniProt held more" looks like on the wire.
         stubResponse(200, { results: [row, row, row] });
@@ -203,7 +207,7 @@ describe("searchProtein — the bound on the answer", () => {
 
         expect(out.proteins).toHaveLength(2);
         expect(out.hasMore).toBe(true);
-        expect(new URL(requestedUrls[0]!).searchParams.get("size")).toBe("3");
+        expect(new URL(presentAt(requestedUrls, 0)).searchParams.get("size")).toBe("3");
     });
 
     it("reports hasMore false when the answer fits inside the limit", async () => {
@@ -226,6 +230,6 @@ describe("searchProtein — an upstream failure", () => {
 
 describe("searchProtein — describeCall", () => {
     it("names the query", () => {
-        expect(searchProteinTool.describeCall!({ ...DEFAULTS, query: "BRCA1" })).toBe("BRCA1");
+        expect(searchProteinTool.describeCall?.({ ...DEFAULTS, query: "BRCA1" })).toBe("BRCA1");
     });
 });

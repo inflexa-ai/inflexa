@@ -6,6 +6,7 @@ import type { ChatPartFrame } from "../chat-events.js";
 import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../chat-frame.js";
 import type { ChatMessage } from "../message.js";
 import { ChatEventSchema } from "../schemas/chat-events.js";
+import { presentAt } from "../../lib/present.js";
 
 const fallback = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
 const topLevel = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
@@ -181,7 +182,7 @@ describe("applyChatFrame", () => {
             ],
         );
         expect(messages).toHaveLength(1);
-        const assistant = messages[0]!;
+        const assistant = presentAt(messages, 0);
         expect(assistant.role).toBe("assistant");
         expect(assistant.parts).toHaveLength(1);
         expect(assistant.parts[0]).toEqual({ type: "text", text: "abc" });
@@ -195,7 +196,7 @@ describe("applyChatFrame", () => {
                 { type: "tool-finished", toolUseId: "tu_1", name: "searchGene", outcome: "ok", source: SOURCE },
             ],
         );
-        const parts = messages[0]!.parts;
+        const parts = presentAt(messages, 0).parts;
         expect(parts).toHaveLength(1);
         expect(parts[0]).toEqual({
             type: "tool-call",
@@ -213,7 +214,9 @@ describe("applyChatFrame", () => {
                 { type: "tool-finished", toolUseId: "tu_1", name: "searchGene", outcome: "ok", detail: "TP53", durationMs: 420, source: SOURCE },
             ],
         );
-        expect(messages[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "ok", detail: "TP53", durationMs: 420 }]);
+        expect(presentAt(messages, 0).parts).toEqual([
+            { type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "ok", detail: "TP53", durationMs: 420 },
+        ]);
     });
 
     test("a finish with no start appends the finished call", () => {
@@ -224,7 +227,7 @@ describe("applyChatFrame", () => {
                 { type: "tool-finished", toolUseId: "tu_1", name: "searchGene", outcome: "error", detail: "TP53", durationMs: 9, source: SOURCE },
             ],
         );
-        expect(messages[0]!.parts).toEqual([
+        expect(presentAt(messages, 0).parts).toEqual([
             { type: "text", text: "before" },
             { type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "error", detail: "TP53", durationMs: 9 },
         ]);
@@ -232,7 +235,7 @@ describe("applyChatFrame", () => {
 
     test("an in-flight call carries no outcome until it finishes", () => {
         const { messages } = applyMany([], [{ type: "tool-started", toolUseId: "tu_1", name: "x", source: SOURCE }]);
-        expect(messages[0]!.parts[0]).toEqual({
+        expect(presentAt(messages, 0).parts[0]).toEqual({
             type: "tool-call",
             toolCallId: "tu_1",
             toolName: "x",
@@ -247,7 +250,7 @@ describe("applyChatFrame", () => {
                 { type: "tool-finished", toolUseId: "tu_1", name: "x", outcome: "denied", source: SOURCE },
             ],
         );
-        expect(messages[0]!.parts[0]).toMatchObject({ outcome: "denied" });
+        expect(presentAt(messages, 0).parts[0]).toMatchObject({ outcome: "denied" });
     });
 
     test("preserves the outcome on tool-finished", () => {
@@ -258,7 +261,7 @@ describe("applyChatFrame", () => {
                 { type: "tool-finished", toolUseId: "tu_1", name: "x", outcome: "error", source: SOURCE },
             ],
         );
-        const part = messages[0]!.parts[0];
+        const part = presentAt(messages, 0).parts[0];
         expect(part).toMatchObject({ outcome: "error" });
     });
 
@@ -272,7 +275,7 @@ describe("applyChatFrame", () => {
                 { type: "tool-finished", toolUseId: "tu_b", name: "y", outcome: "ok", source: SOURCE },
             ],
         );
-        const parts = messages[0]!.parts;
+        const parts = presentAt(messages, 0).parts;
         expect(parts).toHaveLength(2);
         expect(parts[0]).toMatchObject({ toolCallId: "tu_a", outcome: "ok" });
         expect(parts[1]).toMatchObject({ toolCallId: "tu_b", outcome: "ok" });
@@ -292,7 +295,7 @@ describe("applyChatFrame", () => {
             ],
         );
         expect(terminal).toBeNull();
-        expect(messages[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "literature_review" }]);
+        expect(presentAt(messages, 0).parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "literature_review" }]);
     });
 
     test("an iteration frame of the root agent makes no part", () => {
@@ -314,7 +317,7 @@ describe("applyChatFrame", () => {
 
     test("keeps the source of a data part frame out of the part", () => {
         const { messages } = applyMany([], [{ type: "data-presentation", id: "p1", content: { kind: "markdown", body: "card" }, source: SOURCE }]);
-        expect(messages[0]!.parts).toEqual([{ type: "data-presentation", id: "p1", content: { kind: "markdown", body: "card" } }]);
+        expect(presentAt(messages, 0).parts).toEqual([{ type: "data-presentation", id: "p1", content: { kind: "markdown", body: "card" } }]);
     });
 
     test("appends a flat data-* part", () => {
@@ -325,7 +328,7 @@ describe("applyChatFrame", () => {
                 { type: "data-run-started", runId: "r1", planSummary: "p", stepCount: 1 },
             ],
         );
-        const parts = messages[0]!.parts;
+        const parts = presentAt(messages, 0).parts;
         expect(parts).toHaveLength(2);
         expect(parts[1]).toEqual({
             type: "data-run-started",
@@ -344,8 +347,8 @@ describe("applyChatFrame", () => {
             ],
         );
         expect(terminal).toBe("finish");
-        expect(messages[0]!.parts).toEqual([{ type: "text", text: "ok" }]);
-        expect(messages[0]!.usage).toBeUndefined();
+        expect(presentAt(messages, 0).parts).toEqual([{ type: "text", text: "ok" }]);
+        expect(presentAt(messages, 0).usage).toBeUndefined();
     });
 
     test("finish stamps the turn rollup on the assistant message", () => {
@@ -360,7 +363,7 @@ describe("applyChatFrame", () => {
                 },
             ],
         );
-        expect(messages[0]!.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
+        expect(presentAt(messages, 0).usage).toEqual({ inputTokens: 12, outputTokens: 3 });
     });
 
     test("error yields terminal with the error frame", () => {
@@ -377,7 +380,7 @@ describe("applyChatFrame", () => {
                 { type: "data-ask", id: "ask-1", title: "Run a script", command: "Rscript de.R", status: "resolved" },
             ],
         );
-        expect(messages[0]!.parts).toEqual([
+        expect(presentAt(messages, 0).parts).toEqual([
             { type: "data-ask", id: "ask-1", title: "Run a script", command: "Rscript de.R", status: "resolved" },
             { type: "text", text: "thinking" },
         ]);
@@ -391,7 +394,7 @@ describe("applyChatFrame", () => {
                 { type: "data-ask", id: "ask-2", title: "Second", command: "pwd", status: "pending" },
             ],
         );
-        expect(messages[0]!.parts).toHaveLength(2);
+        expect(presentAt(messages, 0).parts).toHaveLength(2);
     });
 
     test("a settled compaction replaces its running emission in place", () => {
@@ -403,7 +406,7 @@ describe("applyChatFrame", () => {
                 { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 152_000, tokensAfter: 18_000, durationMs: 12_400 },
             ],
         );
-        expect(messages[0]!.parts).toEqual([
+        expect(presentAt(messages, 0).parts).toEqual([
             { type: "text", text: "before" },
             { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 152_000, tokensAfter: 18_000, durationMs: 12_400 },
         ]);
@@ -417,33 +420,33 @@ describe("applyChatFrame", () => {
                 { type: "data-compaction", id: "same", status: "running", tokensBefore: 1 },
             ],
         );
-        expect(messages[0]!.parts).toHaveLength(2);
+        expect(presentAt(messages, 0).parts).toHaveLength(2);
     });
 
     test("a data part the registry does not mark reconciling always appends", () => {
         const part = { type: "data-plan", id: "plan-1", planId: "p1" } as const;
         const { messages } = applyMany([], [part, part]);
-        expect(messages[0]!.parts).toHaveLength(2);
+        expect(presentAt(messages, 0).parts).toHaveLength(2);
     });
 
     test("a data part of a type the registry does not know appends", () => {
         const part: Parameters<typeof applyChatFrame>[1] = { type: "data-from-a-newer-emitter", id: "x-1" };
         const { messages } = applyMany([], [part, part]);
-        expect(messages[0]!.parts).toHaveLength(2);
+        expect(presentAt(messages, 0).parts).toHaveLength(2);
     });
 
     test("creates the assistant message on the first frame", () => {
         const { messages } = applyMany([], [{ type: "text-delta", text: "first", source: SOURCE }]);
         expect(messages).toHaveLength(1);
-        expect(messages[0]!.id).toBe(ASSISTANT_ID);
-        expect(messages[0]!.role).toBe("assistant");
+        expect(presentAt(messages, 0).id).toBe(ASSISTANT_ID);
+        expect(presentAt(messages, 0).role).toBe("assistant");
     });
 
     test("appends to an existing assistant message rather than creating a new one", () => {
         const start: ChatMessage[] = [{ id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] }];
         const { messages } = applyMany(start, [{ type: "text-delta", text: "reply", source: SOURCE }]);
         expect(messages).toHaveLength(2);
-        expect(messages[1]!.id).toBe(ASSISTANT_ID);
+        expect(presentAt(messages, 1).id).toBe(ASSISTANT_ID);
     });
 });
 

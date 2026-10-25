@@ -180,10 +180,11 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
         execute: async (input, context): Promise<Result<PubMedOutput, ToolError>> => {
             switch (input.action) {
                 case "search":
+                    if (input.query === undefined) throw new Error("search requires query");
                     return ok(
                         await searchPubmed(
                             deps.ncbiApiKey,
-                            input.query!,
+                            input.query,
                             {
                                 maxResults: input.maxResults ?? DEFAULTS.searchResults,
                                 sort: input.sort,
@@ -193,7 +194,8 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                         ),
                     );
                 case "details": {
-                    const { articles, notFound } = await getArticleDetails(deps.ncbiApiKey, input.pmids!, context.signal);
+                    if (input.pmids === undefined) throw new Error("details requires pmids");
+                    const { articles, notFound } = await getArticleDetails(deps.ncbiApiKey, input.pmids, context.signal);
                     return ok({
                         articles: boundArticleDetails(articles, {
                             maxAuthors: input.maxAuthors ?? DEFAULTS.maxAuthors,
@@ -203,9 +205,10 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                     });
                 }
                 case "fulltext": {
+                    if (input.pmcId === undefined) throw new Error("fulltext requires pmcId");
                     const parsed = await getArticleFullText(
                         deps.ncbiApiKey,
-                        input.pmcId!,
+                        input.pmcId,
                         {
                             sections: input.sections ? input.sections : undefined,
                             maxChars: input.maxChars ?? DEFAULTS.maxChars,
@@ -213,11 +216,11 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                         context.signal,
                     );
                     // "Not open-access" is an expected outcome — a data variant, not an error.
-                    if (!parsed) return ok({ pmcId: input.pmcId!, available: false as const });
+                    if (!parsed) return ok({ pmcId: input.pmcId, available: false as const });
                     // `fullText` already holds each admitted section under its heading, thus the
                     // `sections` array would send the same text to the model a second time.
                     const { sections: _sections, ...bounded } = parsed;
-                    return ok({ pmcId: input.pmcId!, available: true as const, ...bounded });
+                    return ok({ pmcId: input.pmcId, available: true as const, ...bounded });
                 }
             }
         },

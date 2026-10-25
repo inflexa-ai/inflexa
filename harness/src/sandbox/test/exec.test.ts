@@ -11,6 +11,7 @@ import { ExecTimeoutError, runExec, type ExecDeps } from "../exec.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { PROBE_AFTER_UNAVAILABLE_POLLS } from "../liveness.js";
 import type { ExecResult, SandboxLiveness, SandboxRef } from "../types.js";
+import { presentAt, presentFind, presentLast } from "../../lib/present.js";
 
 const EXEC_ID = "an-1:run-1-0:7";
 const NOW_MS = 1_700_000_000_000;
@@ -60,8 +61,8 @@ function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenR
     const double = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         seen.push({ url: String(input), init });
         if (init?.method === "POST") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
-        const item = i < polls.length ? polls[i++] : polls[polls.length - 1];
-        return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item!);
+        const item = i < polls.length ? presentAt(polls, i++) : presentLast(polls);
+        return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item);
     };
     return Object.assign(double, { preconnect: fetch.preconnect });
 }
@@ -88,7 +89,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, { command: ["echo", "hi"], cwd: "/an-1" }, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
-        const post = seen.find((r) => r.init?.method === "POST")!;
+        const post = presentFind(seen, (r) => r.init?.method === "POST");
         expect(post.url).toBe("http://127.0.0.1:8765/exec");
         expect(seenBody(post)).toEqual({
             command: ["echo", "hi"],
@@ -103,7 +104,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
-        const body = seenBody(seen[0]!);
+        const body = seenBody(presentAt(seen, 0));
         expect(body.stdoutByteCap).toBe(1_048_576);
         expect(body.stderrByteCap).toBe(1_048_576);
     });
@@ -112,7 +113,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, execStreamByteCap: 1234, fetch: sandbox([completed], seen) });
 
-        const body = seenBody(seen[0]!);
+        const body = seenBody(presentAt(seen, 0));
         expect(body.stdoutByteCap).toBe(1234);
         expect(body.stderrByteCap).toBe(1234);
     });
@@ -134,7 +135,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
-        expect(seen[1]!.url).toBe(`http://127.0.0.1:8765/exec/${encodeURIComponent(EXEC_ID)}?since=0`);
+        expect(presentAt(seen, 1).url).toBe(`http://127.0.0.1:8765/exec/${encodeURIComponent(EXEC_ID)}?since=0`);
     });
 });
 
@@ -178,8 +179,8 @@ describe("the poll loop", () => {
             },
         );
         expect(emitted).toHaveLength(3);
-        expect(seen[1]!.url).toContain("?since=0");
-        expect(seen[2]!.url).toContain("?since=2");
+        expect(presentAt(seen, 1).url).toContain("?since=0");
+        expect(presentAt(seen, 2).url).toContain("?since=2");
     });
 
     test("events at or below the local cursor are never emitted again", async () => {
@@ -389,7 +390,7 @@ describe("the liveness escalation", () => {
             now,
             sleep,
             fetch: sandbox(["unavailable"]),
-            isAlive: async () => verdicts[probe++]!,
+            isAlive: async () => presentAt(verdicts, probe++),
         });
         expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
         expect(probe).toBe(2);

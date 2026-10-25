@@ -11,6 +11,7 @@
 import type { CompanionFile, MemberFile, SetCompleteness, SetMember } from "./set-types.js";
 import type { ScannedFile } from "./types.js";
 import { basenameOf } from "./tokens.js";
+import { presentGet } from "../lib/present.js";
 import { EXPECTED_COMPANION_SHARE, MAX_INCOMPLETE_SAMPLE } from "./tuning.js";
 
 /** Suffixes that name a helper file. The list is a floor; growth is additive. */
@@ -82,7 +83,7 @@ export function attachCompanions(files: readonly ScannedFile[]): MemberFile[] {
         const root = roots.get(file.path);
         if (root === undefined) continue;
         const bucket = attached.get(root);
-        const companion: CompanionFile = { path: file.path, suffix: suffixes.get(file.path)!, size: file.size };
+        const companion: CompanionFile = { path: file.path, suffix: presentGet(suffixes, file.path, "companion suffixes"), size: file.size };
         if (bucket) bucket.push(companion);
         else attached.set(root, [companion]);
     }

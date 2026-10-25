@@ -359,7 +359,7 @@ function workflowInput(
         planId,
         planSummary: planSummary(plan),
         threadId: args.threadId,
-        steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on ?? [] })),
+        steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? "unknown"])),
         resourcesByStepId: args.resourcesByStepId,
@@ -788,10 +788,14 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
         // running is a different event from an ad hoc request being routed.
         describeCall: (input) => (input.mode === "plan" ? `plan ${input.planId ?? ""}` : `ad hoc: ${input.request ?? ""}`),
         execute: async (input, ctx) => {
-            if (ctx.session.scope.kind !== "analysis") throw new Error("execute_analysis requires an analysis-scoped session");
-            if (!ctx.session.auth) throw new Error("execute_analysis: session is missing its auth capability");
             const analysisId = ctx.session.scope.analysisId;
-            const planId = input.mode === "plan" ? input.planId! : adHocPlanId(analysisId, ctx.invocationId);
+            let planId: string;
+            if (input.mode === "plan") {
+                if (input.planId === undefined) throw new Error("plan mode requires planId");
+                planId = input.planId;
+            } else {
+                planId = adHocPlanId(analysisId, ctx.invocationId);
+            }
             const emitRunCard = async (runId: string) => {
                 const card = await buildRunCardData(deps.pool, { planId, analysisId, runId }).unwrapOr(null);
                 if (card) await ctx.emit({ type: "data-run-card", source: ctx.session.provenance, data: card });
@@ -799,7 +803,8 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
 
             const launch = async (): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> => {
                 if (input.mode === "plan") return launchPlanRun(deps, { session: ctx.session, planId });
-                const plan = await persistedAdHocPlan(deps, { analysisId, request: input.request!, ctx, planId });
+                if (input.request === undefined) throw new Error("adhoc mode requires request");
+                const plan = await persistedAdHocPlan(deps, { analysisId, request: input.request, ctx, planId });
                 const runId = adHocRunId(analysisId, ctx.invocationId);
                 return launchReservedRun(deps, {
                     session: ctx.session,

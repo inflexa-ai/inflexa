@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { classifyValues, commonAffixes, isDateToken, isOpaqueId, maskAffix, skeletonOf, splitStem, tokenizeName, tokenizeSegment } from "../tokens.js";
+import { presentAt } from "../../lib/present.js";
 
 describe("splitStem", () => {
     it("keeps a categorical suffix chain in the stem", () => {
@@ -53,7 +54,7 @@ describe("tokenizeSegment", () => {
     it("keeps an opaque identifier whole", () => {
         const tokens = tokenizeSegment("k7Qm2xVb9Lr4Tz8Wp3Ny");
         expect(tokens).toHaveLength(1);
-        expect(tokens[0]!.kind).toBe("id");
+        expect(presentAt(tokens, 0).kind).toBe("id");
     });
 
     it("splits a human-written name into its runs", () => {

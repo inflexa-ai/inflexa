@@ -20,6 +20,7 @@ import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
 import type { EnsureSessionStateResult } from "../../app/report-session-runtime.js";
 import type { WebSearchEngine } from "../../tools/research/web-search.js";
+import { presentFind } from "../../lib/present.js";
 
 // Composition never calls the engine — a bare stub shapes the deps bag.
 const unusedWebSearchEngine: WebSearchEngine = {
@@ -275,7 +276,7 @@ describe("createConversationAgent", () => {
             },
         });
         const agent = buildAgent([hostAskTool]);
-        const wired = agent.tools.find((t) => t.id === "host_needs_approval")!;
+        const wired = presentFind(agent.tools, (t) => t.id === "host_needs_approval");
         // The fixture wires `UnavailableAsk` — no interactive surface — so the ask
         // resolves to a denial rather than waiting on a surface that cannot answer.
         const { ctx } = makeToolContext();

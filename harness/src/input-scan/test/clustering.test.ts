@@ -4,6 +4,7 @@ import type { ContentSimilarity, DirectoryEntry } from "../clustering.js";
 import { buildTree, clusterChildren, computeSignatures } from "../clustering.js";
 import type { MemberFile } from "../set-types.js";
 import { basenameOf } from "../tokens.js";
+import { presentAt, presentGet } from "../../lib/present.js";
 
 function member(path: string): MemberFile {
     return { path, name: basenameOf(path), size: 1024, format: "unknown", companions: [] };
@@ -12,7 +13,7 @@ function member(path: string): MemberFile {
 /** The children of `parent`, as the descent hands them to the clusterer. */
 function childrenOf(paths: readonly string[], parent: string): DirectoryEntry[] {
     let node = computeSignatures(buildTree(paths.map(member)));
-    for (const segment of parent.split("/")) node = node.children.get(segment)!;
+    for (const segment of parent.split("/")) node = presentGet(node.children, segment);
     return [...node.children.values()].map((child) => ({ node: child, varValues: [] }));
 }
 
@@ -30,8 +31,8 @@ describe("clusterChildren", () => {
         const clusters = clusterChildren(childrenOf(perSpecimenTree(8), "inputs"));
 
         expect(clusters).toHaveLength(1);
-        expect(clusters[0]!.names).toHaveLength(8);
-        expect(clusters[0]!.entries).toHaveLength(8);
+        expect(presentAt(clusters, 0).names).toHaveLength(8);
+        expect(presentAt(clusters, 0).entries).toHaveLength(8);
     });
 
     it("leaves a sibling holding unrelated content outside the cluster", () => {
@@ -40,8 +41,8 @@ describe("clusterChildren", () => {
         const clusters = clusterChildren(childrenOf(paths, "inputs")).sort((a, b) => b.names.length - a.names.length);
 
         expect(clusters).toHaveLength(2);
-        expect(clusters[0]!.names).toHaveLength(8);
-        expect(clusters[1]!.names).toEqual(["paperwork"]);
+        expect(presentAt(clusters, 0).names).toHaveLength(8);
+        expect(presentAt(clusters, 1).names).toEqual(["paperwork"]);
     });
 
     it("keeps directories apart when neither their names nor their contents agree", () => {
@@ -67,7 +68,7 @@ describe("clusterChildren", () => {
         const withContent = clusterChildren(childrenOf(paths, "inputs"), identicalSchemas);
 
         expect(withContent).toHaveLength(1);
-        expect(withContent[0]!.names.sort()).toEqual(["first", "second"]);
+        expect(presentAt(withContent, 0).names.sort()).toEqual(["first", "second"]);
     });
 
     it("ignores a hook that has no opinion", () => {
@@ -81,7 +82,7 @@ describe("clusterChildren", () => {
 describe("computeSignatures", () => {
     it("carries a child's masked templates up into its parent's signature", () => {
         const root = computeSignatures(buildTree(perSpecimenTree(2).map(member)));
-        const inputs = root.children.get("inputs")!;
+        const inputs = presentGet(root.children, "inputs");
 
         expect(inputs.childNames).toEqual(new Set(["specimen-01", "specimen-02"]));
         expect([...inputs.fineSignature]).toContain("specimen-#/metrics tsv");

@@ -15,6 +15,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { BondResponseSchema, DrugResponseSchema, searchDrugbank } from "../drugbank-client.js";
+import { presentAt, presentFirst } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 let requested: string[] = [];
@@ -40,7 +41,7 @@ runFixtureSuite("drugbank golden fixtures", [
         drift: "discovery-record.synthetic.drift.json",
         schema: DrugResponseSchema,
         assertOutput: (body) => {
-            const drug = Array.isArray(body) ? body[0]! : body;
+            const drug = Array.isArray(body) ? presentFirst(body, "the first drug row") : body;
             expect(drug.drugbankId).toBe("DB00316");
             expect(drug.name).toBe("Acetaminophen");
             expect(drug.type).toBe("Small Molecule");
@@ -77,7 +78,7 @@ describe("the DrugBank client over the golden fixtures", () => {
         // `per_page` tops out at 50, and no `limit` parameter exists.
         expect(requested[0]).toContain("per_page=50");
         expect(requested[0]).not.toContain("limit=");
-        expect(drugs[0]!.drugbankId).toBe("DB00316");
+        expect(presentAt(drugs, 0).drugbankId).toBe("DB00316");
     });
 
     it("reads the drugs of a gene off the target bonds, one row per drug", async () => {
@@ -87,6 +88,6 @@ describe("the DrugBank client over the golden fixtures", () => {
 
         expect(requested[0]).toContain("/discovery/v1/bonds/targets?q=polypeptides.gene_name%3AF");
         expect(drugs.map((d) => d.drugbankId)).toEqual(["DB16258", "DB00110"]);
-        expect(drugs[0]!.name).toBe("Nirsevimab");
+        expect(presentAt(drugs, 0).name).toBe("Nirsevimab");
     });
 });

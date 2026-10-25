@@ -31,12 +31,20 @@ export type EncodedErr = { error?: Json };
  * `JSON.stringify` gives `{}` for one. A `bigint` becomes its decimal text,
  * because `JSON.stringify` throws on one.
  */
-function toJson(value: unknown): Json {
-    const text = JSON.stringify(value, (_key, v: unknown) => {
+/**
+ * The stringify with the Error and bigint replacer. The declared return is honest where
+ * the lib signature lies: the format gives back `undefined` for a value it cannot hold.
+ */
+function stringifyJson(value: unknown): string | undefined {
+    return JSON.stringify(value, (_key, v: unknown) => {
         if (v instanceof Error) return { name: v.name, message: v.message };
         if (typeof v === "bigint") return v.toString();
         return v;
     });
+}
+
+function toJson(value: unknown): Json {
+    const text = stringifyJson(value);
     // The stringify round-trip holds only JSON values, so the parse cannot refuse.
     return text === undefined ? undefined : JsonSchema.parse(JSON.parse(text));
 }

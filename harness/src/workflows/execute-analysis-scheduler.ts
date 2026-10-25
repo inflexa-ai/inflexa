@@ -19,6 +19,7 @@
  */
 
 import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
+import { presentGet, presentLast } from "../lib/present.js";
 
 /**
  * The minimum shape the scheduler needs from a plan step. Larger workflow-state
@@ -116,11 +117,13 @@ function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
     for (const start of steps) {
         if (state.get(start.id) === DONE) continue;
         // Iterative DFS — preserves the in-progress chain so we can report it.
-        const stack: Array<{ id: string; iter: Iterator<string> }> = [{ id: start.id, iter: stepById.get(start.id)!.depends_on[Symbol.iterator]() }];
+        const stack: Array<{ id: string; iter: Iterator<string> }> = [
+            { id: start.id, iter: presentGet(stepById, start.id, "the step of the cycle walk").depends_on[Symbol.iterator]() },
+        ];
         state.set(start.id, VISITING);
 
         while (stack.length > 0) {
-            const frame = stack[stack.length - 1]!;
+            const frame = presentLast(stack, "the top frame of the cycle walk");
             const next = frame.iter.next();
             if (next.done) {
                 state.set(frame.id, DONE);
@@ -138,7 +141,7 @@ function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
             state.set(childId, VISITING);
             stack.push({
                 id: childId,
-                iter: stepById.get(childId)!.depends_on[Symbol.iterator](),
+                iter: presentGet(stepById, childId, "the dependency step of the cycle walk").depends_on[Symbol.iterator](),
             });
         }
     }

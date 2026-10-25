@@ -91,8 +91,9 @@ describe("buildPresentationCardData", () => {
                 series: [{ type: "bar" }],
             },
         });
+        if (card === null) throw new Error("the card is absent");
 
-        const spec = parseUnknownRecord(card!.content.spec);
+        const spec = parseUnknownRecord(card.content.spec);
         if (spec === undefined) throw new Error("expected the card content record");
         expect("title" in spec).toBe(false);
         expect(spec.legend).toEqual({ show: false });
@@ -104,19 +105,20 @@ describe("buildPresentationCardData", () => {
         const input = { kind: "echart", title: "T", spec: { title: { text: "dup" }, series: [{ type: "line" }] } };
         const a = buildPresentationCardData(input);
         const b = buildPresentationCardData(structuredClone(input));
+        if (b === null) throw new Error("the card is absent");
 
-        expect(a!.id).toBe(b!.id);
-        expect(a!.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        expect(a?.id).toBe(b.id);
+        expect(a?.id).toMatch(/^pres-[0-9a-f]{16}$/);
     });
 
     it("carries a non-echart kind through untouched", () => {
         const card = buildPresentationCardData({ kind: "markdown", title: "Findings", body: "## Hello" });
-        expect(card!.content).toEqual({ kind: "markdown", body: "## Hello" });
+        expect(card?.content).toEqual({ kind: "markdown", body: "## Hello" });
     });
 
     it("carries an echart without a spec through untouched (there is no spec to invent)", () => {
         const card = buildPresentationCardData({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
-        expect(card!.content).toEqual({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
+        expect(card?.content).toEqual({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
     });
 });
 
@@ -125,8 +127,8 @@ describe("buildPresentationCardData — structure", () => {
 
     it("normalizes an admitted AlphaFold URL into the derived source fields", () => {
         const card = buildPresentationCardData({ kind: "structure", title: "BRCA1", url });
-        expect(card!.title).toBe("BRCA1");
-        expect(card!.content).toEqual({ kind: "structure", format: "mmcif", url, provider: "alphafold", accession: "P38398", version: 6 });
+        expect(card?.title).toBe("BRCA1");
+        expect(card?.content).toEqual({ kind: "structure", format: "mmcif", url, provider: "alphafold", accession: "P38398", version: 6 });
     });
 
     it("refuses a URL the grammar does not admit — no card on the live path or on replay", () => {
@@ -136,7 +138,7 @@ describe("buildPresentationCardData — structure", () => {
 
     it("does not let a stray field of the flat tool input ride along", () => {
         const card = buildPresentationCardData({ kind: "structure", url, body: "## stray", spec: { series: [] } });
-        expect(Object.keys(card!.content).sort()).toEqual(["accession", "format", "kind", "provider", "url", "version"]);
+        expect(Object.keys(card?.content ?? {}).sort()).toEqual(["accession", "format", "kind", "provider", "url", "version"]);
     });
 
     it("keys the id off the raw input and rebuilds identically from a clone", () => {
@@ -144,6 +146,6 @@ describe("buildPresentationCardData — structure", () => {
         const a = buildPresentationCardData(input);
         const b = buildPresentationCardData(structuredClone(input));
         expect(a).toEqual(b);
-        expect(a!.id).toMatch(/^pres-[0-9a-f]{16}$/);
+        expect(a?.id).toMatch(/^pres-[0-9a-f]{16}$/);
     });
 });

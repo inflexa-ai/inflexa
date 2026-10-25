@@ -46,7 +46,9 @@ export function suspensionOfSpawnRefusal(refusal: SuspendingRefusal): Suspension
  * `DBOSWorkflowCancelledError` and nothing after it runs.
  */
 export async function cancelSelf(stepName: string): Promise<never> {
-    await DBOS.cancelWorkflow(DBOS.workflowID!);
+    // The caller runs inside a workflow, so the id is defined in production; the
+    // unit-test fake records the call verbatim, undefined included.
+    await DBOS.cancelWorkflow(DBOS.workflowID ?? "");
     await DBOS.runStep(async () => undefined, { name: stepName });
     throw new Error(`unreachable: ${stepName} did not raise the cancellation`);
 }

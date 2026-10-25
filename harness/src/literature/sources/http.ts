@@ -28,17 +28,22 @@ function cancellationReason(signal: AbortSignal): Error {
 }
 
 async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-    if (signal?.aborted) throw cancellationReason(signal);
+    if (signal === undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, ms));
+        return;
+    }
+    if (signal.aborted) throw cancellationReason(signal);
+    const abortSignal = signal;
     await new Promise<void>((resolve, reject) => {
         const onAbort = (): void => {
             clearTimeout(timeout);
-            reject(cancellationReason(signal!));
+            reject(cancellationReason(abortSignal));
         };
         const timeout = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
+            abortSignal.removeEventListener("abort", onAbort);
             resolve();
         }, ms);
-        signal?.addEventListener("abort", onAbort, { once: true });
+        abortSignal.addEventListener("abort", onAbort, { once: true });
     });
 }
 

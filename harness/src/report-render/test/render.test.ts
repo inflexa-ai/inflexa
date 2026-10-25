@@ -50,6 +50,7 @@ import {
 import { formatTableCell } from "../number-format.js";
 import { REPORT_PROVENANCE_GLOBAL } from "../provenance-data.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import { presentFind } from "../../lib/present.js";
 import { TABLE_DATA_GLOBAL } from "../table-data.js";
 import type { FigureMember, FigureModule } from "../figures/index.js";
 import { statisticsGraphic } from "../figures/common.js";
@@ -663,16 +664,15 @@ describe("the provenance data assets", () => {
         )._unsafeUnwrap();
         const documentAsset = provenanceAt(provenanceAssets(rendered.dataAssets), 0);
         const attestationAsset = provenanceAt(provenanceAssets(rendered.dataAssets), 1);
-        const tableAsset = rendered.dataAssets.find((asset) => asset.name.startsWith("t-"));
+        const tableAsset = presentFind(rendered.dataAssets, (asset) => asset.name.startsWith("t-"), "the table asset");
 
         // A `fetch` is refused on a `file://` page, thus the document reaches the reader through a script tag
         // and never through a request.
         expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${documentAsset.name}"></script>`);
         expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${attestationAsset.name}"></script>`);
-        expect(tableAsset).toBeDefined();
         const documentAt = rendered.html.indexOf(documentAsset.name);
         expect(documentAt).toBeLessThan(rendered.html.indexOf(attestationAsset.name));
-        expect(rendered.html.indexOf(attestationAsset.name)).toBeLessThan(rendered.html.indexOf(tableAsset!.name));
+        expect(rendered.html.indexOf(attestationAsset.name)).toBeLessThan(rendered.html.indexOf(tableAsset.name));
         expect(documentAt).toBeLessThan(rendered.html.indexOf(TABLE_DATA_DECODER));
         expect(documentAt).toBeLessThan(rendered.html.indexOf(CHART_BOOTSTRAP));
         expect(documentAt).toBeLessThan(rendered.html.indexOf(SECTION_SPY));

@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
+import { presentAt } from "../../lib/present.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError, type ApiError } from "./api-utils.js";
 import { IUPHAR_BASE, IUPHAR_HEADERS as HEADERS } from "./iuphar-config.js";
 
@@ -143,8 +144,8 @@ export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promis
         const batch = complexes.slice(i, i + concurrency);
         const subunitLists = await Promise.all(batch.map((c) => getSubunits(c.targetId)));
         for (let j = 0; j < batch.length; j++) {
-            const complex = batch[j]!;
-            const subunits = subunitLists[j]!;
+            const complex = presentAt(batch, j, "the complex of the batch");
+            const subunits = presentAt(subunitLists, j, "the subunits of the complex");
             const cleanedSubunits = subunits.map((s) => ({ ...s, name: stripHtml(s.name) }));
             // Only a shape B row reaches this filter, because `getSubunits`
             // calls `/targets/{id}/subunits`. Shape B is the one shape that

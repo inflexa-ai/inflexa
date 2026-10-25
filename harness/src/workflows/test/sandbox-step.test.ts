@@ -50,6 +50,7 @@ import { createExecuteCommandTool } from "../../tools/workspace/execute-command.
 import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "../sandbox-step.js";
+import { presentAt, presentLast } from "../../lib/present.js";
 
 const RUN = "run-9";
 
@@ -445,7 +446,7 @@ describe("sandbox-step activity history", () => {
         for (const [index, part] of stream.entries()) {
             if (part.type !== "data-activity-entry") continue;
             const { type: _type, id: _id, ...entry } = part;
-            const { type: _activityType, id: _activityId, ...activity } = stream[index - 1]!;
+            const { type: _activityType, id: _activityId, ...activity } = presentAt(stream, index - 1);
             expect(entry).toEqual(activity);
         }
         expect(ChatPartSchema.safeParse(partsOf("data-activity-entry")[0]).success).toBe(true);
@@ -465,7 +466,7 @@ describe("sandbox-step activity history", () => {
         expect(folded.filter((part) => part.type === "data-activity-entry")).toEqual(partsOf("data-activity-entry"));
         const activity = folded.filter((part) => part.type === "data-step-activity");
         expect(activity).toHaveLength(1);
-        expect(activity[0]).toEqual(partsOf("data-step-activity").at(-1)!);
+        expect(activity[0]).toEqual(presentLast(partsOf("data-step-activity")));
     });
 
     it("logs a rejected entry write, continues the step, and gives the next entry the next number", async () => {
@@ -492,8 +493,8 @@ describe("sandbox-step activity history", () => {
         expect(rejected).toBe(true);
         expect(result.status).toBe("complete");
         expect(logger.records.filter((r) => r.level === "warn" && r.msg.includes("emitToParentStream failed"))).toHaveLength(1);
-        expect(partsOf("data-activity-entry")[0]!.id).toBe(`${ENTRY_ID}-1`);
-        expect(partsOf("data-step-activity").at(-1)!.phase).toBe("complete");
+        expect(presentAt(partsOf("data-activity-entry"), 0).id).toBe(`${ENTRY_ID}-1`);
+        expect(presentLast(partsOf("data-step-activity")).phase).toBe("complete");
     });
 });
 
@@ -532,7 +533,7 @@ describe("sandbox-step file-metadata output tool", () => {
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
         expect(result.status).toBe("complete");
-        const refusal = toolResultIn(provider.calls[1]!, "tu-meta");
+        const refusal = toolResultIn(presentAt(provider.calls, 1), "tu-meta");
         expect(refusal?.output.type).toBe("error-text");
         expect(JSON.stringify(refusal?.output)).toContain("The tool submit_file_metadata is not available for this request");
         expect(cell?.descriptions.size).toBe(0);
@@ -565,17 +566,17 @@ describe("sandbox-step post-step continuations", () => {
         );
         const described = makeMessage([textBlock("described")], "end_turn");
         const replies = [makeMessage([textBlock("done")], "end_turn"), submit, described, makeMessage([textBlock("## Summary")], "end_turn")];
-        const provider = scriptedProvider((i) => replies[i]!);
+        const provider = scriptedProvider((i) => presentAt(replies, i));
 
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
 
         expect(result.status).toBe("complete");
         expect(provider.calls).toHaveLength(4);
-        const metadataRequest = provider.calls[1]!;
-        const summaryRequest = provider.calls[3]!;
+        const metadataRequest = presentAt(provider.calls, 1);
+        const summaryRequest = presentAt(provider.calls, 3);
         expect(summaryRequest.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool", "assistant", "user"]);
         expect(JSON.stringify(summaryRequest.messages.slice(0, 2))).toBe(JSON.stringify(metadataRequest.messages.slice(0, 2)));
-        expect(summaryRequest.messages[2]!.content).toBe(metadataRequest.messages[2]!.content);
+        expect(presentAt(summaryRequest.messages, 2).content).toBe(presentAt(metadataRequest.messages, 2).content);
         expect(summaryRequest.messages[3]).toEqual(submit.message);
         expect(summaryRequest.messages[5]).toEqual(described.message);
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "gene counts" })]);
@@ -594,13 +595,13 @@ describe("sandbox-step post-step continuations", () => {
             ),
         );
         const replies = [makeMessage([textBlock("done")], "end_turn"), makeMessage([textBlock("## Summary")], "end_turn")];
-        const provider = scriptedProvider((i) => replies[i]!);
+        const provider = scriptedProvider((i) => presentAt(replies, i));
 
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
 
         expect(result.status).toBe("complete");
         expect(provider.calls).toHaveLength(2);
-        expect(provider.calls[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+        expect(presentAt(provider.calls, 1).messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "cached description" })]);
     });
 });
@@ -626,7 +627,9 @@ describe("sandbox-step kept tool outputs", () => {
             .flatMap((message) => (message.role === "tool" ? message.content : []))
             .map((part) => (part.type === "tool-result" && part.output.type === "text" ? part.output.value : ""))
             .find((text) => text.startsWith("[Tool result cut: "));
-        return /reference "(to_[0-9a-f]{20})"/.exec(excerpt ?? "")![1]!;
+        const match = /reference "(to_[0-9a-f]{20})"/.exec(excerpt ?? "");
+        if (match === null) throw new Error("the tool-result cut notice is absent");
+        return presentAt(match, 1);
     }
 
     it("keeps the text of a long execute_command result of the task in the store of the step", async () => {
@@ -653,16 +656,18 @@ describe("sandbox-step kept tool outputs", () => {
             provider,
             sandboxClient,
             toolOutputStore: store,
-            buildAgent: async (ctx) =>
-                stepAgent(ctx.fileMetadata, [
+            buildAgent: async (ctx) => {
+                if (ctx.toolOutputStore === undefined) throw new Error("the tool output store is absent");
+                return stepAgent(ctx.fileMetadata, [
                     createExecuteCommandTool({
                         sandboxClient,
                         sandbox: ctx.sandbox,
                         deadlineMs: ctx.deadlineMs,
                         defaultCwd: `/${ANALYSIS_ID}`,
                     }),
-                    createReadToolOutputTool(ctx.toolOutputStore!),
-                ]),
+                    createReadToolOutputTool(ctx.toolOutputStore),
+                ]);
+            },
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -671,9 +676,11 @@ describe("sandbox-step kept tool outputs", () => {
         expect(store.puts).toHaveLength(1);
         expect(store.puts[0]).toMatchObject({ analysisId: ANALYSIS_ID, toolName: "execute_command", toolCallId: "tu-x" });
         expect(store.puts[0]).not.toHaveProperty("threadId");
-        const excerpt = toolResultIn(provider.calls[1]!, "tu-x")!;
+        const excerpt = toolResultIn(presentAt(provider.calls, 1), "tu-x");
+        if (excerpt === undefined) throw new Error("excerpt is absent");
         if (excerpt.output.type !== "text") throw new Error(`expected a text excerpt, got ${String(excerpt.output.type)}`);
-        const tail = excerpt.output.value.split("\n").at(-1)!;
+        const tail = excerpt.output.value.split("\n").at(-1);
+        if (tail === undefined) throw new Error("tail is absent");
         expect(tail).toContain("ValueError: no batch column");
         expect(tail).toContain('"timedOut":false');
     });
@@ -697,14 +704,18 @@ describe("sandbox-step kept tool outputs", () => {
             ...usageStepDeps(undefined),
             provider,
             toolOutputStore: store,
-            buildAgent: async (ctx) => stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore!)]),
+            buildAgent: async (ctx) => {
+                if (ctx.toolOutputStore === undefined) throw new Error("the tool output store is absent");
+                return stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore)]);
+            },
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
         expect(result.status).toBe("complete");
         expect(provider.calls).toHaveLength(4);
-        const read = toolResultIn(provider.calls[3]!, "tu-read")!;
+        const read = toolResultIn(presentAt(provider.calls, 3), "tu-read");
+        if (read === undefined) throw new Error("read is absent");
         if (read.output.type !== "json") throw new Error(`expected a json excerpt, got ${String(read.output.type)}`);
         expect(read.output.value).toMatchObject({ status: "ok", offset: 0 });
     });
@@ -729,8 +740,9 @@ describe("sandbox-step blocker replay", () => {
             dbos.DBOS,
             "runStep",
             mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+                if (config?.name === undefined) throw new Error("the step name is absent");
                 const value = await fn();
-                cache.set(config!.name!, value);
+                cache.set(config.name, value);
                 return value;
             }),
         );
@@ -746,12 +758,15 @@ describe("sandbox-step blocker replay", () => {
             },
         });
 
-        const first = await runSandboxStepBody(usageStepInput(), blockerDeps(scriptedProvider((i) => replies[i]!)));
+        const first = await runSandboxStepBody(usageStepInput(), blockerDeps(scriptedProvider((i) => presentAt(replies, i))));
 
         Reflect.set(
             dbos.DBOS,
             "runStep",
-            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => (cache.has(config!.name!) ? cache.get(config!.name!) : fn())),
+            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+                if (config?.name === undefined) throw new Error("the step name is absent");
+                return cache.has(config.name) ? cache.get(config.name) : fn();
+            }),
         );
         const replayProvider = scriptedProvider(() => {
             throw new Error("the replay called the provider");
@@ -773,7 +788,7 @@ describe("sandbox-step blocker replay", () => {
         ];
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
-            provider: scriptedProvider((i) => replies[i]!),
+            provider: scriptedProvider((i) => presentAt(replies, i)),
             buildAgent: async ({ blockerHolder, fileMetadata }) => stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]),
         };
 
@@ -794,10 +809,10 @@ describe("sandbox-step spawn", () => {
 
         expect(result.status).toBe("complete");
         expect(spawns).toHaveLength(1);
-        expect(spawns[0]!.session.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
-        expect(spawns[0]!.session.scope.analysisId).toBe(ANALYSIS_ID);
-        expect(spawns[0]!.session.provenance.agentId).toBe(USAGE_AGENT_ID);
-        expect(Object.keys(spawns[0]!.spec).sort()).toEqual(["childWorkflowId", "extraEnv", "image", "resources"]);
+        expect(presentAt(spawns, 0).session.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
+        expect(presentAt(spawns, 0).session.scope.analysisId).toBe(ANALYSIS_ID);
+        expect(presentAt(spawns, 0).session.provenance.agentId).toBe(USAGE_AGENT_ID);
+        expect(Object.keys(presentAt(spawns, 0).spec).sort()).toEqual(["childWorkflowId", "extraEnv", "image", "resources"]);
     });
 });
 
@@ -823,7 +838,7 @@ describe("sandbox-step suspension", () => {
         const marked = statements.filter((q) => /UPDATE\s+cortex_step_executions/i.test(q.text) && q.values.includes("canceled"));
         expect(marked).toHaveLength(1);
         // The error and the last error class of the row both carry the reason of the host.
-        expect(marked[0]!.values.filter((v) => v === reason)).toHaveLength(2);
+        expect(presentAt(marked, 0).values.filter((v) => v === reason)).toHaveLength(2);
         expect(dbosState.sent).toEqual([
             { destination: "parent-wf", message: { kind: "suspended", childWorkflowId: CHILD_ID, stepId: USAGE_STEP_ID, reason }, topic: "child-suspended" },
         ]);
@@ -1123,7 +1138,7 @@ describe("sandbox-step capped-out empty manifest", () => {
         expect(values.filter((v) => v === CAPPED_OUT_EMPTY_REASON).length).toBe(2);
         const emitted = blockedParts(dbosState.emittedParts);
         expect(emitted.length).toBe(1);
-        expect(emitted[0]!.reason).toBe(CAPPED_OUT_EMPTY_REASON);
+        expect(presentAt(emitted, 0).reason).toBe(CAPPED_OUT_EMPTY_REASON);
     });
 
     it("stays completed when the capped-out step persisted artifacts", async () => {
@@ -1164,6 +1179,6 @@ describe("sandbox-step capped-out empty manifest", () => {
         expect(result.error).toBe("the input has no batch column");
         const emitted = blockedParts(dbosState.emittedParts);
         expect(emitted.length).toBe(1);
-        expect(emitted[0]!.reason).toBe("the input has no batch column");
+        expect(presentAt(emitted, 0).reason).toBe("the input has no batch column");
     });
 });

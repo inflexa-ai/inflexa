@@ -13,6 +13,7 @@ import { createWriteFileTool } from "../write-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
+import { presentAt } from "../../../lib/present.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
@@ -175,10 +176,12 @@ describe("write_file tool", () => {
         expect(collector.getRecords()).toEqual([]);
 
         // A replay returns the cached value and folds its record again, into fresh process state.
-        tool.foldCallRecord!(readToolCallRecord(out));
+        const foldCallRecord = tool.foldCallRecord;
+        if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
+        foldCallRecord(readToolCallRecord(out));
         const records = collector.getRecords();
         expect(records.map((record) => record.outputPath)).toEqual(["output/replay.txt"]);
-        expect(records[0]!.outputHash).toBe(computeSha256(Buffer.from("v1", "utf8")));
-        expect(records[0]!.outputSize).toBe(2);
+        expect(presentAt(records, 0).outputHash).toBe(computeSha256(Buffer.from("v1", "utf8")));
+        expect(presentAt(records, 0).outputSize).toBe(2);
     });
 });

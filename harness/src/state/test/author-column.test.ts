@@ -32,7 +32,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-    await drop?.();
+    await drop();
 });
 
 describe("messages.author column", () => {

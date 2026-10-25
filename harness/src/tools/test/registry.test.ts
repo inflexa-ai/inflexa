@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
 import { createRegistry } from "../registry.js";
+import { presentGet } from "../../lib/present.js";
 
 const alpha = defineTool({
     id: "alpha",
@@ -34,8 +35,8 @@ describe("createRegistry", () => {
         const defs = registry.definitions();
         expect(Object.keys(defs)).toEqual(["alpha", "beta"]);
         expect(defs.alpha).toBeDefined();
-        expect(defs.alpha!.description).toBe("The alpha tool.");
-        const schema = defs.alpha!.inputSchema;
+        expect(defs.alpha?.description).toBe("The alpha tool.");
+        const schema = presentGet(defs, "alpha").inputSchema;
         if (!("jsonSchema" in schema)) throw new Error("expected a json-schema definition");
         const emitted = schema.jsonSchema;
         if (!("type" in emitted)) throw new Error("expected a typed JSON schema");

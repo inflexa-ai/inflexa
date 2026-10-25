@@ -117,7 +117,9 @@ function search(ref: string, text: string, start: number, limit: number | undefi
     });
     let result = at(end);
     while (!fits(result) && matches.length > 1) {
-        end = matches.pop()!.offset;
+        const dropped = matches.pop();
+        if (dropped === undefined) break;
+        end = dropped.offset;
         result = at(end);
     }
     return result;

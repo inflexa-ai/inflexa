@@ -204,9 +204,7 @@ function treeSeries(option: EchartOption, axis: "x" | "y"): EchartOption {
  */
 function leafPlaces(tree: EchartOption, axis: "x" | "y"): number[] {
     return optionArray(tree, "data").flatMap((edge) => {
-        const start = optionPair(optionList(edge.coords)[0]);
-        if (start === undefined) throw new Error("the tree drew an edge with no start");
-        const [a, b] = start;
+        const [a, b] = optionPair(optionList(edge.coords)[0]);
         return (axis === "x" ? b : a) === 0 ? [axis === "x" ? a : b] : [];
     });
 }
@@ -578,7 +576,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const option = chartOf("clinical-roc");
         expect([axisOf(option, "xAxis").min, axisOf(option, "xAxis").max, axisOf(option, "yAxis").min, axisOf(option, "yAxis").max]).toEqual([0, 1, 0, 1]);
         expect(JSON.stringify(seriesOf(option).find((entry) => entry.markLine !== undefined)?.markLine)).toContain('[{"coord":[0,0]},{"coord":[1,1]}]');
-        const names = seriesOf(option).flatMap((entry) => optionsOf(entry.data ?? []).map((item) => item?.name));
+        const names = seriesOf(option).flatMap((entry) => optionsOf(entry.data ?? []).map((item) => item.name));
         expect(names).toContain("AUC, ECOG + Karnofsky + age = 0.627\nAUC, ECOG alone = 0.619");
         expect(valueOf("clinical-roc").statistics?.map((statistic) => statistic.value)).toEqual(["0.626761473820297", "0.619166666666667"]);
     });

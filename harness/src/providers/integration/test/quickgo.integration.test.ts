@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 
 import { lookupAnnotationTool } from "../../../tools/bio/lookup-annotation.js";
 import { makeToolContext } from "../../../tools/__fixtures__/tool-context.js";
+import { presentAt } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 
@@ -27,7 +28,7 @@ describe.skipIf(!LIVE)("live QuickGO", () => {
         if (!("terms" in output)) throw new Error("expected the terms arm");
         const terms = output.terms ?? [];
         expect(terms.length).toBeGreaterThan(0);
-        expect(terms[0]!.id).toBe(ROOT_TERM);
-        expect(terms[0]!.name.length).toBeGreaterThan(0);
+        expect(presentAt(terms, 0).id).toBe(ROOT_TERM);
+        expect(presentAt(terms, 0).name.length).toBeGreaterThan(0);
     }, 60_000);
 });

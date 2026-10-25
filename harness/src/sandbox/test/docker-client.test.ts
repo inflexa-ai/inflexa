@@ -21,6 +21,7 @@ import { createDockerSandboxOps, engineConnectionOptions, type DockerEngine } fr
 import { mintSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 // A real, usable on-disk farm: the Docker client resolves the farm source at
 // each createSandbox and gates the store mounts on a parseable `inflexa.lock`
@@ -99,9 +100,15 @@ function notFound(): Error & { statusCode: number } {
     return Object.assign(new Error("no such container"), { statusCode: 404 });
 }
 
+const sandboxPredicate = (c: CreatedContainer) => c.labels?.role === "sandbox";
+
 /** The one sandbox container the ops create (there is no sidecar). */
 function sandboxOf(created: CreatedContainer[]): CreatedContainer | undefined {
-    return created.find((c) => c.labels?.role === "sandbox");
+    return created.find(sandboxPredicate);
+}
+
+function sandboxOfCreated(created: CreatedContainer[]): CreatedContainer {
+    return presentFind(created, sandboxPredicate, "the sandbox container");
 }
 
 function envMapOf(container: CreatedContainer): Record<string, string> {
@@ -201,7 +208,8 @@ describe("docker createSandbox — confinement", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         expect(sandbox.capDrop).toEqual(["ALL"]);
         expect(sandbox.securityOpt).toEqual(["no-new-privileges"]);
         // The container starts as root with exactly the capabilities the entrypoint's setup
@@ -235,7 +243,7 @@ describe("docker createSandbox — confinement", () => {
         expect(created).toHaveLength(1);
         expect(createdNetworks).toEqual([]);
 
-        const binding = sandboxOf(created)!.portBindings?.["8765/tcp"]?.[0];
+        const binding = sandboxOfCreated(created).portBindings?.["8765/tcp"]?.[0];
         expect(binding?.HostIp).toBe("127.0.0.1");
         // The SandboxRef carries the mapped host port the daemon assigned.
         expect(ref.host).toBe("127.0.0.1");
@@ -262,7 +270,8 @@ describe("docker createSandbox — confinement", () => {
 
         expect(ref.backend).toBe("docker");
 
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         const env = envMapOf(sandbox);
         expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
@@ -296,7 +305,7 @@ describe("docker createSandbox — confinement", () => {
         // A fork copies the pool size of its parent, thus a pool at the quota
         // runs workers * quota threads. One thread per pool is the safe
         // default, and the agent raises it per command through the exec env.
-        const env = envMapOf(sandboxOf(created)!);
+        const env = envMapOf(sandboxOfCreated(created));
         expect(env.OMP_NUM_THREADS).toBe("1");
         expect(env.OPENBLAS_NUM_THREADS).toBe("1");
         expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
@@ -324,7 +333,7 @@ describe("docker createSandbox — confinement", () => {
             )
         )._unsafeUnwrap();
 
-        const env = envMapOf(sandboxOf(created)!);
+        const env = envMapOf(sandboxOfCreated(created));
         expect(env.BIOCPARALLEL_WORKER_NUMBER).toBe("1");
         expect(env.OPENBLAS_NUM_THREADS).toBe("1");
         expect(env.OMP_NUM_THREADS).toBe("8");
@@ -345,7 +354,8 @@ describe("docker createSandbox — confinement", () => {
 
         // With swap a fork storm thrashes instead of an OOM kill, and
         // sandbox-server in the same cgroup stops to answer /exec.
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         expect(sandbox.memory).toBe(4 * 1024 ** 3);
         expect(sandbox.memorySwap).toBe(4 * 1024 ** 3);
     });
@@ -369,7 +379,8 @@ describe("docker createSandbox — confinement", () => {
         // the online list. Both files describe the host, thus a small file over
         // each path is the only way to make them report the quota.
         const cpuDir = join(wsRoot, ".cpu", ref.sandboxId);
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         expect(sandbox.binds).toEqual([
             `${wsRoot}/an-1:/an-1:ro`,
             `${wsRoot}/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw`,
@@ -400,7 +411,7 @@ describe("docker createSandbox — confinement", () => {
 
         const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const binds = sandboxOf(created)!.binds;
+        const binds = sandboxOfCreated(created).binds;
         expect(binds).toContain(`${join(wsRoot, ".cpu", ref.sandboxId, "online")}:/sys/devices/system/cpu/online:ro`);
         expect(binds.some((b) => b.endsWith(":/proc/cpuinfo:ro"))).toBe(false);
         expect(logger.records.some((r) => r.level === "debug" && r.msg.includes("no host /proc/cpuinfo"))).toBe(true);
@@ -424,7 +435,7 @@ describe("docker createSandbox — confinement", () => {
 
         // The sandbox still starts: the thread env limits each library, and only
         // the two base calls report the host.
-        expect(sandboxOf(created)!.binds.some((b) => b.includes(".cpu"))).toBe(false);
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes(".cpu"))).toBe(false);
         expect(existsSync(join(wsRoot, "absent"))).toBe(false);
         expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("cpu files not written"))).toBe(true);
     });
@@ -484,7 +495,7 @@ describe("docker createSandbox — the label set", () => {
         const identity = mintSandboxIdentity("run-1");
         (await ops.createSandbox(...splitSpawn(META), identity, {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.labels).toEqual({
+        expect(sandboxOfCreated(created).labels).toEqual({
             "app.kubernetes.io/managed-by": "cortex",
             role: "sandbox",
             "cortex/sandbox-id": identity.sandboxId,
@@ -506,7 +517,8 @@ describe("docker createSandbox — the label set", () => {
             })
         )._unsafeUnwrap();
 
-        const labels = sandboxOf(created)!.labels!;
+        const labels = sandboxOf(created)?.labels;
+        if (labels === undefined) throw new Error("labels is absent");
         expect(labels["cortex/run-id"]).toBe("run-1");
         expect(labels["cortex/owner-workflow-id"]).toBe("run-1-0");
         expect(labels["example.com/tenant"]).toBe("acme");
@@ -528,7 +540,8 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         const env = envMapOf(sandbox);
         expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
         expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
@@ -551,8 +564,8 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.hasPlatformKey).toBe(true);
-        expect(sandboxOf(created)!.platform).toBe("linux/arm64");
+        expect(sandboxOfCreated(created).hasPlatformKey).toBe(true);
+        expect(sandboxOfCreated(created).platform).toBe("linux/arm64");
     });
 
     test("omits the platform key entirely when no platform is configured", async () => {
@@ -568,8 +581,8 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.hasPlatformKey).toBe(false);
-        expect(sandboxOf(created)!.platform).toBeUndefined();
+        expect(sandboxOfCreated(created).hasPlatformKey).toBe(false);
+        expect(sandboxOfCreated(created).platform).toBeUndefined();
     });
 
     test("readOnly omits the rw step bind and pins WorkingDir to the RO tree", async () => {
@@ -599,9 +612,9 @@ describe("docker createSandbox — mounts and platform", () => {
             )
         )._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`, `${farmDir}:/mnt/libs/current:ro`]);
-        expect(sandboxOf(created)!.binds.some((b) => b.endsWith(":rw"))).toBe(false);
-        expect(sandboxOf(created)!.workingDir).toBe("/an-1");
+        expect(sandboxOfCreated(created).binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`, `${farmDir}:/mnt/libs/current:ro`]);
+        expect(sandboxOfCreated(created).binds.some((b) => b.endsWith(":rw"))).toBe(false);
+        expect(sandboxOfCreated(created).workingDir).toBe("/an-1");
     });
 
     test("binds a declared write tail in place of the step directory", async () => {
@@ -623,7 +636,8 @@ describe("docker createSandbox — mounts and platform", () => {
             )
         )._unsafeUnwrap();
 
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         // The tree stays read-only, and the one read-write bind covers the declared tail alone.
         expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/report-sessions/thread-1/derived:/an-1/report-sessions/thread-1/derived:rw"]);
         // No step directory of the coordinates reaches a bind.
@@ -667,8 +681,8 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const env = envMapOf(sandboxOf(created)!);
-        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        const env = envMapOf(sandboxOfCreated(created));
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(env.R_LIBS_SITE).toBeUndefined();
     });
 
@@ -692,9 +706,9 @@ describe("docker createSandbox — mounts and platform", () => {
 
         const warnings = logger.records.filter((r) => r.level === "warn");
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]!.msg).toContain("inflexa.lock");
-        expect(warnings[0]!.msg).toStartWith("[docker-client] ");
-        expect(warnings[0]!.fields).toMatchObject({ libStorePath: libRoot, farmPath: farmDir });
+        expect(presentAt(warnings, 0).msg).toContain("inflexa.lock");
+        expect(presentAt(warnings, 0).msg).toStartWith("[docker-client] ");
+        expect(presentAt(warnings, 0).fields).toMatchObject({ libStorePath: libRoot, farmPath: farmDir });
     });
 
     test("degrades to silence rather than throwing when no logger is wired", async () => {
@@ -732,7 +746,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
     test("a required package store refuses an unparseable lock, and no container is made", async () => {
@@ -811,7 +825,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
     test("no configured store means the farm source is not called", async () => {
@@ -836,7 +850,7 @@ describe("docker createSandbox — mounts and platform", () => {
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(resolverCalls).toBe(0);
-        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
     test("a per-analysis resolver refusal returns farm_unavailable with the embedder reason, and no container is made", async () => {
@@ -910,7 +924,7 @@ describe("docker createSandbox — mounts and platform", () => {
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(resolvedFor).toEqual(["an-1"]);
-        expect(sandboxOf(created)!.binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
+        expect(sandboxOfCreated(created).binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
     });
 
     test("a cache location on the farm resolution mounts read-write at /mnt/libs/cache, after the two store binds", async () => {
@@ -931,7 +945,8 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         const libsIdx = sandbox.binds.indexOf(`${libRoot}:/mnt/libs:ro`);
         const farmIdx = sandbox.binds.indexOf(`${farmDir}:/mnt/libs/farm:ro`);
         const cacheIdx = sandbox.binds.indexOf(`${cacheDir}:/mnt/libs/cache:rw`);
@@ -960,13 +975,14 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        const sandbox = sandboxOf(created)!;
+        const sandbox = sandboxOf(created);
+        if (sandbox === undefined) throw new Error("sandbox is absent");
         expect(sandbox.binds).toContain(`${farmDir}:/mnt/libs/farm:ro`);
         const env = envMapOf(sandbox);
         expect(env.NODE_PATH).toBe("/opt/node/node_modules");
         // The farm python/bin ends the PATH, after every image path, thus a
         // farm script never shadows an image tool.
-        expect(env.PATH!.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
+        expect(env.PATH?.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
         expect(env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
         // Without a cache mount the cache env stays absent — the entrypoint fallback covers it.
         expect(env.NUMBA_CACHE_DIR).toBeUndefined();
@@ -993,7 +1009,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
         // The harness must never materialize the bind source: a real bind would make Docker
         // auto-create a root-owned dir here, bricking a later reference download.
         expect(existsSync(missing)).toBe(false);
@@ -1020,7 +1036,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds).toContain(`${installedLater}:/mnt/refs:ro`);
+        expect(sandboxOfCreated(created).binds).toContain(`${installedLater}:/mnt/refs:ro`);
     });
 
     test("skips the /mnt/refs mount when the configured path is a symlink, even to a real directory", async () => {
@@ -1044,7 +1060,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
-        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
+        expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
     });
 });
 

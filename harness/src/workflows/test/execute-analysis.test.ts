@@ -55,6 +55,7 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { RUN_END_EVENT_KEY } from "../../execution/run-end-record.js";
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { presentAt, presentFind, presentGet } from "../../lib/present.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
 
@@ -365,7 +366,7 @@ function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => 
             if (text.startsWith(prefix)) {
                 const call = callsByPrefix.get(prefix) ?? 0;
                 callsByPrefix.set(prefix, call + 1);
-                const configured = rowByText[prefix]!;
+                const configured = presentGet(rowByText, prefix);
                 const rows = typeof configured === "function" ? configured(call) : configured;
                 if (rows instanceof Error) throw rows;
                 return { rows, rowCount: rows.length };
@@ -645,11 +646,11 @@ describe("executeAnalysis body", () => {
         // The failure settlement marks D skipped in the very same dag emission
         // that shows B failed, while C (independent, still in flight) runs on.
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const afterFailure = dagParts.find((p) => p.steps.some((s) => s.id === "B" && s.status === "failed"))!;
-        expect(afterFailure.steps.find((s) => s.id === "D")!.status).toBe("skipped");
-        expect(afterFailure.steps.find((s) => s.id === "C")!.status).toBe("running");
-        const last = dagParts[dagParts.length - 1]!;
-        expect(last.steps.find((s) => s.id === "D")!.status).toBe("skipped");
+        const afterFailure = presentFind(dagParts, (p) => p.steps.some((s) => s.id === "B" && s.status === "failed"));
+        expect(presentFind(afterFailure.steps, (s) => s.id === "D").status).toBe("skipped");
+        expect(presentFind(afterFailure.steps, (s) => s.id === "C").status).toBe("running");
+        const last = presentAt(dagParts, dagParts.length - 1);
+        expect(presentFind(last.steps, (s) => s.id === "D").status).toBe("skipped");
 
         // Stream-only doom-marking: D's ledger row is touched by the pending
         // seed and the terminal sweep, never mid-run.
@@ -739,13 +740,13 @@ describe("executeAnalysis body", () => {
         expect(result.failedSteps).toEqual([]);
 
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const statusesOf = (id: string) => dagParts.map((p) => p.steps.find((s) => s.id === id)!.status);
+        const statusesOf = (id: string) => dagParts.map((p) => presentFind(p.steps, (s) => s.id === id).status);
         // Held steps are visibly queued before they run; the admitted step never is.
         expect(statusesOf("B")).toContain("queued");
         expect(statusesOf("C")).toContain("queued");
         expect(statusesOf("A")).not.toContain("queued");
         // The final snapshot reconciles everything to completed.
-        const last = dagParts[dagParts.length - 1]!;
+        const last = presentAt(dagParts, dagParts.length - 1);
         expect(last.steps.map((s) => s.status)).toEqual(["completed", "completed", "completed"]);
         // One-at-a-time admission: each dag emit shows at most one running step.
         for (const part of dagParts) {
@@ -765,7 +766,7 @@ describe("executeAnalysis body", () => {
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         expect(dagParts.length).toBeGreaterThan(0);
         for (const part of dagParts) {
-            const step = part.steps.find((s) => s.id === "A")!;
+            const step = presentFind(part.steps, (s) => s.id === "A");
             // The fixture gives name and id different values on purpose: asserting merely
             // "non-empty" would have passed against the id this join replaces.
             expect(step.name).toBe("step A");
@@ -788,9 +789,9 @@ describe("executeAnalysis body", () => {
         const terminal = terminalOf(record.emittedParts);
         expect(terminal?.error).toContain("budget");
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const last = dagParts[dagParts.length - 1]!;
-        expect(last.steps[0]!.status).toBe("failed");
-        expect(last.steps[0]!.error).toContain("machine budget");
+        const last = presentAt(dagParts, dagParts.length - 1);
+        expect(presentAt(last.steps, 0).status).toBe("failed");
+        expect(presentAt(last.steps, 0).error).toContain("machine budget");
     });
 
     it("budget admission: a failed step frees capacity for a held step", async () => {
@@ -811,7 +812,7 @@ describe("executeAnalysis body", () => {
         expect(result.completedSteps).toEqual(["B"]);
         expect(result.failedSteps).toEqual(["A"]);
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const statusesOf = (id: string) => dagParts.map((p) => p.steps.find((s) => s.id === id)!.status);
+        const statusesOf = (id: string) => dagParts.map((p) => presentFind(p.steps, (s) => s.id === id).status);
         expect(statusesOf("B")).toContain("queued");
         expect(statusesOf("B")).toContain("running");
     });
@@ -832,7 +833,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("completed");
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
         // First snapshot after dispatch: all three running at once, none queued.
-        const first = dagParts[0]!;
+        const first = presentAt(dagParts, 0);
         expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running"]);
         for (const part of dagParts) {
             expect(part.steps.some((s) => s.status === "queued")).toBe(false);
@@ -1002,8 +1003,8 @@ describe("executeAnalysis body", () => {
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
         const completed = record.emittedParts.find((p) => p.type === "data-run-completed");
-        expect(completed).toBeDefined();
-        expect("usage" in completed!).toBe(false);
+        if (completed === undefined) throw new Error("the data-run-completed part is absent");
+        expect("usage" in completed).toBe(false);
     });
 
     it("run-completed aggregates only what settled children reported — a child that threw contributes nothing", async () => {
@@ -1212,7 +1213,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("completed");
         const writes = synthesisWrites(pool);
         expect(writes.length).toBe(1);
-        expect(writes[0]!.values).toEqual(["produced", null, "run-test"]);
+        expect(presentAt(writes, 0).values).toEqual(["produced", null, "run-test"]);
     });
 
     it("blocker synthesis → records synthesis_status 'skipped_blocker' with the reason; run still completed", async () => {
@@ -1234,7 +1235,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("completed");
         const writes = synthesisWrites(pool);
         expect(writes.length).toBe(1);
-        expect(writes[0]!.values).toEqual(["skipped_blocker", BLOCKER_REASON, "run-test"]);
+        expect(presentAt(writes, 0).values).toEqual(["skipped_blocker", BLOCKER_REASON, "run-test"]);
     });
 
     it("failed synthesis → records synthesis_status 'failed' with the error message before re-throwing", async () => {
@@ -1251,7 +1252,7 @@ describe("executeAnalysis body", () => {
         // re-throws afterward to drive the workflow record to ERROR.
         const writes = synthesisWrites(pool);
         expect(writes.length).toBe(1);
-        expect(writes[0]!.values).toEqual(["failed", "synth boom", "run-test"]);
+        expect(presentAt(writes, 0).values).toEqual(["failed", "synth boom", "run-test"]);
     });
 
     it("synthesis disabled → no synthesis_status write (ledger columns stay NULL) even when a step completed", async () => {
@@ -1313,7 +1314,7 @@ describe("executeAnalysis body", () => {
 
         const seeds = seedWrites(pool);
         expect(seeds.length).toBe(1);
-        const values = [...(seeds[0]!.values ?? [])];
+        const values = [...(presentAt(seeds, 0).values ?? [])];
         // 2 DAG rows + the synthesis row, 5 values per tuple (runId, stepId, analysisId, wave, agentId).
         expect(values.length).toBe(15);
         const at = values.indexOf("synthesis");
@@ -1334,7 +1335,7 @@ describe("executeAnalysis body", () => {
 
         const seeds = seedWrites(pool);
         expect(seeds.length).toBe(1);
-        const values = [...(seeds[0]!.values ?? [])];
+        const values = [...(presentAt(seeds, 0).values ?? [])];
         expect(values.length).toBe(5);
         expect(values).not.toContain("synthesis");
     });
@@ -1351,11 +1352,11 @@ describe("executeAnalysis body", () => {
 
         const marks = synthesisMarkRunning(pool);
         expect(marks.length).toBe(1);
-        expect(marks[0]!.values).toContain("run-synthesizer");
+        expect(presentAt(marks, 0).values).toContain("run-synthesizer");
 
         const updates = synthesisStepUpdates(pool);
         expect(updates.length).toBe(1);
-        const [status, completedAt, durationMs, error, runId, stepId] = updates[0]!.values ?? [];
+        const [status, completedAt, durationMs, error, runId, stepId] = presentAt(updates, 0).values ?? [];
         expect(status).toBe("completed");
         expect(typeof completedAt).toBe("string");
         // Exactly one fake-clock tick elapses between the two bracketing DBOS.now()
@@ -1367,10 +1368,10 @@ describe("executeAnalysis body", () => {
 
         // Ordering: at the moment the step row's terminal write executed, no run-row
         // status write had been recorded — the run row was still `running`.
-        const stepIdx = pool.queries.indexOf(updates[0]!);
+        const stepIdx = pool.queries.indexOf(presentAt(updates, 0));
         const runWrites = runStatusWrites(pool);
         expect(runWrites.length).toBe(1);
-        expect(stepIdx).toBeLessThan(pool.queries.indexOf(runWrites[0]!));
+        expect(stepIdx).toBeLessThan(pool.queries.indexOf(presentAt(runWrites, 0)));
     });
 
     it("skipped_no_summaries → row skipped; skipped_blocker → row blocked with the reason", async () => {
@@ -1389,7 +1390,7 @@ describe("executeAnalysis body", () => {
 
             const updates = synthesisStepUpdates(pool);
             expect(updates.length).toBe(1);
-            const values = [...(updates[0]!.values ?? [])];
+            const values = [...(presentAt(updates, 0).values ?? [])];
             expect(values[0]).toBe(expectStatus);
             // The blocker's reason rides the blocked_reason column (before runId/stepId).
             if (outcome === "skipped_blocker") expect(values[values.length - 3]).toBe(reason);
@@ -1408,12 +1409,12 @@ describe("executeAnalysis body", () => {
 
         const updates = synthesisStepUpdates(pool);
         expect(updates.length).toBe(1);
-        const [status, , , error] = updates[0]!.values ?? [];
+        const [status, , , error] = presentAt(updates, 0).values ?? [];
         expect(status).toBe("failed");
         expect(error).toBe("synth boom");
         const runWrites = runStatusWrites(pool);
         expect(runWrites.length).toBe(1);
-        expect(pool.queries.indexOf(updates[0]!)).toBeLessThan(pool.queries.indexOf(runWrites[0]!));
+        expect(pool.queries.indexOf(presentAt(updates, 0))).toBeLessThan(pool.queries.indexOf(presentAt(runWrites, 0)));
     });
 
     it("cancellation mid-synthesis re-propagates with the row untouched and no outcome persisted", async () => {
@@ -1468,7 +1469,7 @@ describe("executeAnalysis body", () => {
 
         const updates = synthesisStepUpdates(pool);
         expect(updates.length).toBe(1);
-        expect(updates[0]!.values?.[0]).toBe("completed");
+        expect(presentAt(updates, 0).values?.[0]).toBe("completed");
         // The resumable suspension preserves pending DAG rows — no sweep — and the
         // synthesis row needs none: it reached its terminal before the suspension.
         expect(sweepWrites(pool)).toEqual([]);
@@ -1490,11 +1491,11 @@ describe("executeAnalysis body", () => {
         expect(suspendWrites(pool).length).toBe(1);
         const runWrites = runStatusWrites(pool);
         expect(runWrites.length).toBe(1);
-        expect(runWrites[0]!.values).toContain("suspended_insufficient_funds");
-        expect(runWrites[0]!.values).toContain("payment_required");
+        expect(presentAt(runWrites, 0).values).toContain("suspended_insufficient_funds");
+        expect(presentAt(runWrites, 0).values).toContain("payment_required");
         const updates = synthesisStepUpdates(pool);
         expect(updates.length).toBe(1);
-        const [status, , , error] = updates[0]!.values ?? [];
+        const [status, , , error] = presentAt(updates, 0).values ?? [];
         expect(status).toBe("canceled");
         expect(error).toBe("payment_required");
         expect(synthesisWrites(pool)).toEqual([]);
@@ -1538,8 +1539,8 @@ describe("executeAnalysis body", () => {
         expect(seeds.length).toBe(1);
         // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
         // B's wave is 1 (depends on A) and both carry the shared agent fallback map.
-        expect(seeds[0]!.values).toEqual(["run-test", "A", "a1", 0, "agent-x", "run-test", "B", "a1", 1, "agent-x"]);
-        expect(seeds[0]!.text).toContain("ON CONFLICT (run_id, step_id) DO NOTHING");
+        expect(presentAt(seeds, 0).values).toEqual(["run-test", "A", "a1", 0, "agent-x", "run-test", "B", "a1", 1, "agent-x"]);
+        expect(presentAt(seeds, 0).text).toContain("ON CONFLICT (run_id, step_id) DO NOTHING");
     });
 
     it("unreachable dependents are swept to skipped; an all-failed run closes charge=error", async () => {
@@ -1558,7 +1559,7 @@ describe("executeAnalysis body", () => {
 
         const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
         expect(sweeps.length).toBe(1);
-        expect(sweeps[0]!.values?.[0]).toBe("run-test");
+        expect(presentAt(sweeps, 0).values?.[0]).toBe("run-test");
     });
 
     it("a suspension preserves pending rows (no sweep), and dooms no dependent", async () => {
@@ -1726,7 +1727,7 @@ describe("executeAnalysis body", () => {
         const stepEvents = events.flatMap((e) => (e.type === "step_completed" ? [e] : []));
         expect(stepEvents).toHaveLength(3);
         for (const e of stepEvents) expect(e.atMs).toBeGreaterThanOrEqual(FAKE_CLOCK_BASE_MS);
-        const a = stepEvents.find((e) => e.stepId === "A")!;
+        const a = presentFind(stepEvents, (e) => e.stepId === "A");
         expect(a.durationMs).toBe(5);
     });
 
@@ -1747,7 +1748,7 @@ describe("executeAnalysis body", () => {
         expect(result.status).toBe("completed");
         const stepEvents = events.flatMap((e) => (e.type === "step_completed" ? [e] : []));
         expect(stepEvents).toHaveLength(1);
-        expect(stepEvents[0]!.status).toBe("completed");
+        expect(presentAt(stepEvents, 0).status).toBe("completed");
     });
 
     it("a DBOS-recovery re-execution re-emits identical timestamps (values come from the checkpointed clock, not Date.now())", async () => {
@@ -2061,7 +2062,7 @@ describe("executeAnalysis run end ownership", () => {
             expect(events).toHaveLength(1);
             const failures = logger.records.filter((r) => r.level === "error" && r.msg.endsWith("ledger write failed"));
             expect(failures).toHaveLength(1);
-            expect(failures[0]!.fields).toMatchObject({ runId: "run-test", status: "completed" });
+            expect(presentAt(failures, 0).fields).toMatchObject({ runId: "run-test", status: "completed" });
             const retried = logger.records.filter((r) => r.level === "warn" && r.fields.status === "completed" && r.fields.runId === "run-test");
             expect(retried).toHaveLength(4);
         });
@@ -2180,7 +2181,7 @@ describe("executeAnalysis child seed", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
         expect(result.status).toBe("completed");
 
-        const seedB = dbosState.childInputs.find((i) => i.stepId === "B")!.prompt;
+        const seedB = presentFind(dbosState.childInputs, (i) => i.stepId === "B").prompt;
         // The task fields the plan step carries.
         expect(seedB).toContain("question B");
         expect(seedB).toContain("criterion B");
@@ -2221,8 +2222,8 @@ describe("executeAnalysis child input projection", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
         expect(result.status).toBe("completed");
 
-        expect(dbosState.childInputs.find((i) => i.stepId === "A")!.dependsOn).toEqual([]);
-        expect(dbosState.childInputs.find((i) => i.stepId === "B")!.dependsOn).toEqual(["A"]);
+        expect(presentFind(dbosState.childInputs, (i) => i.stepId === "A").dependsOn).toEqual([]);
+        expect(presentFind(dbosState.childInputs, (i) => i.stepId === "B").dependsOn).toEqual(["A"]);
     });
 
     it("carries the template binding composed beside the seed into the child input of a grounded step, and none into an ungrounded one", async () => {
@@ -2241,7 +2242,7 @@ describe("executeAnalysis child input projection", () => {
             planStepById: {
                 ...base.planStepById,
                 B: {
-                    ...base.planStepById.B!,
+                    ...presentGet(base.planStepById, "B"),
                     grounding: {
                         status: "grounded",
                         snapshot: "sha256:71ac",
@@ -2257,7 +2258,7 @@ describe("executeAnalysis child input projection", () => {
         const result = await runExecuteAnalysisBody(grounded, deps);
         expect(result.status).toBe("completed");
 
-        const childB = dbosState.childInputs.find((i) => i.stepId === "B")!;
+        const childB = presentFind(dbosState.childInputs, (i) => i.stepId === "B");
         expect(childB.templateBinding).toEqual({
             template: "tpl-deseq2-two-group@1.0.0",
             slots: { lfc_shrink: "apeglm" },
@@ -2271,7 +2272,7 @@ describe("executeAnalysis child input projection", () => {
                 .map((slot) => slot.name),
         });
         expect(childB.prompt).toContain("## Template contract");
-        expect(dbosState.childInputs.find((i) => i.stepId === "A")!.templateBinding).toBeUndefined();
+        expect(presentFind(dbosState.childInputs, (i) => i.stepId === "A").templateBinding).toBeUndefined();
     });
 
     it("hands the child the seed of a checkpoint written as a bare string, with no binding", async () => {
@@ -2287,7 +2288,7 @@ describe("executeAnalysis child input projection", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
         expect(result.status).toBe("completed");
 
-        const childA = dbosState.childInputs.find((i) => i.stepId === "A")!;
+        const childA = presentFind(dbosState.childInputs, (i) => i.stepId === "A");
         expect(childA.prompt).toBe("LEGACY SEED");
         expect(childA.templateBinding).toBeUndefined();
     });
@@ -2386,13 +2387,13 @@ describe("executeAnalysis run observation", () => {
         for (const snapshot of seen) {
             expect(snapshot.steps.map((s) => s.id).sort()).toEqual(["A", "B"]);
             // Names and agents ride every snapshot, not only the terminal one.
-            expect(snapshot.steps.find((s) => s.id === "B")!.name).toBe("step B");
-            expect(snapshot.steps.find((s) => s.id === "B")!.agent).toBe("agent-x");
+            expect(presentFind(snapshot.steps, (s) => s.id === "B").name).toBe("step B");
+            expect(presentFind(snapshot.steps, (s) => s.id === "B").agent).toBe("agent-x");
         }
         // The opening snapshot precedes any dispatch: nothing has run yet.
-        expect(seen[0]!.steps.every((s) => s.status === "pending")).toBe(true);
+        expect(presentAt(seen, 0).steps.every((s) => s.status === "pending")).toBe(true);
         // The last snapshot carries the derived terminal status, not `running`.
-        expect(seen[seen.length - 1]!.status).toBe("completed");
+        expect(presentAt(seen, seen.length - 1).status).toBe("completed");
     });
 
     it("a throwing observer is swallowed and the run still reaches its terminal status", async () => {
@@ -2433,7 +2434,8 @@ describe("executeAnalysis run observation", () => {
         const fold = (sequence: readonly RunObservation[]): RunObservation | null => sequence.reduce<RunObservation | null>((_, next) => next, null);
         const once = fold(seen);
         const twice = fold([...seen, ...seen]);
-        expect(twice).toEqual(once!);
+        if (once === null) throw new Error("the folded observation is absent");
+        expect(twice).toEqual(once);
     });
 });
 

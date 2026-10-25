@@ -19,7 +19,7 @@ describe("scope coordinate derivation", () => {
             analysisId: "analysis-xyz",
             threadId: "thread-1",
         };
-        expect(scope.kind === "analysis" ? scope.threadId : undefined).toBe("thread-1");
+        expect(scope.threadId).toBe("thread-1");
     });
 });
 

@@ -26,6 +26,7 @@ import {
 } from "../otel.js";
 import { untracedWorkflow } from "../otel-spans.js";
 import { parseUnknownRecord } from "../unknown-containers.js";
+import { presentAt } from "../present.js";
 
 let collector: Server;
 let endpoint: string;
@@ -91,7 +92,7 @@ function registeredResourceAttributes(): Record<string, unknown> {
 /** The resource attributes on the metrics the exporter posted to the collector. */
 function exportedMetricResourceAttributes(): Record<string, unknown> {
     expect(metricBodies.length).toBeGreaterThan(0);
-    const payload = parseUnknownRecord(JSON.parse(metricBodies[0]!));
+    const payload = parseUnknownRecord(JSON.parse(presentAt(metricBodies, 0)));
     const resourceMetrics = Array.isArray(payload?.resourceMetrics) ? payload.resourceMetrics : [];
     const first = parseUnknownRecord(resourceMetrics[0]);
     const resource = parseUnknownRecord(first?.resource);

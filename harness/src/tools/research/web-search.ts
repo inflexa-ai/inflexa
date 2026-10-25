@@ -141,7 +141,12 @@ export function createWebSearchTool(deps: WebSearchToolDeps) {
         execute: async ({ query, queries, numResults, recencyFilter, domainFilter }): Promise<Result<WebSearchOutput, ToolError>> => {
             const filter = parseDomainFilter(domainFilter);
             // The input refine guarantees exactly one of `query` and `queries`.
-            const queryList = queries ?? [query!];
+            let queryList: readonly string[];
+            if (queries !== undefined) queryList = queries;
+            else {
+                if (query === undefined) throw new Error("search requires query");
+                queryList = [query];
+            }
 
             const requests = queryList.map((raw) => deps.engine.search({ query: queryTerms(raw, filter), recencyFilter }));
 

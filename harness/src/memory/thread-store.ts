@@ -47,6 +47,7 @@
 import { type ResultAsync, errAsync, okAsync } from "neverthrow";
 
 import { type DbError, type Connectable, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import { presentFirst } from "../lib/present.js";
 import type { DomainError } from "../lib/result.js";
 import type { Querier } from "../state/db.js";
 
@@ -410,7 +411,7 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
             // the existing row's identity).
             return tryQuery("thread-store.createThread.readback", () =>
                 pool.query<ThreadRow>(`SELECT ${THREAD_COLUMNS} FROM cortex_analysis_threads WHERE thread_id = $1`, [input.threadId]),
-            ).map(({ rows: existing }) => toThread(existing[0]!));
+            ).map(({ rows: existing }) => toThread(presentFirst(existing, "the thread row read back")));
         });
     }
 
@@ -684,7 +685,7 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
                 scopeValues,
             ),
         ).andThen((totalResult) => {
-            const total = Number(totalResult.rows[0]!.count);
+            const total = Number(presentFirst(totalResult.rows, "the thread count row").count);
             return tryQuery("thread-store.listThreads.page", () =>
                 pool.query<ThreadRow>(
                     `SELECT ${THREAD_COLUMNS}

@@ -134,7 +134,8 @@ const testCParent = DBOS.registerWorkflow(
 // message that its recv accumulator already holds.
 const testDChild = DBOS.registerWorkflow(
     async (input: SandboxStepInput): Promise<SandboxStepResult> => {
-        const childWorkflowId = DBOS.workflowID!;
+        const childWorkflowId = DBOS.workflowID;
+        if (childWorkflowId === undefined) throw new Error("childWorkflowId is absent");
         const message: ChildSuspended = { kind: "suspended", childWorkflowId, stepId: input.stepId, reason: "payment_required" };
         await DBOS.runStep(() => DBOS.send(input.parentWorkflowId, message, CHILD_SUSPENDED_TOPIC), { name: "notify-parent-suspended" });
         await DBOS.cancelWorkflow(childWorkflowId);
@@ -194,7 +195,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-    if (rig) await rig.drop();
+    await rig.drop();
 });
 
 describe("the suspension cascade — parent self-cancel", () => {

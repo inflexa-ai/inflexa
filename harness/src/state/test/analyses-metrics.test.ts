@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "../analyses-metrics.js";
+import { presentAt } from "../../lib/present.js";
 
 async function seedAnalysis(pool: Pool, analysisId: string, dataProfileStatus: string | null = "pending"): Promise<void> {
     const now = new Date().toISOString();
@@ -66,7 +67,7 @@ describe("the indexes on the runs", () => {
             "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_runs_analysis_started'",
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.indexdef).toContain("(analysis_id, started_at DESC, run_id DESC)");
+        expect(presentAt(rows, 0).indexdef).toContain("(analysis_id, started_at DESC, run_id DESC)");
     });
 
     it("has an index on the completion time and the run id after the migrations", async () => {
@@ -74,7 +75,7 @@ describe("the indexes on the runs", () => {
             "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_cortex_runs_completed'",
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.indexdef).toContain("(completed_at DESC, run_id DESC)");
+        expect(presentAt(rows, 0).indexdef).toContain("(completed_at DESC, run_id DESC)");
     });
 });
 

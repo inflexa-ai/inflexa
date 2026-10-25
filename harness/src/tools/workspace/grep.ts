@@ -11,6 +11,7 @@
 import { posix as posixPath } from "node:path";
 
 import { ok, type Result } from "neverthrow";
+import { presentAt } from "../../lib/present.js";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
@@ -122,7 +123,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
                         truncated = true;
                         return;
                     }
-                    const line = lines[i]!;
+                    const line = presentAt(lines, i, "the scanned line");
                     if (regex.test(line)) {
                         matches.push({
                             file: filePath,
@@ -164,6 +165,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
             if (matches.length === 0) {
                 return ok({ status: "no_matches" as const, path, pattern });
             }
+            // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the walk/searchFile closures that set truncated; the check is live (it returns the truncated result).
             if (truncated) {
                 return ok({
                     status: "truncated" as const,

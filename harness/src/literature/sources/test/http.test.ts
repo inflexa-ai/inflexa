@@ -36,7 +36,8 @@ describe("shared source HTTP request policy", () => {
             fetch: fetchDouble(
                 (_url, init) =>
                     new Promise((_resolve, reject) => {
-                        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+                        const signal = init?.signal;
+                        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
                     }),
             ),
         });

@@ -12,6 +12,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { getGenePhenotypeProfile } from "../../../tools/lib/monarch-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 
@@ -27,7 +28,7 @@ describe.skipIf(!LIVE)("monarch-client", () => {
             expect(profile.geneCurie).toBe("HGNC:1097");
             expect(profile.phenotypes.length).toBeGreaterThan(0);
 
-            const phenotype = profile.phenotypes[0]!;
+            const phenotype = presentAt(profile.phenotypes, 0);
             expect(phenotype.hpoId).toStartWith("HP:");
             expect(typeof phenotype.label).toBe("string");
             expect(Array.isArray(phenotype.ancestorIds)).toBe(true);

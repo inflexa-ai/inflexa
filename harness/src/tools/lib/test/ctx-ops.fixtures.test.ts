@@ -22,6 +22,7 @@ import {
     RawSeemPredictionSchema,
     ToxValSchema,
 } from "../ctx-ops.js";
+import { presentAt, presentGet } from "../../../lib/present.js";
 
 runFixtureSuite("CompTox golden fixtures", [
     fixtureCase({
@@ -31,8 +32,8 @@ runFixtureSuite("CompTox golden fixtures", [
         drift: "chemical-search-equal.drift.json",
         schema: z.array(CtxChemicalSearchRowSchema),
         assertOutput: (rows) => {
-            expect(rows[0]!.dtxsid).toBe("DTXSID7020182");
-            expect(rows[0]!.casrn).toBe("80-05-7");
+            expect(presentAt(rows, 0).dtxsid).toBe("DTXSID7020182");
+            expect(presentAt(rows, 0).casrn).toBe("80-05-7");
         },
     }),
     fixtureCase({
@@ -44,7 +45,7 @@ runFixtureSuite("CompTox golden fixtures", [
         assertOutput: (rows) => {
             // A DTXCID match carries no substance identifier. The row parses,
             // and `resolveDtxsid` drops it.
-            expect(rows[0]!.dtxsid).toBeNull();
+            expect(presentAt(rows, 0).dtxsid).toBeNull();
             expect(rows.filter((row) => row.dtxsid)).toHaveLength(0);
         },
     }),
@@ -55,7 +56,7 @@ runFixtureSuite("CompTox golden fixtures", [
         drift: "genetox-summary.drift.json",
         schema: z.array(GenetoxSchema),
         assertOutput: (rows) => {
-            const row = rows[0]!;
+            const row = presentAt(rows, 0);
             expect(row.genetoxCall).toBe("negative");
             expect(row.ames).toBe("negative");
             expect(row.micronucleus).toBe("negative");
@@ -72,7 +73,7 @@ runFixtureSuite("CompTox golden fixtures", [
         drift: "cancer-summary.synthetic.drift.json",
         schema: z.array(CancerSchema),
         assertOutput: (rows) => {
-            const row = rows[0]!;
+            const row = presentAt(rows, 0);
             expect(row.cancerCall).toBe("Group 2B: Possibly carcinogenic to humans");
             expect(row.exposureRoute).toBe("oral");
             expect(row.source).toBe("IARC");
@@ -99,7 +100,7 @@ runFixtureSuite("CompTox golden fixtures", [
         drift: "seem-general.drift.json",
         schema: z.array(RawSeemPredictionSchema),
         assertOutput: (rows) => {
-            const row = rows[0]!;
+            const row = presentAt(rows, 0);
             expect(row.productionVolume).toBe(2780000);
             // `probabilityPesticde` is the wire name. The corrected spelling is
             // served nowhere, thus the mapped output renames it.
@@ -126,8 +127,8 @@ runFixtureSuite("CompTox golden fixtures", [
         drift: "httk.drift.json",
         schema: z.array(RawHttkRowSchema),
         assertOutput: (rows) => {
-            expect(rows[0]!.parameter).toBe("Css");
-            expect(rows[0]!.predicted).toBe(1.114);
+            expect(presentAt(rows, 0).parameter).toBe("Css");
+            expect(presentAt(rows, 0).predicted).toBe(1.114);
         },
     }),
     fixtureCase({
@@ -138,7 +139,7 @@ runFixtureSuite("CompTox golden fixtures", [
         schema: z.array(RawFunctionalUseRowSchema),
         assertOutput: (rows) => {
             // An absent category is an explicit null, not an omitted key.
-            expect(rows[0]!.functioncategory).toBeNull();
+            expect(presentAt(rows, 0).functioncategory).toBeNull();
             expect(rows.some((row) => row.functioncategory)).toBe(true);
         },
     }),
@@ -154,7 +155,7 @@ describe("the CompTox oracles and the corrected fields", () => {
     }
 
     it("names the genotoxicity summary fields that the client now declares", () => {
-        const props = Object.keys(oracleSchemas("hazard").GenetoxSummary!.properties);
+        const props = Object.keys(presentGet(oracleSchemas("hazard"), "GenetoxSummary", "the GenetoxSummary schema").properties);
         for (const field of ["ames", "genetoxCall", "micronucleus", "reportsPositive", "reportsNegative", "reportsOther", "clowderDocId"]) {
             expect(props).toContain(field);
         }
@@ -165,7 +166,7 @@ describe("the CompTox oracles and the corrected fields", () => {
     });
 
     it("names cancerCall and exposureRoute on the cancer summary", () => {
-        const props = Object.keys(oracleSchemas("hazard").CancerSummary!.properties);
+        const props = Object.keys(presentGet(oracleSchemas("hazard"), "CancerSummary", "the CancerSummary schema").properties);
         expect(props).toContain("cancerCall");
         expect(props).toContain("exposureRoute");
         expect(props).not.toContain("classification");
@@ -173,7 +174,7 @@ describe("the CompTox oracles and the corrected fields", () => {
     });
 
     it("declares no averageMass on the chemicaldetailstandard projection", () => {
-        const props = Object.keys(oracleSchemas("chemical").ChemicalDetailStandard!.properties);
+        const props = Object.keys(presentGet(oracleSchemas("chemical"), "ChemicalDetailStandard", "the ChemicalDetailStandard schema").properties);
         expect(props).toContain("monoisotopicMass");
         expect(props).not.toContain("averageMass");
         const detail = z.record(z.string(), z.unknown()).parse(readFixture("comptox", "chemical-detail.json"));
@@ -181,21 +182,23 @@ describe("the CompTox oracles and the corrected fields", () => {
     });
 
     it("declares hitc as a double, thus the active predicate is a threshold", () => {
-        const hitc = z.object({ type: z.string(), format: z.string() }).parse(oracleSchemas("bioactivity").BioactivityDataAll!.properties.hitc);
+        const hitc = z
+            .object({ type: z.string(), format: z.string() })
+            .parse(presentGet(oracleSchemas("bioactivity"), "BioactivityDataAll", "the BioactivityDataAll schema").properties.hitc);
         expect(hitc.type).toBe("number");
         expect(hitc.format).toBe("double");
     });
 
     it("carries no assay identifier on the per-chemical roll-up", () => {
-        const props = Object.keys(oracleSchemas("bioactivity").ChemicalAgg!.properties);
+        const props = Object.keys(presentGet(oracleSchemas("bioactivity"), "ChemicalAgg", "the ChemicalAgg schema").properties);
         expect(props).not.toContain("aeid");
         expect(props).not.toContain("aenm");
         // The assay resource is where the endpoint name lives.
-        expect(Object.keys(oracleSchemas("bioactivity").AssayAnnotation!.properties)).toContain("assayComponentEndpointName");
+        expect(Object.keys(oracleSchemas("bioactivity").AssayAnnotation?.properties ?? {})).toContain("assayComponentEndpointName");
     });
 
     it("serves only the misspelled pesticide probability", () => {
-        const props = Object.keys(oracleSchemas("exposure").GenExpoPrediction!.properties);
+        const props = Object.keys(presentGet(oracleSchemas("exposure"), "GenExpoPrediction", "the GenExpoPrediction schema").properties);
         expect(props).toContain("probabilityPesticde");
         expect(props).not.toContain("probabilityPesticide");
     });

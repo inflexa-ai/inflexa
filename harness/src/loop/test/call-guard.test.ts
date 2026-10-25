@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { presentAt, presentFirst } from "../../lib/present.js";
 import { defineTool, type ToolContext } from "../../tools/define-tool.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { canonicalInputKey, guardRepeatedCalls } from "../call-guard.js";
@@ -37,10 +38,10 @@ describe("guardRepeatedCalls", () => {
 
     it("serves two identical calls and refuses the third without a call to the tool", async () => {
         const { tool, count } = makeTool("list_available_refs");
-        const [guarded] = guardRepeatedCalls([tool]);
-        expect((await guarded!.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
-        expect((await guarded!.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
-        const third = await guarded!.execute({ query: "hallmark" }, ctx);
+        const guarded = presentFirst(guardRepeatedCalls([tool]));
+        expect((await guarded.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
+        expect((await guarded.execute({ query: "hallmark" }, ctx)).isOk()).toBe(true);
+        const third = await guarded.execute({ query: "hallmark" }, ctx);
         expect(third.isErr()).toBe(true);
         expect(third._unsafeUnwrapErr().error).toContain("exact input 2 times");
         expect(third._unsafeUnwrapErr().retryable).toBe(false);
@@ -50,12 +51,14 @@ describe("guardRepeatedCalls", () => {
     it("refuses the call past the per-tool budget, whatever the inputs, and reports each refusal", async () => {
         const { tool, count } = makeTool("list_available_packages");
         const refusals: string[] = [];
-        const [guarded] = guardRepeatedCalls([tool], {
-            policy: { identicalLimit: 2, perToolLimit: 3, totalLimit: 40 },
-            onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
-        });
-        for (const query of ["a", "b", "c"]) expect((await guarded!.execute({ query }, ctx)).isOk()).toBe(true);
-        const fourth = await guarded!.execute({ query: "d" }, ctx);
+        const guarded = presentFirst(
+            guardRepeatedCalls([tool], {
+                policy: { identicalLimit: 2, perToolLimit: 3, totalLimit: 40 },
+                onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
+            }),
+        );
+        for (const query of ["a", "b", "c"]) expect((await guarded.execute({ query }, ctx)).isOk()).toBe(true);
+        const fourth = await guarded.execute({ query: "d" }, ctx);
         expect(fourth.isErr()).toBe(true);
         expect(fourth._unsafeUnwrapErr().error).toContain("3 calls of list_available_packages");
         expect(count()).toBe(3);
@@ -66,12 +69,12 @@ describe("guardRepeatedCalls", () => {
         const a = makeTool("a");
         const b = makeTool("b");
         const guarded = guardRepeatedCalls([a.tool, b.tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
-        expect((await guarded[0]!.execute({ query: "x" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[1]!.execute({ query: "x" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[0]!.execute({ query: "x" }, ctx)).isErr()).toBe(true);
-        expect(guarded[0]!.id).toBe("a");
-        expect(guarded[0]!.describeCall?.({ query: "x" })).toBe("query x");
-        expect(guarded[0]!.jsonSchema).toEqual(a.tool.jsonSchema);
+        expect((await presentFirst(guarded).execute({ query: "x" }, ctx)).isOk()).toBe(true);
+        expect((await presentAt(guarded, 1).execute({ query: "x" }, ctx)).isOk()).toBe(true);
+        expect((await presentFirst(guarded).execute({ query: "x" }, ctx)).isErr()).toBe(true);
+        expect(presentFirst(guarded).id).toBe("a");
+        expect(presentFirst(guarded).describeCall?.({ query: "x" })).toBe("query x");
+        expect(presentFirst(guarded).jsonSchema).toEqual(a.tool.jsonSchema);
     });
 
     it("refuses every tool past the total budget of the run, whatever the tool", async () => {
@@ -82,10 +85,10 @@ describe("guardRepeatedCalls", () => {
             policy: { identicalLimit: 2, perToolLimit: 12, totalLimit: 3 },
             onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
         });
-        expect((await guarded[0]!.execute({ query: "1" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[1]!.execute({ query: "2" }, ctx)).isOk()).toBe(true);
-        expect((await guarded[0]!.execute({ query: "3" }, ctx)).isOk()).toBe(true);
-        const fourth = await guarded[1]!.execute({ query: "4" }, ctx);
+        expect((await presentFirst(guarded).execute({ query: "1" }, ctx)).isOk()).toBe(true);
+        expect((await presentAt(guarded, 1).execute({ query: "2" }, ctx)).isOk()).toBe(true);
+        expect((await presentFirst(guarded).execute({ query: "3" }, ctx)).isOk()).toBe(true);
+        const fourth = await presentAt(guarded, 1).execute({ query: "4" }, ctx);
         expect(fourth.isErr()).toBe(true);
         expect(fourth._unsafeUnwrapErr().error).toContain("3 calls across its search tools");
         expect(a.count() + b.count()).toBe(3);
@@ -95,9 +98,9 @@ describe("guardRepeatedCalls", () => {
     it("starts the counters at zero for each wrapped list", async () => {
         const { tool } = makeTool("c");
         const first = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
-        expect((await first[0]!.execute({}, ctx)).isOk()).toBe(true);
-        expect((await first[0]!.execute({}, ctx)).isErr()).toBe(true);
+        expect((await presentFirst(first).execute({}, ctx)).isOk()).toBe(true);
+        expect((await presentFirst(first).execute({}, ctx)).isErr()).toBe(true);
         const second = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
-        expect((await second[0]!.execute({}, ctx)).isOk()).toBe(true);
+        expect((await presentFirst(second).execute({}, ctx)).isOk()).toBe(true);
     });
 });

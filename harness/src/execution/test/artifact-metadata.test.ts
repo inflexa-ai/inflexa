@@ -21,6 +21,7 @@ import { createGrepTool, createReadFileTool } from "../../tools/workspace/index.
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 import { generateFileMetadata, type ArtifactForMetadata, type GenerateFileMetadataOptions } from "../artifact-metadata.js";
+import { presentAt, presentFind } from "../../lib/present.js";
 
 type RecordedCall = {
     readonly req: ChatRequest;
@@ -130,7 +131,7 @@ describe("generateFileMetadata", () => {
             description: "desc a.csv",
             metadata: { dataType: "csv", format: "csv" },
         });
-        expect(out.entries[2]!.dbPath).toBe("p/c.csv");
+        expect(presentAt(out.entries, 2).dbPath).toBe("p/c.csv");
     });
 
     it("continues the conversation of the step agent and returns only the messages of the exchange", async () => {
@@ -139,13 +140,13 @@ describe("generateFileMetadata", () => {
 
         const out = await generateFileMetadata(options(provider, ARTIFACTS_3, step));
 
-        const first = calls[0]!.req;
+        const first = presentAt(calls, 0).req;
         expect(first.system).toMatchObject({ content: "You are a test step agent." });
         expect(Object.keys(first.tools)).toEqual(step.agent.tools.map((t) => t.id));
         expect(JSON.stringify(first.messages.slice(0, TRANSCRIPT.length))).toBe(JSON.stringify(TRANSCRIPT));
         expect(out.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
-        expect(isSyntheticUserMessage(out.messages[0]!)).toBe(true);
-        expect(String(out.messages[0]!.content)).toContain("- b.csv");
+        expect(isSyntheticUserMessage(presentAt(out.messages, 0))).toBe(true);
+        expect(String(presentAt(out.messages, 0).content)).toContain("- b.csv");
     });
 
     it("matches descriptions to files by PATH, not array position", async () => {
@@ -171,7 +172,7 @@ describe("generateFileMetadata", () => {
         expect(out.indexed).toBe(3);
         expect(out.entries.map((e) => e.dbPath).sort()).toEqual(["p/a.csv", "p/b.csv", "p/c.csv"]);
         // The first tool_result must report the bad path so the model can fix it.
-        const toolResult = JSON.stringify(calls[1]!.req.messages.at(-1));
+        const toolResult = JSON.stringify(presentAt(calls, 1).req.messages.at(-1));
         expect(toolResult).toContain("ghost.csv");
         expect(toolResult).toContain("c.csv");
     });
@@ -186,7 +187,7 @@ describe("generateFileMetadata", () => {
         // Every file still produces an entry; only one was model-described.
         expect(out.entries).toHaveLength(3);
         expect(out.indexed).toBe(1);
-        const b = out.entries.find((e) => e.dbPath === "p/b.csv")!;
+        const b = presentFind(out.entries, (e) => e.dbPath === "p/b.csv");
         expect(b.description).toContain("b.csv");
         expect(b.description).toContain("automated description unavailable");
         expect(b.metadata).toMatchObject({ format: "csv" });
@@ -196,7 +197,7 @@ describe("generateFileMetadata", () => {
         const { provider } = makeProvider([stopTurn()]);
         const out = await generateFileMetadata(options(provider, [{ dbPath: "p/x.csv", displayPath: "output/x.csv", sizeBytes: 2048 }]));
         expect(out.indexed).toBe(0);
-        expect(out.entries[0]!.description).toContain("2048 bytes");
+        expect(presentAt(out.entries, 0).description).toContain("2048 bytes");
     });
 
     it("merges extraMetadata into described and fallback entries alike", async () => {
@@ -238,10 +239,10 @@ describe("generateFileMetadata", () => {
         expect(out.entries).toHaveLength(3);
         expect(out.indexed).toBe(1);
         // The read_file tool_result carried the real file contents to the model.
-        const afterRead = JSON.stringify(calls[1]!.req.messages);
+        const afterRead = JSON.stringify(presentAt(calls, 1).req.messages);
         expect(afterRead).toContain("TP53");
         // Undescribed files still get a deterministic fallback (lossless guarantee).
-        const b = out.entries.find((e) => e.dbPath === "p/b.csv")!;
+        const b = presentFind(out.entries, (e) => e.dbPath === "p/b.csv");
         expect(b.description).toContain("automated description unavailable");
     });
 
@@ -265,7 +266,9 @@ describe("generateFileMetadata", () => {
 
         await generateFileMetadata(options(provider, ARTIFACTS_3, stepAgent([execProbe])));
 
-        const refusal = calls[1]!.req.messages.flatMap((m) => (m.role === "tool" ? m.content : [])).find((part) => part.type === "tool-result");
+        const refusal = presentAt(calls, 1)
+            .req.messages.flatMap((m) => (m.role === "tool" ? m.content : []))
+            .find((part) => part.type === "tool-result");
         expect(refusal?.type === "tool-result" ? refusal.output.type : undefined).toBe("error-text");
         expect(JSON.stringify(refusal)).toContain("The tools that can run now: submit_file_metadata, read_file, grep, read_tool_output.");
         expect(ran).toBe(false);
@@ -299,7 +302,7 @@ describe("generateFileMetadata", () => {
         expect(out.entries.every((e) => e.description.includes("automated description unavailable"))).toBe(true);
         const warns = logger.records.filter((r) => r.level === "warn");
         expect(warns).toHaveLength(1);
-        expect(warns[0]!.fields).toMatchObject({ agentId: "test-step-agent", artifactCount: 3 });
+        expect(presentAt(warns, 0).fields).toMatchObject({ agentId: "test-step-agent", artifactCount: 3 });
     });
 
     it("records each call under the accounting id file-metadata-describer and the step of the session", async () => {
@@ -324,6 +327,6 @@ describe("generateFileMetadata", () => {
 
         expect(records).toHaveLength(1);
         expect(records[0]).toMatchObject({ agentId: "file-metadata-describer", runId: "run-1", stepId: "T1S1" });
-        expect(records[0]!.recordKey.endsWith(":file-metadata:llm-0")).toBe(true);
+        expect(presentAt(records, 0).recordKey.endsWith(":file-metadata:llm-0")).toBe(true);
     });
 });

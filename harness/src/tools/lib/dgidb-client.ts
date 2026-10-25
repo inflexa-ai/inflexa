@@ -199,7 +199,7 @@ export async function searchDgidb(
     if (res.isErr()) throw new Error(describeApiError(res.error));
 
     const body = res.value;
-    if (!body || !body.data) throw new Error("DGIdb returned no data");
+    if (!body.data) throw new Error("DGIdb returned no data");
     if (body.errors?.length) onPartialErrors?.(body.errors.slice(0, 3));
 
     const nodes = (isGene ? body.data.genes?.nodes : body.data.drugs?.nodes) ?? [];

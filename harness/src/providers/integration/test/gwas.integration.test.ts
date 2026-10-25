@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { searchGwasCatalog } from "../../../tools/lib/gwas-catalog-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 const LIVE = process.env.CORTEX_LIVE_API_TESTS;
 
@@ -23,7 +24,7 @@ describe.skipIf(!LIVE)("live GWAS Catalog", () => {
         const result = await searchGwasCatalog(STUDY_ACCESSION, "study", { limit: 5, pValueThreshold: 1 });
 
         expect(result.associations.length).toBeGreaterThan(0);
-        const association = result.associations[0]!;
+        const association = presentAt(result.associations, 0);
         expect(typeof association.pValue).toBe("number");
         expect(association.studyAccession).toBe(STUDY_ACCESSION);
         expect(association).toHaveProperty("rsId");

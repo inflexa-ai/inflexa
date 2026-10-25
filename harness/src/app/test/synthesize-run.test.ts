@@ -18,6 +18,7 @@ import type { Querier } from "../../state/db.js";
 import { okAsync } from "neverthrow";
 
 import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
+import { presentFirst } from "../../lib/present.js";
 import type { RunSynthesis } from "../../schemas/run-synthesis.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
@@ -285,7 +286,7 @@ describe("synthesizeRun", () => {
 
     it("skips on a blocker that follows a rejected submission, writing nothing", async () => {
         const bad = validSynthesisPayload();
-        bad.findings[0]!.stepId = "UNKNOWN";
+        presentFirst(bad.findings).stepId = "UNKNOWN";
         const provider = scriptedProvider((i) => {
             if (i === 0) return makeMessage([toolUseBlock("tu-0", "submit_synthesis", { synthesis: bad })], "tool_use");
             if (i === 1) return makeMessage([toolUseBlock("tu-b", "report_blocker", { reason: "cannot reconcile references" })], "tool_use");

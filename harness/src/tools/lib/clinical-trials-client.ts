@@ -292,11 +292,11 @@ export async function searchTrials(query: string, options: SearchOptions = {}): 
     });
     if (res.isErr()) throw new Error(describeApiError(res.error));
 
-    const studies = res.value?.studies ?? [];
+    const studies = res.value.studies ?? [];
     const phase = options.phase;
     const selected = phase ? studies.filter((study) => studyHasPhase(study, phase)) : studies;
     const trials = selected.slice(0, limit).map(mapClinicalTrialStudy);
-    return { totalFound: res.value?.totalCount ?? trials.length, trials };
+    return { totalFound: res.value.totalCount ?? trials.length, trials };
 }
 
 /** Search trials whose intervention or condition mentions the gene/target. */
@@ -373,8 +373,8 @@ function extractEffect(resultsMeasure: CtResultsMeasure | undefined): OutcomeEff
                         kind: "quantitative",
                         value: num,
                         units: resultsMeasure?.unitOfMeasure ?? "",
-                        ci_low: m.lowerLimit !== undefined && m.lowerLimit !== null && !isNaN(parseFloat(m.lowerLimit)) ? parseFloat(m.lowerLimit) : undefined,
-                        ci_high: m.upperLimit !== undefined && m.upperLimit !== null && !isNaN(parseFloat(m.upperLimit)) ? parseFloat(m.upperLimit) : undefined,
+                        ci_low: m.lowerLimit !== undefined && !isNaN(parseFloat(m.lowerLimit)) ? parseFloat(m.lowerLimit) : undefined,
+                        ci_high: m.upperLimit !== undefined && !isNaN(parseFloat(m.upperLimit)) ? parseFloat(m.upperLimit) : undefined,
                     };
                 }
             }

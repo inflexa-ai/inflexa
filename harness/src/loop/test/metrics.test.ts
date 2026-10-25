@@ -101,9 +101,10 @@ describe("runAgent metrics", () => {
         const collected = await collectMetrics();
         const iterations = collected.find((m) => m.descriptor.name === ITERATIONS_METRIC);
         expect(iterations).toBeDefined();
-        expect(iterations!.dataPoints).toHaveLength(1);
-        const histogram = iterations!.dataPoints[0]!.value;
-        if (typeof histogram !== "object" || histogram === null || !("count" in histogram) || !("sum" in histogram)) {
+        if (iterations === undefined) throw new Error("the iterations metric is absent");
+        expect(iterations.dataPoints).toHaveLength(1);
+        const histogram = iterations.dataPoints[0]?.value;
+        if (histogram === undefined || typeof histogram !== "object" || !("count" in histogram) || !("sum" in histogram)) {
             throw new Error("the iterations metric exported no histogram value");
         }
         expect(histogram.count).toBe(1);
@@ -132,15 +133,19 @@ describe("runAgent metrics", () => {
         const collected = await collectMetrics();
         const capHits = collected.find((m) => m.descriptor.name === CAP_HITS_METRIC);
         expect(capHits).toBeDefined();
-        const total = capHits!.dataPoints.reduce((acc, dp) => {
+        if (capHits === undefined) throw new Error("the cap-hit metric is absent");
+        const total = capHits.dataPoints.reduce((acc, dp) => {
             const pointValue: unknown = dp.value;
             return typeof pointValue === "number" ? acc + pointValue : acc;
         }, 0);
         expect(total).toBe(1);
 
         const iterations = collected.find((m) => m.descriptor.name === ITERATIONS_METRIC);
-        const histogram = iterations!.dataPoints[0]!.value;
-        if (typeof histogram !== "object" || histogram === null || !("sum" in histogram)) throw new Error("the iterations metric exported no histogram value");
+        expect(iterations).toBeDefined();
+        if (iterations === undefined) throw new Error("the iterations metric is absent");
+        const histogram = iterations.dataPoints[0]?.value;
+        if (histogram === undefined || typeof histogram !== "object" || !("sum" in histogram))
+            throw new Error("the iterations metric exported no histogram value");
         expect(histogram.sum).toBe(2);
     });
 });
@@ -278,6 +283,8 @@ describe("runAgent token counters for each call", () => {
 
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: { ...LABELS, agent_id: "step-summary-writer" }, value: 100 }]);
         const iterations = (await collectMetrics()).find((m) => m.descriptor.name === ITERATIONS_METRIC);
-        expect(iterations!.dataPoints.map((dp) => dp.attributes["agent_id"])).toEqual(["step-summary-writer"]);
+        expect(iterations).toBeDefined();
+        if (iterations === undefined) throw new Error("the iterations metric is absent");
+        expect(iterations.dataPoints.map((dp) => dp.attributes["agent_id"])).toEqual(["step-summary-writer"]);
     });
 });

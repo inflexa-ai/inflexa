@@ -80,7 +80,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-    if (rig) await rig.drop();
+    await rig.drop();
 });
 
 function productionCanceler(closes: string[], revokes: string[]) {

@@ -4,8 +4,9 @@ import { z } from "zod";
 
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
+import { presentFirst } from "../../lib/present.js";
 import { defineTool, type Tool, type ToolError } from "../../tools/define-tool.js";
-import { computeDetail, computeResultDetail, DETAIL_MAX_LENGTH, normalizeDetail } from "../tool-detail.js";
+import { computeDetail, computeResultDetail, DETAIL_MAX_LENGTH, normalizeDetail, type ToolCallDetail } from "../tool-detail.js";
 
 /** A logger that records every `debug` record, for the hook-failure path. */
 function recordingLogger(): { logger: Logger; debugs: { msg: string; fields?: LogFields }[] } {
@@ -21,6 +22,12 @@ function recordingLogger(): { logger: Logger; debugs: { msg: string; fields?: Lo
         errorFields: (err) => ({ error: err instanceof Error ? err.message : String(err) }),
     };
     return { logger, debugs };
+}
+
+/** The detail every input of these tests gives, absent only on a path the test wants to fail loudly. */
+function presentDetail(detail: ToolCallDetail | undefined): ToolCallDetail {
+    if (detail === undefined) throw new Error("the detail is absent");
+    return detail;
 }
 
 /** A tool over `{ path }` whose hook is whatever the test supplies. */
@@ -97,7 +104,7 @@ describe("normalizeDetail", () => {
     // The mark is what tells a reader that the line is short of what the hook returned. It costs
     // one of the capped code points, so the marked result still obeys the bound.
     it("caps an over-long value and marks the cut", () => {
-        const detail = normalizeDetail("x".repeat(5000))!;
+        const detail = presentDetail(normalizeDetail("x".repeat(5000)));
 
         expect(detail.endsWith("…")).toBe(true);
         expect(Array.from(detail).length).toBeLessThanOrEqual(DETAIL_MAX_LENGTH);
@@ -114,7 +121,7 @@ describe("normalizeDetail", () => {
     // `trimEnd` runs before the append, so a cut that lands on a space gives `word…`, not `word …`.
     it("does not strand a space before the mark", () => {
         // The 119th code point is a space, which is exactly where the cut falls.
-        const detail = normalizeDetail(`${"a".repeat(DETAIL_MAX_LENGTH - 2)} ${"b".repeat(50)}`)!;
+        const detail = presentDetail(normalizeDetail(`${"a".repeat(DETAIL_MAX_LENGTH - 2)} ${"b".repeat(50)}`));
 
         expect(detail).not.toContain(" …");
         expect(detail.endsWith("a…")).toBe(true);
@@ -122,9 +129,9 @@ describe("normalizeDetail", () => {
 
     it("redacts before capping, so a secret cannot survive by being cut", () => {
         const secret = "sk-ant-api03-BBBBBBBBBBBBBBBBBBBBBBBB";
-        const detail = normalizeDetail(`${"padding ".repeat(12)}${secret}`);
+        const detail = presentDetail(normalizeDetail(`${"padding ".repeat(12)}${secret}`));
 
-        expect(detail!.length).toBeLessThanOrEqual(DETAIL_MAX_LENGTH);
+        expect(detail.length).toBeLessThanOrEqual(DETAIL_MAX_LENGTH);
         expect(detail).not.toContain("sk-ant-");
     });
 
@@ -133,7 +140,7 @@ describe("normalizeDetail", () => {
     // character — the cap would corrupt the tail it was only supposed to shorten.
     it("caps without splitting a surrogate pair", () => {
         // Each emoji is one code point and TWO UTF-16 units, so a unit-indexed cut lands mid-pair.
-        const detail = normalizeDetail("🧬".repeat(200))!;
+        const detail = presentDetail(normalizeDetail("🧬".repeat(200)));
 
         expect(Array.from(detail)).toHaveLength(DETAIL_MAX_LENGTH);
         expect(detail).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
@@ -188,7 +195,7 @@ describe("computeDetail", () => {
 
         expect(computeDetail(tool, { path: "a.csv" }, logger)).toBeUndefined();
         expect(debugs).toHaveLength(1);
-        expect(debugs[0]!.fields).toMatchObject({ tool: "described", error: "hook is broken" });
+        expect(presentFirst(debugs).fields).toMatchObject({ tool: "described", error: "hook is broken" });
     });
 
     it("ignores a hook that returns a non-string or an empty string", () => {
@@ -214,7 +221,7 @@ describe("computeDetail", () => {
         });
 
         expect(computeDetail(asyncRefined, { path: "a.csv" }, logger)).toBeUndefined();
-        expect(debugs[0]!.fields).toMatchObject({ tool: "async_refined" });
+        expect(presentFirst(debugs).fields).toMatchObject({ tool: "async_refined" });
     });
 
     it("survives a schema whose own refinement throws", () => {
@@ -230,7 +237,7 @@ describe("computeDetail", () => {
         });
 
         expect(computeDetail(throwingRefinement, { path: "a.csv" }, logger)).toBeUndefined();
-        expect(debugs[0]!.fields).toMatchObject({ tool: "throwing_refinement", error: "refinement is broken" });
+        expect(presentFirst(debugs).fields).toMatchObject({ tool: "throwing_refinement", error: "refinement is broken" });
     });
 });
 
@@ -264,7 +271,7 @@ describe("computeResultDetail", () => {
     it("caps an over-long result the same as a call detail", () => {
         const tool = toolWithResultHook(() => "x".repeat(5000));
 
-        const detail = computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, log)!;
+        const detail = presentDetail(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, log));
 
         expect(detail).toHaveLength(DETAIL_MAX_LENGTH);
         expect(detail.endsWith("…")).toBe(true);
@@ -278,7 +285,7 @@ describe("computeResultDetail", () => {
 
         expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, logger)).toBeUndefined();
         expect(debugs).toHaveLength(1);
-        expect(debugs[0]!.fields).toMatchObject({ tool: "described-result", error: "result hook is broken" });
+        expect(presentFirst(debugs).fields).toMatchObject({ tool: "described-result", error: "result hook is broken" });
     });
 
     it("ignores a hook that returns a non-string or an empty string", () => {

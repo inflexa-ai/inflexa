@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 
+import { presentFirst } from "../../../lib/present.js";
 import { fixtureCase, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { OpenFdaLabelResponseSchema } from "../openfda-client.js";
 
@@ -11,7 +12,7 @@ runFixtureSuite("openfda golden fixtures", [
         drift: "label-lenalidomide-rems.drift.json",
         schema: OpenFdaLabelResponseSchema,
         assertOutput: (body) => {
-            const label = body.results![0]!;
+            const label = presentFirst(body.results ?? [], "the first label row");
             expect(label.genericName).toBe("LENALIDOMIDE");
             expect(label.applicationNumber).toBe("ANDA201452");
             expect(label.effectiveTime).toBe("20260527");
@@ -28,7 +29,7 @@ runFixtureSuite("openfda golden fixtures", [
         drift: "label-missing-openfda.drift.json",
         schema: OpenFdaLabelResponseSchema,
         assertOutput: (body) => {
-            const label = body.results![0]!;
+            const label = presentFirst(body.results ?? [], "the first label row");
             // An unapproved product carries `openfda: {}`, and it omits the
             // boxed-warning key. Both are normal, thus the schema parses the record.
             expect(label.brandName).toBeNull();

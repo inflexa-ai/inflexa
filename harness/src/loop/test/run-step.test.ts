@@ -12,6 +12,7 @@
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { err, ok } from "neverthrow";
 
+import { presentFirst } from "../../lib/present.js";
 import { ResultError } from "../../lib/result.js";
 import { durableStep, passthroughStep, resultStep } from "../run-step.js";
 
@@ -64,7 +65,7 @@ describe("durableStep", () => {
 
         expect(result).toBe("ok");
         expect(stub).toHaveBeenCalledTimes(1);
-        const [, config] = stub.mock.calls[0]!;
+        const [, config] = presentFirst(stub.mock.calls);
         expect(config).toEqual({ name: "llm-3" });
     });
 
@@ -73,7 +74,7 @@ describe("durableStep", () => {
 
         await durableStep("tool-add-toolu_abc123", async () => "1");
 
-        const [, config] = stub.mock.calls[0]!;
+        const [, config] = presentFirst(stub.mock.calls);
         expect(config).toEqual({ name: "tool-add-toolu_abc123" });
     });
 });

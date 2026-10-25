@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchGeneTool } from "../search-gene.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -54,7 +55,7 @@ describe("searchGene (bio-lookup family)", () => {
         )._unsafeUnwrap();
 
         expect(result.genes).toHaveLength(1);
-        expect(result.genes[0]!.id).toBe("ENSG00000012048");
+        expect(presentAt(result.genes, 0).id).toBe("ENSG00000012048");
         expect(result.notFound).toEqual([]);
     });
 
@@ -115,7 +116,7 @@ describe("searchGene (bio-lookup family)", () => {
         const result = (await searchGeneTool.execute({ identifiers: ["ENSG00000141510"], species: "homo_sapiens" }, ctx))._unsafeUnwrap();
 
         expect(result.resolvedFrom).toEqual([{ input: "ENSG00000141510", symbol: "TP53" }]);
-        expect(result.genes[0]!.symbol).toBe("TP53");
+        expect(presentAt(result.genes, 0).symbol).toBe("TP53");
         expect(seen.some((u) => u.includes("/lookup/symbol/homo_sapiens/TP53"))).toBe(true);
     });
 

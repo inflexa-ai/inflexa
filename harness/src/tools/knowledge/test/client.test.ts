@@ -15,6 +15,7 @@ import {
     substituteRenderAnswer,
     substitutionAnswer,
 } from "../__fixtures__/fake-client.js";
+import { presentAt, presentFind } from "../../../lib/present.js";
 
 const SITUATION: KnowledgeSituation = {
     question: "differential_expression",
@@ -52,7 +53,7 @@ function stubService() {
             }
             const templateMatch = url.pathname.match(/^\/v1\/templates\/(.+)$/);
             if (request.method === "GET" && templateMatch) {
-                const id = decodeURIComponent(templateMatch[1]!);
+                const id = decodeURIComponent(presentAt(templateMatch, 1));
                 if (id === "tpl-boom") return Response.json({ error: "server", message: "boom" }, { status: 500 });
                 if (id !== "tpl-deseq2-two-group") return Response.json({ error: "not_found", message: "no such template in this snapshot" }, { status: 404 });
                 return Response.json({ ...contractAnswer(), step_types: ["model_design"], environment: [] });
@@ -96,9 +97,9 @@ describe("createHttpKnowledgeClient", () => {
         expect(answer.match).toBe("applicable");
         if (answer.match !== "applicable") return;
         expect(answer.claims.map((view) => view.id)).toContain("R-0001@e7d0");
-        const de = answer.procedure.find((step) => step.step === "differential_expression")!;
+        const de = presentFind(answer.procedure, (step) => step.step === "differential_expression");
         expect(de.alternatives?.[0]?.rules).toEqual(["R-0001@e7d0"]);
-        const adjust = answer.procedure.find((step) => step.step === "multiple_testing")!;
+        const adjust = presentFind(answer.procedure, (step) => step.step === "multiple_testing");
         expect(adjust.conflicts).toEqual([
             {
                 parameter: "independent_filtering",
@@ -112,14 +113,14 @@ describe("createHttpKnowledgeClient", () => {
 
     it("parses a substitution and a language limit on a step", () => {
         const substituted = RecommendResponseSchema.parse(substitutionAnswer());
-        const enrichment = substituted.procedure.find((step) => step.step === "enrichment")!;
+        const enrichment = presentFind(substituted.procedure, (step) => step.step === "enrichment");
         expect(enrichment.substitution).toEqual({
             for: "M-0034",
             label: "Per-sample set scores with a linear model",
             template: "tpl-decoupler-scores@1.0.0",
         });
         const limited = RecommendResponseSchema.parse(limitAnswer());
-        const de = limited.procedure.find((step) => step.step === "differential_expression")!;
+        const de = presentFind(limited.procedure, (step) => step.step === "differential_expression");
         expect(de.limit).toEqual({
             requested_language: "python",
             reason: "no Python template of M-0001 honors pairing",
@@ -141,7 +142,7 @@ describe("createHttpKnowledgeClient", () => {
                 },
             ],
         });
-        expect(refused.procedure[0]!.limit?.skipped[0]?.refused).toBe("the slot lfc_shrink takes one of apeglm, none");
+        expect(presentAt(refused.procedure, 0).limit?.skipped[0]?.refused).toBe("the slot lfc_shrink takes one of apeglm, none");
     });
 
     it("parses the render answer with the method and the method of record of a substitute", async () => {

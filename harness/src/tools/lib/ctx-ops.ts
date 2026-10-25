@@ -77,7 +77,7 @@ export async function resolveDtxsid(query: string, headers: Record<string, strin
         throw new Error(describeApiError(res.error));
     }
 
-    const chem = (res.value ?? []).find((row) => row.dtxsid);
+    const chem = res.value.find((row) => row.dtxsid);
     if (!chem?.dtxsid) return null;
     return {
         dtxsid: chem.dtxsid,
@@ -162,7 +162,7 @@ export async function fetchToxcastBioactivity(
     const bioRes = await apiFetchValidated(bioUrl, z.array(ToxcastBioactivityRowSchema), { headers });
     if (bioRes.isErr()) throw new Error(describeApiError(bioRes.error));
 
-    const allResults = bioRes.value ?? [];
+    const allResults = bioRes.value;
     const totalAssays = allResults.length;
     const activeAssays = allResults.filter(isActive).length;
 
@@ -472,7 +472,7 @@ export async function fetchCtxChemicalDetail(dtxsid: string, headers: Record<str
     const detailRes = await apiFetchValidated(detailUrl, RawChemicalDetailSchema, { headers });
     if (detailRes.isErr()) throw new Error(describeApiError(detailRes.error));
 
-    const d: RawChemicalDetail = detailRes.value ?? {};
+    const d: RawChemicalDetail = detailRes.value;
     return {
         dtxsid: d.dtxsid ?? dtxsid,
         dtxcid: d.dtxcid ?? "",

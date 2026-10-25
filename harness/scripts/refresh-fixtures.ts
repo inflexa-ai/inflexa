@@ -326,9 +326,14 @@ function renderPath(path: string[]): string {
     return path.length === 0 ? "$" : path.join(".");
 }
 
+/** The stringify with the honest return: the format gives back `undefined` where the lib signature types `string`. */
+function stringifyJson(value: unknown): string | undefined {
+    return JSON.stringify(value);
+}
+
 function renderValue(value: unknown): string {
     if (value === undefined) return "(absent)";
-    const text = JSON.stringify(value) ?? String(value);
+    const text = stringifyJson(value) ?? String(value);
     return text.length > MAX_RENDERED_VALUE ? `${text.slice(0, MAX_RENDERED_VALUE)}…` : text;
 }
 

@@ -9,6 +9,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { presentFirst } from "../../lib/present.js";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
@@ -114,9 +115,10 @@ export function createSearchPatentsTool(deps: { apiKey: string }) {
             const headers = getAmassHeaders(deps.apiKey);
 
             if (input.action === "search") {
+                if (input.query === undefined) throw new Error("search requires query");
                 const patents = await searchPatentRecords(
                     {
-                        query: input.query!,
+                        query: input.query,
                         limit: input.limit,
                         assignee: input.assignee ? input.assignee : undefined,
                         inventor: input.inventor ? input.inventor : undefined,
@@ -149,7 +151,7 @@ export function createSearchPatentsTool(deps: { apiKey: string }) {
                 if (ids.isErr()) return failure(ids.error);
                 if (ids.value.length === 0) return ok({ status: "not_found" as const });
                 if (ids.value.length > 1) return ok({ status: "ambiguous" as const, candidates: ids.value });
-                amassId = ids.value[0]!;
+                amassId = presentFirst(ids.value, "the single patent id");
             }
 
             const patent = await getPatentRecord(amassId, { claims: input.includeClaims, description: input.includeDescription }, headers);

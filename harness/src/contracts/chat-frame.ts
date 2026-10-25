@@ -193,14 +193,12 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
             };
             if (frame.detail !== undefined) finished.detail = frame.detail;
             if (frame.durationMs !== undefined) finished.durationMs = frame.durationMs;
-            let started = false;
-            const next = parts.map((p) => {
-                if (p.type !== "tool-call" || p.toolCallId !== frame.toolUseId) return p;
-                started = true;
-                return { ...p, ...finished };
-            });
-            // The stored transcript keeps a call whose start never arrived, thus a live view keeps it too.
-            return started ? next : [...parts, finished];
+            const started = parts.some((p) => p.type === "tool-call" && p.toolCallId === frame.toolUseId);
+            if (!started) {
+                // The stored transcript keeps a call whose start never arrived, thus a live view keeps it too.
+                return [...parts, finished];
+            }
+            return parts.map((p) => (p.type !== "tool-call" || p.toolCallId !== frame.toolUseId ? p : { ...p, ...finished }));
         }
         default: {
             // A chat event type that no case above takes is not a part frame, thus this annotation fails to compile.

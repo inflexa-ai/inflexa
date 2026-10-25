@@ -16,6 +16,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger, type CapturedLog } from "../../__tests__/setup/logger.js";
+import { presentFind, presentFirst } from "../../lib/present.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { AskRejectedError } from "../../tools/approval/contract.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
@@ -76,8 +77,9 @@ describe("runAgent — the terminal record", () => {
 
         const finished = finishRecords(logger.records);
         expect(finished).toHaveLength(1);
-        expect(finished[0]!.level).toBe("info");
-        expect(finished[0]!.fields).toMatchObject({
+        const finishedRecord = presentFirst(finished);
+        expect(finishedRecord.level).toBe("info");
+        expect(finishedRecord.fields).toMatchObject({
             iterations: 2,
             reason: "stop",
             cappedOut: false,
@@ -111,7 +113,7 @@ describe("runAgent — the terminal record", () => {
 
         await runAgent(agentDef([echoTool()]), GO, makeSession(), baseOpts(provider, { logger }));
 
-        const iteration = logger.records.find((r) => r.level === "debug")!;
+        const iteration = presentFind(logger.records, (r) => r.level === "debug");
         expect(iteration.fields).toMatchObject({ iteration: 0, tools: ["echo", "echo"] });
     });
 });
@@ -143,7 +145,7 @@ describe("runAgent — level follows the outcome class", () => {
 
         await runAgent(agentDef([]), GO, makeSession(), baseOpts(provider, { logger }));
 
-        expect(finishRecords(logger.records)[0]!.level).toBe("info");
+        expect(presentFirst(finishRecords(logger.records)).level).toBe("info");
     });
 
     it("records a capped-out run at warn", async () => {
@@ -156,7 +158,7 @@ describe("runAgent — level follows the outcome class", () => {
         const { finish } = await runAgent(agentDef([echoTool()], 2), GO, makeSession(), baseOpts(provider, { logger }));
 
         expect(finish.cappedOut).toBe(true);
-        const record = finishRecords(logger.records)[0]!;
+        const record = presentFirst(finishRecords(logger.records));
         expect(record.level).toBe("warn");
         expect(record.fields).toMatchObject({ reason: "max_iterations", cappedOut: true });
     });
@@ -177,7 +179,7 @@ describe("runAgent — level follows the outcome class", () => {
         const { finish } = await runAgent(agentDef([denyingTool]), GO, makeSession(), baseOpts(provider, { logger }));
 
         expect(finish.reason).toBe("denied");
-        const record = finishRecords(logger.records)[0]!;
+        const record = presentFirst(finishRecords(logger.records));
         expect(record.level).toBe("warn");
         expect(record.fields).toMatchObject({ reason: "denied", cappedOut: false });
     });
@@ -217,8 +219,9 @@ describe("runToTerminal — the salvage record", () => {
 
         const salvage = logger.records.filter((r) => r.msg.includes("salvaging"));
         expect(salvage).toHaveLength(1);
-        expect(salvage[0]!.level).toBe("warn");
-        expect(salvage[0]!.fields).toMatchObject({ agentId: "test-agent" });
+        const salvageRecord = presentFirst(salvage);
+        expect(salvageRecord.level).toBe("warn");
+        expect(salvageRecord.fields).toMatchObject({ agentId: "test-agent" });
     });
 
     it("writes no salvage record when the first run resolves", async () => {

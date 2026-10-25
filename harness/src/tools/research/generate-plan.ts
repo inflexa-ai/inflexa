@@ -577,7 +577,7 @@ function restoreSkeletonGrounding(
             }
         }
         if (isUnknownArray(current.claims)) {
-            let changed = false;
+            let changed: boolean | undefined;
             const claims = current.claims.map((claim, position) => {
                 if (typeof claim !== "string" || memory.claims.has(claim)) return claim;
                 const match = byRule.get(ruleOf(claim));

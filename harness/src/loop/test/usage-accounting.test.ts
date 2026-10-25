@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { forSubAgent, type AgentSession } from "../../auth/types.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
+import { presentFirst } from "../../lib/present.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage } from "../../providers/types.js";
@@ -172,7 +173,7 @@ describe("runAgent usage records — one per completed call", () => {
         // A `RequestSession` — no RunFrame, and the provider reported no model ids.
         await runAgent(agentDef([]), GO, makeSession(), opts(provider, recorder));
 
-        const record = records[0]!;
+        const record = presentFirst(records);
         expect("runId" in record).toBe(false);
         expect("stepId" in record).toBe(false);
         expect("requestedModelId" in record).toBe(false);
@@ -219,7 +220,7 @@ describe("runAgent usage records — one per completed call", () => {
 
         await runAgent(agentDef([]), GO, makeSession(), opts(provider, recorder));
 
-        expect(records[0]!.usage).toEqual({ inputTokens: 7 });
+        expect(presentFirst(records).usage).toEqual({ inputTokens: 7 });
     });
 });
 
@@ -261,7 +262,7 @@ describe("runAgent usage records — delivered as calls complete", () => {
 
         expect(finish.reason).toBe("aborted");
         expect(records).toHaveLength(1);
-        expect(records[0]!.usage).toEqual({ inputTokens: 9, outputTokens: 4 });
+        expect(presentFirst(records).usage).toEqual({ inputTokens: 9, outputTokens: 4 });
         // The aborted call's tokens are in the rollup too — the fold precedes the abort branch.
         expect(finish.usage).toEqual({ inputTokens: 9, outputTokens: 4 });
     });
@@ -335,7 +336,7 @@ describe("runAgent usage records — replay-safe keys", () => {
         // The parent workflow's loops collide with nothing — their keys are one
         // segment shorter than any step's.
         expect(records.map((r) => r.recordKey)).toEqual(["run-1:conversation-agent:llm-0", "run-1:conversation-agent:llm-1"]);
-        expect(records[0]!.stepId).toBeUndefined();
+        expect(presentFirst(records).stepId).toBeUndefined();
     });
 
     it("reuses a host's own step-name scheme verbatim", async () => {
@@ -351,7 +352,7 @@ describe("runAgent usage records — replay-safe keys", () => {
             }),
         );
 
-        expect(records[0]!.recordKey).toBe("run-1:step-a:conversation-agent:llm:0");
+        expect(presentFirst(records).recordKey).toBe("run-1:step-a:conversation-agent:llm:0");
     });
 
     it("mints a distinct key per call outside a RunFrame", async () => {
@@ -442,8 +443,8 @@ describe("runAgent usage — sub-agent runs", () => {
 
         const childRecords = records.filter((r) => r.agentId === "child-agent");
         expect(childRecords).toHaveLength(1);
-        expect(childRecords[0]!.callPath).toEqual(["conversation-agent", "child-agent"]);
-        expect(childRecords[0]!.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+        expect(presentFirst(childRecords).callPath).toEqual(["conversation-agent", "child-agent"]);
+        expect(presentFirst(childRecords).usage).toEqual({ inputTokens: 100, outputTokens: 20 });
 
         // The parent's own calls stay under the parent — the ledger spans the tree.
         expect(records.filter((r) => r.agentId === "conversation-agent")).toHaveLength(2);
@@ -464,8 +465,10 @@ describe("runAgent usage — sub-agent runs", () => {
         expect(finish.turnUsage).toEqual({ inputTokens: 115, outputTokens: 23 });
 
         // The child created no accumulator, so it is not the root and reports no turn total.
-        expect(capture.finish!.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
-        expect(capture.finish!.turnUsage).toBeUndefined();
+        const childFinish = capture.finish;
+        if (childFinish === undefined) throw new Error("the child run recorded no finish");
+        expect(childFinish.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+        expect(childFinish.turnUsage).toBeUndefined();
     });
 
     it("keeps parallel invocations of one sub-agent disjoint", async () => {
@@ -514,11 +517,11 @@ describe("runAgent usage — sub-agent runs", () => {
 
         const childRecords = records.filter((r) => r.agentId === "literature-reviewer");
         expect(childRecords).toHaveLength(1);
-        expect(childRecords[0]!.callPath).toEqual(["conversation-agent", "literature-reviewer"]);
-        expect(childRecords[0]!.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+        expect(presentFirst(childRecords).callPath).toEqual(["conversation-agent", "literature-reviewer"]);
+        expect(presentFirst(childRecords).usage).toEqual({ inputTokens: 100, outputTokens: 20 });
         // The dispatching tool call's id rides in the key — the discriminator that
         // only reaches the child because the factory forwards `ctx.invocationId`.
-        expect(childRecords[0]!.recordKey).toBe("run-1:step-a:conversation-agent>literature-reviewer:tu-lit:llm-0");
+        expect(presentFirst(childRecords).recordKey).toBe("run-1:step-a:conversation-agent>literature-reviewer:tu-lit:llm-0");
 
         // The child folded into the root's accumulator rather than a private one.
         expect(finish.usage).toEqual({ inputTokens: 15, outputTokens: 3 });

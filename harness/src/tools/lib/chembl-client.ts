@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
+import { presentAt } from "../../lib/present.js";
 import { apiFetchValidated, describeApiError, isUnexpectedApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { CHEMBL_BASE, CHEMBL_HEADERS as HEADERS } from "./chembl-config.js";
 
@@ -703,7 +704,9 @@ export async function getModulatorOnTargetPchembl(modulatorChemblId: string, tar
     if (values.length === 0) return null;
     values.sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);
-    return values.length % 2 === 1 ? values[mid]! : (values[mid - 1]! + values[mid]!) / 2;
+    return values.length % 2 === 1
+        ? presentAt(values, mid, "the middle activity value")
+        : (presentAt(values, mid - 1, "the lower middle activity value") + presentAt(values, mid, "the middle activity value")) / 2;
 }
 
 /**

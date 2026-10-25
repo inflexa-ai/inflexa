@@ -3,6 +3,7 @@ import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { type Connectable } from "../../lib/db-result.js";
+import { presentFirst } from "../../lib/present.js";
 import type { Querier } from "../../state/db.js";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
@@ -143,9 +144,9 @@ describe("approvePlan", () => {
         (await approvePlan(depsOf(d), input()))._unsafeUnwrap();
 
         expect(d.authorizations).toHaveLength(1);
-        expect(d.authorizations[0]!.auth).toBe(auth);
-        expect(d.authorizations[0]!.scope).toEqual({ kind: "analysis", analysisId: ANALYSIS_ID, threadId: THREAD_ID });
-        expect(d.authorizations[0]!.provenance).toEqual({ agentId: "plan-approval", callPath: ["plan-approval"] });
+        expect(presentFirst(d.authorizations).auth).toBe(auth);
+        expect(presentFirst(d.authorizations).scope).toEqual({ kind: "analysis", analysisId: ANALYSIS_ID, threadId: THREAD_ID });
+        expect(presentFirst(d.authorizations).provenance).toEqual({ agentId: "plan-approval", callPath: ["plan-approval"] });
     });
 
     it("emits one approve-plan event whose time is not later than the launch, and the part carries the same instant", async () => {
@@ -154,12 +155,14 @@ describe("approvePlan", () => {
         const approval = (await approvePlan(depsOf(d), input()))._unsafeUnwrap();
 
         expect(d.events).toHaveLength(1);
-        const event = d.events[0]!;
+        const event = presentFirst(d.events);
         expect(event).toMatchObject({ type: "approve-plan", analysisId: ANALYSIS_ID, threadId: THREAD_ID, planId: PLAN_ID, runId: approval.runId });
         if (event.type !== "approve-plan") throw new Error("expected the approve-plan event");
         const atMs = event.atMs;
-        expect(atMs).toBeLessThanOrEqual(d.launches[0]!.atMs);
-        const part = approval.message!.parts[0];
+        expect(atMs).toBeLessThanOrEqual(presentFirst(d.launches).atMs);
+        const approvalMessage = approval.message;
+        if (approvalMessage === null) throw new Error("the approval carries no message");
+        const part = approvalMessage.parts[0];
         expect(part).toEqual({ type: "data-plan-approval", planId: PLAN_ID, runId: approval.runId, approvedAt: new Date(atMs).toISOString() });
     });
 
@@ -170,9 +173,9 @@ describe("approvePlan", () => {
 
         const history = (await createThreadHistory(pool).loadRecent(THREAD_ID))._unsafeUnwrap();
         expect(history).toHaveLength(1);
-        expect(history[0]!.role).toBe("user");
-        expect(JSON.stringify(history[0]!.content)).toContain(`The person approved plan ${PLAN_ID}. Run ${approval.runId} started.`);
-        expect(JSON.stringify(history[0]!.content)).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/);
+        expect(presentFirst(history).role).toBe("user");
+        expect(JSON.stringify(presentFirst(history).content)).toContain(`The person approved plan ${PLAN_ID}. Run ${approval.runId} started.`);
+        expect(JSON.stringify(presentFirst(history).content)).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/);
     });
 
     it("shows the approval and the run card in the transcript, and the result message equals the transcript message but for the row time", async () => {
@@ -182,7 +185,7 @@ describe("approvePlan", () => {
 
         const transcript = storedMessagesToChat((await createThreadHistory(pool).loadAll(THREAD_ID))._unsafeUnwrap().flat());
         expect(transcript).toHaveLength(1);
-        const { createdAt, ...rest } = transcript[0]!;
+        const { createdAt, ...rest } = presentFirst(transcript);
         expect(createdAt).toBeDefined();
         expect(approval.message).toEqual(rest);
         expect(rest.parts).toMatchObject([

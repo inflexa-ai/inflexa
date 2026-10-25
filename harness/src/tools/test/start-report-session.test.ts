@@ -13,6 +13,7 @@ import { createThreadStore, type ThreadStore } from "../../memory/thread-store.j
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { Tool, ToolContext } from "../define-tool.js";
 import { createStartReportSessionTool, type StartReportSessionInput, type StartReportSessionResult } from "../start-report-session.js";
+import { presentAt } from "../../lib/present.js";
 
 const ANALYSIS = "analysis-a";
 
@@ -80,7 +81,7 @@ function ctxForThread(threadId: string): ToolContext {
 /** The count of `report` rows in the schema — 0 says that a refusal wrote nothing. */
 async function reportThreadCount(): Promise<number> {
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_type = 'report'");
-    return Number(rows[0]!.count);
+    return Number(presentAt(rows, 0).count);
 }
 
 /**
@@ -128,8 +129,8 @@ describe("the started arm", () => {
         expect(result.title).toBe("RNA-seq QC — Report 1");
         // The row is on disk, not only in the returned value.
         const child = (await store.getThread(result.threadId))._unsafeUnwrap();
-        expect(child!.threadType).toBe("report");
-        expect(child!.parentThreadId).toBe("p1");
+        expect(child?.threadType).toBe("report");
+        expect(child?.parentThreadId).toBe("p1");
         expect(await reportThreadCount()).toBe(1);
     });
 

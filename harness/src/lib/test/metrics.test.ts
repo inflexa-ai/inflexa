@@ -21,6 +21,7 @@ import {
     recordStepCompleted,
     stepOutcomeOf,
 } from "../metrics.js";
+import { presentFind } from "../present.js";
 
 let exporter: InMemoryMetricExporter;
 let provider: MeterProvider;
@@ -67,8 +68,8 @@ describe("reconcile metrics", () => {
         recordLineageInputDropped({ agentId: "agent-y", reason: "missing" });
 
         const exported = await collect();
-        const dropped = exported.find((m) => m.descriptor.name === "cortex.artifact.reconcile.dropped")!;
-        const inputDropped = exported.find((m) => m.descriptor.name === "cortex.artifact.reconcile.input_dropped")!;
+        const dropped = presentFind(exported, (m) => m.descriptor.name === "cortex.artifact.reconcile.dropped");
+        const inputDropped = presentFind(exported, (m) => m.descriptor.name === "cortex.artifact.reconcile.input_dropped");
         expect(dropped.dataPoints.map((p) => [p.attributes, p.value])).toEqual([[{ agent_id: "agent-x" }, 2]]);
         expect(inputDropped.dataPoints.map((p) => p.attributes)).toEqual([
             { agent_id: "agent-x", reason: "missing" },
@@ -84,7 +85,9 @@ describe("run and step outcome metrics", () => {
         try {
             recordRunCompleted({ workflow: "analysis", status: "partial", durationMs: 900_000 });
             // A blocked step is a failure to deliver; a step without a durable duration is counted, not timed.
-            recordStepCompleted({ agentId: "enrichment", status: stepOutcomeOf("blocked")!, durationMs: 3_000 });
+            const blocked = stepOutcomeOf("blocked");
+            if (blocked === undefined) throw new Error("the blocked status holds no step outcome");
+            recordStepCompleted({ agentId: "enrichment", status: blocked, durationMs: 3_000 });
             recordStepCompleted({ agentId: "enrichment", status: "canceled" });
 
             expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "partial", workflow: "analysis" }, 1]]);

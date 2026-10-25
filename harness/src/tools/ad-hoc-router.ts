@@ -301,7 +301,7 @@ export async function routeAdHocRequest(
         if (!call) failure = "malformed";
     } catch (error) {
         if (input.signal.aborted) throw error;
-        failure = controller.signal.aborted && !input.signal.aborted ? "timeout" : "provider_error";
+        failure = controller.signal.aborted ? "timeout" : "provider_error";
         logger.warn("ad hoc route fell back", { failure, error: error instanceof Error ? error.message : String(error) });
     } finally {
         clearTimeout(timer);

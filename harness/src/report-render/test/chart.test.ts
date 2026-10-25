@@ -1737,8 +1737,8 @@ describe("the dense chart reads the shared payload", () => {
         // The preset splits the rows itself, thus each series names its category and the rule carries the
         // two cuts that the guides draw.
         expect(source.rule).toEqual({ kind: "volcano", cut: -Math.log10(VOLCANO_P_THRESHOLD), effect: VOLCANO_EFFECT_THRESHOLD });
-        expect(source?.series.map((entry) => entry.category)).toEqual([0, 1, 2]);
-        for (const entry of source?.series ?? []) {
+        expect(source.series.map((entry) => entry.category)).toEqual([0, 1, 2]);
+        for (const entry of source.series) {
             expect(entry.x).toEqual({ column: 1, numeric: true });
             expect(entry.y).toEqual({ column: 2, transform: "neg_log10" });
             expect(entry.label).toBe(0);
@@ -1753,9 +1753,9 @@ describe("the dense chart reads the shared payload", () => {
         const source = chartSourceOf(deriveChartRender(composed, denseRows(6000), COLUMNS, target)._unsafeUnwrap().option);
 
         expect(source.series.map((entry) => entry.value)).toEqual(["a", "b"]);
-        expect(source?.series[0]?.group).toEqual({ column: 3 });
+        expect(source.series[0]?.group).toEqual({ column: 3 });
         // A line draws along the x axis, thus the page sorts its points as the derivation does.
-        expect(source?.series[0]?.sort).toBe(true);
+        expect(source.series[0]?.sort).toBe(true);
         // The flags name the rows of the payload, thus each split carries the labels of the rows that it
         // holds and the two lists together hold the declared count.
         expect(
@@ -1764,7 +1764,7 @@ describe("the dense chart reads the shared payload", () => {
                 ...(source.series[1]?.flags === undefined ? [] : optionNumbers(source.series[1].flags)),
             ].sort((a, b) => a - b),
         ).toEqual([0, 1, 2, 3, 4, 5]);
-        expect(source?.rule).toBeUndefined();
+        expect(source.rule).toBeUndefined();
     });
 
     it("keeps a band inline, because no descriptor states the difference of two columns", () => {

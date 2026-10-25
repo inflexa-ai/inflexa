@@ -243,7 +243,8 @@ async function summarizeDirectory(
     const stack = [directory];
 
     while (stack.length > 0 && scanned < MAX_SCANNED_ENTRIES) {
-        const current = stack.pop()!;
+        const current = stack.pop();
+        if (current === undefined) break;
         const { values, cut } = await cappedEntries(current, MAX_SCANNED_ENTRIES - scanned);
         truncated = truncated || cut;
         const childDirectories: string[] = [];
@@ -380,7 +381,8 @@ async function collectFiles(
     const stack: { path: string; relative: string }[] = [{ path: directory, relative }];
 
     while (stack.length > 0 && budget.scanned < MAX_SCANNED_ENTRIES) {
-        const current = stack.pop()!;
+        const current = stack.pop();
+        if (current === undefined) break;
         const { values, cut } = await cappedEntries(current.path, MAX_SCANNED_ENTRIES - budget.scanned);
         truncated = truncated || cut;
         for (const child of values) {

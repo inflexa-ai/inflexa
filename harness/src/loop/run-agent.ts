@@ -21,6 +21,7 @@ import type { CompactionPart } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { isUnknownArray } from "../lib/unknown-array.js";
+import { presentAt, presentLast } from "../lib/present.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
@@ -365,7 +366,7 @@ export function openLoop(
         givenCount = messages.length;
     };
     const source: { agentId: string; callPath: readonly string[]; invocationId?: string } = {
-        agentId: session.provenance.agentId ?? agent.id,
+        agentId: session.provenance.agentId,
         callPath: session.provenance.callPath,
     };
     if (opts.invocationId !== undefined) source.invocationId = opts.invocationId;
@@ -570,8 +571,8 @@ export function openLoop(
     ): Promise<string[]> => {
         const errored: string[] = [];
         for (let idx = 0; idx < calls.length; idx++) {
-            const tu = calls[idx]!;
-            const outcome = outcomeOf(results[idx]!);
+            const tu = presentAt(calls, idx, "the dispatched tool call");
+            const outcome = outcomeOf(presentAt(results, idx, "the tool result"));
             toolCallCount++;
             // A denial counts here with the errors: the model reads it as a result
             // it did not get to act on, which is what these counters describe. The
@@ -777,7 +778,7 @@ export function openLoop(
                     continuesTruncation = true;
                     continue;
                 }
-                const trailing = toolCalls[toolCalls.length - 1]!;
+                const trailing = presentLast(toolCalls, "the trailing tool call");
                 const earlier = toolCalls.slice(0, -1);
                 const earlierDetails = roundDetails(earlier);
                 for (const [idx, tu] of earlier.entries()) {
@@ -1031,7 +1032,7 @@ function assistantHasContent(message: Extract<ModelMessage, { role: "assistant" 
  */
 function markLastLoopAssistant(messages: LoopMessage[], roundStart: number): void {
     for (let idx = messages.length - 1; idx >= roundStart; idx--) {
-        const message = messages[idx]!;
+        const message = presentAt(messages, idx, "the message at the index");
         if (message.role === "assistant") {
             messages[idx] = markInterruptedMessage(message);
             return;

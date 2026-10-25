@@ -244,7 +244,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
 
     const nameOf = (index: number): string | undefined => {
         const cell = label === undefined ? undefined : rows[index]?.[label];
-        return cell === undefined || cell === null || String(cell).trim() === "" ? undefined : String(cell);
+        return cell === undefined || String(cell).trim() === "" ? undefined : String(cell);
     };
     const item = (index: number, y: number): EchartOption => {
         const name = nameOf(index);
@@ -343,7 +343,7 @@ function locusColumns(block: ChartBlock, rows: readonly ChartRow[], context: Fig
         rate: metric === undefined ? undefined : channelColumn(metric),
         chromosome: group === undefined ? undefined : channelColumn(group),
     };
-    for (const column of Object.values(found)) {
+    for (const column of [found.position, found.p, found.r2, found.label, found.rate, found.chromosome]) {
         if (column === undefined) continue;
         if (rows.length > 0 && !columnPresent(column, rows, context.columns)) {
             return err(chartProblem(context.blockId, `The column "${column}" is absent from every row.`));
@@ -357,7 +357,7 @@ function distinctNames(rows: readonly ChartRow[], column: string): string[] {
     const names: string[] = [];
     for (const row of rows) {
         const cell = row[column];
-        if (cell === undefined || cell === null || String(cell).trim() === "") continue;
+        if (cell === undefined || String(cell).trim() === "") continue;
         const name = categoryName(cell);
         if (!names.includes(name)) names.push(name);
         if (names.length > 1) break;
@@ -436,7 +436,7 @@ function guideStart(text: string, line: number, room: GuideRoom): number {
     const blocked: Array<[number, number]> = [];
     for (const [index, x] of room.xs.entries()) {
         const y = room.ys[index];
-        if (x !== null && x !== undefined && y !== null && y !== undefined && y + reach >= low && y - reach <= high) blocked.push([x - half, x + half]);
+        if (x !== null && y !== null && y !== undefined && y + reach >= low && y - reach <= high) blocked.push([x - half, x + half]);
     }
     if (room.rateTop > 0) {
         const rateLow = (low / room.top) * room.rateTop;

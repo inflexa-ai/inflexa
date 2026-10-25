@@ -161,10 +161,9 @@ export function buildCorrespondences(detected: DetectedSets, sets: readonly Dete
     );
 
     const found: SlotCorrespondence[] = [];
-    for (let i = 0; i < candidates.length; i++) {
-        for (let j = i + 1; j < candidates.length; j++) {
-            const first = candidates[i]!;
-            const second = candidates[j]!;
+    for (const [i, first] of candidates.entries()) {
+        for (const [j, second] of candidates.entries()) {
+            if (j <= i) continue;
             if (first.set.id === second.set.id) continue;
             const overlap = correspond(first, second);
             if (overlap) found.push(overlap);

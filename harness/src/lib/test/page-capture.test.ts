@@ -10,6 +10,7 @@ import type { MediaFeature, ScreenshotOptions, Viewport } from "puppeteer-core";
 
 import { setBrowserConnector, type CaptureArea, type ConnectedBrowser, type LookContext, type LookPage } from "../chrome.js";
 import { capturePage } from "../page-capture.js";
+import { presentAt } from "../present.js";
 
 /**
  * The steps that the capture drove, in order, the arguments that it gave to each of the three setters, and
@@ -213,7 +214,7 @@ describe("the tiled capture", () => {
         // Five slices is the budget. The pictures end at the budget, and the coverage carries the honest
         // account: the captured pixels against the total, thus no reader mistakes the look for a whole one.
         expect(capture.screenshots).toHaveLength(5);
-        expect(capture.screenshots[4]!.range).toEqual({ fromY: 16000, toY: 20000 });
+        expect(presentAt(capture.screenshots, 4).range).toEqual({ fromY: 16000, toY: 20000 });
         expect(capture.coverage).toEqual({ kind: "tiled", capturedPx: 20000, totalPx: 30000 });
     });
 
@@ -294,8 +295,8 @@ describe("the block capture", () => {
         const capture = await capturePage({ browserUrl: "http://capture-block-tall.test:9222" }, "http://page.test/report", { blockId: "s1" });
 
         expect(capture.screenshots).toHaveLength(5);
-        expect(capture.screenshots[0]!.range).toEqual({ fromY: 1000, toY: 5000 });
-        expect(capture.screenshots[4]!.range).toEqual({ fromY: 17000, toY: 21000 });
+        expect(presentAt(capture.screenshots, 0).range).toEqual({ fromY: 1000, toY: 5000 });
+        expect(presentAt(capture.screenshots, 4).range).toEqual({ fromY: 17000, toY: 21000 });
         expect(capture.coverage).toEqual({ kind: "block", capturedPx: 20000, totalPx: 25000 });
     });
 

@@ -86,7 +86,7 @@ describe("buildMountPlan", () => {
         expect(plan.env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
         // /opt/conda/bin comes before the farm python/bin at the end, thus a
         // farm script never shadows an image tool.
-        expect(plan.env.PATH!.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
+        expect(plan.env.PATH?.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
         // System Python resolves the store through a .pth file, never PYTHONPATH.
         expect(plan.env.PYTHONPATH).toBeUndefined();
     });
@@ -188,9 +188,11 @@ describe("the declared write tail", () => {
         expect(subPaths.rw).toBe(`tenants/acme/an-1/${TAIL}`);
         // The RW subPath matches the container RW mount path sans leading slash — the two sides of the
         // same directory.
-        expect(`/an-1/${subPaths.rw!.slice("tenants/acme/an-1/".length)}`).toBe(
-            buildMountPlan({ ...COORDS, writableTail: TAIL }, { libs: false, refs: false }).writableStepPath!,
-        );
+        const rw = subPaths.rw;
+        if (rw === undefined) throw new Error("rw is absent");
+        const writableStepPath = buildMountPlan({ ...COORDS, writableTail: TAIL }, { libs: false, refs: false }).writableStepPath;
+        if (writableStepPath === undefined) throw new Error("writableStepPath is absent");
+        expect(`/an-1/${rw.slice("tenants/acme/an-1/".length)}`).toBe(writableStepPath);
     });
 
     test("refuses a tail beside read-only, because the two state opposite things", () => {

@@ -3,6 +3,7 @@ import type { ToolResultPart } from "ai";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { presentAt, presentFind, presentFirst } from "../../lib/present.js";
 import { isSyntheticUserMessage } from "../../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
@@ -94,7 +95,7 @@ describe("runToTerminal", () => {
         // The terminal tool ends the loop itself; no acknowledgement call is
         // spent after the closure outcome is recorded.
         expect(provider.calls).toHaveLength(1);
-        expect(provider.calls[0]!.toolChoice).toBe("auto");
+        expect(presentFirst(provider.calls).toolChoice).toBe("auto");
         // No salvage continuation — the nudge never reaches the provider.
         const sawNudge = provider.calls.some((c) => c.messages.some((m) => m.content === NUDGE));
         expect(sawNudge).toBe(false);
@@ -249,7 +250,9 @@ describe("runToTerminal", () => {
         // the first pass's call too — 10 (first run) + 3 (the nudged submit) +
         // 10 (the salvage pass's reply after the tool result).
         expect(finish.usage).toEqual({ inputTokens: 23, outputTokens: 9 });
-        expect(finish.turnUsage).toEqual(finish.usage!);
+        const usage = finish.usage;
+        if (usage === undefined) throw new Error("the finish carries no usage");
+        expect(finish.turnUsage).toEqual(usage);
     });
 
     it("leaves both rollups absent when neither pass reported usage", async () => {
@@ -307,11 +310,14 @@ describe("runToTerminal", () => {
         expect(cell.value).toBe("salvaged");
         expect(provider.calls).toHaveLength(2);
         const [firstRequest, salvageRequest] = provider.calls;
-        expect(Object.keys(salvageRequest!.tools)).toEqual(["search", "read", "submit", "report_blocker"]);
-        expect(Object.keys(salvageRequest!.tools)).toEqual(Object.keys(firstRequest!.tools));
-        expect(salvageRequest!.system).toEqual(firstRequest!.system);
+        expect(firstRequest).toBeDefined();
+        expect(salvageRequest).toBeDefined();
+        if (firstRequest === undefined || salvageRequest === undefined) throw new Error("the salvage requests are absent");
+        expect(Object.keys(salvageRequest.tools)).toEqual(["search", "read", "submit", "report_blocker"]);
+        expect(Object.keys(salvageRequest.tools)).toEqual(Object.keys(firstRequest.tools));
+        expect(salvageRequest.system).toEqual(firstRequest.system);
         // The nudge is a synthetic request, thus it opens no turn in a stored thread.
-        const nudge = messages[2]!;
+        const nudge = presentAt(messages, 2);
         expect(nudge.content).toBe(NUDGE);
         expect(isSyntheticUserMessage(nudge)).toBe(true);
         expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool"]);
@@ -338,15 +344,17 @@ describe("runToTerminal", () => {
 
         expect(search.runs()).toBe(0);
         expect(cell.value).toBe("salvaged");
-        const refused = messages
-            .flatMap((m) => {
-                if (m.role !== "tool") return [];
-                const content = m.content;
-                if (typeof content === "string") throw new Error("the tool message carries string content");
-                return content;
-            })
-            .filter((r): r is ToolResultPart => r.type === "tool-result")
-            .find((r) => r.toolCallId === "s1")!;
+        const refused = presentFind(
+            messages
+                .flatMap((m) => {
+                    if (m.role !== "tool") return [];
+                    const content = m.content;
+                    if (typeof content === "string") throw new Error("the tool message carries string content");
+                    return content;
+                })
+                .filter((r): r is ToolResultPart => r.type === "tool-result"),
+            (r) => r.toolCallId === "s1",
+        );
         expect(refused.output.type).toBe("error-text");
         const refusedOutput = refused.output;
         if (refusedOutput.type !== "error-text") throw new Error("the refused call holds no error text");

@@ -7,6 +7,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createComptoxTool } from "../comptox.js";
+import { presentAt, presentFirst } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -57,8 +58,8 @@ describe("comptox tool — dataset 'toxcast'", () => {
             expect(result.chemical.activeHitRate).toBe(0.5);
             expect(result.chemical.results).toHaveLength(2);
             // sorted by AC50 ascending
-            expect(result.chemical.results[0]!.ac50).toBe(2.5);
-            expect(result.chemical.results[0]!.assayEndpoint).toBe("ER_agonist");
+            expect(presentAt(result.chemical.results, 0).ac50).toBe(2.5);
+            expect(presentAt(result.chemical.results, 0).assayEndpoint).toBe("ER_agonist");
         }
     });
 
@@ -83,7 +84,7 @@ describe("comptox tool — dataset 'toxcast'", () => {
         if (result.found && "chemical" in result) {
             expect(result.chemical.totalAssays).toBe(2);
             expect(result.chemical.results).toHaveLength(1);
-            expect(result.chemical.results[0]!.hitCall).toBe(0.9);
+            expect(presentAt(result.chemical.results, 0).hitCall).toBe(0.9);
         }
     });
 
@@ -126,12 +127,12 @@ describe("comptox tool — dataset 'hazard'", () => {
         expect(result.found).toBe(true);
         if (result.found && "toxval" in result) {
             expect(result.toxval).toHaveLength(1); // capped
-            expect(result.toxval![0]!.toxvalNumeric).toBe(5);
+            expect(presentFirst(result.toxval ?? [], "the first toxval row").toxvalNumeric).toBe(5);
             expect(result.genetox).toHaveLength(1);
-            expect(result.genetox![0]!.genetoxCall).toBe("negative");
+            expect(presentFirst(result.genetox ?? [], "the first genetox summary").genetoxCall).toBe("negative");
             expect(result.cancer).toHaveLength(2); // NOT capped
-            expect(result.cancer![1]!.cancerCall).toBe("R");
-            expect(result.cancer![1]!.exposureRoute).toBe("inhalation");
+            expect(presentAt(result.cancer ?? [], 1, "the second cancer summary").cancerCall).toBe("R");
+            expect(presentAt(result.cancer ?? [], 1, "the second cancer summary").exposureRoute).toBe("inhalation");
         }
     });
 
@@ -163,7 +164,7 @@ describe("comptox tool — dataset 'chemical'", () => {
             expect(result.detail.casrn).toBe("80-05-7");
             expect(result.detail.pubchemCid).toBe(6623);
             expect(result.properties).toHaveLength(1);
-            expect(result.properties![0]!.propName).toBe("logP");
+            expect(presentFirst(result.properties ?? [], "the first property").propName).toBe("logP");
         }
     });
 
@@ -203,12 +204,12 @@ describe("comptox tool — dataset 'exposure'", () => {
         const result = (await comptox.execute({ dataset: "exposure", query: DTXSID }, ctx))._unsafeUnwrap();
 
         if (result.found && "seem" in result) {
-            expect(result.seem!.productionVolume).toBe(1000);
-            expect(result.seem!.probabilityDietary).toBe(0.9);
-            expect(result.seem!.probabilityPesticide).toBe(0.1); // read from the misspelled wire field
+            expect(result.seem?.productionVolume).toBe(1000);
+            expect(result.seem?.probabilityDietary).toBe(0.9);
+            expect(result.seem?.probabilityPesticide).toBe(0.1); // read from the misspelled wire field
             expect(result.httk).toHaveLength(1);
-            expect(result.functionalUse![0]!.functionCategory).toBe("plasticizer");
-            expect(result.productData![0]!.productName).toBe("epoxy resin");
+            expect(presentFirst(result.functionalUse ?? [], "the first functional use").functionCategory).toBe("plasticizer");
+            expect(presentFirst(result.productData ?? [], "the first product record").productName).toBe("epoxy resin");
         }
     });
 
@@ -219,7 +220,7 @@ describe("comptox tool — dataset 'exposure'", () => {
         const result = (await comptox.execute({ dataset: "exposure", query: DTXSID, dataType: "seem" }, ctx))._unsafeUnwrap();
 
         if (result.found && "seem" in result) {
-            expect(result.seem!.productionVolume).toBe(5);
+            expect(result.seem?.productionVolume).toBe(5);
             expect(result.httk).toBeUndefined();
             expect(result.functionalUse).toBeUndefined();
         }

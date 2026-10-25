@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { genePreclinicalProfileTool } from "../gene-preclinical-profile.js";
+import { presentFirst } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -64,11 +65,11 @@ describe("genePreclinicalProfile — knockout half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["knockout"] }, ctx))._unsafeUnwrap();
 
-        expect(result.knockout!.mouseMarkerSymbol).toBe("Brca1");
-        expect(result.knockout!.mgiAccessionId).toBe("MGI:104537");
-        expect(result.knockout!.mpTerms.length).toBeGreaterThan(0);
-        expect(result.knockout!.mpTerms[0]!.id).toBe("MP:0001392");
-        expect(result.knockout!.phenotypesTrimmed).toBe(false);
+        expect(result.knockout?.mouseMarkerSymbol).toBe("Brca1");
+        expect(result.knockout?.mgiAccessionId).toBe("MGI:104537");
+        expect(result.knockout?.mpTerms.length).toBeGreaterThan(0);
+        expect(presentFirst(result.knockout?.mpTerms ?? [], "the first MP term").id).toBe("MP:0001392");
+        expect(result.knockout?.phenotypesTrimmed).toBe(false);
     });
 
     it("returns an empty profile when no mouse knockout exists (does not throw)", async () => {
@@ -77,11 +78,11 @@ describe("genePreclinicalProfile — knockout half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "NOTAGENE", include: ["knockout"] }, ctx))._unsafeUnwrap();
 
-        expect(result.knockout!.mouseMarkerSymbol).toBeNull();
-        expect(result.knockout!.mgiAccessionId).toBeNull();
-        expect(result.knockout!.viability).toBeNull();
-        expect(result.knockout!.mpTerms).toEqual([]);
-        expect(result.knockout!.phenotypeCount).toBe(0);
+        expect(result.knockout?.mouseMarkerSymbol).toBeNull();
+        expect(result.knockout?.mgiAccessionId).toBeNull();
+        expect(result.knockout?.viability).toBeNull();
+        expect(result.knockout?.mpTerms).toEqual([]);
+        expect(result.knockout?.phenotypeCount).toBe(0);
     });
 
     it("trims phenotype terms to phenotypeLimit while reporting the true count", async () => {
@@ -109,11 +110,11 @@ describe("genePreclinicalProfile — knockout half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["knockout"], phenotypeLimit: 2 }, ctx))._unsafeUnwrap();
 
-        expect(result.knockout!.mpTerms).toHaveLength(2);
-        expect(result.knockout!.phenotypeCount).toBe(5);
-        expect(result.knockout!.phenotypesTrimmed).toBe(true);
+        expect(result.knockout?.mpTerms).toHaveLength(2);
+        expect(result.knockout?.phenotypeCount).toBe(5);
+        expect(result.knockout?.phenotypesTrimmed).toBe(true);
         // Best p-value first survives the trim.
-        expect(result.knockout!.mpTerms[0]!.id).toBe("MP:0000000");
+        expect(presentFirst(result.knockout?.mpTerms ?? [], "the first MP term").id).toBe("MP:0000000");
     });
 
     it("throws on an upstream 5xx failure", async () => {
@@ -157,9 +158,9 @@ describe("genePreclinicalProfile — human phenotype half", () => {
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1", include: ["phenotypes"] }, ctx))._unsafeUnwrap();
 
-        expect(result.phenotypes!.geneCurie).toBe("HGNC:1100");
-        expect(result.phenotypes!.phenotypeCount).toBe(1);
-        expect(result.phenotypes!.hpoTerms[0]).toEqual({
+        expect(result.phenotypes?.geneCurie).toBe("HGNC:1100");
+        expect(result.phenotypes?.phenotypeCount).toBe(1);
+        expect(result.phenotypes?.hpoTerms[0]).toEqual({
             hpoId: "HP:0003002",
             label: "Breast carcinoma",
             publications: ["PMID:12345678"],

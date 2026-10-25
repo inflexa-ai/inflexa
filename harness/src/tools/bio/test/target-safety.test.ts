@@ -8,6 +8,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { targetSafetyTool } from "../target-safety.js";
+import { presentAt } from "../../../lib/present.js";
 
 const GqlVariablesSchema = z.object({ variables: z.record(z.string(), z.unknown()) });
 
@@ -55,7 +56,7 @@ describe("targetSafety — curated panel", () => {
         expect(result.summary.panelMatched).toBe(1);
         expect(result.summary.bySeverity.high).toBe(1);
         expect(result.summary.byOrgan.cardiac).toBe(1);
-        expect(result.targets[0]!.panelEntry!.clinical_consequence).toContain("valvulopathy");
+        expect(presentAt(result.targets, 0).panelEntry?.clinical_consequence).toContain("valvulopathy");
         expect(result.panelVersion).toMatch(/^\d+\.\d+\.\d+$/);
     });
 
@@ -74,7 +75,7 @@ describe("targetSafety — curated panel", () => {
         const result = (await targetSafetyTool.execute({ identifiers: ["NOTATARGET"], sources: ["panel"] }, ctx))._unsafeUnwrap();
 
         expect(result.targets).toHaveLength(1);
-        expect(result.targets[0]!.panelEntry).toBeNull();
+        expect(presentAt(result.targets, 0).panelEntry).toBeNull();
         expect(result.summary.panelMatched).toBe(0);
     });
 
@@ -82,10 +83,10 @@ describe("targetSafety — curated panel", () => {
         const { ctx } = makeToolContext();
 
         const wrongOrgan = (await targetSafetyTool.execute({ identifiers: [HTR2B.gene], sources: ["panel"], filterOrgan: "hepatic" }, ctx))._unsafeUnwrap();
-        expect(wrongOrgan.targets[0]!.panelEntry).toBeNull();
+        expect(presentAt(wrongOrgan.targets, 0).panelEntry).toBeNull();
 
         const highOnly = (await targetSafetyTool.execute({ identifiers: [HTR2B.gene], sources: ["panel"], minSeverity: "high" }, ctx))._unsafeUnwrap();
-        expect(highOnly.targets[0]!.panelEntry).not.toBeNull();
+        expect(presentAt(highOnly.targets, 0).panelEntry).not.toBeNull();
     });
 });
 
@@ -96,7 +97,7 @@ describe("targetSafety — Open Targets liabilities", () => {
         const { ctx } = makeToolContext();
         const result = (await targetSafetyTool.execute({ identifiers: [HTR2B.gene], sources: ["opentargets"] }, ctx))._unsafeUnwrap();
 
-        expect(result.targets[0]!.liabilities).toEqual([
+        expect(presentAt(result.targets, 0).liabilities).toEqual([
             { event: "cardiac arrhythmia", biosamples: ["heart", "myocardium"], effects: "activation, inhibition", source: "AOP-Wiki" },
         ]);
         expect(result.summary.openTargetsWithLiabilities).toBe(1);
@@ -127,8 +128,8 @@ describe("targetSafety — Open Targets liabilities", () => {
         const result = (await targetSafetyTool.execute({ identifiers: ["TP53"], sources: ["opentargets"] }, ctx))._unsafeUnwrap();
 
         expect(seen.some((u) => u.includes("ensembl"))).toBe(true);
-        expect(result.targets[0]!.ensemblId).toBe("ENSG00000141510");
-        expect(result.targets[0]!.liabilities).toEqual([]);
+        expect(presentAt(result.targets, 0).ensemblId).toBe("ENSG00000141510");
+        expect(presentAt(result.targets, 0).liabilities).toEqual([]);
     });
 
     it("notes an unknown Ensembl id instead of failing (not is_error)", async () => {
@@ -138,7 +139,7 @@ describe("targetSafety — Open Targets liabilities", () => {
         const outcome = await targetSafetyTool.execute({ identifiers: [HTR2B.gene], sources: ["opentargets"] }, ctx);
 
         expect(outcome.isOk()).toBe(true);
-        expect(outcome._unsafeUnwrap().targets[0]!.opentargetsNote).toContain("no Open Targets record");
+        expect(presentAt(outcome._unsafeUnwrap().targets, 0).opentargetsNote).toContain("no Open Targets record");
     });
 
     it("skips a ChEMBL identifier that is not on the panel, saying why", async () => {
@@ -147,8 +148,8 @@ describe("targetSafety — Open Targets liabilities", () => {
         const { ctx } = makeToolContext();
         const result = (await targetSafetyTool.execute({ identifiers: ["CHEMBL9999999"], sources: ["opentargets"] }, ctx))._unsafeUnwrap();
 
-        expect(result.targets[0]!.opentargetsNote).toContain("no Ensembl gene id available");
-        expect(result.targets[0]!.liabilities).toBeUndefined();
+        expect(presentAt(result.targets, 0).opentargetsNote).toContain("no Ensembl gene id available");
+        expect(presentAt(result.targets, 0).liabilities).toBeUndefined();
     });
 
     it("keeps the panel half when Open Targets is unreachable", async () => {
@@ -159,7 +160,7 @@ describe("targetSafety — Open Targets liabilities", () => {
 
         expect(result.perSource.find((s) => s.source === "panel")).toMatchObject({ status: "ok", matched: 1 });
         expect(result.perSource.find((s) => s.source === "opentargets")).toMatchObject({ status: "unavailable" });
-        expect(result.targets[0]!.panelEntry).not.toBeNull();
+        expect(presentAt(result.targets, 0).panelEntry).not.toBeNull();
     });
 });
 

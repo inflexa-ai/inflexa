@@ -107,11 +107,14 @@ type Input = z.infer<typeof inputSchema>;
 function toListOp(input: Input): ListOp {
     switch (input.operation ?? "add") {
         case "add":
-            return { op: "add", text: input.text! };
+            if (input.text === undefined) throw new Error("add requires text");
+            return { op: "add", text: input.text };
         case "revise":
-            return { op: "revise", id: input.id!, text: input.text! };
+            if (input.id === undefined || input.text === undefined) throw new Error("revise requires id and text");
+            return { op: "revise", id: input.id, text: input.text };
         case "retire":
-            return { op: "retire", id: input.id! };
+            if (input.id === undefined) throw new Error("retire requires id");
+            return { op: "retire", id: input.id };
     }
 }
 
@@ -123,7 +126,9 @@ function toConstraintOp(input: Input): ConstraintOp {
 /** As `toListOp`, but an added finding also carries the run it is attributed to. */
 function toFindingOp(input: Input): FindingOp {
     const base = toListOp(input);
-    return base.op === "add" ? { ...base, runId: input.runId! } : base;
+    if (base.op !== "add") return base;
+    if (input.runId === undefined) throw new Error("a finding add requires runId");
+    return { ...base, runId: input.runId };
 }
 
 type UpdateOutput = {
@@ -187,7 +192,8 @@ export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore,
             const analysisId = scopeResource(ctx.session.scope).resourceId;
             switch (input.section) {
                 case "goal":
-                    return apply(analysisId, "goal", { text: input.text! });
+                    if (input.text === undefined) throw new Error("goal requires text");
+                    return apply(analysisId, "goal", { text: input.text });
                 case "constraint":
                     return apply(analysisId, "constraint", toConstraintOp(input));
                 case "hypothesis":

@@ -6,6 +6,7 @@ import { createWorkingMemory, WORKING_MEMORY_LIMITS, type WorkingMemoryStore } f
 import { insertRun } from "../../../state/index.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createUpdateWorkingMemoryTool } from "../update-working-memory.js";
+import { presentAt, presentGet } from "../../../lib/present.js";
 
 // `makeToolContext` builds a session whose workload id is "analysis-001".
 const ANALYSIS = "analysis-001";
@@ -46,8 +47,8 @@ describe("section routing", () => {
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.constraints.length).toBe(1);
-        expect(loaded.constraints[0]!.text).toBe("FDR threshold 0.01");
-        expect(loaded.constraints[0]!.origin).toBe("user");
+        expect(presentAt(loaded.constraints, 0).text).toBe("FDR threshold 0.01");
+        expect(presentAt(loaded.constraints, 0).origin).toBe("user");
     });
 
     it("a 'hypothesis' update appends to the hypotheses section", async () => {
@@ -56,7 +57,7 @@ describe("section routing", () => {
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.hypotheses.length).toBe(1);
-        expect(loaded.hypotheses[0]!.text).toBe("EGFR amplification drives resistance");
+        expect(presentAt(loaded.hypotheses, 0).text).toBe("EGFR amplification drives resistance");
     });
 
     it("a 'finding' update records under the given runId", async () => {
@@ -67,21 +68,21 @@ describe("section routing", () => {
 
         expect(result.isOk()).toBe(true);
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        expect(loaded.findings["run-A"]!.length).toBe(1);
-        expect(loaded.findings["run-A"]![0]!.text).toBe("412 genes DE");
+        expect(presentGet(loaded.findings, "run-A").length).toBe(1);
+        expect(presentAt(presentGet(loaded.findings, "run-A"), 0).text).toBe("412 genes DE");
     });
 
     it("a 'constraint' revise addresses an existing entry by id", async () => {
         const { ctx } = makeToolContext();
         await tool.execute({ section: "constraint", text: "FDR 0.05", origin: "agent" }, ctx);
         const seeded = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        const id = seeded.constraints[0]!.id;
+        const id = presentAt(seeded.constraints, 0).id;
 
         await tool.execute({ section: "constraint", operation: "revise", id, text: "FDR 0.01" }, ctx);
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.constraints.length).toBe(1);
-        expect(loaded.constraints[0]!.text).toBe("FDR 0.01");
+        expect(presentAt(loaded.constraints, 0).text).toBe("FDR 0.01");
     });
 });
 
@@ -90,7 +91,7 @@ describe("findings can be revised and retired", () => {
         const { ctx } = makeToolContext();
         await seedRun("run-A");
         await tool.execute({ section: "finding", runId: "run-A", text: "412 genes DE" }, ctx);
-        const id = (await wm.load(ANALYSIS))._unsafeUnwrap().findings["run-A"]![0]!.id;
+        const id = presentAt(presentGet((await wm.load(ANALYSIS))._unsafeUnwrap().findings, "run-A"), 0).id;
 
         const result = await tool.execute({ section: "finding", operation: "revise", id, text: "412 genes DE (ComBat-corrected)" }, ctx);
 
@@ -103,7 +104,7 @@ describe("findings can be revised and retired", () => {
         const { ctx } = makeToolContext();
         await seedRun("run-A");
         await tool.execute({ section: "finding", runId: "run-A", text: "a superseded conclusion" }, ctx);
-        const id = (await wm.load(ANALYSIS))._unsafeUnwrap().findings["run-A"]![0]!.id;
+        const id = presentAt(presentGet((await wm.load(ANALYSIS))._unsafeUnwrap().findings, "run-A"), 0).id;
 
         const result = await tool.execute({ section: "finding", operation: "retire", id }, ctx);
 
@@ -127,7 +128,7 @@ describe("findings can be revised and retired", () => {
         expect(result._unsafeUnwrapErr().error).toContain("deadbeef");
 
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        expect(loaded.findings["run-A"]!.map((f) => f.text)).toEqual(["the real finding"]);
+        expect(presentGet(loaded.findings, "run-A").map((f) => f.text)).toEqual(["the real finding"]);
     });
 });
 
@@ -267,7 +268,7 @@ describe("finding runId must name a real run of this analysis", () => {
 
         expect(result.isOk()).toBe(true);
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        expect(loaded.findings["run-real"]!.map((f) => f.text)).toEqual(["412 genes differentially expressed"]);
+        expect(presentGet(loaded.findings, "run-real").map((f) => f.text)).toEqual(["412 genes differentially expressed"]);
 
         const md = (await wm.render(ANALYSIS))._unsafeUnwrap();
         expect(md).toContain("(run-real) 412 genes differentially expressed");

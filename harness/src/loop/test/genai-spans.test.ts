@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { AgentSession } from "../../auth/types.js";
+import { presentFind } from "../../lib/present.js";
 import type { Logger } from "../../lib/logger.js";
 import { createHarnessSampler, DbosSpanProcessor, HarnessTracerProvider, untracedWorkflow } from "../../lib/otel-spans.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
@@ -131,7 +132,7 @@ it("writes only chat and execute_tool under invoke_agent for a durable model cal
 
     const spans = exporter.getFinishedSpans();
     expect(spans.map((span) => span.name).sort()).toEqual(["chat mock-model-id", "execute_tool lookup", "invoke_agent test-agent"]);
-    const named = (name: string): ReadableSpan => spans.find((span) => span.name === name)!;
+    const named = (name: string): ReadableSpan => presentFind(spans, (span) => span.name === name);
     const agent = named("invoke_agent test-agent");
     expect(agent.parentSpanContext).toBeUndefined();
     for (const child of [named("chat mock-model-id"), named("execute_tool lookup")]) {
@@ -155,7 +156,7 @@ function runScriptedTurn(session: AgentSession = makeSession()): Promise<unknown
     );
 }
 
-const spanNamed = (spans: readonly ReadableSpan[], name: string): ReadableSpan => spans.find((span) => span.name === name)!;
+const spanNamed = (spans: readonly ReadableSpan[], name: string): ReadableSpan => presentFind(spans, (span) => span.name === name);
 
 it("starts a new trace for the root of a turn, and links it to the span that was active", async () => {
     const session: AgentSession = {

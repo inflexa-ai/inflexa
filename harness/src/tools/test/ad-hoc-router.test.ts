@@ -12,6 +12,7 @@ import type { ProviderError } from "../../providers/errors.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "../ad-hoc-router.js";
+import { presentAt, presentGet } from "../../lib/present.js";
 
 function providerReturning(input: Record<string, unknown>, capture?: { system?: string }): ChatProvider {
     return chatProviderDouble((request) => {
@@ -389,7 +390,7 @@ describe("ad hoc routing — the usage of the router call", () => {
             stepId: "step-1",
             usage: { inputTokens: 120, outputTokens: 30 },
         });
-        expect(records[0]!.recordKey).toBe("run-1:step-1:conversation-agent>adhoc-router:tool-call-1:adhoc-route");
+        expect(presentAt(records, 0).recordKey).toBe("run-1:step-1:conversation-agent>adhoc-router:tool-call-1:adhoc-route");
         // The root finish of the turn reads this accumulator.
         expect(turnUsage).toEqual({ inputTokens: 1_120, outputTokens: 30 });
     });
@@ -428,7 +429,8 @@ describe("ad hoc routing — the usage of the router call", () => {
  */
 describe("the capability phrase of an ad hoc route", () => {
     const safetyAgent = "translational-safety-agent";
-    const realPhrase = SANDBOX_AGENT_META[safetyAgent]!.capabilities.find((phrase) => phrase.includes("matched negative gene set"))!;
+    const realPhrase = presentGet(SANDBOX_AGENT_META, safetyAgent).capabilities.find((phrase) => phrase.includes("matched negative gene set"));
+    if (realPhrase === undefined) throw new Error("realPhrase is absent");
 
     it("keeps a phrase the chosen agent advertises", async () => {
         const { ctx } = makeToolContext();

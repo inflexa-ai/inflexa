@@ -10,6 +10,7 @@ import { DEFAULT_MATCH_CONFIG, type CitationMatchConfig } from "./match.js";
 import { citationLookupKey, normalizeCitation } from "./normalize.js";
 import { planCitationSources } from "./plan.js";
 import { createRateLimitSchedule, type RateLimitConfig, type RateLimitRuntime } from "../lib/rate-limit.js";
+import { presentAt, presentFind, presentFirst, presentGet } from "../lib/present.js";
 import type { SourceHttpOptions } from "../literature/sources/http.js";
 import {
     CitationInputSchema,
@@ -162,7 +163,11 @@ async function runSource(client: CitationSourceClient, requests: readonly Citati
     if (client.resolveMany === undefined) {
         const settled = await Promise.allSettled(requests.map((request) => client.resolve(request, signal)));
         if (signal?.aborted) throw abortReason(signal);
-        return settled.map((outcome, index) => (outcome.status === "fulfilled" ? outcome.value : unavailable(requests[index]!, describe(outcome.reason))));
+        return settled.map((outcome, index) =>
+            outcome.status === "fulfilled"
+                ? outcome.value
+                : unavailable(presentAt(requests, index, "the request for the settled outcome"), describe(outcome.reason)),
+        );
     }
 
     try {
@@ -198,10 +203,11 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
             const requests: CitationSourceRequest[] = [];
             const requestIndices: number[] = [];
             for (let index = 0; index < entries.length; index += 1) {
-                const entry = entries[index]!;
-                const plan = entry.plans.find((candidate) => candidate.source === source)!;
+                const entry = presentAt(entries, index, "the pending citation entry");
+                const entryOutcomes = presentAt(outcomes, index, "the outcome map of the pending citation entry");
+                const plan = presentFind(entry.plans, (candidate) => candidate.source === source, `the plan for ${source}`);
                 if (!plan.applicable || sourceConfig?.enabled === false || client === undefined) {
-                    outcomes[index]!.set(
+                    entryOutcomes.set(
                         source,
                         sourceConfig?.enabled === false
                             ? notApplicableOutcome({ ...plan, applicable: false, operation: "none", reason: "source disabled by resolver configuration" })
@@ -215,18 +221,26 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                     input: entry.input,
                     normalized: entry.normalized,
                     plan,
-                    registrationAgency: registrationAgencyEvidence(outcomes[index]!.get("doi_registry")),
+                    registrationAgency: registrationAgencyEvidence(entryOutcomes.get("doi_registry")),
                 });
                 requestIndices.push(index);
             }
             if (requests.length === 0 || client === undefined) continue;
             const resolved = await runSource(client, requests, signal);
             for (let requestIndex = 0; requestIndex < resolved.length; requestIndex += 1) {
-                outcomes[requestIndices[requestIndex]!]!.set(source, resolved[requestIndex]!);
+                const entryIndex = presentAt(requestIndices, requestIndex, "the entry index of the request");
+                presentAt(outcomes, entryIndex, "the outcome map of the pending citation entry").set(
+                    source,
+                    presentAt(resolved, requestIndex, "the resolved outcome"),
+                );
             }
         }
         return entries.map((entry, index) =>
-            SOURCE_ORDER.map((source) => outcomes[index]!.get(source) ?? notApplicableOutcome(entry.plans.find((plan) => plan.source === source)!)),
+            SOURCE_ORDER.map(
+                (source) =>
+                    presentAt(outcomes, index, "the outcome map of the pending citation entry").get(source) ??
+                    notApplicableOutcome(presentFind(entry.plans, (plan) => plan.source === source, `the plan for ${source}`)),
+            ),
         );
     }
 
@@ -257,7 +271,7 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                 pending.set(key, running);
                 continue;
             }
-            const input = firstByKey.get(key)!;
+            const input = presentGet(firstByKey, key, "the first input for the lookup key");
             const normalized = normalizeCitation(input);
             uncached.push({ key, entry: { input, normalized, plans: planCitationSources(input, normalized) } });
         }
@@ -268,8 +282,8 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                 options.signal,
             );
             for (let index = 0; index < uncached.length; index += 1) {
-                const { key } = uncached[index]!;
-                const one = batch.then((results) => results[index]!);
+                const { key } = presentAt(uncached, index, "the uncached entry");
+                const one = batch.then((results) => presentAt(results, index, "the outcome batch of the uncached entry"));
                 const tracked = one.then(
                     (outcomes) => {
                         const kind = cacheable(outcomes);
@@ -290,16 +304,23 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
         const outcomesByKey = new Map<string, readonly CitationSourceOutcome[]>();
         await Promise.all(
             uniqueOrder.map(async (key) => {
-                outcomesByKey.set(key, await withCallerSignal(pending.get(key)!, options.signal));
+                outcomesByKey.set(key, await withCallerSignal(presentGet(pending, key, "the pending promise for the lookup key"), options.signal));
             }),
         );
         // Aggregated per input, never per shared lookup: comparisons and the
         // verdict they drive belong to the caller's own supplied metadata.
-        return parsed.map((input) => aggregateCitationResolution(input, normalizeCitation(input), outcomesByKey.get(keyFor(input))!, matchConfig));
+        return parsed.map((input) =>
+            aggregateCitationResolution(
+                input,
+                normalizeCitation(input),
+                presentGet(outcomesByKey, keyFor(input), "the outcomes for the lookup key"),
+                matchConfig,
+            ),
+        );
     }
 
     return {
-        resolveOne: async (input, options = {}) => (await resolveMany([input], options))[0]!,
+        resolveOne: async (input, options = {}) => presentFirst(await resolveMany([input], options), "the single resolution"),
         resolveMany,
     };
 }

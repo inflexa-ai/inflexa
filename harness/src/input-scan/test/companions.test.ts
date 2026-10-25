@@ -4,6 +4,7 @@ import { assessCompleteness, attachCompanions } from "../companions.js";
 import type { MemberFile } from "../set-types.js";
 import { basenameOf } from "../tokens.js";
 import type { ScannedFile } from "../types.js";
+import { presentAt } from "../../lib/present.js";
 
 function file(path: string, size = 1024): ScannedFile {
     const base = basenameOf(path);
@@ -31,22 +32,26 @@ describe("attachCompanions", () => {
         const members = attachCompanions([file("inputs/spec_01.vcf.gz"), file("inputs/spec_01.vcf.gz.tbi", 16)]);
 
         expect(members).toHaveLength(1);
-        expect(members[0]!.path).toBe("inputs/spec_01.vcf.gz");
-        expect(members[0]!.companions).toEqual([{ path: "inputs/spec_01.vcf.gz.tbi", suffix: ".tbi", size: 16 }]);
+        expect(presentAt(members, 0).path).toBe("inputs/spec_01.vcf.gz");
+        expect(presentAt(members, 0).companions).toEqual([{ path: "inputs/spec_01.vcf.gz.tbi", suffix: ".tbi", size: 16 }]);
     });
 
     it("attaches a companion that replaces the extension rather than extending it", () => {
         const members = attachCompanions([file("inputs/align_01.bam"), file("inputs/align_01.bai", 16)]);
 
         expect(members).toHaveLength(1);
-        expect(members[0]!.companions.map((companion) => companion.suffix)).toEqual([".bai"]);
+        expect(presentAt(members, 0).companions.map((companion) => companion.suffix)).toEqual([".bai"]);
     });
 
     it("follows a chain to the file that is data", () => {
         const members = attachCompanions([file("inputs/spec_01.vcf.gz"), file("inputs/spec_01.vcf.gz.tbi"), file("inputs/spec_01.vcf.gz.tbi.md5")]);
 
         expect(members).toHaveLength(1);
-        expect(members[0]!.companions.map((companion) => companion.suffix).sort()).toEqual([".md5", ".tbi"]);
+        expect(
+            presentAt(members, 0)
+                .companions.map((companion) => companion.suffix)
+                .sort(),
+        ).toEqual([".md5", ".tbi"]);
     });
 
     it("leaves a companion whose data file is absent as a member of its own", () => {
@@ -83,7 +88,7 @@ describe("assessCompleteness", () => {
         expect(completeness.completeMembers).toBe(3);
         expect(completeness.incompleteMembers).toBe(1);
         expect(completeness.incompleteSample).toEqual([{ path: "inputs/spec_04.vcf.gz", missingCompanions: [".tbi"] }]);
-        expect(assessed[3]!.missingCompanions).toEqual([".tbi"]);
+        expect(presentAt(assessed, 3).missingCompanions).toEqual([".tbi"]);
     });
 
     it("expects nothing from a companion only a minority carries", () => {

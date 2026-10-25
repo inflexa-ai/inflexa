@@ -6,6 +6,7 @@
 import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
+import { presentAt } from "../lib/present.js";
 import type { Querier } from "./db.js";
 import { ArtifactRole, ArtifactRowSchema, type ArtifactRow } from "./schema.js";
 
@@ -414,8 +415,9 @@ export function updateFileIds(pool: Querier, pairs: Array<{ artifactId: string; 
         const tuples: string[] = [];
         for (let i = 0; i < pairs.length; i++) {
             const base = i * 2;
+            const pair = presentAt(pairs, i, "the artifact/file pair at the index");
             tuples.push(`($${base + 1}::text, $${base + 2}::text)`);
-            values.push(pairs[i]!.artifactId, pairs[i]!.fileId);
+            values.push(pair.artifactId, pair.fileId);
         }
         await pool.query({
             text: `UPDATE cortex_artifacts AS a

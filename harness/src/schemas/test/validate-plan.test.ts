@@ -7,8 +7,9 @@ import { STEP_SUBDIRS } from "../../workspace/paths.js";
 import { AnalysisStepSchema } from "../workflow-state.js";
 import type { AnalysisPlan, AnalysisStep } from "../workflow-state.js";
 import { validatePlan } from "../validate-plan.js";
+import { presentAt } from "../../lib/present.js";
 
-const AGENT = KNOWN_AGENT_IDS[0]!;
+const AGENT = presentAt(KNOWN_AGENT_IDS, 0);
 
 function step(over: Partial<AnalysisStep> & { id: string }): AnalysisStep {
     return {
@@ -228,7 +229,7 @@ describe("the capability field of a step", () => {
         depends_on: [],
         resources: { cpu: 1, memoryGb: 2 },
         packages: [],
-        agent: PLANNABLE_AGENT_IDS[0]!,
+        agent: presentAt(PLANNABLE_AGENT_IDS, 0),
     };
 
     it("parses a stored step that carries no phrase", () => {

@@ -252,7 +252,9 @@ describe("PubMed citation client", () => {
                 return text(PUBMED_TWO_XML);
             }),
         });
-        const results = await client.resolveMany!([
+        const resolveMany = client.resolveMany;
+        if (resolveMany === undefined) throw new Error("the pubmed client declares no batch resolve");
+        const results = await resolveMany([
             request({ citation: "PMID: 87654321" }, "pubmed", "pubmed_exact"),
             request({ citation: "PMID: 12345678" }, "pubmed", "pubmed_exact"),
         ]);

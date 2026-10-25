@@ -24,6 +24,7 @@ import {
     RegulatorySearchResponseSchema,
     RegulatorySectionResponseSchema,
 } from "../amass-client.js";
+import { presentAt } from "../../../lib/present.js";
 
 runFixtureSuite("Amass golden fixtures", [
     fixtureCase({
@@ -37,16 +38,16 @@ runFixtureSuite("Amass golden fixtures", [
             expect(rows.map((row) => row.agency)).toEqual(["FDA", "FDA", "EMA"]);
 
             // The active Gleevec label matched 16 sections; the row keeps 5, grouped by source document.
-            const gleevec = rows[0]!;
+            const gleevec = presentAt(rows, 0);
             expect(gleevec.matchedSectionCount).toBe(16);
             expect(gleevec.matchedDocuments.flatMap((group) => group.sections)).toHaveLength(MAX_MATCHED_SECTIONS);
             expect(gleevec.matchedDocuments).toHaveLength(4);
-            expect(gleevec.matchedDocuments[0]!.docType).toBe("FDA_LABEL");
-            expect(gleevec.matchedDocuments[0]!.sections).toHaveLength(2);
-            expect(gleevec.matchedDocuments[0]!.sections[0]).not.toHaveProperty("sourceUrl");
+            expect(presentAt(gleevec.matchedDocuments, 0).docType).toBe("FDA_LABEL");
+            expect(presentAt(gleevec.matchedDocuments, 0).sections).toHaveLength(2);
+            expect(presentAt(gleevec.matchedDocuments, 0).sections[0]).not.toHaveProperty("sourceUrl");
 
             // An absent base value is an explicit null.
-            expect(rows[1]!.therapeuticIndication).toBeNull();
+            expect(presentAt(rows, 1).therapeuticIndication).toBeNull();
         },
     }),
     fixtureCase({
@@ -101,10 +102,10 @@ runFixtureSuite("Amass golden fixtures", [
         schema: AmassLookupResponseSchema,
         assertOutput: (response) => {
             // The bare number and the package NDC miss in-band; the prefixed number resolves.
-            expect(response.data[0]!.error?.code).toBe("NOT_FOUND");
-            expect(response.data[0]!.amassIds).toBeUndefined();
-            expect(response.data[1]!.amassIds).toEqual(["AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg"]);
-            expect(response.data[2]!.error?.code).toBe("NOT_FOUND");
+            expect(presentAt(response.data, 0).error?.code).toBe("NOT_FOUND");
+            expect(presentAt(response.data, 0).amassIds).toBeUndefined();
+            expect(presentAt(response.data, 1).amassIds).toEqual(["AMRC_MMqv8cAEmfYfgoetgm9HSnLBlQg"]);
+            expect(presentAt(response.data, 2).error?.code).toBe("NOT_FOUND");
         },
     }),
     fixtureCase({
@@ -125,7 +126,7 @@ runFixtureSuite("Amass golden fixtures", [
         drift: "patent-search.drift.json",
         schema: PatentSearchResponseSchema,
         assertOutput: (response) => {
-            const patent = mapPatentSummary(response.data[0]!);
+            const patent = mapPatentSummary(presentAt(response.data, 0));
             expect(patent.publicationNumber).toBe("CN-103570677-A");
             expect(patent.grantDate).toBeNull();
             expect(patent.familyMemberCount).toBe(1);
@@ -153,10 +154,10 @@ runFixtureSuite("Amass golden fixtures", [
         drift: "patent-lookup.drift.json",
         schema: AmassLookupResponseSchema,
         assertOutput: (response) => {
-            expect(response.data[0]!.amassIds).toEqual(["AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M"]);
+            expect(presentAt(response.data, 0).amassIds).toEqual(["AMPC_EzkKarMF7cIFSt3SZg13CV1tr3M"]);
             // One application number, two publications.
-            expect(response.data[1]!.amassIds).toHaveLength(2);
-            expect(response.data[2]!.error?.code).toBe("NOT_FOUND");
+            expect(presentAt(response.data, 1).amassIds).toHaveLength(2);
+            expect(presentAt(response.data, 2).error?.code).toBe("NOT_FOUND");
         },
     }),
 ]);

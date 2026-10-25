@@ -16,6 +16,7 @@
  */
 
 import type { ModelMessage, ToolCallPart, ToolResultPart } from "ai";
+import { presentAt } from "../lib/present.js";
 
 export const NOT_RUN_TOOL_RESULT = "Not run: the turn ended before this call ran.";
 
@@ -77,14 +78,14 @@ export function answerUnansweredToolCalls(messages: ModelMessage[], fromIndex = 
     // Backward, so an insertion after a message cannot shift an index this walk
     // has yet to visit.
     for (let idx = messages.length - 1; idx >= fromIndex; idx--) {
-        const message = messages[idx]!;
+        const message = presentAt(messages, idx, "the message at the index");
         if (message.role !== "assistant" || typeof message.content === "string") continue;
         const unanswered = message.content.filter(
             (part): part is ToolCallPart => part.type === "tool-call" && needsClientResult(part) && !resultIds.has(part.toolCallId),
         );
         if (unanswered.length === 0) continue;
         let insertAt = idx + 1;
-        while (insertAt < messages.length && messages[insertAt]!.role === "tool") insertAt++;
+        while (insertAt < messages.length && presentAt(messages, insertAt, "the message at the insert point").role === "tool") insertAt++;
         messages.splice(insertAt, 0, { role: "tool", content: unanswered.map((part) => notRunResult(part)) });
         // Prepended as a batch: the walk visits messages tail-first, but the
         // caller's record reads in transcript order.

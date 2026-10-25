@@ -241,7 +241,7 @@ function deriveShapeDraw(block: ChartBlock, rows: readonly ChartRow[], context: 
     const named = labelColumn !== undefined;
     const labeled = named && draw.labelRows > 0 && points.length <= draw.labelRows;
     const sides = new Map<number, NameSide>();
-    if (labeled && labelColumn !== undefined) {
+    if (labelColumn !== undefined && labeled) {
         const placed = pointNameSides(
             points.map((point) => ({ x: point.x, y: point.y, text: String(rows[point.index]?.[labelColumn] ?? "") })),
             ranges,

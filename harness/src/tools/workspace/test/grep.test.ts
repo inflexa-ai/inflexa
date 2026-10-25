@@ -7,6 +7,7 @@ import { okAsync } from "neverthrow";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { GREP_LIMITS, createGrepTool } from "../grep.js";
+import { presentAt, presentGet } from "../../../lib/present.js";
 
 type FakeTree = {
     /** path → file content (utf8). Path is workspace-relative. */
@@ -18,7 +19,7 @@ type FakeTree = {
 function fakeFs(tree: FakeTree): WorkspaceFilesystem {
     return {
         stat({ path }) {
-            if (path in tree.files) return okAsync({ kind: "ok", type: "file", size: tree.files[path]!.length });
+            if (path in tree.files) return okAsync({ kind: "ok", type: "file", size: presentGet(tree.files, path).length });
             if (path in tree.dirs) return okAsync({ kind: "ok", type: "directory", size: 0 });
             return okAsync({ kind: "not_found" });
         },
@@ -51,8 +52,8 @@ describe("createGrepTool", () => {
         expect(r.status).toBe("ok");
         if (r.status === "ok") {
             expect(r.matches).toHaveLength(1);
-            expect(r.matches[0]!.line).toBe(2);
-            expect(r.matches[0]!.preview).toContain("BRCA1");
+            expect(presentAt(r.matches, 0).line).toBe(2);
+            expect(presentAt(r.matches, 0).preview).toContain("BRCA1");
         }
     });
 

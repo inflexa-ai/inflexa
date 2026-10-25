@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { forStep, forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
+import { presentFirst } from "../lib/present.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
@@ -466,7 +467,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
     const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
-    let selfCancelled = false;
+    let selfCancelled: boolean | undefined;
     // A suspension fails the row with the reason of the host, because the profile
     // ledger has no suspended state and the retry path takes a `failed` row again.
     const suspendProfile = async (suspension: Suspension): Promise<void> => {
@@ -715,7 +716,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 deadlineMs: () => deadlineAbs,
             });
 
-            let accepted: { submission: ProfileSubmission; resolution: ProfileResolution } | null = null;
+            let accepted: { submission: ProfileSubmission; resolution: ProfileResolution } | undefined;
             let rounds = 0;
             type SubmitOutcome =
                 | { readonly status: "needs_repair"; readonly detail: string }
@@ -787,7 +788,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                         if (event.type === "tool-started") await activity.forTool(event.name, event.input, resolveDetail);
                     },
                     runStep: durableStep,
-                    resolved: () => accepted !== null,
+                    resolved: () => accepted !== undefined,
                     invocationId: workflowId,
                     usageRecorder: deps.usageRecorder,
                     toolOutputStore: deps.toolOutputStore,
@@ -1200,6 +1201,6 @@ export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfile
 const PROFILE_ERROR_MAX_LEN = 200;
 function profileFailureReason(err: unknown): string {
     const raw = err instanceof Error ? err.message : String(err);
-    const firstLine = raw.split("\n", 1)[0]!.replace(/\s+/g, " ").trim();
+    const firstLine = presentFirst(raw.split("\n", 1), "the first line of the error").replace(/\s+/g, " ").trim();
     return firstLine.length > PROFILE_ERROR_MAX_LEN ? firstLine.slice(0, PROFILE_ERROR_MAX_LEN - 1) + "…" : firstLine || "Data profiling failed";
 }

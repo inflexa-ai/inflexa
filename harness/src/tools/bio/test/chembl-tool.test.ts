@@ -8,6 +8,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import type { ChemblOutput } from "../chembl.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { chemblTool } from "../chembl.js";
+import { presentAt } from "../../../lib/present.js";
 
 const realFetch = globalThis.fetch;
 
@@ -125,9 +126,9 @@ describe("chembl — action: targets", () => {
         const targets = resultKey(await callChembl({ action: "targets", query: "EGFR", limit: 25 }), "targets");
 
         expect(targets).toHaveLength(1);
-        expect(targets[0]!.targetChemblId).toBe("CHEMBL203");
-        expect(targets[0]!.geneNames).toEqual(["EGFR"]);
-        expect(targets[0]!.organism).toBe("Homo sapiens");
+        expect(presentAt(targets, 0).targetChemblId).toBe("CHEMBL203");
+        expect(presentAt(targets, 0).geneNames).toEqual(["EGFR"]);
+        expect(presentAt(targets, 0).organism).toBe("Homo sapiens");
         expect(requestedUrls[0]).toContain("/target/search.json?q=EGFR&limit=25");
     });
 
@@ -180,7 +181,7 @@ describe("chembl — action: compounds", () => {
         const compounds = resultKey(await callChembl({ action: "compounds", query: "CC(=O)Oc1ccccc1C(=O)O", searchType: "smiles", limit: 10 }), "compounds");
 
         expect(compounds).toHaveLength(1);
-        expect(compounds[0]!.chemblId).toBe("CHEMBL25");
+        expect(presentAt(compounds, 0).chemblId).toBe("CHEMBL25");
         expect(requestedUrls[0]).toContain("molecule_structures__canonical_smiles__flexmatch=");
         expect(requestedUrls[0]).toContain("limit=10");
     });
@@ -201,8 +202,8 @@ describe("chembl — action: compounds", () => {
 
         expect(compounds.map((c) => c.chemblId)).toEqual(["CHEMBL25", "CHEMBL1201585"]);
         // A biologic with an explicit null in both blocks still parses.
-        expect(compounds[1]!.canonicalSmiles).toBeNull();
-        expect(compounds[1]!.molecularWeight).toBeNull();
+        expect(presentAt(compounds, 1).canonicalSmiles).toBeNull();
+        expect(presentAt(compounds, 1).molecularWeight).toBeNull();
         expect(requestedUrls[0]).toContain("/target/search.json?q=EGFR&limit=1");
         expect(requestedUrls[1]).toContain("/activity.json?target_chembl_id=CHEMBL203&limit=500");
         // The duplicate molecule id is fetched once.
@@ -258,12 +259,12 @@ describe("chembl — action: drug", () => {
         const drugs = resultKey(await callChembl({ action: "drug", query: "melanoma" }), "drugs");
 
         expect(drugs).toHaveLength(1);
-        expect(drugs[0]!.moleculeChemblId).toBe("CHEMBL1229517");
-        expect(drugs[0]!.preferredName).toBe("VEMURAFENIB");
+        expect(presentAt(drugs, 0).moleculeChemblId).toBe("CHEMBL1229517");
+        expect(presentAt(drugs, 0).preferredName).toBe("VEMURAFENIB");
         // ChEMBL serves the decimal `max_phase` as the string "4.0".
-        expect(drugs[0]!.maxPhase).toBe(4);
-        expect(drugs[0]!.firstApproval).toBe(2011);
-        expect(drugs[0]!.indication).toBe("Melanoma; Skin Neoplasms");
+        expect(presentAt(drugs, 0).maxPhase).toBe(4);
+        expect(presentAt(drugs, 0).firstApproval).toBe(2011);
+        expect(presentAt(drugs, 0).indication).toBe("Melanoma; Skin Neoplasms");
         // The name search runs first and misses, then the indication read answers.
         expect(requestedUrls[0]).toContain("/molecule/search.json");
         expect(requestedUrls[1]).toContain("/drug_indication.json?efo_term__icontains=melanoma");
@@ -285,7 +286,7 @@ describe("chembl — action: drug", () => {
         const drugs = resultKey(await callChembl({ action: "drug", query: "leukemia" }), "drugs");
 
         expect(drugs).toHaveLength(1);
-        expect(drugs[0]!.indication).toBe("Leukemia");
+        expect(presentAt(drugs, 0).indication).toBe("Leukemia");
         expect(requestedUrls[2]).toContain("/drug_indication.json?mesh_heading__icontains=leukemia");
     });
 
@@ -319,10 +320,10 @@ describe("chembl — action: drug", () => {
 
         // Only a molecule of max_phase >= 4 is an approved drug.
         expect(drugs).toHaveLength(1);
-        expect(drugs[0]!.moleculeChemblId).toBe("CHEMBL941");
-        expect(drugs[0]!.maxPhase).toBe(4);
-        expect(drugs[0]!.moleculeType).toBe("Small molecule");
-        expect(drugs[0]!.indication).toBe("Leukemia, Myelogenous, Chronic, BCR-ABL Positive");
+        expect(presentAt(drugs, 0).moleculeChemblId).toBe("CHEMBL941");
+        expect(presentAt(drugs, 0).maxPhase).toBe(4);
+        expect(presentAt(drugs, 0).moleculeType).toBe("Small molecule");
+        expect(presentAt(drugs, 0).indication).toBe("Leukemia, Myelogenous, Chronic, BCR-ABL Positive");
         expect(requestedUrls[0]).toContain("/molecule/search.json?q=imatinib&limit=25");
         expect(requestedUrls[1]).toContain("/drug_indication.json?molecule_chembl_id__in=CHEMBL941");
         expect(requestedUrls.some((url) => url.includes("__icontains"))).toBe(false);
@@ -409,10 +410,10 @@ describe("chembl — action: bioactivity", () => {
         );
 
         expect(activities).toHaveLength(1);
-        expect(activities[0]!.standardType).toBe("IC50");
-        expect(activities[0]!.standardValue).toBe(12.5);
-        expect(activities[0]!.pchemblValue).toBe(7.9);
-        expect(activities[0]!.compoundChemblId).toBe("CHEMBL25");
+        expect(presentAt(activities, 0).standardType).toBe("IC50");
+        expect(presentAt(activities, 0).standardValue).toBe(12.5);
+        expect(presentAt(activities, 0).pchemblValue).toBe(7.9);
+        expect(presentAt(activities, 0).compoundChemblId).toBe("CHEMBL25");
         expect(requestedUrls[0]).toContain("/activity.json?molecule_chembl_id=CHEMBL25&limit=500&standard_type=IC50");
     });
 
@@ -421,7 +422,7 @@ describe("chembl — action: bioactivity", () => {
 
         const activities = resultKey(await callChembl({ action: "bioactivity", chemblId: "CHEMBL203", idType: "target" }), "activities");
 
-        expect(activities[0]!.targetChemblId).toBe("CHEMBL203");
+        expect(presentAt(activities, 0).targetChemblId).toBe("CHEMBL203");
         expect(requestedUrls[0]).toContain("/activity.json?target_chembl_id=CHEMBL203&limit=25");
         expect(requestedUrls[0]).not.toContain("standard_type=");
     });
@@ -431,7 +432,7 @@ describe("chembl — action: bioactivity", () => {
 
         const activities = resultKey(await callChembl({ action: "bioactivity", chemblId: "CHEMBL829584", idType: "assay" }), "activities");
 
-        expect(activities[0]!.assayChemblId).toBe("CHEMBL829584");
+        expect(presentAt(activities, 0).assayChemblId).toBe("CHEMBL829584");
         expect(requestedUrls[0]).toContain("/activity.json?assay_chembl_id=CHEMBL829584&limit=25");
     });
 

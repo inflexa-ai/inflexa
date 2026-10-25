@@ -20,6 +20,7 @@
  */
 
 import { z } from "zod";
+import { presentFirst } from "../../lib/present.js";
 
 import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
 
@@ -78,7 +79,7 @@ export async function fetchAlphaFoldPrediction(uniprotAccession: string): Promis
     if (entries.length === 0) return null;
 
     const exact = entries.find((entry) => entry.uniprotAccession.toUpperCase() === accession.toUpperCase());
-    return exact ?? entries[0]!;
+    return exact ?? presentFirst(entries, "the fallback entry");
 }
 
 function isAbsence(e: ApiError): boolean {

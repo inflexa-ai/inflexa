@@ -33,8 +33,10 @@ describe("placeLeaderNames", () => {
             { x: 52, y: 51, text: "Hml" },
         ];
         const placed = placeLeaderNames(names, { xs: [50, 52], ys: [50, 51], pointPx: 4 }, PLOT, ["right", "left"], 100, FRAME);
-        expect(placed.every((name) => name !== undefined)).toBe(true);
-        const [first, second] = placed.map((name, index) => leaderNameBox(name!, names[index]?.text ?? "", PLOT, FRAME));
+        const [first, second] = placed.map((name, index) => {
+            if (name === undefined) throw new Error("the placed name is absent");
+            return leaderNameBox(name, names[index]?.text ?? "", PLOT, FRAME);
+        });
         if (first === undefined || second === undefined) throw new Error("the two names hold no box");
         expect(overlaps(first, second)).toBe(false);
     });
