@@ -63,12 +63,12 @@ type FakeState = {
 
 function fakePool(state: FakeState): Pool {
     // The state queries pass a config object; the working-memory store passes the text and the values apart.
-    const query = async (config: string | { text: string; values?: readonly unknown[] }, values?: readonly unknown[]) => {
+    const query = (config: string | { text: string; values?: readonly unknown[] }, values?: readonly unknown[]) => {
         const q = typeof config === "string" ? { text: config, values } : config;
         const text = q.text.trim();
         if (text.startsWith("SELECT data_profile_status")) {
-            if (!state.profile) return { rows: [], rowCount: 0 };
-            return {
+            if (!state.profile) return Promise.resolve({ rows: [], rowCount: 0 });
+            return Promise.resolve({
                 rows: [
                     {
                         data_profile_status: "completed",
@@ -80,21 +80,22 @@ function fakePool(state: FakeState): Pool {
                     },
                 ],
                 rowCount: 1,
-            };
+            });
         }
         if (text.startsWith("SELECT data FROM cortex_working_memory")) {
-            if (state.memoryReadFails) throw new Error("connection refused");
+            if (state.memoryReadFails) return Promise.reject(new Error("connection refused"));
             const data = state.memory?.current;
-            return data ? { rows: [{ data }], rowCount: 1 } : { rows: [], rowCount: 0 };
+            return Promise.resolve(data ? { rows: [{ data }], rowCount: 1 } : { rows: [], rowCount: 0 });
         }
         if (text.startsWith("SELECT path, file_type")) {
             const stepId = q.values?.[2];
             const limit = q.values?.[3];
-            if (typeof stepId !== "string" || typeof limit !== "number") throw new Error(`unexpected artifact-list query values: ${JSON.stringify(q.values)}`);
+            if (typeof stepId !== "string" || typeof limit !== "number")
+                return Promise.reject(new Error(`unexpected artifact-list query values: ${JSON.stringify(q.values)}`));
             const rows = (state.artifactsByStep?.[stepId] ?? []).slice(0, limit);
-            return { rows, rowCount: rows.length };
+            return Promise.resolve({ rows, rowCount: rows.length });
         }
-        return { rows: [], rowCount: 0 };
+        return Promise.resolve({ rows: [], rowCount: 0 });
     };
     return Object.assign(new Pool(), { query });
 }
@@ -105,8 +106,8 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
         pool,
         provider: unusedChatProvider(),
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
-        sandboxStepCallable: async () => {
-            throw new Error("sandboxStepCallable should not be invoked in the seed tests");
+        sandboxStepCallable: () => {
+            return Promise.reject(new Error("sandboxStepCallable should not be invoked in the seed tests"));
         },
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         synthesisModel: "test-synthesis-model",

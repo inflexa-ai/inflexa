@@ -49,6 +49,6 @@ export async function cancelSelf(stepName: string): Promise<never> {
     // The caller runs inside a workflow, so the id is defined in production; the
     // unit-test fake records the call verbatim, undefined included.
     await DBOS.cancelWorkflow(DBOS.workflowID ?? "");
-    await DBOS.runStep(async () => undefined, { name: stepName });
+    await DBOS.runStep(() => Promise.resolve(undefined), { name: stepName });
     throw new Error(`unreachable: ${stepName} did not raise the cancellation`);
 }

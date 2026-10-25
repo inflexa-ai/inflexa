@@ -263,7 +263,7 @@ function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, ro
         embedding: refuseEmbedding(),
         workspaceFs: makeFakeWorkspaceFs(),
         gateway: eyesGateway(),
-        resolveWorkspaceRoot: async () => root,
+        resolveWorkspaceRoot: () => Promise.resolve(root),
         store: refuseReportVersionStore(),
         threads: refuseThreadTitles(),
         chrome,
@@ -388,9 +388,15 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
         workspaceFs: makeFakeWorkspaceFs(),
         model: "test/model",
         utilityModel: "test/utility-model",
-        executeAnalysisWorkflow: async (_input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => refuse("executeAnalysisWorkflow"),
+        executeAnalysisWorkflow: (_input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => {
+            try {
+                return Promise.resolve(refuse("executeAnalysisWorkflow"));
+            } catch (err) {
+                return Promise.reject(err);
+            }
+        },
         anchorReportSession: createReportSessionRuntime({ pool }).ensureSessionState,
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: refuseRunLauncher(),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -526,7 +532,7 @@ describe("the tool output store of the composition", () => {
             workspaceFs: makeFakeWorkspaceFs(),
             model: "test/model",
             utilityModel: "test/utility-model",
-            resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
             runAuthorizer: createLocalRunAuthorizer(),
             runLauncher: refuseRunLauncher(),
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -613,8 +619,10 @@ describe("the approval of the composition", () => {
     it("starts the run through the run launcher of the conversation deps", async () => {
         const launched: string[] = [];
         const runLauncher: RunLauncher = {
-            launch: async (_workflow, options) => {
+            launch: (_workflow, options) => {
                 launched.push(options.workflowId);
+
+                return Promise.resolve();
             },
         };
         const runAuthorizer: RunAuthorizer = {
@@ -641,7 +649,7 @@ describe("the approval of the composition", () => {
                 workspaceFs: makeFakeWorkspaceFs(),
                 model: "test/model",
                 utilityModel: "test/utility-model",
-                resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
                 runAuthorizer,
                 runLauncher,
                 bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

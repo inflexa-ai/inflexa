@@ -59,11 +59,11 @@ afterEach(async () => {
 function statementPool(): { pool: Querier; statements: Array<{ text: string; values: readonly unknown[] }> } {
     const statements: Array<{ text: string; values: readonly unknown[] }> = [];
     const pool: Querier = {
-        query: async (textOrConfig, values) => {
+        query: (textOrConfig, values) => {
             const text = typeof textOrConfig === "string" ? textOrConfig : textOrConfig.text;
             const configValues = typeof textOrConfig === "string" ? undefined : textOrConfig.values;
             statements.push({ text, values: configValues ?? values ?? [] });
-            return { rows: [], rowCount: 0 };
+            return Promise.resolve({ rows: [], rowCount: 0 });
         },
     };
     return { pool, statements };
@@ -85,8 +85,8 @@ function deps(pool: Querier, sandboxClient: SandboxClient, revoked: string[]): D
         provider: unusedChatProvider(),
         pool,
         sandboxClient,
-        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
-        resolveWorkspaceRoot: async (id) => join(root, id),
+        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
+        resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
         model: "test-model",
         runAuthorizer: {
             authorize: () => {

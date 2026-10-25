@@ -36,8 +36,8 @@ function toolContext(analysisId = "analysis-001"): ToolContext {
         }),
         signal: new AbortController().signal,
         emit: () => {},
-        ask: async () => {
-            throw new Error("ask should not be reached");
+        ask: () => {
+            return Promise.reject(new Error("ask should not be reached"));
         },
     };
 }

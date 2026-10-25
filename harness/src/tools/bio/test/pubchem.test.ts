@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = fetchDouble(async (url) => response(String(url)));
+    globalThis.fetch = fetchDouble((url) => Promise.resolve(response(String(url))));
 }
 
 function json(body: unknown, status = 200): Response {

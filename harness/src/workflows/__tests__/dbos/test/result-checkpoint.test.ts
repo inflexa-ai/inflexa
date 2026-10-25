@@ -35,16 +35,16 @@ let stepCalls = 0;
 const errStepMirror = DBOS.registerWorkflow(
     async (): Promise<{ isErr: boolean; hasMatch: boolean; error: Refusal | null }> => {
         const result = await DBOS.runStep(
-            async (): Promise<Result<string, Refusal>> => {
+            (): Promise<Result<string, Refusal>> => {
                 stepCalls += 1;
-                return err({ reason: "refused", suspend: true });
+                return Promise.resolve(err({ reason: "refused", suspend: true }));
             },
             { name: "result-checkpoint.step" },
         );
         const workflowId = DBOS.workflowID;
         if (workflowId === undefined) throw new Error("the workflow id is absent outside a DBOS execution");
         await DBOS.cancelWorkflow(workflowId);
-        await DBOS.runStep(async () => undefined, { name: "result-checkpoint.tail" });
+        await DBOS.runStep(() => Promise.resolve(undefined), { name: "result-checkpoint.tail" });
         return {
             isErr: result.isErr(),
             hasMatch: typeof result.match === "function",
@@ -55,7 +55,7 @@ const errStepMirror = DBOS.registerWorkflow(
 );
 
 const errWorkflow = DBOS.registerWorkflow(
-    async (): Promise<Result<string, { kind: "suspended"; reason: string }>> => err({ kind: "suspended", reason: "payment_required" }),
+    (): Promise<Result<string, { kind: "suspended"; reason: string }>> => Promise.resolve(err({ kind: "suspended", reason: "payment_required" })),
     { name: "result-checkpoint-workflow" },
 );
 

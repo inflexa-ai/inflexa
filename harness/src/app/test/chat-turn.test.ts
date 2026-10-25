@@ -387,7 +387,7 @@ describe("runChatTurn", () => {
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute: async ({ label }) => ok({ label }),
+            execute: ({ label }) => Promise.resolve(ok({ label })),
         });
     }
 
@@ -579,8 +579,8 @@ describe("runChatTurn", () => {
             description: "Throws an AbortError that no abort of the turn caused.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw new DOMException("The operation was aborted", "AbortError");
+            execute: () => {
+                return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "stall", {})], "tool_use")]);
@@ -690,7 +690,7 @@ describe("runChatTurn", () => {
             description: "Give a long text.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok(text),
+            execute: () => Promise.resolve(ok(text)),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "long", {})], "tool_use"), makeMessage([textBlock("read it")], "end_turn")]);
 
@@ -829,7 +829,7 @@ describe("runChatTurn — compaction", () => {
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute: async ({ label }) => ok({ label }),
+            execute: ({ label }) => Promise.resolve(ok({ label })),
         });
     }
 

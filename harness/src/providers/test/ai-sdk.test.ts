@@ -224,9 +224,9 @@ describe("createAiSdkProvider", () => {
     it("runs an embedder-supplied AI SDK language model and adds the headers of the hook as the hook gives them", async () => {
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
+            model: fakeModel((options) => {
                 calls.push(options);
-                return okResult("done");
+                return Promise.resolve(okResult("done"));
             }),
             resolveRequestHeaders: () => okAsync({ "x-attribution": "a1", "x-no-harness-name": "v2" }),
         });
@@ -247,9 +247,9 @@ describe("createAiSdkProvider", () => {
     it("adds no header from a hook when the provider has no hook", async () => {
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
+            model: fakeModel((options) => {
                 calls.push(options);
-                return okResult("done");
+                return Promise.resolve(okResult("done"));
             }),
         });
 
@@ -260,8 +260,8 @@ describe("createAiSdkProvider", () => {
 
     it("gives a 402 as a suspend error with the default reason, and no budget word", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
-                throw Object.assign(new Error("payment required"), { status: 402 });
+            model: fakeModel(() => {
+                return Promise.reject(Object.assign(new Error("payment required"), { status: 402 }));
             }),
         });
 
@@ -274,8 +274,8 @@ describe("createAiSdkProvider", () => {
 
     it("gives an unmapped 403 as a non-retryable provider error", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
-                throw Object.assign(new Error("forbidden"), { status: 403 });
+            model: fakeModel(() => {
+                return Promise.reject(Object.assign(new Error("forbidden"), { status: 403 }));
             }),
         });
 
@@ -286,8 +286,8 @@ describe("createAiSdkProvider", () => {
     it("uses a map from the host in place of the default map", async () => {
         const failing = (status: number) =>
             createAiSdkProvider({
-                model: fakeModel(async () => {
-                    throw Object.assign(new Error("refused"), { status });
+                model: fakeModel(() => {
+                    return Promise.reject(Object.assign(new Error("refused"), { status }));
                 }),
                 suspendOn: { 429: "quota" },
             });
@@ -299,8 +299,8 @@ describe("createAiSdkProvider", () => {
     it("rethrows aborts instead of classifying them", async () => {
         const signal = AbortSignal.abort();
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
-                throw new DOMException("aborted", "AbortError");
+            model: fakeModel(() => {
+                return Promise.reject(new DOMException("aborted", "AbortError"));
             }),
         });
 
@@ -318,13 +318,13 @@ describe("createAiSdkProvider", () => {
         const streamCalls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async (options) => {
+                (options) => {
                     generateCalls.push(options);
-                    return okResult("should not be used");
+                    return Promise.resolve(okResult("should not be used"));
                 },
-                async (options) => {
+                (options) => {
                     streamCalls.push(options);
-                    return streamResult(["he", "llo"]);
+                    return Promise.resolve(streamResult(["he", "llo"]));
                 },
             ),
             resolveRequestHeaders: () => okAsync({ "x-attribution": "a1" }),
@@ -355,29 +355,31 @@ describe("createAiSdkProvider", () => {
         ]);
     });
 
-    it("rejects tool-required agents before the first model call when tool calling is disabled", async () => {
+    it("rejects tool-required agents before the first model call when tool calling is disabled", () => {
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
+            model: fakeModel((options) => {
                 calls.push(options);
-                return okResult();
+                return Promise.resolve(okResult());
             }),
             capabilities: { toolCalling: false },
         });
 
         expect(provider.capabilities.toolCalling).toBe(false);
         expect(calls).toHaveLength(0);
+
+        return Promise.resolve();
     });
 
     // An absent picture flag means "cannot carry", never "unknown". Thus the
     // factory copies a stated flag, and it invents no value for an absent one.
     it("copies a stated user-message picture flag, and leaves an absent one absent", () => {
         const declared = createAiSdkProvider({
-            model: fakeModel(async () => okResult()),
+            model: fakeModel(() => Promise.resolve(okResult())),
             capabilities: { imageUserMessages: true },
         });
         const silent = createAiSdkProvider({
-            model: fakeModel(async () => okResult()),
+            model: fakeModel(() => Promise.resolve(okResult())),
             capabilities: { toolCalling: true },
         });
 
@@ -394,9 +396,9 @@ describe("empty text block sanitization", () => {
     it("strips empty text parts from echoed history before the wire call", async () => {
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
+            model: fakeModel((options) => {
                 calls.push(options);
-                return okResult("done");
+                return Promise.resolve(okResult("done"));
             }),
         });
 
@@ -447,12 +449,14 @@ describe("usage reporting", () => {
 
     it("surfaces input/output and cache tokens on the generate path", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => ({
-                content: [{ type: "text", text: "done" }],
-                finishReason: { unified: "stop", raw: "stop" },
-                usage: cachedUsage,
-                warnings: [],
-            })),
+            model: fakeModel(() =>
+                Promise.resolve({
+                    content: [{ type: "text", text: "done" }],
+                    finishReason: { unified: "stop", raw: "stop" },
+                    usage: cachedUsage,
+                    warnings: [],
+                }),
+            ),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -469,19 +473,20 @@ describe("usage reporting", () => {
     it("surfaces the same usage on the stream path's terminal event", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => ({
-                    stream: new ReadableStream({
-                        start(controller) {
-                            controller.enqueue({ type: "stream-start", warnings: [] });
-                            controller.enqueue({ type: "text-start", id: "txt-1" });
-                            controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
-                            controller.enqueue({ type: "text-end", id: "txt-1" });
-                            controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: cachedUsage });
-                            controller.close();
-                        },
+                () => Promise.resolve(okResult()),
+                () =>
+                    Promise.resolve({
+                        stream: new ReadableStream({
+                            start(controller) {
+                                controller.enqueue({ type: "stream-start", warnings: [] });
+                                controller.enqueue({ type: "text-start", id: "txt-1" });
+                                controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
+                                controller.enqueue({ type: "text-end", id: "txt-1" });
+                                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: cachedUsage });
+                                controller.close();
+                            },
+                        }),
                     }),
-                }),
             ),
         });
 
@@ -501,15 +506,17 @@ describe("usage reporting", () => {
 
     it("leaves cache fields undefined when a provider reports no cache breakdown", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => ({
-                content: [{ type: "text", text: "done" }],
-                finishReason: { unified: "stop", raw: "stop" },
-                usage: {
-                    inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
-                    outputTokens: { total: 5, text: 5, reasoning: undefined },
-                },
-                warnings: [],
-            })),
+            model: fakeModel(() =>
+                Promise.resolve({
+                    content: [{ type: "text", text: "done" }],
+                    finishReason: { unified: "stop", raw: "stop" },
+                    usage: {
+                        inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+                        outputTokens: { total: 5, text: 5, reasoning: undefined },
+                    },
+                    warnings: [],
+                }),
+            ),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -521,19 +528,21 @@ describe("usage reporting", () => {
 
     it("carries a reported reasoning count verbatim, without reconciling it against the output total", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => ({
-                content: [{ type: "text", text: "done" }],
-                finishReason: { unified: "stop", raw: "stop" },
-                usage: {
-                    inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
-                    // A provider counting reasoning OUTSIDE its output total: 90 + 40
-                    // does not equal `total`. Neither figure may be adjusted to fit the
-                    // other — whether reasoning is a subset of output is the provider's
-                    // convention, not the harness's arithmetic.
-                    outputTokens: { total: 90, text: 90, reasoning: 40 },
-                },
-                warnings: [],
-            })),
+            model: fakeModel(() =>
+                Promise.resolve({
+                    content: [{ type: "text", text: "done" }],
+                    finishReason: { unified: "stop", raw: "stop" },
+                    usage: {
+                        inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
+                        // A provider counting reasoning OUTSIDE its output total: 90 + 40
+                        // does not equal `total`. Neither figure may be adjusted to fit the
+                        // other — whether reasoning is a subset of output is the provider's
+                        // convention, not the harness's arithmetic.
+                        outputTokens: { total: 90, text: 90, reasoning: 40 },
+                    },
+                    warnings: [],
+                }),
+            ),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -544,15 +553,17 @@ describe("usage reporting", () => {
 
     it("leaves reasoningTokens undefined — never zero — when a provider reports no reasoning count", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => ({
-                content: [{ type: "text", text: "done" }],
-                finishReason: { unified: "stop", raw: "stop" },
-                usage: {
-                    inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
-                    outputTokens: { total: 5, text: 5, reasoning: undefined },
-                },
-                warnings: [],
-            })),
+            model: fakeModel(() =>
+                Promise.resolve({
+                    content: [{ type: "text", text: "done" }],
+                    finishReason: { unified: "stop", raw: "stop" },
+                    usage: {
+                        inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+                        outputTokens: { total: 5, text: 5, reasoning: undefined },
+                    },
+                    warnings: [],
+                }),
+            ),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -564,26 +575,27 @@ describe("usage reporting", () => {
     it("surfaces reasoning tokens on the stream path's terminal event", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => ({
-                    stream: new ReadableStream({
-                        start(controller) {
-                            controller.enqueue({ type: "stream-start", warnings: [] });
-                            controller.enqueue({ type: "text-start", id: "txt-1" });
-                            controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
-                            controller.enqueue({ type: "text-end", id: "txt-1" });
-                            controller.enqueue({
-                                type: "finish",
-                                finishReason: { unified: "stop", raw: "stop" },
-                                usage: {
-                                    inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
-                                    outputTokens: { total: 90, text: 50, reasoning: 40 },
-                                },
-                            });
-                            controller.close();
-                        },
+                () => Promise.resolve(okResult()),
+                () =>
+                    Promise.resolve({
+                        stream: new ReadableStream({
+                            start(controller) {
+                                controller.enqueue({ type: "stream-start", warnings: [] });
+                                controller.enqueue({ type: "text-start", id: "txt-1" });
+                                controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
+                                controller.enqueue({ type: "text-end", id: "txt-1" });
+                                controller.enqueue({
+                                    type: "finish",
+                                    finishReason: { unified: "stop", raw: "stop" },
+                                    usage: {
+                                        inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
+                                        outputTokens: { total: 90, text: 50, reasoning: 40 },
+                                    },
+                                });
+                                controller.close();
+                            },
+                        }),
                     }),
-                }),
             ),
         });
 
@@ -601,9 +613,9 @@ describe("the order of the reasoning effort", () => {
     function recordingProvider(configured?: ReasoningPolicy): { provider: ChatProvider; sent: (ReasoningPolicy | undefined)[] } {
         const sent: (ReasoningPolicy | undefined)[] = [];
         const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
+            model: fakeModel((options) => {
                 sent.push(options.reasoning);
-                return okResult();
+                return Promise.resolve(okResult());
             }),
             reasoning: configured,
         });
@@ -836,14 +848,16 @@ describe("createAiSdkProvider chat retry", () => {
     it("retries a connection failure and succeeds on the next attempt", async () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 attempts += 1;
                 if (attempts === 1) {
-                    throw Object.assign(new TypeError("fetch failed"), {
-                        cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
-                    });
+                    return Promise.reject(
+                        Object.assign(new TypeError("fetch failed"), {
+                            cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
+                        }),
+                    );
                 }
-                return okResult("recovered");
+                return Promise.resolve(okResult("recovered"));
             }),
         });
 
@@ -867,9 +881,9 @@ describe("createAiSdkProvider chat retry", () => {
         for (const { status, type } of cases) {
             let attempts = 0;
             const provider = createAiSdkProvider({
-                model: fakeModel(async () => {
+                model: fakeModel(() => {
                     attempts += 1;
-                    throw Object.assign(new Error(`HTTP ${status}`), { status });
+                    return Promise.reject(Object.assign(new Error(`HTTP ${status}`), { status }));
                 }),
             });
 
@@ -887,11 +901,11 @@ describe("createAiSdkProvider chat retry", () => {
     it("exhausts retries on a persistent retryable failure and preserves the transient classification", async () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 attempts += 1;
                 // The 503 reaches classification down the retry wrapper's cause
                 // chain; asserting type/retryable proves it stayed reachable.
-                throw apiError503();
+                return Promise.reject(apiError503());
             }),
         });
 
@@ -908,9 +922,9 @@ describe("createAiSdkProvider chat retry", () => {
     it("bounds the envelope by a configured maxRetries in place of the default", async () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 attempts += 1;
-                throw apiError503();
+                return Promise.reject(apiError503());
             }),
             maxRetries: 2,
         });
@@ -930,11 +944,11 @@ describe("createAiSdkProvider chat retry", () => {
         let attempts = 0;
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
+            model: fakeModel((options) => {
                 calls.push(options);
                 attempts += 1;
-                if (attempts === 1) throw apiError503();
-                return okResult();
+                if (attempts === 1) return Promise.reject(apiError503());
+                return Promise.resolve(okResult());
             }),
             resolveRequestHeaders: () => {
                 hookCalls += 1;
@@ -953,9 +967,9 @@ describe("createAiSdkProvider chat retry", () => {
     it("never retries a status that the map of the host holds", async () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 attempts += 1;
-                throw Object.assign(new Error("HTTP 429"), { status: 429 });
+                return Promise.reject(Object.assign(new Error("HTTP 429"), { status: 429 }));
             }),
             suspendOn: { 429: "quota_exhausted" },
         });
@@ -971,11 +985,11 @@ describe("createAiSdkProvider abort during backoff", () => {
     it("abandons a pending retry backoff when the signal fires", async () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 attempts += 1;
                 // A 4s server-named delay makes the backoff long enough that only
                 // the abort — not the delay elapsing — can end the call quickly.
-                throw apiError503({ "retry-after-ms": "4000" });
+                return Promise.reject(apiError503({ "retry-after-ms": "4000" }));
             }),
         });
 
@@ -1005,9 +1019,9 @@ describe("createAiSdkProvider abort during backoff", () => {
         // unchanged.
         let attempts = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 attempts += 1;
-                throw new DOMException("The operation timed out.", "TimeoutError");
+                return Promise.reject(new DOMException("The operation timed out.", "TimeoutError"));
             }),
         });
 
@@ -1031,11 +1045,11 @@ describe("createAiSdkProvider chatStream retry", () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     attempts += 1;
-                    if (attempts === 1) return streamErrorsBeforeDelta(apiError503());
-                    return streamResult(["a", "b"]);
+                    if (attempts === 1) return Promise.resolve(streamErrorsBeforeDelta(apiError503()));
+                    return Promise.resolve(streamResult(["a", "b"]));
                 },
             ),
         });
@@ -1065,10 +1079,10 @@ describe("createAiSdkProvider chatStream retry", () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     attempts += 1;
-                    return streamDeltaThenError("a", apiError503());
+                    return Promise.resolve(streamDeltaThenError("a", apiError503()));
                 },
             ),
         });
@@ -1092,10 +1106,10 @@ describe("createAiSdkProvider chatStream retry", () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     attempts += 1;
-                    return streamErrorsBeforeDelta(apiError503());
+                    return Promise.resolve(streamErrorsBeforeDelta(apiError503()));
                 },
             ),
         });
@@ -1122,15 +1136,15 @@ describe("createAiSdkProvider chatStream retry", () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     attempts += 1;
                     // A rejected doStream promise is the shape a real connection
                     // failure at establishment takes; streamText defers it past a
                     // clean first pull, so the envelope surfaces it via the result
                     // promises rather than the first `textStream` pull.
-                    if (attempts === 1) throw apiError503();
-                    return streamResult(["a", "b"]);
+                    if (attempts === 1) return Promise.reject(apiError503());
+                    return Promise.resolve(streamResult(["a", "b"]));
                 },
             ),
         });
@@ -1160,10 +1174,10 @@ describe("createAiSdkProvider chatStream retry", () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     attempts += 1;
-                    throw apiError503();
+                    return Promise.reject(apiError503());
                 },
             ),
         });
@@ -1190,10 +1204,10 @@ describe("createAiSdkProvider chatStream retry", () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     attempts += 1;
-                    return streamWithNoText();
+                    return Promise.resolve(streamWithNoText());
                 },
             ),
         });
@@ -1224,9 +1238,9 @@ describe("createAiSdkProvider request headers hook", () => {
         let generateCalls = 0;
         let hookCalls = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 generateCalls += 1;
-                return okResult();
+                return Promise.resolve(okResult());
             }),
             resolveRequestHeaders: () => {
                 hookCalls += 1;
@@ -1245,7 +1259,7 @@ describe("createAiSdkProvider request headers hook", () => {
 
     it("gives a suspend error with the reason and no status on a hook err with the suspend flag", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => okResult()),
+            model: fakeModel(() => Promise.resolve(okResult())),
             resolveRequestHeaders: () => errAsync({ reason: "account_frozen", suspend: true }),
         });
 
@@ -1259,9 +1273,9 @@ describe("createAiSdkProvider request headers hook", () => {
         let wireCalls = 0;
         let hookCalls = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 wireCalls += 1;
-                throw apiError503();
+                return Promise.reject(apiError503());
             }),
             resolveRequestHeaders: () => {
                 hookCalls += 1;
@@ -1281,9 +1295,9 @@ describe("createAiSdkProvider request headers hook", () => {
         let wireCalls = 0;
         let hookCalls = 0;
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 wireCalls += 1;
-                throw apiError503();
+                return Promise.reject(apiError503());
             }),
             resolveRequestHeaders: () => {
                 hookCalls += 1;
@@ -1306,9 +1320,9 @@ describe("createAiSdkProvider request headers hook", () => {
         // The text of a connection failure, which the wire taxonomy would retry.
         const rejection = new TypeError("fetch failed");
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 wireCalls += 1;
-                return okResult();
+                return Promise.resolve(okResult());
             }),
             resolveRequestHeaders: () => {
                 hookCalls += 1;
@@ -1336,10 +1350,10 @@ describe("createAiSdkProvider request headers hook", () => {
         let streamCalls = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => {
+                () => Promise.resolve(okResult()),
+                () => {
                     streamCalls += 1;
-                    return streamResult(["a"]);
+                    return Promise.resolve(streamResult(["a"]));
                 },
             ),
             resolveRequestHeaders: () => errAsync({ reason: "attribution refused", suspend: false }),
@@ -1372,13 +1386,15 @@ describe("createAiSdkProvider request headers hook", () => {
 describe("model identity", () => {
     it("reports the served model beside the requested one when the endpoint names it", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => ({
-                content: [{ type: "text", text: "done" }],
-                finishReason: { unified: "stop", raw: "stop" },
-                usage,
-                response: { id: "resp-1", timestamp: new Date(0), modelId: "fake-model-20260101" },
-                warnings: [],
-            })),
+            model: fakeModel(() =>
+                Promise.resolve({
+                    content: [{ type: "text", text: "done" }],
+                    finishReason: { unified: "stop", raw: "stop" },
+                    usage,
+                    response: { id: "resp-1", timestamp: new Date(0), modelId: "fake-model-20260101" },
+                    warnings: [],
+                }),
+            ),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -1389,7 +1405,7 @@ describe("model identity", () => {
 
     it("leaves servedModelId absent when the endpoint reports no model id", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => okResult()),
+            model: fakeModel(() => Promise.resolve(okResult())),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -1401,20 +1417,21 @@ describe("model identity", () => {
     it("captures the served model from the stream's response metadata", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => ({
-                    stream: new ReadableStream({
-                        start(controller) {
-                            controller.enqueue({ type: "stream-start", warnings: [] });
-                            controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
-                            controller.enqueue({ type: "text-start", id: "txt-1" });
-                            controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
-                            controller.enqueue({ type: "text-end", id: "txt-1" });
-                            controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-                            controller.close();
-                        },
+                () => Promise.resolve(okResult()),
+                () =>
+                    Promise.resolve({
+                        stream: new ReadableStream({
+                            start(controller) {
+                                controller.enqueue({ type: "stream-start", warnings: [] });
+                                controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
+                                controller.enqueue({ type: "text-start", id: "txt-1" });
+                                controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
+                                controller.enqueue({ type: "text-end", id: "txt-1" });
+                                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                                controller.close();
+                            },
+                        }),
                     }),
-                }),
             ),
         });
 
@@ -1430,8 +1447,8 @@ describe("model identity", () => {
     it("leaves servedModelId absent on a stream that carries no response metadata", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => streamResult(["do", "ne"]),
+                () => Promise.resolve(okResult()),
+                () => Promise.resolve(streamResult(["do", "ne"])),
             ),
         });
 
@@ -1447,17 +1464,18 @@ describe("model identity", () => {
     it("keeps a text-less turn's model identity on the terminal event", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(
-                async () => okResult(),
-                async () => ({
-                    stream: new ReadableStream({
-                        start(controller) {
-                            controller.enqueue({ type: "stream-start", warnings: [] });
-                            controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
-                            controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-                            controller.close();
-                        },
+                () => Promise.resolve(okResult()),
+                () =>
+                    Promise.resolve({
+                        stream: new ReadableStream({
+                            start(controller) {
+                                controller.enqueue({ type: "stream-start", warnings: [] });
+                                controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
+                                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                                controller.close();
+                            },
+                        }),
                     }),
-                }),
             ),
         });
 
@@ -1474,20 +1492,21 @@ describe("model identity", () => {
 describe("stream error parts", () => {
     /** A stream that opens, then reports `error` the way a mid-turn failure does. */
     function erroringStream(error: unknown): () => Promise<LanguageModelV4StreamResult> {
-        return async () => ({
-            stream: new ReadableStream({
-                start(controller) {
-                    controller.enqueue({ type: "stream-start", warnings: [] });
-                    controller.enqueue({ type: "error", error });
-                    controller.close();
-                },
-            }),
-        });
+        return () =>
+            Promise.resolve({
+                stream: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue({ type: "stream-start", warnings: [] });
+                        controller.enqueue({ type: "error", error });
+                        controller.close();
+                    },
+                }),
+            });
     }
 
     it("fails the call rather than returning the empty turn the parts describe", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => okResult("unused"), erroringStream(new Error("upstream exploded"))),
+            model: fakeModel(() => Promise.resolve(okResult("unused")), erroringStream(new Error("upstream exploded"))),
             maxRetries: 0,
         });
 
@@ -1502,7 +1521,7 @@ describe("stream error parts", () => {
 
     it("fails the call with the message of an overload in the stream, and the failure stays retryable", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => okResult("unused"), erroringStream({ type: "overloaded_error", message: "Overloaded" })),
+            model: fakeModel(() => Promise.resolve(okResult("unused")), erroringStream({ type: "overloaded_error", message: "Overloaded" })),
             maxRetries: 0,
         });
 
@@ -1538,8 +1557,8 @@ describe("failure logging", () => {
     it("records a call the envelope gave up on, thus the operator sees what the reply says", async () => {
         const { logger, errors } = recordingLogger();
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
-                throw Object.assign(new Error("payment required"), { status: 402 });
+            model: fakeModel(() => {
+                return Promise.reject(Object.assign(new Error("payment required"), { status: 402 }));
             }),
             maxRetries: 0,
             logger,
@@ -1557,9 +1576,9 @@ describe("failure logging", () => {
         const { logger, errors } = recordingLogger();
         const controller = new AbortController();
         const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
+            model: fakeModel(() => {
                 controller.abort();
-                throw controller.signal.reason;
+                return Promise.reject(controller.signal.reason);
             }),
             maxRetries: 0,
             logger,
@@ -1607,11 +1626,13 @@ describe("dropped thinking blocks", () => {
     ];
 
     function droppingModel(text?: string): LanguageModelV4 {
-        return fakeModel(async () => ({
-            ...okResult(),
-            content: text === undefined ? [] : [{ type: "text", text }],
-            providerMetadata: { anthropic: { inputTransformations: DROPS } },
-        }));
+        return fakeModel(() =>
+            Promise.resolve({
+                ...okResult(),
+                content: text === undefined ? [] : [{ type: "text", text }],
+                providerMetadata: { anthropic: { inputTransformations: DROPS } },
+            }),
+        );
     }
 
     it("writes one warn record for each drop on chat, and chat returns ok", async () => {
@@ -1646,7 +1667,7 @@ describe("dropped thinking blocks", () => {
 
     it("writes no drop record for a response without drops", async () => {
         const { logger, warnings } = recordingLogger();
-        const provider = createAiSdkProvider({ model: fakeModel(async () => okResult()), logger });
+        const provider = createAiSdkProvider({ model: fakeModel(() => Promise.resolve(okResult())), logger });
 
         (await provider.chat(request, makeSession()))._unsafeUnwrap();
         for await (const _event of provider.chatStream(request, makeSession())) {
@@ -1702,12 +1723,14 @@ describe("a reply that a fallback model served", () => {
         content: LanguageModelV4GenerateResult["content"],
         providerMetadata: NonNullable<LanguageModelV4GenerateResult["providerMetadata"]>,
     ): LanguageModelV4 {
-        return fakeModel(async () => ({
-            ...okResult(),
-            content,
-            providerMetadata,
-            response: { id: "resp-1", timestamp: new Date(0), modelId: "claude-opus-5-5" },
-        }));
+        return fakeModel(() =>
+            Promise.resolve({
+                ...okResult(),
+                content,
+                providerMetadata,
+                response: { id: "resp-1", timestamp: new Date(0), modelId: "claude-opus-5-5" },
+            }),
+        );
     }
 
     const partTypesOf = (content: unknown): string[] => {

@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function stubFetch(body: unknown): void {
-    globalThis.fetch = fetchDouble(async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    globalThis.fetch = fetchDouble(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })));
 }
 
 // `UniProtRecordSchema` is private to the client, thus this table drives the

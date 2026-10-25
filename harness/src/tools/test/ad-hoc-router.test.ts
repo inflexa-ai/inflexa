@@ -51,7 +51,7 @@ function providerFailingChat(): ChatProvider {
 }
 
 const emptyPool: Querier = {
-    query: async () => ({ rows: [], rowCount: 0 }),
+    query: () => Promise.resolve({ rows: [], rowCount: 0 }),
 };
 
 const policy = {
@@ -275,13 +275,15 @@ describe("ad hoc routing — the packages of the step", () => {
                 model: "utility-model",
                 pool: emptyPool,
                 resourcePolicy: policy,
-                resolvePackages: async (names) =>
-                    names.map((requested) =>
-                        requested === "scanpy"
-                            ? { requested, present: true as const, name: "scanpy", section: "Python (pip)", version: "1.10.0" }
-                            : requested === "MOFA2"
-                              ? { requested, present: false as const }
-                              : { requested, present: false as const, suggestion: "Seurat" },
+                resolvePackages: (names) =>
+                    Promise.resolve(
+                        names.map((requested) =>
+                            requested === "scanpy"
+                                ? { requested, present: true as const, name: "scanpy", section: "Python (pip)", version: "1.10.0" }
+                                : requested === "MOFA2"
+                                  ? { requested, present: false as const }
+                                  : { requested, present: false as const, suggestion: "Seurat" },
+                        ),
                     ),
             },
             { analysisId: "analysis-1", request: "Integrate these datasets", session: ctx.session, signal: ctx.signal },
@@ -305,7 +307,7 @@ describe("ad hoc routing — the packages of the step", () => {
                     resources: { cpu: 4, memoryGb: 8 },
                     packages: ["scanpy", "MOFA2"],
                 }),
-                resolvePackages: async () => null,
+                resolvePackages: () => Promise.resolve(null),
             },
             { analysisId: "analysis-1", request: "Score this network", session: ctx.session, signal: ctx.signal },
         );

@@ -477,8 +477,8 @@ describe("list_available_packages — reading the inventory", () => {
     });
 
     it("a bound pool reader wins over the farm lock, and the listing renders name==version", async () => {
-        const readPoolInventory = async () =>
-            ({
+        const readPoolInventory = () =>
+            Promise.resolve({
                 kind: "sections",
                 sections: [
                     {
@@ -487,7 +487,7 @@ describe("list_available_packages — reading the inventory", () => {
                         packages: [{ name: "scipy", version: "1.16.3", storeDir: "scipy-1.16.3-ffff0000ffff0000", hash: "b".repeat(64) }],
                     },
                 ],
-            }) as const;
+            } as const);
         // No farmLockFile: with a pool reader, the lock must not even be tried.
         const tool = createListAvailablePackagesTool({ readPoolInventory });
 
@@ -502,7 +502,7 @@ describe("list_available_packages — reading the inventory", () => {
 
     it("an unreadable pool reads as UNKNOWN with its reason, never as empty", async () => {
         const tool = createListAvailablePackagesTool({
-            readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
+            readPoolInventory: () => Promise.resolve({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" } as const),
         });
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
@@ -563,18 +563,19 @@ describe("list_available_packages — reading the inventory", () => {
             {
                 farmLockFile,
                 imagePackagesFile,
-                readPoolInventory: async () =>
-                    ({
+                readPoolInventory: () =>
+                    Promise.resolve({
                         kind: "sections",
                         sections: [{ title: "Python (pip)", track: "python", packages: [{ name: "scipy", version: "1.16.3" }] }],
-                    }) as const,
+                    } as const),
             },
             "analysis-001",
         );
         const unreadable = await readInventorySections(
             {
                 farmLockFile,
-                readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
+                readPoolInventory: () =>
+                    Promise.resolve({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" } as const),
             },
             "analysis-001",
         );

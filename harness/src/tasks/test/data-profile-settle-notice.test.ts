@@ -88,8 +88,8 @@ describe("the settle notice of the data profile", () => {
             provider: unusedChatProvider(),
             pool,
             sandboxClient,
-            workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(root, id) }),
-            resolveWorkspaceRoot: async (id) => join(root, id),
+            workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
             model: "test-model",
             runAuthorizer: {
                 authorize: () => {

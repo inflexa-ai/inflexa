@@ -17,7 +17,7 @@ afterEach(() => {
 
 /** Answer every request with the given payload. */
 function stubFetch(body: unknown): void {
-    globalThis.fetch = fetchDouble(async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    globalThis.fetch = fetchDouble(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })));
 }
 
 runFixtureSuite("dgidb golden fixtures", [

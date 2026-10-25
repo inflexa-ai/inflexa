@@ -40,7 +40,7 @@ const RECORDED: RecordedRunEnd = { status: "failed", error: "synthesis failed", 
 
 const recordsRunEnd = DBOS.registerWorkflow(
     async (): Promise<void> => {
-        await DBOS.runStep(async () => undefined, { name: "run-end-record.work" });
+        await DBOS.runStep(() => Promise.resolve(undefined), { name: "run-end-record.work" });
         await DBOS.setEvent(RUN_END_EVENT_KEY, RECORDED);
     },
     { name: "run-end-record-sets-event" },
@@ -48,7 +48,7 @@ const recordsRunEnd = DBOS.registerWorkflow(
 
 const recordsNothing = DBOS.registerWorkflow(
     async (): Promise<void> => {
-        await DBOS.runStep(async () => undefined, { name: "run-end-record.work" });
+        await DBOS.runStep(() => Promise.resolve(undefined), { name: "run-end-record.work" });
     },
     { name: "run-end-record-sets-nothing" },
 );
@@ -62,9 +62,10 @@ const observedAttempts: ObservedAttempt[] = [];
 const retriesAStep = DBOS.registerWorkflow(
     async (): Promise<void> => {
         await DBOS.runStep(
-            async () => {
+            () => {
                 observedAttempts.push({ currentAttempt: DBOS.stepStatus?.currentAttempt, maxAttempts: DBOS.stepStatus?.maxAttempts });
-                if (observedAttempts.length < 2) throw new Error("attempt failed");
+                if (observedAttempts.length < 2) return Promise.reject(new Error("attempt failed"));
+                return Promise.resolve();
             },
             { name: "run-end-record.retried", retriesAllowed: true, maxAttempts: 2, intervalSeconds: 0.05, backoffRate: 1 },
         );

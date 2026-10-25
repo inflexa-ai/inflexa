@@ -49,7 +49,7 @@ const lookup = defineTool({
     description: "Look a term up.",
     inputSchema: z.object({ query: z.string() }),
     describeCall: "none",
-    execute: async () => ok({ answer: "SECRET-RESULT" }),
+    execute: () => Promise.resolve(ok({ answer: "SECRET-RESULT" })),
 });
 
 it("exports the loop and model-call spans as one trace, with no prompt or completion text", async () => {
@@ -252,8 +252,8 @@ it("records an exception that a tool throws on its execute_tool span", async () 
         description: "Always throws.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: async () => {
-            throw new TypeError("kaboom");
+        execute: () => {
+            return Promise.reject(new TypeError("kaboom"));
         },
     });
 
@@ -270,7 +270,7 @@ it("labels rejected input on the span with no text of the input", async () => {
         description: "Takes one number.",
         inputSchema: z.strictObject({ n: z.number() }),
         describeCall: "none",
-        execute: async () => ok({}),
+        execute: () => Promise.resolve(ok({})),
     });
 
     // Zod quotes an unrecognized key in its message.
@@ -288,7 +288,7 @@ it("records the shape of rejected input on the span and in one warn, with no val
         description: "Takes a run id, a count, and environment variables.",
         inputSchema: z.object({ runId: z.string(), count: z.number(), env: z.record(z.string(), z.string()) }),
         describeCall: "none",
-        execute: async () => ok({}),
+        execute: () => Promise.resolve(ok({})),
     });
     const logger = createCapturingLogger();
 
@@ -309,7 +309,7 @@ it("labels an err(ToolError) with its text and records no exception", async () =
         description: "Returns an err Result.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: async () => err({ error: "upstream down", retryable: true } as const),
+        execute: () => Promise.resolve(err({ error: "upstream down", retryable: true } as const)),
     });
 
     const span = await executeToolSpan(down, "tc-err", {});

@@ -35,7 +35,7 @@ const echoTool = defineTool({
     description: "A no-op tool.",
     inputSchema: z.object({}),
     describeCall: "none",
-    execute: async () => ok({ ok: true }),
+    execute: () => Promise.resolve(ok({ ok: true })),
 });
 
 function agentDef(maxIterations = 8): AgentDefinition {
@@ -514,7 +514,7 @@ function seenBody(init: RequestInit | undefined): Record<string, unknown> {
  * same neutral field the Anthropic provider uses.
  */
 function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
-    const run = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const run = (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         seen.push(seenBody(init));
         const base = { id: "chatcmpl-1", object: "chat.completion.chunk", created: 1_700_000_000, model: "local-model" };
         const body = [
@@ -526,7 +526,7 @@ function cannedOpenAiFetch(seen: Record<string, unknown>[]): typeof fetch {
             })}\n\n`,
             "data: [DONE]\n\n",
         ].join("");
-        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+        return Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }));
     };
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
@@ -596,15 +596,17 @@ describe("prompt caching against an openai-compatible provider", () => {
 
 /** A canned Bedrock Converse response — enough for the provider to parse a reply. */
 function cannedBedrockFetch(seen: Record<string, unknown>[]): typeof fetch {
-    const run = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const run = (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         seen.push(seenBody(init));
-        return new Response(
-            JSON.stringify({
-                output: { message: { role: "assistant", content: [{ text: "ok" }] } },
-                stopReason: "end_turn",
-                usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
+        return Promise.resolve(
+            new Response(
+                JSON.stringify({
+                    output: { message: { role: "assistant", content: [{ text: "ok" }] } },
+                    stopReason: "end_turn",
+                    usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+            ),
         );
     };
     return Object.assign(run, { preconnect: fetch.preconnect });

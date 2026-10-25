@@ -18,9 +18,10 @@ import { DBOS_SYSTEM_POOL_SIZE, DEFAULT_APP_POOL_SIZE } from "../pools.js";
 
 function fakePool(maxConnections: number): Querier {
     return Object.assign(new Pool(), {
-        query: async () => ({
-            rows: [{ max: String(maxConnections) }],
-        }),
+        query: () =>
+            Promise.resolve({
+                rows: [{ max: String(maxConnections) }],
+            }),
     });
 }
 

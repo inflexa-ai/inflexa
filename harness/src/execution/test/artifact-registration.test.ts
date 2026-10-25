@@ -27,7 +27,7 @@ const OUT = `runs/${RUN}/${STEP}/output/out.csv`;
 const HASH = `sha256:${"a".repeat(64)}`;
 
 /** Every write this module makes is fire-and-forget SQL, and none of it is read back. */
-const stubDb = (): Querier => ({ query: async () => ({ rows: [], rowCount: 0 }) });
+const stubDb = (): Querier => ({ query: () => Promise.resolve({ rows: [], rowCount: 0 }) });
 
 const manifest = (): ArtifactManifestEntry[] => [{ stepId: STEP, runId: RUN, path: "output/out.csv", size: 40, type: "output", hash: HASH }];
 
@@ -107,9 +107,9 @@ describe("registerStepArtifacts — a refusal of the register gate", () => {
     it("returns the refusal as its err, throws nothing, and writes no external id", async () => {
         const statements: string[] = [];
         const db: Querier = {
-            query: async (query) => {
+            query: (query) => {
                 statements.push(typeof query === "string" ? query : query.text);
-                return { rows: [], rowCount: 0 };
+                return Promise.resolve({ rows: [], rowCount: 0 });
             },
         };
         const refusing: ArtifactRegistry = { register: () => errAsync({ reason: "r", suspend: false }), sync: () => okAsync(undefined) };

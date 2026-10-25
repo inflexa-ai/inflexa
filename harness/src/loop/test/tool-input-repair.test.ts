@@ -31,12 +31,12 @@ function submitTool(): { tool: Tool; seen: unknown[] } {
             note: z.string().optional(),
         }),
         describeCall: "none",
-        execute: async (input) => {
+        execute: (input) => {
             seen.push(input);
             if (input.synthesis.findings.length === 0) {
-                return err({ error: "synthesis must contain at least one finding", retryable: true });
+                return Promise.resolve(err({ error: "synthesis must contain at least one finding", retryable: true }));
             }
-            return ok({ accepted: input.synthesis.runId });
+            return Promise.resolve(ok({ accepted: input.synthesis.runId }));
         },
     });
     return { tool, seen };

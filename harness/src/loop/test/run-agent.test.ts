@@ -331,9 +331,9 @@ describe("runAgent — max-iteration wrap-up", () => {
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute: async ({ label }) => {
+            execute: ({ label }) => {
                 count++;
-                return ok({ label });
+                return Promise.resolve(ok({ label }));
             },
         });
         return { tool, runs: () => count };
@@ -429,8 +429,8 @@ describe("runAgent — tool-error boundary", () => {
             description: "Always throws.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw new Error("kaboom");
+            execute: () => {
+                return Promise.reject(new Error("kaboom"));
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "boom", {})], "tool_use"), makeMessage([textBlock("recovered")], "end_turn")]);
@@ -449,7 +449,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Returns an ok Result.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({ answer: 42 }),
+            execute: () => Promise.resolve(ok({ answer: 42 })),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "ok_tool", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
 
@@ -469,7 +469,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Returns bytes read off disk.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({ header: `MAGIC${NUL}rest`, lines: [`a${NUL}b`] }),
+            execute: () => Promise.resolve(ok({ header: `MAGIC${NUL}rest`, lines: [`a${NUL}b`] })),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "binary_tool", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
 
@@ -487,8 +487,8 @@ describe("runAgent — tool-error boundary", () => {
             description: "Throws with stderr quoted verbatim.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw new Error(`segfault${NUL} core dumped`);
+            execute: () => {
+                return Promise.reject(new Error(`segfault${NUL} core dumped`));
             },
         });
         const provider = scriptedProvider([
@@ -510,7 +510,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Returns an err Result.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => err({ error: "upstream down", retryable: true } as const),
+            execute: () => Promise.resolve(err({ error: "upstream down", retryable: true } as const)),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "err_tool", {})], "tool_use"), makeMessage([textBlock("recovered")], "end_turn")]);
 
@@ -530,7 +530,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Bridges a ToolError through unwrapOrThrow.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok(unwrapOrThrow(err({ error: "sandbox refused the exec", retryable: false } as const))),
+            execute: () => Promise.resolve(ok(unwrapOrThrow(err({ error: "sandbox refused the exec", retryable: false } as const)))),
         });
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "bridging_tool", {})], "tool_use"),
@@ -555,9 +555,9 @@ describe("runAgent — tool-error boundary", () => {
             description: "Needs a number.",
             inputSchema: z.object({ n: z.number() }),
             describeCall: "none",
-            execute: async () => {
+            execute: () => {
                 executed = true;
-                return ok({ ok: true });
+                return Promise.resolve(ok({ ok: true }));
             },
         });
         const provider = scriptedProvider([
@@ -581,8 +581,8 @@ describe("runAgent — tool-error boundary", () => {
             executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw fatal;
+            execute: () => {
+                return Promise.reject(fatal);
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "inline_fatal", {})], "tool_use")]);
@@ -606,8 +606,8 @@ describe("runAgent — tool-error boundary", () => {
             description: "Aborts.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw aborted;
+            execute: () => {
+                return Promise.reject(aborted);
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "abort", {})], "tool_use")]);
@@ -630,7 +630,7 @@ function eyesTool(): Tool {
         description: "Look at a page and give a picture beside the faults.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: async () => ok(withToolResultImage({ faults: ["boom"] }, { base64: "PNGBYTES", mediaType: "image/png" })),
+        execute: () => Promise.resolve(ok(withToolResultImage({ faults: ["boom"] }, { base64: "PNGBYTES", mediaType: "image/png" }))),
     });
 }
 
@@ -641,12 +641,14 @@ function slicingEyesTool(): Tool {
         description: "Look at a tall page and give its slices in document order.",
         inputSchema: z.object({}),
         describeCall: "none",
-        execute: async () =>
-            ok(
-                withToolResultImages({ faults: ["boom"] }, [
-                    { base64: "TILE-ONE", mediaType: "image/png" },
-                    { base64: "TILE-TWO", mediaType: "image/png" },
-                ]),
+        execute: () =>
+            Promise.resolve(
+                ok(
+                    withToolResultImages({ faults: ["boom"] }, [
+                        { base64: "TILE-ONE", mediaType: "image/png" },
+                        { base64: "TILE-TWO", mediaType: "image/png" },
+                    ]),
+                ),
             ),
     });
 }
@@ -903,9 +905,9 @@ describe("runAgent — max_tokens recovery", () => {
             description: "Writes a payload.",
             inputSchema: z.object({ body: z.string() }),
             describeCall: "none",
-            execute: async () => {
+            execute: () => {
                 executed = true;
-                return ok({ ok: true });
+                return Promise.resolve(ok({ ok: true }));
             },
         });
         const provider = scriptedProvider([
@@ -982,9 +984,9 @@ describe("runAgent — tool mask and budget", () => {
             description: `Counts each call of ${id}.`,
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute: async ({ label }) => {
+            execute: ({ label }) => {
                 counts.set(id, (counts.get(id) ?? 0) + 1);
-                return ok({ label });
+                return Promise.resolve(ok({ label }));
             },
         });
     }
@@ -1084,11 +1086,11 @@ describe("runAgent — tool mask and budget", () => {
         const replay: RunStep = (() => {
             async function replayStep(name: string, fn: () => Promise<LlmStepValue>): Promise<LlmStepValue>;
             async function replayStep(name: string, fn: () => Promise<ToolStepValue>): Promise<ToolStepValue>;
-            async function replayStep(name: string, _fn: () => Promise<unknown>): Promise<unknown> {
+            function replayStep(name: string, _fn: () => Promise<unknown>): Promise<unknown> {
                 const step = steps[position++];
-                if (step === undefined) throw new Error(`the replay started the step ${name}, which the recording does not hold`);
-                if (step.name !== name) throw new Error(`the replay started the step ${name} where the recording holds ${step.name}`);
-                return step.value;
+                if (step === undefined) return Promise.reject(new Error(`the replay started the step ${name}, which the recording does not hold`));
+                if (step.name !== name) return Promise.reject(new Error(`the replay started the step ${name} where the recording holds ${step.name}`));
+                return Promise.resolve(step.value);
             }
             return replayStep;
         })();
@@ -1153,7 +1155,7 @@ describe("runAgent — tool mask and budget", () => {
             executionMode: "inline",
             inputSchema: z.object({ label: z.string() }),
             describeCall: "none",
-            execute: async ({ label }) => ok({ label }),
+            execute: ({ label }) => Promise.resolve(ok({ label })),
         });
 
         const { messages } = await runAgent(agentDef([inlineEcho]), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolMask: "none" }));
@@ -1286,8 +1288,8 @@ describe("runAgent — aborted terminal path", () => {
             description: "Honors the abort signal by throwing.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw new Error("aborted mid-tool");
+            execute: () => {
+                return Promise.reject(new Error("aborted mid-tool"));
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "boom", {})], "tool_use"), abortedReply("")]);
@@ -1371,9 +1373,9 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
             description: "Record that the loop executed this call.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
+            execute: () => {
                 executed = true;
-                return ok({});
+                return Promise.resolve(ok({}));
             },
         });
         return { tool, wasExecuted: () => executed };
@@ -1577,7 +1579,7 @@ describe("runAgent — approval denial", () => {
             description: "An ordinary tool.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({ b: true }),
+            execute: () => Promise.resolve(ok({ b: true })),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-A", "guarded", {}), toolUseBlock("tu-B", "plain", {})], "tool_use")]);
 
@@ -1586,8 +1588,8 @@ describe("runAgent — approval denial", () => {
             GO,
             makeSession(),
             opts(provider, {
-                ask: async () => {
-                    throw new AskRejectedError("nope");
+                ask: () => {
+                    return Promise.reject(new AskRejectedError("nope"));
                 },
             }),
         );
@@ -1609,7 +1611,12 @@ describe("runAgent — approval denial", () => {
     it("does not terminate the turn when the approval returns once", async () => {
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
 
-        const { messages, finish } = await runAgent(agentDef([guardedTool()]), GO, makeSession(), opts(provider, { ask: async () => ({ kind: "once" }) }));
+        const { messages, finish } = await runAgent(
+            agentDef([guardedTool()]),
+            GO,
+            makeSession(),
+            opts(provider, { ask: () => Promise.resolve({ kind: "once" }) }),
+        );
 
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(false);
@@ -1748,9 +1755,9 @@ function describedRead(fail = false): Tool {
         description: "Read a path.",
         inputSchema: z.object({ path: z.string() }),
         describeCall: ({ path }) => path,
-        execute: async ({ path }) => {
-            if (fail) throw new Error("disk on fire");
-            return ok({ path });
+        execute: ({ path }) => {
+            if (fail) return Promise.reject(new Error("disk on fire"));
+            return Promise.resolve(ok({ path }));
         },
     });
 }
@@ -1769,9 +1776,9 @@ function describedRender(options: { fail?: boolean; breakHook?: boolean } = {}):
             if (options.breakHook === true) throw new Error("result hook is broken");
             return `page ${page}`;
         },
-        execute: async ({ path }) => {
-            if (options.fail === true) throw new Error("disk on fire");
-            return ok({ page: `${path}.html` });
+        execute: ({ path }) => {
+            if (options.fail === true) return Promise.reject(new Error("disk on fire"));
+            return Promise.resolve(ok({ page: `${path}.html` }));
         },
     });
 }
@@ -1810,7 +1817,7 @@ describe("runAgent — tool call detail", () => {
             description: "Returns an unnormalized detail.",
             inputSchema: z.object({ text: z.string() }),
             describeCall: ({ text }) => text,
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "noisy", { text: `line one\nline two ${"z".repeat(400)}` })], "tool_use"),
@@ -1834,7 +1841,7 @@ describe("runAgent — tool call detail", () => {
             describeCall: () => {
                 throw new Error("hook is broken");
             },
-            execute: async ({ path }) => ok({ path }),
+            execute: ({ path }) => Promise.resolve(ok({ path })),
         });
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "broken-hook", { path: "a.csv" })], "tool_use"),
@@ -1910,7 +1917,7 @@ describe("runAgent — tool result detail", () => {
             inputSchema: z.object({ text: z.string() }),
             describeCall: ({ text }) => text,
             describeResult: (_input, { echoed }) => `wrote\n${echoed}`,
-            execute: async ({ text }) => ok({ echoed: text }),
+            execute: ({ text }) => Promise.resolve(ok({ echoed: text })),
         });
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "noisy_result", { text: `line one ${"z".repeat(400)}` })], "tool_use"),
@@ -2010,8 +2017,8 @@ describe("runAgent — tool-finished outcome", () => {
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use")]);
 
         const events = await runCapturingToolEvents([guardedTool()], provider, {
-            ask: async () => {
-                throw new AskRejectedError("nope");
+            ask: () => {
+                return Promise.reject(new AskRejectedError("nope"));
             },
         });
 
@@ -2025,9 +2032,9 @@ describe("runAgent — tool-finished outcome", () => {
             description: "Requires a numeric count.",
             inputSchema: z.object({ count: z.number() }),
             describeCall: "none",
-            execute: async () => {
+            execute: () => {
                 executed = true;
-                return ok({});
+                return Promise.resolve(ok({}));
             },
         });
         const provider = scriptedProvider([
@@ -2140,8 +2147,10 @@ function recordingSink(): { onRound: (round: AgentRound) => Promise<void>; round
     const rounds: LoopMessage[][] = [];
     return {
         rounds,
-        onRound: async (round) => {
+        onRound: (round) => {
             rounds.push([...round.messages]);
+
+            return Promise.resolve();
         },
     };
 }
@@ -2216,8 +2225,8 @@ describe("runAgent — round sink", () => {
             executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
-                throw fatal;
+            execute: () => {
+                return Promise.reject(fatal);
             },
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "inline_fatal", {})], "tool_use")]);
@@ -2257,9 +2266,9 @@ describe("runAgent — round sink", () => {
                 GO,
                 makeSession(),
                 opts(provider, {
-                    onRound: async () => {
+                    onRound: () => {
                         calls++;
-                        throw rejection;
+                        return Promise.reject(rejection);
                     },
                 }),
             ),
@@ -2471,7 +2480,15 @@ describe("runAgent — compaction", () => {
     }
 
     function policyOf(provider: AgentChat, overrides: Partial<CompactionPolicy> = {}): CompactionPolicy {
-        return { budget: 1_000, provider, request: COMPACT, mask: { allow: ["echo"] }, keepFirstTurn: false, recordsAfter: async () => [RECORD], ...overrides };
+        return {
+            budget: 1_000,
+            provider,
+            request: COMPACT,
+            mask: { allow: ["echo"] },
+            keepFirstTurn: false,
+            recordsAfter: () => Promise.resolve([RECORD]),
+            ...overrides,
+        };
     }
 
     function failingChat(error: ProviderError): AgentChat {
@@ -2674,9 +2691,9 @@ describe("runAgent — compaction", () => {
             description: "Counts each write.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => {
+            execute: () => {
                 writes++;
-                return ok({ written: true });
+                return Promise.resolve(ok({ written: true }));
             },
         });
         const { provider } = compactingProvider(
@@ -2915,8 +2932,10 @@ describe("runAgent — compaction", () => {
                 emit: (event) => {
                     if (event.type === "data-compaction") log.push(compactionParts([event])[0]?.status ?? "no status");
                 },
-                onRound: async (round) => {
+                onRound: (round) => {
                     log.push(markersOf(round.messages).length > 0 ? "marker round" : "round");
+
+                    return Promise.resolve();
                 },
             }),
         );

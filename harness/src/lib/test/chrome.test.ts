@@ -26,10 +26,11 @@ function makeFakeBrowser(id: string): FakeBrowser {
             if (event === "disconnected") listeners.push(listener);
         },
         wsEndpoint: () => `ws://${id}`,
-        createBrowserContext: async () => ({
-            newPage: async () => fakeLookPage(),
-            close: async () => {},
-        }),
+        createBrowserContext: () =>
+            Promise.resolve({
+                newPage: () => Promise.resolve(fakeLookPage()),
+                close: async () => {},
+            }),
     };
     return {
         // The cache reads the connected flag, it registers the disconnect listener, it logs the socket
@@ -57,9 +58,9 @@ afterEach(() => {
 describe("the connection cache", () => {
     it("holds one connection for each endpoint", async () => {
         const calls: string[] = [];
-        restoreConnector = setBrowserConnector(async (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             calls.push(browserUrl);
-            return makeFakeBrowser(browserUrl).browser;
+            return Promise.resolve(makeFakeBrowser(browserUrl).browser);
         });
 
         const one = await getBrowser("http://one.test:9222");
@@ -75,9 +76,9 @@ describe("the connection cache", () => {
 
     it("reuses the connection of an endpoint that it reached already", async () => {
         let connects = 0;
-        restoreConnector = setBrowserConnector(async (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             connects++;
-            return makeFakeBrowser(browserUrl).browser;
+            return Promise.resolve(makeFakeBrowser(browserUrl).browser);
         });
 
         const first = await getBrowser("http://warm.test:9222");
@@ -90,11 +91,11 @@ describe("the connection cache", () => {
     it("evicts the entry of the endpoint that disconnected, and it keeps the other endpoint", async () => {
         const calls: string[] = [];
         const fakes: FakeBrowser[] = [];
-        restoreConnector = setBrowserConnector(async (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             calls.push(browserUrl);
             const fake = makeFakeBrowser(`${browserUrl}/${calls.length}`);
             fakes.push(fake);
-            return fake.browser;
+            return Promise.resolve(fake.browser);
         });
 
         const dead = await getBrowser("http://dead.test:9222");
@@ -114,14 +115,14 @@ describe("the connection cache", () => {
     it("evicts the entry of a connect that failed, and it keeps a healthy endpoint", async () => {
         const calls: string[] = [];
         let refuse = true;
-        restoreConnector = setBrowserConnector(async (browserUrl) => {
+        restoreConnector = setBrowserConnector((browserUrl) => {
             calls.push(browserUrl);
-            if (browserUrl === "http://broken.test:9222" && refuse) throw new Error("connect refused");
-            return makeFakeBrowser(browserUrl).browser;
+            if (browserUrl === "http://broken.test:9222" && refuse) return Promise.reject(new Error("connect refused"));
+            return Promise.resolve(makeFakeBrowser(browserUrl).browser);
         });
 
         const healthy = await getBrowser("http://healthy.test:9222");
-        await expect(withPage({ browserUrl: "http://broken.test:9222", maxPages: 1 }, async () => "unreachable")).rejects.toThrow("connect refused");
+        await expect(withPage({ browserUrl: "http://broken.test:9222", maxPages: 1 }, () => Promise.resolve("unreachable"))).rejects.toThrow("connect refused");
         refuse = false;
 
         // The failed entry is gone, thus the cap of the next caller makes the gate. A kept entry would hold
@@ -137,9 +138,9 @@ describe("the connection cache", () => {
             return "page-1";
         });
         await tick();
-        const other = withPage({ browserUrl: "http://broken.test:9222", maxPages: 2 }, async () => {
+        const other = withPage({ browserUrl: "http://broken.test:9222", maxPages: 2 }, () => {
             started.push("page-2");
-            return "page-2";
+            return Promise.resolve("page-2");
         });
         await tick();
         expect(started).toEqual(["page-1", "page-2"]);
@@ -174,7 +175,7 @@ describe("the connection cache", () => {
     });
 
     it("gates the pages of one endpoint, and it leaves a second endpoint free", async () => {
-        restoreConnector = setBrowserConnector(async (browserUrl) => makeFakeBrowser(browserUrl).browser);
+        restoreConnector = setBrowserConnector((browserUrl) => Promise.resolve(makeFakeBrowser(browserUrl).browser));
         const started: string[] = [];
         let finishFirst: (() => void) | undefined;
         const firstRuns = new Promise<void>((resolve) => {
@@ -189,13 +190,13 @@ describe("the connection cache", () => {
             return "busy-1";
         });
         await tick();
-        const queued = withPage(busy, async () => {
+        const queued = withPage(busy, () => {
             started.push("busy-2");
-            return "busy-2";
+            return Promise.resolve("busy-2");
         });
-        const other = withPage(idle, async () => {
+        const other = withPage(idle, () => {
             started.push("idle-1");
-            return "idle-1";
+            return Promise.resolve("idle-1");
         });
         await tick();
 
@@ -210,6 +211,6 @@ describe("the connection cache", () => {
 
     it("refuses a config that names no endpoint", async () => {
         await expect(getBrowser(undefined)).rejects.toThrow("CHROME_BROWSER_URL");
-        await expect(withPage({}, async () => "unreachable")).rejects.toThrow("CHROME_BROWSER_URL");
+        await expect(withPage({}, () => Promise.resolve("unreachable"))).rejects.toThrow("CHROME_BROWSER_URL");
     });
 });

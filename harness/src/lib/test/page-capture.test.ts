@@ -83,40 +83,46 @@ function makeEvaluateFake(recorder: Recorder, plan: ShotPlan): LookPage["evaluat
 function makeFakeBrowser(recorder: Recorder, plan: ShotPlan = {}): ConnectedBrowser {
     const page: LookPage = {
         on: () => {},
-        setViewport: async (viewport: Viewport) => {
+        setViewport: (viewport: Viewport) => {
             recorder.steps.push("viewport");
             recorder.viewports.push(viewport);
+
+            return Promise.resolve();
         },
-        emulateMediaFeatures: async (features: MediaFeature[]) => {
+        emulateMediaFeatures: (features: MediaFeature[]) => {
             recorder.steps.push("emulate");
             recorder.features.push(features);
+
+            return Promise.resolve();
         },
-        goto: async () => {
+        goto: () => {
             recorder.steps.push("goto");
+
+            return Promise.resolve();
         },
         waitForSelector: () => Promise.resolve(null),
         evaluate: makeEvaluateFake(recorder, plan),
-        screenshot: async (options: ScreenshotOptions) => {
+        screenshot: (options: ScreenshotOptions) => {
             recorder.steps.push("screenshot");
             recorder.shots.push(options);
             if (options.clip !== undefined) {
-                if (plan.failTile !== undefined) throw plan.failTile;
-                return `TILE-${options.clip.y}`;
+                if (plan.failTile !== undefined) return Promise.reject(plan.failTile);
+                return Promise.resolve(`TILE-${options.clip.y}`);
             }
             const refusal = options.fullPage === true ? plan.failFullPage : plan.failViewport;
-            if (refusal !== undefined) throw refusal;
-            return options.fullPage === true ? FULL_PAGE_SHOT : VIEWPORT_SHOT;
+            if (refusal !== undefined) return Promise.reject(refusal);
+            return Promise.resolve(options.fullPage === true ? FULL_PAGE_SHOT : VIEWPORT_SHOT);
         },
     };
     const context: LookContext = {
-        newPage: async () => page,
+        newPage: () => Promise.resolve(page),
         close: async () => {},
     };
     const fake: ConnectedBrowser = {
         connected: true,
         on: () => {},
         wsEndpoint: () => "ws://capture.test",
-        createBrowserContext: async () => context,
+        createBrowserContext: () => Promise.resolve(context),
     };
     return fake;
 }
@@ -131,7 +137,7 @@ afterEach(() => {
 describe("the settled capture", () => {
     it("sizes the window and emulates the reduced-motion preference before the navigation", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder)));
 
         const capture = await capturePage({ browserUrl: "http://capture.test:9222" }, "http://page.test/report");
 
@@ -149,7 +155,7 @@ describe("the framed capture", () => {
     it("gives the whole document at a window that clears each breakpoint of the design", async () => {
         const recorder = makeRecorder();
         // The connection cache holds one browser for each endpoint, thus this test names its own endpoint.
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder)));
 
         await capturePage({ browserUrl: "http://capture-frame.test:9222" }, "http://page.test/report");
 
@@ -165,7 +171,7 @@ describe("the tiled capture", () => {
     it("keeps the one full-page shot for a page at the single-shot bound", async () => {
         const recorder = makeRecorder();
         // A page at the bound reaches the model whole in one shot.
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 4000 }));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 4000 })));
 
         const capture = await capturePage({ browserUrl: "http://capture-bound.test:9222" }, "http://page.test/report");
 
@@ -176,7 +182,7 @@ describe("the tiled capture", () => {
 
     it("slices a tall page into consecutive tiles in document order", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 10000 }));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 10000 })));
 
         const capture = await capturePage({ browserUrl: "http://capture-tall.test:9222" }, "http://page.test/report");
 
@@ -197,7 +203,7 @@ describe("the tiled capture", () => {
 
     it("covers a long report of 16,000 pixels whole", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 16000 }));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 16000 })));
 
         const capture = await capturePage({ browserUrl: "http://capture-long.test:9222" }, "http://page.test/report");
 
@@ -207,7 +213,7 @@ describe("the tiled capture", () => {
 
     it("truncates at the tile budget and reports the captured and the total pixels", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 30000 }));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 30000 })));
 
         const capture = await capturePage({ browserUrl: "http://capture-budget.test:9222" }, "http://page.test/report");
 
@@ -220,8 +226,8 @@ describe("the tiled capture", () => {
 
     it("retries at the window when a tile bitmap fails, and names the viewport coverage", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () =>
-            makeFakeBrowser(recorder, { scrollHeight: 5000, failTile: new Error("the compositor refused the bitmap") }),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 5000, failTile: new Error("the compositor refused the bitmap") })),
         );
 
         const capture = await capturePage({ browserUrl: "http://capture-tile-fail.test:9222" }, "http://page.test/report");
@@ -237,7 +243,9 @@ describe("the tiled capture", () => {
 describe("the degraded capture", () => {
     it("retries at the window when the full-page bitmap fails, and names the viewport coverage", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap") }));
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap") })),
+        );
 
         const capture = await capturePage({ browserUrl: "http://capture-degrade.test:9222" }, "http://page.test/report");
 
@@ -253,8 +261,8 @@ describe("the degraded capture", () => {
     it("propagates the fault when the window bitmap also fails", async () => {
         const recorder = makeRecorder();
         const refusedFullPage = new Error("the compositor refused the bitmap");
-        restoreConnector = setBrowserConnector(async () =>
-            makeFakeBrowser(recorder, { failFullPage: refusedFullPage, failViewport: new Error("the browser is broken") }),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { failFullPage: refusedFullPage, failViewport: new Error("the browser is broken") })),
         );
 
         const capture = capturePage({ browserUrl: "http://capture-broken.test:9222" }, "http://page.test/report");
@@ -272,8 +280,8 @@ describe("the degraded capture", () => {
 describe("the block capture", () => {
     it("clips the measured box of the block, and names the block coverage", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () =>
-            makeFakeBrowser(recorder, { scrollHeight: 16000, blockArea: { x: 300, width: 900, fromY: 5200, toY: 5700 } }),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 16000, blockArea: { x: 300, width: 900, fromY: 5200, toY: 5700 } })),
         );
 
         const capture = await capturePage({ browserUrl: "http://capture-block.test:9222" }, "http://page.test/report", { blockId: "sec-results" });
@@ -288,8 +296,8 @@ describe("the block capture", () => {
 
     it("slices a tall block, and cuts it at the budget", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () =>
-            makeFakeBrowser(recorder, { scrollHeight: 40000, blockArea: { x: 0, width: 1440, fromY: 1000, toY: 26000 } }),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 40000, blockArea: { x: 0, width: 1440, fromY: 1000, toY: 26000 } })),
         );
 
         const capture = await capturePage({ browserUrl: "http://capture-block-tall.test:9222" }, "http://page.test/report", { blockId: "s1" });
@@ -302,7 +310,7 @@ describe("the block capture", () => {
 
     it("takes no picture when the page holds no mark of the block", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () => makeFakeBrowser(recorder, { scrollHeight: 5000 }));
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser(recorder, { scrollHeight: 5000 })));
 
         const capture = await capturePage({ browserUrl: "http://capture-no-block.test:9222" }, "http://page.test/report", { blockId: "gone" });
 
@@ -313,11 +321,13 @@ describe("the block capture", () => {
 
     it("propagates a refused slice of a block, because the window does not show the block", async () => {
         const recorder = makeRecorder();
-        restoreConnector = setBrowserConnector(async () =>
-            makeFakeBrowser(recorder, {
-                blockArea: { x: 0, width: 1440, fromY: 3000, toY: 3400 },
-                failTile: new Error("the compositor refused the bitmap"),
-            }),
+        restoreConnector = setBrowserConnector(() =>
+            Promise.resolve(
+                makeFakeBrowser(recorder, {
+                    blockArea: { x: 0, width: 1440, fromY: 3000, toY: 3400 },
+                    failTile: new Error("the compositor refused the bitmap"),
+                }),
+            ),
         );
 
         const capture = capturePage({ browserUrl: "http://capture-block-fail.test:9222" }, "http://page.test/report", { blockId: "b1" });

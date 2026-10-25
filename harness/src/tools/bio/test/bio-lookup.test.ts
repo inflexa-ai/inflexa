@@ -20,7 +20,7 @@ function json(body: unknown): Response {
 }
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = fetchDouble(async () => response());
+    globalThis.fetch = fetchDouble(() => Promise.resolve(response()));
 }
 
 describe("searchGene (bio-lookup family)", () => {
@@ -86,30 +86,32 @@ describe("searchGene (bio-lookup family)", () => {
 
     it("resolves an Ensembl gene ID to its approved symbol before it reaches Ensembl", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble(async (input) => {
+        globalThis.fetch = fetchDouble((input) => {
             const url = String(input);
             seen.push(url);
             const { hostname, pathname } = new URL(url);
             if (hostname === "rest.genenames.org") {
-                return json({
-                    response: {
-                        docs: [
-                            {
-                                symbol: "TP53",
-                                name: "tumor protein p53",
-                                hgnc_id: "HGNC:11998",
-                                ensembl_gene_id: "ENSG00000141510",
-                                uniprot_ids: ["P04637"],
-                            },
-                        ],
-                    },
-                });
+                return Promise.resolve(
+                    json({
+                        response: {
+                            docs: [
+                                {
+                                    symbol: "TP53",
+                                    name: "tumor protein p53",
+                                    hgnc_id: "HGNC:11998",
+                                    ensembl_gene_id: "ENSG00000141510",
+                                    uniprot_ids: ["P04637"],
+                                },
+                            ],
+                        },
+                    }),
+                );
             }
             if (hostname === "rest.uniprot.org") {
-                return json({ results: [{ primaryAccession: "P04637", genes: [{ geneName: { value: "TP53" } }] }] });
+                return Promise.resolve(json({ results: [{ primaryAccession: "P04637", genes: [{ geneName: { value: "TP53" } }] }] }));
             }
-            if (hostname === "www.ebi.ac.uk" && pathname.startsWith("/chembl")) return json({ targets: [] });
-            return json({ id: "ENSG00000141510", display_name: "TP53", biotype: "protein_coding" });
+            if (hostname === "www.ebi.ac.uk" && pathname.startsWith("/chembl")) return Promise.resolve(json({ targets: [] }));
+            return Promise.resolve(json({ id: "ENSG00000141510", display_name: "TP53", biotype: "protein_coding" }));
         });
 
         const { ctx } = makeToolContext();
@@ -121,10 +123,10 @@ describe("searchGene (bio-lookup family)", () => {
     });
 
     it("reports an identifier that anchors on no human gene as notFound, not an error", async () => {
-        globalThis.fetch = fetchDouble(async (input) => {
+        globalThis.fetch = fetchDouble((input) => {
             const url = String(input);
-            if (new URL(url).hostname === "rest.ensembl.org") return json({ id: "", display_name: "" });
-            return json({});
+            if (new URL(url).hostname === "rest.ensembl.org") return Promise.resolve(json({ id: "", display_name: "" }));
+            return Promise.resolve(json({}));
         });
 
         const { ctx } = makeToolContext();

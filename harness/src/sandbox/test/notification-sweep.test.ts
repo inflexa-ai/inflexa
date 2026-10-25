@@ -16,9 +16,9 @@ describe("sweepStaleNotifications", () => {
     test("forwards limit to deleteStale and returns the cleared count", async () => {
         let received = 0;
         const cleared = await sweepStaleNotifications({
-            deleteStale: async (limit) => {
+            deleteStale: (limit) => {
                 received = limit;
-                return 42;
+                return Promise.resolve(42);
             },
         });
         expect(received).toBe(10_000);
@@ -28,8 +28,8 @@ describe("sweepStaleNotifications", () => {
     test("propagates errors so the scheduled wrapper can log them", async () => {
         await expect(
             sweepStaleNotifications({
-                deleteStale: async () => {
-                    throw new Error("pg down");
+                deleteStale: () => {
+                    return Promise.reject(new Error("pg down"));
                 },
             }),
         ).rejects.toThrow("pg down");
@@ -37,7 +37,7 @@ describe("sweepStaleNotifications", () => {
 
     test("zero-rows return is fine (no log noise required)", async () => {
         const cleared = await sweepStaleNotifications({
-            deleteStale: async () => 0,
+            deleteStale: () => Promise.resolve(0),
         });
         expect(cleared).toBe(0);
     });

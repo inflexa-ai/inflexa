@@ -29,13 +29,15 @@ describe("BoundedRateLimiter", () => {
             { maxConcurrency: 3, requestsPerSecond: 10, maxRetries: 0, maxRetryDelayMs: 0 },
             {
                 now: () => now,
-                sleep: async (milliseconds) => {
+                sleep: (milliseconds) => {
                     if (milliseconds > 0) waits.push(milliseconds);
                     now += milliseconds;
+
+                    return Promise.resolve();
                 },
             },
         );
-        await Promise.all([limiter.run(async () => 1), limiter.run(async () => 2), limiter.run(async () => 3)]);
+        await Promise.all([limiter.run(() => Promise.resolve(1)), limiter.run(() => Promise.resolve(2)), limiter.run(() => Promise.resolve(3))]);
         expect(waits).toEqual([100, 100]);
     });
 
@@ -45,7 +47,7 @@ describe("BoundedRateLimiter", () => {
         const first = limiter.run(async () => await new Promise<void>((resolve) => (release = resolve)));
         await Promise.resolve();
         const controller = new AbortController();
-        const second = limiter.run(async () => undefined, controller.signal);
+        const second = limiter.run(() => Promise.resolve(undefined), controller.signal);
         controller.abort(new DOMException("stop waiting", "AbortError"));
         await expect(second).rejects.toThrow("stop waiting");
         release();
@@ -56,12 +58,12 @@ describe("BoundedRateLimiter", () => {
         const limiter = new BoundedRateLimiter({ maxConcurrency: 1, requestsPerSecond: 1_000_000, maxRetries: 0, maxRetryDelayMs: 0 });
 
         await expect(
-            limiter.run(async () => {
-                throw new Error("upstream exploded");
+            limiter.run(() => {
+                return Promise.reject(new Error("upstream exploded"));
             }),
         ).rejects.toThrow("upstream exploded");
 
-        expect(await limiter.run(async () => "recovered")).toBe("recovered");
+        expect(await limiter.run(() => Promise.resolve("recovered"))).toBe("recovered");
     });
 
     it("returns each operation's own value, in the face of interleaving", async () => {
@@ -83,10 +85,10 @@ describe("BoundedRateLimiter", () => {
         const limiter = new BoundedRateLimiter({ maxConcurrency: 1, requestsPerSecond: 1_000_000, maxRetries: 0, maxRetryDelayMs: 0 });
         let ran = false;
 
-        await expect(limiter.run(async () => (ran = true), AbortSignal.abort(new DOMException("gone", "AbortError")))).rejects.toThrow("gone");
+        await expect(limiter.run(() => Promise.resolve((ran = true)), AbortSignal.abort(new DOMException("gone", "AbortError")))).rejects.toThrow("gone");
 
         expect(ran).toBe(false);
-        expect(await limiter.run(async () => "still usable")).toBe("still usable");
+        expect(await limiter.run(() => Promise.resolve("still usable"))).toBe("still usable");
     });
 
     it("paces from the later of now and the last reservation, so an idle limiter does not bank credit", async () => {
@@ -96,16 +98,18 @@ describe("BoundedRateLimiter", () => {
             { maxConcurrency: 1, requestsPerSecond: 10, maxRetries: 0, maxRetryDelayMs: 0 },
             {
                 now: () => now,
-                sleep: async (milliseconds) => {
+                sleep: (milliseconds) => {
                     if (milliseconds > 0) waits.push(milliseconds);
                     now += milliseconds;
+
+                    return Promise.resolve();
                 },
             },
         );
 
-        await limiter.run(async () => undefined);
+        await limiter.run(() => Promise.resolve(undefined));
         now = 5_000;
-        await limiter.run(async () => undefined);
+        await limiter.run(() => Promise.resolve(undefined));
 
         expect(waits).toEqual([]);
     });
@@ -143,18 +147,20 @@ describe("createRateLimitSchedule", () => {
             { maxConcurrency: 1, requestsPerSecond: 10, maxRetries: 0, maxRetryDelayMs: 0 },
             {
                 now: () => now,
-                sleep: async (milliseconds) => {
+                sleep: (milliseconds) => {
                     if (milliseconds > 0) waits.push(milliseconds);
                     now += milliseconds;
+
+                    return Promise.resolve();
                 },
             },
         );
 
         const results = await Promise.all(
             Array.from({ length: 3 }, (_, index) =>
-                schedule(async () => {
+                schedule(() => {
                     admitted += 1;
-                    return index;
+                    return Promise.resolve(index);
                 }),
             ),
         );

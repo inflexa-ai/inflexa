@@ -18,9 +18,10 @@ afterEach(() => {
 describe("shared authority discovery adapters", () => {
     it("preserves the search_arxiv input and output contract", async () => {
         let seen: URL | undefined;
-        globalThis.fetch = fetchDouble(async (url) => {
+        globalThis.fetch = fetchDouble((url) => {
             seen = new URL(String(url));
-            return new Response(`
+            return Promise.resolve(
+                new Response(`
                 <feed>
                   <entry>
                     <id>http://arxiv.org/abs/2401.01234v1</id>
@@ -32,7 +33,8 @@ describe("shared authority discovery adapters", () => {
                     <link href="https://arxiv.org/abs/2401.01234v1" rel="alternate" type="text/html"/>
                   </entry>
                 </feed>
-            `);
+            `),
+            );
         });
 
         const result = (await searchArxivTool.execute({ query: "shared client", categories: ["cs.LG"], limit: 4 }, makeToolContext().ctx))._unsafeUnwrap();
@@ -44,22 +46,24 @@ describe("shared authority discovery adapters", () => {
 
     it("preserves the search_semantic_scholar input and output contract", async () => {
         let seen: URL | undefined;
-        globalThis.fetch = fetchDouble(async (url) => {
+        globalThis.fetch = fetchDouble((url) => {
             seen = new URL(String(url));
-            return Response.json({
-                data: [
-                    {
-                        paperId: "paper-1",
-                        title: "Shared authority client",
-                        abstract: null,
-                        year: 2024,
-                        venue: null,
-                        citationCount: 7,
-                        authors: [{ name: "Jane Smith" }],
-                        externalIds: { DOI: "10.1000/example" },
-                    },
-                ],
-            });
+            return Promise.resolve(
+                Response.json({
+                    data: [
+                        {
+                            paperId: "paper-1",
+                            title: "Shared authority client",
+                            abstract: null,
+                            year: 2024,
+                            venue: null,
+                            citationCount: 7,
+                            authors: [{ name: "Jane Smith" }],
+                            externalIds: { DOI: "10.1000/example" },
+                        },
+                    ],
+                }),
+            );
         });
 
         const result = (await createSearchSemanticScholarTool().execute({ query: "shared client", limit: 4 }, makeToolContext().ctx))._unsafeUnwrap();

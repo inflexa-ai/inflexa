@@ -70,7 +70,7 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         embedding: unusedEmbedding,
         workspaceFs: makeFakeWorkspaceFs(),
         gateway: refuseGateway,
-        resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         store: refuseStore,
         threads: refuseThreads,
         chrome: {},

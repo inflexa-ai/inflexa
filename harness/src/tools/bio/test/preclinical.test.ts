@@ -24,12 +24,12 @@ function json(body: unknown, status = 200): Response {
 
 /** Route a stubbed fetch by URL substring. */
 function stubFetch(routes: Array<[string, () => Response]>): void {
-    globalThis.fetch = fetchDouble(async (url) => {
+    globalThis.fetch = fetchDouble((url) => {
         const u = String(url);
         for (const [needle, make] of routes) {
-            if (u.includes(needle)) return make();
+            if (u.includes(needle)) return Promise.resolve(make());
         }
-        return new Response("unrouted", { status: 404 });
+        return Promise.resolve(new Response("unrouted", { status: 404 }));
     });
 }
 
@@ -188,15 +188,15 @@ describe("genePreclinicalProfile — human phenotype half", () => {
 
     it("stays out of the default include set", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble(async (url) => {
+        globalThis.fetch = fetchDouble((url) => {
             const u = String(url);
             seen.push(u);
-            if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
-            if (u.includes("bgee")) return json({ data: { calls: [] } });
+            if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
+            if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));
             for (const [needle, make] of IMPC_ROUTES) {
-                if (u.includes(needle)) return make();
+                if (u.includes(needle)) return Promise.resolve(make());
             }
-            return new Response("unrouted", { status: 404 });
+            return Promise.resolve(new Response("unrouted", { status: 404 }));
         });
 
         const { ctx } = makeToolContext();
@@ -210,15 +210,15 @@ describe("genePreclinicalProfile — human phenotype half", () => {
 describe("genePreclinicalProfile — both halves", () => {
     it("fetches expression and knockout together by default", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble(async (url) => {
+        globalThis.fetch = fetchDouble((url) => {
             const u = String(url);
             seen.push(u);
-            if (u.includes("ensembl")) return json({ id: "ENSG00000012048" });
-            if (u.includes("bgee")) return json({ data: { calls: [] } });
+            if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
+            if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));
             for (const [needle, make] of IMPC_ROUTES) {
-                if (u.includes(needle)) return make();
+                if (u.includes(needle)) return Promise.resolve(make());
             }
-            return new Response("unrouted", { status: 404 });
+            return Promise.resolve(new Response("unrouted", { status: 404 }));
         });
 
         const { ctx } = makeToolContext();

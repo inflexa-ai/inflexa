@@ -21,12 +21,12 @@ function json(body: unknown, status = 200): Response {
 
 /** Route a stubbed fetch by URL substring; unmatched URLs 404. */
 function stubFetch(routes: Array<[string, () => Response]>): void {
-    globalThis.fetch = fetchDouble(async (url) => {
+    globalThis.fetch = fetchDouble((url) => {
         const u = String(url);
         for (const [needle, make] of routes) {
-            if (u.includes(needle)) return make();
+            if (u.includes(needle)) return Promise.resolve(make());
         }
-        return new Response("unrouted", { status: 404 });
+        return Promise.resolve(new Response("unrouted", { status: 404 }));
     });
 }
 

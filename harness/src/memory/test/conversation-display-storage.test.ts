@@ -44,8 +44,10 @@ describe("stored conversation display envelope", () => {
         ["AI SDK major", { ...envelopeDisplayMessages(messages), aiSdkMajor: 8 }],
         ["display version", { ...envelopeDisplayMessages(messages), schemaVersion: 2 }],
         ["messages", { ...envelopeDisplayMessages(messages), messages: [{ id: "x", role: "assistant", parts: [{ type: "text" }] }] }],
-    ])("rejects an unsupported or malformed %s", async (_label, value) => {
+    ])("rejects an unsupported or malformed %s", (_label, value) => {
         expect(parseStoredDisplayEnvelope(value, "thread-1/0/display")).rejects.toThrow("Invalid stored conversation display envelope");
+
+        return Promise.resolve();
     });
 
     it("keeps a stale field inside a known data payload rather than failing the read", async () => {
@@ -109,9 +111,11 @@ describe("a stored display part the vocabulary can no longer render", () => {
         expect(logger.records).toEqual([]);
     });
 
-    it("leaves structural corruption to fail, having no part it can identify", async () => {
+    it("leaves structural corruption to fail, having no part it can identify", () => {
         const value = { ...envelopeDisplayMessages(messages), messages: [{ id: "a1", role: "assistant", parts: [{ data: { x: 1 } }] }] };
         expect(parseStoredDisplayEnvelope(value, "t/0/display")).rejects.toThrow("Invalid stored conversation display envelope");
+
+        return Promise.resolve();
     });
 });
 

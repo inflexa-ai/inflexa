@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: () => Response): void {
-    globalThis.fetch = fetchDouble(async () => response());
+    globalThis.fetch = fetchDouble(() => Promise.resolve(response()));
 }
 
 function trialsResponse(body: unknown): Response {
@@ -109,21 +109,23 @@ describe("searchClinicalTrials (translational-medicine family)", () => {
 describe("searchClinicalTrials — action 'details'", () => {
     it("reads one study back by its NCT id, with its outcomes and adverse events", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble(async (input) => {
+        globalThis.fetch = fetchDouble((input) => {
             seen.push(String(input));
-            return trialsResponse({
-                protocolSection: {
-                    identificationModule: { nctId: "NCT01234567", briefTitle: "A Study of Imatinib in CML" },
-                    statusModule: { overallStatus: "TERMINATED", whyStopped: "Slow accrual" },
-                    outcomesModule: { primaryOutcomes: [{ measure: "Overall survival", timeFrame: "24 months" }] },
-                },
-                resultsSection: {
-                    adverseEventsModule: {
-                        eventGroups: [{ id: "EG000", title: "Imatinib" }],
-                        seriousEvents: [{ term: "Neutropenia", organSystem: "Blood", stats: [{ groupId: "EG000", numAffected: 3, numAtRisk: 40 }] }],
+            return Promise.resolve(
+                trialsResponse({
+                    protocolSection: {
+                        identificationModule: { nctId: "NCT01234567", briefTitle: "A Study of Imatinib in CML" },
+                        statusModule: { overallStatus: "TERMINATED", whyStopped: "Slow accrual" },
+                        outcomesModule: { primaryOutcomes: [{ measure: "Overall survival", timeFrame: "24 months" }] },
                     },
-                },
-            });
+                    resultsSection: {
+                        adverseEventsModule: {
+                            eventGroups: [{ id: "EG000", title: "Imatinib" }],
+                            seriousEvents: [{ term: "Neutropenia", organSystem: "Blood", stats: [{ groupId: "EG000", numAffected: 3, numAtRisk: 40 }] }],
+                        },
+                    },
+                }),
+            );
         });
 
         const { ctx } = makeToolContext();

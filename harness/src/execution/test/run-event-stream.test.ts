@@ -550,8 +550,8 @@ describe("run-event stream — a run with a run row", () => {
 
     it("gives a suspended run the reason of the host, with no workflow read", async () => {
         const runId = await endedRunWithNoTerminalPart("run-suspended-");
-        const readWorkflowStatus = async (): Promise<string | null> => {
-            throw new Error("a settled row must not read the workflow");
+        const readWorkflowStatus = (): Promise<string | null> => {
+            return Promise.reject(new Error("a settled row must not read the workflow"));
         };
 
         const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("suspended_insufficient_funds", "budget_exceeded")]), readWorkflowStatus });
@@ -604,7 +604,7 @@ describe("run-event stream — a run with a run row", () => {
     it("gives a wedged run a failed part when the workflow ended in ERROR", async () => {
         const runId = await endedRunWithNoTerminalPart("run-wedged-");
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "ERROR" });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve("ERROR") });
 
         expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run ended without a terminal status" });
     });
@@ -613,7 +613,7 @@ describe("run-event stream — a run with a run row", () => {
         for (const workflowStatus of ["SUCCESS", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"]) {
             const runId = await endedRunWithNoTerminalPart("run-wedged-other-");
 
-            const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => workflowStatus });
+            const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve(workflowStatus) });
 
             expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run ended without a terminal status" });
         }
@@ -622,7 +622,7 @@ describe("run-event stream — a run with a run row", () => {
     it("gives a canceled part when the row never leaves running and the workflow is CANCELLED", async () => {
         const runId = await endedRunWithNoTerminalPart("run-late-canceler-");
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "CANCELLED" });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve("CANCELLED") });
 
         expect(seen.at(-1)).toEqual(canceledPart(runId));
     });
@@ -631,7 +631,7 @@ describe("run-event stream — a run with a run row", () => {
         const runId = await endedRunWithNoTerminalPart("run-read-count-");
         const readRun = rowReads([row("running"), row("running"), row("running"), row("running"), row("canceled")]);
 
-        const seen = await subscribeToEndedRun(runId, { readRun, readWorkflowStatus: async () => null });
+        const seen = await subscribeToEndedRun(runId, { readRun, readWorkflowStatus: () => Promise.resolve(null) });
 
         expect(readRun.count()).toBe(4);
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
@@ -641,7 +641,7 @@ describe("run-event stream — a run with a run row", () => {
         const runId = await endedRunWithNoTerminalPart("run-active-");
         const logger = createCapturingLogger();
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => "PENDING" }, logger);
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve("PENDING") }, logger);
 
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
         expect(logger.records.some((r) => r.level === "warn" && r.fields.workflowStatus === "PENDING")).toBe(true);
@@ -650,7 +650,7 @@ describe("run-event stream — a run with a run row", () => {
     it("adds no part when the row stays running and no workflow exists", async () => {
         const runId = await endedRunWithNoTerminalPart("run-no-workflow-");
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: async () => null });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus: () => Promise.resolve(null) });
 
         expect(typesOf(seen)).toEqual(["data-dag-state"]);
     });
@@ -658,8 +658,8 @@ describe("run-event stream — a run with a run row", () => {
     it("adds no part and logs when the workflow status read fails", async () => {
         const runId = await endedRunWithNoTerminalPart("run-status-read-fails-");
         const logger = createCapturingLogger();
-        const readWorkflowStatus = async (): Promise<string | null> => {
-            throw new Error("engine unreachable");
+        const readWorkflowStatus = (): Promise<string | null> => {
+            return Promise.reject(new Error("engine unreachable"));
         };
 
         const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("running")]), readWorkflowStatus }, logger);

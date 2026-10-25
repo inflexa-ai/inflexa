@@ -1616,8 +1616,10 @@ describe("validateReport — prepare before the loop", () => {
         let prepareCount = 0;
         let resolvesBeforePrepare = 0;
         const resolver: ReferenceResolver = {
-            async prepare() {
+            prepare() {
                 prepareCount += 1;
+
+                return Promise.resolve();
             },
             async resolve(reference, snapshot) {
                 if (prepareCount === 0) {

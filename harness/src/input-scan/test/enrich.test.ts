@@ -55,11 +55,11 @@ function recordingSandbox(): { client: SandboxClient; submitted: ExecRequest[] }
     const submitted: ExecRequest[] = [];
     const client: SandboxClient = {
         ...makeFakeSandboxClient(),
-        async exec(_ref: unknown, request: ExecRequest): Promise<ExecResult> {
+        exec(_ref: unknown, request: ExecRequest): Promise<ExecResult> {
             submitted.push(request);
             const paths = request.command.slice(3);
             const stdout = paths.map((path) => JSON.stringify({ path, fields: { columnCount: 7 } })).join("\n");
-            return { execId: "wf:7", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false };
+            return Promise.resolve({ execId: "wf:7", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false });
         },
     };
     return { client, submitted };
@@ -69,8 +69,8 @@ function recordingSandbox(): { client: SandboxClient; submitted: ExecRequest[] }
 function failingSandbox(result: Partial<ExecResult>): SandboxClient {
     return {
         ...makeFakeSandboxClient(),
-        async exec(): Promise<ExecResult> {
-            return { execId: "wf:7", exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result };
+        exec(): Promise<ExecResult> {
+            return Promise.resolve({ execId: "wf:7", exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false, ...result });
         },
     };
 }

@@ -86,7 +86,7 @@ export type Ask = {
  * rather than left waiting on a surface that will never respond.
  */
 export class UnavailableAsk implements Ask {
-    async ask(_request: AskRequest): Promise<AskApproval> {
-        throw new AskRejectedError("approval is unavailable in this environment");
+    ask(_request: AskRequest): Promise<AskApproval> {
+        return Promise.reject(new AskRejectedError("approval is unavailable in this environment"));
     }
 }

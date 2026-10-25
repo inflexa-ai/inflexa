@@ -41,12 +41,12 @@ type GqlRequest = {
  */
 function stubOpenTargets(responder: (req: GqlRequest) => Response): GqlRequest[] {
     const seen: GqlRequest[] = [];
-    globalThis.fetch = fetchDouble(async (_url, init) => {
+    globalThis.fetch = fetchDouble((_url, init) => {
         const body = GqlBodySchema.parse(parseJsonAs(String(init?.body ?? "{}"), z.unknown()));
         const operation = operationNameOf(body.query);
         const req: GqlRequest = { operation, variables: body.variables };
         seen.push(req);
-        return responder(req);
+        return Promise.resolve(responder(req));
     });
     return seen;
 }

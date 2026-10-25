@@ -304,21 +304,21 @@ export function fakeKnowledgeClient(
     const calls: FakeCalls = { recommend: [], check: [], render: [], contract: [] };
     const checkAnswer: CheckResponse = { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [], not_assessed: [] };
     const client: KnowledgeClient = {
-        async recommend(situation, _responseFormat, preferences, expectedSnapshot) {
+        recommend(situation, _responseFormat, preferences, expectedSnapshot) {
             calls.recommend.push({ situation, preferences, expected_snapshot: expectedSnapshot });
-            return answers.recommend ?? recommendAnswer();
+            return Promise.resolve(answers.recommend ?? recommendAnswer());
         },
-        async check(situation, steps, expectedSnapshot) {
+        check(situation, steps, expectedSnapshot) {
             calls.check.push({ situation, steps, expected_snapshot: expectedSnapshot });
-            return answers.check ?? checkAnswer;
+            return Promise.resolve(answers.check ?? checkAnswer);
         },
-        async render(template, slots, farm, options) {
+        render(template, slots, farm, options) {
             calls.render.push({ template, slots, farm, options });
-            return answers.render ?? renderAnswer();
+            return Promise.resolve(answers.render ?? renderAnswer());
         },
-        async contract(template) {
+        contract(template) {
             calls.contract.push({ template });
-            return answers.contract ?? contractAnswer();
+            return Promise.resolve(answers.contract ?? contractAnswer());
         },
     };
     return { client, calls };

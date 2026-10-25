@@ -133,7 +133,7 @@ describe("createGrepTool", () => {
             await writeFile(join(stepDir, "clean.txt"), "no match here\n");
             await symlink(secret, join(stepDir, "leak.txt"));
 
-            const realFs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(sessions, id) });
+            const realFs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessions, id)) });
             const tool = createGrepTool(realFs);
             const { ctx } = makeToolContext();
 

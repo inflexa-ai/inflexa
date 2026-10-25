@@ -39,7 +39,7 @@ function envelope(status: number, code: string, message: string): Response {
 /** Route a stubbed fetch by URL substring, and record each request. Unmatched URLs 404. */
 function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>): SeenRequest[] {
     const seen: SeenRequest[] = [];
-    globalThis.fetch = fetchDouble(async (input, init) => {
+    globalThis.fetch = fetchDouble((input, init) => {
         const request: SeenRequest = {
             url: new URL(String(input)),
             method: init?.method ?? "GET",
@@ -48,9 +48,9 @@ function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>):
         };
         seen.push(request);
         for (const [needle, make] of routes) {
-            if (request.url.toString().includes(needle)) return make(request);
+            if (request.url.toString().includes(needle)) return Promise.resolve(make(request));
         }
-        return envelope(404, "NOT_FOUND", "unrouted");
+        return Promise.resolve(envelope(404, "NOT_FOUND", "unrouted"));
     });
     return seen;
 }

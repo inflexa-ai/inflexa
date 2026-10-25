@@ -63,9 +63,9 @@ afterEach(() => {
 /** Answer every request with one body, and record the URL that the tool asked for. */
 function serve(body: unknown, status = 200): void {
     const text = JSON.stringify(body);
-    globalThis.fetch = fetchDouble(async (url) => {
+    globalThis.fetch = fetchDouble((url) => {
         requested.push(String(url));
-        return new Response(text, { status, headers: { "content-type": "application/json" } });
+        return Promise.resolve(new Response(text, { status, headers: { "content-type": "application/json" } }));
     });
 }
 

@@ -100,7 +100,7 @@ function makeDeps(pool: Pool, embedding: EmbeddingProvider, logger: Logger): Pos
         embedding,
         provider: unusedChatProvider(),
         artifactRegistry: refusingRegistry,
-        resolveWorkspaceRoot: async (id) => id,
+        resolveWorkspaceRoot: (id) => Promise.resolve(id),
     };
 }
 

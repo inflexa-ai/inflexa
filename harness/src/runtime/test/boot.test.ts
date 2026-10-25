@@ -34,7 +34,7 @@ function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
                 workspaceFs: makeFakeWorkspaceFs(),
                 model: "test/model",
                 utilityModel: "test/utility-model",
-                resolveWorkspaceRoot: async (id: string) => join("/sessions", id),
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
                 runAuthorizer: createLocalRunAuthorizer(),
                 runLauncher: refuseRunLauncher(),
                 bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },

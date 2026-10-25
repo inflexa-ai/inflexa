@@ -64,13 +64,15 @@ function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
             "names and call it again. An accepted call ends the run.",
         inputSchema: AnalogyReportSchema,
         describeCall: "none",
-        execute: async (report) => {
+        execute: (report) => {
             // A report replaces a blocker, thus the report wins when one round records both.
             cell.outcome = { kind: "report", report };
-            return ok({
-                recorded: true as const,
-                message: "Report recorded.",
-            });
+            return Promise.resolve(
+                ok({
+                    recorded: true as const,
+                    message: "Report recorded.",
+                }),
+            );
         },
     });
 }

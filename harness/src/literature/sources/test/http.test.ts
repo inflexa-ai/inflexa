@@ -19,9 +19,9 @@ describe("shared source HTTP request policy", () => {
         const options = {
             schedule: createRateLimitSchedule({ maxConcurrency: 1, requestsPerSecond: 25, maxRetries: 0, maxRetryDelayMs: 0 }),
             timeoutMs: 60,
-            fetch: fetchDouble(async (_url, init) => {
-                if (init?.signal?.aborted) throw init.signal.reason;
-                return Response.json({ ok: true });
+            fetch: fetchDouble((_url, init) => {
+                if (init?.signal?.aborted) return Promise.reject(init.signal.reason);
+                return Promise.resolve(Response.json({ ok: true }));
             }),
         };
 
@@ -51,12 +51,14 @@ describe("shared source HTTP request policy", () => {
         const result = await requestJson("https://example.test", BodySchema, {
             maxRetries: 2,
             maxRetryDelayMs: 1_000,
-            sleep: async (milliseconds: number): Promise<void> => {
+            sleep: (milliseconds: number): Promise<void> => {
                 waits.push(milliseconds);
+
+                return Promise.resolve();
             },
-            fetch: fetchDouble(async () => {
+            fetch: fetchDouble(() => {
                 calls += 1;
-                return calls === 1 ? new Response("later", { status: 429, headers: { "retry-after": "2" } }) : Response.json({ ok: true });
+                return Promise.resolve(calls === 1 ? new Response("later", { status: 429, headers: { "retry-after": "2" } }) : Response.json({ ok: true }));
             }),
         });
 
@@ -71,9 +73,9 @@ describe("shared source HTTP request policy", () => {
             maxRetries: 2,
             maxRetryDelayMs: 10,
             sleep: async (): Promise<void> => {},
-            fetch: fetchDouble(async () => {
+            fetch: fetchDouble(() => {
                 calls += 1;
-                return new Response("unavailable", { status: 503 });
+                return Promise.resolve(new Response("unavailable", { status: 503 }));
             }),
         });
 
@@ -92,9 +94,9 @@ describe("shared source HTTP request policy", () => {
                 admitted += 1;
                 return await operation();
             },
-            fetch: fetchDouble(async () => {
+            fetch: fetchDouble(() => {
                 calls += 1;
-                return calls === 1 ? new Response("later", { status: 429 }) : Response.json({ ok: true });
+                return Promise.resolve(calls === 1 ? new Response("later", { status: 429 }) : Response.json({ ok: true }));
             }),
         });
 

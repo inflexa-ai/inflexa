@@ -1202,10 +1202,11 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
     return wrapLanguageModel({
         model,
         middleware: {
-            transformParams: async ({ params }) => ({
-                ...params,
-                providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
-            }),
+            transformParams: ({ params }) =>
+                Promise.resolve({
+                    ...params,
+                    providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
+                }),
         },
     });
 }

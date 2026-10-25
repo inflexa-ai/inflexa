@@ -737,7 +737,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     "the errors; the repair is a FULL resubmit of the whole operation list.",
                 inputSchema: ProfileSubmissionSchema,
                 describeCall: "none",
-                execute: async (input): Promise<Result<SubmitOutcome, ToolError>> => {
+                execute: (input): Promise<Result<SubmitOutcome, ToolError>> => {
                     rounds++;
                     // The last round resolves as final: nothing that follows can repair an
                     // overlap, so a contested file sweeps rather than being awarded to whichever
@@ -745,16 +745,18 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     const finalRound = rounds >= MAX_SUBMIT_ROUNDS;
                     const resolution = resolveProfileSubmission(input, detected, briefingMenu, { finalRound });
                     if (!finalRound && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
-                        return ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) });
+                        return Promise.resolve(ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) }));
                     }
                     accepted = { submission: input, resolution };
-                    return ok({
-                        status: "accepted",
-                        groups: resolution.groups.length,
-                        keptFiles: resolution.partition.keptFiles,
-                        unclassifiedFiles: resolution.partition.unclassifiedFiles,
-                        unresolvedOperations: resolution.errors.length,
-                    });
+                    return Promise.resolve(
+                        ok({
+                            status: "accepted",
+                            groups: resolution.groups.length,
+                            keptFiles: resolution.partition.keptFiles,
+                            unclassifiedFiles: resolution.partition.unclassifiedFiles,
+                            unresolvedOperations: resolution.errors.length,
+                        }),
+                    );
                 },
             });
 

@@ -147,8 +147,19 @@ describe("foldRunEventParts", () => {
 });
 
 describe("pipeFoldedRunEvents", () => {
-    async function* burst<T>(entries: readonly T[]): AsyncIterable<T> {
-        yield* entries;
+    function burst<T>(entries: readonly T[]): AsyncIterable<T> {
+        let i = 0;
+        return {
+            [Symbol.asyncIterator]: () => ({
+                next: (): Promise<IteratorResult<T>> => {
+                    if (i >= entries.length) return Promise.resolve({ done: true, value: undefined });
+                    const value = entries[i];
+                    if (value === undefined) return Promise.resolve({ done: true, value: undefined });
+                    i += 1;
+                    return Promise.resolve({ done: false, value });
+                },
+            }),
+        };
     }
 
     async function* withGaps<T>(entries: readonly T[], gapMs: number): AsyncIterable<T> {
@@ -162,8 +173,10 @@ describe("pipeFoldedRunEvents", () => {
         const out: T[] = [];
         await pipeFoldedRunEvents(
             entries,
-            async (entry) => {
+            (entry) => {
                 out.push(entry);
+
+                return Promise.resolve();
             },
             flushMs,
         );

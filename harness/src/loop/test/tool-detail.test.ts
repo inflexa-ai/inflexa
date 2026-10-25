@@ -40,7 +40,7 @@ function toolWithHook(describeCall: (input: { path: string }) => string | undefi
         description: "A tool that describes its own calls.",
         inputSchema: z.object({ path: z.string() }),
         describeCall,
-        execute: async () => ok({}),
+        execute: () => Promise.resolve(ok({})),
     });
 }
 
@@ -57,7 +57,7 @@ function toolWithResultHook(describeResult: (input: { path: string }, result: Re
         inputSchema: z.object({ path: z.string() }),
         describeCall: ({ path }) => path,
         describeResult,
-        execute: async () => ok<ReadOutcome, ToolError>({ bytes: 0 }),
+        execute: () => Promise.resolve(ok<ReadOutcome, ToolError>({ bytes: 0 })),
     });
 }
 
@@ -170,7 +170,7 @@ describe("computeDetail", () => {
             description: "Declares no hook.",
             inputSchema: z.object({ path: z.string() }),
             describeCall: "none",
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
 
         expect(computeDetail(tool, { path: "a.csv" }, log)).toBeUndefined();
@@ -216,9 +216,9 @@ describe("computeDetail", () => {
         const asyncRefined = defineTool({
             id: "async_refined",
             description: "A tool whose schema carries an async refinement.",
-            inputSchema: z.object({ path: z.string() }).refine(async ({ path }) => path.length > 0, "unreachable"),
+            inputSchema: z.object({ path: z.string() }).refine(({ path }) => Promise.resolve(path.length > 0), "unreachable"),
             describeCall: ({ path }) => path,
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
 
         expect(computeDetail(asyncRefined, { path: "a.csv" }, logger)).toBeUndefined();
@@ -234,7 +234,7 @@ describe("computeDetail", () => {
                 throw new Error("refinement is broken");
             }),
             describeCall: ({ path }) => path,
-            execute: async () => ok({}),
+            execute: () => Promise.resolve(ok({})),
         });
 
         expect(computeDetail(throwingRefinement, { path: "a.csv" }, logger)).toBeUndefined();

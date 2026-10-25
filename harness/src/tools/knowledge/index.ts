@@ -65,15 +65,15 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
 
 /** A client that answers nothing: the definitions of the tools do not depend on the answers. */
 const NO_CLIENT: KnowledgeClient = {
-    recommend: async () => ({ match: "unavailable", reason: "no service" }),
-    check: async () => ({ match: "unavailable", reason: "no service" }),
-    render: async () => ({ match: "unavailable", reason: "no service" }),
-    contract: async () => ({ match: "unavailable", reason: "no service" }),
+    recommend: () => Promise.resolve({ match: "unavailable", reason: "no service" }),
+    check: () => Promise.resolve({ match: "unavailable", reason: "no service" }),
+    render: () => Promise.resolve({ match: "unavailable", reason: "no service" }),
+    contract: () => Promise.resolve({ match: "unavailable", reason: "no service" }),
 };
 
 /** A mutator that writes nothing: the definition of the template tool does not depend on the workspace. */
 const NO_MUTATOR: WorkspaceMutator = {
-    writeFile: async ({ path }) => ({ status: "out_of_scope", path }),
+    writeFile: ({ path }) => Promise.resolve({ status: "out_of_scope", path }),
     recordWrite: () => undefined,
 };
 

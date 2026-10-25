@@ -27,6 +27,7 @@ import {
 
 import type { EchartOption } from "../chart.js";
 import { optionAt, optionList, optionMaybe, optionNumber, optionOf, optionStrings } from "./options.js";
+import { pageExports } from "./page-function.js";
 
 /** The feature member of one toolbox, each control an option object. */
 function features(toolbox: EchartOption): Record<string, EchartOption> {
@@ -68,10 +69,16 @@ function pageFunctions(document: unknown): {
     fault: (entry: unknown) => unknown;
     named: Record<string, unknown>;
 } {
-    const made: unknown = new Function(
-        "document",
-        `${CHART_TOOLBOX_SOURCE}\nreturn { rows: reportDataViewRows, content: reportDataViewContent, bind: reportBindToolbox, open: reportOpenExportMenu, click: reportMenuClick, key: reportMenuKey, fault: reportMenuFault, named: reportToolboxFunctions };`,
-    ).call(undefined, document);
+    const made: unknown = pageExports(["document"], [document], CHART_TOOLBOX_SOURCE, [
+        ["rows", "reportDataViewRows"],
+        ["content", "reportDataViewContent"],
+        ["bind", "reportBindToolbox"],
+        ["open", "reportOpenExportMenu"],
+        ["click", "reportMenuClick"],
+        ["key", "reportMenuKey"],
+        ["fault", "reportMenuFault"],
+        ["named", "reportToolboxFunctions"],
+    ]);
     const page = optionOf(made);
     const fn = (name: string): ((...args: unknown[]) => unknown) => {
         const member = page[name];

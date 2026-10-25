@@ -67,8 +67,8 @@ describe("runShutdownSequence", () => {
 
     it("continues to exit even if one step fails", async () => {
         const r = makeRecordedDeps({
-            shutdownDbos: async () => {
-                throw new Error("dbos-boom");
+            shutdownDbos: () => {
+                return Promise.reject(new Error("dbos-boom"));
             },
         });
         await runShutdownSequence(r.deps);

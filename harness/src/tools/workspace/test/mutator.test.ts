@@ -182,7 +182,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     function buildSessionMutator() {
         const events: SessionProvenanceEvent[] = [];
         const mutator = createSessionWorkspaceMutator({
-            resolveWorkspaceRoot: async (id) => join(basePath, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)),
             provenance: { emitSessionEvent: (event) => events.push(event) },
         });
         return { mutator, events };
@@ -328,7 +328,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     });
 
     test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
-        const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: async (id) => join(basePath, id) });
+        const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         const result = await writeAndRecord(mutator, {
             path: "notes/b.md",
             content: "b",
@@ -343,7 +343,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
     test("write_file and edit_file through the real tool path land and emit in a chat ToolContext", async () => {
         const { mutator, events } = buildSessionMutator();
         const writeTool = createWriteFileTool({ mutator });
-        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: async (id) => join(basePath, id) });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         // No workingDir: the read seam defaults to the analysis root, matching
         // the session-scoped mutator's write prefix.
         const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs });

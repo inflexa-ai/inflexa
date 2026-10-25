@@ -46,7 +46,7 @@ function makeRunSession(): RunSession {
 /** A pool stub that returns no rows — `queryRun` → null → empty narrative. */
 function emptyPool(): Querier {
     return {
-        query: async () => ({ rows: [], rowCount: 0 }),
+        query: () => Promise.resolve({ rows: [], rowCount: 0 }),
     };
 }
 
@@ -149,7 +149,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             pool: emptyPool(),
             provider,
             embedding,
-            resolveWorkspaceRoot: async (id) => join(base, id),
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
             synthesisModel: "claude-test",
             bioKeys: BIO_KEYS,
             citationResolver: unusedCitationResolver,

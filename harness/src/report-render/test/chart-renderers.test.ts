@@ -7,6 +7,7 @@ import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
 import { optionList, optionNumber, optionOf, optionPair } from "./options.js";
+import { pageExports } from "./page-function.js";
 import { rendererApi } from "../chart-export.js";
 import { CHART_INK, GUIDE_LINE_COLOR } from "../design.js";
 
@@ -121,9 +122,13 @@ function rectShape(element: PageElement, place: number): { x: number; y: number;
 }
 
 /** The page twin of the renderers and of the registration step, as the bootstrap runs them. */
-const made: unknown = new Function(
-    `${CHART_RENDERERS_SOURCE}\nreturn { interval: reportIntervalRenderer, outline: reportOutlineRenderer, glyph: reportCellGlyphRenderer, stem: reportStemRenderer, register: reportRegisterRenderers };`,
-).call(undefined);
+const made: unknown = pageExports([], [], CHART_RENDERERS_SOURCE, [
+    ["interval", "reportIntervalRenderer"],
+    ["outline", "reportOutlineRenderer"],
+    ["glyph", "reportCellGlyphRenderer"],
+    ["stem", "reportStemRenderer"],
+    ["register", "reportRegisterRenderers"],
+]);
 const page = optionOf(made);
 
 function rendererOf(name: string): (params: unknown, api: RenderApi) => PageElement {

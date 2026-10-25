@@ -220,11 +220,11 @@ describe("createSandboxAgent", () => {
 
     it("resolves the citation tool only when the shared resolver dependency is supplied", () => {
         const citationResolver = {
-            resolveOne: async () => {
-                throw new Error("not executed in this roster test");
+            resolveOne: () => {
+                return Promise.reject(new Error("not executed in this roster test"));
             },
-            resolveMany: async () => {
-                throw new Error("not executed in this roster test");
+            resolveMany: () => {
+                return Promise.reject(new Error("not executed in this roster test"));
             },
         } satisfies CitationResolver;
         const citationMeta = { ...meta, tools: [...BASE_SANDBOX_TOOLS, "resolve_citation"] as const };

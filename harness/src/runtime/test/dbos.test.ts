@@ -182,9 +182,9 @@ describe("legacy ephemeral workflow migration sweep", () => {
     it("cancels only pending rows for the current executor before recovery", async () => {
         const queries: Array<{ text: string; values?: unknown[] }> = [];
         const pool: Querier = {
-            query: async (query) => {
+            query: (query) => {
                 if (typeof query !== "string") queries.push(query);
-                return { rows: [], rowCount: 2 };
+                return Promise.resolve({ rows: [], rowCount: 2 });
             },
         };
 

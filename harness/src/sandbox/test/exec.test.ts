@@ -60,17 +60,17 @@ function seenBody(request: SeenRequest): Record<string, unknown> {
  */
 function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenRequest[] = []): typeof fetch {
     let i = 0;
-    const double = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const double = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         seen.push({ url: String(input), init });
-        if (init?.method === "POST") return new Response(JSON.stringify({ status: "started" }), { status: 202 });
+        if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "started" }), { status: 202 }));
         const item = i < polls.length ? presentAt(polls, i++) : presentLast(polls);
-        return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item);
+        return Promise.resolve(item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item));
     };
     return Object.assign(double, { preconnect: fetch.preconnect });
 }
 
 /** Deps that never really sleep and never see a cancel. */
-const BASE: ExecDeps = { clock: { now: () => NOW_MS, wait: async () => {} }, isCancelled: async () => false };
+const BASE: ExecDeps = { clock: { now: () => NOW_MS, wait: async () => {} }, isCancelled: () => Promise.resolve(false) };
 
 /** A clock whose wait advances the mock time, thus a deadline-bounded loop ends. */
 function tickingClock(stepMs = 1000) {
@@ -80,8 +80,10 @@ function tickingClock(stepMs = 1000) {
         execDeps: {
             clock: {
                 now: () => clock.nowMs,
-                wait: async () => {
+                wait: () => {
                     clock.nowMs += stepMs;
+
+                    return Promise.resolve();
                 },
             },
         } satisfies ExecDeps,
@@ -127,9 +129,9 @@ describe("the submit", () => {
     test("a non-202 throws, and no poll follows", async () => {
         const seen: SeenRequest[] = [];
         const failing = Object.assign(
-            async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
                 seen.push({ url: String(input), init });
-                return new Response("boom", { status: 503 });
+                return Promise.resolve(new Response("boom", { status: 503 }));
             },
             { preconnect: fetch.preconnect },
         );
@@ -233,8 +235,10 @@ describe("the poll loop", () => {
             ...BASE,
             clock: {
                 now: () => NOW_MS,
-                wait: async (ms) => {
+                wait: (ms) => {
                     waits.push(ms);
+
+                    return Promise.resolve();
                 },
             },
             fetch: sandbox([...Array.from({ length: 41 }, () => running), completed]),
@@ -308,9 +312,9 @@ describe("the liveness escalation", () => {
             ...BASE,
             ...execDeps,
             fetch: sandbox(["unavailable"]),
-            isAlive: async () => {
+            isAlive: () => {
                 probes++;
-                return { alive: false, oomKilled: false };
+                return Promise.resolve({ alive: false, oomKilled: false });
             },
         });
         expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
@@ -325,7 +329,7 @@ describe("the liveness escalation", () => {
             ...BASE,
             ...execDeps,
             fetch: sandbox(["unavailable"]),
-            isAlive: async () => ({ alive: false, oomKilled: true }),
+            isAlive: () => Promise.resolve({ alive: false, oomKilled: true }),
         });
         expect(result.syntheticFailure?.reason).toBe("sandbox-oom-killed");
     });
@@ -338,9 +342,9 @@ describe("the liveness escalation", () => {
                 ...BASE,
                 ...execDeps,
                 fetch: sandbox(["unavailable"]),
-                isAlive: async () => {
+                isAlive: () => {
                     probes++;
-                    return { alive: true, oomKilled: false };
+                    return Promise.resolve({ alive: true, oomKilled: false });
                 },
             }),
         ).rejects.toBeInstanceOf(ExecTimeoutError);
@@ -357,9 +361,9 @@ describe("the liveness escalation", () => {
                 ...Array.from({ length: T - 1 }, () => "unavailable" as const),
                 completed,
             ]),
-            isAlive: async () => {
+            isAlive: () => {
                 probes++;
-                return { alive: true, oomKilled: false };
+                return Promise.resolve({ alive: true, oomKilled: false });
             },
         });
         expect(result.exitCode).toBe(0);
@@ -374,9 +378,9 @@ describe("the liveness escalation", () => {
                 ...BASE,
                 ...execDeps,
                 fetch: sandbox(["unavailable"]),
-                isAlive: async () => {
+                isAlive: () => {
                     probes++;
-                    throw new Error("docker daemon unreachable");
+                    return Promise.reject(new Error("docker daemon unreachable"));
                 },
             }),
         ).rejects.toBeInstanceOf(ExecTimeoutError);
@@ -394,7 +398,13 @@ describe("the liveness escalation", () => {
             ...BASE,
             ...execDeps,
             fetch: sandbox(["unavailable"]),
-            isAlive: async () => presentAt(verdicts, probe++),
+            isAlive: () => {
+                try {
+                    return Promise.resolve(presentAt(verdicts, probe++));
+                } catch (err) {
+                    return Promise.reject(err);
+                }
+            },
         });
         expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
         expect(probe).toBe(2);
@@ -411,7 +421,7 @@ describe("the cancel read", () => {
                 ...BASE,
                 ...execDeps,
                 fetch: sandbox([running]),
-                isCancelled: async () => true,
+                isCancelled: () => Promise.resolve(true),
             }),
         ).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
     });
@@ -424,9 +434,9 @@ describe("the cancel read", () => {
             ...execDeps,
             // 20 running polls at 1.5 s each span 28.5 s of the clock: reads at 10.5 s and at 21 s.
             fetch: sandbox([...Array.from({ length: 20 }, () => running), completed]),
-            isCancelled: async () => {
+            isCancelled: () => {
                 reads++;
-                return false;
+                return Promise.resolve(false);
             },
         });
         expect(reads).toBe(2);
@@ -437,9 +447,9 @@ describe("the cancel read", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
             fetch: sandbox([running, completed]),
-            isCancelled: async () => {
+            isCancelled: () => {
                 reads++;
-                return false;
+                return Promise.resolve(false);
             },
         });
         expect(reads).toBe(0);

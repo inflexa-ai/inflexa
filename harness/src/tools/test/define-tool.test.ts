@@ -19,7 +19,7 @@ describe("defineTool", () => {
                 limit: z.number().default(10),
             }),
             describeCall: (input) => input.query,
-            execute: async (input) => ok({ found: input.query }),
+            execute: (input) => Promise.resolve(ok({ found: input.query })),
         });
 
         expect(tool.id).toBe("search-thing");
@@ -39,7 +39,7 @@ describe("defineTool", () => {
             description: "Defaults to a durable step.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({ done: true }),
+            execute: () => Promise.resolve(ok({ done: true })),
         });
 
         expect(tool.executionMode).toBe("step");
@@ -52,7 +52,7 @@ describe("defineTool", () => {
             executionMode: "inline",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async () => ok({ done: true }),
+            execute: () => Promise.resolve(ok({ done: true })),
         });
 
         expect(inline.executionMode).toBe("inline");
@@ -70,7 +70,7 @@ describe("defineTool", () => {
                 description: "A tool with a union input.",
                 inputSchema: unionSchema,
                 describeCall: "none",
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             }),
         ).toThrow(UNION_TOOL_REFUSAL);
     });
@@ -82,7 +82,7 @@ describe("defineTool", () => {
                 description: "Reads a file.",
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: (input) => input.path,
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             expect(tool.describeCall?.({ path: "output/summary.md" })).toBe("output/summary.md");
@@ -94,7 +94,7 @@ describe("defineTool", () => {
                 description: "Declines the hook.",
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: "none",
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             expect(tool.describeCall).toBeUndefined();
@@ -107,7 +107,7 @@ describe("defineTool", () => {
                 description: "Declines the hook.",
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: "none",
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             expect(Object.values(tool)).not.toContain("none");
@@ -122,14 +122,14 @@ describe("defineTool", () => {
                 description: "Reads a file.",
                 inputSchema: schema,
                 describeCall: (input) => input.path,
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
             const withoutHook = defineTool({
                 id: "same-tool",
                 description: "Reads a file.",
                 inputSchema: schema,
                 describeCall: "none",
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             const described = createRegistry([withHook]).definitions();
@@ -155,7 +155,7 @@ describe("defineTool", () => {
                 inputSchema: z.object({ path: z.string() }),
                 // @ts-expect-error -- `query` is absent from this tool's inputSchema.
                 describeCall: (input: { path: string; query: string }) => input.query,
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             expect(tool.id).toBe("typed-hook");
@@ -170,7 +170,7 @@ describe("defineTool", () => {
                 id: "undecided",
                 description: "Declares no describeCall at all.",
                 inputSchema: z.object({ path: z.string() }),
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             expect(tool.id).toBe("undecided");
@@ -185,7 +185,7 @@ describe("defineTool", () => {
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: (input) => input.path,
                 describeResult: (input, result) => `${input.path} -> ${result.page}`,
-                execute: async () => ok({ page: "index.html" }),
+                execute: () => Promise.resolve(ok({ page: "index.html" })),
             });
 
             expect(tool.describeResult?.({ path: "draft" }, { page: "index.html" })).toBe("draft -> index.html");
@@ -197,7 +197,7 @@ describe("defineTool", () => {
                 description: "Describes its call alone.",
                 inputSchema: z.object({ path: z.string() }),
                 describeCall: (input) => input.path,
-                execute: async () => ok({}),
+                execute: () => Promise.resolve(ok({})),
             });
 
             expect(tool.describeResult).toBeUndefined();
@@ -213,7 +213,7 @@ describe("defineTool", () => {
                 inputSchema: z.object({}),
                 describeCall: "none",
                 describeResult: (_input, result) => result.outcome,
-                execute: async () => ok({ outcome: "rendered" }),
+                execute: () => Promise.resolve(ok({ outcome: "rendered" })),
             });
 
             expect("describeCall" in tool).toBe(false);
@@ -228,14 +228,14 @@ describe("defineTool", () => {
                 inputSchema: schema,
                 describeCall: "none",
                 describeResult: (_input, result) => result.page,
-                execute: async () => ok({ page: "index.html" }),
+                execute: () => Promise.resolve(ok({ page: "index.html" })),
             });
             const withoutHook = defineTool({
                 id: "same-tool",
                 description: "Renders a page.",
                 inputSchema: schema,
                 describeCall: "none",
-                execute: async () => ok({ page: "index.html" }),
+                execute: () => Promise.resolve(ok({ page: "index.html" })),
             });
 
             expect(withHook.jsonSchema).toEqual(withoutHook.jsonSchema);
@@ -255,7 +255,7 @@ describe("defineTool", () => {
                 describeCall: "none",
                 // @ts-expect-error -- `versionId` is absent from this tool's output.
                 describeResult: (_input, result) => String(result.versionId),
-                execute: async () => ok({ page: "index.html" }),
+                execute: () => Promise.resolve(ok({ page: "index.html" })),
             });
 
             expect(tool.id).toBe("typed-result-hook");

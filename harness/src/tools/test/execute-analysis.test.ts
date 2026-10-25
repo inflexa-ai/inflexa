@@ -84,10 +84,11 @@ function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
     const launches: Array<{ workflowId: string }> = [];
     const inputs: unknown[] = [];
     const launcher: RunLauncher = {
-        launch: async (_workflow, o, input) => {
-            if (opts.failLaunch) throw new Error("launch boom");
+        launch: (_workflow, o, input) => {
+            if (opts.failLaunch) return Promise.reject(new Error("launch boom"));
             launches.push({ workflowId: o.workflowId });
             inputs.push(input);
+            return Promise.resolve();
         },
     };
     return { launcher, launches, inputs };
@@ -150,7 +151,7 @@ function fakePool(rowsByPrefix: Record<string, Row[]>): {
         }
         return Promise.resolve({ rows: [] });
     };
-    const connect = async () => ({ query, release: () => {} });
+    const connect = () => Promise.resolve({ query, release: () => {} });
     // A real `Pool` whose `query` and `connect` the fake overrides; the own properties win at runtime.
     return { pool: Object.assign(new Pool(), { query, connect }), queries };
 }
@@ -166,11 +167,13 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
         session,
         invocationId,
         signal: new AbortController().signal,
-        emit: async (part) => {
+        emit: (part) => {
             emitted.push(part);
+
+            return Promise.resolve();
         },
-        ask: async () => {
-            throw new Error("ask should not be reached");
+        ask: () => {
+            return Promise.reject(new Error("ask should not be reached"));
         },
     };
 }
@@ -213,20 +216,20 @@ function routeProvider(agentId = "single-cell-agent", packages?: string[]): { pr
 function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: Map<string, Row> } {
     const plans = new Map<string, unknown>();
     const runs = new Map<string, Row>();
-    const query = async (q: { text: string; values?: unknown[] }) => {
+    const query = (q: { text: string; values?: unknown[] }) => {
         const values = q.values ?? [];
         if (q.text.includes("SELECT plan FROM cortex_plans")) {
             const plan = plans.get(String(values[0]));
-            return { rows: plan === undefined ? [] : [{ plan }], rowCount: plan === undefined ? 0 : 1 };
+            return Promise.resolve({ rows: plan === undefined ? [] : [{ plan }], rowCount: plan === undefined ? 0 : 1 });
         }
         if (q.text.includes("INSERT INTO cortex_plans")) {
             const planId = String(values[0]);
             if (!plans.has(planId)) plans.set(planId, parseJsonAs(String(values[2]), z.unknown()));
-            return { rows: [], rowCount: 1 };
+            return Promise.resolve({ rows: [], rowCount: 1 });
         }
         if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {
             const runId = String(values[0]);
-            if (runs.has(runId)) return { rows: [], rowCount: 0 };
+            if (runs.has(runId)) return Promise.resolve({ rows: [], rowCount: 0 });
             const row = {
                 run_id: runId,
                 analysis_id: String(values[1]),
@@ -244,15 +247,15 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
                 plan_id: values[5] ?? null,
             };
             runs.set(runId, row);
-            return { rows: [{ run_id: runId }], rowCount: 1 };
+            return Promise.resolve({ rows: [{ run_id: runId }], rowCount: 1 });
         }
         if (q.text.includes("FROM cortex_runs") && q.text.includes("WHERE run_id = $1")) {
             const row = runs.get(String(values[0]));
-            return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+            return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
         }
-        if (q.text.includes("UPDATE cortex_runs")) return { rows: [], rowCount: 1 };
+        if (q.text.includes("UPDATE cortex_runs")) return Promise.resolve({ rows: [], rowCount: 1 });
         // No persisted data profile.
-        return { rows: [], rowCount: 0 };
+        return Promise.resolve({ rows: [], rowCount: 0 });
     };
     return { pool: Object.assign(new Pool(), { query }), plans, runs };
 }
@@ -299,8 +302,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool: new Pool(),
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -320,8 +323,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanNotFoundError);
@@ -341,16 +344,16 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow: async () => {
+            executeAnalysisWorkflow: () => {
                 dispatched = true;
-                return {
+                return Promise.resolve({
                     runId: "x",
                     workflowId: "x",
                     status: "completed",
                     completedSteps: [],
                     failedSteps: [],
                     canceledSteps: [],
-                };
+                });
             },
         });
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanValidationError);
@@ -381,12 +384,14 @@ describe("createExecuteAnalysisTool plan mode", () => {
         // Saved and restored below: a stub left in place would answer every
         // later test file's request from this one's fixture.
         const realFetch = globalThis.fetch;
-        globalThis.fetch = fetchDouble(async () => {
+        globalThis.fetch = fetchDouble(() => {
             mintCalls++;
-            return new Response("{}", {
-                status: 200,
-                headers: { "content-type": "application/json" },
-            });
+            return Promise.resolve(
+                new Response("{}", {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                }),
+            );
         });
 
         let dispatched = false;
@@ -395,16 +400,16 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
-            executeAnalysisWorkflow: async () => {
+            executeAnalysisWorkflow: () => {
                 dispatched = true;
-                return {
+                return Promise.resolve({
                     runId: "x",
                     workflowId: "x",
                     status: "completed",
                     completedSteps: [],
                     failedSteps: [],
                     canceledSteps: [],
-                };
+                });
             },
         });
         try {
@@ -436,8 +441,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: failingAuthorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("workflow must not start after a failed authorization");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("workflow must not start after a failed authorization"));
             },
         });
 
@@ -466,8 +471,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: suspendingAuthorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("workflow must not start after a refused authorization");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("workflow must not start after a refused authorization"));
             },
         });
 
@@ -494,8 +499,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("the tool launches via the seam, never calls directly");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("the tool launches via the seam, never calls directly"));
             },
         });
 
@@ -519,8 +524,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("the tool launches via the seam, never calls directly");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("the tool launches via the seam, never calls directly"));
             },
         });
 
@@ -545,8 +550,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -570,8 +575,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("launch seam should be used");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("launch seam should be used"));
             },
         });
 
@@ -606,8 +611,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("launch seam should be used");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("launch seam should be used"));
             },
         });
         const request = "Calculate descriptors for the supplied compounds";
@@ -636,8 +641,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                 seamCalls.push({ analysisId, queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("launch seam should be used");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("launch seam should be used"));
             },
         });
 
@@ -670,8 +675,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                         storeDirs: ["python-dir", "r-dir"] as const,
                     })),
                 ),
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
         const request = "Fit a gradient boosting model on these features";
@@ -699,8 +704,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
                 seamCalled = true;
                 return okAsync([]);
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("launch seam should be used");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("launch seam should be used"));
             },
         });
 
@@ -793,8 +798,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ analysisId, queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: q.version ?? "1.0.0" })));
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("the tool launches via the seam, never calls directly");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("the tool launches via the seam, never calls directly"));
             },
         });
 
@@ -827,8 +832,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                             : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
                     ),
                 ),
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
 
@@ -862,8 +867,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                         reason: "the dependency graph names 1 edge(s) that it does not hold",
                     })),
                 ),
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
 
@@ -898,8 +903,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -936,8 +941,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -980,8 +985,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -1015,8 +1020,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalls.push({ queries: [...queries] });
                 return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -1062,8 +1067,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                     ),
                 );
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
 
@@ -1097,8 +1102,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                         detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
                     })),
                 ),
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
 
@@ -1124,8 +1129,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
             extendAnalysisFarm,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("should not be called");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("should not be called"));
             },
         });
 
@@ -1152,8 +1157,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 seamCalled = true;
                 return okAsync([]);
             },
-            executeAnalysisWorkflow: async () => {
-                throw new Error("unused");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
             },
         });
 
@@ -1233,8 +1238,8 @@ describe("the launch of a stored plan, over a real database", () => {
     function deps(over: Partial<LaunchPlanRunDeps> = {}): LaunchPlanRunDeps {
         return {
             pool,
-            executeAnalysisWorkflow: async () => {
-                throw new Error("the launcher starts the workflow");
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("the launcher starts the workflow"));
             },
             runAuthorizer: recordingAuthorizer().authorizer,
             runLauncher: fakeLauncher().launcher,
@@ -1816,8 +1821,8 @@ describe("the launch of a stored plan, over a real database", () => {
             await seedPlan(validPlan);
             const boom = new Error("launch boom");
             const launcher: RunLauncher = {
-                launch: async () => {
-                    throw boom;
+                launch: () => {
+                    return Promise.reject(boom);
                 },
             };
 
