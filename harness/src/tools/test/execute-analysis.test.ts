@@ -58,6 +58,7 @@ import type { AdHocRoute } from "../ad-hoc-router.js";
 import type { ToolContext } from "../define-tool.js";
 import { capabilityDataRequirement } from "../../agents/sandbox-catalog.js";
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
+import { awaitOk } from "../../lib/test/result-assert.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../../reference-data/receipt.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
@@ -529,7 +530,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+        await awaitOk(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()));
 
         const workflowInput = launchedInput(inputs[0]);
         expect(presentGet(workflowInput.planStepById, "step-a").question).toBe("do step-a");

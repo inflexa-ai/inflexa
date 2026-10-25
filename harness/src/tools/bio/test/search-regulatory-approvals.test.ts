@@ -9,6 +9,7 @@ import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
 import { createSearchRegulatoryApprovalsTool } from "../search-regulatory-approvals.js";
 import { presentAt, presentFind } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const realFetch = globalThis.fetch;
 
@@ -76,7 +77,7 @@ function lookupAnswer(items: Array<{ input: Record<string, string>; amassIds?: s
 describe("search_regulatory_approvals — the key", () => {
     it("sends the key as a Bearer token", async () => {
         const seen = stubFetch([["/regulatorycore/records?", () => json({ data: [] })]]);
-        await run({ query: "imatinib" });
+        await awaitOk(run({ query: "imatinib" }));
         expect(presentAt(seen, 0).authorization).toBe("Bearer amass_test");
     });
 
@@ -193,7 +194,7 @@ describe("search_regulatory_approvals — action 'details'", () => {
     it("sends the product code of a package NDC", async () => {
         const seen = stubFetch([["/records/lookup", () => lookupAnswer([{ input: { ndc: "0078-0401" } }])]]);
 
-        await run({ action: "details", ndc: "0078-0401-05" });
+        await awaitOk(run({ action: "details", ndc: "0078-0401-05" }));
 
         expect(presentAt(seen, 0).body).toEqual({ items: [{ ndc: "0078-0401" }] });
     });

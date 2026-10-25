@@ -21,6 +21,7 @@ import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../san
 import { createExecuteCommandTool } from "../execute-command.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { presentAt } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const DEFAULT_CWD = "/analysis-001/runs/run-abc/step1";
 
@@ -141,14 +142,14 @@ describe("execute_command and the decision record of a script", () => {
         const { ctx } = makeToolContext();
 
         // Unchanged: the record stays as it is.
-        await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx);
+        await awaitOk(tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
         expect((await record()).unvetted_edits).toEqual([]);
         expect(client.execs).toHaveLength(1);
 
         // Changed by a path no file tool recorded: the note lands before the run, with the digest of the bytes that run.
         const changed = "ALPHA <- 0.5\n";
         await writeFile(join(stepDir(), "scripts", "de.R"), changed);
-        await tool.execute({ command: ["Rscript", "scripts/de.R", "--verbose"] }, ctx);
+        await awaitOk(tool.execute({ command: ["Rscript", "scripts/de.R", "--verbose"] }, ctx));
         const noted = await record();
         expect(noted.unvetted_edits).toEqual([
             { path: `${DEFAULT_CWD}/scripts/de.R`, note: "the script changed by a path no file tool recorded, before it ran", sha256: scriptSha256(changed) },
@@ -156,7 +157,7 @@ describe("execute_command and the decision record of a script", () => {
         expect(client.execs).toHaveLength(2);
 
         // A second run of the same bytes notes nothing more: the last note is the expected digest now.
-        await tool.execute({ command: ["Rscript", `${DEFAULT_CWD}/scripts/de.R`] }, ctx);
+        await awaitOk(tool.execute({ command: ["Rscript", `${DEFAULT_CWD}/scripts/de.R`] }, ctx));
         const unvetted = (await record()).unvetted_edits;
         if (!isUnknownArray(unvetted)) throw new Error("expected the unvetted edits array");
         expect(unvetted).toHaveLength(1);
@@ -183,7 +184,7 @@ describe("execute_command and the decision record of a script", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ command: ["Rscript", "scripts/own.R"] }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        await tool.execute({ command: ["ls", "-la"] }, ctx);
+        await awaitOk(tool.execute({ command: ["ls", "-la"] }, ctx));
         expect(client.execs).toHaveLength(2);
     });
 });
@@ -243,7 +244,7 @@ describe("execute_command tool", () => {
         });
         const { ctx, emitted } = makeToolContext();
 
-        await makeTool(client).execute({ command: ["ls"] }, ctx);
+        await awaitOk(makeTool(client).execute({ command: ["ls"] }, ctx));
 
         expect(emitted).toEqual([
             { type: "data-sandbox-event", data: { event: { kind: "progress", pct: 10 } } },
@@ -285,7 +286,7 @@ describe("execute_command tool", () => {
     it("passes through cwd/env/timeoutSeconds when supplied", async () => {
         const client = makeFakeClient();
         const { ctx } = makeToolContext();
-        await makeTool(client).execute({ command: ["pwd"], cwd: "/workspace", env: { FOO: "bar" }, timeoutSeconds: 30 }, ctx);
+        await awaitOk(makeTool(client).execute({ command: ["pwd"], cwd: "/workspace", env: { FOO: "bar" }, timeoutSeconds: 30 }, ctx));
         expect(presentAt(client.execs, 0).request.cwd).toBe("/workspace");
         expect(presentAt(client.execs, 0).request.env).toEqual({ FOO: "bar" });
         expect(presentAt(client.execs, 0).request.timeoutSeconds).toBe(30);
@@ -294,7 +295,7 @@ describe("execute_command tool", () => {
     it("sends defaultCwd when no cwd is supplied", async () => {
         const client = makeFakeClient();
         const { ctx } = makeToolContext();
-        await makeTool(client).execute({ command: ["pwd"] }, ctx);
+        await awaitOk(makeTool(client).execute({ command: ["pwd"] }, ctx));
         expect(presentAt(client.execs, 0).request.cwd).toBe(DEFAULT_CWD);
     });
 
@@ -302,10 +303,10 @@ describe("execute_command tool", () => {
         const client = makeFakeClient();
         const tool = makeTool(client);
         const { ctx } = makeToolContext();
-        await tool.execute({ command: ["ls"], cwd: "output" }, ctx);
+        await awaitOk(tool.execute({ command: ["ls"], cwd: "output" }, ctx));
         expect(presentAt(client.execs, 0).request.cwd).toBe(`${DEFAULT_CWD}/output`);
 
-        await tool.execute({ command: ["ls"], cwd: "/analysis-001/data" }, ctx);
+        await awaitOk(tool.execute({ command: ["ls"], cwd: "/analysis-001/data" }, ctx));
         expect(presentAt(client.execs, 1).request.cwd).toBe("/analysis-001/data");
     });
 });

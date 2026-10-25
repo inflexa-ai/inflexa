@@ -11,6 +11,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { targetSafetyTool } from "../target-safety.js";
 import { presentAt } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const GqlVariablesSchema = z.object({ variables: z.record(z.string(), z.unknown()) });
 
@@ -110,7 +111,7 @@ describe("targetSafety — Open Targets liabilities", () => {
         const seen = stubOpenTargets(() => gqlResponse(safetyData(HTR2B.gene)));
 
         const { ctx } = makeToolContext();
-        await targetSafetyTool.execute({ identifiers: [HTR2B.gene], sources: ["opentargets"] }, ctx);
+        await awaitOk(targetSafetyTool.execute({ identifiers: [HTR2B.gene], sources: ["opentargets"] }, ctx));
 
         // One call only: the Ensembl resolution round-trip is skipped.
         expect(seen).toEqual([{ ensemblId: HTR2B.ensembl }]);

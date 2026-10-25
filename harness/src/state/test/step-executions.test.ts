@@ -6,6 +6,7 @@ import { cancelRunningStepExecutions, insertStepExecution, queryStepsByRun, seed
 import { createBlockerHolder, createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import { awaitOk } from "../../lib/test/result-assert.js";
 
 async function seedRunning(pool: Pool, runId: string, stepId: string): Promise<void> {
     (
@@ -250,8 +251,8 @@ describe("report_blocker tool", () => {
         const holder = createBlockerHolder();
         const tool = createReportBlockerTool(holder);
 
-        await tool.execute({ reason: "first" }, ctx);
-        await tool.execute({ reason: "second" }, ctx);
+        await awaitOk(tool.execute({ reason: "first" }, ctx));
+        await awaitOk(tool.execute({ reason: "second" }, ctx));
 
         expect(holder.outcome).toEqual({ kind: "blocker", reason: "first" });
     });

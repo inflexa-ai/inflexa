@@ -15,6 +15,7 @@ import { contractAnswer, fakeKnowledgeClient, renderAnswer, SNAPSHOT, substitute
 import { decisionRecordPath } from "../../workspace/decision-record.js";
 import { createKnowledgeTemplateTool, type TemplateBinding } from "../template.js";
 import { presentAt, presentFind, presentGet } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const ANALYSIS = "analysis-001";
 const TEMPLATE = "tpl-deseq2-two-group@1.0.0";
@@ -170,16 +171,18 @@ describe("knowledge_template with a binding", () => {
     it("records no override for a slot whose value the model did not change, or did not send", async () => {
         const { tool, workingDir } = build(binding());
         const { ctx } = makeToolContext();
-        await tool.execute(
-            {
-                template: TEMPLATE,
-                slots: { counts_path: COUNTS, lfc_shrink: "apeglm" },
-                overrides: [
-                    { slot: "lfc_shrink", reason: "no change" },
-                    { slot: "min_count", reason: "not sent" },
-                ],
-            },
-            ctx,
+        await awaitOk(
+            tool.execute(
+                {
+                    template: TEMPLATE,
+                    slots: { counts_path: COUNTS, lfc_shrink: "apeglm" },
+                    overrides: [
+                        { slot: "lfc_shrink", reason: "no change" },
+                        { slot: "min_count", reason: "not sent" },
+                    ],
+                },
+                ctx,
+            ),
         );
         expect((await recordOf(workingDir)).settings_overrides).toEqual([]);
     });

@@ -21,6 +21,7 @@ import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
 import { createGeneratePlanTool } from "../generate-plan.js";
 import { presentAt, presentFirst, presentGet } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
 const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
@@ -274,9 +275,11 @@ describe("generatePlan loop-driving tool", () => {
         await writeFile(join(root, "managed", "collectri-human", "2.0", "CollecTRI_regulons.csv"), "source,target");
 
         const provider = refsProbe();
-        await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, refStorePath: root, bioKeys: TEST_BIO_KEYS }).execute(
-            INPUT,
-            toolContext(),
+        await awaitOk(
+            createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, refStorePath: root, bioKeys: TEST_BIO_KEYS }).execute(
+                INPUT,
+                toolContext(),
+            ),
         );
 
         const offered = Object.keys(presentAt(provider.calls, 0).tools);
@@ -295,9 +298,11 @@ describe("generatePlan loop-driving tool", () => {
         const provider = refsProbe();
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
 
-        await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, toolOutputStore, bioKeys: TEST_BIO_KEYS }).execute(
-            INPUT,
-            toolContext(),
+        await awaitOk(
+            createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, toolOutputStore, bioKeys: TEST_BIO_KEYS }).execute(
+                INPUT,
+                toolContext(),
+            ),
         );
 
         const ids = Object.keys(presentAt(provider.calls, 0).tools);
@@ -307,7 +312,7 @@ describe("generatePlan loop-driving tool", () => {
 
     it("reports no reference store to the planner when none is configured", async () => {
         const provider = refsProbe();
-        await toolFor(provider).execute(INPUT, toolContext());
+        await awaitOk(toolFor(provider).execute(INPUT, toolContext()));
 
         expect(transcript(provider)).toContain("No reference store is provisioned");
     });
@@ -379,7 +384,7 @@ describe("generatePlan loop-driving tool", () => {
             });
             const provider = blockImmediately();
 
-            await toolFor(provider).execute(INPUT, toolContext(analysisId));
+            await awaitOk(toolFor(provider).execute(INPUT, toolContext(analysisId)));
 
             const seed = plannerSeed(provider);
             const context = dataContextBlock(seed);
@@ -745,7 +750,7 @@ describe("generatePlan loop-driving tool", () => {
             });
             const provider = blockImmediately();
 
-            await toolFor(provider).execute(INPUT, toolContext(analysisId));
+            await awaitOk(toolFor(provider).execute(INPUT, toolContext(analysisId)));
 
             const context = dataContextBlock(plannerSeed(provider));
             expect(context).not.toContain("PROVISIONAL");
@@ -763,7 +768,7 @@ describe("generatePlan loop-driving tool", () => {
             });
             const provider = blockImmediately();
 
-            await toolFor(provider).execute(INPUT, toolContext(analysisId));
+            await awaitOk(toolFor(provider).execute(INPUT, toolContext(analysisId)));
 
             const context = dataContextBlock(plannerSeed(provider));
             expect(context).toContain("PROVISIONAL");
@@ -776,7 +781,7 @@ describe("generatePlan loop-driving tool", () => {
             await seedAnalysis(pool, analysisId, { dpStatus: "running", result: null, seed: ["file-aaa"] });
             const provider = blockImmediately();
 
-            await toolFor(provider).execute(INPUT, toolContext(analysisId));
+            await awaitOk(toolFor(provider).execute(INPUT, toolContext(analysisId)));
 
             const context = dataContextBlock(plannerSeed(provider));
             expect(context).toContain("still being profiled");
@@ -793,7 +798,7 @@ describe("generatePlan loop-driving tool", () => {
             });
             const provider = blockImmediately();
 
-            await toolFor(provider).execute(INPUT, toolContext(analysisId));
+            await awaitOk(toolFor(provider).execute(INPUT, toolContext(analysisId)));
 
             const context = dataContextBlock(plannerSeed(provider));
             expect(context).toContain("Data profiling failed");
@@ -811,7 +816,7 @@ describe("generatePlan loop-driving tool", () => {
             const provider = blockImmediately();
             const note = "Samples 3 and 7 were re-sequenced; treat batch B as the reference.";
 
-            await toolFor(provider).execute({ ...INPUT, analystNotes: note }, toolContext(analysisId));
+            await awaitOk(toolFor(provider).execute({ ...INPUT, analystNotes: note }, toolContext(analysisId)));
 
             const seed = plannerSeed(provider);
             expect(seed).toContain("## Analyst Notes");
@@ -873,7 +878,7 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const { tool, logger } = loggedToolFor(provider);
 
-            await tool.execute(INPUT, toolContext());
+            await awaitOk(tool.execute(INPUT, toolContext()));
 
             const record = outcomeRecord(logger);
             expect(record.level).toBe("info");
@@ -883,7 +888,7 @@ describe("generatePlan loop-driving tool", () => {
         it("records a blocker at warn — a real answer that cost the user their plan", async () => {
             const { tool, logger } = loggedToolFor(blockImmediately());
 
-            await tool.execute(INPUT, toolContext());
+            await awaitOk(tool.execute(INPUT, toolContext()));
 
             const record = outcomeRecord(logger);
             expect(record.level).toBe("warn");
@@ -911,7 +916,7 @@ describe("generatePlan loop-driving tool", () => {
             // declines, so the invocation finishes with nothing submitted.
             const { tool, logger } = loggedToolFor(scriptedProvider(() => makeMessage([textBlock("thinking out loud")], "end_turn")));
 
-            await tool.execute(INPUT, toolContext());
+            await awaitOk(tool.execute(INPUT, toolContext()));
 
             const record = outcomeRecord(logger);
             expect(record.level).toBe("error");
@@ -922,15 +927,17 @@ describe("generatePlan loop-driving tool", () => {
             const cancelled = createCapturingLogger();
             const aborted = new AbortController();
             aborted.abort();
-            await createGeneratePlanTool({
-                conversation: { provider: scriptedProvider([]), model: "claude-test" },
-                pool,
-                logger: cancelled,
-                bioKeys: TEST_BIO_KEYS,
-            }).execute(INPUT, {
-                ...toolContext(),
-                signal: aborted.signal,
-            });
+            await awaitOk(
+                createGeneratePlanTool({
+                    conversation: { provider: scriptedProvider([]), model: "claude-test" },
+                    pool,
+                    logger: cancelled,
+                    bioKeys: TEST_BIO_KEYS,
+                }).execute(INPUT, {
+                    ...toolContext(),
+                    signal: aborted.signal,
+                }),
+            );
 
             const cancelledRecord = presentAt(
                 cancelled.records.filter((r) => r.msg.endsWith("plan generation finished")),
@@ -951,7 +958,7 @@ describe("generatePlan loop-driving tool", () => {
             ]);
             const { tool, logger } = loggedToolFor(provider);
 
-            await tool.execute(INPUT, toolContext());
+            await awaitOk(tool.execute(INPUT, toolContext()));
 
             // `warn`, not `debug`: a rejection costs an iteration and is otherwise unreported,
             // so it must survive the default level a host actually runs at.
@@ -971,7 +978,7 @@ describe("generatePlan loop-driving tool", () => {
                 ]),
             );
 
-            await accepted.tool.execute(INPUT, toolContext("an-log-accept"));
+            await awaitOk(accepted.tool.execute(INPUT, toolContext("an-log-accept")));
 
             expect(accepted.logger.records.filter((r) => r.msg.includes("rejected"))).toHaveLength(0);
         });
@@ -981,7 +988,7 @@ describe("generatePlan loop-driving tool", () => {
             await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
             const { tool, logger } = loggedToolFor(blockImmediately());
 
-            await tool.execute({ ...INPUT, userConstraints: "Use limma-voom." }, toolContext(analysisId));
+            await awaitOk(tool.execute({ ...INPUT, userConstraints: "Use limma-voom." }, toolContext(analysisId)));
 
             const started = logger.records.filter((r) => r.msg.endsWith("plan generation started"));
             expect(started).toHaveLength(1);
@@ -1006,7 +1013,7 @@ describe("generatePlan loop-driving tool", () => {
             // answering in prose, and a reply cut off mid-tool-call alike.
             const { tool, logger } = loggedToolFor(scriptedProvider(() => makeMessage([textBlock("Let me think about this out loud.")], "end_turn")));
 
-            await tool.execute(INPUT, toolContext());
+            await awaitOk(tool.execute(INPUT, toolContext()));
 
             const record = outcomeRecord(logger);
             expect(record.fields.outcome).toBe("no_outcome");
@@ -1095,7 +1102,7 @@ describe("generatePlan loop-driving tool", () => {
                 ]),
             );
 
-            await tool.execute(INPUT, toolContext(analysisId));
+            await awaitOk(tool.execute(INPUT, toolContext(analysisId)));
 
             const accepted = logger.records.filter((r) => r.msg.endsWith("submit_plan accepted a plan"));
             expect(accepted).toHaveLength(1);
@@ -1108,7 +1115,7 @@ describe("generatePlan loop-driving tool", () => {
         it("reports a blocker with the attempt count, separating giving up from never trying", async () => {
             const { tool, logger } = loggedToolFor(blockImmediately());
 
-            await tool.execute(INPUT, toolContext());
+            await awaitOk(tool.execute(INPUT, toolContext()));
 
             const blocker = logger.records.filter((r) => r.msg.endsWith("planner reported a blocker"));
             expect(blocker).toHaveLength(1);

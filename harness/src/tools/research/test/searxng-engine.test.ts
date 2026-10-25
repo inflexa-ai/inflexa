@@ -15,6 +15,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 }
 
 import { createSearxngEngine, mapSearxngResponse, normalizeSearxngBaseUrl } from "../searxng-engine.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const BASE_URL = "http://127.0.0.1:28437";
 
@@ -40,7 +41,7 @@ describe("createSearxngEngine — the request", () => {
         serve({});
         const engine = createSearxngEngine({ baseUrl: "http://127.0.0.1:28437/?a=b" });
 
-        await engine.search({ query: "q" });
+        await awaitOk(engine.search({ query: "q" }));
 
         expect(requested).toEqual([`${BASE_URL}/search?q=q&format=json`]);
     });
@@ -49,8 +50,8 @@ describe("createSearxngEngine — the request", () => {
         serve({});
         const engine = createSearxngEngine({ baseUrl: BASE_URL });
 
-        await engine.search({ query: "q -site:example.com" });
-        await engine.search({ query: "q", recencyFilter: "month" });
+        await awaitOk(engine.search({ query: "q -site:example.com" }));
+        await awaitOk(engine.search({ query: "q", recencyFilter: "month" }));
 
         expect(requested).toEqual([`${BASE_URL}/search?q=q+-site%3Aexample.com&format=json`, `${BASE_URL}/search?q=q&format=json&time_range=month`]);
     });

@@ -10,6 +10,7 @@ import { createShowPlanTool } from "../show-plan.js";
 import { showUserTool } from "../../display/show-user.js";
 import { createWorkspaceSearchTool, type WorkspaceSearchQuerier } from "../workspace-search.js";
 import { presentAt } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 /** The emitted chat event, checked: the type string and the data record, or a failed test. */
 function emittedEvent(emitted: unknown[]): { type: string; data: Record<string, unknown> } {
@@ -133,18 +134,20 @@ describe("showUser", () => {
 
     it("emits an echart whose spec is layout-normalized (the renderer owns the layout, not the model)", async () => {
         const { ctx, emitted } = makeToolContext();
-        await showUserTool.execute(
-            {
-                kind: "echart",
-                title: "Top Variable Genes",
-                spec: {
-                    title: { text: "Top Variable Genes" },
-                    xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => `gene-${i}`) },
-                    yAxis: { type: "value" },
-                    series: [{ type: "bar", name: "vst" }],
+        await awaitOk(
+            showUserTool.execute(
+                {
+                    kind: "echart",
+                    title: "Top Variable Genes",
+                    spec: {
+                        title: { text: "Top Variable Genes" },
+                        xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => `gene-${i}`) },
+                        yAxis: { type: "value" },
+                        series: [{ type: "bar", name: "vst" }],
+                    },
                 },
-            },
-            ctx,
+                ctx,
+            ),
         );
 
         const spec = recordOf(recordOf(emittedEvent(emitted).data.content).spec);

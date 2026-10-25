@@ -8,6 +8,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createPubMedTool } from "../pubmed.js";
 import { presentAt, presentFind } from "../../../lib/present.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 const realFetch = globalThis.fetch;
 
@@ -152,7 +153,7 @@ describe("pubmed — action 'search'", () => {
         const defaults = stubNcbi((url) => (url.pathname.endsWith("esearch.fcgi") ? json({ esearchresult: { idlist: [], count: "0" } }) : xml(ESUMMARY_XML)));
 
         const { ctx } = makeToolContext();
-        await tool.execute({ action: "search", query: "BRCA1" }, ctx);
+        await awaitOk(tool.execute({ action: "search", query: "BRCA1" }, ctx));
 
         expect(presentAt(defaults, 0).searchParams.get("retmax")).toBe("10");
         expect(presentAt(defaults, 0).searchParams.get("sort")).toBe("relevance");
@@ -160,15 +161,17 @@ describe("pubmed — action 'search'", () => {
 
         const explicit = stubNcbi((url) => (url.pathname.endsWith("esearch.fcgi") ? json({ esearchresult: { idlist: [], count: "0" } }) : xml(ESUMMARY_XML)));
 
-        await tool.execute(
-            {
-                action: "search",
-                query: "BRCA1",
-                maxResults: 3,
-                sort: "date",
-                dateRange: { from: "2020/01/01", to: "2021/12/31" },
-            },
-            ctx,
+        await awaitOk(
+            tool.execute(
+                {
+                    action: "search",
+                    query: "BRCA1",
+                    maxResults: 3,
+                    sort: "date",
+                    dateRange: { from: "2020/01/01", to: "2021/12/31" },
+                },
+                ctx,
+            ),
         );
 
         expect(presentAt(explicit, 0).searchParams.get("retmax")).toBe("3");

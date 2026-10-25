@@ -4,6 +4,7 @@ import { okAsync } from "neverthrow";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ReadFileResult, WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { createReadFileTool } from "../read-file.js";
+import { awaitOk } from "../../../lib/test/result-assert.js";
 
 function fakeFs(behavior: (path: string) => ReadFileResult): WorkspaceFilesystem {
     return {
@@ -113,7 +114,7 @@ describe("createReadFileTool", () => {
         const { ctx } = makeToolContext();
         let threw = false;
         try {
-            await tool.execute({ path: "data/inputs/cold.csv" }, ctx);
+            await awaitOk(tool.execute({ path: "data/inputs/cold.csv" }, ctx));
         } catch (e) {
             if (!(e instanceof Error)) throw new Error(`expected an Error, got ${String(e)}`, { cause: e });
             threw = true;
