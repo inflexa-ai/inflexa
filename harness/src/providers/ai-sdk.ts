@@ -1148,6 +1148,7 @@ export function wrapFetchWithRequestTimeout(fetchImpl: typeof fetch, requestTime
         async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
             const controller = new AbortController();
             const callerSignal = init?.signal ?? undefined;
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a guard, not a wait: it aborts the controller of the in-flight fetch at the deadline, unrefs so an armed guard never holds a short-lived process, and the finally clears it.
             const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
             // The harness runs on Node, where a timer has `unref`. Unref the guard
             // timer, thus an armed guard does not keep a short-lived process alive.

@@ -12,13 +12,15 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { buildReportSessionUrl, reportSessionResourceId } from "../content-url.js";
 
 const ReportSessionVectorSchema = z.object({ analysisId: z.string(), threadId: z.string(), expectedRes: z.string() });
 
-const reportSessionFixture = z
-    .object({ vectors: z.array(ReportSessionVectorSchema) })
-    .parse(JSON.parse(readFileSync(new URL("../../__tests__/fixtures/report-session-res.json", import.meta.url), "utf8")));
+const reportSessionFixture = parseJsonAs(
+    readFileSync(new URL("../../__tests__/fixtures/report-session-res.json", import.meta.url), "utf8"),
+    z.object({ vectors: z.array(ReportSessionVectorSchema) }),
+);
 
 describe("reportSessionResourceId", () => {
     test("matches every vector of the shared fixture", () => {

@@ -21,6 +21,7 @@ import { CHEMBL_RE, SafetyPanelFileSchema, UNIPROT_RE, type SafetyTarget } from 
 import panelData from "../../data/safety-panel.json" with { type: "json" };
 import { defineTool } from "../define-tool.js";
 import { resolveSymbolToEnsemblId } from "../lib/ensembl-client.js";
+import { isAllDigits } from "../../lib/text.js";
 import { getTargetSafetyLiabilities, type SafetyLiability } from "../lib/opentargets-client.js";
 
 const PANEL = SafetyPanelFileSchema.parse(panelData);
@@ -29,7 +30,9 @@ const BY_CHEMBL: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t
 const BY_GENE: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.gene_symbol, t]));
 const BY_UNIPROT: Map<string, SafetyTarget> = new Map(PANEL.targets.map((t) => [t.uniprot, t]));
 
-const ENSG_RE = /^ENSG\d{11}$/;
+function isEnsemblGeneId(id: string): boolean {
+    return id.startsWith("ENSG") && id.length === 15 && isAllDigits(id.slice(4));
+}
 
 /** Ordered weakest → strongest so `minSeverity` can be a numeric floor. */
 const SEVERITY_ORDER: Record<Severity, number> = { low: 0, medium: 1, high: 2 };
@@ -46,7 +49,7 @@ type ConcreteType = "chembl_id" | "gene_symbol" | "uniprot" | "ensembl_id";
 
 function detectType(id: string): ConcreteType {
     if (CHEMBL_RE.test(id)) return "chembl_id";
-    if (ENSG_RE.test(id)) return "ensembl_id";
+    if (isEnsemblGeneId(id)) return "ensembl_id";
     if (UNIPROT_RE.test(id)) return "uniprot";
     return "gene_symbol";
 }

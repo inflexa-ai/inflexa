@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the InChIKey grammar of 14-10-1 uppercase blocks, whose shape is a pattern
+const INCHI_KEY = /^[A-Z]{14}-[A-Z]{10}-[A-Z]$/;
+
 /**
  * Live PubChem PUG-REST contract check.
  *
@@ -25,7 +28,7 @@ describe.skipIf(!LIVE)("live PubChem", () => {
         expect(props).not.toBe(null);
         expect(props?.cid).toBe(ASPIRIN_CID);
         expect(typeof props?.molecularWeight).toBe("number");
-        expect(props?.inchiKey).toMatch(/^[A-Z]{14}-[A-Z]{10}-[A-Z]$/);
+        expect(typeof props?.inchiKey === "string" && INCHI_KEY.test(props.inchiKey)).toBe(true);
         expect(props).toHaveProperty("canonicalSmiles");
     }, 60_000);
 });

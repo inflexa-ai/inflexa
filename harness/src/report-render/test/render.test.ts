@@ -1,6 +1,59 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the src, href, and srcset reference attributes of the page, read as the render gate reads them
+const REFERENCE_ATTRIBUTE = /\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quoted or bare source of one url() font or image reference of the inline sheet
+const CSS_URL_SOURCE = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quoted target of one @import rule of the inline sheet
+const CSS_IMPORT_SOURCE = /@import\s+(?:"([^"]*)"|'([^']*)')/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the candidate list of one image-set() rule of the inline sheet
+const CSS_IMAGE_SET_LIST = /image-set\(([^;]*)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the quoted source that leads one image-set() candidate
+const CSS_QUOTED_LEAD = /^\s*(?:"([^"]*)"|'([^']*)')/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- one css comment, which no rule reader reads through
+const CSS_COMMENT = /\/\*[\s\S]*?\*\//g;
+const CSS_RULE = (selector: string): RegExp =>
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the rule body of one selector, read with its declarations
+    new RegExp(
+        `${
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the selector text escapes to a literal form, which no caller can spell wrong
+            selector.replaceAll(/[^a-zA-Z0-9-]/g, "\\$&")
+        }\\s*\\{([^}]*)\\}`,
+        "g",
+    );
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the report-lineage class names that the style sheet defines
+const LINEAGE_CLASS_NAME = /\.(report-lineage[a-z-]*)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the remote http(s) scheme that the gate admits, in any letter case
+const REMOTE_SCHEME = /^https?:/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the absolute-URL scheme grammar that the page scheme check reads
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the content column rule that caps the measure at the shared variable
+const CONTENT_MAX_WIDTH_RULE = /\.report-content\s*\{[^}]*max-width:\s*var\(--content-max\)/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pixel value that the shared measure variable holds
+const CONTENT_MAX_WIDTH_VARIABLE = /--content-max:\s*\d+px/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the font size of one reference-list item, in pixels
+const FONT_SIZE_PX = /font-size:\s*(\d+)px/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the negative bottom margin of the lineage observer, which pulls one section into the box
+const NEGATIVE_BOTTOM_MARGIN = /0px 0px -\d+% 0px/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the bottom-margin percentage of the lineage observer
+const BOTTOM_MARGIN_PERCENT = /-(\d+)% 0px/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the overflow-wrap guard of the stat card value
+const OVERFLOW_WRAP_ANYWHERE = /(?:^|;)\s*overflow-wrap\s*:\s*anywhere\b/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the print media block that hides the chart download control
+const PRINT_CHART_DOWNLOAD_RULE = /@media print \{[\s\S]*\.report-chart-download \{\s*display: none;/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the closed form of the chart menu fault, which stands hidden until a fault shows it
+const CHART_MENU_FAULT_RULE = /\.report-chart-menu-fault \{\s*display: none;/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the print media block that hides the open chart menu
+const PRINT_CHART_MENU_OPEN_RULE = /@media print \{[\s\S]*\.report-chart-menu-open \{\s*display: none;/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the closed form of the chart menu, which stands closed before the page opens it
+const CHART_MENU_CLOSED_RULE = /\.report-chart-menu \{[^}]*display: none;/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the long path data of the dense point cloud, which no short path reaches
+const LONG_PATH_D = /<path d="([^"]{1000,})"/;
+
 import { beforeAll, describe, expect, it } from "bun:test";
+import { collapseWhitespace, isAllDigits } from "../../lib/text.js";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 import { load } from "cheerio";
 import { ok } from "neverthrow";
+import { z } from "zod";
 
 import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../../contracts/report-blocks.js";
 import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, TSPROV_ASSET, tableSidecarName } from "../assets.js";
@@ -49,6 +102,7 @@ import {
 } from "../page.js";
 import { formatTableCell } from "../number-format.js";
 import { REPORT_PROVENANCE_GLOBAL } from "../provenance-data.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { presentFind } from "../../lib/present.js";
 import { TABLE_DATA_GLOBAL } from "../table-data.js";
@@ -91,7 +145,20 @@ const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", i
 const scalarRef: MetricBlock["value"] = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
 
 /** The descriptor form of one `srcset` candidate: a pixel ratio such as `2x`, or a width such as `600w`. */
-const SRCSET_DESCRIPTOR = /^\d+(?:\.\d+)?[wx]$/;
+function isSrcsetDescriptor(token: string): boolean {
+    const unit = token.charAt(token.length - 1);
+    if (unit !== "w" && unit !== "x") return false;
+    const whole = token.slice(0, -1);
+    const dot = whole.indexOf(".");
+    if (dot < 0) return whole.length > 0 && isAllDigits(whole);
+    return (
+        whole.indexOf(".", dot + 1) < 0 &&
+        isAllDigits(whole.slice(0, dot)) &&
+        isAllDigits(whole.slice(dot + 1)) &&
+        whole.slice(0, dot).length > 0 &&
+        whole.slice(dot + 1).length > 0
+    );
+}
 
 /**
  * Each candidate URL of one `srcset` value.
@@ -102,9 +169,13 @@ const SRCSET_DESCRIPTOR = /^\d+(?:\.\d+)?[wx]$/;
  */
 function srcsetCandidates(list: string): string[] {
     const candidates: string[] = [];
-    for (const token of list.split(/\s+/)) {
-        const trimmed = token.replace(/^,+|,+$/g, "");
-        if (trimmed === "" || SRCSET_DESCRIPTOR.test(trimmed)) continue;
+    for (const token of collapseWhitespace(list).split(" ")) {
+        let start = 0;
+        let end = token.length;
+        while (start < end && token.charAt(start) === ",") start++;
+        while (end > start && token.charAt(end - 1) === ",") end--;
+        const trimmed = token.slice(start, end);
+        if (trimmed === "" || isSrcsetDescriptor(trimmed)) continue;
         if (trimmed.startsWith("data:")) {
             candidates.push(trimmed);
             continue;
@@ -125,7 +196,7 @@ function srcsetCandidates(list: string): string[] {
  */
 function attributeReferences(html: string): string[] {
     const references: string[] = [];
-    for (const match of html.matchAll(/\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    for (const match of html.matchAll(REFERENCE_ATTRIBUTE)) {
         const value = match[2] ?? match[3] ?? "";
         if (match[1] === "srcset") references.push(...srcsetCandidates(value));
         else references.push(value);
@@ -163,18 +234,18 @@ function referenceSites(html: string, value: string): string[] {
  */
 function styleReferences(css: string): string[] {
     const references: string[] = [];
-    for (const match of css.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g)) {
+    for (const match of css.matchAll(CSS_URL_SOURCE)) {
         references.push(match[1] ?? match[2] ?? match[3] ?? "");
     }
-    for (const match of css.matchAll(/@import\s+(?:"([^"]*)"|'([^']*)')/g)) {
+    for (const match of css.matchAll(CSS_IMPORT_SOURCE)) {
         references.push(match[1] ?? match[2] ?? "");
     }
     // One declaration ends at its semicolon, thus the scan of a list stops there. A comma divides the
     // candidates, and each candidate leads with its quoted source. Thus a `type(...)` hint inside a
     // candidate never reads as a source of its own.
-    for (const list of css.matchAll(/image-set\(([^;]*)/g)) {
+    for (const list of css.matchAll(CSS_IMAGE_SET_LIST)) {
         for (const candidate of (list[1] ?? "").split(",")) {
-            const quoted = /^\s*(?:"([^"]*)"|'([^']*)')/.exec(candidate);
+            const quoted = CSS_QUOTED_LEAD.exec(candidate);
             if (quoted !== null) references.push(quoted[1] ?? quoted[2] ?? "");
         }
     }
@@ -210,6 +281,11 @@ function stagedAt(window: Record<string, unknown>, id: string): Record<string, u
 }
 
 /** One record that the renderer staged: checked without a copy, so an own `__proto__` key survives. */
+/** Whether one name is the `prov-<12 hex>` form of a provenance asset with the given suffix. */
+function provAssetNameIs(name: string, suffix: string): boolean {
+    return name.startsWith("prov-") && name.endsWith(suffix) && isLowerHexOfLength(name.slice(5, name.length - suffix.length), 12);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     try {
         return parseUnknownRecord(value) !== undefined;
@@ -300,7 +376,7 @@ describe("renderReportPage text lists", () => {
     });
 
     it("fills the content column with the list, the same as with a paragraph", () => {
-        const listRules = [...DESIGN_CSS.matchAll(/\.report-list\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        const listRules = [...DESIGN_CSS.matchAll(CSS_RULE(".report-list"))].map((match) => match[1] ?? "");
         expect(listRules.length).toBe(1);
         // A list reads at the measure of the prose around it, thus no inner width caps it.
         expect(listRules[0]).not.toContain("max-width");
@@ -510,6 +586,7 @@ describe("the table data assets", () => {
         const document = tableDocument();
         // An object literal sends a `__proto__` key to the prototype. The rows arrive from a parse in the
         // real path, thus the test builds them the same way and the column stays an own key.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the text gives `__proto__` and `constructor` as own keys, which an object literal cannot express.
         const rows = cellRows(JSON.parse('[{"constructor":"up","__proto__":"left","gene":"TP53"},{"constructor":"up","__proto__":"right","gene":"MYC"}]'));
         const values: RenderValues = { tbl: { type: "table", columns: ["constructor", "__proto__", "gene"], rows } };
         const rendered = (await renderReportPage(document, values))._unsafeUnwrap();
@@ -634,8 +711,8 @@ describe("the provenance data assets", () => {
 
         const documentAsset = provenanceAt(provenanceAssets(first.dataAssets), 0);
         const attestationAsset = provenanceAt(provenanceAssets(first.dataAssets), 1);
-        expect(documentAsset.name).toMatch(/^prov-[0-9a-f]{12}\.data\.js$/);
-        expect(attestationAsset.name).toMatch(/^prov-[0-9a-f]{12}\.sig\.data\.js$/);
+        expect(provAssetNameIs(documentAsset.name, ".data.js")).toBe(true);
+        expect(provAssetNameIs(attestationAsset.name, ".sig.data.js")).toBe(true);
         expect(second.dataAssets).toEqual(first.dataAssets);
         expect(second.html).toBe(first.html);
     });
@@ -767,7 +844,7 @@ describe("the lineage stamp and the popover control", () => {
     /** The keys that one block stamped, read back from the container of the block. */
     function keysOf(html: string, blockId: string): unknown[] {
         const value = load(html)(`[${LINEAGE_BLOCK_ATTRIBUTE}="${blockId}"]`).attr(LINEAGE_KEYS_ATTRIBUTE);
-        return value === undefined ? [] : optionList(JSON.parse(value));
+        return value === undefined ? [] : optionList(parseJsonAs(value, z.unknown()));
     }
 
     /** The place that each control of one block names, in document order. */
@@ -980,7 +1057,7 @@ describe("the lineage stamp and the popover control", () => {
 
     it("holds no popover rule that no emitter writes", async () => {
         const html = await groundedPage(PROVENANCE);
-        const classes = [...new Set([...DESIGN_CSS.matchAll(/\.(report-lineage[a-z-]*)/g)].map((match) => match[1]))];
+        const classes = [...new Set([...DESIGN_CSS.matchAll(LINEAGE_CLASS_NAME)].map((match) => match[1] ?? ""))];
 
         expect(classes.length).toBeGreaterThan(1);
         for (const name of classes) {
@@ -1016,7 +1093,7 @@ describe("the lineage stamp and the popover control", () => {
     });
 
     it("caps the body inside the viewport and holds the panel above the control where it does not fit", () => {
-        const bodyRule = /\.report-lineage-body\s*\{([^}]*)\}/.exec(DESIGN_CSS);
+        const bodyRule = CSS_RULE(".report-lineage-body").exec(DESIGN_CSS);
         if (bodyRule === null) {
             throw new Error("The design sheet holds no body rule for the lineage popover.");
         }
@@ -1075,7 +1152,7 @@ describe("the lineage stamp and the popover control", () => {
     });
 
     it("sizes the panel to its longest row up to a cap, and holds that width across the fit", () => {
-        const rule = /\.report-lineage-popover \{([^}]*)\}/.exec(DESIGN_CSS);
+        const rule = CSS_RULE(".report-lineage-popover").exec(DESIGN_CSS);
         if (rule === null) {
             throw new Error("The design sheet holds no rule for the lineage popover.");
         }
@@ -1207,7 +1284,7 @@ describe("the page stands alone", () => {
      * open, thus none of them admits one.
      */
     function remoteSitesOf(html: string): string[] {
-        const remote = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter((value) => /^https?:/i.test(value));
+        const remote = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter((value) => REMOTE_SCHEME.test(value));
         return [...new Set(remote.flatMap((value) => referenceSites(html, value)))];
     }
 
@@ -1223,8 +1300,8 @@ describe("the page stands alone", () => {
      * start of the value, thus a namespace URI inside a data URI never reads as one.
      */
     function insideThePage(value: string): boolean {
-        if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
-            return value.startsWith("data:") || /^https?:/i.test(value);
+        if (URL_SCHEME.test(value)) {
+            return value.startsWith("data:") || REMOTE_SCHEME.test(value);
         }
         return !value.startsWith("/") && !value.split("/").includes("..");
     }
@@ -1310,7 +1387,7 @@ describe("the page stands alone", () => {
 describe("the stands-alone extraction", () => {
     /** The remote references of a value list. The test reads the start of a value, as the gate does. */
     function remote(values: string[]): string[] {
-        return values.filter((value) => /^https?:/i.test(value));
+        return values.filter((value) => REMOTE_SCHEME.test(value));
     }
 
     it("reads a remote source out of each attribute form that HTML admits", () => {
@@ -1753,15 +1830,15 @@ describe("the one content column", () => {
     });
 
     it("caps no prose measure below the column width", () => {
-        const proseRules = [...DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.report-prose\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        const proseRules = [...DESIGN_CSS.replace(CSS_COMMENT, "").matchAll(CSS_RULE(".report-prose"))].map((match) => match[1] ?? "");
         expect(proseRules.length).toBeGreaterThan(0);
         // An inner measure on the prose alone leaves a half-empty band beside a full-width table.
         for (const body of proseRules) {
             expect(body).not.toContain("max-width");
         }
         // The width rides one token, thus each region reads the same value.
-        expect(DESIGN_CSS).toMatch(/\.report-content\s*\{[^}]*max-width:\s*var\(--content-max\)/);
-        expect(DESIGN_CSS).toMatch(/--content-max:\s*\d+px/);
+        expect(CONTENT_MAX_WIDTH_RULE.test(DESIGN_CSS)).toBe(true);
+        expect(CONTENT_MAX_WIDTH_VARIABLE.test(DESIGN_CSS)).toBe(true);
     });
 });
 
@@ -1848,7 +1925,7 @@ describe("the References appendix", () => {
         // Every marker of a page that holds each block kind reads as a bracket number.
         expect(markers.length).toBeGreaterThan(0);
         for (const marker of markers) {
-            expect(marker).toMatch(/^\[\d+\]$/);
+            expect(marker.startsWith("[") && marker.endsWith("]") && isAllDigits(marker.slice(1, -1))).toBe(true);
         }
         // The superscript notation retires, thus no element of the page carries it.
         expect(html).not.toContain("<sup");
@@ -1862,8 +1939,8 @@ describe("the References appendix", () => {
     });
 
     it("reads quieter than the body of the report", () => {
-        const itemRules = [...DESIGN_CSS.matchAll(/\.report-ref-item\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
-        const sizes = itemRules.flatMap((body) => [...body.matchAll(/font-size:\s*(\d+)px/g)].map((match) => Number(match[1] ?? "")));
+        const itemRules = [...DESIGN_CSS.matchAll(CSS_RULE(".report-ref-item"))].map((match) => match[1] ?? "");
+        const sizes = itemRules.flatMap((body) => [...body.matchAll(FONT_SIZE_PX)].map((match) => Number(match[1] ?? "")));
         expect(sizes.length).toBeGreaterThan(0);
         // The body reads at 16px. A reader consults one entry of the appendix from a marker, thus the
         // appendix reads smaller than the text that sent the reader to it.
@@ -1989,7 +2066,7 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("li#ref-3").text()).toContain("pvalue");
         expect(page("li#ref-4").text()).toContain("hr");
         // The option prints each statistic in the number format of its column.
-        const option = optionOf(JSON.parse(page(".report-chart script[type='application/json']").text()));
+        const option = optionOf(parseJsonAs(page(".report-chart script[type='application/json']").text(), z.unknown()));
         const graphic = optionArray(option, "graphic")[0];
         if (graphic === undefined) throw new Error("the option holds no graphic");
         expect(optionAt(graphic, "style").text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
@@ -2192,7 +2269,7 @@ describe("the section scrollspy", () => {
         const run = runSpy(["sec-1"]);
         run.intersect([true]);
         // The negative bottom margin is what keeps one section in the box at a time.
-        expect(run.rootMargin).toMatch(/0px 0px -\d+% 0px/);
+        expect(NEGATIVE_BOTTOM_MARGIN.test(run.rootMargin)).toBe(true);
     });
 
     it("marks the first link when every section starts below the box", () => {
@@ -2234,7 +2311,7 @@ describe("the section scrollspy", () => {
     it("reads the end of the box from the margin that the observer takes", () => {
         const run = runSpy(["sec-1"]);
         run.intersect([true]);
-        const margin = /-(\d+)% 0px/.exec(run.rootMargin);
+        const margin = BOTTOM_MARGIN_PERCENT.exec(run.rootMargin);
         expect(margin).not.toBeNull();
         // The script is browser source text, thus the test reads it as text. The fallback measures the same
         // box that the observer takes, and one constant feeds both. Thus the two readings cannot drift.
@@ -3136,7 +3213,7 @@ describe("renderReportPage number format", () => {
 describe("the stat card value style rule", () => {
     /** The declaration body of each `.stat-card-value` rule of a style sheet, with each comment removed. */
     function statValueRules(css: string): string[] {
-        return [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.stat-card-value\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
+        return [...css.replace(CSS_COMMENT, "").matchAll(CSS_RULE(".stat-card-value"))].map((match) => match[1] ?? "");
     }
 
     it("guards the overflow of the value", () => {
@@ -3145,7 +3222,7 @@ describe("the stat card value style rule", () => {
 
         // A value that the number format cannot shorten, for example a long identifier, would paint past
         // the card edge without the guard.
-        expect(rules.some((body) => /(?:^|;)\s*overflow-wrap\s*:\s*anywhere\b/.test(body))).toBe(true);
+        expect(rules.some((body) => OVERFLOW_WRAP_ANYWHERE.test(body))).toBe(true);
     });
 });
 
@@ -3354,7 +3431,7 @@ describe("the chart exports", () => {
         const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
         const svgs = rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"));
 
-        expect(svgs.map((asset) => asset.name.replace(/c-[0-9a-f]{12}-/, "c-HASH-"))).toEqual(["c-HASH-89mm.svg", "c-HASH-183mm.svg"]);
+        expect(svgs.map((asset) => `c-HASH-${asset.name.slice(15)}`)).toEqual(["c-HASH-89mm.svg", "c-HASH-183mm.svg"]);
         const $ = load(rendered.html);
         for (const asset of svgs) {
             expect(asset.bytes.startsWith("<svg ")).toBe(true);
@@ -3421,13 +3498,13 @@ describe("the chart exports", () => {
         expect(control.attr("data-chart-menu")).toBe("chart-bars");
         expect(control.attr("tabindex")).toBeUndefined();
         expect(control.text()).toBe(DOWNLOAD_CONTROL_LABEL);
-        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-download \{\s*display: none;/);
+        expect(PRINT_CHART_DOWNLOAD_RULE.test(DESIGN_CSS)).toBe(true);
     });
 
     it("puts the toolbox of the chart type into the page option, with each handler as the name of a page function", async () => {
         const page = chartPage(bars, barRows);
         const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
-        const option = optionOf(JSON.parse(load(rendered.html)("script[type='application/json']").text()));
+        const option = optionOf(parseJsonAs(load(rendered.html)("script[type='application/json']").text(), z.unknown()));
         expect(option.toolbox).toEqual(chartToolbox("bar"));
         // Each export removes the toolbox, thus a file never shows it.
         for (const asset of rendered.dataAssets.filter((entry) => entry.name.endsWith(".svg"))) expect(asset.bytes).not.toContain("Download");
@@ -3445,8 +3522,8 @@ describe("the chart exports", () => {
         const single = rendered.dataAssets.find((asset) => asset.name.endsWith("-89mm.svg"));
         // The export reads the inline option, thus each point of the table is in the file. A dense scatter
         // draws one path, and each point is one move of it.
-        const cloud = /<path d="([^"]{1000,})"/.exec(single?.bytes ?? "");
-        expect(cloud?.[1]?.match(/M/g)?.length).toBe(6000);
+        const cloud = LONG_PATH_D.exec(single?.bytes ?? "");
+        expect(cloud?.[1] !== undefined ? cloud[1].split("M").length - 1 : undefined).toBe(6000);
     });
 
     it("stages no SVG for a scatter past the crowd row count, and the menu names the hybrid SVG that the page builds", async () => {
@@ -3471,7 +3548,7 @@ describe("the chart exports", () => {
         const fault = $(`#chart-crowd-menu .${MENU_FAULT_CLASS}`);
         expect(fault.text()).toBe(HYBRID_FAULT_NOTE);
         expect(fault.hasClass(MENU_FAULT_SHOWN_CLASS)).toBe(false);
-        expect(DESIGN_CSS).toMatch(/\.report-chart-menu-fault \{\s*display: none;/);
+        expect(CHART_MENU_FAULT_RULE.test(DESIGN_CSS)).toBe(true);
         expect(fault.attr("role")).toBe("menuitem");
         expect(fault.attr("aria-disabled")).toBe("true");
     });
@@ -3515,7 +3592,11 @@ describe("the chart exports", () => {
         const pca: ChartBlock = { kind: "chart", id: "square", binding, chartType: "pca", encoding: { x: "PC1", y: "PC2", group: "condition" } };
         const page = chartPage(pca, rows);
         const $ = load((await renderReportPage(page.document, page.values))._unsafeUnwrap().html);
-        expect($("[data-echarts-id='square']").attr("style")).toMatch(/^max-width: \d+px; margin-inline: auto$/);
+        const style = $("[data-echarts-id='square']").attr("style") ?? "";
+        const widthValue = style.slice("max-width: ".length, -"; margin-inline: auto".length);
+        expect(
+            style.startsWith("max-width: ") && style.endsWith("; margin-inline: auto") && widthValue.endsWith("px") && isAllDigits(widthValue.slice(0, -2)),
+        ).toBe(true);
         expect($("[data-echarts-id='square']").attr("class")).toBe("chart-container");
     });
 
@@ -3542,9 +3623,9 @@ describe("the chart exports", () => {
     });
 
     it("hides the download menu in print", () => {
-        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-menu-open \{\s*display: none;/);
+        expect(PRINT_CHART_MENU_OPEN_RULE.test(DESIGN_CSS)).toBe(true);
         // A menu that the page has not opened stands closed.
-        expect(DESIGN_CSS).toMatch(/\.report-chart-menu \{[^}]*display: none;/);
+        expect(CHART_MENU_CLOSED_RULE.test(DESIGN_CSS)).toBe(true);
     });
 });
 

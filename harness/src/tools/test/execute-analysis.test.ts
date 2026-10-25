@@ -10,11 +10,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { Pool, type QueryConfig, type QueryResultRow } from "pg";
 import type { Querier } from "../../state/db.js";
 import type { Connectable } from "../../lib/db-result.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 
@@ -219,7 +221,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
         }
         if (q.text.includes("INSERT INTO cortex_plans")) {
             const planId = String(values[0]);
-            if (!plans.has(planId)) plans.set(planId, JSON.parse(String(values[2])));
+            if (!plans.has(planId)) plans.set(planId, parseJsonAs(String(values[2]), z.unknown()));
             return { rows: [], rowCount: 1 };
         }
         if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {
@@ -477,7 +479,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
             true,
         );
-        expect(queries.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
+        expect(queries.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(true);
     });
 
     it("launches the run through the RunLauncher and returns the reserved runId", async () => {
@@ -548,7 +550,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/launch boom/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("launch boom");
 
         expect(revokes).toContain("workflow-start-failed");
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed"))).toBe(true);
@@ -675,8 +677,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         const request = "Fit a gradient boosting model on these features";
 
         await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-1"))).rejects.toThrow(PlanPackagesMissingError);
-        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-2"))).rejects.toThrow(/python:xgboost/);
-        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-3"))).rejects.toThrow(/r:xgboost/);
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-2"))).rejects.toThrow("python:xgboost");
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-3"))).rejects.toThrow("r:xgboost");
         expect(launches).toHaveLength(0);
         expect(runs.size).toBe(0);
     });
@@ -831,9 +833,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/scanpy/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("scanpy");
         // The message names no remedy command — the remedy belongs to the embedder.
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow(/inflexa/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow("inflexa");
         expect(launches).toHaveLength(0);
         expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
     });
@@ -865,9 +867,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             },
         });
 
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/the store cannot answer/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/dependency graph names 1 edge/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow(/does not hold: scanpy/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("the store cannot answer");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("dependency graph names 1 edge");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.not.toThrow("does not hold: scanpy");
         expect(launches).toHaveLength(0);
         expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
     });
@@ -1065,8 +1067,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             },
         });
 
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/python:igraph/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/r:igraph/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("python:igraph");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("r:igraph");
         expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "igraph", track: "python" }, { spelling: "igraph" }]);
         expect(launches).toHaveLength(0);
     });
@@ -1100,10 +1102,10 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             },
         });
 
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/igraph-0\.11\.9-aaaaaaaa/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/igraph-2\.1\.4-bbbbbbbb/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow(/python:igraph/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-4"))).rejects.toThrow(/r:igraph/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow("igraph-0.11.9-aaaaaaaa");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("igraph-2.1.4-bbbbbbbb");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow("python:igraph");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-4"))).rejects.toThrow("r:igraph");
         expect(launches).toHaveLength(0);
     });
 
@@ -1128,8 +1130,8 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
 
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(PlanPackagesMissingError);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow(/the store cannot answer/);
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow(/locked by another process/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-2"))).rejects.toThrow("the store cannot answer");
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-3"))).rejects.toThrow("locked by another process");
         expect(launches).toHaveLength(0);
     });
 
@@ -1691,13 +1693,16 @@ describe("the launch of a stored plan, over a real database", () => {
                 const first = launchPlanRun(deps({ pool: gated }), { session: session(), planId: PLAN_ID, newestRunId: null });
                 await insertReached;
                 const second = launchPlanRun(deps(), { session: session(), planId: PLAN_ID, newestRunId: null });
+                // The gate arms a wait that the abort of the settled race retires, so no timer of the loser outlives the test.
+                const gate = new AbortController();
                 const settled = await Promise.race([
                     second.match(
                         () => "settled",
                         () => "settled",
                     ),
-                    new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 200)),
+                    sleep(200, undefined, { signal: gate.signal }).then(() => "waiting"),
                 ]);
+                gate.abort();
                 releaseInsert();
                 const firstLaunch = (await first)._unsafeUnwrap();
                 const secondLaunch = (await second)._unsafeUnwrap();
@@ -1757,7 +1762,7 @@ describe("the launch of a stored plan, over a real database", () => {
             }).run;
 
             await expect(run()).rejects.toThrow(PlanPackagesMissingError);
-            await expect(run()).rejects.toThrow(/scanpy/);
+            await expect(run()).rejects.toThrow("scanpy");
             expect(await runRows()).toEqual([]);
         });
 

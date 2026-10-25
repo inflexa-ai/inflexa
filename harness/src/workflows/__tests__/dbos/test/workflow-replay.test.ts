@@ -47,6 +47,8 @@
  *   This makes the files order-independent within one bun process.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
@@ -327,7 +329,7 @@ async function waitForTerminal(workflowId: string, timeoutMs = 5_000): Promise<A
         if (status && (status.status === "SUCCESS" || status.status === "ERROR" || status.status === "CANCELLED")) {
             return status;
         }
-        await new Promise((r) => setTimeout(r, 25));
+        await sleep(25);
     }
     return status;
 }

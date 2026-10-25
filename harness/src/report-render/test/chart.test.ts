@@ -1,3 +1,14 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the element that carries the chart id and the chart-container class on one tag
+const CHART_CONTAINER_MARK = /<div[^>]*\bdata-echarts-id="b3"[^>]*\bclass="chart-container"[^>]*>/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the declaration body of each report-chart-card rule of the style sheet
+const CARD_RULES = /\.report-chart-card[^{}]*\{([^{}]*)\}/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the declaration body of each chart-container rule of the style sheet
+const CONTAINER_RULES = /\.chart-container\s*\{([^}]*)\}/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- one height declaration of a rule body
+const HEIGHT_DECL = /(?:^|;)\s*height\s*:\s*([^;]+)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a nonzero length value with a css unit, which the chart box needs
+const NONZERO_LENGTH = /^[1-9][\d.]*(?:px|rem|em|vh|%)$/;
+
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition, ChartTransform } from "../../contracts/report-blocks.js";
@@ -1625,7 +1636,7 @@ describe("renderChart", () => {
         // The bootstrap finds the container by `data-echarts-id`, and the style sheet sizes it by the
         // `chart-container` class. The two must sit on one element. A class on a different element, or no
         // class at all, gives the chart runtime a box of zero height and the chart draws into nothing.
-        expect(html).toMatch(/<div[^>]*\bdata-echarts-id="b3"[^>]*\bclass="chart-container"[^>]*>/);
+        expect(CHART_CONTAINER_MARK.test(html)).toBe(true);
     });
 
     it("wraps the chart in the corner-accent card under the mono title line", () => {
@@ -1656,7 +1667,7 @@ describe("renderChart", () => {
     it("gives the card the square corners and no hover raise", () => {
         // The corner-accent card is the one geometry of a data card. A border radius on the chart, or a
         // transform under hover, brings the window costume back through the style sheet.
-        const cardRules = [...DESIGN_CSS.matchAll(/\.report-chart-card[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
+        const cardRules = [...DESIGN_CSS.matchAll(CARD_RULES)].map((match) => match[1] ?? "");
         expect(cardRules.length).toBeGreaterThan(0);
         for (const body of cardRules) {
             expect(body).not.toContain("border-radius");
@@ -1668,7 +1679,7 @@ describe("renderChart", () => {
 describe("the chart container style rule", () => {
     /** The declaration body of each `.chart-container` rule of a style sheet. */
     function chartContainerRules(css: string): string[] {
-        return [...css.matchAll(/\.chart-container\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
+        return [...css.matchAll(CONTAINER_RULES)].map((match) => match[1] ?? "");
     }
 
     it("declares a height on the chart container", () => {
@@ -1677,9 +1688,9 @@ describe("the chart container style rule", () => {
 
         // The chart runtime measures the container at initialization. A rule with no height, or a height of
         // zero, gives a box that shows no chart even though every other gate stays green.
-        const heights = rules.flatMap((body) => [...body.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((match) => (match[1] ?? "").trim()));
+        const heights = rules.flatMap((body) => [...body.matchAll(HEIGHT_DECL)].map((match) => (match[1] ?? "").trim()));
         expect(heights.length).toBeGreaterThan(0);
-        expect(heights.some((height) => /^[1-9][\d.]*(?:px|rem|em|vh|%)$/.test(height))).toBe(true);
+        expect(heights.some((height) => NONZERO_LENGTH.test(height))).toBe(true);
     });
 });
 

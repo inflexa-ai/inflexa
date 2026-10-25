@@ -25,6 +25,7 @@ import type { Scope } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { isSafeId } from "../../workspace/paths.js";
@@ -437,7 +438,7 @@ function decodeBlockPayload(block: unknown): unknown {
         return block;
     }
     try {
-        return JSON.parse(block);
+        return parseJsonAs(block, z.unknown());
     } catch {
         return block;
     }

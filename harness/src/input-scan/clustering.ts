@@ -17,6 +17,7 @@
 import type { MemberFile } from "./set-types.js";
 import { DATE_SYMBOL, DIGIT_SYMBOL, ID_SYMBOL, maskSegment, skeletonOf, tokenizeName } from "./tokens.js";
 import { COARSE_SIMILARITY, CONTAINMENT_SIMILARITY, FINE_SIMILARITY, MAX_SIGNATURE_KEYS } from "./tuning.js";
+import { firstSegmentOf } from "../lib/text.js";
 
 export type DirectoryNode = {
     readonly name: string;
@@ -52,7 +53,7 @@ function newNode(name: string): DirectoryNode {
     return { name, children: new Map(), files: [], fineSignature: new Set(), coarseSignature: new Set(), childNames: new Set() };
 }
 
-import { presentAt, presentFirst } from "../lib/present.js";
+import { presentAt } from "../lib/present.js";
 
 export function buildTree(files: readonly MemberFile[]): DirectoryNode {
     const root = newNode("");
@@ -126,8 +127,9 @@ function hasMask(skeleton: string): boolean {
  */
 function skeletonKin(a: string, b: string): boolean {
     if (a === b && hasMask(a)) return true;
-    const head = presentFirst(a.split(/[_\-.]/), "kinship heads");
-    return head === presentFirst(b.split(/[_\-.]/), "kinship heads") && hasMask(head);
+    const head = firstSegmentOf(a, "_-.");
+    if (head === undefined) return false;
+    return head === firstSegmentOf(b, "_-.") && hasMask(head);
 }
 
 type Candidate = {

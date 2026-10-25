@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 
 import type { DraftDocument } from "../draft.js";
 import { computeDraftHash } from "../draft-hash.js";
@@ -44,7 +45,7 @@ describe("computeDraftHash", () => {
         const draft: DraftDocument = { title: "", sections: [] };
         const hash = computeDraftHash(draft);
         // A sha256 digest is 64 hex characters. The hash is deterministic, thus a second call gives the same.
-        expect(hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHexOfLength(hash, 64)).toBe(true);
         expect(computeDraftHash(draft)).toBe(hash);
     });
 });

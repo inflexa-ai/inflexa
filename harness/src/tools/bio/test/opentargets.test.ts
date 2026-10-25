@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
+import { parseJsonAs } from "../../../lib/parse-json.js";
+
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
     return Object.assign(run, { preconnect: fetch.preconnect });
@@ -9,6 +11,15 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { openTargetsTool } from "../opentargets.js";
 import { presentAt } from "../../../lib/present.js";
+
+function operationNameOf(query: string): string {
+    const at = query.indexOf("query ");
+    if (at < 0) return "";
+    let end = at + "query ".length;
+    const isWordChar = (char: string): boolean => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_";
+    while (end < query.length && isWordChar(query.charAt(end))) end++;
+    return query.slice(at + "query ".length, end);
+}
 
 const GqlBodySchema = z.object({ query: z.string(), variables: z.record(z.string(), z.unknown()) });
 
@@ -31,8 +42,8 @@ type GqlRequest = {
 function stubOpenTargets(responder: (req: GqlRequest) => Response): GqlRequest[] {
     const seen: GqlRequest[] = [];
     globalThis.fetch = fetchDouble(async (_url, init) => {
-        const body = GqlBodySchema.parse(JSON.parse(String(init?.body ?? "{}")));
-        const operation = /query (\w+)/.exec(body.query)?.[1] ?? "";
+        const body = GqlBodySchema.parse(parseJsonAs(String(init?.body ?? "{}"), z.unknown()));
+        const operation = operationNameOf(body.query);
         const req: GqlRequest = { operation, variables: body.variables };
         seen.push(req);
         return responder(req);

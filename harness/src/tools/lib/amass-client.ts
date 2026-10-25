@@ -33,6 +33,8 @@ import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { z } from "zod";
 
 import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
+import { safeParseJsonAs } from "../../lib/parse-json.js";
+import { hasWhitespace, isAllDigits } from "../../lib/text.js";
 import { AMASS_BASE } from "./amass-config.js";
 
 // ---------------------------------------------------------------------------
@@ -79,13 +81,12 @@ export const AmassErrorEnvelopeSchema = z.object({
 
 /** Read the message of an Amass error body, with the per-field reasons of a 400. */
 function envelopeOf(body: string): { code: string | null; message: string } {
-    let parsed: unknown;
+    let envelope;
     try {
-        parsed = JSON.parse(body);
+        envelope = safeParseJsonAs(body, AmassErrorEnvelopeSchema);
     } catch {
         return { code: null, message: body || "no message" };
     }
-    const envelope = AmassErrorEnvelopeSchema.safeParse(parsed);
     if (!envelope.success) return { code: null, message: body || "no message" };
     const { code, message, fields } = envelope.data.error;
     const reasons = fields ? Object.entries(fields).map(([field, reason]) => `${field}: ${reason}`) : [];
@@ -176,8 +177,11 @@ const FDA_APPLICATION_PREFIXES = ["NDA", "BLA", "ANDA"] as const;
  * thus goes as all three prefixes, in one request at the price of one.
  */
 export function fdaApplicationForms(input: string): string[] {
-    const compact = input.replace(/[\s-]/g, "").toUpperCase();
-    if (/^\d+$/.test(compact)) return FDA_APPLICATION_PREFIXES.map((prefix) => `${prefix}${compact}`);
+    const compact = [...input]
+        .filter((char) => char !== "-" && !hasWhitespace(char))
+        .join("")
+        .toUpperCase();
+    if (compact !== "" && isAllDigits(compact)) return FDA_APPLICATION_PREFIXES.map((prefix) => `${prefix}${compact}`);
     return [compact];
 }
 
@@ -188,7 +192,7 @@ export function fdaApplicationForms(input: string): string[] {
 export function productNdcOf(input: string): string {
     const trimmed = input.trim();
     const segments = trimmed.split("-");
-    return segments.length === 3 && segments.every((segment) => /^\d+$/.test(segment)) ? `${segments[0]}-${segments[1]}` : trimmed;
+    return segments.length === 3 && segments.every((segment) => segment.length > 0 && isAllDigits(segment)) ? `${segments[0]}-${segments[1]}` : trimmed;
 }
 
 // ---------------------------------------------------------------------------

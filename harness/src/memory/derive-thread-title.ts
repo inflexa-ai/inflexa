@@ -11,8 +11,10 @@
  *    append the real ellipsis `…` (U+2026). If no space exists inside
  *    the window, hard-slice at `max` and append `…`.
  */
+import { collapseWhitespace } from "../lib/text.js";
+
 export function deriveThreadTitle(text: string, max: number = 40): string {
-    const normalized = text.replace(/\s+/g, " ").trim();
+    const normalized = collapseWhitespace(text);
     if (normalized.length === 0) return "Untitled";
     if (normalized.length <= max) return normalized;
 

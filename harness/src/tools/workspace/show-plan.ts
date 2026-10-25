@@ -15,12 +15,11 @@ import { z } from "zod";
 import { buildPlanCardData } from "../../memory/card-builders.js";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { PLAN_ID_RE } from "../../contracts/schemas/chat-parts.js";
 import type { PlanRowQuerier } from "../../state/plans.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 
 type ShowPlanOutput = { shown: false; reason: "plan_not_found" } | { shown: true; id: string };
-
-const PLAN_ID_REGEX = /^pln-[a-f0-9]{8}$/;
 
 export function createShowPlanTool(pool: PlanRowQuerier) {
     return defineTool({
@@ -36,7 +35,7 @@ export function createShowPlanTool(pool: PlanRowQuerier) {
         inputSchema: z.object({
             planId: z
                 .string()
-                .regex(PLAN_ID_REGEX, "planId must match pln-<8hex>")
+                .regex(PLAN_ID_RE, "planId must match pln-<8hex>")
                 .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
             title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
         }),

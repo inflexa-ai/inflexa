@@ -97,14 +97,23 @@ type RecipeEntry = {
 };
 
 function slug(value: string): string {
-    return (
-        value
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-            .slice(0, 60) || "group"
-    );
+    let out = "";
+    let inRun = false;
+    for (const char of value.toLowerCase()) {
+        if (out.length >= SLUG_MAX_LENGTH) break;
+        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+        if (!isSlugChar) {
+            inRun = true;
+            continue;
+        }
+        if (inRun && out.length > 0) out += "-";
+        inRun = false;
+        out += char;
+    }
+    return out.slice(0, SLUG_MAX_LENGTH) || "group";
 }
+
+const SLUG_MAX_LENGTH = 60;
 
 function fileCountOf(members: readonly MemberFile[]): number {
     return members.reduce((total, member) => total + 1 + member.companions.length, 0);

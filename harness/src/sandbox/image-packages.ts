@@ -27,6 +27,8 @@ import { readFileSync } from "node:fs";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { safeParseJsonAs } from "../lib/parse-json.js";
+
 /**
  * The file name of the record, at the root of the package store. Exported,
  * as `FARM_LOCK_FILE` is, thus an embedder that joins the path onto its own
@@ -120,13 +122,12 @@ export function readImagePackagesFile(recordPath: string): Result<ImagePackages,
     } catch (cause) {
         return err({ type: "record_unreadable", recordPath, cause });
     }
-    let parsed: unknown;
+    let record;
     try {
-        parsed = JSON.parse(raw);
+        record = safeParseJsonAs(raw, ImagePackagesSchema);
     } catch (cause) {
         return err({ type: "record_invalid", recordPath, cause });
     }
-    const record = ImagePackagesSchema.safeParse(parsed);
     if (!record.success) {
         return err({ type: "record_invalid", recordPath, cause: record.error });
     }

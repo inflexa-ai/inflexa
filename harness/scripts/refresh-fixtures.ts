@@ -33,7 +33,10 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { z } from "zod";
+
 import { sleep } from "../src/lib/async-utils.js";
+import { parseJsonAs, safeParseJsonAs } from "../src/lib/parse-json.js";
 import { FixtureManifestSchema, type FixtureManifest, type FixtureManifestEntry } from "../src/tools/lib/__fixtures__/manifest.js";
 
 const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "tools", "lib", "__fixtures__");
@@ -164,9 +167,9 @@ async function listProviders(selected: string[]): Promise<string[]> {
 
 /** Read and validate one `manifest.json`. A file that breaks the contract gives `null`. */
 async function readManifest(provider: string, path: string): Promise<FixtureManifest | null> {
-    let raw: unknown;
+    let parsed;
     try {
-        raw = JSON.parse(await readFile(path, "utf8"));
+        parsed = safeParseJsonAs(await readFile(path, "utf8"), FixtureManifestSchema);
     } catch (error) {
         // A missing or malformed file is a normal condition of an edit in progress. Report the cause and
         // continue with the other providers, because a stack trace here hides the drift report.
@@ -174,7 +177,6 @@ async function readManifest(provider: string, path: string): Promise<FixtureMani
         return null;
     }
 
-    const parsed = FixtureManifestSchema.safeParse(raw);
     if (!parsed.success) {
         reject(
             provider,
@@ -266,7 +268,7 @@ async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Re
 /** Parse JSON text. A body that is not JSON stays a string, thus the diff reports it instead of throwing. */
 function safeJson(text: string): unknown {
     try {
-        return JSON.parse(text);
+        return parseJsonAs(text, z.unknown());
     } catch {
         return text;
     }

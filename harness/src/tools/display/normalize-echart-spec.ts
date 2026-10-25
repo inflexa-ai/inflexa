@@ -52,14 +52,24 @@ function axisEntries(axis: unknown): Record<string, unknown>[] {
  * Diacritics are folded, every other non-alphanumeric run collapses to a single dash.
  */
 export function kebabFilename(source: string | undefined): string {
-    const slug = (source ?? "")
-        .normalize("NFKD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .slice(0, MAX_FILENAME_LEN)
-        .replace(/^-+|-+$/g, "");
-    return slug.length > 0 ? slug : DEFAULT_FILENAME;
+    let out = "";
+    let inRun = false;
+    for (const char of (source ?? "").normalize("NFKD").toLowerCase()) {
+        if (char >= "\u0300" && char <= "\u036f") continue;
+        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+        if (!isSlugChar) {
+            inRun = true;
+            continue;
+        }
+        if (inRun && out.length > 0) out += "-";
+        inRun = false;
+        out += char;
+        if (out.length >= MAX_FILENAME_LEN) break;
+    }
+    // One append can add two characters, so the cap can land between a dash and the letter it introduces.
+    if (out.length > MAX_FILENAME_LEN) out = out.slice(0, MAX_FILENAME_LEN);
+    if (out.endsWith("-")) out = out.slice(0, -1);
+    return out.length > 0 ? out : DEFAULT_FILENAME;
 }
 
 /** Declared series count. `0` = none declared, which is also "nothing a legend could label". */

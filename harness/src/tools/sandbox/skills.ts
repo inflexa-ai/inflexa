@@ -21,13 +21,15 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
+import { collapseWhitespace, splitLines } from "../../lib/text.js";
 
 /** Bounds — keep a search over a deep skill tree cheap and context-safe. */
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SNIPPET = 240;
 const DEFAULT_TOP_K = 10;
 const MAX_TOP_K = 25;
-const TEXT_EXT = /\.(md|markdown|txt|py|r|R|json|ya?ml|csv|tsv)$/;
+/** The file-name extensions a skill may carry text in. */
+const TEXT_EXTENSIONS = [".md", ".markdown", ".txt", ".py", ".r", ".R", ".json", ".yaml", ".yml", ".csv", ".tsv"];
 
 export type SkillToolsDeps = {
     /** Absolute path to the skills tree (one subdirectory per skill). */
@@ -64,7 +66,7 @@ async function collectTextFiles(dir: string, acc: string[]): Promise<void> {
         const full = join(dir, e.name);
         if (e.isDirectory()) {
             await collectTextFiles(full, acc);
-        } else if (TEXT_EXT.test(e.name)) {
+        } else if (TEXT_EXTENSIONS.some((extension) => e.name.endsWith(extension))) {
             acc.push(full);
         }
     }
@@ -91,7 +93,7 @@ export function createSkillTools(deps: SkillToolsDeps) {
             if (allowed.size === 0) {
                 return ok({ status: "no_skills" as const });
             }
-            const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+            const tokens = collapseWhitespace(query.toLowerCase()).split(" ").filter(Boolean);
             const matches: SkillMatch[] = [];
 
             for (const skill of allowed) {
@@ -111,7 +113,7 @@ export function createSkillTools(deps: SkillToolsDeps) {
                     const distinct = tokens.filter((t) => lower.includes(t)).length;
                     if (distinct === 0) continue;
 
-                    const lines = content.split(/\r?\n/);
+                    const lines = splitLines(content);
                     const hitIdx = lines.findIndex((l) => {
                         const ll = l.toLowerCase();
                         return tokens.some((t) => ll.includes(t));

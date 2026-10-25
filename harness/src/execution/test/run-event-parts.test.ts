@@ -4,6 +4,8 @@
  * reconciling fold does to a batch and to a live stream.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { describe, expect, it } from "bun:test";
 
 import type { ChatPart, StepPhase } from "../../contracts/chat-parts.js";
@@ -151,7 +153,7 @@ describe("pipeFoldedRunEvents", () => {
 
     async function* withGaps<T>(entries: readonly T[], gapMs: number): AsyncIterable<T> {
         for (const [index, entry] of entries.entries()) {
-            if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, gapMs));
+            if (index > 0) await sleep(gapMs);
             yield entry;
         }
     }

@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
 
 import { searchTrials } from "../../../tools/lib/clinical-trials-client.js";
 import { presentAt } from "../../../lib/present.js";
@@ -24,7 +25,7 @@ describe.skipIf(!LIVE)("live ClinicalTrials.gov", () => {
         expect(result.totalFound).toBeGreaterThanOrEqual(result.trials.length);
 
         const trial = presentAt(result.trials, 0);
-        expect(trial.nctId).toMatch(/^NCT\d{8}$/);
+        expect(trial.nctId.startsWith("NCT") && trial.nctId.length === 11 && isAllDigits(trial.nctId.slice(3))).toBe(true);
         expect(trial.title.length).toBeGreaterThan(0);
         expect(trial.status.length).toBeGreaterThan(0);
         expect(Array.isArray(trial.conditions)).toBe(true);

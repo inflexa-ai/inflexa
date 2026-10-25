@@ -1412,6 +1412,7 @@ function modeledToolError(failure: unknown): ToolError | undefined {
 function jsonValue(value: unknown): JSONValue {
     // The stringify/parse round trip holds only JSON values, so the guard never
     // refuses; it moves the parser's `any` out of the tool-result field.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the NUL-stripping reviver walks a value this code serialized one line above, not text of unknown shape; a schema proves nothing here.
     const serialized: unknown = JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
     if (!isJsonValue(serialized)) throw new Error("the JSON round trip of a tool result produced a non-JSON value");
     return serialized;

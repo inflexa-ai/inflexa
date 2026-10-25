@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { hasLoneHighSurrogate, hasLoneLowSurrogate, isToolOutputRef, referencedToolOutput } from "../../lib/test/text-shapes.js";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
@@ -219,7 +220,7 @@ describe("runAgent — long tool results", () => {
         expect(store.puts).toHaveLength(1);
         const kept = presentFirst(store.puts);
         expect(kept).toMatchObject({ analysisId: "analysis-001", toolName: "big", toolCallId: "tu-1", totalLength: length });
-        expect(kept.ref).toMatch(/^to_[0-9a-f]{20}$/);
+        expect(isToolOutputRef(kept.ref)).toBe(true);
         expect(kept.content).toBe(sizedText(length));
         expect(textOf(onlyResult(messages)).split("\n")[1]).toContain(`reference "${kept.ref}"`);
     });
@@ -406,7 +407,7 @@ describe("runAgent — long tool results", () => {
 
         const excerpt = textOf(onlyResult(messages));
         expect(excerpt.split("\n")[0]).toContain(`Shown: the first ${EXCERPT_HEAD_CHARS - 1} and the last ${EXCERPT_TAIL_CHARS - 1} characters.`);
-        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(excerpt)).toBe(false);
+        expect(hasLoneHighSurrogate(excerpt) || hasLoneLowSurrogate(excerpt)).toBe(false);
     });
 
     it("gives the result of read_tool_output uncut when the model reads the reference of its own excerpt", async () => {
@@ -415,9 +416,8 @@ describe("runAgent — long tool results", () => {
             if (i === 0) return makeMessage([toolUseBlock("tu-1", "big", { length: 100_000 })], "tool_use");
             if (i === 1) {
                 const excerpt = textOf(onlyResult(request.messages));
-                const match = /reference "(to_[0-9a-f]{20})"/.exec(excerpt);
-                if (match === null) throw new Error("the excerpt names no stored tool output");
-                const ref = presentAt(match, 1);
+                const ref = referencedToolOutput(excerpt);
+                if (ref === undefined) throw new Error("the excerpt names no stored tool output");
                 return makeMessage([toolUseBlock("tu-2", "read_tool_output", { ref, limit: 16_384 })], "tool_use");
             }
             return makeMessage([textBlock("done")], "end_turn");

@@ -21,6 +21,7 @@
 import { z } from "zod";
 
 import { apiFetchValidated, describeApiError, type ApiError } from "../lib/api-utils.js";
+import { parseJsonAs, safeParseJsonAs } from "../../lib/parse-json.js";
 
 import type { SituationFieldsSchema } from "./situation.js";
 
@@ -341,7 +342,7 @@ export type HttpKnowledgeClientConfig = {
 /** The `message` of an error envelope, or the body itself when it is not one. */
 function messageOf(body: string): string | undefined {
     try {
-        const raw: unknown = JSON.parse(body);
+        const raw = parseJsonAs(body, z.unknown());
         if (raw !== null && typeof raw === "object" && "message" in raw && typeof raw.message === "string") return raw.message;
     } catch {
         // Not JSON: the body is the message.
@@ -376,24 +377,22 @@ function refusalOf(error: ApiError, notFoundField?: string): KnowledgeRejected |
         return { match: "rejected", message, issues: [{ field: notFoundField, message }] };
     }
     if (error.status === 409) {
-        let raw: unknown;
+        let parsed;
         try {
-            raw = JSON.parse(error.body);
+            parsed = safeParseJsonAs(error.body, SnapshotMismatchSchema);
         } catch {
             return undefined;
         }
-        const parsed = SnapshotMismatchSchema.safeParse(raw);
         if (!parsed.success) return undefined;
         return { match: "snapshot_mismatch", message: parsed.data.message, expected: parsed.data.expected, served: parsed.data.served };
     }
     if (error.status !== 400) return undefined;
-    let raw: unknown;
+    let parsed;
     try {
-        raw = JSON.parse(error.body);
+        parsed = safeParseJsonAs(error.body, ValidationFailureSchema);
     } catch {
         return { match: "rejected", message: error.body || "the service refused the request", issues: [] };
     }
-    const parsed = ValidationFailureSchema.safeParse(raw);
     if (!parsed.success) return { match: "rejected", message: error.body, issues: [] };
     return { match: "rejected", message: parsed.data.message, issues: parsed.data.issues };
 }

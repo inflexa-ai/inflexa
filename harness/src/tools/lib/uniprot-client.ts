@@ -258,6 +258,7 @@ function toProtein(raw: UniProtSearchResult): UniProtProtein {
  * that match this form. Thus the match decides only whether the `accession:`
  * clause is SAFE to send, never which space the query names.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the full UniProt accession grammar, both entry-class arms with the optional isoform suffix; the shape overlap with gene symbols is why the match decides safety only.
 const ACCESSION_RE = /^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?$/i;
 
 /**

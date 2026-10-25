@@ -1,4 +1,28 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- one XML tag of the SVG, with its attributes
+const XML_TAG = /<[a-zA-Z][^>]*>/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the well-formed tag grammar that the XML reader of the file accepts
+const WELL_FORMED_TAG = /^<[a-zA-Z][\w:-]*(\s+[\w:-]+="[^"]*")*\s*\/?>$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the instance token that the chart runtime renumbers, the shape that chart-export.ts names INSTANCE_TOKEN
+const INSTANCE_TOKEN = /zr\d+-[a-z]+-?\d+/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the id attribute of one SVG element
+const SVG_ID = /id="([^"]+)"/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the page count of the wrapped legend, drawn as text
+const PAGE_COUNT_TEXT = />1\/\d+<\/text>/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the straight line segment that one series draws
+const LINE_PATH = /<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"([^>]*)>/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the axis line that the chart draws in the ink color with a round cap
+const AXIS_PATH = /<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"[^>]*stroke="#222222"[^>]*stroke-linecap/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the rotated title of the y axis, read for its x from the transform matrix
+const TITLE_MATRIX = /transform="matrix\(0,-1,1,0,(-?[\d.]+),[^)]*\)"[^>]*>GO biological process</;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the positioned text element, read for its origin and its inner text
+const TEXT_EXTENTS = /<text[^>]*?(?:\sx="(-?[\d.]+)")?[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*>([^<]*)<\/text>/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- one text element of the SVG, read for its inner text
+const TEXT_CONTENT = />([^<]*)<\/text>/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the positioned label that the axis paints over the grid, read for its origin
+const PAINT_ORDER_LABEL = /<text[^>]*?y="(-?[\d.]+)"[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*paint-order="stroke"[^>]*>10<\/text>/g;
+
 import { describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
@@ -119,20 +143,20 @@ describe("the SVG export", () => {
     it("writes each start tag as a sequence of double-quoted attributes, thus the file parses as XML", () => {
         for (const option of [GRADIENT_OPTION, { ...GRADIENT_OPTION, legend: { bottom: 0, data: ["Level"] } }]) {
             const svg = svgOf(option);
-            const tags = svg.match(/<[a-zA-Z][^>]*>/g) ?? [];
+            const tags = svg.match(XML_TAG) ?? [];
             expect(tags.length).toBeGreaterThan(10);
             // A double quote inside an attribute value ends the value early, and an XML reader then refuses the file.
-            expect(tags.filter((tag) => !/^<[a-zA-Z][\w:-]*(\s+[\w:-]+="[^"]*")*\s*\/?>$/.test(tag))).toEqual([]);
+            expect(tags.filter((tag) => !WELL_FORMED_TAG.test(tag))).toEqual([]);
         }
     });
 
     it("renumbers each instance token in order of first appearance, thus each reference still resolves", () => {
         const svg = svgOf(GRADIENT_OPTION);
-        const tokens = [...new Set(svg.match(/zr\d+-[a-z]+-?\d+/g) ?? [])];
+        const tokens = [...new Set([...svg.matchAll(INSTANCE_TOKEN)].map((match) => match[0]))];
         expect(tokens.length).toBeGreaterThan(2);
         expect(tokens.every((token) => token.startsWith("zr0-"))).toBe(true);
         // A clip path and a gradient each carry an id, and an element names it in a `url(#...)`.
-        for (const id of svg.matchAll(/id="([^"]+)"/g)) {
+        for (const id of svg.matchAll(SVG_ID)) {
             expect(svg).toContain(`url(#${id[1]})`);
         }
     });
@@ -169,7 +193,7 @@ describe("the SVG export", () => {
         };
         const inline = deriveChartRender(block, rows, undefined, { key: "v1", columns: [] })._unsafeUnwrap().inline;
         const svg = svgOf(inline);
-        expect(svg.match(/<polygon /g)?.length).toBe(2);
+        expect(svg.split("<polygon ").length - 1).toBe(2);
         expect(svg).toContain("<circle");
     });
 });
@@ -195,8 +219,8 @@ describe("the SVG assets of one chart", () => {
         const first = chartSvgAssets(echarts, "c1", GRADIENT_OPTION)._unsafeUnwrap();
         const second = chartSvgAssets(echarts, "c1", GRADIENT_OPTION)._unsafeUnwrap();
         expect(first).toBeDefined();
-        expect(first?.single.name).toMatch(/^c-[0-9a-f]{12}-89mm\.svg$/);
-        expect(first?.double.name).toMatch(/^c-[0-9a-f]{12}-183mm\.svg$/);
+        expect(chartAssetNameIs(first?.single.name, "-89mm.svg")).toBe(true);
+        expect(chartAssetNameIs(first?.double.name, "-183mm.svg")).toBe(true);
         expect(second).toEqual(first);
     });
 
@@ -376,7 +400,7 @@ describe("the export option", () => {
         }
         expect(optionArray(print, "graphic").find((element) => element.bottom !== undefined)?.bottom).toBe(band);
         // The chart runtime draws the one line and the page count of the legend in the file.
-        expect(svgOf(CROWDED_LEGEND)).toMatch(/>1\/\d+<\/text>/);
+        expect(PAGE_COUNT_TEXT.test(svgOf(CROWDED_LEGEND))).toBe(true);
         // The slide holds the twenty-eight names in lines that leave each panel its room, thus its legend wraps.
         expect(optionAt(exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080), "legend").type).toBeUndefined();
     });
@@ -445,6 +469,7 @@ function barOption(encoding: NonNullable<ChartBlock["encoding"]>, rows: ChartRow
 function boxesOf(svg: string, fill: string): Array<[number, number, number, number]> {
     const boxes: Array<[number, number, number, number]> = [];
     const number = "(-?[\\d.]+)";
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the bar path grammar of one rectangle drawn as four line runs
     const bar = new RegExp(`<path d="M${number} ${number}l${number} ${number}l${number} ${number}l${number} ${number}Z"([^>]*)>`, "g");
     for (const match of svg.matchAll(bar)) {
         if (!match[9]?.includes(`fill="${fill}"`)) continue;
@@ -464,9 +489,18 @@ function boxesOf(svg: string, fill: string): Array<[number, number, number, numb
 }
 
 /** The vertical segments in the ink of the chart that a series draws, as `[x, top, bottom]`. The axis lines draw none. */
+function isDigitChar(char: string): boolean {
+    return char >= "0" && char <= "9";
+}
+
+/** Whether one name is the `c-<12 hex>` form of a chart asset with the given size suffix. */
+function chartAssetNameIs(name: string | undefined, suffix: string): boolean {
+    return name !== undefined && name.startsWith("c-") && name.endsWith(suffix) && isLowerHexOfLength(name.slice(2, name.length - suffix.length), 12);
+}
+
 function verticalInk(svg: string): Array<[number, number, number]> {
     const segments: Array<[number, number, number]> = [];
-    for (const match of svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"([^>]*)>/g)) {
+    for (const match of svg.matchAll(LINE_PATH)) {
         if (!match[5]?.includes(`stroke="${CHART_INK}"`) || !match[5].includes("ecmeta_series_index") || match[1] !== match[3]) continue;
         segments.push([Number(match[1]), Math.min(Number(match[2]), Number(match[4])), Math.max(Number(match[2]), Number(match[4]))]);
     }
@@ -483,7 +517,7 @@ describe("the bar of an interval through the server render", () => {
         const bars = boxesOf(svg, CHART_PALETTE[0]);
         expect(bars.length).toBe(2);
         // The value axis holds zero, thus both bars share one base, and the heights keep the ratio of the values.
-        expect(svg).toMatch(/>0<\/text>/);
+        expect(svg).toContain(">0</text>");
         expect(bars[0]?.[3]).toBeCloseTo(bars[1]?.[3] ?? Number.NaN, 0);
         const secondRise = (bars[1]?.[3] ?? 0) - (bars[1]?.[1] ?? 0);
         const firstRise = (bars[0]?.[3] ?? 0) - (bars[0]?.[1] ?? 0);
@@ -543,9 +577,13 @@ describe("the title of a category axis in an export", () => {
         };
         const svg = svgOf(deriveChartRender(block, rows, undefined, { key: "nes", columns: [] })._unsafeUnwrap().inline, "double");
         // The title turns 90 degrees, thus its transform names its x as the fifth member of the matrix.
-        const title = /transform="matrix\(0,-1,1,0,(-?[\d.]+),[^)]*\)"[^>]*>GO biological process</.exec(svg);
+        const title = TITLE_MATRIX.exec(svg);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the end-anchored label line of one legend term
         const label = new RegExp(
-            `text-anchor="end"[^>]*transform="translate\\((-?[\\d.]+) [^)]*\\)"[^>]*>${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<`,
+            `text-anchor="end"[^>]*transform="translate\\((-?[\\d.]+) [^)]*\\)"[^>]*>${
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the term escapes to a literal form inside the label line
+                term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+            }<`,
         ).exec(svg);
         expect(title).not.toBeNull();
         expect(label).not.toBeNull();
@@ -619,7 +657,7 @@ describe("the export option at a column width", () => {
  */
 function textExtents(svg: string, lines: readonly string[]): number[][] {
     const extents: number[][] = [];
-    for (const match of svg.matchAll(/<text[^>]*?(?:\sx="(-?[\d.]+)")?[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*>([^<]*)<\/text>/g)) {
+    for (const match of svg.matchAll(TEXT_EXTENTS)) {
         if (match[4] === undefined || !lines.includes(match[4])) continue;
         const center = Number(match[2]) + Number(match[1] ?? 0);
         const half = (match[4].length * CHART_PRINT_TEXT_PX * 0.6) / 2;
@@ -631,7 +669,7 @@ function textExtents(svg: string, lines: readonly string[]): number[][] {
 /** The right end of the rightmost x axis line of an SVG: the right edge of the plot. */
 function plotRightEdge(svg: string): number {
     let edge = 0;
-    for (const match of svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"[^>]*stroke="#222222"[^>]*stroke-linecap/g)) {
+    for (const match of svg.matchAll(AXIS_PATH)) {
         if (match[2] === match[4]) edge = Math.max(edge, Number(match[3]));
     }
     return edge;
@@ -642,8 +680,8 @@ describe("the title of a color scale in the column export", () => {
 
     /** Check that each line of the title stays inside the canvas and at the right of the plot. */
     function expectClear(svg: string): void {
-        const lines = svg.match(/>([^<]*)<\/text>/g)?.map((text) => text.slice(1, -7)) ?? [];
-        const titleLines = lines.filter((line) => TITLE.includes(line) && line.length > 1 && !/^\d/.test(line));
+        const lines = svg.match(TEXT_CONTENT)?.map((text) => text.slice(1, -7)) ?? [];
+        const titleLines = lines.filter((line) => TITLE.includes(line) && line.length > 1 && !isDigitChar(line.charAt(0)));
         expect(titleLines.join(" ")).toBe(TITLE);
         const edge = plotRightEdge(svg);
         expect(edge).toBeGreaterThan(0);
@@ -760,6 +798,7 @@ describe("the export of a faceted chart", () => {
         /** The page twin of the export option. */
         const onThePage = (option: EchartOption, textPx: number, widthPx: number, heightPx: number): EchartOption =>
             optionOf(pageCall(CHART_RENDERERS_SOURCE, "reportExportOption")(option, textPx, widthPx, heightPx));
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         expect(onThePage(optionOf(JSON.parse(JSON.stringify(page))), CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx)).toEqual(exported);
     });
 
@@ -775,12 +814,8 @@ describe("the export of a faceted chart", () => {
         };
         const svg = svgOf(deriveChartRender(block, rows, undefined, { key: "f2", columns: [] })._unsafeUnwrap().inline, "double");
         // The top of each panel is the upper end of its y axis line.
-        const tops = [...svg.matchAll(/<path d="M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)"[^>]*stroke="#222222"[^>]*stroke-linecap/g)]
-            .filter((match) => match[1] === match[3])
-            .map((match) => Math.min(Number(match[2]), Number(match[4])));
-        const labels = [
-            ...svg.matchAll(/<text[^>]*?y="(-?[\d.]+)"[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*paint-order="stroke"[^>]*>10<\/text>/g),
-        ].map((match) => Number(match[3]) + Number(match[1]));
+        const tops = [...svg.matchAll(AXIS_PATH)].filter((match) => match[1] === match[3]).map((match) => Math.min(Number(match[2]), Number(match[4])));
+        const labels = [...svg.matchAll(PAINT_ORDER_LABEL)].map((match) => Number(match[3]) + Number(match[1]));
         expect(tops.length).toBeGreaterThan(0);
         expect(labels.length).toBe(2);
         for (const label of labels) expect(label).toBeGreaterThanOrEqual(Math.min(...tops));
@@ -812,7 +847,7 @@ describe("the export bound of a violin", () => {
 
     it("keeps both SVG files of a violin chart under the point bound", () => {
         const assets = chartSvgAssets(echarts, "v1", violins(10))._unsafeUnwrap();
-        expect(assets?.single.name).toMatch(/-89mm\.svg$/);
-        expect(assets?.double.name).toMatch(/-183mm\.svg$/);
+        expect(assets?.single.name.endsWith("-89mm.svg")).toBe(true);
+        expect(assets?.double.name.endsWith("-183mm.svg")).toBe(true);
     });
 });

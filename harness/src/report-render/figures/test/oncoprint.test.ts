@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { isHexColor } from "../../../lib/test/text-shapes.js";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, deriveChartRender, type ChartRow, type EchartOption } from "../../chart.js";
@@ -92,7 +93,7 @@ describe("the oncoprint figure", () => {
         const payload = optionOf(cellSeries(option).itemPayload);
         const silent = optionStrings(payload.colors)[cellClass(option, "TCGA-AB-2802", "DNMT3A")];
         expect(Object.values(ALTERATION_CLASS_COLORS)).not.toContain(silent);
-        expect(silent).toMatch(/^#[0-9a-f]{6}$/);
+        expect(typeof silent === "string" && isHexColor(silent)).toBe(true);
         // The fixed map holds the common classes of the MAF standard.
         expect(Object.keys(ALTERATION_CLASS_COLORS)).toEqual([
             "Missense_Mutation",

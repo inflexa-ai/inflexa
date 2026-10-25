@@ -15,6 +15,8 @@
  * test` invocation.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
@@ -61,7 +63,7 @@ const longRunner = DBOS.registerWorkflow(
         for (let i = 0; i < 200; i += 1) {
             await DBOS.runStep(
                 async () => {
-                    await new Promise((r) => setTimeout(r, 25));
+                    await sleep(25);
                     return i;
                 },
                 { name: "step-tick" },
@@ -136,7 +138,7 @@ describe("DBOS testcontainer rig — smoke", () => {
         })();
 
         // Give the workflow a moment to enter its loop, then cancel.
-        await new Promise((r) => setTimeout(r, 100));
+        await sleep(100);
         await DBOS.cancelWorkflow(wfId);
 
         // The cancellation propagates as a thrown error from the next DBOS call
@@ -156,7 +158,7 @@ describe("DBOS testcontainer rig — smoke", () => {
         while (Date.now() < deadline) {
             status = await DBOS.getWorkflowStatus(wfId);
             if (status && status.status === "CANCELLED") break;
-            await new Promise((r) => setTimeout(r, 100));
+            await sleep(100);
         }
         expect(status?.status).toBe("CANCELLED");
     });

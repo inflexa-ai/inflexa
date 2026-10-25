@@ -67,6 +67,24 @@ const SAMPLE_RESULT = {
     profiledAt: "2026-06-09T10:00:00.000Z",
 };
 
+/** The slug of a claim name: each non-word run folds to one hyphen, as the key builder spells it. */
+function slugOf(name: string): string {
+    const isWordChar = (char: string): boolean => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_";
+    let slug = "";
+    let inRun = false;
+    for (const char of name) {
+        if (isWordChar(char)) {
+            if (inRun) slug += "-";
+            inRun = false;
+            slug += char;
+        } else {
+            inRun = true;
+        }
+    }
+    if (inRun) slug += "-";
+    return slug.toLowerCase();
+}
+
 describe("data-profile state transitions", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
@@ -335,7 +353,7 @@ describe("the seed conjunct on every claim into running", () => {
     ] as const;
 
     for (const { name, status, claim } of claims) {
-        const slug = name.replace(/\W+/g, "-").toLowerCase();
+        const slug = slugOf(name);
 
         it(`${name}: refuses a NULL seed`, async () => {
             const id = `null-${slug}`;

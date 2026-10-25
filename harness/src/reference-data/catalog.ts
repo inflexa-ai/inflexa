@@ -7,8 +7,11 @@ import { z } from "zod";
 /** Schema version for the checked-in reference-data catalog. */
 export const REFERENCE_DATA_CATALOG_VERSION = 1 as const;
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a dataset id is lowercase segments joined by one separator; the shape is the stable-id rule.
 const SAFE_ID = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a version is alphanumeric segments joined by one separator; the shape is the path-segment rule.
 const SAFE_VERSION = /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a lowercase SHA-256 digest is 64 hex digits, the fixed digest shape.
 const SHA256 = /^[a-f0-9]{64}$/;
 
 function isSafeRelativePath(value: string): boolean {
@@ -36,7 +39,9 @@ const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("h
  * remain cheap to add, and an unrecognized format degrades to "unknown reader"
  * rather than failing catalog validation.
  */
-export const ReferenceArtifactFormatSchema = z.string().regex(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/, "Expected a lowercase format token");
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a format token is lowercase segments joined by one plus sign, the free-token rule the reader table keys on.
+const FORMAT_TOKEN_RE = /^[a-z0-9]+(?:[+-][a-z0-9]+)*$/;
+export const ReferenceArtifactFormatSchema = z.string().regex(FORMAT_TOKEN_RE, "Expected a lowercase format token");
 
 /**
  * One final file distributed for a reference dataset: a stable install-relative
@@ -66,7 +71,9 @@ export const ReferenceArtifactSchema = z.strictObject({
  * choice is most silently wrong on — human regulons over mouse counts still run —
  * so it is a first-class field rather than something inferred from the id suffix.
  */
-export const ReferenceOrganismSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/, "Expected a lowercase organism common name");
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- an organism common name is lowercase words joined by a space or hyphen; the shape keeps the search axis one canonical form.
+const ORGANISM_NAME_RE = /^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/;
+export const ReferenceOrganismSchema = z.string().regex(ORGANISM_NAME_RE, "Expected a lowercase organism common name");
 
 /** Provenance and licensing information for one supported reference dataset. */
 export const ReferenceDatasetSchema = z.object({

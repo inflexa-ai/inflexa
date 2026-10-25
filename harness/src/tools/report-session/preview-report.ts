@@ -150,8 +150,25 @@ export type PreviewReportToolDeps = {
  * collide on the staged name.
  */
 function assetFileName(file: ResolvedFile): string {
-    const slug = file.hash.replace(/[^a-z0-9]+/gi, "-");
+    const slug = dashUnsafeRuns(file.hash);
     return slug + extname(file.path);
+}
+
+/** Each run of characters outside the letters and digits becomes one dash. */
+function dashUnsafeRuns(text: string): string {
+    let out = "";
+    let inRun = false;
+    for (const char of text) {
+        const isNameChar = (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9");
+        if (isNameChar) {
+            out += char;
+            inRun = false;
+        } else if (!inRun) {
+            out += "-";
+            inRun = true;
+        }
+    }
+    return out;
 }
 
 /** The relative source of a staged figure. The page directory is self-contained, thus the source is `assets/<name>`. */

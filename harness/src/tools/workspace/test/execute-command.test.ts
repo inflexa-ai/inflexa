@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { isUnknownArray } from "../../../lib/unknown-array.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readToolCallRecord } from "../../define-tool.js";
@@ -128,7 +130,7 @@ describe("execute_command and the decision record of a script", () => {
     }
 
     async function record(): Promise<Record<string, unknown>> {
-        return asRecord(JSON.parse(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8")));
+        return asRecord(parseJsonAs(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8"), z.unknown()));
     }
 
     it("notes a script that changed since its record before the command runs, and leaves an unchanged one alone", async () => {
@@ -172,7 +174,7 @@ describe("execute_command and the decision record of a script", () => {
         expect(out.status).toBe("ok");
         expect(client.execs).toHaveLength(1);
         // The record of another step is outside the writable prefix: the mutator refused the note, and the record is untouched.
-        expect(asRecord(JSON.parse(await readFile(join(other, "output", "decision_record_de.json"), "utf8"))).unvetted_edits).toEqual([]);
+        expect(asRecord(parseJsonAs(await readFile(join(other, "output", "decision_record_de.json"), "utf8"), z.unknown())).unvetted_edits).toEqual([]);
     });
 
     it("runs a script without a record, and a command without a script, with no record read", async () => {
@@ -253,7 +255,7 @@ describe("execute_command tool", () => {
         const client = makeFakeClient({ execError: new Error("sandbox unreachable") });
         const { ctx } = makeToolContext();
 
-        await expect(makeTool(client).execute({ command: ["bad"] }, ctx)).rejects.toThrow(/sandbox unreachable/);
+        await expect(makeTool(client).execute({ command: ["bad"] }, ctx)).rejects.toThrow("sandbox unreachable");
     });
 
     it("truncates oversize stdout while leaving exit/duration/timedOut intact", async () => {

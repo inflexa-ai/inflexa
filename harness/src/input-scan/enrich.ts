@@ -28,7 +28,9 @@ import type { ExecResult } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
 
 import { READOUT_PREFIX_BYTES, readPrefix } from "./readout.js";
+import { safeParseJsonAs } from "../lib/parse-json.js";
 import { presentAt } from "../lib/present.js";
+import { collapseWhitespace } from "../lib/text.js";
 import type { FileShape, HeaderReadout } from "./types.js";
 
 /** Members decoded per shape. One is enough to characterise a set whose names already match. */
@@ -198,7 +200,7 @@ async function decodeContainers(
     for (const line of result.stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed.startsWith("{")) continue;
-        const parsed = ReadoutLineSchema.safeParse(JSON.parse(trimmed));
+        const parsed = safeParseJsonAs(trimmed, ReadoutLineSchema);
         if (!parsed.success) continue;
         const target = parsed.data.path ? byAbsolute.get(parsed.data.path) : undefined;
         if (!target) continue;
@@ -224,7 +226,7 @@ function describeExecFailure(result: ExecResult): string {
     if (result.timedOut) return `container decoder timed out after ${ENRICH_TIMEOUT_SECONDS}s`;
     if (result.syntheticFailure) return `container decoder did not complete: ${result.syntheticFailure.reason}`;
     if (result.exitCode !== 0) {
-        const stderr = result.stderr.replace(/\s+/g, " ").trim().slice(0, MAX_STDERR_CHARS);
+        const stderr = collapseWhitespace(result.stderr).slice(0, MAX_STDERR_CHARS);
         return `container decoder exited ${result.exitCode ?? "with no code"}${stderr ? `: ${stderr}` : ""}`;
     }
     return "container decoder reported nothing for this member";

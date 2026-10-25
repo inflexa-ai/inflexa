@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 
 import { computeInputSignature } from "../input-signature.js";
 import { presentAt } from "../../lib/present.js";
@@ -13,7 +14,7 @@ describe("computeInputSignature", () => {
     it("counts the staged inputs and digests their identity", () => {
         const signature = computeInputSignature(inputs);
         expect(signature.count).toBe(3);
-        expect(signature.digest).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHexOfLength(signature.digest, 64)).toBe(true);
     });
 
     it("is order-independent", () => {
@@ -90,6 +91,6 @@ describe("computeInputSignature", () => {
             { fileId: "f-2", size: 200 },
         ]);
         expect(legacy.count).toBe(2);
-        expect(legacy.digest).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHexOfLength(legacy.digest, 64)).toBe(true);
     });
 });

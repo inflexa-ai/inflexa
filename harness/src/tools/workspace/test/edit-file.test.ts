@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { isSha256Hash } from "../../../lib/test/text-shapes.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile as readHostFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { isUnknownArray } from "../../../lib/unknown-array.js";
@@ -104,7 +107,7 @@ describe("edit_file tool", () => {
         )._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
 
-        const record = asRecord(JSON.parse(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8")));
+        const record = asRecord(parseJsonAs(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"), z.unknown()));
         expect(record.written_sha256).toBe("sha256:old");
         const edits = record.unvetted_edits;
         if (!isUnknownArray(edits) || edits.length !== 1) throw new Error("the record stored no unvetted edit");
@@ -112,7 +115,7 @@ describe("edit_file tool", () => {
         if (typeof edit !== "object" || edit === null || !("sha256" in edit)) throw new Error("the edit carries no sha256");
         const { sha256, ...editShape } = edit;
         expect(editShape).toEqual({ path: "scripts/de.R", note: "edit_file: 1 replacement(s)" });
-        expect(sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(typeof sha256 === "string" && isSha256Hash(sha256)).toBe(true);
         const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");
         expect(edited).toBe("ALPHA <- 0.1  # [adaptable: alpha]\n");
 

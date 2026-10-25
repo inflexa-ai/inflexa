@@ -11,6 +11,8 @@
  * step returns its checkpoint without a new call of its closure.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, type Result } from "neverthrow";
@@ -65,7 +67,7 @@ async function waitForTerminal(workflowId: string, timeoutMs = 5_000): Promise<A
         if (status && (status.status === "SUCCESS" || status.status === "ERROR" || status.status === "CANCELLED")) {
             return status;
         }
-        await new Promise((r) => setTimeout(r, 25));
+        await sleep(25);
     }
     return status;
 }

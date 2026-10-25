@@ -6,6 +6,8 @@
  * `cortex_analysis_state`, so every test seeds that row first.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
@@ -360,7 +362,7 @@ describe("createReportSessionStateStore", () => {
                           AND query LIKE '%cortex_report_session_state%'`,
             });
             if ((rows[0]?.waiting ?? 0) > 0) return;
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await sleep(10);
         }
         throw new Error("the second append never blocked on the row lock");
     }

@@ -30,6 +30,7 @@ import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import { z } from "zod";
 import { presentLast } from "../../lib/present.js";
+import { hasWhitespace } from "../../lib/text.js";
 
 import { keptTextOf, pairSafeIndex, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "../../loop/tool-output.js";
 import { AskRejectedError, type AskRequest } from "../approval/contract.js";
@@ -299,6 +300,7 @@ function sendHop(url: URL, state: HopState): Promise<HopOutcome> {
             },
         });
         // The socket-idle timeout below does not bound a server that trickles bytes, so a wall clock bounds the whole hop.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a guard, not a wait: it destroys the in-flight hop at the wall clock, unrefs so it never holds the process, and the settle disposes it.
         const deadline = setTimeout(() => {
             const error = hopTimeoutError(url);
             liveResponse?.destroy(error);
@@ -403,6 +405,17 @@ const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "i
 /** Elements whose content is raw text: the scanner skips to their close tag, because markup inside them is not structure. */
 const RAW_TEXT_TAGS = new Set(["script", "style", "textarea", "title", "xmp", "noscript", "iframe", "noembed"]);
 
+/** A raw-text close repeats the element name in any letter case and ends at whitespace, a slash, or the bracket. */
+function isRawTextClose(html: string, at: number, name: string): boolean {
+    if (html.slice(at + 2, at + 2 + name.length).toLowerCase() !== name) return false;
+    const next = html.charAt(at + 2 + name.length);
+    return next === ">" || next === "/" || hasWhitespace(next);
+}
+
+function isTagNameChar(char: string): boolean {
+    return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === ":" || char === "-";
+}
+
 /** An opening tag in a family closes its open peers before it nests — the implied-end rules that keep a list or a table row of any length flat. */
 const IMPLIED_CLOSE_PEERS: Readonly<Record<string, ReadonlySet<string>>> = {
     li: new Set(["li"]),
@@ -431,11 +444,15 @@ const IMPLIED_CLOSE_PEERS: Readonly<Record<string, ReadonlySet<string>>> = {
 export function htmlNestingDepth(html: string): number {
     let max = 0;
     const stack: string[] = [];
-    const tagName = (start: number, end: number): string =>
-        html
-            .slice(start, end)
-            .match(/^[a-zA-Z][a-zA-Z0-9:-]*/)?.[0]
-            ?.toLowerCase() ?? "";
+    const tagName = (start: number, end: number): string => {
+        const text = html.slice(start, end);
+        const first = text.charAt(0);
+        const isLetter = (first >= "a" && first <= "z") || (first >= "A" && first <= "Z");
+        if (!isLetter) return "";
+        let at = 1;
+        while (at < text.length && isTagNameChar(text.charAt(at))) at++;
+        return text.slice(0, at).toLowerCase();
+    };
     let i = 0;
     while (i < html.length) {
         if (html[i] !== "<") {
@@ -483,10 +500,9 @@ export function htmlNestingDepth(html: string): number {
         i = j + 1;
         if (name === "") continue;
         if (RAW_TEXT_TAGS.has(name)) {
-            const close = new RegExp(`</${name}(?=[\\s/>])`, "gi");
-            close.lastIndex = i;
-            const found = close.exec(html);
-            i = found === null ? html.length : found.index + found[0].length;
+            let close = html.indexOf("</", i);
+            while (close !== -1 && !isRawTextClose(html, close, name)) close = html.indexOf("</", close + 1);
+            i = close === -1 ? html.length : close + 2 + name.length;
             continue;
         }
         if (selfClosed || VOID_TAGS.has(name)) continue;

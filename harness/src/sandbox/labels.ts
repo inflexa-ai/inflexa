@@ -33,6 +33,7 @@ export const STEP_ID_LABEL = "cortex/step-id";
 export const OWNER_WORKFLOW_KEY = "cortex/owner-workflow-id";
 
 /** A valid K8s label value: 1 to 63 characters, `[A-Za-z0-9._-]` only, a letter or a digit at each end. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the K8s label-value grammar: the bounded charset with the letter-or-digit ends; the shape is the K8s validation rule.
 const LABEL_VALUE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$/;
 
 /** The harness never applies it to a host value. */

@@ -146,22 +146,22 @@ describe("buildSessionSubPaths", () => {
     });
 
     test("rejects an empty, absolute, or traversing workspace subPath", () => {
-        expect(() => buildSessionSubPaths(COORDS, "")).toThrow(/non-empty/);
-        expect(() => buildSessionSubPaths(COORDS, "/abs/an-1")).toThrow(/PVC-root-relative/);
-        expect(() => buildSessionSubPaths(COORDS, "../escape/an-1")).toThrow(/'\.\.'/);
+        expect(() => buildSessionSubPaths(COORDS, "")).toThrow("non-empty");
+        expect(() => buildSessionSubPaths(COORDS, "/abs/an-1")).toThrow("PVC-root-relative");
+        expect(() => buildSessionSubPaths(COORDS, "../escape/an-1")).toThrow("'..'");
     });
 
     test("rejects a crafted `..` runId/stepId in the RW subPath", () => {
-        expect(() => buildSessionSubPaths({ ...COORDS, stepId: ".." }, "an-1")).toThrow(/Invalid stepId/);
-        expect(() => buildSessionSubPaths({ ...COORDS, runId: ".." }, "an-1")).toThrow(/Invalid runId/);
+        expect(() => buildSessionSubPaths({ ...COORDS, stepId: ".." }, "an-1")).toThrow("Invalid stepId");
+        expect(() => buildSessionSubPaths({ ...COORDS, runId: ".." }, "an-1")).toThrow("Invalid runId");
     });
 });
 
 describe("buildMountPlan id validation", () => {
     test("rejects a crafted `..` analysisId/runId/stepId", () => {
-        expect(() => buildMountPlan({ ...COORDS, analysisId: ".." }, { libs: false, refs: false })).toThrow(/Invalid analysisId/);
-        expect(() => buildMountPlan({ ...COORDS, stepId: ".." }, { libs: false, refs: false })).toThrow(/Invalid stepId/);
-        expect(() => buildMountPlan({ ...COORDS, runId: ".." }, { libs: false, refs: false })).toThrow(/Invalid runId/);
+        expect(() => buildMountPlan({ ...COORDS, analysisId: ".." }, { libs: false, refs: false })).toThrow("Invalid analysisId");
+        expect(() => buildMountPlan({ ...COORDS, stepId: ".." }, { libs: false, refs: false })).toThrow("Invalid stepId");
+        expect(() => buildMountPlan({ ...COORDS, runId: ".." }, { libs: false, refs: false })).toThrow("Invalid runId");
     });
 });
 
@@ -196,31 +196,31 @@ describe("the declared write tail", () => {
     });
 
     test("refuses a tail beside read-only, because the two state opposite things", () => {
-        expect(() => buildMountPlan({ ...COORDS, writableTail: TAIL, readOnly: true }, { libs: false, refs: false })).toThrow(/read-only sandbox cannot/);
-        expect(() => buildSessionSubPaths({ ...COORDS, writableTail: TAIL, readOnly: true }, "an-1")).toThrow(/read-only sandbox cannot/);
-        expect(() => sandboxWriteTail({ ...COORDS, writableTail: TAIL, readOnly: true })).toThrow(/read-only sandbox cannot/);
+        expect(() => buildMountPlan({ ...COORDS, writableTail: TAIL, readOnly: true }, { libs: false, refs: false })).toThrow("read-only sandbox cannot");
+        expect(() => buildSessionSubPaths({ ...COORDS, writableTail: TAIL, readOnly: true }, "an-1")).toThrow("read-only sandbox cannot");
+        expect(() => sandboxWriteTail({ ...COORDS, writableTail: TAIL, readOnly: true })).toThrow("read-only sandbox cannot");
     });
 
     test("validates the two ids even where the tail replaces the step directory", () => {
         // The ids reach the sandbox name, the ownership labels, and the registry row on every path, thus a
         // declared tail is no reason to skip their validation.
-        expect(() => buildMountPlan({ ...COORDS, runId: "..", writableTail: TAIL }, { libs: false, refs: false })).toThrow(/Invalid runId/);
-        expect(() => buildMountPlan({ ...COORDS, stepId: "a/b", writableTail: TAIL }, { libs: false, refs: false })).toThrow(/Invalid stepId/);
-        expect(() => sandboxWriteTail({ ...COORDS, stepId: "..", readOnly: true })).toThrow(/Invalid stepId/);
-        expect(() => buildSessionSubPaths({ ...COORDS, runId: "..", writableTail: TAIL }, "an-1")).toThrow(/Invalid runId/);
+        expect(() => buildMountPlan({ ...COORDS, runId: "..", writableTail: TAIL }, { libs: false, refs: false })).toThrow("Invalid runId");
+        expect(() => buildMountPlan({ ...COORDS, stepId: "a/b", writableTail: TAIL }, { libs: false, refs: false })).toThrow("Invalid stepId");
+        expect(() => sandboxWriteTail({ ...COORDS, stepId: "..", readOnly: true })).toThrow("Invalid stepId");
+        expect(() => buildSessionSubPaths({ ...COORDS, runId: "..", writableTail: TAIL }, "an-1")).toThrow("Invalid runId");
     });
 
     test("refuses an empty, absolute, or traversing tail", () => {
         for (const tail of ["", "/abs/derived", "../escape", "report-sessions/../../etc", "report-sessions//derived", "derived/"]) {
-            expect(() => buildMountPlan({ ...COORDS, writableTail: tail }, { libs: false, refs: false })).toThrow(/Invalid writableTail/);
+            expect(() => buildMountPlan({ ...COORDS, writableTail: tail }, { libs: false, refs: false })).toThrow("Invalid writableTail");
         }
     });
 
     test("refuses a tail segment that carries a shell-hostile character", () => {
         expect(() => buildMountPlan({ ...COORDS, writableTail: "report-sessions/thread 1/derived" }, { libs: false, refs: false })).toThrow(
-            /Invalid writableTail/,
+            "Invalid writableTail",
         );
-        expect(() => buildMountPlan({ ...COORDS, writableTail: "report-sessions/a\0b/derived" }, { libs: false, refs: false })).toThrow(/Invalid writableTail/);
+        expect(() => buildMountPlan({ ...COORDS, writableTail: "report-sessions/a\0b/derived" }, { libs: false, refs: false })).toThrow("Invalid writableTail");
     });
 
     test("keeps the run plan byte-identical when no tail is declared", () => {

@@ -25,7 +25,7 @@ describe("assertContainerWillBeReaped", () => {
         process.env.CORTEX_TEST_ALLOW_LEAKED_PG = "1";
         process.env.TESTCONTAINERS_RYUK_DISABLED = "true";
 
-        await expect(assertContainerWillBeReaped()).rejects.toThrow(/TESTCONTAINERS_RYUK_DISABLED=true disables/);
+        await expect(assertContainerWillBeReaped()).rejects.toThrow("TESTCONTAINERS_RYUK_DISABLED=true disables");
     });
 });
 

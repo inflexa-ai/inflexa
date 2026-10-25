@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the inline JSON script block that the page embeds, read up to its closing tag
+const JSON_SCRIPT_BLOCK = /<script type="application\/json">([\s\S]*?)<\/script>/;
+
 /**
  * The validity gate of the rendered page.
  *
@@ -15,10 +18,12 @@
 import { describe, expect, it } from "bun:test";
 import { HtmlValidate } from "html-validate";
 import { createRequire } from "node:module";
+import { z } from "zod";
 
 import { optionAt, optionList, optionOf } from "./options.js";
 
 import type { ReportDocument } from "../../contracts/report-blocks.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { DESIGN_CSS, SCATTER_CROWD_ROWS } from "../design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "../fixture.js";
 import { renderReportPage } from "../render.js";
@@ -177,11 +182,11 @@ describe("a raw script sink stays hardened", () => {
 
         // The inline JSON parses whole over the first `</script>`, thus the escape kept the element intact.
         // The cell round-trips byte for byte, thus the escape is transparent to the reader.
-        const match = /<script type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+        const match = JSON_SCRIPT_BLOCK.exec(html);
         if (match === null) {
             throw new Error("The page holds no application/json script element.");
         }
-        const parsed = optionOf(JSON.parse(match[1] ?? ""));
+        const parsed = optionOf(parseJsonAs(match[1] ?? "", z.unknown()));
         expect(optionList(optionAt(parsed, "xAxis").data)).toContain(hostileCell);
         expect(JSON.stringify(parsed)).toContain(hostileCell);
     });

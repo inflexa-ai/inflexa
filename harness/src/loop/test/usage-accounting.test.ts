@@ -6,6 +6,8 @@
  * reached them.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { describe, expect, it } from "bun:test";
 import { errAsync, ok, okAsync, type Result } from "neverthrow";
 import { z } from "zod";
@@ -137,7 +139,7 @@ describe("runAgent usage records — one per completed call", () => {
         const withFailure = await runAgent(agentDef([echoTool], 3), GO, makeSession(), opts(neverTerminates(usage(10, 2)), failing, { logger: log }));
         const withSuccess = await runAgent(agentDef([echoTool], 3), GO, makeSession(), opts(neverTerminates(usage(10, 2)), recordingRecorder().recorder));
         // The loop does not wait for a notice, thus its log lands on a later turn of the event loop.
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await sleep(0);
 
         expect(withFailure.finish).toEqual(withSuccess.finish);
         const failures = log.records.filter((r) => r.level === "error" && r.fields.notice === "UsageRecorder.record");
@@ -243,7 +245,7 @@ describe("runAgent usage records — delivered as calls complete", () => {
             },
         };
 
-        await expect(runAgent(agentDef([echoTool]), GO, makeSession(), opts(provider, recorder))).rejects.toThrow(/upstream exploded/);
+        await expect(runAgent(agentDef([echoTool]), GO, makeSession(), opts(provider, recorder))).rejects.toThrow("upstream exploded");
 
         // The two calls that completed before the fatal third are in the ledger.
         expect(records).toHaveLength(2);

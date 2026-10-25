@@ -88,10 +88,18 @@ export function installedPackages(paths: Pick<EnvironmentPaths, "farmLockFile" |
 }
 
 function tokens(text: string): string[] {
-    return text
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((token) => token.length > 1);
+    const tokens: string[] = [];
+    let token = "";
+    const flush = () => {
+        if (token.length > 1) tokens.push(token);
+        token = "";
+    };
+    for (const char of text.toLowerCase()) {
+        if ((char >= "a" && char <= "z") || (char >= "0" && char <= "9")) token += char;
+        else flush();
+    }
+    flush();
+    return tokens;
 }
 
 /** A collection term of the tree (`msigdb_hallmark_human`) matches an entry whose labels hold every token of the term. */

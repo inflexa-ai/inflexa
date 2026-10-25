@@ -66,7 +66,7 @@ describe("app pool acquisition under saturation", () => {
             const held = await pool.connect();
             try {
                 expect(pool.totalCount).toBe(1);
-                await expect(pool.connect()).rejects.toThrow(/timeout/i);
+                await expect(pool.connect()).rejects.toThrow("timeout");
             } finally {
                 held.release();
             }

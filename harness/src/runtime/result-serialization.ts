@@ -19,6 +19,8 @@ import type { SerializationRecipe } from "@dbos-inc/dbos-sdk";
 import { Err, Ok, err, ok } from "neverthrow";
 import { z } from "zod";
 
+import { parseJsonAs } from "../lib/parse-json.js";
+
 export type Json = string | number | boolean | null | undefined | Json[] | { [key: string]: Json };
 
 export type EncodedOk = { value?: Json };
@@ -46,7 +48,7 @@ function stringifyJson(value: unknown): string | undefined {
 function toJson(value: unknown): Json {
     const text = stringifyJson(value);
     // The stringify round-trip holds only JSON values, so the parse cannot refuse.
-    return text === undefined ? undefined : JsonSchema.parse(JSON.parse(text));
+    return text === undefined ? undefined : parseJsonAs(text, JsonSchema);
 }
 
 const JsonSchema: z.ZodType<Json> = z.lazy(() =>

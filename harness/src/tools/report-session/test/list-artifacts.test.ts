@@ -9,6 +9,7 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
+import { isAllDigits } from "../../../lib/text.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -251,7 +252,7 @@ describe("the columns", () => {
         const columns = artifact?.columns ?? [];
         expect(columns[0]).toBe("gene");
         // Each name that lands is whole, thus a locator that names one addresses a real column.
-        expect(columns.every((name) => name === "gene" || /^col\d{4}$/.test(name))).toBe(true);
+        expect(columns.every((name) => name === "gene" || (name.startsWith("col") && name.length === 7 && isAllDigits(name.slice(3))))).toBe(true);
         expect(columns.length).toBeLessThan(names.length);
     });
 

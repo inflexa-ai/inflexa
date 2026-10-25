@@ -31,11 +31,18 @@ function isUndefinedTable(cause: unknown): boolean {
 }
 
 function indexName(analysisId: string): string {
-    const name = `search_${analysisId.replace(/-/g, "_")}`;
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    const name = `search_${analysisId.replaceAll("-", "_")}`;
+    if (!isSqlIdentifier(name)) {
         throw new Error(`workspaceSearch: unusable analysis id "${analysisId}"`);
     }
     return name;
+}
+
+function isSqlIdentifier(name: string): boolean {
+    if (name.length === 0) return false;
+    const isLetterOrUnderscore = (char: string) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || char === "_";
+    const isWordChar = (char: string) => isLetterOrUnderscore(char) || (char >= "0" && char <= "9");
+    return isLetterOrUnderscore(name.charAt(0)) && [...name].every(isWordChar);
 }
 
 /** Entry types that address a pattern spanning many files, never a single one. */
@@ -54,7 +61,9 @@ export function fileTargetOf(id: string, metadata: unknown): string | undefined 
     if (type !== undefined && PATTERN_TYPES.has(type)) return undefined;
     if (type === "input" && meta.entity !== undefined) return undefined;
     if (typeof meta.path === "string") return meta.path;
-    return id.replace(/^\/[^/]+\//, "");
+    if (!id.startsWith("/")) return id;
+    const afterResource = id.indexOf("/", 1);
+    return afterResource === -1 ? id : id.slice(afterResource + 1);
 }
 
 /** One search-hit row, as the pgvector SELECT returns it. */

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { PLAN_ID_RE } from "../../../contracts/schemas/chat-parts.js";
 import { okAsync } from "neverthrow";
 import { z } from "zod";
 import type { Pool } from "pg";
@@ -704,7 +705,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
             expect(result.event).toBe("plan_complete");
-            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+            expect(result.planId).toMatch(PLAN_ID_RE);
         });
 
         it("plans without a profile: no data-context section, and the plan still lands", async () => {
@@ -719,7 +720,7 @@ describe("generatePlan loop-driving tool", () => {
             // Planning proceeds to a persisted plan — a missing profile costs grounding,
             // never the plan.
             expect(result.event).toBe("plan_complete");
-            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+            expect(result.planId).toMatch(PLAN_ID_RE);
 
             const seed = plannerSeed(provider);
             expect(seed).not.toContain("## Data Context");
@@ -887,6 +888,22 @@ describe("generatePlan loop-driving tool", () => {
             const record = outcomeRecord(logger);
             expect(record.level).toBe("warn");
             expect(record.fields).toMatchObject({ outcome: "blocker" });
+        });
+
+        it("refuses a parentPlanId that is not a plan of this analysis, before the planner runs", async () => {
+            const analysisId = "an-parent-plan-classified";
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: SEED_FILE_IDS });
+            const provider = scriptedProvider([makeMessage([textBlock("never reached")], "end_turn")]);
+            const { tool, logger } = loggedToolFor(provider);
+
+            const result = planResultOf((await tool.execute({ ...INPUT, parentPlanId: "pln-00000000" }, toolContext(analysisId)))._unsafeUnwrap());
+
+            expect(result.event).toBe("error");
+            expect(result.error).toBe("parentPlanId is not a valid plan for this analysis");
+            const record = outcomeRecord(logger);
+            expect(record.level).toBe("warn");
+            expect(record.fields).toMatchObject({ outcome: "invalid_parent_plan" });
+            expect(provider.calls).toHaveLength(0);
         });
 
         it("distinguishes the failure shapes rather than collapsing them to one error", async () => {

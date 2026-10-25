@@ -32,9 +32,13 @@ const UNIPROT_BASE = "https://rest.uniprot.org/uniprotkb/search";
 const HGNC_HEADERS = { Accept: "application/json" };
 const UNIPROT_HEADERS = { Accept: "application/json" };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Ensembl gene ids are ENSG plus 11 digits; the fixed shape is the identifier rule.
 const ENSG_RE = /^ENSG\d{11}$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the UniProt accession shape with its optional isoform suffix (-<n>).
 const UNIPROT_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- ChEMBL ids carry the fixed CHEMBL<n> shape.
 const CHEMBL_RE = /^CHEMBL\d+$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- HGNC ids are the HGNC: prefix plus digits.
 const HGNC_RE = /^HGNC:\d+$/;
 
 export type ResolvedTarget = {
@@ -216,7 +220,7 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
             hgncDoc = await fetchHgncBy("prev_symbol", seedSymbol);
         }
     } else if (seedHgncId) {
-        hgncDoc = await fetchHgncBy("hgnc_id", seedHgncId.replace(/^HGNC:/, ""));
+        hgncDoc = await fetchHgncBy("hgnc_id", seedHgncId.startsWith("HGNC:") ? seedHgncId.slice("HGNC:".length) : seedHgncId);
     } else if (seedEnsemblId) {
         hgncDoc = await fetchHgncBy("ensembl_gene_id", seedEnsemblId);
     } else if (seedUniprot) {

@@ -215,7 +215,7 @@ describe("createSandboxAgent", () => {
                 { ...meta, tools: [...BASE_SANDBOX_TOOLS, "thisToolDoesNotExist"] },
                 body,
             ),
-        ).toThrow(/unknown SandboxToolName "thisToolDoesNotExist"/);
+        ).toThrow('unknown SandboxToolName "thisToolDoesNotExist"');
     });
 
     it("resolves the citation tool only when the shared resolver dependency is supplied", () => {
@@ -229,7 +229,7 @@ describe("createSandboxAgent", () => {
         } satisfies CitationResolver;
         const citationMeta = { ...meta, tools: [...BASE_SANDBOX_TOOLS, "resolve_citation"] as const };
 
-        expect(() => createSandboxAgent(makeFakeSandboxAgentDeps(), citationMeta, body)).toThrow(/requires a CitationResolver/);
+        expect(() => createSandboxAgent(makeFakeSandboxAgentDeps(), citationMeta, body)).toThrow("requires a CitationResolver");
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), citationResolver }, citationMeta, body);
         expect(def.tools.map((tool) => tool.id)).toContain("resolve_citation");
     });

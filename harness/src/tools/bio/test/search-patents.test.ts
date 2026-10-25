@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { createSearchPatentsTool } from "../search-patents.js";
 import { presentAt } from "../../../lib/present.js";
 
@@ -34,7 +35,7 @@ function stubFetch(routes: Array<[string, () => Response]>): SeenRequest[] {
     globalThis.fetch = fetchDouble(async (input, init) => {
         const request: SeenRequest = {
             url: new URL(String(input)),
-            body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+            body: typeof init?.body === "string" ? parseJsonAs(init.body, z.unknown()) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {
@@ -75,6 +76,13 @@ describe("search_patents — action 'search'", () => {
 
     it("rejects a limit above 20", () => {
         expect(tool.inputSchema.safeParse({ query: "imatinib", limit: 21 }).success).toBe(false);
+    });
+
+    it("accepts a YYYY-MM-DD date filter and rejects any other text shape", () => {
+        expect(tool.inputSchema.safeParse({ query: "imatinib", minPublicationDate: "2026-08-24" }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ query: "imatinib", minPublicationDate: "26-08-24" }).success).toBe(false);
+        expect(tool.inputSchema.safeParse({ query: "imatinib", minPublicationDate: "2026/08/24" }).success).toBe(false);
+        expect(tool.inputSchema.safeParse({ query: "imatinib", maxGrantDate: "2026-08-2a" }).success).toBe(false);
     });
 });
 
@@ -124,12 +132,12 @@ describe("search_patents — the key", () => {
         const keyless = createSearchPatentsTool({ apiKey: "" });
         const { ctx } = makeToolContext();
         // `parse` hands back `unknown` (`Tool` erases the schema generic); the input type and the schema share one declaration.
-        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow(/AMASS_API_KEY/);
+        await expect(keyless.execute(keyless.inputSchema.parse({ query: "imatinib" }), ctx)).rejects.toThrow("AMASS_API_KEY");
         expect(seen).toHaveLength(0);
     });
 
     it("throws on a rejected key, never an empty result", async () => {
         stubFetch([["/patentcore/records?", () => json({ error: { status: 401, code: "UNAUTHORIZED", message: "Unauthorized" } }, 401)]]);
-        await expect(run({ query: "imatinib" })).rejects.toThrow(/AMASS_API_KEY/);
+        await expect(run({ query: "imatinib" })).rejects.toThrow("AMASS_API_KEY");
     });
 });

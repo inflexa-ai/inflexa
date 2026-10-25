@@ -3,8 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { makeFakeSandboxAgentDeps } from "../../../agents/sandbox/__fixtures__/deps.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { createSandboxAgents } from "../../../agents/sandbox/index.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -59,7 +61,7 @@ describe("knowledge_template with a binding", () => {
     }
 
     async function recordOf(workingDir: string): Promise<Record<string, unknown>> {
-        return asRecord(JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8")));
+        return asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.unknown()));
     }
 
     it("rides the bound slots into the render request when the model sends no value for them", async () => {

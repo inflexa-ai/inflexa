@@ -29,6 +29,7 @@ import { z } from "zod";
 
 import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { splitLines } from "../../lib/text.js";
 import { tryFs } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import { citationRecordOf, fileTypeHoldsNoCell, snapshotEntry } from "../../report-model/reference-resolver.js";
@@ -165,7 +166,7 @@ async function readHeaderLine(absolute: string): Promise<HeaderRead | undefined>
     if (head === undefined) {
         return undefined;
     }
-    const [line = ""] = head.text.split(/\r?\n/, 1);
+    const [line = ""] = splitLines(head.text).slice(0, 1);
     if (line.length === 0) {
         return undefined;
     }

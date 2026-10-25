@@ -15,9 +15,11 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import { appendFile, cp, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { z } from "zod";
 
 import { ChartBlockSchema, type Block, type ChartBlock } from "../../../contracts/report-blocks.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { createFixtureResolver } from "../../../report-model/fixture-resolver.js";
 import { parseDelimited } from "../../../report-model/production-resolver.js";
 import { walkBlocks } from "../../../report-model/block-walk.js";
@@ -117,7 +119,7 @@ let gallery: GalleryLoad;
 let manifest: ManifestEntry[];
 
 beforeAll(async () => {
-    manifest = optionList(JSON.parse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"))).map((item) => manifestEntry(item));
+    manifest = optionList(parseJsonAs(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"), z.unknown())).map((item) => manifestEntry(item));
     if (!NO_DATA) gallery = (await loadGallery())._unsafeUnwrap();
 });
 
@@ -228,11 +230,17 @@ function depthFirstLeaves(rows: readonly ChartRow[]): string[] {
  * the license of the data. A name that holds no form fails the gate, thus a new license joins this list.
  */
 const LICENSE_FORMS: readonly { readonly pattern: RegExp; readonly caption: string }[] = [
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the license name as a whole word of the license text
     { pattern: /\bLGPL\b/, caption: "LGPL" },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the license name as a whole word of the license text
     { pattern: /\bGPL\b/, caption: "GPL" },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the Creative Commons Attribution 4.0 name in its short and its long form
     { pattern: /\bCC BY 4\.0\b|Creative Commons Attribution 4\.0/, caption: "CC BY 4.0" },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the license name as a whole word of the license text
     { pattern: /\bMIT\b/, caption: "MIT" },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the EBI license phrase of the license text
     { pattern: /EBI Terms of Use/, caption: "EBI Terms of Use" },
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the public-domain notice in its hyphenated and its spaced form
     { pattern: /public[- ]domain/i, caption: "public domain" },
 ];
 
@@ -438,7 +446,14 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const up = countRows("bulk-volcano", (row) => significant(row) && Number(row.log2FoldChange) > 0);
         const names = seriesOf(option).map((series) => series.name);
         expect(names.slice(0, 2)).toEqual([`Down (${down})`, `Up (${up})`]);
-        expect(String(names[2])).toMatch(/^Not significant \([\d,]+\)$/);
+        const label = String(names[2]);
+        const inner = label.slice("Not significant (".length, -1);
+        expect(
+            label.startsWith("Not significant (") &&
+                label.endsWith(")") &&
+                inner.length > 0 &&
+                [...inner].every((char) => (char >= "0" && char <= "9") || char === ","),
+        ).toBe(true);
         expect(axisOf(option, "xAxis").min).toBe(-optionNumber(axisOf(option, "xAxis").max));
     });
 
@@ -539,7 +554,9 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const largest = rows.reduce((best, row) => (Number(row.gene_ratio) > Number(best.gene_ratio) ? row : best));
         // A long term wraps to two lines and ends with an ellipsis, thus the first category reads the head of the term.
         const first = String(optionList(axisOf(option, "yAxis").data)[0]);
-        expect(String(largest.term).startsWith(first.replaceAll("\n", " ").replace(/…$/, ""))).toBe(true);
+        const head = first.replaceAll("\n", " ");
+        const headWithoutEllipsis = head.endsWith("…") ? head.slice(0, -1) : head;
+        expect(String(largest.term).startsWith(headWithoutEllipsis)).toBe(true);
         expect(option.visualMap).toBeDefined();
     });
 

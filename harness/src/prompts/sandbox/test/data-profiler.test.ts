@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the backtick-quoted camelCase tokens, whose shape is a pattern
+const CAMEL_TOKEN = /`[a-z]+[A-Z][A-Za-z]*`/g;
+
 /**
  * The profiler prompt carries three things nothing else can enforce: the substrate test in
  * the words the decision ledger settled on, the catalogues the submit schema validates
@@ -6,6 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { collapseWhitespace, splitLines } from "../../../lib/text.js";
 
 import { z } from "zod";
 
@@ -15,10 +19,27 @@ import { dataProfilerPrompt } from "../data-profiler.js";
 
 /** Collapse wrapping and blockquote markers, so a verbatim carry survives being re-wrapped. */
 function flatten(text: string): string {
-    return text
-        .replace(/^\s*>\s?/gm, "")
-        .replace(/\s+/g, " ")
-        .trim();
+    const unquoted = splitLines(text).map((line) => {
+        let rest = line.trimStart();
+        if (rest.startsWith(">")) {
+            rest = rest.slice(1);
+            if (rest.startsWith(" ") || rest.startsWith("\t")) rest = rest.slice(1);
+        }
+        return rest;
+    });
+    return collapseWhitespace(unquoted.join("\n"));
+}
+
+function containsWord(text: string, word: string): boolean {
+    const isWordChar = (char: string): boolean => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_";
+    let at = text.indexOf(word);
+    while (at >= 0) {
+        const before = at === 0 ? "" : text.charAt(at - 1);
+        const after = at + word.length >= text.length ? "" : text.charAt(at + word.length);
+        if (!isWordChar(before) && !isWordChar(after)) return true;
+        at = text.indexOf(word, at + 1);
+    }
+    return false;
 }
 
 /** The substrate test as the design ledger states it. */
@@ -86,7 +107,8 @@ describe("the no-forcing stance", () => {
     it("forbids applying every category", () => {
         expect(flat).toContain("Apply every category");
         expect(flat).toContain("never a checklist to fill");
-        expect(flat).not.toMatch(/dimension for (each|every) categor/i);
+        const lower = flat.toLowerCase();
+        expect(lower.includes("dimension for each categor") || lower.includes("dimension for every categor")).toBe(false);
     });
 
     it("forbids exhaustive column hunts off the probe list", () => {
@@ -119,9 +141,9 @@ describe("reasons and orientation", () => {
     });
 
     it("carries no kinds-or-axes-era language", () => {
-        expect(flat).not.toMatch(/\bkinds\b/);
-        expect(flat).not.toMatch(/\baxes\b/);
-        expect(flat).not.toMatch(/qualityAssessment/);
+        expect(containsWord(flat, "kinds")).toBe(false);
+        expect(containsWord(flat, "axes")).toBe(false);
+        expect(flat).not.toContain("qualityAssessment");
     });
 });
 
@@ -151,7 +173,7 @@ describe("the prompt names the submission's fields as the schema spells them", (
     const fields = schemaFieldNames(z.toJSONSchema(ProfileSubmissionSchema));
 
     it("uses a real field name for every camelCase token it quotes", () => {
-        const quoted = [...new Set(dataProfilerPrompt.match(/`[a-z]+[A-Z][A-Za-z]*`/g) ?? [])].map((token) => token.slice(1, -1));
+        const quoted = [...new Set([...dataProfilerPrompt.matchAll(CAMEL_TOKEN)].map((match) => match[0].slice(1, -1)))];
 
         expect(quoted.length).toBeGreaterThan(0);
         for (const token of quoted) expect(fields.has(token), `prompt quotes \`${token}\`, which the submission schema does not carry`).toBe(true);

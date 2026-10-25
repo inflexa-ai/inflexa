@@ -5,6 +5,8 @@
  * connector that makes a fake browser proves the keys, the eviction, and the gate with no sidecar at all.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterEach, describe, expect, it } from "bun:test";
 
 import { fakeLookPage } from "../__fixtures__/chrome.js";
@@ -42,7 +44,7 @@ function makeFakeBrowser(id: string): FakeBrowser {
 
 /** One turn of the macrotask queue. It drains the connect chain and the page setup of a pending call. */
 function tick(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, 0));
+    return sleep(0);
 }
 
 let restoreConnector: (() => void) | undefined;

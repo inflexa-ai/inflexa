@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { describe, expect, it } from "bun:test";
 import { createServer, type ServerResponse } from "node:http";
 
@@ -68,29 +70,26 @@ function fetchThatNeverStarts(onCall?: () => void): typeof fetch {
  */
 function fetchWithSteadyBody(body: string, chunks: number, gapMs: number): typeof fetch {
     return fetchDouble((_input, init) => {
-        const signal = init?.signal;
+        const abortSignal = init?.signal ?? undefined;
         const encoded = new TextEncoder().encode(body);
         const size = Math.ceil(encoded.length / chunks);
         let offset = 0;
-        let timer: ReturnType<typeof setTimeout>;
         const stream = new ReadableStream<Uint8Array>({
-            start(controller) {
-                const push = (): void => {
-                    if (signal?.aborted) return controller.error(signal.reason);
+            start: async (controller) => {
+                for (;;) {
+                    if (abortSignal?.aborted) return controller.error(abortSignal.reason);
                     if (offset >= encoded.length) return controller.close();
+                    try {
+                        // The wait rejects on abort, which ends the loop and lets node unschedule
+                        // the timer — the cleanup the clearTimeout listener used to do.
+                        await sleep(gapMs, undefined, { signal: abortSignal });
+                    } catch {
+                        if (abortSignal === undefined) throw new Error("the gap wait rejected with no signal to blame");
+                        return controller.error(abortSignal.reason);
+                    }
                     controller.enqueue(encoded.slice(offset, offset + size));
                     offset += size;
-                    timer = setTimeout(push, gapMs);
-                };
-                timer = setTimeout(push, gapMs);
-                signal?.addEventListener(
-                    "abort",
-                    () => {
-                        clearTimeout(timer);
-                        controller.error(signal.reason);
-                    },
-                    { once: true },
-                );
+                }
             },
         });
         return Promise.resolve(new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
@@ -135,10 +134,12 @@ describe("request-timeout guard", () => {
         });
 
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 20);
 
         try {
-            const outcome = await provider.chat(request, makeSession(), controller.signal);
+            // The abort lands once the call holds the stalled fetch, so the caller signal, not the guard, ends it.
+            const pending = provider.chat(request, makeSession(), controller.signal);
+            controller.abort();
+            const outcome = await pending;
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
             if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
@@ -320,10 +321,11 @@ describe("request-timeout advertisement", () => {
         // With no guard installed, only the caller abort ends the stalled request,
         // thus the failure is a cancellation, never a request-timeout.
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 40);
 
         try {
-            const outcome = await provider.chat(request, makeSession(), controller.signal);
+            const pending = provider.chat(request, makeSession(), controller.signal);
+            controller.abort();
+            const outcome = await pending;
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
             if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
@@ -397,11 +399,13 @@ function emitEvery(chunks: readonly string[], gapMs: number, end: boolean): (res
             if (index < chunks.length) {
                 res.write(presentAt(chunks, index));
                 index += 1;
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the emitter re-arms its own next write, unref'd so the fake endpoint never holds the process; a wait cannot re-arm itself here.
                 setTimeout(push, gapMs).unref();
                 return;
             }
             if (end) res.end();
         };
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the emitter re-arms its own next write, unref'd so the fake endpoint never holds the process; a wait cannot re-arm itself here.
         setTimeout(push, gapMs).unref();
     };
 }
@@ -515,9 +519,12 @@ describe("SDK chunk bound", () => {
         // ends the stalled stream.
         const endpoint = await startFakeStreamEndpoint(emitEvery([sseDelta("a")], 20, false));
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 120);
         try {
-            const { events, failure } = await drain(providerOver(endpoint.baseURL, 5_000).chatStream(request, makeSession(), controller.signal));
+            // The stream pushes one delta per 20 ms, so the abort at 120 ms lands while the stream flows.
+            const pending = drain(providerOver(endpoint.baseURL, 5_000).chatStream(request, makeSession(), controller.signal));
+            await sleep(120);
+            controller.abort();
+            const { events, failure } = await pending;
 
             expect(events).toEqual([{ type: "text-delta", text: "a" }]);
             expect(isProviderError(failure)).toBe(false);

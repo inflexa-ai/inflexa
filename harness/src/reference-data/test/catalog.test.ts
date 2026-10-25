@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the catalog format-token grammar that the format field declares, whose shape is a pattern
+const FORMAT_TOKEN = /^[a-z0-9]+(?:[+-][a-z0-9]+)*$/;
+
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 
@@ -251,7 +254,7 @@ describe("reference-data catalog", () => {
     it("gives every artifact a format and a non-restating description of its contents", () => {
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
             for (const artifact of dataset.artifacts) {
-                expect(artifact.format).toMatch(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/);
+                expect(FORMAT_TOKEN.test(artifact.format)).toBe(true);
                 expect(artifact.contents.length).toBeGreaterThan(40);
                 expect(artifact.contents).not.toBe(dataset.title);
             }

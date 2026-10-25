@@ -14,10 +14,14 @@ import { basenameOf, dirnameOf } from "./tokens.js";
 import { presentFirst } from "../lib/present.js";
 
 /** A marker whose presence claims the directory it sits in, and nothing below it. */
-const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: readonly RegExp[] }[] = [
+const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: readonly ((name: string) => boolean)[] }[] = [
     {
         label: "feature-barcode-matrix",
-        requires: [/^matrix\.mtx(\.gz)?$/, /^barcodes\.tsv(\.gz)?$/, /^(features|genes)\.tsv(\.gz)?$/],
+        requires: [
+            nameIs("matrix.mtx", "matrix.mtx.gz"),
+            nameIs("barcodes.tsv", "barcodes.tsv.gz"),
+            nameIs("features.tsv", "features.tsv.gz", "genes.tsv", "genes.tsv.gz"),
+        ],
     },
 ];
 
@@ -28,10 +32,15 @@ const DIRECTORY_MARKERS: readonly { readonly label: string; readonly requires: r
  * tree it does not describe, and letting it claim everything below would swallow the
  * dataset it happens to share a directory with.
  */
-const SUBTREE_MARKERS: readonly { readonly label: string; readonly name: string; readonly corroborate?: RegExp }[] = [
+const SUBTREE_MARKERS: readonly { readonly label: string; readonly name: string; readonly corroborate?: (segment: string) => boolean }[] = [
     { label: "study-manifest", name: "meta_study.txt" },
-    { label: "dataset-descriptor", name: "dataset_description.json", corroborate: /^sub-/ },
+    { label: "dataset-descriptor", name: "dataset_description.json", corroborate: (segment) => segment.startsWith("sub-") },
 ];
+
+function nameIs(...names: string[]): (name: string) => boolean {
+    const known = new Set(names);
+    return (name) => known.has(name);
+}
 
 export type MarkerUnit = {
     readonly label: string;
@@ -39,11 +48,9 @@ export type MarkerUnit = {
     readonly members: readonly MemberFile[];
 };
 
-function hasCorroboratingChild(files: readonly MemberFile[], root: string, pattern: RegExp): boolean {
+function hasCorroboratingChild(files: readonly MemberFile[], root: string, matches: (segment: string) => boolean): boolean {
     const prefix = root === "" ? "" : `${root}/`;
-    return files.some(
-        (file) => file.path.startsWith(prefix) && pattern.test(presentFirst(file.path.slice(prefix.length).split("/"), "the first path segment")),
-    );
+    return files.some((file) => file.path.startsWith(prefix) && matches(presentFirst(file.path.slice(prefix.length).split("/"), "the first path segment")));
 }
 
 /** The marker-claimed units of a tree, and the members no marker claimed. */
@@ -61,7 +68,7 @@ export function applyMarkers(files: readonly MemberFile[]): { units: MarkerUnit[
     for (const [directory, members] of byDirectory) {
         const names = members.map((member) => basenameOf(member.path));
         for (const marker of DIRECTORY_MARKERS) {
-            if (marker.requires.every((pattern) => names.some((name) => pattern.test(name)))) directories.push({ label: marker.label, root: directory });
+            if (marker.requires.every((matches) => names.some((name) => matches(name)))) directories.push({ label: marker.label, root: directory });
         }
         for (const marker of SUBTREE_MARKERS) {
             if (!names.includes(marker.name)) continue;

@@ -17,6 +17,15 @@ import { z } from "zod";
 
 import { enrichShapes } from "../../input-scan/enrich.js";
 import { renderInputScanManifest, scanInputTree } from "../../input-scan/scan.js";
+
+/** The path without its leading and trailing slashes. */
+function stripEdgeSlashes(value: string): string {
+    let start = 0;
+    let end = value.length;
+    while (start < end && value.charAt(start) === "/") start++;
+    while (end > start && value.charAt(end - 1) === "/") end--;
+    return value.slice(start, end);
+}
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
@@ -61,7 +70,7 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
             const scan = await scanInputTree({
                 session: ctx.session,
                 fs: deps.workspaceFs,
-                root: path.replace(/^\/+/, "").replace(/\/+$/, ""),
+                root: stripEdgeSlashes(path),
                 signal: ctx.signal,
             });
 

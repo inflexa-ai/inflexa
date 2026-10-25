@@ -67,14 +67,23 @@ export type BuildProfileIndexArgs = {
 };
 
 function slug(value: string): string {
-    return (
-        value
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-            .slice(0, 60) || "unnamed"
-    );
+    let out = "";
+    let inRun = false;
+    for (const char of value.toLowerCase()) {
+        if (out.length >= SLUG_MAX_LENGTH) break;
+        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+        if (!isSlugChar) {
+            inRun = true;
+            continue;
+        }
+        if (inRun && out.length > 0) out += "-";
+        inRun = false;
+        out += char;
+    }
+    return out.slice(0, SLUG_MAX_LENGTH) || "unnamed";
 }
+
+const SLUG_MAX_LENGTH = 60;
 
 function slotSummary(slot: DataProfileGroupSlot): Record<string, unknown> {
     return { id: slot.id, location: slot.location, tokenClass: slot.tokenClass, distinctValues: slot.distinctValues };

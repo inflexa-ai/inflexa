@@ -23,16 +23,15 @@ import {
     type PatentSummary,
 } from "../lib/amass-client.js";
 import { getAmassHeaders } from "../lib/amass-config.js";
+import { isIsoDate } from "../../lib/text.js";
 
 /** The largest `limit` that still costs one search price (5 credits for each 20 records). */
 const MAX_LIMIT = 20;
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 const IDENTIFIER_FIELDS = ["amassId", "publicationNumber", "applicationNumber"] as const;
 
 function dateField(description: string) {
-    return z.string().regex(ISO_DATE).optional().describe(`'search' only. ${description}, YYYY-MM-DD.`);
+    return z.string().refine(isIsoDate).optional().describe(`'search' only. ${description}, YYYY-MM-DD.`);
 }
 
 const inputSchema = z

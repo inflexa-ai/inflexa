@@ -661,7 +661,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const attempt = async (): Promise<void> => {
             (await ops.createSandbox(...splitSpawn({ ...META, writableTail: "../escape" }), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
         };
-        await expect(attempt()).rejects.toThrow(/Invalid writableTail/);
+        await expect(attempt()).rejects.toThrow("Invalid writableTail");
         expect(created).toHaveLength(0);
     });
 

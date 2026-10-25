@@ -14,6 +14,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { presentAt, presentFirst } from "../../lib/present.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
@@ -502,7 +503,7 @@ describe("runAgent cache-token metrics", () => {
 
 /** The captured body the canned fetch saw, or a failed test. */
 function seenBody(init: RequestInit | undefined): Record<string, unknown> {
-    const parsed = parseUnknownRecord(JSON.parse(String(init?.body)));
+    const parsed = parseUnknownRecord(parseJsonAs(String(init?.body), z.unknown()));
     if (parsed === undefined) throw new Error("the canned provider saw a non-object request body");
     return parsed;
 }

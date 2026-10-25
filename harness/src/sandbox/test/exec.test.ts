@@ -5,9 +5,11 @@
 
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 
 import { EXEC_STREAM_BYTE_CAP } from "../../tools/workspace/result-bounds.js";
 import { ExecTimeoutError, runExec, type ExecDeps } from "../exec.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { PROBE_AFTER_UNAVAILABLE_POLLS } from "../liveness.js";
 import type { ExecResult, SandboxLiveness, SandboxRef } from "../types.js";
@@ -49,7 +51,7 @@ type SeenRequest = {
 function seenBody(request: SeenRequest): Record<string, unknown> {
     const raw = request.init?.body;
     if (typeof raw !== "string") throw new Error("the test writes only string bodies");
-    return parseUnknownRecord(JSON.parse(raw)) ?? {};
+    return parseUnknownRecord(parseJsonAs(raw, z.unknown())) ?? {};
 }
 
 /**
@@ -68,17 +70,21 @@ function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenR
 }
 
 /** Deps that never really sleep and never see a cancel. */
-const BASE: ExecDeps = { now: () => NOW_MS, sleep: async () => {}, isCancelled: async () => false };
+const BASE: ExecDeps = { clock: { now: () => NOW_MS, wait: async () => {} }, isCancelled: async () => false };
 
-/** A sleep that advances the mock clock, thus a deadline-bounded loop ends. */
+/** A clock whose wait advances the mock time, thus a deadline-bounded loop ends. */
 function tickingClock(stepMs = 1000) {
     const clock = { nowMs: NOW_MS };
     return {
         clock,
-        now: () => clock.nowMs,
-        sleep: async () => {
-            clock.nowMs += stepMs;
-        },
+        execDeps: {
+            clock: {
+                now: () => clock.nowMs,
+                wait: async () => {
+                    clock.nowMs += stepMs;
+                },
+            },
+        } satisfies ExecDeps,
     };
 }
 
@@ -127,7 +133,7 @@ describe("the submit", () => {
             },
             { preconnect: fetch.preconnect },
         );
-        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: failing })).rejects.toThrow(/503/);
+        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: failing })).rejects.toThrow("503");
         expect(seen).toHaveLength(1);
     });
 
@@ -221,18 +227,21 @@ describe("the poll loop", () => {
     });
 
     test("the cadence backs off after the fast-phase attempts are spent", async () => {
-        const sleeps: number[] = [];
+        const waits: number[] = [];
         const running = { status: "running", events: [], cursor: 0 };
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
-            sleep: async (ms) => {
-                sleeps.push(ms);
+            clock: {
+                now: () => NOW_MS,
+                wait: async (ms) => {
+                    waits.push(ms);
+                },
             },
             fetch: sandbox([...Array.from({ length: 41 }, () => running), completed]),
         });
-        expect(sleeps).toHaveLength(41);
-        expect(sleeps.slice(0, 40)).toEqual(Array.from({ length: 40 }, () => 1_500));
-        expect(sleeps[40]).toBe(10_000);
+        expect(waits).toHaveLength(41);
+        expect(waits.slice(0, 40)).toEqual(Array.from({ length: 40 }, () => 1_500));
+        expect(waits[40]).toBe(10_000);
     });
 
     test("a seq gap above the cursor — events that the ring shed — is surfaced through warn", async () => {
@@ -282,8 +291,8 @@ describe("the poll loop", () => {
     });
 
     test("an unreachable sandbox keeps polling until the deadline, then times out", async () => {
-        const { now, sleep } = tickingClock();
-        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, NOW_MS + 3000, { ...BASE, now, sleep, fetch: sandbox(["unavailable"]) })).rejects.toBeInstanceOf(
+        const { execDeps } = tickingClock();
+        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, NOW_MS + 3000, { ...BASE, ...execDeps, fetch: sandbox(["unavailable"]) })).rejects.toBeInstanceOf(
             ExecTimeoutError,
         );
     });
@@ -293,12 +302,11 @@ describe("the liveness escalation", () => {
     const T = PROBE_AFTER_UNAVAILABLE_POLLS;
 
     test("a dead machine fast-fails with a synthetic failure instead of waiting out the deadline", async () => {
-        const { now, sleep, clock } = tickingClock();
+        const { clock, execDeps } = tickingClock();
         let probes = 0;
         const result = await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
-            now,
-            sleep,
+            ...execDeps,
             fetch: sandbox(["unavailable"]),
             isAlive: async () => {
                 probes++;
@@ -312,11 +320,10 @@ describe("the liveness escalation", () => {
     });
 
     test("an OOM-killed machine carries the OOM reason", async () => {
-        const { now, sleep } = tickingClock();
+        const { execDeps } = tickingClock();
         const result = await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
-            now,
-            sleep,
+            ...execDeps,
             fetch: sandbox(["unavailable"]),
             isAlive: async () => ({ alive: false, oomKilled: true }),
         });
@@ -324,13 +331,12 @@ describe("the liveness escalation", () => {
     });
 
     test("a live but slow machine never escalates to failure — the deadline still bounds", async () => {
-        const { now, sleep } = tickingClock();
+        const { execDeps } = tickingClock();
         let probes = 0;
         await expect(
             runExec(REF, EXEC_ID, REQUEST, () => {}, NOW_MS + 6000, {
                 ...BASE,
-                now,
-                sleep,
+                ...execDeps,
                 fetch: sandbox(["unavailable"]),
                 isAlive: async () => {
                     probes++;
@@ -361,13 +367,12 @@ describe("the liveness escalation", () => {
     });
 
     test("a thrown probe is inconclusive — the loop resumes and the deadline bounds", async () => {
-        const { now, sleep } = tickingClock();
+        const { execDeps } = tickingClock();
         let probes = 0;
         await expect(
             runExec(REF, EXEC_ID, REQUEST, () => {}, NOW_MS + 6000, {
                 ...BASE,
-                now,
-                sleep,
+                ...execDeps,
                 fetch: sandbox(["unavailable"]),
                 isAlive: async () => {
                     probes++;
@@ -379,7 +384,7 @@ describe("the liveness escalation", () => {
     });
 
     test("a probe that finds the machine alive re-arms, and a later dead verdict ends the exec", async () => {
-        const { now, sleep } = tickingClock();
+        const { execDeps } = tickingClock();
         const verdicts: SandboxLiveness[] = [
             { alive: true, oomKilled: false },
             { alive: false, oomKilled: false },
@@ -387,8 +392,7 @@ describe("the liveness escalation", () => {
         let probe = 0;
         const result = await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
-            now,
-            sleep,
+            ...execDeps,
             fetch: sandbox(["unavailable"]),
             isAlive: async () => presentAt(verdicts, probe++),
         });
@@ -401,19 +405,23 @@ describe("the cancel read", () => {
     const running = { status: "running", events: [], cursor: 0 };
 
     test("a cancelled workflow stops the exec with the DBOS cancel error", async () => {
-        const { now, sleep } = tickingClock(5_000);
+        const { execDeps } = tickingClock(5_000);
         await expect(
-            runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, now, sleep, fetch: sandbox([running]), isCancelled: async () => true }),
+            runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
+                ...BASE,
+                ...execDeps,
+                fetch: sandbox([running]),
+                isCancelled: async () => true,
+            }),
         ).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
     });
 
     test("the workflow status is read at most once for each interval", async () => {
-        const { now, sleep } = tickingClock(1_500);
+        const { execDeps } = tickingClock(1_500);
         let reads = 0;
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
-            now,
-            sleep,
+            ...execDeps,
             // 20 running polls at 1.5 s each span 28.5 s of the clock: reads at 10.5 s and at 21 s.
             fetch: sandbox([...Array.from({ length: 20 }, () => running), completed]),
             isCancelled: async () => {

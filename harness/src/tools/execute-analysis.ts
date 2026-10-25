@@ -48,7 +48,10 @@ import { defineTool, type ToolContext } from "./define-tool.js";
 import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
 import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 
-const planIdSchema = z.string().regex(/^pln-[a-f0-9]{8}$/, "planId must be a pln-<8hex> value");
+import { PLAN_ID_RE } from "../contracts/schemas/chat-parts.js";
+import { collapseWhitespace } from "../lib/text.js";
+
+const planIdSchema = z.string().regex(PLAN_ID_RE, "planId must be a pln-<8hex> value");
 const inputSchema = z
     .object({
         mode: z
@@ -387,7 +390,7 @@ function validateStoredPlan(raw: unknown, planId: string): AnalysisPlan {
 }
 
 function adHocTitle(request: string): string {
-    const compact = request.trim().replace(/\s+/g, " ");
+    const compact = collapseWhitespace(request);
     return compact.length <= 80 ? compact : `${compact.slice(0, 77)}…`;
 }
 

@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -97,7 +99,7 @@ async function waitForPendingId(analysisId?: string): Promise<string> {
         const latest = match.at(-1);
         if (latest !== undefined) return latest.id;
         if (Date.now() > deadline) throw new Error("timed out waiting for a pending ask");
-        await new Promise((r) => setTimeout(r, 15));
+        await sleep(15);
     }
 }
 

@@ -10,6 +10,8 @@
  * durably written" is a fact the test waits on rather than a delay it hopes for.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { errAsync, okAsync } from "neverthrow";
@@ -124,22 +126,24 @@ async function waitUntil(predicate: () => boolean, label: string, timeoutMs = 15
     const deadline = Date.now() + timeoutMs;
     while (!predicate()) {
         if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-        await new Promise((r) => setTimeout(r, 25));
+        await sleep(25);
     }
 }
 
 /** Reject rather than hang when a promise that should settle does not. */
 async function settlesWithin<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const gate = new AbortController();
     try {
         return await Promise.race([
             promise,
-            new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Error(`${label} did not settle within ${timeoutMs}ms`)), timeoutMs);
+            sleep(timeoutMs, undefined, { signal: gate.signal }).then(() => {
+                throw new Error(`${label} did not settle within ${timeoutMs}ms`);
             }),
         ]);
     } finally {
-        if (timer) clearTimeout(timer);
+        // The abort ends the armed wait of a settled race; the race absorbed its
+        // rejection when it attached to each arm, so nothing reaches the process.
+        gate.abort();
     }
 }
 
@@ -256,7 +260,7 @@ describe("run-event stream — one workflow", () => {
             stream.subscribe({
                 runId,
                 onPart: async (p) => {
-                    await new Promise((r) => setTimeout(r, 200));
+                    await sleep(200);
                     seen.push(p);
                 },
                 signal: new AbortController().signal,
@@ -407,7 +411,7 @@ describe("run-event stream — lifecycle", () => {
         // Let the run finish; nothing it writes afterwards may reach the handler.
         await DBOS.send(runId, "go", "release");
         await parent.getResult();
-        await new Promise((r) => setTimeout(r, 500));
+        await sleep(500);
 
         expect(seen).toHaveLength(atAbort);
         expect(typesOf(seen)).not.toContain("data-run-completed");
@@ -698,7 +702,7 @@ describe("run-event stream — a data profile", () => {
             runId: workflowId,
             onPart: async (p) => {
                 seen.push(p);
-                await new Promise((r) => setTimeout(r, 100));
+                await sleep(100);
             },
             signal: new AbortController().signal,
         });

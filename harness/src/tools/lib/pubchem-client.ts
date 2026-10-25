@@ -117,6 +117,7 @@ export async function getCompoundPropertiesByInChIKey(inchiKey: string): Promise
     return getCompoundPropertiesByCID(cid);
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the amide-bond motif C(=O)N read out of a SMILES string; the literal atoms are the chemistry.
 const AMIDE_BOND_RE = /C\(=O\)N/g;
 
 /**

@@ -192,7 +192,7 @@ function textFormat(buf: Buffer): string | undefined {
     if (head.startsWith("data_")) return "mmcif";
     if (head.startsWith("[CEL]")) return "cel";
     if (head.startsWith("track ") || head.startsWith("fixedStep") || head.startsWith("variableStep")) return "wig";
-    if (/^<\?xml/.test(head)) {
+    if (head.startsWith("<?xml")) {
         if (head.includes("<indexedmzML") || head.includes("<mzML")) return "mzml";
         if (head.includes("<mzXML")) return "mzxml";
         if (head.includes("MzIdentML")) return "mzidentml";

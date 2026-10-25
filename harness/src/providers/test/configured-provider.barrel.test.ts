@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
@@ -86,7 +88,7 @@ type CapturedRequest = {
 function capturingFetch(respond: (text: string, model: string) => Response): { fetch: typeof fetch; requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
     const fetch = fetchDouble(async (_input, init) => {
-        const body = init?.body ? (parseUnknownRecord(JSON.parse(String(init.body))) ?? {}) : {};
+        const body = init?.body ? (parseUnknownRecord(parseJsonAs(String(init.body), z.unknown())) ?? {}) : {};
         // `Headers` folds each name to lowercase, thus an assertion does not
         // depend on the spelling that the SDK forwards.
         const headers = Object.fromEntries(new Headers(init?.headers));

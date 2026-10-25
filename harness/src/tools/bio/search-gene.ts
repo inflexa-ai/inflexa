@@ -28,6 +28,7 @@ const IDENTIFIERS_LISTED_IN_FULL = 8;
  * The identifier spaces that Ensembl cannot key on. Anything that matches none
  * of them is treated as a symbol and goes straight to Ensembl.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- each entry is the fixed issued shape of one identifier space (Ensembl, HGNC, ChEMBL, UniProt); the alternation of the four is what keys the resolver.
 const NON_SYMBOL_PATTERNS = [/^ENSG\d{11}$/, /^HGNC:\d+$/, /^CHEMBL\d+$/, /^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$/];
 
 function isSymbol(identifier: string): boolean {

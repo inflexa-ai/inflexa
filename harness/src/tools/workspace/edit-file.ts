@@ -161,6 +161,7 @@ function replaceRegex(
     | { kind: "count_mismatch"; expected: number; actual: number; lines: number[] } {
     let compiled: RegExp;
     try {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caller-supplied match pattern is the tool's input; the dynamic form is the feature, and an invalid pattern is the handled error below.
         compiled = new RegExp(pattern, "gm");
     } catch (err) {
         return { kind: "invalid_pattern", error: err instanceof Error ? err.message : String(err) };

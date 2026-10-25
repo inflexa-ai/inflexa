@@ -405,7 +405,7 @@ describe("composeStepSeed", () => {
         const root = await makeWorkspace();
         const bad: ExecuteAnalysisInput = { ...input([planStep("T1S1")]), planStepById: {} };
 
-        await expect(composeStepSeed({ input: bad, stepId: "T1S1", runId: RUN_ID, deps: deps(root) })).rejects.toThrow(/missing from planStepById/);
+        await expect(composeStepSeed({ input: bad, stepId: "T1S1", runId: RUN_ID, deps: deps(root) })).rejects.toThrow("missing from planStepById");
     });
 });
 

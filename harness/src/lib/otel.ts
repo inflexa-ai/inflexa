@@ -40,6 +40,7 @@
 import { context, propagation, metrics, trace } from "@opentelemetry/api";
 
 import { createNoopLogger } from "./console-logger.js";
+import { trimTrailingOf } from "./text.js";
 import type { Logger } from "./logger.js";
 import { createHarnessSampler, DbosSpanProcessor, HarnessTracerProvider } from "./otel-spans.js";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
@@ -127,7 +128,7 @@ export function initOtel(options: InitOtelOptions = {}): void {
         const spanProcessors: SpanProcessor[] = [];
 
         if (endpoint) {
-            const base = endpoint.replace(/\/+$/, "");
+            const base = trimTrailingOf(endpoint, "/");
             spanProcessors.push(new DbosSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: `${base}/v1/traces` }))));
         }
 
@@ -163,7 +164,7 @@ export function initOtel(options: InitOtelOptions = {}): void {
     // With no MeterProvider registered the API's global no-op provider serves
     // every instrument, so the record sites stay valid when export is off.
     if (endpoint && !metricsExportDisabled()) {
-        const base = endpoint.replace(/\/+$/, "");
+        const base = trimTrailingOf(endpoint, "/");
         const metricExporter = new OTLPMetricExporter({
             url: `${base}/v1/metrics`,
         });

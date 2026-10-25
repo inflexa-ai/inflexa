@@ -94,6 +94,6 @@ describe("assertConnectionBudget", () => {
                 logger: silentLogger,
                 config: { poolMax: process.env.DB_POOL_MAX },
             }),
-        ).rejects.toThrow(/FATAL: pg max_connections \(100\) cannot hold one pod's pool footprint \(210\)/);
+        ).rejects.toThrow("FATAL: pg max_connections (100) cannot hold one pod's pool footprint (210)");
     });
 });

@@ -442,7 +442,7 @@ describe("the dendrograms of the heatmap", () => {
         )._unsafeUnwrap();
         const svgs = chartSvgAssets(echarts, "h1", render.inline, render.bodyPx)._unsafeUnwrap();
         for (const svg of [svgs?.single.bytes ?? "", svgs?.double.bytes ?? ""]) {
-            expect(svg.match(/<polyline /g)?.length).toBe(SAMPLE_TREE.length + GENE_TREE.length);
+            expect(svg.split("<polyline ").length - 1).toBe(SAMPLE_TREE.length + GENE_TREE.length);
         }
     });
 

@@ -59,7 +59,21 @@ export type PackageIdentity = {
  * idempotent, thus a fold of a folded name gives that name again.
  */
 function fold(name: string): string {
-    return name.replace(/[-_.]+/g, "-").toLowerCase();
+    let out = "";
+    let inRun = false;
+    for (const char of name) {
+        if (char === "-" || char === "_" || char === ".") {
+            inRun = true;
+            continue;
+        }
+        if (inRun) {
+            out += "-";
+            inRun = false;
+        }
+        out += char;
+    }
+    if (inRun) out += "-";
+    return out.toLowerCase();
 }
 
 /**
@@ -157,12 +171,24 @@ export type ParseQueryError =
  * A path, a URL, or a store directory. The entry is trimmed already, thus a
  * leading space cannot defeat the guard.
  */
-const LOCATION = /^[.~]|[/\\]|:\/\//;
+function isLocation(entry: string): boolean {
+    return entry.startsWith(".") || entry.startsWith("~") || entry.includes("/") || entry.includes("\\") || entry.includes("://");
+}
 
-/** The `<word>:` prefix of an entry. The group holds the word before the colon. */
-const PREFIX = /^([A-Za-z][A-Za-z0-9_.-]*):/;
+/** The `<word>:` prefix of an entry, or `undefined` when the word before the colon is empty or starts outside the letters. */
+function prefixWordOf(entry: string): string | undefined {
+    const at = entry.indexOf(":");
+    if (at < 1) return undefined;
+    const word = entry.slice(0, at);
+    const first = word.charAt(0);
+    const isLeadingLetter = (first >= "A" && first <= "Z") || (first >= "a" && first <= "z");
+    if (!isLeadingLetter) return undefined;
+    const isWordChar = (char: string) =>
+        (char >= "A" && char <= "Z") || (char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "_" || char === "." || char === "-";
+    return [...word].every(isWordChar) ? word : undefined;
+}
 
-/** A run of specifier characters. Only the exact run `==` names a version. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the specifier grammar is a run of comparison characters; the parser reads the first run verbatim to accept only `==` and to report any other run.
 const SPECIFIER = /[<>!~=]+/;
 
 /**
@@ -171,6 +197,7 @@ const SPECIFIER = /[<>!~=]+/;
  * thus `numpy==1.26,<2` gives the version `1.26,<2` without this guard, and
  * the compound range then rides into the pool as a version string.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the guard reads the first intruder run of the version text to report it verbatim; the run is the compound specifier the pool must not see.
 const VERSION_INTRUDER = /[<>!~=,\s]+/;
 
 /**
@@ -186,10 +213,9 @@ const VERSION_INTRUDER = /[<>!~=,\s]+/;
 export function parseQuery(entry: string): Result<PackageQuery, ParseQueryError> {
     const trimmed = entry.trim();
     if (trimmed === "") return err({ type: "empty" });
-    if (LOCATION.test(trimmed)) return err({ type: "location", entry: trimmed });
+    if (isLocation(trimmed)) return err({ type: "location", entry: trimmed });
 
-    const prefix = PREFIX.exec(trimmed);
-    const word = prefix?.[1];
+    const word = prefixWordOf(trimmed);
     if (word !== undefined && word !== "python" && word !== "r") {
         return err({ type: "unknown_prefix", prefix: word, entry: trimmed });
     }

@@ -1,3 +1,8 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the unpadded base64url digest of the session key, whose shape is a pattern
+const BASE64URL_DIGEST_43 = /^[A-Za-z0-9_-]{43}$/;
+
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { APICallError } from "@ai-sdk/provider";
@@ -263,7 +268,8 @@ describe("createAiSdkProvider", () => {
         const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
         expect(failure).toMatchObject({ type: "suspend", status: 402, reason: "payment_required", retryable: false });
         expect(failure.message).toContain("HTTP 402");
-        expect(failure.message).not.toMatch(/budget|tenant|billing/i);
+        const lowerMessage = failure.message.toLowerCase();
+        expect(["budget", "tenant", "billing"].some((word) => lowerMessage.includes(word))).toBe(false);
     });
 
     it("gives an unmapped 403 as a non-retryable provider error", async () => {
@@ -680,7 +686,7 @@ describe("sessionKeyDigestOf", () => {
 
         // The identifier string alone passes the limit.
         expect(sessionKeyOf(session).length).toBeGreaterThan(64);
-        expect(sessionKeyDigestOf(session)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(BASE64URL_DIGEST_43.test(sessionKeyDigestOf(session))).toBe(true);
     });
 
     it("gives the base64url SHA-256 digest of the identifier string, the same each time", () => {
@@ -975,10 +981,13 @@ describe("createAiSdkProvider abort during backoff", () => {
 
         const controller = new AbortController();
         const startedAt = Date.now();
-        setTimeout(() => controller.abort(), 50);
 
         try {
-            const outcome = await provider.chat(request, makeSession(), controller.signal);
+            // The abort lands while the call waits out the server-named backoff, so only the abort can end it quickly.
+            const pending = provider.chat(request, makeSession(), controller.signal);
+            await sleep(50);
+            controller.abort();
+            const outcome = await pending;
             throw new Error(`expected the abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
             if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });

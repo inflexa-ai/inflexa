@@ -50,6 +50,7 @@ export function localParameters(parameters: readonly TemplateParameter[]): Templ
     return parameters.filter((parameter) => parameter.local === true);
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a formula starts with ~ and holds only formula name characters; the shape is the slot contract.
 const FORMULA_PATTERN = /^~\s*[A-Za-z0-9_.+*:()\s-]+$/;
 
 /** Check one caller value against the contract of its slot, as the renderer of the service does. */
@@ -63,6 +64,7 @@ export function validateLocalSlot(parameter: TemplateParameter, value: unknown):
             if (parameter.type === "formula" && !FORMULA_PATTERN.test(value))
                 return { slot, reason: "a formula must start with ~ and hold only names, +, :, *, and parentheses" };
             if (permitted && !permitted.includes(value)) return { slot, reason: `the value "${value}" is not permitted`, permitted };
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pattern arrives as contract data from the template author, not from this module.
             if (parameter.pattern && !new RegExp(parameter.pattern).test(value)) return { slot, reason: `the value must match ${parameter.pattern}` };
             return undefined;
         }
@@ -190,12 +192,14 @@ export function bindLocalSlots(
         }
     }
     if (issues.length > 0) return { ok: false, issues };
-    const bound = script.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (whole, name: string) => {
-        const parameter = byName.get(name);
-        if (!parameter) return whole;
-        const value = values.get(name);
-        return value === undefined ? absentLiteral(template.language, parameter.type) : literal(template.language, parameter, value);
-    });
+    const bound =
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the {{name}} placeholders are the template grammar of the contract; the capture names the slot to bind.
+        script.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (whole, name: string) => {
+            const parameter = byName.get(name);
+            if (!parameter) return whole;
+            const value = values.get(name);
+            return value === undefined ? absentLiteral(template.language, parameter.type) : literal(template.language, parameter, value);
+        });
     const lines = bound.split("\n");
     const readByName = new Map(marked.flatMap((entry) => (entry.read === undefined ? [] : [[entry.name, entry.read] as const])));
     const located = slots.map((entry) => ({

@@ -155,11 +155,11 @@ describe("normalizeSearxngBaseUrl", () => {
     });
 
     it("refuses a scheme that is not http or https", () => {
-        expect(() => normalizeSearxngBaseUrl("file:///etc/searxng")).toThrow(/http or https/);
-        expect(() => normalizeSearxngBaseUrl("ftp://127.0.0.1:28437")).toThrow(/http or https/);
+        expect(() => normalizeSearxngBaseUrl("file:///etc/searxng")).toThrow("http or https");
+        expect(() => normalizeSearxngBaseUrl("ftp://127.0.0.1:28437")).toThrow("http or https");
     });
 
     it("refuses a user name or a password", () => {
-        expect(() => normalizeSearxngBaseUrl("http://user:pass@127.0.0.1:28437")).toThrow(/no user name or password/);
+        expect(() => normalizeSearxngBaseUrl("http://user:pass@127.0.0.1:28437")).toThrow("no user name or password");
     });
 });

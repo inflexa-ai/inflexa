@@ -213,8 +213,8 @@ describe("stepWritePrefix", () => {
     it("rejects a `..` stepId before it becomes a host path", () => {
         // An LLM-authored plan step id of ".." would otherwise climb `runs/{runId}`
         // into a sibling run's tree (the finding this guard closes).
-        expect(() => stepWritePrefix({ workspaceRoot: ROOT, runId: "run-abc", stepId: ".." })).toThrow(/Invalid stepId/);
-        expect(() => stepWritePrefix({ workspaceRoot: ROOT, runId: "..", stepId: "step-1" })).toThrow(/Invalid runId/);
+        expect(() => stepWritePrefix({ workspaceRoot: ROOT, runId: "run-abc", stepId: ".." })).toThrow("Invalid stepId");
+        expect(() => stepWritePrefix({ workspaceRoot: ROOT, runId: "..", stepId: "step-1" })).toThrow("Invalid runId");
     });
 });
 
@@ -226,13 +226,13 @@ describe("assertSafeId", () => {
     });
 
     it("rejects the pure-dot segments the charset otherwise admits", () => {
-        expect(() => assertSafeId(".", "stepId")).toThrow(/Invalid stepId/);
-        expect(() => assertSafeId("..", "stepId")).toThrow(/Invalid stepId/);
+        expect(() => assertSafeId(".", "stepId")).toThrow("Invalid stepId");
+        expect(() => assertSafeId("..", "stepId")).toThrow("Invalid stepId");
     });
 
     it("rejects a slash or NUL", () => {
-        expect(() => assertSafeId("a/b", "stepId")).toThrow(/Invalid stepId/);
-        expect(() => assertSafeId("a\0b", "stepId")).toThrow(/Invalid stepId/);
+        expect(() => assertSafeId("a/b", "stepId")).toThrow("Invalid stepId");
+        expect(() => assertSafeId("a\0b", "stepId")).toThrow("Invalid stepId");
     });
 });
 
@@ -251,9 +251,9 @@ describe("reportSessionDir", () => {
     });
 
     it("rejects a thread id that is not safe", () => {
-        expect(() => reportSessionDir("..")).toThrow(/Invalid threadId/);
-        expect(() => reportSessionDir("a/b")).toThrow(/Invalid threadId/);
-        expect(() => reportSessionDir("a\0b")).toThrow(/Invalid threadId/);
+        expect(() => reportSessionDir("..")).toThrow("Invalid threadId");
+        expect(() => reportSessionDir("a/b")).toThrow("Invalid threadId");
+        expect(() => reportSessionDir("a\0b")).toThrow("Invalid threadId");
     });
 });
 
@@ -264,18 +264,18 @@ describe("assertSafeTail", () => {
     });
 
     it("rejects an empty, an absolute, and a traversing tail", () => {
-        expect(() => assertSafeTail("")).toThrow(/Invalid writableTail/);
-        expect(() => assertSafeTail("/abs/derived")).toThrow(/Invalid writableTail/);
-        expect(() => assertSafeTail("../escape")).toThrow(/Invalid writableTail/);
-        expect(() => assertSafeTail("a/../../etc")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("")).toThrow("Invalid writableTail");
+        expect(() => assertSafeTail("/abs/derived")).toThrow("Invalid writableTail");
+        expect(() => assertSafeTail("../escape")).toThrow("Invalid writableTail");
+        expect(() => assertSafeTail("a/../../etc")).toThrow("Invalid writableTail");
         // An empty segment reaches the same refusal, thus a doubled or a trailing separator is out.
-        expect(() => assertSafeTail("a//b")).toThrow(/Invalid writableTail/);
-        expect(() => assertSafeTail("a/")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("a//b")).toThrow("Invalid writableTail");
+        expect(() => assertSafeTail("a/")).toThrow("Invalid writableTail");
     });
 
     it("rejects a segment that carries a NUL or a space, and it names the label", () => {
-        expect(() => assertSafeTail("a\0b/c")).toThrow(/Invalid writableTail/);
-        expect(() => assertSafeTail("a b/c", "tail")).toThrow(/Invalid tail/);
+        expect(() => assertSafeTail("a\0b/c")).toThrow("Invalid writableTail");
+        expect(() => assertSafeTail("a b/c", "tail")).toThrow("Invalid tail");
     });
 });
 
@@ -289,7 +289,7 @@ describe("tailWritePrefix", () => {
     });
 
     it("refuses a crafted tail instead of resolving outside the root", () => {
-        expect(() => tailWritePrefix({ workspaceRoot: ROOT, tail: "../../etc" })).toThrow(/Invalid writableTail/);
+        expect(() => tailWritePrefix({ workspaceRoot: ROOT, tail: "../../etc" })).toThrow("Invalid writableTail");
     });
 });
 
@@ -300,7 +300,7 @@ describe("toSandboxPath", () => {
     });
 
     it("throws when the host path escapes the workspace root", () => {
-        expect(() => toSandboxPath(ROOT, ANALYSIS, resolvePath(SESSIONS, "analysis-002", "x"))).toThrow(/escapes the workspace root/);
+        expect(() => toSandboxPath(ROOT, ANALYSIS, resolvePath(SESSIONS, "analysis-002", "x"))).toThrow("escapes the workspace root");
     });
 });
 

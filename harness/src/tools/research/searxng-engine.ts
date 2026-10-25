@@ -13,6 +13,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { apiFetchValidated, type ApiError } from "../lib/api-utils.js";
+import { isAllDigits, trimTrailingOf } from "../../lib/text.js";
 import type { WebSearchAnswer, WebSearchEngine, WebSearchEngineError, WebSearchPage, WebSearchRequest, WebSearchResult } from "./web-search.js";
 
 // SearXNG sends an explicit null for a snippet no engine produced, and it omits
@@ -64,7 +65,7 @@ export function normalizeSearxngBaseUrl(raw: string): string {
     if (parsed.username !== "" || parsed.password !== "") {
         throw new Error(`The SearXNG base URL must carry no user name or password: ${raw}`);
     }
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, "")}`;
+    return `${parsed.protocol}//${parsed.host}${trimTrailingOf(parsed.pathname, "/")}`;
 }
 
 /** The first 300 characters of a body, as the HTTP-error text reports it. */
@@ -91,12 +92,13 @@ export function describeSearchFailure(error: ApiError): WebSearchEngineError {
         case "exhausted": {
             // A spent retryable status arrives as `exhausted` with an `HTTP <status>`
             // last error, because the helper reports it there and not as `http_status`.
-            const status = /^HTTP (\d+)$/.exec(error.lastError);
+            const statusText = error.lastError.startsWith("HTTP ") ? error.lastError.slice("HTTP ".length) : undefined;
+            const status = statusText !== undefined && isAllDigits(statusText) ? statusText : null;
             if (status) {
                 return {
                     status: "retryable_status",
-                    httpStatus: Number(status[1]),
-                    text: `SearXNG answered HTTP ${status[1]} and spent its retry attempt`,
+                    httpStatus: Number(status),
+                    text: `SearXNG answered HTTP ${status} and spent its retry attempt`,
                 };
             }
             // A transport failure and a body that will not parse share this bucket,

@@ -102,8 +102,16 @@ export type KoPhenotypeProfile = {
     phenotypesTruncated: boolean;
 };
 
+import { hasWhitespace } from "../../lib/text.js";
+
 function escapeSolrValue(value: string): string {
-    return value.replace(/([+\-&|!(){}[\]^"~*?:\\/\s])/g, "\\$1");
+    const specials = '+-&|!(){}[]^"~*?:\\/';
+    let out = "";
+    for (const char of value) {
+        if (specials.includes(char) || hasWhitespace(char)) out += "\\" + char;
+        else out += char;
+    }
+    return out;
 }
 
 export function parsePhenotypeResponse(raw: unknown): PhenotypeProfile {

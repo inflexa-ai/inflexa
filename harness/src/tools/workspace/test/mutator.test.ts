@@ -8,6 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { isSha256Hash } from "../../../lib/test/text-shapes.js";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -77,7 +78,7 @@ describe("WorkspaceMutator provenance recording", () => {
             expect(rec.producer.tool).toBe("write_file");
             expect(rec.producer.invocationId).toBe("inv-1");
         }
-        expect(rec.outputHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+        expect(isSha256Hash(rec.outputHash)).toBe(true);
         expect(rec.outputHash).toBe(computeSha256(contentBytes));
         expect(rec.outputSize).toBe(contentBytes.length);
         expect(rec.inputs).toEqual([]);

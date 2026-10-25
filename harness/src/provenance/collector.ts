@@ -13,6 +13,7 @@
  */
 
 import { presentFirst } from "../lib/present.js";
+import { collapseWhitespace, hasWhitespace } from "../lib/text.js";
 import type { ArtifactRecord } from "../execution/artifact-record.js";
 import type { ProvenanceRecord, InputRef, InputSource, Producer } from "./types.js";
 
@@ -37,8 +38,8 @@ export type ObservedWrite = {
 
 // ── Script path inference ───────────────────────────────────────────
 
-/** Known interpreter prefixes for script path extraction. */
-const SCRIPT_PATTERNS = [/^python3?\s+(\S.*)$/, /^Rscript\s+(\S.*)$/, /^bash\s+(\S.*)$/, /^sh\s+(\S.*)$/];
+/** Known interpreter prefixes for script path extraction. The two python spellings sit first, so the longer prefix wins. */
+const INTERPRETER_PREFIXES = ["python3", "python", "Rscript", "bash", "sh"];
 
 /**
  * Attempt to extract the script path from a command string.
@@ -47,12 +48,14 @@ const SCRIPT_PATTERNS = [/^python3?\s+(\S.*)$/, /^Rscript\s+(\S.*)$/, /^bash\s+(
 function inferScriptPath(command: string, args?: string[]): string | null {
     const fullCommand = args?.length ? `${command} ${args.join(" ")}` : command;
 
-    for (const pattern of SCRIPT_PATTERNS) {
-        const match = fullCommand.match(pattern);
-        if (match?.[1]) {
-            // Take the first token (the script path), ignoring further args
-            return presentFirst(match[1].split(/\s+/), "the script path");
-        }
+    for (const prefix of INTERPRETER_PREFIXES) {
+        if (!fullCommand.startsWith(prefix)) continue;
+        const rest = fullCommand.slice(prefix.length);
+        if (!hasWhitespace(rest.charAt(0))) continue;
+        const argumentsText = collapseWhitespace(rest);
+        if (argumentsText === "") continue;
+        // Take the first token (the script path), ignoring further args
+        return presentFirst(argumentsText.split(" "), "the script path");
     }
 
     return null;

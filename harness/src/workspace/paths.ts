@@ -242,7 +242,7 @@ export function toAnalysisRootPath(resourceId: string, path: string): string {
 
     // A record holds no host path. Thus a leading slash is how a model writes the
     // same root-relative path, and the remainder is the tail.
-    const tail = normalizeTail(trimmed.replace(/^\/+/, ""));
+    const tail = normalizeTail(stripLeadingSlashes(trimmed));
     if (tail === ".." || tail.startsWith("../")) return trimmed;
     return joinAnalysisRoot(resourceId, tail);
 }
@@ -305,10 +305,15 @@ function stripAnalysisRoot(path: string, analysisId: string): string | null {
     return slashIdx === -1 ? "" : withoutLead.slice(slashIdx + 1);
 }
 
-const SAFE_ID = /^[\w.-]+$/;
+/** The text without its leading slashes. */
+function stripLeadingSlashes(value: string): string {
+    let start = 0;
+    while (start < value.length && value.charAt(start) === "/") start++;
+    return value.slice(start);
+}
 
 /**
- * True when `value` is a safe single path segment: the `SAFE_ID` charset (word
+ * True when `value` is a safe single path segment: the safe-id charset (word
  * chars, `.`, `-` — no slash, NUL, or shell-hostile char) AND not a pure-dot
  * segment (`.`/`..`), which the charset otherwise admits and which `resolve`/`join`
  * would treat as the current/parent directory and use to climb the tree. The one
@@ -317,7 +322,14 @@ const SAFE_ID = /^[\w.-]+$/;
  * same at plan time and at mount time.
  */
 export function isSafeId(value: string): boolean {
-    return SAFE_ID.test(value) && value !== "." && value !== "..";
+    return isSafeIdCharset(value) && value !== "." && value !== "..";
+}
+
+function isSafeIdCharset(value: string): boolean {
+    if (value.length === 0) return false;
+    return [...value].every(
+        (char) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_" || char === "." || char === "-",
+    );
 }
 
 /**

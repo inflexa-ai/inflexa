@@ -29,6 +29,8 @@
  * outcome guards the call.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { withPage, type CaptureArea, type ChromeConfig, type LookPage } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
 import { BLOCK_ID_ATTRIBUTE } from "../report-render/views/block-mark.js";
@@ -140,6 +142,7 @@ function waitForThemeReady(sentinel: string, event: string, timeout: number): Pr
             resolve();
             return;
         }
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the browser runs this body as page source, so the node timers module does not exist here; the timer bounds a page that never signals.
         const timer = setTimeout(() => {
             resolve();
         }, timeout);
@@ -314,7 +317,7 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
         }
         if (options.waitMs !== undefined && options.waitMs > 0) {
             const settle = options.waitMs;
-            await new Promise((resolve) => setTimeout(resolve, settle));
+            await sleep(settle);
         }
 
         // The pictures must show the whole document at the layout that a reader gets. Thus a defect below the

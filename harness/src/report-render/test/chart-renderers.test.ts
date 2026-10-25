@@ -1,3 +1,8 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the straight stem segment that one series draws, with its attribute tail
+const STEM_PATH = /<path d="M([\d.-]+) ([\d.-]+)L([\d.-]+) ([\d.-]+)"([^>]*)>/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the polygon that the highlight fill draws, read for its points
+const MAGENTA_POLYGON = /<polygon points="([^"]*)"[^>]*fill="#ff00ff"/;
+
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
@@ -282,7 +287,7 @@ function ssrSvg(option: Record<string, unknown>): string {
 /** The straight segments of each path whose stroke is the given color, as `[x1, y1, x2, y2]`. */
 function segmentsOf(svg: string, stroke: string): Array<[number, number, number, number]> {
     const segments: Array<[number, number, number, number]> = [];
-    for (const match of svg.matchAll(/<path d="M([\d.-]+) ([\d.-]+)L([\d.-]+) ([\d.-]+)"([^>]*)>/g)) {
+    for (const match of svg.matchAll(STEM_PATH)) {
         if ((match[5] ?? "").includes(`stroke="${stroke}"`)) {
             segments.push([Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])]);
         }
@@ -315,7 +320,7 @@ describe("the named renderers through the server render", () => {
             color: [INK],
         });
         // The axis names each tick as text. The axis must reach the bound of 11, thus a tick at 12 is present.
-        expect(svg).toMatch(/>12<\/text>/);
+        expect(svg).toContain(">12</text>");
         const verticals = segmentsOf(svg, CHART_INK).filter((segment) => segment[0] === segment[2]);
         expect(verticals.length).toBe(2);
         // Each vertical line sits at the center of its category band.
@@ -334,7 +339,7 @@ describe("the named renderers through the server render", () => {
             series: [{ type: "custom", name: "density", renderItem: "outline", encode: { x: 0, y: [1, 2] }, data: [item] }],
             color: [INK],
         });
-        const match = /<polygon points="([^"]*)"[^>]*fill="#ff00ff"/.exec(svg);
+        const match = MAGENTA_POLYGON.exec(svg);
         expect(match).not.toBeNull();
         const numbers = (match?.[1] ?? "").split(" ").map(Number);
         const xs = numbers.filter((_value, index) => index % 2 === 0);
@@ -365,8 +370,8 @@ describe("the named renderers through the server render", () => {
                 },
             ],
         });
-        expect(svg.match(/fill="#e0e0e0"/g)?.length).toBe(4);
-        expect(svg.match(/fill="#ff00ff"/g)?.length).toBe(1);
+        expect(svg.split('fill="#e0e0e0"').length - 1).toBe(4);
+        expect(svg.split('fill="#ff00ff"').length - 1).toBe(1);
     });
 
     it("draws each stem from the axis floor to its head through the registry", () => {
@@ -392,6 +397,6 @@ describe("the named renderers through the server render", () => {
         const [firstStem, secondStem] = stems;
         if (firstStem === undefined || secondStem === undefined) throw new Error("the stems did not draw");
         expect(Math.max(firstStem[1], firstStem[3])).toBe(Math.max(secondStem[1], secondStem[3]));
-        expect(svg.match(/fill="#ff00ff"/g)?.length).toBe(2);
+        expect(svg.split('fill="#ff00ff"').length - 1).toBe(2);
     });
 });

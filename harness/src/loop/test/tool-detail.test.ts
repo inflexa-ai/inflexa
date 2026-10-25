@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { hasLoneHighSurrogate, hasLoneLowSurrogate } from "../../lib/test/text-shapes.js";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -143,8 +144,8 @@ describe("normalizeDetail", () => {
         const detail = presentDetail(normalizeDetail("🧬".repeat(200)));
 
         expect(Array.from(detail)).toHaveLength(DETAIL_MAX_LENGTH);
-        expect(detail).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
-        expect(detail).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+        expect(hasLoneHighSurrogate(detail)).toBe(false);
+        expect(hasLoneLowSurrogate(detail)).toBe(false);
     });
 });
 

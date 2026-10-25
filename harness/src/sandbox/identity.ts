@@ -17,7 +17,7 @@ import type { SandboxIdentity } from "./types.js";
  *  adoption is owner-label-guarded, but a unique name keeps a collision from
  *  ever reaching that guard. */
 export function mintSandboxIdentity(runId: string): SandboxIdentity {
-    const run8 = runId.replace(/-/g, "").slice(0, 8);
-    const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
+    const run8 = runId.replaceAll("-", "").slice(0, 8);
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
     return { sandboxId: `sbx-${run8}-${suffix}` };
 }

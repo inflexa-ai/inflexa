@@ -54,6 +54,7 @@ const DraftedStepSchema = z.object({
     method: z.string().min(1).describe("The method as the step names it, for example `DESeq2 Wald test` or `edgeR quasi-likelihood`."),
     method_id: z
         .string()
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the recommend-answer method id shape: M- plus four digits.
         .regex(/^M-\d{4}$/)
         .optional()
         .describe(

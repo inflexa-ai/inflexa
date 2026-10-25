@@ -333,7 +333,7 @@ describe("synthesizeRun", () => {
                     emit: () => {},
                     onProgress,
                 }),
-            ).rejects.toThrow(/terminal tool call/);
+            ).rejects.toThrow("terminal tool call");
             expect(phases.at(0)).toBe("starting");
             expect(phases.at(-1)).toBe("failed");
         } finally {

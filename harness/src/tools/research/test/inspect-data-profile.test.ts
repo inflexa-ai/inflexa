@@ -34,6 +34,7 @@ async function completeWith(result: DataProfileResult): Promise<void> {
 
 /** The serialized wire view of one tool answer: the record the model reads. */
 function wireOf(value: unknown): Record<string, unknown> {
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
     const wire = parseUnknownRecord(JSON.parse(JSON.stringify(value)));
     if (!wire) throw new Error("expected a serializable wire object");
     return wire;

@@ -2,11 +2,13 @@
  * Shared async utilities — sleep and a bounded-concurrency `Promise.all`.
  */
 
+import { setTimeout as timerSleep } from "node:timers/promises";
+
 import PQueue from "p-queue";
 
 /** Promise-based delay. */
 export function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return timerSleep(ms);
 }
 
 /**

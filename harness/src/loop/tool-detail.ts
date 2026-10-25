@@ -19,6 +19,7 @@
 
 import type { ToolCallDetail } from "../contracts/chat-events.js";
 import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
+import { collapseWhitespace } from "../lib/text.js";
 import type { Logger } from "../lib/logger.js";
 import type { Tool } from "../tools/define-tool.js";
 
@@ -97,7 +98,7 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     // `normalizeUnicode` leaves tab, newline and carriage return in place (they
     // are legitimate whitespace in prose); the collapse below is what turns them
     // into the single line this contract promises.
-    const oneLine = normalizeUnicode(raw).replace(/\s+/g, " ").trim();
+    const oneLine = collapseWhitespace(normalizeUnicode(raw));
     if (oneLine.length === 0) return undefined;
 
     const capped = capCodePoints(redactSecrets(oneLine), DETAIL_MAX_LENGTH);

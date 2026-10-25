@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { describe, expect, it } from "bun:test";
 
 import { BoundedRateLimiter, createRateLimitSchedule, sleepWithSignal } from "../rate-limit.js";
@@ -12,7 +14,7 @@ describe("BoundedRateLimiter", () => {
                 limiter.run(async () => {
                     active += 1;
                     maximum = Math.max(maximum, active);
-                    await new Promise((resolve) => setTimeout(resolve, 2));
+                    await sleep(2);
                     active -= 1;
                 }),
             ),
@@ -68,7 +70,7 @@ describe("BoundedRateLimiter", () => {
         const results = await Promise.all(
             Array.from({ length: 12 }, (_, index) =>
                 limiter.run(async () => {
-                    await new Promise((resolve) => setTimeout(resolve, (index % 3) + 1));
+                    await sleep((index % 3) + 1);
                     return index;
                 }),
             ),

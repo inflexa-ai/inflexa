@@ -82,6 +82,7 @@ function page(ref: string, text: string, start: number, limit: number): ReadTool
 function search(ref: string, text: string, start: number, limit: number | undefined, pattern: string): ReadToolOutputResult {
     let regex: RegExp;
     try {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caller-supplied search pattern is the tool's input; the dynamic form is the feature, and an invalid pattern is the handled error below.
         regex = new RegExp(pattern, "g");
     } catch (err) {
         return { status: "invalid_pattern", pattern, error: err instanceof Error ? err.message : String(err) };

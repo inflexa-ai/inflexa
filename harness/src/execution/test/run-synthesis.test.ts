@@ -20,6 +20,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
@@ -36,6 +37,7 @@ import {
 } from "../run-synthesis.js";
 import { flattenDataPart } from "../../contracts/chat-frame.js";
 import { RunSynthesisPartSchema } from "../../contracts/schemas/chat-parts.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { RunSynthesis } from "../../schemas/run-synthesis.js";
 import type { ToolContext } from "../../tools/define-tool.js";
@@ -559,7 +561,7 @@ describe("generateRunSynthesis — happy path", () => {
                 planNarrative: "n/a",
                 runId: RUN_ID,
             }),
-        ).rejects.toThrow(/terminal tool call/);
+        ).rejects.toThrow("terminal tool call");
 
         // The corrective continuation re-prompted: a later chat request carries a
         // user turn instructing a terminal-tool call.
@@ -667,7 +669,7 @@ describe("generateRunSynthesis — happy path", () => {
                 planNarrative: "n/a",
                 runId: RUN_ID,
             }),
-        ).rejects.toThrow(/no step summaries/);
+        ).rejects.toThrow("no step summaries");
     });
 });
 
@@ -676,7 +678,7 @@ describe("blocker discipline copy", () => {
         const { blocker } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), runId: RUN_ID });
         expect(blocker.description.toLowerCase()).not.toContain("worth surfacing");
         expect(blocker.description).toContain("empty findings[]");
-        expect(blocker.description.toLowerCase()).toMatch(/incoheren/);
+        expect(blocker.description.toLowerCase()).toContain("incoheren");
     });
 
     it("synthesizer prompt states an empty findings[] is a valid submission and not a blocker", () => {
@@ -732,7 +734,7 @@ describe("persistSynthesis", () => {
                 synthesis,
             });
             expect(path.endsWith("synthesis.json")).toBe(true);
-            const written = parseUnknownRecord(JSON.parse(await readFile(path, "utf8")));
+            const written = parseUnknownRecord(parseJsonAs(await readFile(path, "utf8"), z.unknown()));
             expect(written?.runId).toBe(RUN_ID);
         } finally {
             await rm(tempDir, { recursive: true, force: true });

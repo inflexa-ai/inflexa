@@ -13,7 +13,11 @@
 import { constants as zlibConstants, createGunzip, createZstdDecompress } from "node:zlib";
 import type { Transform } from "node:stream";
 
+import { z } from "zod";
+
+import { parseJsonAs } from "../lib/parse-json.js";
 import { isUnknownArray } from "../lib/unknown-array.js";
+import { collapseWhitespace, splitLines } from "../lib/text.js";
 import { presentAt, presentFirst } from "../lib/present.js";
 
 /** Bytes read from each file. The readout's whole per-file I/O budget. */
@@ -123,7 +127,7 @@ function decodeText(buf: Buffer, format: string): PrefixReadout {
 }
 
 function textFields(text: string, format: string): PrefixReadout {
-    const lines = text.split(/\r?\n/).filter((line) => line.trim() !== "");
+    const lines = splitLines(text).filter((line) => line.trim() !== "");
     const head = lines[0];
     if (head === undefined) return { fields: {}, unavailable: "no text in the prefix" };
 
@@ -168,12 +172,15 @@ function metaHeaderFields(lines: readonly string[]): PrefixReadout {
     return { fields };
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the SAM header sort order: `SO:<value>` at the line start or after a tab, ending at the next tab.
+const SAM_SORT_ORDER_FIELD = /(?:^|\t)SO:([^\t]+)/;
+
 function samFields(lines: readonly string[]): PrefixReadout {
     const fields: ReadoutFields = {
         referenceSequences: countPrefixed(lines, "@SQ"),
         readGroups: countPrefixed(lines, "@RG"),
     };
-    const sortOrder = /(?:^|\t)SO:([^\t]+)/.exec(lines.find((line) => line.startsWith("@HD")) ?? "");
+    const sortOrder = SAM_SORT_ORDER_FIELD.exec(lines.find((line) => line.startsWith("@HD")) ?? "");
     if (sortOrder) fields.sortOrder = clip(presentAt(sortOrder, 1, "the SO: capture group"), 20);
     return { fields };
 }
@@ -285,11 +292,14 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     return { fields: { firstLine: clip(presentFirst(lines, "prefix lines"), MAX_LINE_CHARS) }, unavailable: "JSON document extends past the readout prefix" };
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a top-level YAML key: an identifier from the line start, then `:` and end of line or whitespace.
+const YAML_TOP_LEVEL_KEY = /^([A-Za-z_][\w.-]*):(\s|$)/;
+
 /** Top-level keys, read positionally: an unindented `key:` line opens a mapping entry. */
 function yamlFields(lines: readonly string[]): PrefixReadout {
     const keys: string[] = [];
     for (const line of lines.slice(0, MAX_META_LINES)) {
-        const match = /^([A-Za-z_][\w.-]*):(\s|$)/.exec(line);
+        const match = YAML_TOP_LEVEL_KEY.exec(line);
         if (match) keys.push(presentAt(match, 1, "the yaml key capture"));
     }
     const documents = lines.filter((line) => line.trim() === "---").length;
@@ -302,11 +312,17 @@ function yamlFields(lines: readonly string[]): PrefixReadout {
     return { fields };
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- an ATX heading opens with one to six `#` and a whitespace character.
+const MARKDOWN_HEADING = /^#{1,6}\s/;
+
 function markdownFields(lines: readonly string[]): PrefixReadout {
-    const headings = lines.filter((line) => /^#{1,6}\s/.test(line));
+    const headings = lines.filter((line) => MARKDOWN_HEADING.test(line));
+    const first = headings[0] ?? presentFirst(lines, "prefix lines");
+    let markers = 0;
+    while (first.charAt(markers) === "#") markers++;
     return {
         fields: {
-            title: clip((headings[0] ?? presentFirst(lines, "prefix lines")).replace(/^#+\s*/, ""), MAX_LINE_CHARS),
+            title: clip(first.slice(markers).trimStart(), MAX_LINE_CHARS),
             headings: headings.length,
             linesInPrefix: lines.length,
         },
@@ -315,7 +331,7 @@ function markdownFields(lines: readonly string[]): PrefixReadout {
 
 function parseJson(text: string): unknown {
     try {
-        return JSON.parse(text);
+        return parseJsonAs(text, z.unknown());
     } catch {
         return undefined;
     }
@@ -340,5 +356,5 @@ function countPrefixed(lines: readonly string[], prefix: string): number {
 }
 
 function clip(text: string, limit: number): string {
-    return text.replace(/\s+/g, " ").trim().slice(0, limit);
+    return collapseWhitespace(text).slice(0, limit);
 }

@@ -26,6 +26,20 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { collapseWhitespace } from "../../lib/text.js";
+import {
+    ON_CONFLICT_DO_NOTHING,
+    ON_CONFLICT_DO_UPDATE,
+    RUN_STATUS_WRITE_PARAM,
+    RUNS_PARTS_WRITE,
+    RUNS_STATUS_WRITE,
+    RUNS_STATUS_WRITE_ANY_CASE,
+    SKIPPED_SWEEP_WRITE,
+    STEP_SEED_INSERT,
+    STEP_STATUS_WRITE_PARAM,
+    SUSPEND_STATE_WRITE,
+    SYNTHESIS_STATUS_WRITE,
+} from "./sql-writes.js";
 import { z } from "zod";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -361,7 +375,7 @@ function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => 
         queries.push(q);
         // Crude prefix match on the whitespace-normalized text — returns the configured
         // rows for the first prefix that hits, otherwise an empty rowset.
-        const text = q.text.trim().replace(/\s+/g, " ");
+        const text = collapseWhitespace(q.text);
         for (const prefix of Object.keys(rowByText)) {
             if (text.startsWith(prefix)) {
                 const call = callsByPrefix.get(prefix) ?? 0;
@@ -409,7 +423,7 @@ function synthesisSuspendError(reason: string): Error {
 
 /** Suspend-analysis writes the body issues in-line on the suspension path. */
 function suspendWrites(pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> {
-    return pool.queries.filter((q) => /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i.test(q.text));
+    return pool.queries.filter((q) => SUSPEND_STATE_WRITE.test(q.text));
 }
 
 // ── Fake handle factory ──────────────────────────────────────────────
@@ -692,7 +706,7 @@ describe("executeAnalysis body", () => {
         expect(result.completedSteps).toEqual(["C"]);
         // Run-level failureReason is the first failure in settlement order; the
         // per-step detail lives on the step ledger and the dag snapshot.
-        const statusWrite = pool.queries.find((q) => /UPDATE cortex_runs\s+SET status/.test(q.text) && q.values?.[0] === "partial");
+        const statusWrite = pool.queries.find((q) => RUNS_STATUS_WRITE.test(q.text) && q.values?.[0] === "partial");
         expect(statusWrite?.values?.[2]).toBe("first boom");
     });
 
@@ -907,7 +921,7 @@ describe("executeAnalysis body", () => {
         expect(types).toContain("data-run-completed");
 
         // No UPDATE on cortex_runs.parts.
-        const partsWrites = pool.queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+parts/i.test(q.text));
+        const partsWrites = pool.queries.filter((q) => RUNS_PARTS_WRITE.test(q.text));
         expect(partsWrites).toEqual([]);
     });
 
@@ -1079,7 +1093,7 @@ describe("executeAnalysis body", () => {
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
         expect(suspendWrites(pool).length).toBe(1);
-        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        const statusWrite = pool.queries.find((q) => RUNS_STATUS_WRITE_ANY_CASE.test(q.text));
         expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("payment_required");
         // The terminal failed part carries the reason of the host, unread.
@@ -1160,7 +1174,7 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("failed");
         expect(dbosState.childInputs).toEqual([]);
-        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        const statusWrite = pool.queries.find((q) => RUNS_STATUS_WRITE_ANY_CASE.test(q.text));
         expect(statusWrite?.values).toContain("failed");
         expect(statusWrite?.values).toContain("charge_refused");
         expect(suspendWrites(pool)).toEqual([]);
@@ -1178,7 +1192,7 @@ describe("executeAnalysis body", () => {
         expect(dbosState.childInputs).toEqual([]);
         expect(suspendWrites(pool).length).toBe(1);
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "no_funds" } }]);
-        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        const statusWrite = pool.queries.find((q) => RUNS_STATUS_WRITE_ANY_CASE.test(q.text));
         expect(statusWrite?.values).toContain("suspended_insufficient_funds");
         expect(statusWrite?.values).toContain("no_funds");
     });
@@ -1194,7 +1208,7 @@ describe("executeAnalysis body", () => {
     // the write is absent when synthesis never ran.
 
     const synthesisWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
-        pool.queries.filter((q) => /UPDATE\s+cortex_runs\s+SET\s+synthesis_status/i.test(q.text));
+        pool.queries.filter((q) => SYNTHESIS_STATUS_WRITE.test(q.text));
 
     it("produced synthesis → records synthesis_status 'produced' with a null reason; run completed", async () => {
         const pool = makeFakePool();
@@ -1281,23 +1295,22 @@ describe("executeAnalysis body", () => {
 
     /** The one seed insert (`ON CONFLICT … DO NOTHING`) — its VALUES are 5-wide row tuples. */
     const seedWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
-        pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO NOTHING/i.test(q.text));
+        pool.queries.filter((q) => STEP_SEED_INSERT.test(q.text) && ON_CONFLICT_DO_NOTHING.test(q.text));
 
     /** The mark-running upsert (`ON CONFLICT … DO UPDATE`) for the synthesis row. */
     const synthesisMarkRunning = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
-        pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO UPDATE/i.test(q.text) && (q.values ?? []).includes("synthesis"));
+        pool.queries.filter((q) => STEP_SEED_INSERT.test(q.text) && ON_CONFLICT_DO_UPDATE.test(q.text) && (q.values ?? []).includes("synthesis"));
 
     /** The synthesis row's terminal `updateStepExecution` write (`SET status = $1`). */
     const synthesisStepUpdates = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
-        pool.queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = \$1/i.test(q.text) && (q.values ?? []).includes("synthesis"));
+        pool.queries.filter((q) => STEP_STATUS_WRITE_PARAM.test(q.text) && (q.values ?? []).includes("synthesis"));
 
     /** The terminal sweep (`pending` → `skipped`). */
-    const sweepWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
-        pool.queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text));
+    const sweepWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> => pool.queries.filter((q) => SKIPPED_SWEEP_WRITE.test(q.text));
 
     /** The run row's status write (`updateRunStatus`). */
     const runStatusWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
-        pool.queries.filter((q) => /UPDATE cortex_runs\s+SET status = \$1/i.test(q.text));
+        pool.queries.filter((q) => RUN_STATUS_WRITE_PARAM.test(q.text));
 
     it("seeds the synthesis row with the DAG, last wave, when synthesis is enabled", async () => {
         const pool = makeFakePool();
@@ -1535,7 +1548,7 @@ describe("executeAnalysis body", () => {
 
         await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], undefined, false), deps);
 
-        const seeds = pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && q.text.includes("'pending'"));
+        const seeds = pool.queries.filter((q) => STEP_SEED_INSERT.test(q.text) && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
         // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
         // B's wave is 1 (depends on A) and both carry the shared agent fallback map.
@@ -1872,7 +1885,7 @@ describe("executeAnalysis run end ownership", () => {
         expect(events).toEqual([
             { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
         ]);
-        const timeline = pool.queries.map((q) => q.text.trim().replace(/\s+/g, " "));
+        const timeline = pool.queries.map((q) => collapseWhitespace(q.text));
         const write = timeline.findIndex((text) => text.startsWith(RUN_STATUS_WRITE));
         const emit = timeline.indexOf("EMIT run_completed");
         const commit = timeline.indexOf("COMMIT");
@@ -1969,14 +1982,14 @@ describe("executeAnalysis run end ownership", () => {
         expect(events[0]).toMatchObject({ type: "run_completed", status: "completed", atMs: terminalAtMs });
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
-        const timeline = pool.queries.map((q) => q.text.trim().replace(/\s+/g, " "));
+        const timeline = pool.queries.map((q) => collapseWhitespace(q.text));
         expect(timeline.indexOf("EMIT run_completed")).toBeLessThan(timeline.indexOf("COMMIT"));
         const failure = logger.records.find((r) => r.level === "error" && r.msg.endsWith("ledger write failed") && r.fields.status === "completed");
         expect(failure).toBeDefined();
     });
 
     describe("the status write retries and records a run end it owns", () => {
-        const statusWrites = (pool: FakePool) => pool.queries.filter((q) => q.text.replace(/\s+/g, " ").startsWith(RUN_STATUS_WRITE));
+        const statusWrites = (pool: FakePool) => pool.queries.filter((q) => collapseWhitespace(q.text).startsWith(RUN_STATUS_WRITE));
         const failsOnce = { [RUN_STATUS_WRITE]: (call: number) => (call === 0 ? new Error("connection reset") : [{}]) };
         const alwaysFails = { [RUN_STATUS_WRITE]: new Error("connection reset") };
         const commitFailsOnce = { ...WON_STATUS_WRITE, COMMIT: (call: number) => (call === 0 ? new Error("commit failed") : []) };
@@ -2138,7 +2151,7 @@ describe("executeAnalysis run end ownership", () => {
             const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
 
             expect(result.status).toBe("completed");
-            expect(pool.queries.some((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text))).toBe(true);
+            expect(pool.queries.some((q) => SKIPPED_SWEEP_WRITE.test(q.text))).toBe(true);
             const failure = logger.records.find((r) => r.level === "error" && JSON.stringify(r.fields).includes("event store down"));
             expect(failure).toBeDefined();
         });
@@ -2201,7 +2214,7 @@ describe("executeAnalysis child seed", () => {
         });
 
         const bad: ExecuteAnalysisInput = { ...input([{ id: "A" }]), planStepById: {} };
-        await expect(runExecuteAnalysisBody(bad, deps)).rejects.toThrow(/missing from planStepById/);
+        await expect(runExecuteAnalysisBody(bad, deps)).rejects.toThrow("missing from planStepById");
     });
 });
 
@@ -2516,7 +2529,7 @@ describe("run and step outcome metrics", () => {
             const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
 
             expect(result.status).toBe("partial");
-            expect(pool.queries.some((q) => q.text.replace(/\s+/g, " ").startsWith(RUN_STATUS_WRITE))).toBe(true);
+            expect(pool.queries.some((q) => collapseWhitespace(q.text).startsWith(RUN_STATUS_WRITE))).toBe(true);
             expect(await capture.sums("cortex.run.completed")).toEqual([]);
             expect(await capture.sums("cortex.step.completed")).toEqual([]);
         } finally {

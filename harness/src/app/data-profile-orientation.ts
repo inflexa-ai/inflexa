@@ -41,6 +41,7 @@
 
 import type { DataProfileDimension, DataProfileGroup, DataProfileGroupSlot } from "../contracts/data-profile.js";
 import { presentFirst } from "../lib/present.js";
+import { collapseWhitespace } from "../lib/text.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import { toAnalysisRootPath } from "../workspace/paths.js";
 import { profileCaveats, profileDimensions, profileFileRecords, profileGroups, type ProfileDimensionView, type ProfileGroupView } from "./data-profile-view.js";
@@ -117,12 +118,12 @@ function clamp(text: string, max: number): string {
  * keeps one record on one line.
  */
 function clip(text: string, max: number): string {
-    return clamp(text.replace(/\s+/g, " ").trim(), max);
+    return clamp(collapseWhitespace(text), max);
 }
 
 /** Non-empty, whitespace-collapsed value, or `undefined` — nulls and blanks read the same. */
 function present(value: string | null | undefined): string | undefined {
-    const flat = value?.replace(/\s+/g, " ").trim();
+    const flat = value === null || value === undefined ? undefined : collapseWhitespace(value);
     return flat ? flat : undefined;
 }
 

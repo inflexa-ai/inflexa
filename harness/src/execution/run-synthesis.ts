@@ -30,7 +30,9 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
+import { isAllDigits } from "../lib/text.js";
 import { tryFs } from "../lib/fs-result.js";
+import { safeParseJsonAs } from "../lib/parse-json.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
@@ -125,8 +127,6 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
     }));
 }
 
-const PMID_PATTERN = /^\d+$/;
-
 // ── Semantic checks ─────────────────────────────────────────────────
 //
 // Each check takes only the fields it reads, never the whole synthesis. That is
@@ -199,7 +199,7 @@ function checkFindingPmidFormat(findings: readonly SynthesizedFinding[]): Valida
     const issues: ValidationIssue[] = [];
     for (const [fi, f] of findings.entries()) {
         for (const [ri, r] of f.references.entries()) {
-            if (!PMID_PATTERN.test(r.pmid)) {
+            if (r.pmid.length === 0 || !isAllDigits(r.pmid)) {
                 issues.push({
                     path: `synthesis.findings[${fi}].references[${ri}].pmid`,
                     code: "semantic",
@@ -214,7 +214,7 @@ function checkFindingPmidFormat(findings: readonly SynthesizedFinding[]): Valida
 function checkKeyReferencePmidFormat(keyReferences: readonly KeyReference[]): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
     for (const [i, r] of keyReferences.entries()) {
-        if (!PMID_PATTERN.test(r.pmid)) {
+        if (r.pmid.length === 0 || !isAllDigits(r.pmid)) {
             issues.push({
                 path: `synthesis.keyReferences[${i}].pmid`,
                 code: "semantic",
@@ -662,13 +662,12 @@ export async function readRunSynthesis(args: ReadSynthesisInput): Promise<RunSyn
     if (text === undefined) {
         return null;
     }
-    let json: unknown;
+    let parsed;
     try {
-        json = JSON.parse(text);
+        parsed = safeParseJsonAs(text, RunSynthesisSchema);
     } catch {
         return null;
     }
-    const parsed = RunSynthesisSchema.safeParse(json);
     if (!parsed.success) {
         return null;
     }

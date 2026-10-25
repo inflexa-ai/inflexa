@@ -12,6 +12,7 @@ import { posix as posixPath } from "node:path";
 
 import { ok, type Result } from "neverthrow";
 import { presentAt } from "../../lib/present.js";
+import { splitLines } from "../../lib/text.js";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
@@ -77,6 +78,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
         execute: async ({ pattern, path, ignoreCase }, ctx): Promise<Result<GrepOutput, ToolError>> => {
             let regex: RegExp;
             try {
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caller-supplied grep pattern is the tool's input; the dynamic form is the feature, and an invalid pattern is the handled error below.
                 regex = new RegExp(pattern, ignoreCase === true ? "i" : "");
             } catch (err) {
                 return ok({
@@ -117,7 +119,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
                 const text = buf.toString("utf8");
                 if (read.kind === "truncated") truncated = true;
 
-                const lines = text.split(/\r?\n/);
+                const lines = splitLines(text);
                 for (let i = 0; i < lines.length; i++) {
                     if (matches.length >= DEFAULT_MAX_MATCHES) {
                         truncated = true;

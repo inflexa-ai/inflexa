@@ -129,7 +129,9 @@ describe("errorFields", () => {
         // JSON.stringify(new Error("boom")) is "{}" — the message would vanish.
         const fields = createConsoleLogger().errorFields(new Error("boom"));
 
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip is the assertion: it shows what JSON.stringify keeps of the error fields.
         expect(asRecord(JSON.parse(JSON.stringify(fields))).err).toBe("boom");
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip is the assertion: the default stringify of a raw Error carries no message.
         expect(asRecord(JSON.parse(JSON.stringify({ err: new Error("boom") }))).err).toEqual({});
     });
 

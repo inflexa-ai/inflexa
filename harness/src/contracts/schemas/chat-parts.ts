@@ -89,14 +89,14 @@ export const PresentationPartSchema = z.object({
 
 // ── Plan reference ──────────────────────────────────────────────────
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the issued plan-id shape: the pln- prefix plus 8 hex digits.
+export const PLAN_ID_RE = /^pln-[a-f0-9]{8}$/;
+
 export const PlanPartSchema = z.object({
     type: z.literal("data-plan"),
     id: z.string(),
-    planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
-    parentPlanId: z
-        .string()
-        .regex(/^pln-[a-f0-9]{8}$/)
-        .optional(),
+    planId: z.string().regex(PLAN_ID_RE),
+    parentPlanId: z.string().regex(PLAN_ID_RE).optional(),
     title: z.string().optional(),
     steps: z.array(PlanStepSchema).optional(),
     analytical_narrative: z.string().optional(),
@@ -119,7 +119,7 @@ export const RunCardPartSchema = z.object({
 
 export const PlanApprovalPartSchema = z.object({
     type: z.literal("data-plan-approval"),
-    planId: z.string().regex(/^pln-[a-f0-9]{8}$/),
+    planId: z.string().regex(PLAN_ID_RE),
     runId: z.string(),
     approvedAt: z.iso.datetime(),
 });

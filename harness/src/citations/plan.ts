@@ -2,6 +2,11 @@ import type { CitationInput, CitationSource, CitationSourceOperation, CitationSo
 
 const SOURCES: readonly CitationSource[] = ["doi_registry", "crossref", "pubmed", "arxiv", "semantic_scholar"];
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the words "arxiv" or "preprint" anywhere in free prose flag a preprint; the boundaries keep them inside longer words out.
+const ARXIV_PREPRINT_HINT = /\b(?:arxiv|preprint)\b/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the same hint read off a venue string.
+const ARXIV_VENUE_HINT = /\barxiv\b/i;
+
 function item(
     source: CitationSource,
     applicable: boolean,
@@ -19,7 +24,7 @@ function enoughForEcitMatch(input: CitationInput): boolean {
 }
 
 function indicatesArxiv(input: CitationInput, normalized: NormalizedCitation): boolean {
-    return /\b(?:arxiv|preprint)\b/i.test(input.citation) || /\barxiv\b/i.test(input.venue ?? "") || normalized.identifiers.arxiv !== undefined;
+    return ARXIV_PREPRINT_HINT.test(input.citation) || ARXIV_VENUE_HINT.test(input.venue ?? "") || normalized.identifiers.arxiv !== undefined;
 }
 
 export function planCitationSources(input: CitationInput, normalized: NormalizedCitation): CitationSourcePlanItem[] {

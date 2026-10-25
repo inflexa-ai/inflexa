@@ -14,6 +14,8 @@
 
 import { PDFParse } from "pdf-parse";
 
+import { normalizeWhitespace } from "./normalize-whitespace.js";
+
 export type IchSeries = "S" | "E" | "M" | "Q";
 
 export type IchStub = {
@@ -188,17 +190,18 @@ export async function fetchAndExtractIchDoc(stub: IchStub): Promise<IchDoc> {
     };
 }
 
-function normalizeWhitespace(s: string): string {
-    return s
-        .replace(/[ \t]+/g, " ")
-        .replace(/\r/g, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-}
-
 function slugify(s: string): string {
-    return s
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
+    let out = "";
+    let inRun = false;
+    for (const char of s.toLowerCase()) {
+        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+        if (!isSlugChar) {
+            inRun = true;
+            continue;
+        }
+        if (inRun && out.length > 0) out += "-";
+        inRun = false;
+        out += char;
+    }
+    return out;
 }

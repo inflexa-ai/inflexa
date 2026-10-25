@@ -39,6 +39,7 @@ import { ResultAsync, ok } from "neverthrow";
 import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs, errnoOf } from "../lib/fs-result.js";
+import { splitLines } from "../lib/text.js";
 import { classifyWithinRoot } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
 
@@ -501,7 +502,7 @@ function readTailLines(absolute: string, totalSize: number, tailLines: number, m
                     if (windowSize > 0) {
                         await fh.read(buf, 0, windowSize, offset);
                     }
-                    const allLines = buf.toString("utf8").split(/\r?\n/);
+                    const allLines = splitLines(buf.toString("utf8"));
                     // Drop the partial leading line if the window doesn't cover the file start.
                     const candidateLines = offset > 0 ? allLines.slice(1) : allLines;
                     const sliced = candidateLines.length > tailLines ? candidateLines.slice(-tailLines) : candidateLines;
@@ -523,7 +524,7 @@ function readTailLines(absolute: string, totalSize: number, tailLines: number, m
 
 function sliceHeadLines(content: Buffer, headLines: number, maxBytes: number | undefined): ReadFileResult {
     const capped = maxBytes !== undefined && content.length > maxBytes ? content.subarray(0, maxBytes) : content;
-    const lines = capped.toString("utf8").split(/\r?\n/);
+    const lines = splitLines(capped.toString("utf8"));
     const slice = lines.slice(0, headLines);
     const out = Buffer.from(slice.join("\n"));
     if (maxBytes !== undefined && content.length > maxBytes && slice.length < headLines) {
@@ -534,12 +535,12 @@ function sliceHeadLines(content: Buffer, headLines: number, maxBytes: number | u
 
 function sliceTailLines(content: Buffer, tailLines: number, maxBytes: number | undefined): ReadFileResult {
     if (maxBytes === undefined || content.length <= maxBytes) {
-        const lines = content.toString("utf8").split(/\r?\n/);
+        const lines = splitLines(content.toString("utf8"));
         const slice = lines.length > tailLines ? lines.slice(-tailLines) : lines;
         return { kind: "ok", content: Buffer.from(slice.join("\n")), truncated: false };
     }
     const window = content.subarray(content.length - maxBytes);
-    const lines = window.toString("utf8").split(/\r?\n/).slice(1);
+    const lines = splitLines(window.toString("utf8")).slice(1);
     const slice = lines.length > tailLines ? lines.slice(-tailLines) : lines;
     const out = Buffer.from(slice.join("\n"));
     if (slice.length < tailLines) {

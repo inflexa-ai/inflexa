@@ -54,6 +54,7 @@ import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 
 import type { AuthContext } from "../../auth/types.js";
@@ -226,7 +227,7 @@ const RELEASE_DEADLINE_MS = 10_000;
 /** The fault of one operation that ran against a deadline: the cause that it raised, or the expiry. */
 type DeadlineFault = { readonly kind: "threw"; readonly cause: unknown } | { readonly kind: "expired" };
 
-/** The win of the timer arm. A symbol cannot collide with a value that the operation gives. */
+/** The win of the expiry arm. A symbol cannot collide with a value that the operation gives. */
 const EXPIRED = Symbol("expired");
 
 /**
@@ -235,22 +236,23 @@ const EXPIRED = Symbol("expired");
  * The eyes seam takes no abort signal, thus a race is the whole bound. The loser of the race stays in
  * flight, and the caller of an expired operation owns whatever arrives late.
  *
- * Each path clears the timer. `sleep` of `async-utils.ts` holds a timer that nothing can clear. Thus an
- * operation that wins its race would still keep the process alive for the rest of the budget.
+ * The abort after the race clears the wait of a settled operation, so no armed timer outlives the budget.
  */
 async function withDeadline<T>(work: Promise<T>, ms: number): Promise<Result<T, DeadlineFault>> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
     // The settled arm never rejects. Thus a fault that arrives after the expiry stays contained here, and it
     // never reaches the process as an unhandled rejection.
     const settled: Promise<Result<T, DeadlineFault>> = work.then(
         (value) => ok(value),
         (cause: unknown) => err({ kind: "threw" as const, cause }),
     );
-    const expiry = new Promise<typeof EXPIRED>((resolve) => {
-        timer = setTimeout(() => resolve(EXPIRED), ms);
-    });
+    const gate = new AbortController();
+    // The rejection arm answers the abort of a settled race, and its value is never read.
+    const expiry = sleep(ms, undefined, { signal: gate.signal }).then(
+        (): typeof EXPIRED => EXPIRED,
+        (): typeof EXPIRED => EXPIRED,
+    );
     const winner = await Promise.race([settled, expiry]);
-    clearTimeout(timer);
+    gate.abort();
     return winner === EXPIRED ? err({ kind: "expired" }) : winner;
 }
 

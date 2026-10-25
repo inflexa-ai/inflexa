@@ -28,13 +28,13 @@ describe("parseResourcePolicy", () => {
     it("rejects a per-step CPU ceiling above the budget", () => {
         const policy = { ...valid, perStep: { maxCpu: 16, maxMemoryGb: 8, maxGpuCount: 0 } };
         expect(() => parseResourcePolicy(policy)).toThrow(ResourceLimitsConfigError);
-        expect(() => parseResourcePolicy(policy)).toThrow(/maxCpu/);
+        expect(() => parseResourcePolicy(policy)).toThrow("maxCpu");
     });
 
     it("rejects a per-step memory ceiling above the budget", () => {
         const policy = { ...valid, perStep: { maxCpu: 4, maxMemoryGb: 32, maxGpuCount: 0 } };
         expect(() => parseResourcePolicy(policy)).toThrow(ResourceLimitsConfigError);
-        expect(() => parseResourcePolicy(policy)).toThrow(/maxMemoryGb/);
+        expect(() => parseResourcePolicy(policy)).toThrow("maxMemoryGb");
     });
 
     it("rejects non-positive budget values", () => {

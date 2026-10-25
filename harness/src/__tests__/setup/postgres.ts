@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the testcontainers wait matches the Postgres readiness line of the server log
+const POSTGRES_READY_LOG = /database system is ready to accept connections/;
+
 /**
  * Postgres test helper — hands out per-test schemas scoped via `search_path`
  * against one `pgvector/pgvector:pg18` database.
@@ -32,6 +35,8 @@
  * Each test should call `withSchema(testName)` to get a `{ pool, drop }`
  * pair and `afterEach(drop)` to tear it down.
  */
+
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { Pool, type PoolConfig } from "pg";
@@ -69,7 +74,7 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
         })
         .withExposedPorts(5432)
         .withCommand(["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off"])
-        .withWaitStrategy(Wait.forLogMessage(/database system is ready to accept connections/, 2))
+        .withWaitStrategy(Wait.forLogMessage(POSTGRES_READY_LOG, 2))
         .withStartupTimeout(60_000)
         .start();
 
@@ -91,7 +96,7 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
             break;
         } catch (err) {
             if (Date.now() > deadline) throw err;
-            await new Promise((r) => setTimeout(r, 200));
+            await sleep(200);
         }
     }
 
@@ -131,7 +136,9 @@ export async function withSchema(testName: string): Promise<{
     const base = await getTestPool();
     const safeName = testName
         .toLowerCase()
-        .replace(/[^a-z0-9_]/g, "_")
+        .split("")
+        .map((char) => ((char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "_" ? char : "_"))
+        .join("")
         .slice(0, 40);
     const schemaName = `t_${safeName}_${Date.now().toString(36)}_${_schemaCounter++}`;
 

@@ -52,8 +52,22 @@ export function reportSessionResourceId(analysisId: string, threadId: string): s
  * @param token - Short-lived content token minted by the storage backend (required)
  */
 export function buildReportSessionUrl(contentBaseUrl: string, analysisId: string, threadId: string, pagePath: string, token: string): string {
-    const base = contentBaseUrl.replace(/\/+$/, "");
-    const path = pagePath.replace(/^\/+/, "");
+    const base = stripTrailingSlashes(contentBaseUrl);
+    const path = stripLeadingSlashes(pagePath);
     const res = reportSessionResourceId(analysisId, threadId);
     return `${base}/${res}/${path}?t=${encodeURIComponent(token)}`;
+}
+
+/** The text without its trailing slashes. */
+function stripTrailingSlashes(value: string): string {
+    let end = value.length;
+    while (end > 0 && value.charAt(end - 1) === "/") end--;
+    return value.slice(0, end);
+}
+
+/** The text without its leading slashes. */
+function stripLeadingSlashes(value: string): string {
+    let start = 0;
+    while (start < value.length && value.charAt(start) === "/") start++;
+    return value.slice(start);
 }

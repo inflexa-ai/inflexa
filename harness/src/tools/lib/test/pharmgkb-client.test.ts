@@ -76,6 +76,6 @@ describe("searchPharmgkb", () => {
     it("throws when the host is down", async () => {
         stubFetch(() => new Response("upstream down", { status: 500 }));
 
-        await expect(searchPharmgkb("CYP2C19", "gene")).rejects.toThrow(/500/);
+        await expect(searchPharmgkb("CYP2C19", "gene")).rejects.toThrow("500");
     });
 });

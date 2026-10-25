@@ -209,7 +209,7 @@ describe("toProviderError idempotency", () => {
         const err = toProviderError(apiError(401), "chat");
         expect(err.type).toBe("auth");
         expect(err.retryable).toBe(false);
-        expect(err.message).toMatch(/credential/i);
+        expect(err.message.includes("credential")).toBe(true);
         expect(isProviderError(err)).toBe(true);
     });
 

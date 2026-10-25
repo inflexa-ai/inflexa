@@ -1,3 +1,6 @@
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the assertion is about formatted date and clock text, whose shape is a pattern
+const DATE_OR_CLOCK_TEXT = /\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/;
+
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
@@ -175,7 +178,7 @@ describe("approvePlan", () => {
         expect(history).toHaveLength(1);
         expect(presentFirst(history).role).toBe("user");
         expect(JSON.stringify(presentFirst(history).content)).toContain(`The person approved plan ${PLAN_ID}. Run ${approval.runId} started.`);
-        expect(JSON.stringify(presentFirst(history).content)).not.toMatch(/\d{4}-\d{2}-\d{2}|\d{2}:\d{2}/);
+        expect(DATE_OR_CLOCK_TEXT.test(JSON.stringify(presentFirst(history).content))).toBe(false);
     });
 
     it("shows the approval and the run card in the transcript, and the result message equals the transcript message but for the row time", async () => {

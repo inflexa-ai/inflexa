@@ -32,12 +32,19 @@ const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789");
  * - Truncated to 40 characters
  */
 export function sanitizeAgentName(name: string): string {
-    return name
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, "-")
-        .replace(/-{2,}/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, AGENT_NAME_MAX_LENGTH);
+    let out = "";
+    let inRun = false;
+    for (const char of name.toLowerCase()) {
+        const keeps = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+        if (!keeps) {
+            inRun = true;
+            continue;
+        }
+        if (inRun && out.length > 0) out += "-";
+        inRun = false;
+        out += char;
+    }
+    return out.slice(0, AGENT_NAME_MAX_LENGTH);
 }
 
 /**

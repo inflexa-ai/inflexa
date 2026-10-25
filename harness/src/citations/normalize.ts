@@ -1,31 +1,34 @@
 import { CitationInputSchema, type CitationInput, type NormalizedCitation, type NormalizedCitationMetadata, type UnsupportedWorkKind } from "./types.js";
+import { collapseWhitespace as collapseText, trimTrailingOf } from "../lib/text.js";
 
 // Each registry defines its own identifier syntax, and each is matched here rather than parsed:
 // a citation string is prose, so the identifier has to be found inside it, not read off a field.
 // The DOI suffix is deliberately permissive — the registry allows nearly any character in it, so
 // there is no delimiter to stop at, and `trimDoiPunctuation` walks back the sentence punctuation
 // and brackets a greedy match swallows. PMID and arXiv anchor instead, having fixed shapes.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the DOI suffix is deliberately permissive because the registry allows nearly any character in it.
 const DOI_PATTERN = /(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)?(10\.\d{4,9}\/[^\s<>"']+)/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a PMID is a bounded digit run behind an optional `pmid:` prefix.
 const PMID_PATTERN = /^(?:pmid\s*:\s*)?(\d{1,9})$/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the two arXiv id shapes (new-style and old-style) behind their optional URL and `arxiv:` spellings.
 const ARXIV_PATTERN = /^(?:https?:\/\/arxiv\.org\/(?:abs|pdf)\/|arxiv\s*:\s*)?((?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})(?:v\d+)?)(?:\.pdf)?$/i;
 
 function collapseWhitespace(value: string): string {
-    return value.normalize("NFKC").replace(/\s+/g, " ").trim();
+    return collapseText(value.normalize("NFKC"));
 }
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- punctuation and symbols carry no citation identity; they fold to spaces before comparison.
+const PUNCTUATION_AND_SYMBOLS = /[\p{P}\p{S}]+/gu;
 
 export function normalizeComparable(value: string): string {
-    return collapseWhitespace(value)
-        .toLocaleLowerCase("en-US")
-        .replace(/[\p{P}\p{S}]+/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    return collapseText(collapseWhitespace(value).toLocaleLowerCase("en-US").replace(PUNCTUATION_AND_SYMBOLS, " "));
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- generational suffixes are noise in author comparison; the word boundaries keep the letters inside longer tokens.
+const NAME_SUFFIX_WORDS = /\b(?:jr|sr|ii|iii|iv)\b/g;
+
 export function normalizeAuthor(value: string): string {
-    return normalizeComparable(value)
-        .replace(/\b(?:jr|sr|ii|iii|iv)\b/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
+    return collapseText(normalizeComparable(value).replace(NAME_SUFFIX_WORDS, ""));
 }
 
 type AuthorEvidence = {
@@ -94,7 +97,7 @@ export function authorNamesMatch(left: string, right: string): boolean {
 }
 
 function trimDoiPunctuation(value: string): string {
-    let result = value.replace(/[.,;]+$/g, "");
+    let result = trimTrailingOf(value, ".,;");
     const pairs: ReadonlyArray<readonly [string, string]> = [
         ["(", ")"],
         ["[", "]"],
@@ -116,16 +119,26 @@ export function extractPmid(value: string): string | undefined {
     return collapseWhitespace(value).match(PMID_PATTERN)?.[1];
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- an arXiv id carries a version suffix (`v3`) that the registry lookup must not see.
+const ARXIV_VERSION_SUFFIX = /v\d+$/i;
+
 export function extractArxivId(value: string): string | undefined {
     const match = collapseWhitespace(value).match(ARXIV_PATTERN)?.[1];
-    return match?.toLocaleLowerCase("en-US").replace(/v\d+$/i, "");
+    return match?.toLocaleLowerCase("en-US").replace(ARXIV_VERSION_SUFFIX, "");
 }
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the phrase marks a personal communication; the boundaries keep partial words from matching.
+const PERSONAL_COMMUNICATION = /\bpersonal communication\b/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the phrases that mark work with no registered record.
+const UNPUBLISHED_WORK = /\bunpublished (?:data|work|manuscript)\b/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the phrases that mark work accepted but not yet registered.
+const IN_PRESS = /\b(?:in press|forthcoming)\b/;
 
 function classifyUnsupportedWork(value: string): UnsupportedWorkKind | undefined {
     const normalized = normalizeComparable(value);
-    if (/\bpersonal communication\b/.test(normalized)) return "personal_communication";
-    if (/\bunpublished (?:data|work|manuscript)\b/.test(normalized)) return "unpublished";
-    if (/\b(?:in press|forthcoming)\b/.test(normalized)) return "unregistered_in_press";
+    if (PERSONAL_COMMUNICATION.test(normalized)) return "personal_communication";
+    if (UNPUBLISHED_WORK.test(normalized)) return "unpublished";
+    if (IN_PRESS.test(normalized)) return "unregistered_in_press";
     return undefined;
 }
 

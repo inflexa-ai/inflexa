@@ -14,6 +14,21 @@ describe("renderText", () => {
         expect(html).toContain("Second paragraph.");
     });
 
+    it("splits on a CRLF blank line and drops a CR inside a paragraph", () => {
+        const block: TextBlock = {
+            kind: "text",
+            id: "t6",
+            content: { prose: "First paragraph.\r\n\r\nSecond paragraph.\r\nstill the second" },
+        };
+
+        const html = renderText(block);
+
+        expect(html.split("<p ").length - 1).toBe(2);
+        expect(html).toContain("First paragraph.");
+        expect(html).toContain("Second paragraph.\nstill the second");
+        expect(html).not.toContain("\r");
+    });
+
     it("renders the ordered list of six items after the lead paragraph", () => {
         const items = [
             "The cohort is small.",

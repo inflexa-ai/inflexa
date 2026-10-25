@@ -56,9 +56,6 @@ const jsRecommended = {
 
 export default typescript({
     env: { node: true },
-    // The `regex`, `jsonParse` and `timers` syntax bans lift until #708 turns
-    // them back on with their fixes. `forEach` stays on.
-    syntax: { regex: false, jsonParse: false, timers: false },
     // tsprov is a page-asset dependency: the report page ships its browser
     // bundle as bytes, and the manifest names it by a string specifier. An
     // API import would make the harness a provenance reader, which the
@@ -111,14 +108,14 @@ export default typescript({
             // The JSX runtime rewrites `className` to `class` without a warning.
             // A silent rewrite invites a codebase that mixes the two. Thus the
             // markup uses `class` only. An override replaces the options of
-            // `eslint-js/no-restricted-syntax`, so this block repeats the still-on
-            // `restrictedSyntax()` entry beside the JSX entry — the subset form the
-            // plugin's typing prescribes; the lifted bans stay lifted on `.tsx`.
+            // `eslint-js/no-restricted-syntax`, so this block restates the whole
+            // `restrictedSyntax()` set beside the JSX entry — the subset form the
+            // plugin's typing prescribes.
             files: ["**/*.tsx"],
             rules: {
                 "eslint-js/no-restricted-syntax": [
                     "error",
-                    restrictedSyntax({ regex: false, jsonParse: false, timers: false }).forEach,
+                    ...Object.values(restrictedSyntax()),
                     {
                         selector: "JSXAttribute[name.name='className']",
                         message: "Use the `class` attribute, not `className`.",
