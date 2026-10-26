@@ -17,7 +17,7 @@ shipped realizations.
 where diagnostics go, and that decision should be conscious. Every module deps bag below it takes
 it optionally and falls back to `createNoopLogger()`, so internal call sites log unconditionally
 rather than threading `?.` through every diagnostic; the fallback is never `console`.
-`harness/src` calls `console` nowhere outside `lib/console-logger.ts` (enforced by `no-console` in
+`harness/src` calls `console` nowhere outside `lib/console-logger.ts` and its test (enforced by `no-console` in
 `oxlint.config.ts`, exempted by path): a host whose UI owns stdout discards console output, so the
 write succeeds and the record is gone — silent loss exactly when something has failed.
 

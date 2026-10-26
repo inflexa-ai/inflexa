@@ -152,11 +152,9 @@ export function recordChatCall(call: { readonly agentId: string; readonly respon
     const { usage, servedModelId, provider } = call.response;
     if (usage === undefined) return;
     const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens } = getInstruments();
-    const attributes: Attributes = {
-        agent_id: call.agentId,
-        model: servedModelId,
-        provider,
-    };
+    const attributes: Attributes = { agent_id: call.agentId };
+    if (servedModelId !== undefined) attributes.model = servedModelId;
+    if (provider !== undefined) attributes.provider = provider;
     if (usage.inputTokens !== undefined) inputTokens.add(usage.inputTokens, attributes);
     if (usage.outputTokens !== undefined) outputTokens.add(usage.outputTokens, attributes);
     if (usage.cacheReadInputTokens !== undefined) cacheReadTokens.add(usage.cacheReadInputTokens, attributes);

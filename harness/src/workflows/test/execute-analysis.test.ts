@@ -161,6 +161,7 @@ function terminalOf(parts: ReadonlyArray<Record<string, unknown>>) {
  */
 let originalDbosFns: Record<string, unknown> | undefined;
 let originalStepStatus: PropertyDescriptor | undefined;
+let originalWorkflowId: PropertyDescriptor | undefined;
 
 async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
@@ -176,6 +177,7 @@ async function mockDbos(): Promise<void> {
         setEvent: dbos.DBOS.setEvent.bind(dbos.DBOS),
     };
     originalStepStatus ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "stepStatus");
+    originalWorkflowId ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "workflowID");
 
     // `DBOS.runStep` — execute the wrapped fn immediately, unless the step name
     // is registered to throw (the synthesis-failure path injects a throw at the
@@ -215,6 +217,8 @@ async function mockDbos(): Promise<void> {
     );
 
     Object.defineProperty(dbos.DBOS, "stepStatus", { configurable: true, get: () => dbosState.stepStatus });
+    // The self-cancel of a suspension needs the id of the workflow that it cancels.
+    Object.defineProperty(dbos.DBOS, "workflowID", { configurable: true, get: () => "run-test" });
 
     // `DBOS.setEvent` — record the key and the value, or throw the configured error.
     Reflect.set(
@@ -312,6 +316,7 @@ afterAll(async () => {
         Reflect.set(dbos.DBOS, name, fn);
     }
     if (originalStepStatus) Object.defineProperty(dbos.DBOS, "stepStatus", originalStepStatus);
+    if (originalWorkflowId) Object.defineProperty(dbos.DBOS, "workflowID", originalWorkflowId);
 });
 
 beforeEach(async () => {

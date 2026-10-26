@@ -63,10 +63,9 @@ export type UnvettedEdit = {
     readonly sha256: string;
 };
 
-/** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
-/** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
 const LastEditRecordSchema = z.looseObject({ sha256: z.string() });
 
+/** The digest the record expects of the script now: the last recorded change, else the bytes the render wrote. */
 export function expectedScriptSha256(record: Readonly<Record<string, unknown>>): string | undefined {
     const edits = isUnknownArray(record.unvetted_edits) ? record.unvetted_edits : [];
     const parsed = LastEditRecordSchema.safeParse(edits.at(-1));

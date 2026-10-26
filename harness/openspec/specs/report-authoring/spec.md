@@ -194,6 +194,20 @@ A read of a section MUST give the title of the section and the id of each child,
 - **WHEN** a move operation takes a block from one section to a different section
 - **THEN** the tool result carries the child order of the section that the block left and of the section that it reached
 
+### Requirement: A block read tells an unknown id from a block that the authoring grammar refuses
+The block read MUST give `found: false` only when no block of the draft holds the id. A stored atom that the authoring grammar refuses MUST give an error that names the block id.
+
+The draft grammar admits each stored atom, and the read gives the atom in the authoring grammar. The two grammars differ in the stamped hash alone. Thus a stored atom that the authoring grammar refuses shows drift between the two grammars, not a missing block. A result of `found: false` would hide that drift.
+
+#### Scenario: An unknown id is not found
+- **WHEN** the agent reads a block with an id that no block of the draft holds
+- **THEN** the read gives `found: false`
+
+#### Scenario: A stored atom that the authoring grammar refuses is an error
+- **GIVEN** a draft that holds an atom that the authoring grammar refuses
+- **WHEN** the agent reads that atom by its id
+- **THEN** the read gives an error that names the block id, and it does not give `found: false`
+
 ### Requirement: The finish operation
 The finish operation MUST validate the whole draft against the full document schema, the id rule, and the structural tier. It MUST report each gap as data. When the draft passes, it MUST give the valid `ReportDocument` value to its caller in the harness. The preview and the record read that value. The finish MUST NOT open a file, and it MUST NOT change the draft. The finish runs the structural tier only, and the value-tier gate of the report pipeline is a different capability.
 

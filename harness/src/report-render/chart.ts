@@ -1525,24 +1525,26 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
             }
         }
 
-        series.push({
+        const box: EchartOption = {
             type: "boxplot",
-            name: categoryName(lane.name),
             // A box draws its median in the border color, thus a focus colors the border and never the fill.
             itemStyle: { borderColor: color },
             data: boxData,
-        });
+        };
+        if (lane.name !== undefined) box.name = categoryName(lane.name);
+        series.push(box);
         // The outlier scatter pairs with its box series, thus it only appears when an outlier exists. A box with
         // no group takes no palette slot by name, thus its outliers take the ink of the points.
         if (outliers.length > 0) {
             const outlierColor = color ?? (lane.name === undefined ? CHART_INK : undefined);
-            series.push({
+            const outlierMarks: EchartOption = {
                 type: "scatter",
-                name: categoryName(lane.name),
                 itemStyle: { color: outlierColor },
                 symbolSize: 4,
                 data: outliers,
-            });
+            };
+            if (lane.name !== undefined) outlierMarks.name = categoryName(lane.name);
+            series.push(outlierMarks);
         }
         const onSlots = slotSeries(lane.name === undefined ? undefined : categoryName(lane.name), slotPointList, medians, grouped ? color : CHART_INK);
         if (onSlots !== undefined) slotted.push(onSlots);

@@ -38,6 +38,15 @@ describe("apiFetchValidated", () => {
         expect(res._unsafeUnwrap()).toEqual([{ id: 1, name: "TP53" }, { id: 2 }]);
     });
 
+    it("parses the body as JSON when its options value carries parseAs text at run time", async () => {
+        stubFetch(() => json([{ id: 1 }]));
+        const options = { retryDelayMs: 0, parseAs: "text" as const };
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, options);
+
+        expect(res._unsafeUnwrap()).toEqual([{ id: 1 }]);
+    });
+
     it("rejects a response whose field has the wrong type", async () => {
         // `id` comes back as a string — the kind of upstream contract drift the
         // schema exists to catch, rather than letting a bad value flow downstream.

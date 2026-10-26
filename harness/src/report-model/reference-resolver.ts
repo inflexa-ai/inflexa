@@ -205,20 +205,23 @@ function rankText(left: string | number, right: string | number): number {
     return 0;
 }
 
+/** One row that holds a rank in the bound column. Its cell is present, and a numeric column parsed it. */
+type RankableRow = RankedRow & { readonly cell: string | number };
+
 /**
- * A row that holds no rank in the column, which the bound keeps last in either direction.
+ * The row as a rankable row, or `undefined` for a row that holds no rank in the column. The bound keeps
+ * such a row last in either direction.
  *
  * A row that the column does not reach carries no value to rank. In a numeric column a cell that reads as
  * no number carries none either: a sentinel such as `NA` is the absence of a measurement, and a rank for it
  * against a real value would be invented. Thus a descending bound of the top 20 rows gives 20 measurements,
  * and never 20 sentinels.
  */
-function holdsNoRank(entry: RankedRow, numeric: boolean): boolean {
-    return entry.cell === undefined || (numeric && entry.value === undefined);
+function asRankable(entry: RankedRow, numeric: boolean): RankableRow | undefined {
+    const { cell } = entry;
+    if (cell === undefined || (numeric && entry.value === undefined)) return undefined;
+    return { ...entry, cell };
 }
-
-/** One row that holds a rank in the bound column. Its cell is present, and a numeric column parsed it. */
-type RankableRow = RankedRow & { readonly cell: string | number };
 
 /**
  * The rank of two rows that both hold one. A numeric column compares the parsed numbers, and a column
@@ -257,8 +260,13 @@ export function applyRowBound(rows: Array<Record<string, string | number>>, boun
 
     // A row with no rank stays behind every ranked row, and the direction never lifts it. The two lists
     // keep their source order, thus the tail is as stable as the head.
-    const rankable = ranked.flatMap(({ cell, ...rest }) => (cell !== undefined && !(numeric && rest.value === undefined) ? [{ ...rest, cell }] : []));
-    const unrankable = ranked.filter((entry) => holdsNoRank(entry, numeric));
+    const rankable: RankableRow[] = [];
+    const unrankable: RankedRow[] = [];
+    for (const entry of ranked) {
+        const kept = asRankable(entry, numeric);
+        if (kept === undefined) unrankable.push(entry);
+        else rankable.push(kept);
+    }
 
     const sorted = [...rankable].sort((left, right) => {
         const rank = rankRankable(left, right, numeric);

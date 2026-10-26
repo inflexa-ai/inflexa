@@ -370,8 +370,6 @@ describe("createAiSdkProvider", () => {
 
         expect(provider.capabilities.toolCalling).toBe(false);
         expect(calls).toHaveLength(0);
-
-        return Promise.resolve();
     });
 
     // An absent picture flag means "cannot carry", never "unknown". Thus the
@@ -1780,6 +1778,17 @@ describe("a reply that a fallback model served", () => {
         expect(response.servedModelId).toBe("claude-opus-4-8");
         expect(response.requestedModelId).toBe("fake-model");
         expect(hopRecords(warnings).map((w) => w.fields)).toEqual([{ workload: "analysis:analysis-001", servedBy: "claude-opus-4-8" }]);
+    });
+
+    it("keeps the served model of the response when the hop names no model", async () => {
+        const { logger } = recordingLogger();
+        const unnamedHop = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }, { type: "fallback_message" }] } };
+        const provider = createAiSdkProvider({ model: servedModel([thinking, { type: "text", text: "done" }], unnamedHop), logger });
+
+        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(partTypesOf(response.message.content)).toEqual(["text"]);
+        expect(response.servedModelId).toBe("claude-opus-5-5");
     });
 
     it("keeps the thinking when no iteration reports a hop", async () => {

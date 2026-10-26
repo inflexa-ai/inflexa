@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "bun:test";
 
 import type { ChatPart, StepPhase } from "../../contracts/chat-parts.js";
+import { asyncIterableOf } from "../../lib/test/async-iterable.js";
 import { foldRunEventParts, parseRunEventPart, pipeFoldedRunEvents } from "../run-event-parts.js";
 
 const activity = (id: string, phase: StepPhase, text: string): ChatPart => ({
@@ -147,21 +148,6 @@ describe("foldRunEventParts", () => {
 });
 
 describe("pipeFoldedRunEvents", () => {
-    function burst<T>(entries: readonly T[]): AsyncIterable<T> {
-        let i = 0;
-        return {
-            [Symbol.asyncIterator]: () => ({
-                next: (): Promise<IteratorResult<T>> => {
-                    if (i >= entries.length) return Promise.resolve({ done: true, value: undefined });
-                    const value = entries[i];
-                    if (value === undefined) return Promise.resolve({ done: true, value: undefined });
-                    i += 1;
-                    return Promise.resolve({ done: false, value });
-                },
-            }),
-        };
-    }
-
     async function* withGaps<T>(entries: readonly T[], gapMs: number): AsyncIterable<T> {
         for (const [index, entry] of entries.entries()) {
             if (index > 0) await sleep(gapMs);
@@ -185,7 +171,7 @@ describe("pipeFoldedRunEvents", () => {
 
     it("delivers a catch-up burst of one key once, with its latest value", async () => {
         const out = await delivered(
-            burst([
+            asyncIterableOf([
                 activity("step-activity-run-1-T1S1", "sandbox-init", "Starting sandbox"),
                 activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R"),
                 activity("step-activity-run-1-T1S1", "complete", "Step complete"),
@@ -197,7 +183,7 @@ describe("pipeFoldedRunEvents", () => {
 
     it("delivers each key once in a burst, not one key overall", async () => {
         const out = await delivered(
-            burst([
+            asyncIterableOf([
                 activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R"),
                 activity("step-activity-run-1-T1S2", "sandbox-init", "Starting sandbox"),
                 activity("step-activity-run-1-T1S1", "complete", "Step complete"),
@@ -213,12 +199,12 @@ describe("pipeFoldedRunEvents", () => {
     it("delivers the parts that do not reconcile at once, in write order", async () => {
         const history = [summary("T1S1", "first"), summary("T1S2", "second"), summary("T1S1", "revised")];
 
-        expect(await delivered(burst(history))).toEqual(history);
+        expect(await delivered(asyncIterableOf(history))).toEqual(history);
     });
 
     it("delivers each activity entry at once, in write order, beside the newest activity part", async () => {
         const out = await delivered(
-            burst([
+            asyncIterableOf([
                 activity("step-activity-run-1-T1S1", "sandbox-init", "Starting sandbox"),
                 entry(0, "sandbox-init", "Starting sandbox"),
                 activity("step-activity-run-1-T1S1", "complete", "Step complete"),
@@ -237,11 +223,11 @@ describe("pipeFoldedRunEvents", () => {
     it("delivers an entry of a type that the registry does not know at once", async () => {
         const envelope = { type: "data-loop-event", data: { stepId: "T1S1", event: {} } };
 
-        expect(await delivered(burst([envelope, envelope]))).toEqual([envelope, envelope]);
+        expect(await delivered(asyncIterableOf([envelope, envelope]))).toEqual([envelope, envelope]);
     });
 
     it("delivers a held entry when the stream ends before the window closes", async () => {
-        const out = await delivered(burst([activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R")]), 10_000);
+        const out = await delivered(asyncIterableOf([activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R")]), 10_000);
 
         expect(out).toEqual([activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R")]);
     });
@@ -265,12 +251,12 @@ describe("pipeFoldedRunEvents", () => {
         const dag: ChatPart = { type: "data-dag-state", id: "shared", runId: "run-1", steps: [] };
         const ask: ChatPart = { type: "data-ask", id: "shared", title: "t", command: "c", status: "pending" };
 
-        expect(await delivered(burst([dag, ask]))).toEqual([dag, ask]);
+        expect(await delivered(asyncIterableOf([dag, ask]))).toEqual([dag, ask]);
     });
 
     it("delivers each reconciling part that carries no id", async () => {
         const idless: ChatPart = { type: "data-step-activity", runId: "run-1", stepId: "T1S1", phase: "executing", activity: "x" };
 
-        expect(await delivered(burst([idless, idless]))).toEqual([idless, idless]);
+        expect(await delivered(asyncIterableOf([idless, idless]))).toEqual([idless, idless]);
     });
 });

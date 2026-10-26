@@ -5,7 +5,7 @@
  * indexes + persists, reports progress phases, and returns findings — or skips
  * honestly (no summaries / blocker) — or re-throws a genuine failure (D10).
  * The underlying pieces (`generateRunSynthesis`, `persistSynthesis`, …) are
- * tested in `execution/run-synthesis.test.ts`; here we assert the wiring.
+ * tested in `execution/test/run-synthesis.test.ts`; here we assert the wiring.
  */
 
 import { describe, expect, it } from "bun:test";

@@ -117,6 +117,7 @@ let dbosState: FakeDbosState;
  * fakes would leak into every later test file in the same bun process.
  */
 let originalDbosFns: Record<string, unknown> | undefined;
+let originalWorkflowId: PropertyDescriptor | undefined;
 
 async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
@@ -140,6 +141,10 @@ async function mockDbos(): Promise<void> {
             return fn();
         }),
     );
+
+    // The self-cancel of a suspension needs the id of the workflow that it cancels.
+    originalWorkflowId ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "workflowID");
+    Object.defineProperty(dbos.DBOS, "workflowID", { configurable: true, get: () => `${USAGE_RUN_ID}-${USAGE_STEP_ID}` });
 
     Reflect.set(
         dbos.DBOS,
@@ -206,6 +211,7 @@ afterAll(async () => {
     for (const [name, fn] of Object.entries(originalDbosFns)) {
         Reflect.set(dbos.DBOS, name, fn);
     }
+    if (originalWorkflowId) Object.defineProperty(dbos.DBOS, "workflowID", originalWorkflowId);
 });
 
 // ── Fakes for the step's deps ────────────────────────────────────────
@@ -857,7 +863,7 @@ describe("sandbox-step suspension", () => {
         expect(dbosState.sent).toEqual([
             { destination: "parent-wf", message: { kind: "suspended", childWorkflowId: CHILD_ID, stepId: USAGE_STEP_ID, reason }, topic: "child-suspended" },
         ]);
-        expect(dbosState.cancelled).toHaveLength(1);
+        expect(dbosState.cancelled).toEqual([CHILD_ID]);
     }
 
     it("a suspend error of the model marks the row with the reason, sends the typed suspension, and self-cancels", async () => {

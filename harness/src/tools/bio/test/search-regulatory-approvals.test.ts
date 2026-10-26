@@ -146,6 +146,13 @@ describe("search_regulatory_approvals — action 'search'", () => {
         expect(tool.inputSchema.safeParse({ action: "search" }).success).toBe(false);
     });
 
+    it("states the YYYY-MM-DD shape of each authorization date in the JSON Schema of the input", () => {
+        const properties = z.toJSONSchema(tool.inputSchema).properties;
+        for (const name of ["minAuthorizationDate", "maxAuthorizationDate"]) {
+            expect(properties).toMatchObject({ [name]: { pattern: "^\\d{4}-\\d{2}-\\d{2}$" } });
+        }
+    });
+
     it("accepts a YYYY-MM-DD authorization date and rejects any other text shape", () => {
         expect(tool.inputSchema.safeParse({ query: "imatinib", minAuthorizationDate: "2026-08-24" }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ query: "imatinib", minAuthorizationDate: "2026-8-24" }).success).toBe(false);

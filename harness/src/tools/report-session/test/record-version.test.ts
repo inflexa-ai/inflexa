@@ -659,7 +659,7 @@ describe("createRecordVersionTool", () => {
     describe("the result detail", () => {
         /** Run the tool's result hook, asserting that the tool declares one. */
         function detailOf(tool: ReturnType<typeof createRecordVersionTool>, result: RecordVersionResult): string | undefined {
-            expect(tool.describeResult?.bind(tool)).toBeDefined();
+            expect(typeof tool.describeResult).toBe("function");
             const describeResult = tool.describeResult?.bind(tool);
             if (describeResult === undefined) throw new Error("the tool declares no result detail");
             return describeResult({}, result);

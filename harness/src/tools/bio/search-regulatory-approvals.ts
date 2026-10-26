@@ -34,7 +34,7 @@ import {
     type RegulatorySection,
 } from "../lib/amass-client.js";
 import { getAmassHeaders } from "../lib/amass-config.js";
-import { isIsoDate } from "../../lib/text.js";
+import { ISO_DATE_PATTERN } from "../../lib/text.js";
 
 /** The largest `limit` that still costs one search price (5 credits for each 20 records). */
 const MAX_LIMIT = 20;
@@ -68,8 +68,8 @@ const inputSchema = z
             .optional()
             .describe("'search' only. Keep the authorizations that carry any of these designations."),
         isOrphan: z.boolean().optional().describe("'search' only. true keeps the FDA Orphan Drug / EMA Orphan Medicine authorizations; false drops them."),
-        minAuthorizationDate: z.string().refine(isIsoDate).optional().describe("'search' only. Earliest authorization date, YYYY-MM-DD."),
-        maxAuthorizationDate: z.string().refine(isIsoDate).optional().describe("'search' only. Latest authorization date, YYYY-MM-DD."),
+        minAuthorizationDate: z.string().regex(ISO_DATE_PATTERN).optional().describe("'search' only. Earliest authorization date, YYYY-MM-DD."),
+        maxAuthorizationDate: z.string().regex(ISO_DATE_PATTERN).optional().describe("'search' only. Latest authorization date, YYYY-MM-DD."),
         limit: z
             .number()
             .int()

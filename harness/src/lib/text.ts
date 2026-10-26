@@ -71,14 +71,6 @@ export function isAllHex(text: string): boolean {
     return Array.from(text).every((char) => HEX_DIGITS.includes(char));
 }
 
-/** Whether `text` spells the dash-separated calendar form `YYYY-MM-DD`; the digit runs stay unchecked against the calendar. */
-export function isIsoDate(text: string): boolean {
-    return (
-        text.length === 10 &&
-        text.charAt(4) === "-" &&
-        text.charAt(7) === "-" &&
-        isAllDigits(text.slice(0, 4)) &&
-        isAllDigits(text.slice(5, 7)) &&
-        isAllDigits(text.slice(8))
-    );
-}
+/** The dash-separated calendar form `YYYY-MM-DD`; the digit runs stay unchecked against the calendar. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a zod `.regex` is the only form that reaches the JSON Schema `pattern` of a model-facing tool input.
+export const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

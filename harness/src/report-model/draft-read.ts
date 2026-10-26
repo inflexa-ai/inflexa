@@ -14,6 +14,8 @@
  * give the agent a value to mistype.
  */
 
+import { err, ok, type Result } from "neverthrow";
+
 import { locate } from "./draft-operations.js";
 import { AuthoringBlockSchema, type AuthoringAtomBlock } from "./authoring-grammar.js";
 import type { DraftBlock, DraftDocument } from "./draft.js";
@@ -146,21 +148,37 @@ export function childOutline(blocks: readonly DraftBlock[], depth: number): Outl
 }
 
 /**
- * Read one block by its id. An atom gives the block with its bindings, and each binding gives no hash. A
- * section gives its own fields and the id of each child. A block that no id holds gives `undefined`.
+ * A stored atom that the authoring grammar refuses. The draft grammar admits every stored atom, and the
+ * read gives the atom in the authoring grammar. The two grammars differ in the stamped hash alone, thus
+ * this failure shows drift between them, not a missing block.
  */
-export function readBlock(draft: DraftDocument, id: string): ReadableBlock | undefined {
+export type AtomRefusedByAuthoringGrammar = {
+    type: "atom-refused-by-authoring-grammar";
+    id: string;
+    cause: unknown;
+};
+
+/**
+ * Read one block by its id. An atom gives the block with its bindings, and each binding gives no hash. A
+ * section gives its own fields and the id of each child. A block that no id holds gives `undefined`. A
+ * stored atom that the authoring grammar refuses gives an error that names the id.
+ */
+export function readBlock(draft: DraftDocument, id: string): Result<ReadableBlock | undefined, AtomRefusedByAuthoringGrammar> {
     const found = locate(draft, id)?.block;
     if (found === undefined) {
-        return undefined;
+        return ok(undefined);
     }
     if (found.kind === "section") {
-        return { kind: "section", id: found.id, title: found.title, childIds: found.blocks.map((child) => child.id) };
+        return ok({ kind: "section", id: found.id, title: found.title, childIds: found.blocks.map((child) => child.id) });
     }
     // The stored atom and the read atom differ in the stamped hash alone, and the walk removes that field.
     const atom = AuthoringBlockSchema.safeParse(stripReferenceHashes(found));
-    if (atom.success && atom.data.kind !== "section") {
-        return atom.data;
+    if (!atom.success) {
+        return err({ type: "atom-refused-by-authoring-grammar", id, cause: atom.error });
     }
-    return undefined;
+    if (atom.data.kind === "section") {
+        // The walk keeps the kind of a stored atom, thus this branch never runs. It refuses and does not give a section as an atom.
+        return err({ type: "atom-refused-by-authoring-grammar", id, cause: atom.data });
+    }
+    return ok(atom.data);
 }

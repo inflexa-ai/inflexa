@@ -121,8 +121,7 @@ export function addBlock(draft: DraftDocument, operation: AddOperation, snapshot
         if (destination.parentIsRoot && block.kind !== "section") {
             return err({ reason: "atom-at-root", detail: `a ${block.kind} block cannot sit at the root` });
         }
-        const candidate = insertAt(draft, destination.containerPath, destination.index, block);
-        return commit(candidate, block, snapshot);
+        return insertAt(draft, destination.containerPath, destination.index, block).andThen((candidate) => commit(candidate, block, snapshot));
     });
 }
 
@@ -144,7 +143,7 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
             return err({ reason: "payload-kind-mismatch", detail: `the section ${operation.targetId} takes a title, not a block payload` });
         }
         const retitled: DraftSectionBlock = { ...target.block, title: operation.title };
-        return commit(replaceAt(draft, containerPath, index, retitled), undefined, snapshot);
+        return replaceAt(draft, containerPath, index, retitled).andThen((candidate) => commit(candidate, undefined, snapshot));
     }
 
     if ("title" in operation) {
@@ -170,7 +169,8 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
     if (parsed.data.kind === "section") {
         return err({ reason: "payload-kind-mismatch", detail: `the block ${operation.targetId} is an atom, and it cannot take a section payload` });
     }
-    return commit(replaceAt(draft, containerPath, index, parsed.data), parsed.data, snapshot);
+    const replacement = parsed.data;
+    return replaceAt(draft, containerPath, index, replacement).andThen((candidate) => commit(candidate, replacement, snapshot));
 }
 
 /**
@@ -184,7 +184,7 @@ export function removeBlock(draft: DraftDocument, operation: RemoveOperation, sn
         return err({ reason: "unknown-target", detail: `no block holds the id ${operation.targetId}` });
     }
     const { containerPath, index } = target;
-    return commit(removeAt(draft, containerPath, index), undefined, snapshot);
+    return removeAt(draft, containerPath, index).andThen((candidate) => commit(candidate, undefined, snapshot));
 }
 
 /**
@@ -218,13 +218,13 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
         if (movedBlock.kind === "section" && isPrefix(movedPath, destination.containerPath)) {
             return err({ reason: "cycle", detail: `the section ${operation.targetId} cannot move into its own subtree` });
         }
-        const afterRemove = removeAt(draft, target.containerPath, target.index);
         // The removal shifts the sibling indices of the old parent. Thus the destination resolves again
         // against the reduced tree, and the fresh path and index address the correct place.
-        return resolveDestination(afterRemove, operation.destination).andThen((landing): Result<DraftDocument, DraftRefusal> => {
-            const candidate = insertAt(afterRemove, landing.containerPath, landing.index, movedBlock);
-            return commit(candidate, undefined, snapshot);
-        });
+        return removeAt(draft, target.containerPath, target.index).andThen((afterRemove) =>
+            resolveDestination(afterRemove, operation.destination)
+                .andThen((landing) => insertAt(afterRemove, landing.containerPath, landing.index, movedBlock))
+                .andThen((candidate) => commit(candidate, undefined, snapshot)),
+        );
     });
 }
 
@@ -391,19 +391,25 @@ function isSectionBlocks(blocks: readonly DraftBlock[]): blocks is DraftSectionB
     return blocks.every((block) => block.kind === "section");
 }
 
-/** Rebuild the document with new children at a container path, and share each untouched branch. */
-function setChildren(document: DraftDocument, containerPath: number[], children: DraftBlock[]): DraftDocument {
+/**
+ * Rebuild the document with new children at a container path, and share each untouched branch.
+ *
+ * The root holds sections only, thus a root path with a child that is not a section refuses with
+ * `atom-at-root` and gives no candidate. Each operation refuses an atom at the root before it builds a
+ * candidate, thus no operation reaches this refusal.
+ */
+export function setChildren(document: DraftDocument, containerPath: number[], children: DraftBlock[]): Result<DraftDocument, DraftRefusal> {
     if (containerPath.length === 0) {
-        // The root holds sections only. Each operation enforces that rule before it builds a candidate.
-        if (!isSectionBlocks(children)) return document;
-        return { ...document, sections: children };
+        if (!isSectionBlocks(children)) {
+            const atom = children.find((child) => child.kind !== "section");
+            return err({ reason: "atom-at-root", detail: `a ${atom?.kind ?? "non-section"} block cannot sit at the root` });
+        }
+        return ok({ ...document, sections: children });
     }
-    return { ...document, sections: setChildrenInBlocks(document.sections, containerPath, children) };
+    return ok({ ...document, sections: setChildrenInBlocks(document.sections, containerPath, children) });
 }
 
-function setChildrenInBlocks(blocks: DraftSectionBlock[], containerPath: number[], children: DraftBlock[]): DraftSectionBlock[];
-function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[];
-function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], children: DraftBlock[]): DraftBlock[] {
+function setChildrenInBlocks<B extends DraftBlock>(blocks: B[], containerPath: number[], children: DraftBlock[]): B[] {
     const head = containerPath[0];
     if (head === undefined) {
         // setChildren splits off the root before it calls here, thus the path carries an index.
@@ -415,27 +421,26 @@ function setChildrenInBlocks(blocks: DraftBlock[], containerPath: number[], chil
         // A container path names a section at each step, thus this branch never runs.
         return blocks;
     }
-    const updated: DraftSectionBlock =
-        rest.length === 0 ? { ...target, blocks: children } : { ...target, blocks: setChildrenInBlocks(target.blocks, rest, children) };
+    const updated = rest.length === 0 ? { ...target, blocks: children } : { ...target, blocks: setChildrenInBlocks(target.blocks, rest, children) };
     const copy = blocks.slice();
     copy[head] = updated;
     return copy;
 }
 
 /** Insert a block at an index inside a container. */
-function insertAt(document: DraftDocument, containerPath: number[], index: number, block: DraftBlock): DraftDocument {
+function insertAt(document: DraftDocument, containerPath: number[], index: number, block: DraftBlock): Result<DraftDocument, DraftRefusal> {
     const children = getChildren(document, containerPath);
     return setChildren(document, containerPath, [...children.slice(0, index), block, ...children.slice(index)]);
 }
 
 /** Remove the block at an index inside a container. */
-function removeAt(document: DraftDocument, containerPath: number[], index: number): DraftDocument {
+function removeAt(document: DraftDocument, containerPath: number[], index: number): Result<DraftDocument, DraftRefusal> {
     const children = getChildren(document, containerPath);
     return setChildren(document, containerPath, [...children.slice(0, index), ...children.slice(index + 1)]);
 }
 
 /** Replace the block at an index inside a container. */
-function replaceAt(document: DraftDocument, containerPath: number[], index: number, block: DraftBlock): DraftDocument {
+function replaceAt(document: DraftDocument, containerPath: number[], index: number, block: DraftBlock): Result<DraftDocument, DraftRefusal> {
     const children = getChildren(document, containerPath);
     const next = children.slice();
     next[index] = block;

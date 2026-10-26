@@ -6,7 +6,8 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { TemplateParameter } from "../client.js";
+import { TemplateContractSchema, type TemplateParameter } from "../client.js";
+import { contractAnswer } from "../__fixtures__/fake-client.js";
 import { bindLocalSlots, validateLocalSlot } from "../local-slots.js";
 
 const PARAMETERS: TemplateParameter[] = [
@@ -92,5 +93,23 @@ describe("bindLocalSlots", () => {
         const stray = bindLocalSlots({ language: "R", parameters: PARAMETERS }, R_SCRIPT, { ...LOCALS, min_count: 3 });
         expect(stray.ok).toBe(false);
         expect(validateLocalSlot({ name: "odd", type: "matrix", description: "o", adaptable: true, local: true }, "x")).toMatchObject({ slot: "odd" });
+    });
+
+    it("binds a local slot whose contract states a null default as a slot with no default", () => {
+        const contract = TemplateContractSchema.parse({
+            ...contractAnswer(),
+            parameters: [
+                { name: "batch_column", type: "string", description: "b", adaptable: true, local: true, required: false, default: null },
+                { name: "counts_path", type: "string", description: "p", adaptable: true, local: true, default: null },
+            ],
+        });
+        const script = "batch <- {{batch_column}}\ncounts <- {{counts_path}}";
+        const optional = bindLocalSlots({ language: "R", parameters: contract.parameters }, script, { counts_path: "/a/counts.csv" });
+        if (!optional.ok) throw new Error(JSON.stringify(optional.issues));
+        expect(optional.script).toBe('batch <- NA_character_\ncounts <- "/a/counts.csv"');
+        expect(optional.slots.map((slot) => slot.name)).toEqual(["counts_path"]);
+        const required = bindLocalSlots({ language: "R", parameters: contract.parameters }, script, {});
+        expect(required.ok).toBe(false);
+        if (!required.ok) expect(required.issues).toEqual([{ slot: "counts_path", reason: "the local slot is required and has no value" }]);
     });
 });

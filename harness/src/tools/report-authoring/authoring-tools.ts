@@ -896,9 +896,15 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             if (opened.isErr()) {
                 return ok({ refused: opened.error });
             }
-            const block = readBlock(opened.value.state.document, input.targetId);
-            const result: ReadBlockResult = block !== undefined ? { found: true, block } : { found: false };
-            return ok(result);
+            return readBlock(opened.value.state.document, input.targetId).match<Result<ReadBlockResult, ToolError>>(
+                (block) => ok(block !== undefined ? { found: true, block } : { found: false }),
+                (refused) =>
+                    err({
+                        error: `the stored block ${refused.id} does not match the authoring grammar, thus it cannot be read`,
+                        retryable: false,
+                        cause: refused.cause,
+                    }),
+            );
         },
     });
 

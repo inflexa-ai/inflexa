@@ -96,18 +96,18 @@ function formatCensus(files: readonly ScannedFile[]): FormatCount[] {
 /** Assemble a manifest from an already-walked file set. Pure — the seam of the unit tests. */
 export function buildManifest(root: string, files: readonly ScannedFile[], truncated: boolean, limit: number = MAX_SCANNED_FILES): InputScan {
     const observed = observeShapes(files);
-    const manifest: InputScanManifest = {
+    const base: InputScanManifest = {
         root,
         fileCount: files.length,
         totalBytes: files.reduce((sum, f) => sum + f.size, 0),
         truncated,
-        scanLimit: limit,
         shapesTruncated: observed.shapesTruncated,
         formats: formatCensus(files),
         shapes: observed.shapes,
         valueOverlaps: observed.valueOverlaps,
         unstructured: observed.unstructured,
     };
+    const manifest: InputScanManifest = truncated ? { ...base, scanLimit: limit } : base;
     return { files, manifest, positionValues: observed.positionValues };
 }
 

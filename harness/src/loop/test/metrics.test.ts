@@ -198,6 +198,16 @@ describe("runAgent token counters for each call", () => {
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: { agent_id: "metrics-agent" }, value: 7 }]);
     });
 
+    it("gives the counter attributes of such a response no model key and no provider key", async () => {
+        const chat = scriptedProvider([makeMessage([textBlock("done")], "end_turn", { inputTokens: 7 })]);
+
+        await runAgent(agentDef(2), GO, agentSession(), runOpts(chat));
+
+        const [point] = await series(INPUT_TOKENS_METRIC);
+        expect(point).toBeDefined();
+        expect(Object.keys(point?.attributes ?? {})).toEqual(["agent_id"]);
+    });
+
     it("keeps the counts of the calls that completed before the run throws", async () => {
         let calls = 0;
         const failsOnThirdCall: AgentChat = {

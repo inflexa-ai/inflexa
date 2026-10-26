@@ -113,7 +113,7 @@ export function apiFetchValidated<S extends z.ZodType>(
     schema: S,
     options: Omit<ApiFetchOptions, "parseAs"> = {},
 ): ResultAsync<z.infer<S>, ApiError> {
-    return apiFetch(url, options).andThen((data): Result<z.infer<S>, ApiError> => {
+    return apiFetch(url, { ...options, parseAs: "json" }).andThen((data): Result<z.infer<S>, ApiError> => {
         const parsed = schema.safeParse(data);
         if (parsed.success) return ok(parsed.data);
         return err({ type: "invalid_response", issues: summarizeZodIssues(parsed.error) });

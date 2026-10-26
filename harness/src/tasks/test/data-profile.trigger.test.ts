@@ -47,7 +47,7 @@ function legacyStagedInput(fileId: string): SignableInput {
 /**
  * Seed a `cortex_analysis_state` row at the given `data_profile_status` (pass `null`
  * for the cleared/never-profiled state). Mirrors the helper in
- * `state/data-profile.test.ts`: it leaves `seed_input_file_ids` NULL, which is
+ * `state/test/data-profile.test.ts`: it leaves `seed_input_file_ids` NULL, which is
  * exactly the unseeded state that the claim CAS refuses, and that the trigger's guard
  * refuses when the manifest names files.
  */

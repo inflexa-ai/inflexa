@@ -256,7 +256,7 @@ describe("buildOutline", () => {
 
 describe("readBlock", () => {
     it("reads an atom in full, with its binding, and elides the stamped hash", () => {
-        const found = readBlock(nestedDraft, "m1");
+        const found = readBlock(nestedDraft, "m1")._unsafeUnwrap();
         // The pinned snapshot owns the hash, thus the agent never reads a value that it could mistype.
         expect(found).toEqual({
             kind: "metric",
@@ -294,7 +294,7 @@ describe("readBlock", () => {
             ],
         };
 
-        const found = readBlock(draft, "c1");
+        const found = readBlock(draft, "c1")._unsafeUnwrap();
 
         expect(JSON.stringify(found)).not.toContain(OUTPUT_HASH);
         // A citation pins no artifact, thus the read gives it whole.
@@ -318,13 +318,25 @@ describe("readBlock", () => {
     });
 
     it("reads a section as its own fields and the id of each child, and never the subtree", () => {
-        const found = readBlock(nestedDraft, "s1");
+        const found = readBlock(nestedDraft, "s1")._unsafeUnwrap();
         expect(found).toEqual({ kind: "section", id: "s1", title: "Intro", childIds: ["t1", "s1a"] });
         // The grandchild rides in the outline, thus a read of a top-level section never returns the tree.
         expect(JSON.stringify(found)).not.toContain("Coverage");
     });
 
     it("gives undefined for an id that no block holds", () => {
-        expect(readBlock(nestedDraft, "unknown")).toBeUndefined();
+        expect(readBlock(nestedDraft, "unknown")._unsafeUnwrap()).toBeUndefined();
+    });
+
+    it("tells a stored atom that the authoring grammar refuses from an unknown id", () => {
+        // The draft value is built directly: the extra member passes through a variable, thus the compiler admits it and only the authoring grammar reads it.
+        const drifted = { kind: "metric" as const, id: "m9", label: "Coverage", value: valueReference(), legacy: true };
+        const draft: DraftDocument = { title: "Report", sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [drifted] }] };
+
+        const refused = readBlock(draft, "m9")._unsafeUnwrapErr();
+
+        expect(refused.type).toBe("atom-refused-by-authoring-grammar");
+        expect(refused.id).toBe("m9");
+        expect(readBlock(draft, "unknown")._unsafeUnwrap()).toBeUndefined();
     });
 });

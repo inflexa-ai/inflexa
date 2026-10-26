@@ -53,6 +53,7 @@ describe("scanInputTree", () => {
         expect(scan.files.map((f) => f.path).sort()).toEqual([...paths].sort());
         expect(scan.manifest.fileCount).toBe(4);
         expect(scan.manifest.truncated).toBe(false);
+        expect(Object.hasOwn(scan.manifest, "scanLimit")).toBe(false);
     });
 
     it("detects format from bytes during the walk", async () => {

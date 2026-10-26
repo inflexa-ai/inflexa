@@ -34,6 +34,14 @@ const served: { method: string; pathname: string; body?: Record<string, unknown>
 
 const OTHER_DIGEST = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
+/** A contract whose slot states `"default": null`, the wire form of a slot with no default. */
+function nullDefaultContract() {
+    return {
+        ...contractAnswer(),
+        parameters: [{ name: "label_column", type: "string", description: "The sample table column with the label.", adaptable: true, default: null }],
+    };
+}
+
 /** A stub of the service: one route per behavior the client must classify. */
 function stubService() {
     return Bun.serve({
@@ -56,6 +64,7 @@ function stubService() {
             if (request.method === "GET" && templateId !== undefined && templateId.length > 0) {
                 const id = decodeURIComponent(templateId);
                 if (id === "tpl-boom") return Response.json({ error: "server", message: "boom" }, { status: 500 });
+                if (id === "tpl-null-default") return Response.json(nullDefaultContract());
                 if (id !== "tpl-deseq2-two-group") return Response.json({ error: "not_found", message: "no such template in this snapshot" }, { status: 404 });
                 return Response.json({ ...contractAnswer(), step_types: ["model_design"], environment: [] });
             }
@@ -232,6 +241,16 @@ describe("createHttpKnowledgeClient", () => {
         expect(answer.outputs).toEqual([{ name: "results", path: "output/de_results.csv", description: "One row per tested gene." }]);
         // The fields the service adds beside the typed ones pass through the loose remainder.
         expect(answer).toMatchObject({ step_types: ["model_design"] });
+    });
+
+    it("reads a null default of a slot as no default, thus the slot is required", async () => {
+        const answer = await client().contract("tpl-null-default@1.0.0");
+        expect("id" in answer).toBe(true);
+        if (!("id" in answer)) return;
+        const parameter = answer.parameters[0];
+        expect(parameter?.name).toBe("label_column");
+        expect(parameter?.default).toBeUndefined();
+        expect(parameter?.required).toBeUndefined();
     });
 
     it("classifies a 404 on the contract route as rejected naming the template field", async () => {

@@ -141,7 +141,7 @@ export default typescript({
         },
         {
             // bun-types types `expect().rejects.toThrow()` as `void`, so these two
-            // rules report every such assertion in the tests (~300 false reports).
+            // rules report every such assertion in the tests.
             // The exemption is scoped to the two rules and the test globs only;
             // `inflexa-typecheck` still typechecks the test files.
             files: ["**/*.test.{ts,tsx}"],
@@ -151,10 +151,8 @@ export default typescript({
             },
         },
         {
-            // Boundary predicates over values no parser has shaped yet (task group 3 of
-            // adopt-remaining-preset-rules; each file's kept sites are enumerated in that
-            // change's notes.md). A guard over an unknown-typed value is sanctioned when
-            // it IS the boundary check; these are:
+            // Boundary predicates over values no parser has shaped yet. A guard over an
+            // unknown-typed value is sanctioned when it IS the boundary check; these are:
             // - src/lib/unknown-array.ts — `isUnknownArray`: `Array.isArray` alone narrows
             //   `unknown` to `any[]`; this guard yields `unknown[]` so each element must
             //   narrow before use.
@@ -207,8 +205,7 @@ export default typescript({
         },
         {
             // The `typeof` probes are the bodies of the deliberate boundary predicates
-            // above, or readers of a symbol-keyed record (task group 3 of
-            // adopt-remaining-preset-rules; kept sites enumerated in its notes.md):
+            // above, or readers of a symbol-keyed record:
             // - src/lib/null-proto.ts — the body of the ledgered `isRecordOf<T>` guard.
             // - src/literature/sources/pubmed.ts — the bodies of `isRecord`/`isDocSumItem`.
             // - src/tools/define-tool.ts — the predicate bodies plus
@@ -217,7 +214,7 @@ export default typescript({
             //   through string keys only, so every schema-shaped fix destroys the record.
             // - src/tools/display/normalize-echart-spec.ts — the body of `isRecord`.
             // - src/state/snapshot-parse.ts — the body of `isPlainRecord`, kept for the
-            //   `__proto__` pin contract the rule-4 zone entry states.
+            //   `__proto__` pin contract the `no-unknown-type-guards` zone entry states.
             // - src/providers/errors.ts — the body of `isProviderError` and the object gate
             //   of `findInCauseChain`: the structural narrow and the cause-chain walk the
             //   provider error paths share, safe across module realms by design; a
@@ -254,8 +251,7 @@ export default typescript({
             rules: { "@inflexa-ai/no-typeof-object": "off" },
         },
         {
-            // Deliberately open schemas (task group 3 of adopt-remaining-preset-rules;
-            // kept sites enumerated in its notes.md):
+            // Deliberately open schemas:
             // - src/execution/run-synthesis.ts — the submit-synthesis input envelope:
             //   the candidate synthesis arrives in any shape by design, and `execute`
             //   re-parses it against RunSynthesisSchema itself, so a malformed payload
@@ -292,6 +288,12 @@ export default typescript({
             //   `omicsType`/`omicsSubtype`), which `z.json()` refuses. The header
             //   checks presence only; `validateUIMessages` and the `dataSchemas` own
             //   the shape check.
+            // - src/tools/display/show-user.ts — the `spec` member of the tool input:
+            //   the model sends the input as JSON text, so `z.json()` refuses nothing
+            //   more, and its recursive `$defs` reach each model backend as a `$ref`
+            //   that an OpenAI-compatible backend can refuse. The presentation schema
+            //   in `contracts/` keeps `z.json()` for the stored card, because no model
+            //   reads it.
             files: [
                 "src/execution/run-synthesis.ts",
                 "src/lib/unknown-containers.ts",
@@ -300,17 +302,16 @@ export default typescript({
                 "src/tools/report-authoring/authoring-tools.ts",
                 "src/tools/research/generate-plan.ts",
                 "src/memory/conversation-display-storage.ts",
+                "src/tools/display/show-user.ts",
             ],
             rules: { "@inflexa-ai/no-empty-schema": "off" },
         },
         {
             // The object gate of the shared thrown-value reads (`errorMessageOf` and
-            // `errorNameOf` in src/lib/thrown.ts, task group 4 of
-            // adopt-remaining-preset-rules; kept sites enumerated in its notes.md):
-            // `in` cannot run on a primitive, and the gate must stay realm-safe and
-            // enumeration-safe — a record parse rebuild answers on a copy that drops
-            // an Error's own non-enumerable `message` and inherited `name`, so the
-            // read must see the original object.
+            // `errorNameOf` in src/lib/thrown.ts): `in` cannot run on a primitive, and
+            // the gate must stay realm-safe and enumeration-safe — a record parse
+            // rebuild answers on a copy that drops an Error's own non-enumerable
+            // `message` and inherited `name`, so the read must see the original object.
             files: ["src/lib/thrown.ts"],
             rules: { "@inflexa-ai/no-typeof-object": "off" },
         },

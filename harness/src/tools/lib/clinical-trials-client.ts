@@ -98,7 +98,11 @@ const CtInterventionSchema = z.object({
     name: z.string().optional(),
     type: z.string().optional(),
     description: z.string().optional(),
-    otherNames: z.array(z.string()).optional(),
+    // An alias is one name among others; a member that is not a string loses that name, never the study.
+    otherNames: z
+        .array(z.json())
+        .transform((names) => names.flatMap((name) => (typeof name === "string" ? [name] : [])))
+        .optional(),
 });
 const CtOutcomeSchema = z.object({
     measure: z.string().optional(),
