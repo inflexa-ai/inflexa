@@ -321,9 +321,9 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(d
     };
     if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord.bind(def);
     // A tool that declines carries no `describeCall` key at all, so "has a
-    // hook" is one property check. `typeof` is the discriminator, not equality
-    // with the sentinel, so a hook that returns the string `"none"` still
-    // packages as a hook.
+    // hook" is one property check. The test is equality with the `"none"`
+    // sentinel: a function never equals it, so a hook that returns the string
+    // `"none"` still packages as a hook.
     if (def.describeCall !== "none") packaged.describeCall = def.describeCall;
     // The same property-presence pattern as `describeCall`: a tool that
     // declares no result hook carries no key, thus "has a hook" is one

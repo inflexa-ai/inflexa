@@ -5,7 +5,7 @@ import type { SandboxClient } from "../../sandbox/client.js";
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import type { ExecRequest, ExecResult } from "../../sandbox/types.js";
 import type { ListResult, ReadBytesResult, ReadFileResult, StatResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { enrichShapes, type EnrichShapesArgs } from "../enrich.js";
+import { enrichShapes, readHeaders, type EnrichShapesArgs } from "../enrich.js";
 import { observeShapes } from "../shapes.js";
 import type { ScannedFile } from "../types.js";
 import type { AgentSession } from "../../auth/types.js";
@@ -203,6 +203,100 @@ describe("enrichShapes", () => {
         );
 
         expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder reported nothing for this member");
+    });
+
+    it("keeps the readouts before a cut last line and gives the cut path the exec outcome", async () => {
+        const stdout = [
+            JSON.stringify({ path: "/a1/data/a.parquet", fields: { columnCount: 3 } }),
+            JSON.stringify({ path: "/a1/data/b.h5ad", fields: { columnCount: 5 } }),
+            '{"path": "/a1/data/c.loom", "fie',
+        ].join("\n");
+        const readouts = await readHeaders({
+            ...enrichArgs({
+                shapes: [],
+                fs: readSeam({}).fs,
+                sandboxClient: failingSandbox({ stdout }),
+                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+            }),
+            targets: [
+                { path: "data/a.parquet", format: "parquet" },
+                { path: "data/b.h5ad", format: "h5ad" },
+                { path: "data/c.loom", format: "loom" },
+            ],
+        });
+
+        expect(readouts.get("data/a.parquet")?.fields).toEqual({ columnCount: 3 });
+        expect(readouts.get("data/b.h5ad")?.fields).toEqual({ columnCount: 5 });
+        expect(readouts.get("data/c.loom")?.unavailable).toBe("container decoder reported nothing for this member");
+    });
+
+    it("names the cut output when the sandbox capped the decoder stdout", async () => {
+        const stdout = [JSON.stringify({ path: "/a1/data/a.parquet", fields: { columnCount: 3 } }), '{"path": "/a1/data/b.h5ad", "fie'].join("\n");
+        const readouts = await readHeaders({
+            ...enrichArgs({
+                shapes: [],
+                fs: readSeam({}).fs,
+                sandboxClient: failingSandbox({ stdout, stdoutTruncated: true }),
+                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+            }),
+            targets: [
+                { path: "data/a.parquet", format: "parquet" },
+                { path: "data/b.h5ad", format: "h5ad" },
+            ],
+        });
+
+        expect(readouts.get("data/a.parquet")?.fields).toEqual({ columnCount: 3 });
+        expect(readouts.get("data/b.h5ad")?.unavailable).toBe("container decoder output was cut at the sandbox byte cap");
+    });
+
+    it("names the cut output for a path that the capped stdout never reached", async () => {
+        const stdout = JSON.stringify({ path: "/a1/data/a.parquet", fields: { columnCount: 3 } });
+        const readouts = await readHeaders({
+            ...enrichArgs({
+                shapes: [],
+                fs: readSeam({}).fs,
+                sandboxClient: failingSandbox({ stdout, stdoutTruncated: true }),
+                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+            }),
+            targets: [
+                { path: "data/a.parquet", format: "parquet" },
+                { path: "data/b.h5ad", format: "h5ad" },
+            ],
+        });
+
+        expect(readouts.get("data/b.h5ad")?.unavailable).toBe("container decoder output was cut at the sandbox byte cap");
+    });
+
+    it("names the cut output together with a non-zero exit of the decoder", async () => {
+        const readouts = await readHeaders({
+            ...enrichArgs({
+                shapes: [],
+                fs: readSeam({}).fs,
+                sandboxClient: failingSandbox({ stdout: "", stdoutTruncated: true, exitCode: 2, stderr: "boom" }),
+                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+            }),
+            targets: [{ path: "data/b.h5ad", format: "h5ad" }],
+        });
+
+        const reason = readouts.get("data/b.h5ad")?.unavailable;
+        expect(reason).toContain("container decoder exited 2: boom");
+        expect(reason).toContain("container decoder output was cut at the sandbox byte cap");
+    });
+
+    it("names the cut output together with a timeout of the decoder", async () => {
+        const readouts = await readHeaders({
+            ...enrichArgs({
+                shapes: [],
+                fs: readSeam({}).fs,
+                sandboxClient: failingSandbox({ stdout: "", stdoutTruncated: true, timedOut: true, exitCode: null }),
+                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+            }),
+            targets: [{ path: "data/b.h5ad", format: "h5ad" }],
+        });
+
+        const reason = readouts.get("data/b.h5ad")?.unavailable;
+        expect(reason).toContain("container decoder timed out after");
+        expect(reason).toContain("container decoder output was cut at the sandbox byte cap");
     });
 
     it("issues nothing when there is nothing to read", async () => {

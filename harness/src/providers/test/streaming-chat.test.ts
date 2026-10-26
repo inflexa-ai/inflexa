@@ -2,30 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import { makeSession } from "../__fixtures__/session.js";
+import { asyncIterableOf } from "../../lib/test/async-iterable.js";
 import { makeMessage, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { createStreamingChat } from "../streaming-chat.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent } from "../types.js";
 
 const REQUEST: ChatRequest = { system: "test", messages: [], tools: {} };
-
-function streamOf(events: ChatStreamEvent[], toThrow?: unknown): AsyncIterable<ChatStreamEvent> {
-    let i = 0;
-    return {
-        [Symbol.asyncIterator]: () => ({
-            next: (): Promise<IteratorResult<ChatStreamEvent>> => {
-                if (i < events.length) {
-                    const value = events[i];
-                    if (value === undefined) return Promise.resolve({ done: true, value: undefined });
-                    i += 1;
-                    return Promise.resolve({ done: false, value });
-                }
-                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rig rejects with the exact abort reason the production stream carries (DOMException or Error), and the test matches it.
-                if (toThrow !== undefined) return Promise.reject(toThrow);
-                return Promise.resolve({ done: true, value: undefined });
-            },
-        }),
-    };
-}
 
 /** A `ChatProvider` whose `chatStream` yields the given deltas, then `done`. */
 function streamingFake(deltas: readonly string[], final: ChatResponse, options: { omitDone?: boolean } = {}): ChatProvider {
@@ -33,7 +15,9 @@ function streamingFake(deltas: readonly string[], final: ChatResponse, options: 
         capabilities: { toolCalling: true },
         chat: () => okAsync(final),
         chatStream: () =>
-            streamOf(deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })).concat(options.omitDone ? [] : [{ type: "done", response: final }])),
+            asyncIterableOf(
+                deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })).concat(options.omitDone ? [] : [{ type: "done", response: final }]),
+            ),
     };
 }
 
@@ -43,7 +27,7 @@ function throwingStreamFake(deltas: readonly string[], toThrow: unknown): ChatPr
         capabilities: { toolCalling: true },
         chat: () => okAsync(makeMessage([textBlock("unused")], "end_turn")),
         chatStream: () =>
-            streamOf(
+            asyncIterableOf(
                 deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })),
                 toThrow,
             ),
@@ -55,7 +39,8 @@ function doneThenThrowStreamFake(deltas: readonly string[], final: ChatResponse,
     return {
         capabilities: { toolCalling: true },
         chat: () => okAsync(final),
-        chatStream: () => streamOf(deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })).concat([{ type: "done", response: final }]), toThrow),
+        chatStream: () =>
+            asyncIterableOf(deltas.map((text): ChatStreamEvent => ({ type: "text-delta", text })).concat([{ type: "done", response: final }]), toThrow),
     };
 }
 

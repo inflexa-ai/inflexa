@@ -690,7 +690,7 @@ one DBOS engine across `bun test`, and carves out a fresh cortex schema for each
 test with `withSchema()`. Use it for a workflow test or a runtime-shape test. A
 pure body-level unit test must stay on `passthroughStep`.
 
-**Real-upstream integration tests** live under `src/providers/integration/`. There
+**Real-upstream integration tests** live under `src/providers/integration/test/`. There
 is one file for each provider, named `<provider>.integration.test.ts`. They hit a
 real external API with canonical queries. Assert on the response structure and on
 field presence, not on exact values.

@@ -4,7 +4,7 @@
  * JSONB re-sorts object keys on the way in, so a stored turn reads back with
  * every free-form payload rewritten and no longer matches the prefix the
  * provider's prompt cache holds. The fidelity of the round trip is asserted in
- * `memory/thread-history.test.ts`; this pins the column type that makes it hold,
+ * `memory/test/thread-history.test.ts`; this pins the column type that makes it hold,
  * on a fresh database and on one created before the type changed.
  */
 

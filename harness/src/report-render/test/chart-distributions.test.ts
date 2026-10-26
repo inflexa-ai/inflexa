@@ -101,6 +101,26 @@ describe("the points of a box and of a violin", () => {
         });
     });
 
+    it("gives no series name to the box and the outlier mark of a box chart with no group", () => {
+        const rows = [...cells("CD4 T", 201), { cluster: "CD4 T", pct_counts_mt: 90 }];
+        const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt" }), rows)._unsafeUnwrap();
+        const series = seriesOf(option);
+        expect(series.map((entry) => entry.type)).toEqual(["boxplot", "scatter"]);
+        for (const entry of series) expect(Object.hasOwn(entry, "name")).toBe(false);
+    });
+
+    it("names the box and the outlier mark of a grouped box chart by their group", () => {
+        const outlier = (group: string): ChartRow => ({ cluster: "B", sample: group, pct_counts_mt: 90 });
+        const rows = [...cells("B", 201, "s1"), outlier("s1"), ...cells("B", 201, "s2"), outlier("s2")];
+        const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt", group: "sample" }), rows)._unsafeUnwrap();
+        expect(seriesOf(option).map((entry) => [entry.type, entry.name])).toEqual([
+            ["boxplot", "s1"],
+            ["scatter", "s1"],
+            ["boxplot", "s2"],
+            ["scatter", "s2"],
+        ]);
+    });
+
     it("keeps the axis plain where each category passes the limit", () => {
         const option = deriveChartOption(block("box", { x: "cluster", y: "pct_counts_mt" }), cells("CD4 T", 201))._unsafeUnwrap();
         expect(pointsOf(option)).toEqual([]);

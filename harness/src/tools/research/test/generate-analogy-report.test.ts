@@ -198,8 +198,6 @@ describe("generateAnalogyReport sub-agent tool", () => {
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
         const parse = tool.inputSchema.safeParse({ problem: "" });
         expect(parse.success).toBe(false);
-
-        return Promise.resolve();
     });
 });
 

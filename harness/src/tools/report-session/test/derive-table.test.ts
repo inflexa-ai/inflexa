@@ -544,8 +544,6 @@ describe("a derivation that gives no table", () => {
         expect(describeExecFailure(execResult({ timedOut: true }))).toContain("deadline");
         expect(describeExecFailure(execResult({ syntheticFailure: { reason: "sandbox-dead" } }))).toContain("sandbox-dead");
         expect(describeExecFailure(execResult({}))).toBeUndefined();
-
-        return Promise.resolve();
     });
 
     it("gives no-output for a green script that wrote no file", async () => {

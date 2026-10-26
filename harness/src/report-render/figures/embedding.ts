@@ -243,16 +243,21 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
             ...HIDDEN_AXIS_PARTS,
             ...keyFields,
         });
+        const yKeyFields = key
+            ? {
+                  name: `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}`,
+                  nameLocation: "start",
+                  nameRotate: 90,
+                  nameGap: 0,
+                  nameTextStyle: { ...keyStyle, verticalAlign: "bottom" },
+              }
+            : undefined;
         yAxes.push({
             type: "value",
             gridIndex: panel,
             ...ranges.y,
             ...HIDDEN_AXIS_PARTS,
-            name: `${valueAxisTitle(context.labels, channelName(y))}${KEY_ARROW}`,
-            nameLocation: "start",
-            nameRotate: 90,
-            nameGap: 0,
-            nameTextStyle: { ...keyStyle, verticalAlign: "bottom" },
+            ...yKeyFields,
         });
     }
     // Each panel names its facet value on an axis of no series over its square, thus the name moves with the square.

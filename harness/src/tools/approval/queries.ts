@@ -228,19 +228,13 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
         ).andThen((updated) => {
             if ((updated.rowCount ?? 0) === 0) return discriminateMiss(client, id);
             if (reply.kind !== "always") return okAsync<AnswerOutcome, DbError>("applied");
-            // The cast's non-null `grant_key` is sound without any boot-order
-            // caveat: every insert writes grant_key (command when the tool supplied
-            // none), and the COALESCE above covers any pending row that predates
-            // the column — `command` is NOT NULL, so the key can never be null.
-            // `user_id` reads the same way: its COALESCE gives the empty string for a
-            // row that predates the column, and that identity matches no real user.
             // The COALESCEs make every returned field non-null: each insert writes
             // grant_key (command when the tool supplied none) and user_id (empty
             // string when the row predates the column), so the row schema below can
             // demand all three strings; a row that misses one is refused through the
             // transaction's `DbError` channel.
-            const granted = GrantedRowSchema.parse(updated.rows[0]);
             return tryMutation("asks.answer:grant", async () => {
+                const granted = GrantedRowSchema.parse(updated.rows[0]);
                 await client.query({
                     text: `INSERT INTO cortex_ask_grants (analysis_id, user_id, grant_key, created_at)
                       VALUES ($1, $2, $3, $4) ON CONFLICT (analysis_id, user_id, grant_key) DO NOTHING`,

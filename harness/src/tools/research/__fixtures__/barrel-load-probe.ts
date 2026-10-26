@@ -5,6 +5,7 @@
  * extraction tests, which load `pdf-parse` lazily and legitimately.
  */
 
+import { errorMessageOf } from "../../../lib/thrown.js";
 import { textOf } from "../../../lib/unknown-text.js";
 
 const probe = async (): Promise<void> => {
@@ -20,6 +21,6 @@ const probe = async (): Promise<void> => {
 };
 
 probe().catch((error: unknown) => {
-    process.stderr.write(textOf(error));
+    process.stderr.write(errorMessageOf(error) ?? textOf(error));
     process.exit(1);
 });

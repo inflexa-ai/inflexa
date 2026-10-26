@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ArtifactTableReference, ArtifactValueReference } from "../../contracts/report-reference.js";
-import { addBlock, changeBlock, moveBlock, removeBlock, setTitle } from "../draft-operations.js";
+import { addBlock, changeBlock, moveBlock, removeBlock, setChildren, setTitle } from "../draft-operations.js";
 import type { DraftBlock, DraftDocument } from "../draft.js";
 import type { ReportSnapshot } from "../reference-resolver.js";
 
@@ -761,6 +761,21 @@ describe("setTitle", () => {
 
         expect(next.title).toBe("Differential expression");
         expect(next.sections).toEqual(before.sections);
+        expect(draft).toEqual(before);
+    });
+});
+
+describe("setChildren", () => {
+    it("refuses a candidate that puts a chart block at the root and leaves the draft as it was", () => {
+        const draft = chartDraft();
+        const before = structuredClone(draft);
+        const chart: DraftBlock = { kind: "chart", id: "chart-2", binding: tableReference(), chartType: "bar", encoding: { x: "gene", y: "padj" } };
+
+        const result = setChildren(draft, [], [chart]);
+
+        const refusal = result._unsafeUnwrapErr();
+        expect(refusal.reason).toBe("atom-at-root");
+        expect(refusal.detail).toContain("chart");
         expect(draft).toEqual(before);
     });
 });

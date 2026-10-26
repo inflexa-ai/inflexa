@@ -526,7 +526,7 @@ describe("the block look", () => {
     it("names the block in the call detail, and the page when the input names none", () => {
         const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve("/unused"), chrome: {} });
 
-        expect(tool.describeCall?.bind(tool)).toBeDefined();
+        expect(typeof tool.describeCall).toBe("function");
         const describeCall = tool.describeCall?.bind(tool);
         if (describeCall === undefined) throw new Error("the tool declares no call detail");
         expect(describeCall({ blockId: "sec-results" })).toBe("look at sec-results");
@@ -736,7 +736,7 @@ describe("the transport precedence", () => {
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string | undefined {
-        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        expect(typeof tool.describeResult).toBe("function");
         const describeResult = tool.describeResult?.bind(tool);
         if (describeResult === undefined) throw new Error("the tool declares no result detail");
         return describeResult({}, result);

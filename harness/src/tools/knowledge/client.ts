@@ -168,7 +168,7 @@ export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
 // ── The template contract ───────────────────────────────────────────
 
-/** A scalar on the wire. Absence rides the optional key; the service omits, never nulls. */
+/** A scalar on the wire. */
 const SlotScalarSchema = z.union([z.string(), z.number(), z.boolean()]);
 
 /** A slot value on the wire: a scalar, or a list of strings — the contract the service states for a default. */
@@ -188,7 +188,10 @@ const TemplateParameterSchema = z.looseObject({
     /** True for a slot whose value is a fact of the machine (a path, a column name, a level label, a formula): the host binds it, and the service never sees it. */
     local: z.boolean().optional(),
     required: z.boolean().optional(),
-    default: SlotValueSchema.optional(),
+    /** A `null` default is a slot with no default: it parses to an absent value. */
+    default: SlotValueSchema.nullish()
+        .transform((value) => value ?? undefined)
+        .optional(),
     default_source: z.string().optional(),
     enum: z.array(z.string()).optional(),
     pattern: z.string().optional(),

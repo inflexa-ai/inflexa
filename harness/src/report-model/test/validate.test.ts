@@ -1640,7 +1640,7 @@ describe("validateReport — prepare before the loop", () => {
 
     it("keeps the behavior of a realization without prepare", async () => {
         const withoutPrepare = createFixtureResolver();
-        expect(withoutPrepare.prepare?.bind(withoutPrepare)).toBeUndefined();
+        expect(typeof withoutPrepare.prepare).toBe("undefined");
         expectValid(await validateReport(groundedReport(), snapshot, withoutPrepare));
     });
 });

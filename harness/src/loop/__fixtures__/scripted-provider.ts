@@ -3,6 +3,7 @@ import { type ResultAsync, okAsync } from "neverthrow";
 import type { ProviderError } from "../../providers/errors.js";
 import type { AgentSession as Session } from "../../auth/types.js";
 import { WRAP_UP_REQUEST } from "../run-agent.js";
+import { asyncIterableOf } from "../../lib/test/async-iterable.js";
 
 export type TextBlock = { type: "text"; text: string };
 export type ThinkingBlock = { type: "reasoning"; text: string; providerOptions?: { anthropic: { signature: string } } };
@@ -69,21 +70,6 @@ function textDeltas(response: ChatResponse): string[] {
     return content.filter((part) => part.type === "text").map((part) => part.text);
 }
 
-function streamOf(events: ChatStreamEvent[]): AsyncIterable<ChatStreamEvent> {
-    let i = 0;
-    return {
-        [Symbol.asyncIterator]: () => ({
-            next: (): Promise<IteratorResult<ChatStreamEvent>> => {
-                if (i >= events.length) return Promise.resolve({ done: true, value: undefined });
-                const value = events[i];
-                if (value === undefined) return Promise.resolve({ done: true, value: undefined });
-                i += 1;
-                return Promise.resolve({ done: false, value });
-            },
-        }),
-    };
-}
-
 export type ScriptedProvider = ChatProvider & {
     readonly calls: ChatRequest[];
     readonly sessions: Session[];
@@ -124,7 +110,7 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
                 ...textDeltas(response).map((text): ChatStreamEvent => ({ type: "text-delta", text })),
                 { type: "done", response },
             ];
-            return streamOf(events);
+            return asyncIterableOf(events);
         },
     };
 }

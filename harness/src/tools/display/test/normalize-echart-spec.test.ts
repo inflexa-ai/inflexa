@@ -93,6 +93,11 @@ describe("normalizeEchartSpec — grid", () => {
         expect(grid(out).top).toBe("12%");
     });
 
+    it("keeps grid.top at 8% when the graphic list is empty", () => {
+        const out = normalizeEchartSpec({ ...barSpec(6), graphic: [] }, {});
+        expect(grid(out).top).toBe("8%");
+    });
+
     it("raises grid.bottom to 25% for rotated labels (single series, no bottom legend)", () => {
         expect(grid(normalizeEchartSpec(barSpec(14, 1), {})).bottom).toBe("25%");
     });

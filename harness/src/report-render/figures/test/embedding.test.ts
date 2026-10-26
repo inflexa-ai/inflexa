@@ -232,6 +232,13 @@ describe("the facet of an embedding", () => {
         expect(second.name).toBeUndefined();
     });
 
+    it("keys the y dimension under the first square alone", () => {
+        const [first, second] = optionArray(option, "yAxis");
+        if (first === undefined || second === undefined) throw new Error("the option holds fewer than two y axes");
+        expect(first.name).toBe("UMAP_2 →");
+        expect(Object.hasOwn(second, "name")).toBe(false);
+    });
+
     it("draws the zero cells of each panel in the ground", () => {
         const map = firstOf(optionArray(option, "visualMap"), "visual map");
         expect(map.seriesIndex).toEqual([0, 1]);

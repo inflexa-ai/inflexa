@@ -418,6 +418,19 @@ A chart with an auxiliary series (an interval, an outline, or a facet panel) MUS
 - **WHEN** the caller renders a violin, a stacked bar, a normalized bar, or a radar with zero rows
 - **THEN** the page holds the chart container, and the render returns no problem
 
+### Requirement: A box series with no group carries no name
+The derived option of a box chart with no `group` channel MUST give no `name` to its box series and to its outlier series.
+
+A series name shows in the tooltip header and in a legend. A box with no group has one lane, and that lane has no group value to name. Thus a name for it would show text that no row holds, for example `undefined`.
+
+#### Scenario: An ungrouped box has no series name
+- **WHEN** the caller renders a box chart with no `group` channel
+- **THEN** the box series and the outlier series of the option carry no `name` value
+
+#### Scenario: A grouped box names each series by its group
+- **WHEN** the caller renders a box chart with a `group` channel of two conditions
+- **THEN** the box series of each group carries the name of its group
+
 ### Requirement: The table data rides a data-script asset
 The renderer MUST emit the bound table of each table block as a columnar data-script payload: a columns list, row arrays, and a dictionary for a string that occurs more than one time. The payload registers under one global map, keyed by the block id, and a classic `script` tag references the asset. The payload MUST carry the pre-bound row total of the artifact beside its rows. The table markup holds the header and no data rows. The renderer MUST return the payloads beside the page string, because the renderer writes no file. The payload derivation MUST be deterministic, thus two renders of one document give byte-identical payloads.
 

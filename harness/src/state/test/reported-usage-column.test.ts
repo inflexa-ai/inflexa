@@ -6,7 +6,7 @@
  * database created before the column existed has to read back with every row's
  * rollup absent rather than backfilled, defaulted, or zeroed. That is a property
  * of the DDL, not of the write path, which is why it is pinned here rather than
- * in `memory/thread-history.test.ts` (where the round trip through `appendTurn`
+ * in `memory/test/thread-history.test.ts` (where the round trip through `appendTurn`
  * is asserted).
  */
 

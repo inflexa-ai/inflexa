@@ -200,7 +200,13 @@ async function decodeContainers(
     for (const line of result.stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed.startsWith("{")) continue;
-        const parsed = safeParseJsonAs(trimmed, ReadoutLineSchema);
+        let parsed: z.ZodSafeParseResult<z.infer<typeof ReadoutLineSchema>>;
+        try {
+            parsed = safeParseJsonAs(trimmed, ReadoutLineSchema);
+        } catch {
+            // The sandbox caps stdout and a timeout can stop the decoder mid-write, so the last line can be cut.
+            continue;
+        }
         if (!parsed.success) continue;
         const target = parsed.data.path ? byAbsolute.get(parsed.data.path) : undefined;
         if (!target) continue;
@@ -222,12 +228,16 @@ async function decodeContainers(
     return readouts;
 }
 
+const CUT_OUTPUT_REASON = "container decoder output was cut at the sandbox byte cap";
+
 function describeExecFailure(result: ExecResult): string {
-    if (result.timedOut) return `container decoder timed out after ${ENRICH_TIMEOUT_SECONDS}s`;
-    if (result.syntheticFailure) return `container decoder did not complete: ${result.syntheticFailure.reason}`;
+    const cut = result.stdoutTruncated ? ` (${CUT_OUTPUT_REASON})` : "";
+    if (result.timedOut) return `container decoder timed out after ${ENRICH_TIMEOUT_SECONDS}s${cut}`;
+    if (result.syntheticFailure) return `container decoder did not complete: ${result.syntheticFailure.reason}${cut}`;
     if (result.exitCode !== 0) {
         const stderr = collapseWhitespace(result.stderr).slice(0, MAX_STDERR_CHARS);
-        return `container decoder exited ${result.exitCode ?? "with no code"}${stderr ? `: ${stderr}` : ""}`;
+        return `container decoder exited ${result.exitCode ?? "with no code"}${stderr ? `: ${stderr}` : ""}${cut}`;
     }
+    if (result.stdoutTruncated) return CUT_OUTPUT_REASON;
     return "container decoder reported nothing for this member";
 }

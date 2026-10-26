@@ -1,3 +1,4 @@
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { describe, expect, it } from "bun:test";
 import { errAsync } from "neverthrow";
 
@@ -5,7 +6,7 @@ import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { AgentChat } from "../../providers/types.js";
 import { runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
-import { suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal } from "../suspension.js";
+import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal } from "../suspension.js";
 
 describe("a chat turn with a suspend error", () => {
     it("fails the turn, and the host reads the reason of the host by the kind of the error", async () => {
@@ -62,5 +63,25 @@ describe("the suspension of a refusal", () => {
             kind: "suspended",
             reason: "r",
         });
+    });
+});
+
+describe("cancelSelf", () => {
+    it("rejects with an error that names the cause and cancels nothing when no workflow runs", async () => {
+        const cancelled: string[] = [];
+        const original = DBOS.cancelWorkflow.bind(DBOS);
+        // A direct assignment on the DBOS class, which `mock.restore()` does not undo, thus the `finally` puts the original back.
+        Reflect.set(DBOS, "cancelWorkflow", (workflowId: string) => {
+            cancelled.push(workflowId);
+            return Promise.resolve();
+        });
+
+        try {
+            await expect(cancelSelf("self-cancel-suspended")).rejects.toThrow("outside a workflow");
+        } finally {
+            Reflect.set(DBOS, "cancelWorkflow", original);
+        }
+
+        expect(cancelled).toEqual([]);
     });
 });

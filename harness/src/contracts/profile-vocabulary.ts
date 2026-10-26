@@ -9,7 +9,7 @@
  * It lives in `contracts/` because the persisted profile carries these ids: a consumer
  * rendering a stored group needs the category's meaning without importing the ledger,
  * the schema module, or zod. Hosts do not extend it — the package owns the catalogue and
- * versions it with the harness.
+ * versions it with the harness. Each import from outside `contracts/` is a type import.
  *
  * Every category carries its nearest neighbour and the rule that separates them, because
  * a category list without one is a list of labels an author picks by vibe. Every
@@ -17,8 +17,6 @@
  * would TYPICALLY consume one value's files as a different substrate than another's.
  * The agent follows the default and deviates only with a stated reason.
  */
-
-import { presentGet } from "../lib/present.js";
 
 // ── Group roles ────────────────────────────────────────────────────────────
 
@@ -491,11 +489,15 @@ const GROUP_CATEGORY_BY_ID = new Map(GROUP_CATEGORIES.map((entry) => [entry.id, 
 const DIMENSION_CATEGORY_BY_ID: Map<string, DimensionCategoryEntry> = new Map(DIMENSION_CATEGORIES.map((entry) => [entry.id, entry]));
 
 export function groupCategoryEntry(id: GroupCategory): GroupCategoryEntry {
-    return presentGet(GROUP_CATEGORY_BY_ID, id, "the group category entry");
+    const entry = GROUP_CATEGORY_BY_ID.get(id);
+    if (entry === undefined) throw new Error(`the group category entry "${id}" is absent`);
+    return entry;
 }
 
 export function dimensionCategoryEntry(id: DimensionCategory): DimensionCategoryEntry {
-    return presentGet(DIMENSION_CATEGORY_BY_ID, id, "the dimension category entry");
+    const entry = DIMENSION_CATEGORY_BY_ID.get(id);
+    if (entry === undefined) throw new Error(`the dimension category entry "${id}" is absent`);
+    return entry;
 }
 
 /**

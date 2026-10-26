@@ -127,12 +127,12 @@ export function optionPair(value: unknown): [number, number] {
     return [first, second];
 }
 
-/** The function that the page source builds under the given name, called with unknown arguments. */
+/** The function that the page source builds under the given name, called with unknown arguments. Each
+ * call runs the page source again, so a call sees new page globals. */
 export function pageCall(source: string, name: string): (...args: unknown[]) => unknown {
-    const page = pageExports([], [], source, [[name, name]]);
-    const made = page[name];
-    if (typeof made !== "function") throw new Error(`the page source holds no ${name}`);
     return (...args: unknown[]) => {
+        const made = pageExports([], [], source, [[name, name]])[name];
+        if (typeof made !== "function") throw new Error(`the page source holds no ${name}`);
         const given: unknown = Reflect.apply(made, undefined, args);
         return given;
     };

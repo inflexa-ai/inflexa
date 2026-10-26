@@ -889,11 +889,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             workload: workloadOf(session),
             servedBy: servedBy === "" ? undefined : servedBy,
         });
-        return {
-            ...response,
-            message: withoutThinking(response.message),
-            servedModelId: servedBy === "" ? undefined : servedBy,
-        };
+        const settled = { ...response, message: withoutThinking(response.message) };
+        return servedBy === "" ? settled : { ...settled, servedModelId: servedBy };
     }
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {

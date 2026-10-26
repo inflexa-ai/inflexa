@@ -52,9 +52,10 @@ type FreshnessRow = {
 };
 
 async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale: boolean; lastIndexedAt: Date | null; ageDays: number | null }> {
+    // EXTRACT gives numeric, which node-pg returns as a string, thus the float8 cast makes `age_days` a number.
     const { rows } = await pool.query<FreshnessRow>(
         `SELECT MAX(indexed_at) AS last_indexed_at,
-            EXTRACT(EPOCH FROM (NOW() - MAX(indexed_at))) / 86400 AS age_days
+            (EXTRACT(EPOCH FROM (NOW() - MAX(indexed_at))) / 86400)::float8 AS age_days
      FROM cortex_regulatory_chunks`,
     );
     const row = rows[0];

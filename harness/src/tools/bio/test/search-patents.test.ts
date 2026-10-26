@@ -79,6 +79,23 @@ describe("search_patents — action 'search'", () => {
         expect(tool.inputSchema.safeParse({ query: "imatinib", limit: 21 }).success).toBe(false);
     });
 
+    it("states the YYYY-MM-DD shape of each date filter in the JSON Schema of the input", () => {
+        const names = [
+            "minPublicationDate",
+            "maxPublicationDate",
+            "minFilingDate",
+            "maxFilingDate",
+            "minPriorityDate",
+            "maxPriorityDate",
+            "minGrantDate",
+            "maxGrantDate",
+        ];
+        const properties = z.toJSONSchema(tool.inputSchema).properties;
+        for (const name of names) {
+            expect(properties).toMatchObject({ [name]: { pattern: "^\\d{4}-\\d{2}-\\d{2}$" } });
+        }
+    });
+
     it("accepts a YYYY-MM-DD date filter and rejects any other text shape", () => {
         expect(tool.inputSchema.safeParse({ query: "imatinib", minPublicationDate: "2026-08-24" }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ query: "imatinib", minPublicationDate: "26-08-24" }).success).toBe(false);

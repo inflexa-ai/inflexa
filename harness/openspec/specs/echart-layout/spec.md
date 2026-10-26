@@ -179,6 +179,19 @@ lay out), for an array of grids, and for a grid the author sized explicitly with
 - **WHEN** the authored `grid` carries `width` or `height`
 - **THEN** no margin SHALL be added to it
 
+### Requirement: An empty graphic list is not an annotation for the grid top
+The grid default MUST read an empty `graphic` list as no annotation. Thus the default `top` of a cartesian chart stays `"8%"`.
+
+A figure can give an empty `graphic` list when it has no statistics or no key to draw. An empty list draws nothing, thus it does not share the canvas with the plot.
+
+#### Scenario: An empty graphic list keeps the default top
+- **WHEN** a cartesian spec with no authored `grid.top` and a `graphic` member that is an empty list is normalized
+- **THEN** `grid.top` is `"8%"`
+
+#### Scenario: A graphic element moves the top down
+- **WHEN** a cartesian spec with no authored `grid.top` and a `graphic` list of one text element is normalized
+- **THEN** `grid.top` is `"12%"`
+
 ### Requirement: A save-as-image toolbox is injected
 
 The harness SHALL inject `toolbox.feature.saveAsImage` with `type: "png"` and a

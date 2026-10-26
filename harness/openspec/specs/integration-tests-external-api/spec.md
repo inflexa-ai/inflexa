@@ -10,8 +10,8 @@ The golden-fixture tier sits between the two below: captured real payloads with
 drift twins, run offline on every `bun test`.
 
 The first tier is fast, deterministic **unit tests that stub `globalThis.fetch`**
-and never reach the network. They are colocated with the tool
-(`src/tools/bio/<provider>.test.ts`, `src/tools/research/<name>.test.ts`), run on
+and never reach the network. They sit in the test folder of the tool
+(`src/tools/bio/test/<provider>.test.ts`, `src/tools/research/test/<name>.test.ts`), run on
 every `bun test`, and assert the tool's behavioral contract: a found query yields
 a populated data variant; a not-found upstream yields an *empty* data variant (a
 data outcome, never an `is_error`); and an upstream 5xx makes `execute` throw so
@@ -20,7 +20,7 @@ harness-agent-loop spec). Each test saves the real `fetch` and restores it in
 `afterEach`, so stubbing one tool never leaks into another.
 
 The second tier is **real-upstream integration tests** under
-`src/providers/integration/`, named `<name>.integration.test.ts`, that exercise
+`src/providers/integration/test/`, named `<name>.integration.test.ts`, that exercise
 behavior only a live endpoint can confirm. Each wraps its `describe` block in
 `describe.skipIf(...)` so the whole block auto-skips unless the run opts in. A
 provider that needs a key gates on that key, for example `ANTHROPIC_API_KEY`

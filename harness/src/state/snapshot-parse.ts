@@ -109,8 +109,9 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     if (issues.length > 0) {
         return err(issues);
     }
-    // An absent part stays absent in the parsed value. Thus a reload gives the same shape that the pin
-    // wrote, and an equality test over a stored snapshot holds across the round trip.
+    // An absent part comes back as an own key that holds `undefined`, because the literal below always
+    // sets the three keys. An equality that ignores `undefined` members holds across the round trip; a
+    // check that counts the own keys does not.
     return ok({
         artifacts,
         citations: citations.data,

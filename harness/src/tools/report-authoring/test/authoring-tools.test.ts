@@ -625,6 +625,30 @@ describe("read_block", () => {
 
         expect(result._unsafeUnwrap()).toEqual({ found: false });
     });
+
+    it("gives a tool error that is not retryable and names the block id for a stored atom that the authoring grammar refuses", async () => {
+        // The extra member passes through a variable, thus the compiler admits it and only the authoring grammar refuses it.
+        const drifted = {
+            kind: "metric" as const,
+            id: "m9",
+            label: "Coverage",
+            value: {
+                kind: "artifact-value" as const,
+                path: "runs/r1/s1/output/de.csv",
+                hash: PINNED_HASH,
+                locator: { column: "padj", rowFilter: { column: "gene", op: "eq" as const, value: "TP53" } },
+            },
+            legacy: true,
+        };
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: { title: "", sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [drifted] }] }, snapshot });
+        const tools = createReportAuthoringTools(gateway);
+
+        const failure = (await tools.read_block.execute({ targetId: "m9" }, ctxForThread("t1")))._unsafeUnwrapErr();
+
+        expect(failure.retryable).toBe(false);
+        expect(failure.error).toContain("m9");
+    });
 });
 
 describe("the tool surface", () => {
