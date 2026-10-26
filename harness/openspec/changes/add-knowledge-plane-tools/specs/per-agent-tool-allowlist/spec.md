@@ -6,11 +6,11 @@
 
 `BASE_SANDBOX_TOOLS` MUST list `knowledgeTemplate`, thus each sandbox agent lists it. The template follows the step: the planner binds a template to a step and routes the step to the specialist that owns its data object. A specialist that does not list the tool cannot render the template of its step.
 
-#### Scenario: An unknown name throws
+#### Scenario: Unknown tool name throws during agent construction
 
-- **GIVEN** an agent meta that names a tool with no realization
-- **WHEN** the agent is built
-- **THEN** construction throws and names the tool
+- **WHEN** `createSandboxAgent` is invoked with a meta whose `tools` names a tool with no implementation
+- **THEN** construction throws an error naming the offending tool
+- **AND** no agent definition is produced
 
 #### Scenario: The template tool is absent without a client
 

@@ -403,7 +403,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                               return {
                                   name: labelColumn === undefined ? undefined : String(rows[index]?.[labelColumn]),
                                   value: [xs[index] ?? 0, zeroY],
-                                  itemStyle: { color: group === undefined ? undefined : colorOf(categoryName(group)) },
+                                  itemStyle: { color: group === undefined ? MANHATTAN_COLORS[0] : colorOf(categoryName(group)) },
                               };
                           }),
                       },

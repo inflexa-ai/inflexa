@@ -12,9 +12,6 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { safeParseJsonAs } from "../lib/parse-json.js";
-import { parseUnknownRecord } from "../lib/unknown-containers.js";
-
 /**
  * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
  * resolver compares this text against a fresh read with exact string equality, and the producer emits
@@ -314,6 +311,9 @@ const REFERENCE_URI_PREFIX = "inflexa-ref:v1:";
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the base64url alphabet check; Buffer.from never throws, so this explicit shape check is the only malformed-payload guard.
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+/** The module imports no value from outside `contracts/`, so the generic record schema lives here. */
+const UnknownRecordSchema = z.record(z.string(), z.unknown());
+
 /**
  * Sort the keys of every object so that serialization is deterministic. An array keeps its order,
  * because the order of a derivation's inputs carries meaning.
@@ -322,8 +322,9 @@ function sortKeysDeep(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(sortKeysDeep);
     }
-    const record = parseUnknownRecord(value);
-    if (record === undefined) return value;
+    const parsedRecord = UnknownRecordSchema.safeParse(value);
+    if (!parsedRecord.success) return value;
+    const record = parsedRecord.data;
     const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(record).sort()) {
         sorted[key] = sortKeysDeep(record[key]);
@@ -370,11 +371,13 @@ export function parseReference(uri: string): Result<Reference, ParseReferenceErr
         return err({ kind: "invalid-payload" });
     }
     const json = Buffer.from(payload, "base64url").toString("utf8");
-    let parsed;
+    let decoded: unknown;
     try {
-        parsed = safeParseJsonAs(json, ReferenceSchema);
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- contracts/ imports no value from lib/, and ReferenceSchema checks the result on the next line.
+        decoded = JSON.parse(json);
     } catch {
         return err({ kind: "invalid-json" });
     }
+    const parsed = ReferenceSchema.safeParse(decoded);
     return parsed.success ? ok(parsed.data) : err({ kind: "schema-mismatch" });
 }
