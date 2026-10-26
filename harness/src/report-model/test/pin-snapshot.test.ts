@@ -348,9 +348,11 @@ describe("the citation evidence of the pin", () => {
 
     it("fails the pin when the run listing fails", async () => {
         await seedRun("run-1");
-        // A store fault is not absence. The dropped table makes the listing fail against a real driver
-        // error, thus the pin refuses instead of writing an empty citation list.
+        // A store fault is not absence. A table with no columns makes the listing fail against a real driver
+        // error, thus the pin refuses instead of writing an empty citation list. A plain drop is not enough:
+        // the search path of the test schema ends at `public`, which can hold a `cortex_runs` that answers.
         await pool.query("DROP TABLE cortex_runs");
+        await pool.query("CREATE TABLE cortex_runs ()");
 
         const result = await pinReportSnapshot(pool, ANALYSIS, { resolveWorkspaceRoot: resolveRoot });
 
