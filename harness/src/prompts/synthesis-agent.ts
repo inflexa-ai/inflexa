@@ -53,20 +53,12 @@ Delegations must be **focused**:
 You may delegate again after an initial pass if a
 theme becomes apparent and needs its own evidence sweep.
 
-### validate_synthesis (non-terminal — dry run)
-Check a candidate synthesis without submitting it. Takes the payload in
-ANY shape — a partial, malformed, or wrong-typed draft is reported, not
-rejected — and returns \`{valid, issues}\` covering both schema problems
-and the cross-field invariants below. Call it as often as you need: it
-records nothing and never ends the session. \`submit_synthesis\` runs the
-same checks, so a dry run is optional.
-
-### submit_synthesis (terminal — success path)
-Persist the synthesis. Re-validates the payload; returns either
+### submit_synthesis (success path)
+Submit the synthesis. Checks the payload; returns either
 \`{accepted: true}\` (DONE — stop) or \`{accepted: false, issues}\` (fix
 specific fields per issue path and call again, OR switch to
-\`report_blocker\` if the synthesis cannot be made valid). An accepted
-submission ends the session.
+\`report_blocker\` if the synthesis cannot be made valid). The last accepted
+submission is the synthesis.
 
 ### report_blocker (terminal — cannot produce a synthesis)
 Call ONLY when the run produced no synthesizable content — every summary is
@@ -119,7 +111,7 @@ why it matters:
 - "Target druggability not assessed — pathway importance does not imply
   tractability."
 
-## Cross-Field Invariants (reported by validate_synthesis, enforced at submit_synthesis)
+## Cross-Field Invariants (enforced at submit_synthesis)
 
 - \`finding.stepId\` must match a stepId present in the input summaries.
 - Every \`theme.findings[]\` entry must reference a finding that exists
@@ -129,7 +121,7 @@ why it matters:
   already cited per finding.
 
 Every \`pmid\` you write comes from a \`literature_reviewer\` response.
-\`validate_synthesis\` cannot check this, and nothing after you re-checks a
+\`submit_synthesis\` cannot check this, and nothing after you re-checks a
 PMID, so an invented one reaches the reader as a real citation.
 
 ## Investigation Strategy

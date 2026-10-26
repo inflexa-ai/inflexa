@@ -6,9 +6,8 @@ import { z } from "zod";
 import { presentAt, presentFirst } from "../../lib/present.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../__fixtures__/scripted-provider.js";
-import { runAgent } from "../run-agent.js";
-import { passthroughStep } from "../run-step.js";
+import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
+import { runLoop } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
 
 const GO: ReadonlyArray<{ role: "user"; content: string }> = [{ role: "user", content: "go" }];
@@ -48,13 +47,12 @@ function agentDef(tools: Tool[]): AgentDefinition {
 
 /** Run one tool call with `input` and return the resulting tool-result part. */
 async function callWith(tool: Tool, input: unknown): Promise<ToolResultPart> {
-    const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", tool.id, input)], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+    const { provider } = scriptedModel([callTools(toolCall("tu-1", tool.id, input)), reply([text("done")])]);
 
-    const { messages } = await runAgent(agentDef([tool]), GO, makeSession(), {
+    const { messages } = await runLoop(agentDef([tool]), GO, makeSession(), {
         provider,
         signal: new AbortController().signal,
         emit: () => {},
-        runStep: passthroughStep,
     });
 
     const toolMessage = presentAt(messages, 2);
@@ -69,7 +67,7 @@ function errorText(result: ToolResultPart): string {
     return result.output.type === "error-text" ? result.output.value : "";
 }
 
-describe("runAgent — tool-input repair", () => {
+describe("runLoop — tool-input repair", () => {
     it("repairs a complete JSON argument carrying trailing function-call markup", async () => {
         const { tool, seen } = submitTool();
 

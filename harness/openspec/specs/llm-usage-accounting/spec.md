@@ -7,7 +7,7 @@ How the harness records the LLM token usage of each call. Each call gives an att
 
 ### Requirement: The UsageRecorder seam is fire-and-forget with a no-op default
 
-The harness MUST declare a `UsageRecorder` capability seam. The package barrel MUST export a no-op OSS default. The seam SHALL be wired at the composition root (`assembleCoreRuntime`) as an optional dependency defaulting to the no-op, reaching every `runAgent` invocation site (conversation agent, sub-agent tool factories, workflow step bodies) through the existing deps bags.
+The harness MUST declare a `UsageRecorder` capability seam. The package barrel MUST export a no-op OSS default. The seam SHALL be wired at the composition root (`assembleCoreRuntime`) as an optional dependency defaulting to the no-op, reaching every `runLoop` invocation site (conversation agent, sub-agent tool factories, workflow step bodies) through the existing deps bags.
 
 `UsageRecorder.record(record)` MUST return `ResultAsync<void, NoticeFailure>`. Thus `record` is a notice, as the
 host-hooks capability describes. `record` MUST give a failure as an `err`, not as a throw.
@@ -36,19 +36,19 @@ recorder that blocks MUST NOT make a run slower.
 
 ### Requirement: Usage records are replay-safe via deterministic record keys
 
-When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in order: the `runId`; the frame's `stepId` when present; the session's provenance call path; the tool-call `invocationId` when the loop runs nested inside a tool dispatch, or the workflow id of the attempt for the data-profile loop, whose frame is the same constant for every profile; and the loop's deterministic step name — every component replay-stable, so every replay of the same call yields the identical key and no two distinct calls under one run share one. Step names alone are NOT unique across the loops that share a frame (each loop invocation restarts its names), which is why the call-path and invocation-id components are required, not decorative. Outside a `RunFrame` (the HTTP chat path, where no replay exists) the key SHALL be a freshly minted unique id. Consumers MUST upsert on `recordKey`: the harness guarantees key stability across replays, not at-most-once delivery.
+When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in order: the `runId`; the frame's `stepId` when present; the session's provenance call path; the tool-call `invocationId` when the loop runs nested inside a tool dispatch, or the workflow id of the attempt for the data-profile loop, whose frame is the same constant for every profile; and the id of the model response, which the recorded model step gives again on a replay — every component replay-stable, so every replay of the same call yields the identical key and no two distinct calls under one run share one. The call-path and invocation-id components keep the keys of two loops under one frame apart even when the two loops get the same response id. Outside a `RunFrame` (the HTTP chat path, where no replay exists) the key SHALL be a freshly minted unique id. Consumers MUST upsert on `recordKey`: the harness guarantees key stability across replays, not at-most-once delivery.
 
 #### Scenario: Two steps of one run yield distinct keys
 
 - **GIVEN** two steps of the same analysis run whose loops each make a first LLM call
 - **WHEN** their records are produced
-- **THEN** the two records SHALL carry distinct `recordKey`s despite sharing the `runId` and the per-workflow step name
+- **THEN** the two records SHALL carry distinct `recordKey`s despite sharing the `runId`
 
 #### Scenario: Sibling loops sharing one frame yield distinct keys
 
 - **GIVEN** two different agent loops running under the same `RunFrame` (e.g. a step's file describer and its summary writer)
 - **WHEN** each loop's first LLM call is recorded
-- **THEN** the two records SHALL carry distinct `recordKey`s despite identical frame ids and identical loop-local step names
+- **THEN** the two records SHALL carry distinct `recordKey`s despite identical frame ids and identical response ids
 
 #### Scenario: Parallel invocations of one sub-agent yield distinct keys
 
@@ -65,8 +65,8 @@ When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in 
 #### Scenario: A replayed step body does not double-count
 
 - **GIVEN** a workflow body replayed by the durability engine after a crash
-- **WHEN** the body re-fires `record` for an LLM call whose durable step was served from cache
-- **THEN** the record SHALL carry the same `recordKey` as the original delivery, so an upserting consumer counts the call once
+- **WHEN** the replay serves an LLM call from the checkpoint of its durable step
+- **THEN** the harness SHALL deliver no second record for that call, and the record of the first delivery keeps its `recordKey`, so an upserting consumer counts the call once
 
 #### Scenario: Chat-path keys are unique per call
 
@@ -75,7 +75,7 @@ When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in 
 
 ### Requirement: The chat finish event carries own and turn usage rollups
 
-Every loop's `FinishEvent` SHALL carry an optional usage rollup — that loop's accumulated `ChatUsage` across its own LLM calls, the forced wrap-up included — source-tagged like every chat event. The root loop of a turn SHALL additionally carry a turn total folding its own calls with every descendant loop's. Each figure SHALL be absent when no covered call reported usage, never zero. An error-terminated turn emits no finish event and therefore no rollup — the record ledger remains the complete account.
+Every loop's `FinishEvent` SHALL carry an optional usage rollup — that loop's accumulated `ChatUsage` across its own LLM calls — source-tagged like every chat event. The root loop of a turn SHALL additionally carry a turn total folding its own calls with every descendant loop's. Each figure SHALL be absent when no covered call reported usage, never zero. An error-terminated turn emits no finish event and therefore no rollup — the record ledger remains the complete account.
 
 #### Scenario: A turn's finish reports what its calls used
 
@@ -114,7 +114,7 @@ An analysis-run step SHALL emit a `step-usage` run-event part exactly once when 
 
 Every workflow phase that seeds and updates a row in the step-execution ledger SHALL run its agent loops under a `RunSession` whose `RunFrame` carries that row's step id, derived from the run session by the same value derivation sandbox steps use. A phase SHALL NOT run under the bare run session while presenting itself as a step.
 
-Attribution is only as good as the session a phase is handed. `runAgent` faithfully copies whatever `stepId` the session carries, so a phase given the bare run frame produces records that are correct about the run and silent about the step — and silence in this ledger means "no provider reported anything", which is a different and false statement about a phase that reported plenty.
+Attribution is only as good as the session a phase is handed. `runLoop` faithfully copies whatever `stepId` the session carries, so a phase given the bare run frame produces records that are correct about the run and silent about the step — and silence in this ledger means "no provider reported anything", which is a different and false statement about a phase that reported plenty.
 
 The failure is invisible by construction, which is why it is a requirement rather than a convention. Nothing fails to compile, no test fails, and no record is rejected: the rows simply lose a column, and the only symptom is a step that lists everywhere a run's steps are listed while reporting no consumption. Run-level synthesis failed exactly this way — it owned a step row, listed as a step, and recorded its synthesizer loop and every sub-agent under it against the run alone.
 
@@ -140,7 +140,7 @@ This SHALL hold for the phase's whole agent tree. Sub-agents derive from the pha
 
 ### Requirement: Each LLM call produces an attributed usage record
 
-For each LLM call that the harness completes, the harness MUST produce an `LlmUsageRecord`. The calls are each call of `runAgent`, each call of a continuation, and the call of the ad hoc router. The record carries these fields:
+For each LLM call that the harness completes, the harness MUST produce an `LlmUsageRecord`. The calls are each call of `runLoop`, each call of a follow-up request (`continueLoop`), and the call of the ad hoc router. The record carries these fields:
 
 - `recordKey`: an idempotency key.
 - The session attribution at the call site: `agentId`, `callPath`, the scope ids, and `runId` and `stepId` when the session carries a `RunFrame`.
@@ -194,14 +194,14 @@ The harness MUST deliver each record when its call completes. It MUST NOT defer 
 
 ### Requirement: The ad hoc router call uses the accounting path of the loop
 
-The ad hoc router calls `provider.chat` directly, outside `runAgent`. It MUST grow the token counters of its call in the body that makes the call, as the harness-agent-loop capability describes. The router uses the agent id `adhoc-router`. It MUST then account for its call through the function that the loop uses for each call. That function MUST do these steps:
+The ad hoc router MUST run its call as a `runLoop` run of one request, under the agent id `adhoc-router` and a session that `forSubAgent` derives. Thus the loop accounts for the call the same as for each other call:
 
 - Fold the usage of the call into the turn accumulator of the tool context, when the context has one. Thus the root finish of the turn includes the call.
 - Deliver the usage record through the notice helper of the host-hooks capability.
 
-The record key MUST put the fixed call name `adhoc-route` in the slot of the step name. The key also carries the `invocationId` of the tool call that makes the direct call. Thus a replay gives the same key again, and the name cannot collide with a loop step name such as `llm-0`.
+The call path of the record key MUST end with `adhoc-router`. The key also carries the `invocationId` of the tool call that runs the router. Thus a replay gives the same key again, and the key cannot collide with a key of the calling loop.
 
-A direct call that fails reports no usage, thus it produces no record and no counter.
+A router call that fails reports no usage, thus it produces no record and no counter.
 
 #### Scenario: The router call reaches the turn total
 
@@ -209,13 +209,13 @@ A direct call that fails reports no usage, thus it produces no record and no cou
 - **WHEN** the root loop of the turn emits `finish`
 - **THEN** the turn total MUST include the usage of the router call
 
-#### Scenario: The router key does not collide with a loop step name
+#### Scenario: The router key does not collide with a key of the loop
 
 - **GIVEN** an ad hoc route under a `RunFrame`, in a turn whose loop also reports usage
 - **WHEN** the records are produced
-- **THEN** the key of the router record MUST end with `adhoc-route`, and it MUST differ from each key of the loop
+- **THEN** the call path of the router key MUST end with `adhoc-router`, and the key MUST differ from each key of the loop
 
-#### Scenario: A failed direct call records nothing
+#### Scenario: A failed router call records nothing
 
 - **GIVEN** a router call that fails with a provider error
 - **WHEN** the router falls back

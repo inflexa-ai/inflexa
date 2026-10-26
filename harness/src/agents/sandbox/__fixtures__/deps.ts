@@ -7,6 +7,7 @@
 import { okAsync } from "neverthrow";
 import { Pool } from "pg";
 
+import { unusedChatProvider } from "../../../providers/__fixtures__/chat-provider.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecResult, SandboxRef } from "../../../sandbox/types.js";
@@ -68,18 +69,10 @@ export function makeFakeWorkspaceFs(): WorkspaceFilesystem {
 }
 
 export function makeFakeChatProvider(): ChatProvider {
-    return {
-        capabilities: { toolCalling: true },
-        chat() {
-            throw new Error("fake chat provider — not exercised in these tests");
-        },
-        chatStream() {
-            throw new Error("fake chat provider — not exercised in these tests");
-        },
-    };
+    return unusedChatProvider();
 }
 
-/** An unconnected real pool: the fixtures never reach a query (the fake provider throws first). */
+/** An unconnected real pool: the fixtures never reach a query (the fake provider fails first). */
 export function makeFakePool(): Pool {
     return new Pool();
 }

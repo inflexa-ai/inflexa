@@ -78,7 +78,7 @@ accepted by async/durable workflow APIs.
 
 ### Requirement: The agent loop, provider, and tools accept AgentSession
 
-The agent loop (`runAgent`), the provider seams, and `ToolContext` SHALL each accept an `AgentSession` structural view. Both `RequestSession` and `RunSession` SHALL satisfy that view so the same agent path can run under a live request or inside a workflow.
+The agent loop (`runLoop`), the provider seams, and `ToolContext` SHALL each accept an `AgentSession` structural view. Both `RequestSession` and `RunSession` SHALL satisfy that view so the same agent path can run under a live request or inside a workflow.
 
 #### Scenario: A RunSession runs the same agent path as a RequestSession
 

@@ -596,17 +596,6 @@ function containerIn(document: DraftDocument, parentId: string | undefined): Cha
 }
 
 /**
- * Every tool of this surface runs inline.
- *
- * A tool loads the state of its thread, applies the pure operation, and persists the result in one body.
- * The reported outline must agree with the row that the body just wrote. A step-mode tool goes through
- * `DBOS.runStep`, which caches the result of a step and replays it without a fresh load. A replay could
- * then report an outline that the current row no longer holds. Inline mode reads and writes the row in one
- * lifetime, thus the outline never drifts from the state.
- */
-const AUTHORING_EXECUTION_MODE = "inline" as const;
-
-/**
  * The optional deps of the authoring surface. The gateway is the one mandatory part, thus it stays a
  * parameter of its own and this bag holds what a composition can leave out.
  */
@@ -699,7 +688,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "The root admits a section only, and an atom needs a section as its parent. " +
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: addBlockInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => {
             const block = decodeBlockPayload(input.block);
             const kind = readKind(block);
@@ -743,7 +731,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "The change keeps the id of the target, thus the `id` of the payload does not matter. A kind change is permitted. " +
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: changeBlockInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `change ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opened = await openThread(ctx);
@@ -774,7 +761,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         id: "remove_block",
         description: "Remove one block by its id. A removed section takes its whole subtree with it, and the id is free for a later add.",
         inputSchema: removeBlockInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `remove ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opened = await openThread(ctx);
@@ -803,7 +789,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "Move one block by its id to a new destination. Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
             "A section cannot move into its own subtree.",
         inputSchema: moveBlockInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `move ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opened = await openThread(ctx);
@@ -834,7 +819,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "Set the title of the report document. A draft starts with no title, and a document needs one. " +
             "The title names the whole report, and it is not the title of a section.",
         inputSchema: setTitleInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `title the report ${input.title}`,
         // The title sits on the document, thus no container changes its child order.
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
@@ -870,7 +854,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "A label that ends with the character … is clipped. Use the outline as the primary view of the draft, " +
             "and read one block when the label is not enough.",
         inputSchema: readOutlineInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<OutlineResult, ToolError>> => {
@@ -889,7 +872,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "because the session owns the hash. A section gives its title and the id of each child, " +
             "because the outline already names every block under it. Use it when the outline label is not enough.",
         inputSchema: readBlockInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `read ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<ReadBlockResult, ToolError>> => {
             const opened = await openThread(ctx);
@@ -916,7 +898,6 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "preview_report and record_report_version run the same check before they act, thus a finish directly before one of them does that check a second time. " +
             "Use it to make sure that the draft passes the whole document schema, the id rule, and the structural tier.",
         inputSchema: finishDraftInput,
-        executionMode: AUTHORING_EXECUTION_MODE,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<FinishToolResult, ToolError>> => {

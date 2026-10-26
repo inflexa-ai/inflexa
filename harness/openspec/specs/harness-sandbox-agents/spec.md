@@ -6,7 +6,7 @@ Define the code-defined sandbox-agent layer: the directory under
 `harness/src/agents/sandbox/`, the per-agent `AgentMeta`, the planner-facing
 catalog, and per-agent tool resolution through a central registry. Each sandbox
 agent is a plain `AgentDefinition` built by `createSandboxAgent(deps, meta, body,
-opts?)` and run by the harness `runAgent` loop — there is no agent framework and
+opts?)` and run by the harness `runLoop` loop — there is no agent framework and
 no request-time processor pipeline; the system prompt is a frozen static
 composition (SOUL kernel + the agent's prompt body + sandbox standards).
 
@@ -38,7 +38,7 @@ agent set SHALL cover the data-profiler, the omics specialists,
 scientific-executor, cheminformatics, translational-safety,
 pkpd-clinical-response, immune-profiling, and drug-repurposing. It SHALL NOT
 contain a special ephemeral executor. Each `AgentDefinition` SHALL carry the
-five fields `runAgent` consumes: `id`, `systemPrompt`, `model`, `tools`, and
+five fields `runLoop` consumes: `id`, `systemPrompt`, `model`, `tools`, and
 `maxIterations`.
 
 #### Scenario: Catalog covers every agent
@@ -272,7 +272,7 @@ string unique, so each step pays a full cache write and reads nothing back.
 The per-step values belong in the step's seed
 (`harness/src/prompts/briefing.ts`), which names the working directory, the
 analysis root, the dataset, and each dependency's output. The prompt MUST be
-a frozen string by the time `runAgent` sees it — there is no request-time
+a frozen string by the time `runLoop` sees it — there is no request-time
 processor pipeline.
 
 The orient-core environment section MUST key its text on the
@@ -317,9 +317,9 @@ markdown via `formatAgentCatalog()`. Non-plannable agents (`data-profiler`,
 
 ### Requirement: Step agents declare inability via report_blocker, not output inference
 
-A step agent MUST get a terminal `report_blocker({ reason })` tool when a blocker cell is supplied. The step agent MUST NOT get a `submit` or `done` tool for its task, because the deliverable of a step is its persisted files. A clean end of the turn after the agent writes the files is the implicit success. The `submit_file_metadata` output tool does not end a task: the task masks it, and only the file-metadata continuation lets it run.
+A step agent MUST get a terminal `report_blocker({ reason })` tool when its deps set `reportsBlocker`. The step agent MUST NOT get a `submit` or `done` tool for its task, because the deliverable of a step is its persisted files. A clean end of the turn after the agent writes the files is the implicit success. The `submit_file_metadata` output tool does not end a task: the task masks it, and only the file-metadata continuation lets it run.
 
-A call of `report_blocker` MUST record `{ kind: "blocker", reason }` into the cell of the run. After `runAgent`, the workflow body MUST read the blocker from the transcript: the reason of the first `report_blocker` call whose result is ok. The cell is the fallback. A durable replay returns the cached result of the tool step and runs no `execute`, thus the cell of a replayed body stays empty. The transcript holds the call and its result on each replay.
+A call of `report_blocker` MUST give back `{ kind: "blocker", reason }` in its result, and a blocker result MUST end the run. After `runLoop`, the workflow body MUST select the blocker from the recorded calls of the run (`blockerOf`): the reason of the first `report_blocker` call whose result is ok. A durable replay returns the recorded result of the tool step and runs no `execute`. Thus a replay selects the same blocker as the first run.
 
 `blocked` MUST be a distinct terminal step status, separate from `failed` and `completed`. It carries the reason to the `cortex_step_executions.blocked_reason` column, to a `data-step-blocked` run-event part, and to the step return.
 

@@ -203,7 +203,6 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             "A thread holds one version, thus a later record replaces it whole. Amend the draft, look at the page again, and record again. " +
             "After the version lands, the tool removes the file of each derived table that no block of the recorded report binds.",
         inputSchema: recordVersionInput,
-        executionMode: "inline",
         describeCall: "none",
         // The version id is the one durable product of the first record, thus the created arm names it. A
         // later record writes over that same id, thus the line names the update and never reads as a

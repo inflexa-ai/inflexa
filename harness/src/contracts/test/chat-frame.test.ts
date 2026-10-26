@@ -105,11 +105,6 @@ describe("toChatFrame", () => {
         expect(toChatFrame(ev, fallback)).toEqual({ type: "text-delta", text: "hello", source: fallback });
     });
 
-    test("gives no frame for the provider done envelope", () => {
-        const ev: ChatStreamEvent = { type: "done", response: { message: { role: "assistant", content: "" }, finishReason: "stop" } };
-        expect(toChatFrame(ev, fallback)).toBeNull();
-    });
-
     test("flattens a data part to the wire part shape", () => {
         const part: ChatDataPart = { type: "data-presentation", data: { id: "pres-abc", title: "A chart", content: { kind: "markdown", body: "text" } } };
         expect(toChatFrame(part, fallback)).toEqual({

@@ -2,13 +2,12 @@
  * Unit tests for the harness-native run synthesizer.
  *
  * Covers three layers:
- *   1. Inner-tool validation — `validate_synthesis` reports issues without
- *      recording anything, and `submit_synthesis` accepts a valid payload,
- *      rejects schema + semantic violations, and captures the outcome
- *      last-valid-wins.
- *   2. Happy path through `generateRunSynthesis` — the synthesizer agent
- *      reaches a `submit_synthesis(accepted: true)` via the scripted provider
- *      and the function returns the validated synthesis.
+ *   1. Inner tools — `submit_synthesis` checks a synthesis and gives back the
+ *      issues, `report_blocker` gives back its reason, and
+ *      `acceptedSynthesisOf` selects the last accepted submission.
+ *   2. `generateRunSynthesis` over a scripted model — the outcome is the last
+ *      accepted synthesis with the run id of the host, else a blocker, else a
+ *      throw after one salvage request.
  *   3. Disk + persistence helpers — `loadStepSummariesFromDisk` reads from
  *      the on-disk layout, `persistSynthesis` writes the JSON, and
  *      `buildRunSynthesisPart` emits the chat data part shape.
@@ -19,31 +18,35 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { okAsync } from "neverthrow";
 import { z } from "zod";
 
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import type { LoopStep } from "../../loop/run-loop.js";
+import type { ToolCallOutput } from "../../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import {
     __buildInnerToolsForTest,
+    acceptedSynthesisOf,
     buildRunSynthesisPart,
     formatSynthesisEmbeddingText,
     generateRunSynthesis,
     loadStepSummariesFromDisk,
     persistSynthesis,
     readRunSynthesis,
+    type GenerateRunSynthesisInput,
 } from "../run-synthesis.js";
 import { flattenDataPart } from "../../contracts/chat-frame.js";
 import { RunSynthesisPartSchema } from "../../contracts/schemas/chat-parts.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import type { RunSynthesis } from "../../schemas/run-synthesis.js";
+import type { RunSynthesis, SynthesisDraft } from "../../schemas/run-synthesis.js";
 import type { ToolContext } from "../../tools/define-tool.js";
-import type { ChatRequest } from "../../providers/types.js";
 import { synthesisAgentPrompt } from "../../prompts/synthesis-agent.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { presentAt, presentLast } from "../../lib/present.js";
 import { awaitOk } from "../../lib/test/result-assert.js";
 
@@ -77,11 +80,11 @@ function makeToolCtx(): ToolContext {
 /**
  * A valid synthesis payload that satisfies both the Zod schema and the
  * semantic checks (stepId in known set, theme references match findings,
- * keyReferences cited by findings, PMIDs numeric).
+ * keyReferences cited by findings, PMIDs numeric). The model never types the
+ * run id, thus the payload has none.
  */
-function validSynthesisPayload(): RunSynthesis {
+function validSynthesisPayload(): SynthesisDraft {
     return {
-        runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
         conclusions: "The analysis establishes a novel signature.",
         findings: [
@@ -120,563 +123,322 @@ function validSynthesisPayload(): RunSynthesis {
     };
 }
 
-describe("submit_synthesis inner tool", () => {
-    it("accepts a valid payload and captures the outcome", async () => {
-        const { submit, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
+/** A synthesis with an unknown stepId: schema-valid, refused by the semantic checks. */
+function unknownStepPayload(): SynthesisDraft {
+    const bad = validSynthesisPayload();
+    presentAt(bad.findings, 0).stepId = "T9S9";
+    return bad;
+}
 
-        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
+const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
 
-        expect(result.accepted).toBe(true);
-        expect(holder.outcome?.kind).toBe("submitted");
-        if (holder.outcome?.kind === "submitted") {
-            expect(holder.outcome.synthesis.runId).toBe(RUN_ID);
-            expect(holder.outcome.synthesis.findings).toHaveLength(1);
+const done = reply([text("done")]);
+
+const submit = (id: string, synthesis: unknown) => callTools(toolCall(id, "submit_synthesis", { synthesis }));
+
+/** Run the synthesizer over a scripted model, with one summary of the step T1S1. */
+function synthesize(script: readonly ScriptStep[], extra: Partial<GenerateRunSynthesisInput> = {}) {
+    const model = scriptedModel(script);
+    const run = generateRunSynthesis({
+        provider: model.provider,
+        session: makeRunSession(),
+        model: "claude-test",
+        bioKeys: BIO_KEYS,
+        citationResolver: unusedCitationResolver,
+        summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
+        planNarrative: "Compare stimulated vs resting T-cells.",
+        runId: RUN_ID,
+        ...extra,
+    });
+    return { run, calls: model.calls };
+}
+
+const toolNamesOf = (call: LanguageModelV4CallOptions): string[] => (call.tools ?? []).map((tool) => tool.name);
+
+/** The output of the result of one tool call, as the request sent it to the model. */
+function toolResultIn(call: LanguageModelV4CallOptions, toolCallId: string): unknown {
+    for (const message of call.prompt) {
+        if (message.role !== "tool") continue;
+        for (const part of message.content) {
+            if (part.type === "tool-result" && part.toolCallId === toolCallId) return part.output;
         }
+    }
+    return undefined;
+}
+
+/** The text of the last user message of a request. */
+function lastUserText(call: LanguageModelV4CallOptions): string {
+    const user = call.prompt.filter((message) => message.role === "user").at(-1);
+    if (user?.role !== "user") return "";
+    return user.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+}
+
+/** One recorded call of `submit_synthesis`, with the result that the tool gave. */
+function submitCall(toolCallId: string, synthesis: unknown, value: Extract<ToolCallOutput, { outcome: "ok" }>["value"]): LoopStep["calls"][number] {
+    return {
+        toolCallId,
+        toolName: "submit_synthesis",
+        input: { synthesis },
+        output: { outcome: "ok", value },
+        refused: false,
+        answered: true,
+    };
+}
+
+describe("submit_synthesis inner tool", () => {
+    it("accepts a valid synthesis", async () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
+
+        const result = (await tool.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
+
+        expect(result).toEqual({ accepted: true });
+    });
+
+    it("declares no run id in its input schema", () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
+
+        const schema = z.object({ properties: z.object({ synthesis: z.object({ properties: z.record(z.string(), z.json()) }) }) }).parse(tool.jsonSchema);
+
+        expect(Object.keys(schema.properties.synthesis.properties)).not.toContain("runId");
+        expect(Object.keys(schema.properties.synthesis.properties)).toContain("overview");
     });
 
     it("rejects a payload with an unknown stepId", async () => {
-        const { submit, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
 
-        const bad = validSynthesisPayload();
-        presentAt(bad.findings, 0).stepId = "T9S9";
-
-        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
+        const result = (await tool.execute({ synthesis: unknownStepPayload() }, makeToolCtx()))._unsafeUnwrap();
 
         if (!("issues" in result)) throw new Error("expected a rejected submission");
         expect(result.accepted).toBe(false);
-        expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
-        expect(holder.outcome).toBeNull();
+        expect(result.issues.some((i) => i.code === "semantic" && i.message.includes("T9S9"))).toBe(true);
     });
 
     it("rejects a non-numeric PMID", async () => {
-        const { submit } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
         const bad = validSynthesisPayload();
         presentAt(presentAt(bad.findings, 0).references, 0).pmid = "PMC123";
         presentAt(bad.keyReferences, 0).pmid = "PMC123";
 
-        const result = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
+        const result = (await tool.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
         if (!("issues" in result)) throw new Error("expected a rejected submission");
         expect(result.accepted).toBe(false);
         expect(result.issues.some((i) => i.path.includes("pmid"))).toBe(true);
     });
 
-    it("does not clobber a recorded outcome when a later submission is invalid", async () => {
-        const { submit, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
-
-        const bad = validSynthesisPayload();
-        presentAt(bad.findings, 0).stepId = "T9S9";
-        bad.overview = "clobbered";
-
-        const second = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
-
-        if (!("issues" in second)) throw new Error("expected a rejected submission");
-        expect(second.accepted).toBe(false);
-        expect(second.issues.some((i) => i.code === "semantic")).toBe(true);
-        expect(holder.outcome?.kind).toBe("submitted");
-        if (holder.outcome?.kind === "submitted") {
-            expect(holder.outcome.synthesis.overview).toBe(validSynthesisPayload().overview);
-        }
-    });
-
-    it("overwrites an earlier outcome when a later submission is valid", async () => {
-        const { submit, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
-
-        const revised = validSynthesisPayload();
-        revised.overview = "The revised, real synthesis of the run.";
-
-        const second = (await submit.execute({ synthesis: revised }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(second.accepted).toBe(true);
-        expect(holder.outcome?.kind).toBe("submitted");
-        if (holder.outcome?.kind === "submitted") {
-            expect(holder.outcome.synthesis.overview).toBe("The revised, real synthesis of the run.");
-        }
-    });
-
-    it("overwrites a recorded blocker outcome", async () => {
-        const { submit, blocker, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-        await awaitOk(blocker.execute({ reason: "nothing to synthesize" }, makeToolCtx()));
-        expect(holder.outcome?.kind).toBe("blocker");
-
-        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(result.accepted).toBe(true);
-        expect(holder.outcome?.kind).toBe("submitted");
-    });
-});
-
-describe("validate_synthesis inner tool", () => {
-    it("accepts a valid candidate without recording an outcome", async () => {
-        const { validate, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const result = (await validate.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(result.valid).toBe(true);
-        expect(result.issues).toHaveLength(0);
-        expect(holder.outcome).toBeNull();
-    });
-
-    it("decodes a candidate that arrives as a JSON-encoded string", async () => {
-        const { validate, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const plain = (await validate.execute({ synthesis: JSON.stringify(validSynthesisPayload()) }, makeToolCtx()))._unsafeUnwrap();
-        const fenced = (await validate.execute({ synthesis: "```json\n" + JSON.stringify(validSynthesisPayload()) + "\n```" }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(plain.valid).toBe(true);
-        expect(plain.issues).toHaveLength(0);
-        expect(fenced.valid).toBe(true);
-        expect(fenced.issues).toHaveLength(0);
-        expect(holder.outcome).toBeNull();
-    });
-
-    it("reports the issues of the synthesis inside a JSON-encoded string", async () => {
-        const { validate } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const result = (
-            await validate.execute({ synthesis: JSON.stringify({ ...validSynthesisPayload(), runId: "other-run" }) }, makeToolCtx())
-        )._unsafeUnwrap();
-
-        expect(result.valid).toBe(false);
-        expect(result.issues).toHaveLength(1);
-        expect(result.issues[0]?.path).toBe("synthesis.runId");
-        expect(result.issues[0]?.code).toBe("semantic");
-    });
-
-    it("reports schema issues on a malformed candidate instead of rejecting it", async () => {
-        const { validate, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const result = (await validate.execute({ synthesis: { overview: 42, findings: "not an array" } }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(result.valid).toBe(false);
-        expect(result.issues.length).toBeGreaterThan(0);
-        // Nothing in this candidate is salvageable, so every field-level issue is
-        // a schema issue; the only semantic entry is the deferred-checks notice.
-        expect(result.issues.filter((i) => i.path !== "synthesis").every((i) => i.code === "schema")).toBe(true);
-        expect(result.issues.some((i) => i.path === "synthesis" && i.message.includes("INCOMPLETE"))).toBe(true);
-        expect(holder.outcome).toBeNull();
-    });
-
-    it("reports a schema issue and a semantic PMID issue in one pass", async () => {
-        const { validate, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const bad = validSynthesisPayload();
-        const broken = { ...bad, conclusions: undefined };
-        presentAt(presentAt(broken.findings, 0).references, 0).pmid = "PMC123";
-        void bad;
-
-        const result = (await validate.execute({ synthesis: broken }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(result.valid).toBe(false);
-        expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.conclusions")).toBe(true);
-        expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.findings[0].references[0].pmid")).toBe(true);
-        // keyReferences[0].pmid is no longer cited by any finding either.
-        expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.keyReferences[0].pmid")).toBe(true);
-        // Every check's inputs survived — nothing was deferred.
-        expect(result.issues.some((i) => i.message.includes("INCOMPLETE"))).toBe(false);
-        // Structure before content.
-        const codes = result.issues.map((i) => i.code);
-        const lastSchema = codes.lastIndexOf("schema");
-        const firstSemantic = codes.indexOf("semantic");
-        expect(lastSchema).toBeLessThan(firstSemantic);
-        expect(holder.outcome).toBeNull();
-    });
-
-    it("reports a schema issue and an unknown stepId in one pass", async () => {
-        const { validate } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const bad = validSynthesisPayload();
-        const broken = { ...bad, overview: undefined };
-        presentAt(broken.findings, 0).stepId = "T9S9";
-        void bad;
-
-        const result = (await validate.execute({ synthesis: broken }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(result.valid).toBe(false);
-        expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.overview")).toBe(true);
-        const stepIdIssue = result.issues.find((i) => i.path === "synthesis.findings[0].stepId");
-        expect(stepIdIssue?.code).toBe("semantic");
-        expect(stepIdIssue?.message).toContain("T9S9");
-        // The theme still references the finding by its old stepId — also caught.
-        expect(result.issues.some((i) => i.path === "synthesis.themes[0].findings[0]")).toBe(true);
-        expect(result.issues.some((i) => i.message.includes("INCOMPLETE"))).toBe(false);
-    });
-
-    it("names the deferred checks when findings cannot be salvaged", async () => {
-        const { validate } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const bad = { ...validSynthesisPayload(), findings: [{ stepId: 7 }] };
-        bad.findings = [{ stepId: 7 }];
-        presentAt(bad.keyReferences, 0).pmid = "PMC999";
-
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
-
-        expect(result.valid).toBe(false);
-        expect(result.issues.some((i) => i.code === "schema" && i.path.startsWith("synthesis.findings."))).toBe(true);
-        // runId + keyReferences PMID format still parsed on their own, so their
-        // checks ran: the malformed PMID is reported.
-        expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.keyReferences[0].pmid")).toBe(true);
-
-        const notice = result.issues.find((i) => i.path === "synthesis" && i.message.includes("INCOMPLETE"));
-        expect(notice).toBeDefined();
-        expect(notice?.code).toBe("semantic");
-        expect(notice?.message).toContain("finding stepIds");
-        expect(notice?.message).toContain("theme references");
-        expect(notice?.message).toContain("cited by some finding");
-        expect(notice?.message).toContain("finding reference PMIDs are numeric");
-        // runId and the keyReferences PMID-format check were NOT deferred.
-        expect(notice?.message).not.toContain("runId matches the run");
-        expect(notice?.message).not.toContain("keyReferences PMIDs are numeric");
-        expect(notice?.hint).toBeDefined();
-    });
-
-    it("reports every semantic issue on a schema-valid candidate, unchanged", async () => {
-        const { validate, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-
-        const bad = validSynthesisPayload();
-        bad.runId = "run-999";
-        presentAt(bad.findings, 0).stepId = "T9S9";
+    it("reports every semantic issue, in the order of the checks", async () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
+        const bad = unknownStepPayload();
         presentAt(presentAt(bad.findings, 0).references, 0).pmid = "PMC1";
         presentAt(bad.keyReferences, 0).pmid = "PMC2";
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
+        const result = (await tool.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
 
-        expect(result.valid).toBe(false);
+        if (!("issues" in result)) throw new Error("expected a rejected submission");
         expect(result.issues.every((i) => i.code === "semantic")).toBe(true);
         expect(result.issues.map((i) => i.path)).toEqual([
-            "synthesis.runId",
             "synthesis.findings[0].stepId",
             "synthesis.themes[0].findings[0]",
             "synthesis.keyReferences[0].pmid",
             "synthesis.findings[0].references[0].pmid",
             "synthesis.keyReferences[0].pmid",
         ]);
-        expect(holder.outcome).toBeNull();
     });
 
-    it("reports semantic issues and leaves a recorded outcome untouched", async () => {
-        const { validate, submit, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
+    it("refuses a malformed synthesis at its input schema", () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
 
-        const bad = validSynthesisPayload();
-        presentAt(bad.findings, 0).stepId = "T9S9";
+        expect(tool.inputSchema.safeParse({ synthesis: { overview: 42, findings: "not an array" } }).success).toBe(false);
+        expect(tool.inputSchema.safeParse({ synthesis: validSynthesisPayload() }).success).toBe(true);
+    });
+});
 
-        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap();
+describe("acceptedSynthesisOf", () => {
+    it("takes the last accepted submission, and a later refused one does not replace it", () => {
+        const first = validSynthesisPayload();
+        const revised = { ...validSynthesisPayload(), overview: "The revised, real synthesis of the run." };
+        const refused = { accepted: false, issues: [{ path: "synthesis.findings[0].stepId", code: "semantic", message: "unknown" }] };
 
-        expect(result.valid).toBe(false);
-        expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
-        expect(holder.outcome?.kind).toBe("submitted");
+        const steps: LoopStep[] = [
+            { finishReason: "tool-calls", calls: [submitCall("s1", first, { accepted: true })] },
+            { finishReason: "tool-calls", calls: [submitCall("s2", unknownStepPayload(), refused)] },
+        ];
+        expect(acceptedSynthesisOf(steps)).toEqual(first);
+
+        steps.push({ finishReason: "tool-calls", calls: [submitCall("s3", revised, { accepted: true })] });
+        expect(acceptedSynthesisOf(steps)).toEqual(revised);
+    });
+
+    it("gives nothing for a run with no accepted submission", () => {
+        const refused = { accepted: false, issues: [] };
+        expect(acceptedSynthesisOf([{ finishReason: "tool-calls", calls: [submitCall("s1", unknownStepPayload(), refused)] }])).toBeUndefined();
+        expect(acceptedSynthesisOf([])).toBeUndefined();
     });
 });
 
 describe("report_blocker inner tool", () => {
-    it("captures a blocker outcome", async () => {
-        const { blocker, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-        const result = (await blocker.execute({ reason: "no synthesizable content" }, makeToolCtx()))._unsafeUnwrap();
-        expect(result.recorded).toBe(true);
-        expect(holder.outcome?.kind).toBe("blocker");
-        if (holder.outcome?.kind === "blocker") {
-            expect(holder.outcome.reason).toBe("no synthesizable content");
-        }
+    it("gives back the reason of the blocker", async () => {
+        const { blocker } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
+
+        const result = await awaitOk(blocker.execute({ reason: "no synthesizable content" }, makeToolCtx()));
+
+        expect(result).toMatchObject({ kind: "blocker", reason: "no synthesizable content" });
     });
 
-    it("does not overwrite a recorded synthesis", async () => {
-        const { submit, blocker, holder } = __buildInnerToolsForTest({
-            knownStepIds: new Set(["T1S1"]),
-            runId: RUN_ID,
-        });
-        await awaitOk(submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()));
+    it("refuses a placeholder reason at its input schema", () => {
+        const { blocker } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
 
-        await awaitOk(blocker.execute({ reason: "changed my mind" }, makeToolCtx()));
-
-        expect(holder.outcome?.kind).toBe("submitted");
+        expect(blocker.inputSchema.safeParse({ reason: "TBD" }).success).toBe(false);
+        expect(blocker.inputSchema.safeParse({ reason: "Placeholder, not used" }).success).toBe(false);
+        expect(blocker.inputSchema.safeParse({ reason: "Every step summary is empty." }).success).toBe(true);
     });
 });
 
-describe("generateRunSynthesis — happy path", () => {
-    it("drives the agent loop to submit_synthesis and returns the validated synthesis", async () => {
-        // Script: turn 1 → submit_synthesis with the valid payload; submit_tool
-        // returns accepted:true; turn 2 → terminal end_turn message.
-        const provider = scriptedProvider((i) => {
-            if (i === 0) {
-                return makeMessage(
-                    [
-                        toolUseBlock("tu-1", "submit_synthesis", {
-                            synthesis: validSynthesisPayload(),
-                        }),
-                    ],
-                    "tool_use",
-                );
-            }
-            return makeMessage([textBlock("done")], "end_turn");
-        });
+describe("generateRunSynthesis", () => {
+    it("drives the agent loop to submit_synthesis and returns the accepted synthesis", async () => {
+        const { run, calls } = synthesize([submit("tu-1", validSynthesisPayload()), done]);
 
-        const emitted: unknown[] = [];
-        const result = await generateRunSynthesis({
-            provider,
-            session: makeRunSession(),
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
-            planNarrative: "Compare stimulated vs resting T-cells.",
-            runId: RUN_ID,
-            emit: (e) => {
-                emitted.push(e);
-            },
-        });
+        const result = await run;
 
-        expect(result.kind).toBe("synthesis");
-        if (result.kind === "synthesis") {
-            expect(result.synthesis.runId).toBe(RUN_ID);
-            expect(result.synthesis.findings).toHaveLength(1);
-            expect(presentAt(result.synthesis.findings, 0).title).toBe("Upregulation of FOXP3");
-        }
+        expect(result).toEqual({ kind: "synthesis", synthesis: { runId: RUN_ID, ...validSynthesisPayload() } });
+        // The submit does not end the run: the model reads the result, and its reply ends the run.
+        expect(calls).toHaveLength(2);
+    });
+
+    it("stamps the run id of its own run, whatever run id the model typed", async () => {
+        const { run } = synthesize([submit("tu-1", { ...validSynthesisPayload(), runId: "run-typed-by-the-model" }), done]);
+
+        const result = await run;
+
+        if (result.kind !== "synthesis") throw new Error("expected a synthesis");
+        expect(result.synthesis.runId).toBe(RUN_ID);
     });
 
     it("declares the synthesis tools, the reviewer, and then read_tool_output when it has a tool output store", async () => {
-        const provider = scriptedProvider((i) =>
-            i === 0
-                ? makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })], "tool_use")
-                : makeMessage([textBlock("done")], "end_turn"),
-        );
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+        const { run, calls } = synthesize([submit("tu-1", validSynthesisPayload()), done], { toolOutputStore });
 
-        await generateRunSynthesis({
-            provider,
-            session: makeRunSession(),
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            toolOutputStore,
-            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
-            planNarrative: "n/a",
-            runId: RUN_ID,
-        });
+        await run;
 
-        expect(Object.keys(presentAt(provider.calls, 0).tools)).toEqual([
-            "validate_synthesis",
-            "submit_synthesis",
-            "report_blocker",
-            "literature_reviewer",
-            "read_tool_output",
+        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["submit_synthesis", "report_blocker", "literature_reviewer", "read_tool_output"]);
+    });
+
+    it("returns skipped with the reason when the agent records only a blocker", async () => {
+        const { run, calls } = synthesize([callTools(toolCall("tu-1", "report_blocker", { reason: "all summaries are empty" })), done]);
+
+        const result = await run;
+
+        expect(result).toEqual({ kind: "skipped", reason: "all summaries are empty" });
+        // A blocker is an outcome, thus no salvage request follows.
+        expect(calls).toHaveLength(2);
+    });
+
+    it("keeps an accepted synthesis over a blocker of the same run", async () => {
+        const { run } = synthesize([
+            callTools(
+                toolCall("tu-1", "report_blocker", { reason: "nothing to synthesize" }),
+                toolCall("tu-2", "submit_synthesis", { synthesis: validSynthesisPayload() }),
+            ),
+            done,
         ]);
-    });
 
-    it("returns skipped when the agent calls report_blocker", async () => {
-        const provider = scriptedProvider((i) => {
-            if (i === 0) {
-                return makeMessage(
-                    [
-                        toolUseBlock("tu-1", "report_blocker", {
-                            reason: "all summaries are empty",
-                        }),
-                    ],
-                    "tool_use",
-                );
-            }
-            return makeMessage([textBlock("done")], "end_turn");
-        });
+        const result = await run;
 
-        const result = await generateRunSynthesis({
-            provider,
-            session: makeRunSession(),
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "noop" }],
-            planNarrative: "n/a",
-            runId: RUN_ID,
-        });
-
-        expect(result.kind).toBe("skipped");
-        if (result.kind === "skipped") {
-            expect(result.reason).toBe("all summaries are empty");
-        }
-    });
-
-    it("re-prompts once then throws when the agent never calls a terminal tool", async () => {
-        // Provider replies with plain text only — no submit_synthesis, no
-        // report_blocker. After the first runAgent ends on prose, the corrective
-        // continuation fires; the agent still produces no terminal tool →
-        // `generateRunSynthesis` throws.
-        const provider = scriptedProvider(() => makeMessage([textBlock("just thinking out loud")], "end_turn"));
-        await expect(
-            generateRunSynthesis({
-                provider,
-                session: makeRunSession(),
-                model: "claude-test",
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                citationResolver: unusedCitationResolver,
-                summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "x" }],
-                planNarrative: "n/a",
-                runId: RUN_ID,
-            }),
-        ).rejects.toThrow("terminal tool call");
-
-        // The corrective continuation re-prompted: a later chat request carries a
-        // user turn instructing a terminal-tool call.
-        const reprompted = provider.calls.some((c) =>
-            c.messages.some((m) => m.role === "user" && typeof m.content === "string" && m.content.includes("ended without calling a terminal tool")),
-        );
-        expect(reprompted).toBe(true);
-    });
-
-    it("recovers via the corrective re-prompt when the second pass submits", async () => {
-        // First runAgent ends on prose (no terminal tool). The corrective
-        // continuation then drives submit_synthesis → returns the synthesis.
-        let sawReprompt = false;
-        const provider = scriptedProvider((_i, request) => {
-            const last = request.messages.at(-1);
-            const repromptTurn = last?.role === "user" && typeof last.content === "string" && last.content.includes("ended without calling a terminal tool");
-            if (repromptTurn) {
-                sawReprompt = true;
-                return makeMessage(
-                    [
-                        toolUseBlock("tu-1", "submit_synthesis", {
-                            synthesis: validSynthesisPayload(),
-                        }),
-                    ],
-                    "tool_use",
-                );
-            }
-            return makeMessage([textBlock("thinking out loud")], "end_turn");
-        });
-
-        const result = await generateRunSynthesis({
-            provider,
-            session: makeRunSession(),
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "x" }],
-            planNarrative: "n/a",
-            runId: RUN_ID,
-        });
-
-        expect(sawReprompt).toBe(true);
         expect(result.kind).toBe("synthesis");
-        if (result.kind === "synthesis") {
-            expect(result.synthesis.runId).toBe(RUN_ID);
-        }
+    });
+
+    it("gives a refused synthesis its issues, and the corrected submission is the synthesis", async () => {
+        const { run, calls } = synthesize([submit("tu-1", unknownStepPayload()), submit("tu-2", validSynthesisPayload()), done]);
+
+        const result = await run;
+
+        expect(result).toEqual({ kind: "synthesis", synthesis: { runId: RUN_ID, ...validSynthesisPayload() } });
+        const refused = z
+            .object({ type: z.literal("json"), value: z.object({ accepted: z.literal(false), issues: z.array(z.object({ path: z.string() })) }) })
+            .parse(toolResultIn(presentAt(calls, 1), "tu-1"));
+        expect(refused.value.issues.map((issue) => issue.path)).toContain("synthesis.findings[0].stepId");
+    });
+
+    it("accepts a synthesis that arrives as a JSON-encoded string", async () => {
+        const { run } = synthesize([submit("tu-1", JSON.stringify(validSynthesisPayload())), done]);
+
+        const result = await run;
+
+        expect(result).toEqual({ kind: "synthesis", synthesis: { runId: RUN_ID, ...validSynthesisPayload() } });
+    });
+
+    it("salvages a run that ends on prose, and the salvage lets only the terminal tools run", async () => {
+        const { run, calls } = synthesize([
+            reply([text("thinking out loud")]),
+            callTools(toolCall("rv-1", "literature_reviewer", { brief: "Investigate FOXP3." })),
+            submit("tu-1", validSynthesisPayload()),
+            done,
+        ]);
+
+        const result = await run;
+
+        expect(result.kind).toBe("synthesis");
+        expect(lastUserText(presentAt(calls, 1))).toContain("You ended without an accepted synthesis");
+        expect(toolResultIn(presentAt(calls, 2), "rv-1")).toEqual({
+            type: "error-text",
+            value: JSON.stringify({
+                error: "The tool literature_reviewer is not available for this request, thus it did not run. The tools that can run now: submit_synthesis, report_blocker.",
+                retryable: false,
+            }),
+        });
+    });
+
+    it("throws when the run and its salvage both end with no outcome", async () => {
+        const prose = reply([text("just thinking out loud")]);
+        const { run, calls } = synthesize([prose, prose]);
+
+        await expect(run).rejects.toThrow("terminal tool call");
+
+        // One salvage request followed the run, and no request followed the salvage.
+        expect(calls).toHaveLength(2);
+        expect(lastUserText(presentAt(calls, 1))).toContain("You ended without an accepted synthesis");
     });
 
     it("runs 3 reviewer loops and refuses a fourth literature_reviewer call with the error of the budget", async () => {
-        // The synthesizer and its reviewers share this scripted provider.
-        const isSynthesizer = (request: ChatRequest): boolean => "submit_synthesis" in request.tools;
+        // The synthesizer and its reviewers share this scripted model.
+        const isSynthesizer = (call: LanguageModelV4CallOptions): boolean => toolNamesOf(call).includes("submit_synthesis");
         let synthesizerTurn = 0;
-        const provider = scriptedProvider((_i, request) => {
-            if (!isSynthesizer(request)) return makeMessage([textBlock("evidence report")], "end_turn");
+        const answer = (call: LanguageModelV4CallOptions) => {
+            if (!isSynthesizer(call)) return reply([text("evidence report")]);
             synthesizerTurn++;
-            if (synthesizerTurn === 1) {
-                // Three delegations in one round all run.
-                return makeMessage(
-                    [1, 2, 3].map((n) => toolUseBlock(`rv-${n}`, "literature_reviewer", { brief: `brief ${n}` })),
-                    "tool_use",
-                );
-            }
-            if (synthesizerTurn === 2) return makeMessage([toolUseBlock("rv-4", "literature_reviewer", { brief: "brief 4" })], "tool_use");
-            return makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })], "tool_use");
-        });
+            // Three delegations in one round all run.
+            if (synthesizerTurn === 1) return callTools(...[1, 2, 3].map((n) => toolCall(`rv-${n}`, "literature_reviewer", { brief: `brief ${n}` })));
+            if (synthesizerTurn === 2) return callTools(toolCall("rv-4", "literature_reviewer", { brief: "brief 4" }));
+            if (synthesizerTurn === 3) return submit("tu-1", validSynthesisPayload());
+            return done;
+        };
+        const { run, calls } = synthesize(Array.from({ length: 7 }, () => answer));
 
-        const result = await generateRunSynthesis({
-            provider,
-            session: makeRunSession(),
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "x" }],
-            planNarrative: "n/a",
-            runId: RUN_ID,
-        });
+        const result = await run;
 
         expect(result.kind).toBe("synthesis");
         // One reviewer loop of one request for each of the first 3 calls, and none for the fourth.
-        expect(provider.calls.filter((request) => !isSynthesizer(request))).toHaveLength(3);
-        const lastSynthesizerRequest = presentLast(provider.calls.filter(isSynthesizer));
-        const results = lastSynthesizerRequest.messages.flatMap((message) => (message.role === "tool" ? message.content : []));
-        const fourth = results.find((part) => part.type === "tool-result" && part.toolCallId === "rv-4");
-        expect(fourth).toMatchObject({
-            output: {
-                type: "error-text",
-                value: JSON.stringify({
-                    error: "The tool literature_reviewer reached its limit of 3 calls in this run, thus this call did not run.",
-                    retryable: false,
-                }),
-            },
+        expect(calls.filter((call) => !isSynthesizer(call))).toHaveLength(3);
+        const lastSynthesizerRequest = presentLast(calls.filter(isSynthesizer));
+        expect(toolResultIn(lastSynthesizerRequest, "rv-4")).toEqual({
+            type: "error-text",
+            value: JSON.stringify({
+                error: "The tool literature_reviewer reached its limit of 3 calls in this run, thus this call did not run.",
+                retryable: false,
+            }),
         });
     });
 
     it("throws on empty summaries", async () => {
-        const provider = scriptedProvider([]);
-        await expect(
-            generateRunSynthesis({
-                provider,
-                session: makeRunSession(),
-                model: "claude-test",
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                citationResolver: unusedCitationResolver,
-                summaries: [],
-                planNarrative: "n/a",
-                runId: RUN_ID,
-            }),
-        ).rejects.toThrow("no step summaries");
+        const { run } = synthesize([], { summaries: [] });
+
+        await expect(run).rejects.toThrow("no step summaries");
     });
 });
 
 describe("blocker discipline copy", () => {
     it("scopes the blocker tool description to empty/incoherent inputs, not 'no findings worth surfacing'", () => {
-        const { blocker } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), runId: RUN_ID });
+        const { blocker } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
         expect(blocker.description.toLowerCase()).not.toContain("worth surfacing");
         expect(blocker.description).toContain("empty findings[]");
         expect(blocker.description.toLowerCase()).toContain("incoheren");

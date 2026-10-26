@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
+import { streamText, type LanguageModelUsage, type SystemModelMessage } from "ai";
 import { z } from "zod";
 
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
-import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
+import type { AiSdkProviderConfig, ChatProvider, ConfiguredAiSdkProviderDeps, ModelMessage, ReasoningPolicy } from "@inflexa-ai/harness";
 
+import type { AgentSession } from "../../auth/types.js";
 import {
     COMPACTION_EXCHANGE_KEY,
     COMPACTION_MARKER_KEY,
@@ -98,11 +100,50 @@ function capturingFetch(respond: (text: string, model: string) => Response): { f
     return { fetch, requests };
 }
 
-const request: ChatRequest = {
-    system: "You are a test model.",
-    messages: [{ role: "user", content: "Say hello." }],
-    tools: {},
+const MESSAGES: ModelMessage[] = [{ role: "user", content: "Say hello." }];
+
+type DriveCall = {
+    readonly session?: AgentSession;
+    readonly reasoning?: ReasoningPolicy;
+    readonly instructions?: string | SystemModelMessage;
+    readonly messages?: ModelMessage[];
 };
+
+/** What a reader of one model call saw. */
+type Outcome = {
+    readonly text: string;
+    /** The first failure that the call reported, as the AI SDK gave it. */
+    readonly failure: unknown;
+    readonly finishReason?: string;
+    readonly usage?: LanguageModelUsage;
+};
+
+/** Run one model call over the bound model of `provider`, the same way the loop runs each request. */
+async function drive(provider: ChatProvider, call: DriveCall = {}): Promise<Outcome> {
+    const bound = provider.bind({ session: call.session ?? makeSession(), reasoning: call.reasoning, live: false });
+    let failure: unknown;
+    const result = streamText({
+        model: bound.model,
+        ...bound.settings,
+        maxRetries: 0,
+        instructions: call.instructions ?? "You are a test model.",
+        messages: call.messages ?? MESSAGES,
+        onError: ({ error }) => {
+            failure ??= error;
+        },
+    });
+    let text = "";
+    let finishReason: string | undefined;
+    let usage: LanguageModelUsage | undefined;
+    for await (const part of result.stream) {
+        if (part.type === "text-delta") text += part.text;
+        else if (part.type === "finish-step") {
+            finishReason = part.finishReason;
+            usage = part.usage;
+        }
+    }
+    return { text, failure, finishReason, usage };
+}
 
 describe("provider configuration front door", () => {
     it("constructs a working anthropic ChatProvider from the package root", async () => {
@@ -117,13 +158,10 @@ describe("provider configuration front door", () => {
         const deps: ConfiguredAiSdkProviderDeps = { config };
         const provider = createConfiguredAiSdkProvider(deps);
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        expect(result._unsafeUnwrap()).toMatchObject({
-            finishReason: "stop",
-            message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
-        });
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome).toMatchObject({ finishReason: "stop", text: "Hello, world" });
         expect(provider.capabilities.toolCalling).toBe(true);
     });
 
@@ -139,13 +177,10 @@ describe("provider configuration front door", () => {
         };
         const provider = createConfiguredAiSdkProvider({ config });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        expect(result._unsafeUnwrap()).toMatchObject({
-            finishReason: "stop",
-            message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
-        });
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome).toMatchObject({ finishReason: "stop", text: "Hello, world" });
         expect(provider.capabilities.toolCalling).toBe(true);
     });
 
@@ -160,13 +195,10 @@ describe("provider configuration front door", () => {
         const deps: ConfiguredAiSdkProviderDeps = { config };
         const provider = createConfiguredAiSdkProvider(deps);
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        expect(result._unsafeUnwrap()).toMatchObject({
-            finishReason: "stop",
-            message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
-        });
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome).toMatchObject({ finishReason: "stop", text: "Hello, world" });
         expect(provider.capabilities.toolCalling).toBe(true);
     });
 
@@ -182,11 +214,11 @@ describe("provider configuration front door", () => {
         const conversationProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-a" } });
         const sandboxProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-b" } });
 
-        const first = await conversationProvider.chat(request, makeSession());
-        const second = await sandboxProvider.chat(request, makeSession());
+        const first = await drive(conversationProvider);
+        const second = await drive(sandboxProvider);
 
-        expect(first.isOk()).toBe(true);
-        expect(second.isOk()).toBe(true);
+        expect(first.failure).toBeUndefined();
+        expect(second.failure).toBeUndefined();
         // Same shared connection config; each provider instance's request carries the
         // model it was constructed with — no per-request model.
         expect(cap.requests.map((captured) => captured.body["model"])).toEqual(["model-a", "model-b"]);
@@ -207,10 +239,10 @@ describe("the reasoning effort of the configuration", () => {
             },
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        // The request sets no reasoning, thus the configured value applies, and
+        expect(outcome.failure).toBeUndefined();
+        // The run sets no reasoning, thus the configured value applies, and
         // the package maps it onto the effort of the model.
         expect(cap.requests[0]?.body["output_config"]).toMatchObject({ effort: "high" });
     });
@@ -227,9 +259,9 @@ describe("the session key on the wire", () => {
             config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
         });
 
-        const result = await provider.chat(request, stepSession);
+        const outcome = await drive(provider, { session: stepSession });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.requests[0]?.body["metadata"]).toEqual({ user_id: digestOf("a1:r1:s1") });
     });
 
@@ -237,9 +269,9 @@ describe("the session key on the wire", () => {
         const cap = capturingFetch(responsesSse);
         const provider = createConfiguredAiSdkProvider({ config: { kind: "openai", apiKey: "test-key", model: "gpt-5.1", fetch: cap.fetch } });
 
-        const result = await provider.chat(request, chatSession);
+        const outcome = await drive(provider, { session: chatSession });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.requests[0]?.body["prompt_cache_key"]).toBe(digestOf("a1:t1"));
     });
 
@@ -256,9 +288,9 @@ describe("the session key on the wire", () => {
             },
         });
 
-        const result = await provider.chat(request, stepSession);
+        const outcome = await drive(provider, { session: stepSession });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         const body = cap.requests[0]?.body;
         expect(body).not.toHaveProperty("prompt_cache_key");
         expect(body).not.toHaveProperty("metadata");
@@ -287,9 +319,9 @@ describe("the thinking binding on the wire", () => {
             },
         });
 
-        const result = await provider.chat({ ...request, reasoning }, makeSession());
+        const outcome = await drive(provider, { reasoning });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         return presentAt(cap.requests, 0);
     }
 
@@ -338,7 +370,7 @@ describe("the thinking binding on the wire", () => {
 });
 
 describe("the streamed usage of the openai-compatible arm", () => {
-    it("asks for usage on the stream, and the usage chunk reaches the response", async () => {
+    it("asks for usage on the stream, and the usage chunk reaches the step", async () => {
         const cap = capturingFetch(openaiSse);
         const provider = createConfiguredAiSdkProvider({
             config: {
@@ -351,41 +383,25 @@ describe("the streamed usage of the openai-compatible arm", () => {
             },
         });
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+        const outcome = await drive(provider);
 
         expect(cap.requests[0]?.body["stream_options"]).toEqual({ include_usage: true });
-        expect(reply.usage).toMatchObject({ inputTokens: 5, outputTokens: 2 });
+        expect(outcome.usage).toMatchObject({ inputTokens: 5, outputTokens: 2 });
     });
 });
 
-describe("the provider id on the response", () => {
-    it("names the provider of each arm, as the AI SDK names it", async () => {
-        const anthropic = createConfiguredAiSdkProvider({
-            config: {
-                kind: "anthropic",
-                baseURL: "http://models.local/anthropic",
-                apiKey: "test-key",
-                model: "claude-opus-4-7",
-                fetch: capturingFetch(anthropicSse).fetch,
-            },
-        });
-        const openai = createConfiguredAiSdkProvider({
-            config: { kind: "openai", apiKey: "test-key", model: "gpt-5.1", fetch: capturingFetch(responsesSse).fetch },
-        });
-        const compatible = createConfiguredAiSdkProvider({
-            config: {
-                kind: "openai-compatible",
-                name: "self-hosted",
-                baseURL: "http://models.local/v1",
-                apiKey: "test-key",
-                model: "local-tool-model",
-                fetch: capturingFetch(openaiSse).fetch,
-            },
-        });
+describe("the provider id of the bound model", () => {
+    it("names the provider of each arm, as the AI SDK names it", () => {
+        const providerOf = (config: AiSdkProviderConfig): string =>
+            createConfiguredAiSdkProvider({ config }).bind({ session: makeSession(), live: false }).model.provider;
 
-        expect((await anthropic.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("anthropic.messages");
-        expect((await openai.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("openai.responses");
-        expect((await compatible.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("self-hosted.chat");
+        expect(providerOf({ kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7" })).toBe(
+            "anthropic.messages",
+        );
+        expect(providerOf({ kind: "openai", apiKey: "test-key", model: "gpt-5.1" })).toBe("openai.responses");
+        expect(
+            providerOf({ kind: "openai-compatible", name: "self-hosted", baseURL: "http://models.local/v1", apiKey: "test-key", model: "local-tool-model" }),
+        ).toBe("self-hosted.chat");
     });
 });
 
@@ -396,9 +412,9 @@ describe("the system prompt breakpoint on the wire", () => {
             config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
         });
 
-        const result = await provider.chat({ ...request, system: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE) }, makeSession());
+        const outcome = await drive(provider, { instructions: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE) });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.requests[0]?.body["system"]).toEqual([{ type: "text", text: "You are a test model.", cache_control: { type: "ephemeral", ttl: "5m" } }]);
     });
 });
@@ -411,9 +427,9 @@ describe("a context record on the wire", () => {
         });
         const record = contextRecordMessage("working-memory", "[Working Memory]\nThe working memory is empty.");
 
-        const result = await provider.chat({ ...request, messages: [...request.messages, record] }, makeSession());
+        const outcome = await drive(provider, { messages: [...MESSAGES, record] });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         const body = JSON.stringify(cap.requests[0]?.body);
         expect(body).toContain("The working memory is empty.");
         expect(body).not.toContain(CONTEXT_KIND_KEY);
@@ -432,9 +448,9 @@ describe("compaction marks on the wire", () => {
         const reply = markCompactionExchange({ role: "assistant", content: [{ type: "text", text: "The groups differ." }] }, "c-1");
         const marker = summaryMarkerMessage("The groups differ.", { kind: "summary", id: "c-1", tokensBefore: 10, durationMs: 1 });
 
-        const result = await provider.chat({ ...request, messages: [...request.messages, exchangeRequest, reply, marker] }, makeSession());
+        const outcome = await drive(provider, { messages: [...MESSAGES, exchangeRequest, reply, marker] });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         const body = JSON.stringify(cap.requests[0]?.body);
         expect(body).toContain("Reply with the summary.");
         expect(body).toContain("[Conversation Summary]");
@@ -459,9 +475,9 @@ describe("the input tokens of a request on the wire", () => {
         const cap = capturingFetch(respond);
         const provider = createConfiguredAiSdkProvider({ config: { ...config, fetch: cap.fetch } });
 
-        const result = await provider.chat({ ...request, messages: [...request.messages, answered, { role: "user", content: "Again." }] }, makeSession());
+        const outcome = await drive(provider, { messages: [...MESSAGES, answered, { role: "user", content: "Again." }] });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         const body = JSON.stringify(cap.requests[0]?.body);
         expect(body).toContain("Hello.");
         expect(body).not.toContain(REQUEST_INPUT_TOKENS_KEY);
@@ -470,7 +486,7 @@ describe("the input tokens of a request on the wire", () => {
 });
 
 describe("output-token ceiling", () => {
-    /** Run one chat over a capturing fetch and report the `max_tokens` that reached the wire. */
+    /** Run one call over a capturing fetch and report the `max_tokens` that reached the wire. */
     async function wireMaxTokens(
         respond: (text: string, model: string) => Response,
         build: (fetch: typeof globalThis.fetch) => AiSdkProviderConfig,
@@ -478,9 +494,9 @@ describe("output-token ceiling", () => {
         const cap = capturingFetch(respond);
         const provider = createConfiguredAiSdkProvider({ config: build(cap.fetch) });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         const maxTokens = cap.requests[0]?.body["max_tokens"];
         return typeof maxTokens === "number" ? maxTokens : undefined;
     }

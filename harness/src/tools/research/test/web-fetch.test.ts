@@ -263,9 +263,8 @@ async function startAuthEchoServer(): Promise<LocalServer> {
 describe("web_fetch — the tool shape", () => {
     const tool = createWebFetchTool();
 
-    it("runs in the step mode and names the URL of a call", () => {
+    it("names the URL of a call", () => {
         expect(tool.id).toBe("web_fetch");
-        expect(tool.executionMode).toBe("step");
         expect(tool.describeCall?.({ url: "https://example.org/page" })).toBe("https://example.org/page");
     });
 

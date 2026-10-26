@@ -27,7 +27,7 @@ import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolResultPart } from "ai";
+import { APICallError, type LanguageModelV4CallOptions, type LanguageModelV4Prompt, type LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { z } from "zod";
@@ -41,19 +41,19 @@ import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js
 import type { SpawnSession } from "../../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../../__tests__/setup/logger.js";
 import { classifyReadPath } from "../../provenance/collector.js";
-import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../../providers/types.js";
+import type { ChatProvider, ChatUsage } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { Querier } from "../../state/db.js";
 import type { SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../../execution/artifact-registry.js";
 import type { GateFailure } from "../../lib/hooks.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { createExecuteCommandTool } from "../../tools/workspace/execute-command.js";
-import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox/report-blocker.js";
+import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "../sandbox-step.js";
 import { presentAt, presentLast } from "../../lib/present.js";
@@ -128,7 +128,15 @@ async function mockDbos(): Promise<void> {
         now: dbos.DBOS.now.bind(dbos.DBOS),
         send: dbos.DBOS.send.bind(dbos.DBOS),
         cancelWorkflow: dbos.DBOS.cancelWorkflow.bind(dbos.DBOS),
+        isInWorkflow: dbos.DBOS.isInWorkflow.bind(dbos.DBOS),
     };
+
+    // The body runs outside a workflow, thus the loop calls the model and each tool directly.
+    Reflect.set(
+        dbos.DBOS,
+        "isInWorkflow",
+        mock(() => false),
+    );
 
     // Every `DBOS.runStep` runs its body inline — the body under test only needs
     // the steps to execute, not to be cached. The self-cancel of a suspension
@@ -252,22 +260,16 @@ function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxS
     };
 }
 
+/** The requests of a step whose task and post-step continuations each end on their first reply. */
+const ONE_REPLY_STEP_REQUESTS = 3;
+
 /**
- * A chat provider that answers every call with one plain-text assistant reply
- * carrying `usage`. `finishReason: "stop"` terminates the loop on its first
- * iteration, so the run's rollup is exactly this call's usage.
+ * A model that answers each request of the step with one plain-text reply
+ * carrying `usage`. The stop ends the loop on its first request, so the run's
+ * rollup is exactly this call's usage.
  */
-function makeProvider(usage: ChatUsage | undefined): AgentChat {
-    const reply: ChatResponse = {
-        message: { role: "assistant", content: "done" },
-        finishReason: "stop",
-        usage,
-        requestedModelId: STEP_MODEL_ID,
-    };
-    return {
-        capabilities: { toolCalling: true },
-        chat: () => okAsync(reply),
-    };
+function makeProvider(usage: ChatUsage | undefined): ChatProvider {
+    return scriptedModel(Array.from({ length: ONE_REPLY_STEP_REQUESTS }, () => reply([text("done")], "stop", usage))).provider;
 }
 
 function makeRunSession(): SpawnSession {
@@ -517,28 +519,30 @@ describe("sandbox-step activity history", () => {
 
 // ── the output tool of the file-metadata continuation ───────────────
 
-function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
-    return request.messages
+function toolResultIn(call: LanguageModelV4CallOptions, toolCallId: string): LanguageModelV4ToolResultPart | undefined {
+    return call.prompt
         .flatMap((message) => (message.role === "tool" ? message.content : []))
         .flatMap((part) => (part.type === "tool-result" && part.toolCallId === toolCallId ? [part] : []))
         .at(0);
 }
 
+/** The prompt as text, with no cache marker: the marker moves to the last message of each request. */
+function withoutCacheMarkers(prompt: LanguageModelV4Prompt): string {
+    return JSON.stringify(prompt, (key, value: unknown) => (key === "providerOptions" ? undefined : value));
+}
+
 describe("sandbox-step file-metadata output tool", () => {
     it("masks submit_file_metadata during the task, thus the call gets the error of the mask", async () => {
         let cell: FileMetadataCell | undefined;
-        const provider = scriptedProvider((i) =>
-            i === 0
-                ? makeMessage(
-                      [
-                          toolUseBlock("tu-meta", "submit_file_metadata", {
-                              files: [{ path: "output/result.csv", description: "counts", dataType: "table", format: "csv" }],
-                          }),
-                      ],
-                      "tool_use",
-                  )
-                : makeMessage([textBlock("done")], "end_turn"),
-        );
+        const { provider, calls } = scriptedModel([
+            callTools(
+                toolCall("tu-meta", "submit_file_metadata", {
+                    files: [{ path: "output/result.csv", description: "counts", dataType: "table", format: "csv" }],
+                }),
+            ),
+            reply([text("done")]),
+            reply([text("## Summary")]),
+        ]);
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
@@ -551,10 +555,11 @@ describe("sandbox-step file-metadata output tool", () => {
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
         expect(result.status).toBe("complete");
-        const refusal = toolResultIn(presentAt(provider.calls, 1), "tu-meta");
+        const refusal = toolResultIn(presentAt(calls, 1), "tu-meta");
         expect(refusal?.output.type).toBe("error-text");
         expect(JSON.stringify(refusal?.output)).toContain("The tool submit_file_metadata is not available for this request");
-        expect(cell?.descriptions.size).toBe(0);
+        expect(cell?.knownPaths).toBeNull();
+        expect(cell?.described.size).toBe(0);
     });
 });
 
@@ -574,29 +579,30 @@ describe("sandbox-step post-step continuations", () => {
 
     it("gives the summary the messages of the metadata exchange after the transcript of the task", async () => {
         await seedStepOutput();
-        const submit = makeMessage(
-            [
-                toolUseBlock("m1", "submit_file_metadata", {
+        const { provider, calls } = scriptedModel([
+            reply([text("done")]),
+            callTools(
+                toolCall("m1", "submit_file_metadata", {
                     files: [{ path: "output/result.csv", description: "gene counts", dataType: "count matrix", format: "csv" }],
                 }),
-            ],
-            "tool_use",
-        );
-        const described = makeMessage([textBlock("described")], "end_turn");
-        const replies = [makeMessage([textBlock("done")], "end_turn"), submit, described, makeMessage([textBlock("## Summary")], "end_turn")];
-        const provider = scriptedProvider((i) => presentAt(replies, i));
+            ),
+            reply([text("described")]),
+            reply([text("## Summary")]),
+        ]);
 
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
 
         expect(result.status).toBe("complete");
-        expect(provider.calls).toHaveLength(4);
-        const metadataRequest = presentAt(provider.calls, 1);
-        const summaryRequest = presentAt(provider.calls, 3);
-        expect(summaryRequest.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool", "assistant", "user"]);
-        expect(JSON.stringify(summaryRequest.messages.slice(0, 2))).toBe(JSON.stringify(metadataRequest.messages.slice(0, 2)));
-        expect(presentAt(summaryRequest.messages, 2).content).toBe(presentAt(metadataRequest.messages, 2).content);
-        expect(summaryRequest.messages[3]).toEqual(submit.message);
-        expect(summaryRequest.messages[5]).toEqual(described.message);
+        expect(calls).toHaveLength(4);
+        const metadataRequest = presentAt(calls, 1);
+        const summaryRequest = presentAt(calls, 3);
+        expect(summaryRequest.prompt.map((m) => m.role)).toEqual(["system", "user", "assistant", "user", "assistant", "tool", "assistant", "user"]);
+        expect(withoutCacheMarkers(summaryRequest.prompt.slice(0, metadataRequest.prompt.length))).toBe(withoutCacheMarkers(metadataRequest.prompt));
+        expect(summaryRequest.prompt[4]).toMatchObject({
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "m1", toolName: "submit_file_metadata" }],
+        });
+        expect(summaryRequest.prompt[6]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "described" }] });
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "gene counts" })]);
     });
 
@@ -612,14 +618,13 @@ describe("sandbox-step post-step continuations", () => {
                 config?.name === "post-step.generate-file-metadata" ? cached : runInline(fn, config),
             ),
         );
-        const replies = [makeMessage([textBlock("done")], "end_turn"), makeMessage([textBlock("## Summary")], "end_turn")];
-        const provider = scriptedProvider((i) => presentAt(replies, i));
+        const { provider, calls } = scriptedModel([reply([text("done")]), reply([text("## Summary")])]);
 
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
 
         expect(result.status).toBe("complete");
-        expect(provider.calls).toHaveLength(2);
-        expect(presentAt(provider.calls, 1).messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+        expect(calls).toHaveLength(2);
+        expect(presentAt(calls, 1).prompt.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "cached description" })]);
     });
 });
@@ -640,11 +645,11 @@ describe("sandbox-step kept tool outputs", () => {
     }
 
     /** The reference in the first excerpt of the messages of a request. */
-    function referenceIn(request: ChatRequest): string {
-        const excerpt = request.messages
+    function referenceIn(call: LanguageModelV4CallOptions): string {
+        const excerpt = call.prompt
             .flatMap((message) => (message.role === "tool" ? message.content : []))
             .map((part) => (part.type === "tool-result" && part.output.type === "text" ? part.output.value : ""))
-            .find((text) => text.startsWith("[Tool result cut: "));
+            .find((value) => value.startsWith("[Tool result cut: "));
         const ref = referencedToolOutput(excerpt ?? "");
         if (ref === undefined) throw new Error("the tool-result cut notice is absent");
         return ref;
@@ -665,11 +670,11 @@ describe("sandbox-step kept tool outputs", () => {
                     timedOut: false,
                 }),
         };
-        const provider = scriptedProvider((i) =>
-            i === 0
-                ? makeMessage([toolUseBlock("tu-x", "execute_command", { command: ["python", "run.py"] })], "tool_use")
-                : makeMessage([textBlock("done")], "end_turn"),
-        );
+        const { provider, calls } = scriptedModel([
+            callTools(toolCall("tu-x", "execute_command", { command: ["python", "run.py"] })),
+            reply([text("done")]),
+            reply([text("## Summary")]),
+        ]);
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
@@ -696,8 +701,8 @@ describe("sandbox-step kept tool outputs", () => {
         expect(result.status).toBe("complete");
         expect(store.puts).toHaveLength(1);
         expect(store.puts[0]).toMatchObject({ analysisId: ANALYSIS_ID, toolName: "execute_command", toolCallId: "tu-x" });
-        expect(store.puts[0]).not.toHaveProperty("threadId");
-        const excerpt = toolResultIn(presentAt(provider.calls, 1), "tu-x");
+        expect(store.puts[0]?.threadId).toBeUndefined();
+        const excerpt = toolResultIn(presentAt(calls, 1), "tu-x");
         if (excerpt === undefined) throw new Error("excerpt is absent");
         if (excerpt.output.type !== "text") throw new Error(`expected a text excerpt, got ${excerpt.output.type}`);
         const tail = excerpt.output.value.split("\n").at(-1);
@@ -715,12 +720,12 @@ describe("sandbox-step kept tool outputs", () => {
             describeCall: "none",
             execute: () => Promise.resolve(ok("x".repeat(40_000))),
         });
-        const provider = scriptedProvider((i, request) => {
-            if (i === 0) return makeMessage([toolUseBlock("tu-big", "big", {})], "tool_use");
-            if (i === 1) return makeMessage([textBlock("done")], "end_turn");
-            if (i === 2) return makeMessage([toolUseBlock("tu-read", "read_tool_output", { ref: referenceIn(request) })], "tool_use");
-            return makeMessage([textBlock("## Summary")], "end_turn");
-        });
+        const { provider, calls } = scriptedModel([
+            callTools(toolCall("tu-big", "big", {})),
+            reply([text("done")]),
+            (call) => callTools(toolCall("tu-read", "read_tool_output", { ref: referenceIn(call) })),
+            reply([text("## Summary")]),
+        ]);
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
@@ -734,8 +739,8 @@ describe("sandbox-step kept tool outputs", () => {
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
         expect(result.status).toBe("complete");
-        expect(provider.calls).toHaveLength(4);
-        const read = toolResultIn(presentAt(provider.calls, 3), "tu-read");
+        expect(calls).toHaveLength(4);
+        const read = toolResultIn(presentAt(calls, 3), "tu-read");
         if (read === undefined) throw new Error("read is absent");
         if (read.output.type !== "json") throw new Error(`expected a json excerpt, got ${read.output.type}`);
         expect(read.output.value).toMatchObject({ status: "ok", offset: 0 });
@@ -751,71 +756,121 @@ describe("sandbox-step kept tool outputs", () => {
     });
 });
 
-// ── a blocker on a durable replay ───────────────────────────────────
+// ── a blocker ───────────────────────────────────────────────────────
 
-describe("sandbox-step blocker replay", () => {
-    it("keeps the blocked status on a replay, which returns the cached report_blocker step and runs no execute", async () => {
+describe("sandbox-step blocker", () => {
+    const REASON = "The input has no batch column.";
+
+    function blockerDeps(provider: ChatProvider, blocker: Tool = createReportBlockerTool()): SandboxStepDeps {
+        return {
+            ...usageStepDeps(undefined),
+            provider,
+            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [blocker])),
+        };
+    }
+
+    function blockedParts(): Array<Record<string, unknown>> {
+        return dbosState.emittedParts.filter((part) => part.type === "data-step-blocked");
+    }
+
+    it("stops the run at a blocker, and blocks the step with the reason of the call", async () => {
+        // The script holds one reply, thus a second request of the run would fail the step.
+        const { provider, calls } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]);
+
+        const result = await runSandboxStepBody(usageStepInput(), blockerDeps(provider));
+
+        expect(result).toMatchObject({ status: "blocked", error: REASON, finishReason: "stop" });
+        expect(calls).toHaveLength(1);
+        expect(blockedParts().map((part) => part.reason)).toEqual([REASON]);
+    });
+
+    it("refuses a placeholder reason with an error result, records no blocker, and the run continues", async () => {
+        const { provider, calls } = scriptedModel([
+            callTools(toolCall("b1", "report_blocker", { reason: "TODO: fill in the reason" })),
+            reply([text("done")]),
+            reply([text("## Summary")]),
+        ]);
+
+        const result = await runSandboxStepBody(usageStepInput(), blockerDeps(provider));
+
+        expect(result.status).toBe("complete");
+        const refusal = toolResultIn(presentAt(calls, 1), "b1");
+        expect(refusal?.output.type).toBe("error-text");
+        expect(JSON.stringify(refusal?.output)).toContain("placeholder");
+        expect(blockedParts()).toEqual([]);
+    });
+
+    it("takes the reason of the first report_blocker call whose result is ok, not of a call that failed its input schema", async () => {
+        const { provider } = scriptedModel([
+            callTools(
+                toolCall("b0", "report_blocker", { reason: "" }),
+                toolCall("b1", "report_blocker", { reason: "first recorded" }),
+                toolCall("b2", "report_blocker", { reason: "second recorded" }),
+            ),
+        ]);
+
+        const result = await runSandboxStepBody(usageStepInput(), blockerDeps(provider));
+
+        expect(result).toMatchObject({ status: "blocked", error: "first recorded" });
+    });
+
+    it("keeps the blocked status on a replay, which returns the recorded model call and report_blocker call and runs neither again", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const cache = new Map<string, unknown>();
+        // Inside a workflow, the loop runs each model call and each tool call as a step.
+        Reflect.set(
+            dbos.DBOS,
+            "isInWorkflow",
+            mock(() => true),
+        );
+        const recorded: Array<{ readonly name: string | undefined; readonly value: unknown }> = [];
         Reflect.set(
             dbos.DBOS,
             "runStep",
             mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
-                if (config?.name === undefined) throw new Error("the step name is absent");
                 const value = await fn();
-                cache.set(config.name, value);
+                recorded.push({ name: config?.name, value });
                 return value;
             }),
         );
-        const reason = "The input has no batch column.";
-        const replies = [makeMessage([toolUseBlock("b1", "report_blocker", { reason })], "tool_use"), makeMessage([textBlock("blocked")], "end_turn")];
-        const holders: BlockerHolder[] = [];
-        const blockerDeps = (provider: AgentChat): SandboxStepDeps => ({
-            ...usageStepDeps(undefined),
-            provider,
-            buildAgent: ({ blockerHolder, fileMetadata }) => {
-                holders.push(blockerHolder);
-                return Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]));
+        let executes = 0;
+        const blocker = createReportBlockerTool();
+        const counted: Tool = {
+            ...blocker,
+            execute: (input, ctx) => {
+                executes += 1;
+                return blocker.execute(input, ctx);
             },
-        });
+        };
 
-        const first = await runSandboxStepBody(usageStepInput(), blockerDeps(scriptedProvider((i) => presentAt(replies, i))));
+        const first = await runSandboxStepBody(
+            usageStepInput(),
+            blockerDeps(scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]).provider, counted),
+        );
 
+        // DBOS returns the recorded steps of a replay in the order of their function ids, and it refuses a step of a different name.
+        let next = 0;
         Reflect.set(
             dbos.DBOS,
             "runStep",
-            mock((fn: () => Promise<unknown>, config?: { name?: string }) => {
-                if (config?.name === undefined) return Promise.reject(new Error("the step name is absent"));
-                return Promise.resolve(cache.has(config.name) ? cache.get(config.name) : fn());
+            mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+                const step = recorded[next];
+                next += 1;
+                if (step === undefined) return fn();
+                if (step.name !== config?.name)
+                    throw new Error(`the replay reached the step ${config?.name ?? "(unnamed)"} where the record holds ${step.name ?? "(unnamed)"}`);
+                return step.value;
             }),
         );
-        const replayProvider = scriptedProvider(() => {
-            throw new Error("the replay called the provider");
-        });
-        const replayed = await runSandboxStepBody(usageStepInput(), blockerDeps(replayProvider));
+        const replay = scriptedModel([]);
+        const replayed = await runSandboxStepBody(usageStepInput(), blockerDeps(replay.provider, counted));
 
-        expect(first).toMatchObject({ status: "blocked", error: reason });
-        expect(replayed).toMatchObject({ status: "blocked", error: reason });
-        expect(replayProvider.calls).toHaveLength(0);
-        // The replay ran no `execute` of report_blocker, thus its cell stayed empty.
-        expect(holders.map((holder) => holder.outcome)).toEqual([{ kind: "blocker", reason }, null]);
-    });
-
-    it("takes the reason of the first report_blocker call whose result is ok, not of a call that failed its input schema", async () => {
-        const replies = [
-            makeMessage([toolUseBlock("b0", "report_blocker", { reason: "" }), toolUseBlock("b1", "report_blocker", { reason: "first recorded" })], "tool_use"),
-            makeMessage([toolUseBlock("b2", "report_blocker", { reason: "second recorded" })], "tool_use"),
-            makeMessage([textBlock("blocked")], "end_turn"),
-        ];
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            provider: scriptedProvider((i) => presentAt(replies, i)),
-            buildAgent: ({ blockerHolder, fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)])),
-        };
-
-        const result = await runSandboxStepBody(usageStepInput(), deps);
-
-        expect(result).toMatchObject({ status: "blocked", error: "first recorded" });
+        const names = recorded.map((step) => step.name);
+        expect(names).toContain(`${USAGE_AGENT_ID}.model`);
+        expect(names).toContain("report_blocker.b1");
+        expect(first).toMatchObject({ status: "blocked", error: REASON });
+        expect(replayed).toMatchObject({ status: "blocked", error: REASON });
+        expect(replay.calls).toHaveLength(0);
+        expect(executes).toBe(1);
     });
 });
 
@@ -871,11 +926,18 @@ describe("sandbox-step suspension", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             pool,
-            provider: {
-                capabilities: { toolCalling: true },
-                chat: () =>
-                    errAsync({ type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Provider call failed (HTTP 402)" }),
-            },
+            // The default map of the provider reads a 402 as the suspension `payment_required`.
+            provider: scriptedModel([
+                {
+                    fail: new APICallError({
+                        message: "Payment Required",
+                        url: "https://model.test/v1/messages",
+                        requestBodyValues: {},
+                        statusCode: 402,
+                        isRetryable: false,
+                    }),
+                },
+            ]).provider,
         };
 
         await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
@@ -1108,20 +1170,18 @@ describe("sandbox-step capped-out empty manifest", () => {
 
     /**
      * Deps whose loop caps out: a one-iteration agent with one `echo` tool, and
-     * a provider whose first reply is a tool call. The wrap-up call (and every
-     * post-step producer call after it) gets a plain "done", so the loop ends
-     * with `finish.cappedOut: true` and `reason: "max_iterations"`.
+     * a provider whose first reply is a tool call. Each post-step continuation
+     * gets a plain "done", and the loop ends with `finish.cappedOut: true` and
+     * `reason: "max_iterations"`.
      */
-    function cappedOutDeps(args: { blockerReason?: string } = {}): { deps: SandboxStepDeps; values: unknown[] } {
+    function cappedOutDeps(): { deps: SandboxStepDeps; values: unknown[] } {
         const { pool, values } = makeRecordingPool();
-        const provider = scriptedProvider((i) =>
-            i === 0 ? makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
-        );
+        const { provider } = scriptedModel([callTools(toolCall("tu-1", "echo", { label: "x" })), reply([text("done")]), reply([text("done")])]);
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             pool,
             provider,
-            buildAgent: ({ blockerHolder, fileMetadata }) =>
+            buildAgent: ({ fileMetadata }) =>
                 Promise.resolve(
                     stepAgent(
                         fileMetadata,
@@ -1131,12 +1191,7 @@ describe("sandbox-step capped-out empty manifest", () => {
                                 description: "Echo the label back.",
                                 inputSchema: z.object({ label: z.string() }),
                                 describeCall: "none",
-                                execute: ({ label }) => {
-                                    if (args.blockerReason !== undefined) {
-                                        blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
-                                    }
-                                    return Promise.resolve(ok({ label }));
-                                },
+                                execute: ({ label }) => Promise.resolve(ok({ label })),
                             }),
                         ],
                         1,
@@ -1195,13 +1250,22 @@ describe("sandbox-step capped-out empty manifest", () => {
         expect(blockedParts(dbosState.emittedParts)).toEqual([]);
     });
 
-    it("keeps the blocker's own reason when the step also capped out", async () => {
-        const { deps } = cappedOutDeps({ blockerReason: "the input has no batch column" });
+    it("keeps the blocker's own reason when the blocker comes in the last request that the cap lets run", async () => {
+        const { pool } = makeRecordingPool();
+        const { provider } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: "the input has no batch column" }))]);
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            pool,
+            provider,
+            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool()], 1)),
+        };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
         expect(result.status).toBe("blocked");
         expect(result.error).toBe("the input has no batch column");
+        // The blocker ends the run before the cap does.
+        expect(result.finishReason).toBe("stop");
         const emitted = blockedParts(dbosState.emittedParts);
         expect(emitted.length).toBe(1);
         expect(presentAt(emitted, 0).reason).toBe("the input has no batch column");

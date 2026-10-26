@@ -14,7 +14,7 @@
  *    string.
  *
  * This module owns both halves of the response for the three model-facing
- * validation sites (`loop/run-agent.ts`'s tool-input boundary,
+ * validation sites (`loop/tool-adapter.ts`'s tool-input boundary,
  * `execution/run-synthesis.ts`, `tools/research/generate-plan.ts`):
  *
  *  - `hintForZodIssue` — a **diagnostic only**. It parses nothing into the

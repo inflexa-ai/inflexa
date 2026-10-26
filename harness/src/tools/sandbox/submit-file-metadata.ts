@@ -13,35 +13,42 @@
 
 import { err, ok, type Result } from "neverthrow";
 
-import { SubmitFileMetadataInputSchema, type SubmittedFileDescription } from "../../schemas/file-metadata.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { SubmitFileMetadataInputSchema } from "../../schemas/file-metadata.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 
 export const SUBMIT_FILE_METADATA_TOOL_ID = "submit_file_metadata";
 
 /**
- * The per-step cell of the file-metadata continuation. The step body makes it
- * beside the blocker cell, and the agent factory binds the output tool to it.
+ * The per-step cell of the file-metadata follow-up request. The step body makes
+ * it beside the step agent, and the agent factory binds the output tool to it.
+ * The descriptions themselves live in the inputs of the calls: the post-step
+ * code reads them from the recorded calls.
  */
 export type FileMetadataCell = {
-    /** The paths that the continuation describes, or `null` before the first `expect`. */
+    /** The paths that the follow-up request describes, or `null` before the first `expect`. */
     readonly knownPaths: ReadonlySet<string> | null;
-    /** The accepted description of each described path, keyed by the path. The tool writes only a known path. */
-    readonly descriptions: Map<string, SubmittedFileDescription>;
-    /** Arm the cell for one continuation: set the known paths, and drop each accepted description. */
+    /** The known paths that the earlier calls described. The loop folds each call record into it. */
+    readonly described: ReadonlySet<string>;
+    /** Arm the cell for one follow-up request: set the known paths, and forget each described path. */
     expect(paths: readonly string[]): void;
+    /** Add the paths of one call record. */
+    fold(paths: readonly string[]): void;
 };
 
 export function createFileMetadataCell(): FileMetadataCell {
     let knownPaths: ReadonlySet<string> | null = null;
-    const descriptions = new Map<string, SubmittedFileDescription>();
+    const described = new Set<string>();
     return {
         get knownPaths() {
             return knownPaths;
         },
-        descriptions,
+        described,
         expect(paths) {
             knownPaths = new Set(paths);
-            descriptions.clear();
+            described.clear();
+        },
+        fold(paths) {
+            for (const path of paths) described.add(path);
         },
     };
 }
@@ -53,6 +60,9 @@ type SubmitFileMetadataOutcome = {
     readonly unknownPaths: readonly string[];
     readonly remaining: readonly string[];
 };
+
+/** The known paths that one call described. */
+type DescribedPaths = { readonly described: readonly string[] };
 
 /** Build the `submit_file_metadata` tool bound to the cell of one step. */
 export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
@@ -67,7 +77,7 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
             "the unknownPaths and describe the remaining files.",
         inputSchema: SubmitFileMetadataInputSchema,
         describeCall: "none",
-        execute: (input): Promise<Result<SubmitFileMetadataOutcome, ToolError>> => {
+        execute: (input): Promise<Result<WithToolCallRecord<SubmitFileMetadataOutcome, DescribedPaths>, ToolError>> => {
             const knownPaths = cell.knownPaths;
             if (knownPaths === null) {
                 return Promise.resolve(
@@ -77,22 +87,13 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
                     }),
                 );
             }
-            const unknownPaths: string[] = [];
-            for (const entry of input.files) {
-                if (!knownPaths.has(entry.path)) {
-                    unknownPaths.push(entry.path);
-                    continue;
-                }
-                cell.descriptions.set(entry.path, entry);
-            }
-            const remaining = [...knownPaths].filter((path) => !cell.descriptions.has(path));
-            return Promise.resolve(
-                ok({
-                    accepted: unknownPaths.length === 0 && remaining.length === 0,
-                    unknownPaths,
-                    remaining,
-                }),
-            );
+            const unknownPaths = input.files.map((entry) => entry.path).filter((path) => !knownPaths.has(path));
+            const described = input.files.map((entry) => entry.path).filter((path) => knownPaths.has(path));
+            const covered = new Set([...cell.described, ...described]);
+            const remaining = [...knownPaths].filter((path) => !covered.has(path));
+            const outcome: SubmitFileMetadataOutcome = { accepted: unknownPaths.length === 0 && remaining.length === 0, unknownPaths, remaining };
+            return Promise.resolve(ok(withToolCallRecord(outcome, { described })));
         },
+        foldCallRecord: (record) => cell.fold(record.described),
     });
 }

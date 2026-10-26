@@ -1,7 +1,7 @@
 {
     "name": "@inflexa-ai/harness",
     "version": "0.45.1",
-    "description": "Host-agnostic bioinformatics agent harness — hand-rolled agent loop, DBOS-durable workflows, sandboxed compute.",
+    "description": "Host-agnostic bioinformatics agent harness — an agent loop on the AI SDK, DBOS-durable workflows, sandboxed compute.",
     "license": "Apache-2.0",
     "type": "module",
     "main": "dist/index.js",

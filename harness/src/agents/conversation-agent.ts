@@ -5,7 +5,7 @@
  * (see the harness-durable-runtime spec): it receives the shared deps once — `ChatProvider`, `Pool`,
  * `EmbeddingProvider`, the model id — and hands each tool exactly what it
  * needs. Pure leaf tools take nothing; dependency-bearing tools get their
- * factory inputs. By the time `runAgent` sees a tool it is fully dep-bound;
+ * factory inputs. By the time `runLoop` sees a tool it is fully dep-bound;
  * the wiring lines below *are* the dependency graph, made visible.
  *
  * The system prompt is static composition — SOUL kernel + SOUL conversational
@@ -40,6 +40,7 @@ import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
+import { createEditIntentStore } from "../state/edit-intents.js";
 import { conversationPrompt } from "../prompts/conversation.js";
 import { composeSystemPrompt } from "./system-prompt.js";
 
@@ -403,7 +404,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // a symlink escape stay refused. No sandbox is involved — the mutator
         // writes host-side, exactly as it does for a sandbox agent.
         createWriteFileTool({ mutator }),
-        createEditFileTool({ mutator, workspaceFilesystem: workspaceFs }),
+        createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, intents: createEditIntentStore(pool) }),
         // Working memory.
         createUpdateWorkingMemoryTool(workingMemory, pool),
         // Host-contributed tools ride the same context and dispatch path as the

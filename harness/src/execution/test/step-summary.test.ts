@@ -3,18 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4CallOptions, LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
-import { errorOf } from "../../lib/thrown.js";
-import { errAsync, ok, okAsync } from "neverthrow";
-import type { ModelMessage, ToolResultPart } from "ai";
+import { ok, okAsync } from "neverthrow";
+import type { ModelMessage } from "ai";
 import { z } from "zod";
 
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
-import { toProviderError } from "../../providers/errors.js";
-import type { ChatProvider, ChatRequest, ChatResponse } from "../../providers/types.js";
+import type { ChatProvider } from "../../providers/types.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { makeMessage, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply } from "../../testing.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { createGrepTool, createReadFileTool } from "../../tools/workspace/index.js";
@@ -23,45 +22,19 @@ import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../../works
 import { generateStepSummary, type GenerateStepSummaryOptions } from "../step-summary.js";
 import { presentAt, presentFind } from "../../lib/present.js";
 
-type RecordedCall = {
-    readonly req: ChatRequest;
-};
-
-/** The trailing assistant text the scripted provider answered with; anything else fails the test. */
-function lastTextOf(req: ChatRequest): string {
-    const last = req.messages.at(-1);
-    if (last === undefined || typeof last.content !== "string") throw new Error("expected a text message");
-    return last.content;
+/** The text of the last message of a request, which is the summary request of the harness. */
+function lastTextOf(call: LanguageModelV4CallOptions): string {
+    const last = call.prompt.at(-1);
+    if (last?.role !== "user") throw new Error("expected a user message");
+    return last.content.map((part) => (part.type === "text" ? part.text : "")).join("");
 }
 
-function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provider: ChatProvider; calls: RecordedCall[] } {
-    const calls: RecordedCall[] = [];
-    let i = 0;
-    const provider: ChatProvider = {
-        capabilities: { toolCalling: true },
-        chat(req) {
-            // The loop mutates its working `messages` array in place across
-            // iterations, so snapshot it at call time before it's appended to.
-            calls.push({ req: { ...req, messages: [...req.messages] } });
-            const r = responses[i++];
-            const scripted = errorOf(r);
-            if (scripted !== undefined) return errAsync(toProviderError(scripted, "test"));
-            if (!r || !("finishReason" in r)) throw new Error(`scripted provider exhausted at call ${i}`);
-            return okAsync(r);
-        },
-        chatStream() {
-            throw new Error("not used");
-        },
-    };
-    return { provider, calls };
+function textMessage(value: string): ScriptedReply {
+    return reply([text(value)]);
 }
 
-function textMessage(text: string): ChatResponse {
-    return makeMessage([textBlock(text)], "end_turn");
-}
-
-function readFileCall(id: string, path: string): ChatResponse {
-    return makeMessage([toolUseBlock(id, "read_file", { path })], "tool_use");
+function readFileCall(id: string, path: string): ScriptedReply {
+    return callTools(toolCall(id, "read_file", { path }));
 }
 
 /** Fake fs whose readFile is never expected to fire — for the no-read paths. */
@@ -126,13 +99,13 @@ function options(provider: ChatProvider, over: Partial<GenerateStepSummaryOption
     };
 }
 
-function toolResults(request: ChatRequest): ToolResultPart[] {
-    return request.messages.flatMap((m) => (m.role === "tool" ? m.content : [])).flatMap((part) => (part.type === "tool-result" ? [part] : []));
+function toolResults(call: LanguageModelV4CallOptions): LanguageModelV4ToolResultPart[] {
+    return call.prompt.flatMap((m) => (m.role === "tool" ? m.content : [])).flatMap((part) => (part.type === "tool-result" ? [part] : []));
 }
 
 describe("generateStepSummary", () => {
     it("returns { stepId, agentId, markdown } on a final text turn", async () => {
-        const { provider } = makeProvider([textMessage("# Results\n\n- DE genes: 42")]);
+        const { provider } = scriptedModel([textMessage("# Results\n\n- DE genes: 42")]);
         const out = await generateStepSummary(options(provider));
         expect(out).toEqual({
             stepId: "step-1",
@@ -141,25 +114,35 @@ describe("generateStepSummary", () => {
         });
     });
 
-    it("declares the tools of the agent, and its messages start with the transcript and the metadata messages, byte-identical", async () => {
-        const { provider, calls } = makeProvider([textMessage("summary")]);
+    it("declares the tools of the agent, and its messages start with the transcript and the metadata messages", async () => {
+        const { provider, calls } = scriptedModel([textMessage("summary")]);
         const agent = stepAgent(NOOP_FS, STEP_DIR);
         const conversation = [...TRANSCRIPT, ...METADATA_MESSAGES];
 
         await generateStepSummary(options(provider, { agent, conversation }));
 
-        const request = presentAt(calls, 0).req;
-        expect(request.system).toMatchObject({ content: "You are a test step agent." });
-        expect(Object.keys(request.tools)).toEqual(agent.tools.map((t) => t.id));
-        expect(JSON.stringify(request.messages.slice(0, conversation.length))).toBe(JSON.stringify(conversation));
-        // The conversation, then the summary request.
-        expect(request.messages).toHaveLength(conversation.length + 1);
+        const request = presentAt(calls, 0);
+        expect(request.prompt[0]).toMatchObject({ role: "system", content: "You are a test step agent." });
+        expect(request.tools?.map((t) => t.name)).toEqual(agent.tools.map((t) => t.id));
+        expect(request.prompt.slice(1, 1 + conversation.length)).toMatchObject([
+            { role: "user", content: [{ type: "text", text: "Analyze the count matrix at data/inputs/counts.csv." }] },
+            { role: "assistant", content: [{ type: "text", text: "I will compute differential expression." }] },
+            { role: "user", content: [{ type: "text", text: "Describe the output files." }] },
+            { role: "assistant", content: [{ type: "tool-call", toolCallId: "m1", toolName: "submit_file_metadata", input: { files: [] } }] },
+            {
+                role: "tool",
+                content: [{ type: "tool-result", toolCallId: "m1", toolName: "submit_file_metadata", output: { type: "json", value: { accepted: true } } }],
+            },
+            { role: "assistant", content: [{ type: "text", text: "Described." }] },
+        ]);
+        // The system prompt, the conversation, then the summary request.
+        expect(request.prompt).toHaveLength(1 + conversation.length + 1);
     });
 
     it("appends the artifact list to the summary request", async () => {
-        const { provider, calls } = makeProvider([textMessage("summary")]);
+        const { provider, calls } = scriptedModel([textMessage("summary")]);
         await generateStepSummary(options(provider));
-        const last = lastTextOf(presentAt(calls, 0).req);
+        const last = lastTextOf(presentAt(calls, 0));
         for (const path of ARTIFACT_PATHS) {
             expect(last).toContain(path);
         }
@@ -173,14 +156,14 @@ describe("generateStepSummary", () => {
         await writeFile(join(outDir, "de-results.csv"), "gene,log2fc,padj\nTP53,2.3,0.001\nMYC,-1.8,0.004\n");
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
 
-        const { provider, calls } = makeProvider([readFileCall("t1", "output/de-results.csv"), textMessage("# DE\n\n- 2 significant genes: TP53, MYC")]);
+        const { provider, calls } = scriptedModel([readFileCall("t1", "output/de-results.csv"), textMessage("# DE\n\n- 2 significant genes: TP53, MYC")]);
 
         const out = await generateStepSummary(options(provider, { agent: stepAgent(fs, stepDir), artifactPaths: ["output/de-results.csv"] }));
 
         expect(out?.markdown).toContain("TP53");
         // The second request must have seen the actual file contents in the
         // tool_result the loop fed back.
-        const wire = JSON.stringify(presentAt(calls, 1).req.messages);
+        const wire = JSON.stringify(presentAt(calls, 1).prompt);
         expect(wire).toContain("TP53");
         expect(wire).toContain("0.001");
     });
@@ -202,21 +185,15 @@ describe("generateStepSummary", () => {
                 return ok({ written: true });
             },
         });
-        const { provider, calls } = makeProvider([
-            makeMessage(
-                [
-                    toolUseBlock("r1", "read_file", { path: "output/de-results.csv" }),
-                    toolUseBlock("w1", "write_file", { path: "output/notes.md", content: "x" }),
-                ],
-                "tool_use",
-            ),
+        const { provider, calls } = scriptedModel([
+            callTools(toolCall("r1", "read_file", { path: "output/de-results.csv" }), toolCall("w1", "write_file", { path: "output/notes.md", content: "x" })),
             textMessage("# DE\n\n- TP53"),
         ]);
 
         const out = await generateStepSummary(options(provider, { agent: stepAgent(fs, stepDir, [writeProbe]) }));
 
         expect(out?.markdown).toContain("TP53");
-        const [read, write] = toolResults(presentAt(calls, 1).req);
+        const [read, write] = toolResults(presentAt(calls, 1));
         expect(JSON.stringify(read?.output)).toContain("TP53");
         expect(write?.output.type).toBe("error-text");
         expect(JSON.stringify(write?.output)).toContain("The tool write_file is not available for this request");
@@ -243,26 +220,18 @@ describe("generateStepSummary", () => {
             },
             get: (analysisId, ref) => okAsync(kept.find((k) => k.analysisId === analysisId && k.ref === ref) ?? null),
         };
-        const requests: ChatRequest[] = [];
-        const provider: ChatProvider = {
-            capabilities: { toolCalling: true },
-            chat(req) {
-                requests.push({ ...req, messages: [...req.messages] });
-                if (requests.length === 1) return okAsync(readFileCall("r1", "output/long.txt"));
-                if (requests.length === 2) {
-                    const found = presentFind(toolResults(req), (r) => r.toolCallId === "r1");
-                    const outputValue = "value" in found.output ? found.output.value : undefined;
-                    if (typeof outputValue !== "string") throw new Error("expected a string read output");
-                    const ref = referencedToolOutput(outputValue);
-                    if (ref === undefined) throw new Error("the reference marker is absent from the read output");
-                    return okAsync(makeMessage([toolUseBlock("k1", "read_tool_output", { ref, offset: 60_000 })], "tool_use"));
-                }
-                return okAsync(textMessage("# Long\n\n- all read"));
+        const { provider, calls } = scriptedModel([
+            readFileCall("r1", "output/long.txt"),
+            (call) => {
+                const found = presentFind(toolResults(call), (r) => r.toolCallId === "r1");
+                const outputValue = "value" in found.output ? found.output.value : undefined;
+                if (typeof outputValue !== "string") throw new Error("expected a string read output");
+                const ref = referencedToolOutput(outputValue);
+                if (ref === undefined) throw new Error("the reference marker is absent from the read output");
+                return callTools(toolCall("k1", "read_tool_output", { ref, offset: 60_000 }));
             },
-            chatStream() {
-                throw new Error("not used");
-            },
-        };
+            textMessage("# Long\n\n- all read"),
+        ]);
 
         const out = await generateStepSummary(
             options(provider, { agent: stepAgent(fs, stepDir, [createReadToolOutputTool(store)]), artifactPaths: ["output/long.txt"], toolOutputStore: store }),
@@ -270,7 +239,7 @@ describe("generateStepSummary", () => {
 
         expect(out?.markdown).toContain("all read");
         expect(kept).toHaveLength(1);
-        const page = toolResults(presentAt(requests, 2)).find((r) => r.toolCallId === "k1");
+        const page = toolResults(presentAt(calls, 2)).find((r) => r.toolCallId === "k1");
         if (page === undefined) throw new Error("page is absent");
         expect(page.output.type).toBe("json");
         if (page.output.type !== "json") throw new Error("expected the json output arm");
@@ -280,28 +249,27 @@ describe("generateStepSummary", () => {
     it("produces an honest no-output summary for an empty-artifact step (no fabrication)", async () => {
         // No artifacts: the model must state plainly that no outputs were produced,
         // never read a file, and never synthesize a result.
-        const { provider, calls } = makeProvider([textMessage("This step produced no output files.")]);
+        const { provider, calls } = scriptedModel([textMessage("This step produced no output files.")]);
         const out = await generateStepSummary(options(provider, { artifactPaths: [] }));
         expect(out?.markdown).toContain("no output files");
         // The request must signal the empty state to the model.
-        expect(lastTextOf(presentAt(calls, 0).req)).toContain("none");
+        expect(lastTextOf(presentAt(calls, 0))).toContain("none");
     });
 
     it("returns undefined and does not throw when the provider throws", async () => {
-        const { provider } = makeProvider([new Error("upstream 500")]);
+        const { provider } = scriptedModel([{ fail: new Error("upstream 500") }]);
         const out = await generateStepSummary(options(provider));
         expect(out).toBeUndefined();
     });
 
     it("returns undefined when the final turn has no text content", async () => {
-        const reply = makeMessage([], "end_turn");
-        const { provider } = makeProvider([reply]);
+        const { provider } = scriptedModel([reply([])]);
         const out = await generateStepSummary(options(provider));
         expect(out).toBeUndefined();
     });
 
     it("returns undefined for whitespace-only markdown", async () => {
-        const { provider } = makeProvider([textMessage("   \n  \n")]);
+        const { provider } = scriptedModel([textMessage("   \n  \n")]);
         const out = await generateStepSummary(options(provider));
         expect(out).toBeUndefined();
     });

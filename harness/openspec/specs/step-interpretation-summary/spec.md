@@ -124,9 +124,9 @@ step.
 
 The continuation MUST use a cap of 12 requests. Its mask MUST let only `read_file`, `grep`, and `read_tool_output` run. The three are declared tools of the step agent, and the two file tools resolve a path against the step directory. `read_tool_output` reads the rest of a `read_file` result that the loop cut. The continuation MUST run with the tool output store of the task.
 
-Its request MUST be the summary instructions and the list of the output files. It runs with `passthroughStep` durability and a no-op `emit`, inside the `DBOS.runStep` wrapper of the stage. The summary text MUST be the final assistant text of the continuation.
+Its request MUST be the summary instructions and the list of the output files. It runs with a no-op `emit`, inside the `DBOS.runStep` wrapper of the stage. Thus each of its calls runs directly, with no step of its own. The summary text MUST be the final assistant text of the continuation.
 
-The transcript is the in-memory `runAgent` `messages` array of the workflow body, as the no-workflow-message-store rule states (refer to the harness-working-memory spec). The loop answers each unanswered call of the task at its exit. Thus the continuation gets a valid transcript, and it removes no message from it.
+The transcript is the in-memory `runLoop` `messages` array of the workflow body, as the no-workflow-message-store rule states (refer to the harness-working-memory spec). The loop answers each unanswered call of the task at its exit. Thus the continuation gets a valid transcript, and it removes no message from it.
 
 #### Scenario: The summary continuation lets only the read tools run
 

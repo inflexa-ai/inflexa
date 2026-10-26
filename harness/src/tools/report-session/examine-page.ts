@@ -389,7 +389,6 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             "The outcomes no-page and missed-stamp mean that no preview rendered the current page: run preview_report, then look again. " +
             "The outcome no-browser means that this host gives no browser, and a repeat gives the same outcome.",
         inputSchema: examinePageInput,
-        executionMode: "inline",
         describeCall: (input): string => {
             const blockId = input.blockId ?? undefined;
             return blockId === undefined ? "look at the page" : `look at ${blockId}`;

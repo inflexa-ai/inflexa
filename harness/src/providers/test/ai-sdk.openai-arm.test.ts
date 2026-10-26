@@ -1,23 +1,69 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
+import { streamText, type LanguageModelUsage, type ModelMessage, type SystemModelMessage } from "ai";
 import { z } from "zod";
 
+import type { AgentSession } from "../../auth/types.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { makeSession } from "../__fixtures__/session.js";
-import { createConfiguredAiSdkProvider, type AiSdkProviderConfig } from "../ai-sdk.js";
+import { createConfiguredAiSdkProvider, toChatUsage, type AiSdkProviderConfig } from "../ai-sdk.js";
+import { findProviderError, type ProviderError } from "../errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../prompt-cache.js";
-import type { ChatRequest, ChatStreamEvent } from "../types.js";
+import type { ChatProvider } from "../types.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
-const request: ChatRequest = {
-    system: "You are a test model.",
-    messages: [{ role: "user", content: "hello" }],
-    tools: {},
+const MESSAGES: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+type DriveCall = {
+    readonly session?: AgentSession;
+    readonly live?: boolean;
+    readonly instructions?: string | SystemModelMessage;
+    readonly messages?: ModelMessage[];
 };
+
+/** What a reader of one model call saw. */
+type Outcome = {
+    readonly deltas: readonly string[];
+    readonly text: string;
+    /** The first failure that the call reported, as the AI SDK gave it. */
+    readonly failure: unknown;
+    readonly usage?: LanguageModelUsage;
+};
+
+/** Run one model call over the bound model of `provider`, the same way the loop runs each request. */
+async function drive(provider: ChatProvider, call: DriveCall = {}): Promise<Outcome> {
+    const bound = provider.bind({ session: call.session ?? makeSession(), live: call.live ?? false });
+    let failure: unknown;
+    const result = streamText({
+        model: bound.model,
+        ...bound.settings,
+        maxRetries: 0,
+        instructions: call.instructions ?? "You are a test model.",
+        messages: call.messages ?? MESSAGES,
+        onError: ({ error }) => {
+            failure ??= error;
+        },
+    });
+    const deltas: string[] = [];
+    let usage: LanguageModelUsage | undefined;
+    for await (const part of result.stream) {
+        if (part.type === "text-delta") deltas.push(part.text);
+        else if (part.type === "finish-step") usage = part.usage;
+    }
+    return { deltas, text: deltas.join(""), failure, usage };
+}
+
+/** The classified failure of a call that the retry envelope gave up on. */
+function providerErrorOf(outcome: Outcome): ProviderError {
+    const error = findProviderError(outcome.failure);
+    if (error === undefined) throw new Error(`expected a provider error, got ${textOf(outcome.failure)}`, { cause: outcome.failure });
+    return error;
+}
 
 /**
  * A model id of the reasoning family. The package matches the id against that
@@ -152,36 +198,28 @@ describe("openai arm usage", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+        const outcome = await drive(provider);
+        const usage = toChatUsage(outcome.usage);
 
-        // The text part also carries the provider-scoped item id, thus the match
-        // reads a subset of the part.
-        expect(reply.message).toMatchObject({ role: "assistant", content: [{ type: "text", text: "Hello, world" }] });
-        expect(reply.usage?.inputTokens).toBe(1_200);
-        expect(reply.usage?.outputTokens).toBe(90);
-        expect(reply.usage?.cacheReadInputTokens).toBe(900);
-        expect(reply.usage?.reasoningTokens).toBe(64);
+        expect(outcome.text).toBe("Hello, world");
+        expect(usage?.inputTokens).toBe(1_200);
+        expect(usage?.outputTokens).toBe(90);
+        expect(usage?.cacheReadInputTokens).toBe(900);
+        expect(usage?.reasoningTokens).toBe(64);
     });
 });
 
 describe("openai arm stream", () => {
-    it("yields the text deltas and one terminal event that carries the usage", async () => {
+    it("streams the text deltas of a live call, and the usage of the reply", async () => {
         const cap = capturingFetch(() => responsesSse(["Hel", "lo"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
-        const events: ChatStreamEvent[] = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+        const outcome = await drive(provider, { live: true });
 
-        expect(events.slice(0, 2)).toEqual([
-            { type: "text-delta", text: "Hel" },
-            { type: "text-delta", text: "lo" },
-        ]);
-        const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-        expect(events).toHaveLength(3);
-        expect(done.response.message).toMatchObject({ role: "assistant", content: [{ type: "text", text: "Hello" }] });
-        expect(done.response.usage?.cacheReadInputTokens).toBe(900);
-        expect(done.response.usage?.reasoningTokens).toBe(64);
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.deltas).toEqual(["Hel", "lo"]);
+        expect(toChatUsage(outcome.usage)?.cacheReadInputTokens).toBe(900);
+        expect(toChatUsage(outcome.usage)?.reasoningTokens).toBe(64);
     });
 });
 
@@ -194,13 +232,10 @@ describe("openai arm stream failure", () => {
             config: openaiArm(cap.fetch, { maxRetries: 0 }),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const failure = providerErrorOf(await drive(provider));
 
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("provider");
-            expect(result.error.message).toContain("upstream exploded");
-        }
+        expect(failure.type).toBe("provider");
+        expect(failure.message).toContain("upstream exploded");
     });
 });
 
@@ -211,9 +246,9 @@ describe("openai arm store directive", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.bodies[0]?.store).toBe(false);
     });
 
@@ -221,9 +256,9 @@ describe("openai arm store directive", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }) });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.bodies[0]?.store).toBe(true);
     });
 
@@ -233,16 +268,13 @@ describe("openai arm store directive", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }) });
 
-        const result = await provider.chat(
-            {
-                ...request,
-                system: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE),
-                messages: withPromptCacheBreakpoint(request.messages, DEFAULT_PROMPT_CACHE),
-            },
-            makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } }),
-        );
+        const outcome = await drive(provider, {
+            instructions: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE),
+            messages: [...withPromptCacheBreakpoint(MESSAGES, DEFAULT_PROMPT_CACHE)],
+            session: makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } }),
+        });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.bodies[0]?.store).toBe(true);
         expect(cap.bodies[0]?.prompt_cache_key).toBe(createHash("sha256").update("a1:t1").digest("base64url"));
         expect(JSON.stringify(cap.bodies[0])).not.toContain("cache_control");
@@ -255,9 +287,9 @@ describe("openai arm store directive", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
-        const result = await provider.chat(request, makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } }));
+        const outcome = await drive(provider, { session: makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } }) });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.bodies[0]?.store).toBe(false);
         expect(cap.bodies[0]?.prompt_cache_key).toBe(createHash("sha256").update("a1:t1").digest("base64url"));
     });
@@ -271,9 +303,9 @@ describe("openai arm output ceiling", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.bodies[0]).not.toHaveProperty("max_output_tokens");
     });
 
@@ -281,9 +313,9 @@ describe("openai arm output ceiling", () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { maxOutputTokens: 4_096 }) });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(cap.bodies[0]?.max_output_tokens).toBe(4_096);
     });
 });
@@ -296,30 +328,25 @@ describe("openai arm encrypted reasoning", () => {
         const cap = capturingFetch(() => responsesSse(["The second answer."]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
-        const result = await provider.chat(
-            {
-                system: "You are a test model.",
-                messages: [
-                    { role: "user", content: "the first question" },
-                    {
-                        role: "assistant",
-                        content: [
-                            {
-                                type: "reasoning",
-                                text: "The model thought.",
-                                providerOptions: { openai: { itemId: "rs_test_1", reasoningEncryptedContent: "encrypted-blob-1" } },
-                            },
-                            { type: "text", text: "The first answer." },
-                        ],
-                    },
-                    { role: "user", content: "the second question" },
-                ],
-                tools: {},
-            },
-            makeSession(),
-        );
+        const outcome = await drive(provider, {
+            messages: [
+                { role: "user", content: "the first question" },
+                {
+                    role: "assistant",
+                    content: [
+                        {
+                            type: "reasoning",
+                            text: "The model thought.",
+                            providerOptions: { openai: { itemId: "rs_test_1", reasoningEncryptedContent: "encrypted-blob-1" } },
+                        },
+                        { type: "text", text: "The first answer." },
+                    ],
+                },
+                { role: "user", content: "the second question" },
+            ],
+        });
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         const reasoningItem = cap.bodies[0]?.input?.find((item) => item.type === "reasoning");
         expect(reasoningItem?.id).toBe("rs_test_1");
         expect(reasoningItem?.encrypted_content).toBe("encrypted-blob-1");

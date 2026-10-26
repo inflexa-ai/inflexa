@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the per-model capability gate at the harness provider edge that silently strips request fields the target model would reject (e.g., Anthropic Opus 4.7+ rejects `temperature`). Lives at `harness/providers/llm-capabilities.ts`. Callers pass per-call overrides (`temperature`, `thinking`, tool config, …) as native `ChatRequest` fields; the gate is pattern-based on the bare model name, with no network calls or runtime probing.
+Defines the per-model capability gate at the harness provider edge that silently strips request fields the target model would reject (e.g., Anthropic Opus 4.7+ rejects `temperature`). Lives at `harness/providers/llm-capabilities.ts`. Callers pass per-call overrides (`temperature`, `thinking`, tool config, …) as native request fields; the gate is pattern-based on the bare model name, with no network calls or runtime probing.
 
 ## Requirements
 

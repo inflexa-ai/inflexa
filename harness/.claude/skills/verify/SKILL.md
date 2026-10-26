@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verify harness changes at the package boundary — build dist, link the package into a scratch consumer, drive runAgent/tools/gateways against a real Postgres via podman. Use after changing @inflexa-ai/harness when the CLI does not yet consume the change.
+description: Verify harness changes at the package boundary — build dist, link the package into a scratch consumer, drive a chat turn, tools, and gateways against a real Postgres via podman. Use after changing @inflexa-ai/harness when the CLI does not yet consume the change.
 ---
 
 # Verifying @inflexa-ai/harness at the package boundary
@@ -23,18 +23,17 @@ harness change is only observable by importing the freshly built package.
    `bun link @inflexa-ai/harness && bun install`. Run scripts with **node**
    (harness runtime is Node; bun is test-only).
 4. Import ONLY from `@inflexa-ai/harness` (the barrel). Useful exports:
-   `createPool`, `initCortexState(pool)`, `runAgent`, `defineTool`,
-   `passthroughStep`, `makeLocalAuth`, plus whatever seam is under test.
+   `createPool`, `initCortexState(pool)`, `assembleCoreRuntime`, `runChatTurn`,
+   `defineTool`, `makeLocalAuth`, plus whatever seam is under test. The test
+   model is `scriptedModel` from `@inflexa-ai/harness/testing`.
 
 ## Gotchas
 
 - `createPool` takes `port` as a **string** and requires `sslMode: "disable"`
   for a local container — default config path expects SSL.
-- A fake `AgentChat` must return neverthrow `okAsync({message, finishReason})`
-  and SHOULD honor the `signal` argument (`if (signal?.aborted) throw
-  signal.reason`) — the real AI SDK provider does, and abort-path behavior is
-  wrong without it (chat wires no `isFatalLoopError`; cancellation exits via
-  the provider call).
+- `scriptedModel` takes one script entry for each model request. A request
+  past the end of the script fails, thus a script that is too short shows as a
+  failed turn, not as a hang.
 - Session shape: `{identity:{user}, scope:{kind:"analysis", analysisId,
   threadId}, provenance:{agentId, callPath:[agentId]}, auth: makeLocalAuth()}`.
 - Spawned helper processes exit fast — guard `child.exitCode !== null` before

@@ -77,7 +77,7 @@ The configuration path MUST be the only factory of the barrel for a chat provide
 `createAnthropicProvider` or `AnthropicProviderDeps`. The `anthropic` arm of the union makes the same provider.
 
 The exported surface MUST document the construction contract. The wire model is bound at construction, because
-`ChatRequest` carries no model field. Thus an embedder that runs different models on different seats makes one provider
+`ModelBinding` carries no model field. Thus an embedder that runs different models on different seats makes one provider
 instance for each model, over one shared connection configuration.
 
 #### Scenario: An embedder constructs an openai-compatible provider through the front door
@@ -243,22 +243,22 @@ When `baseURL` is absent and the config gives no value, the arm MUST set `imageT
 
 ### Requirement: The openai arm reports usage on the neutral fields
 
-The arm MUST reuse the shared provider runtime, with no arm-owned usage or stream mapping. A Responses call MUST report its usage on the neutral `ChatUsage` fields: `inputTokens`, `outputTokens`, `cacheReadInputTokens`, and `reasoningTokens`. The stream path MUST yield text deltas and a terminal response through the shared pull.
+The arm MUST reuse the shared provider runtime, with no arm-owned usage or stream mapping. A Responses call MUST report its usage on the neutral `ChatUsage` fields: `inputTokens`, `outputTokens`, `cacheReadInputTokens`, and `reasoningTokens`. The stream MUST yield text deltas and a finish part through the shared retry envelope.
 
 #### Scenario: Cached tokens arrive on the neutral field
 
 - **WHEN** a Responses call answers with `input_tokens_details.cached_tokens`
-- **THEN** the `ChatResponse.usage` carries the count on `cacheReadInputTokens`
+- **THEN** the `ChatUsage` of the call carries the count on `cacheReadInputTokens`
 
 #### Scenario: Reasoning tokens arrive on the neutral field
 
 - **WHEN** a Responses call answers with `output_tokens_details.reasoning_tokens`
-- **THEN** the `ChatResponse.usage` carries the count on `reasoningTokens`
+- **THEN** the `ChatUsage` of the call carries the count on `reasoningTokens`
 
-#### Scenario: The stream path completes through the shared pull
+#### Scenario: The stream completes through the shared retry envelope
 
 - **WHEN** an `openai` arm streams a turn
-- **THEN** the consumer receives text deltas and one `done` event whose response carries the usage
+- **THEN** the reader receives text deltas and one finish part that carries the usage
 
 ### Requirement: The openai arm sends an explicit store value on every request
 
@@ -426,12 +426,12 @@ gateway. A host can add it through `resolveRequestHeaders`, which gets the sessi
 ### Requirement: The openai-compatible arm asks for usage on a stream
 
 The `openai-compatible` arm MUST make its model with `includeUsage: true`. The package then sends
-`stream_options: { include_usage: true }` on each streamed request. The provider streams each call, and `chat` also
-streams. Thus without the flag, most calls of this arm report no usage.
+`stream_options: { include_usage: true }` on each streamed request. The loop streams each call. Thus without the flag,
+most calls of this arm report no usage.
 
 #### Scenario: A streamed call asks for usage
 
 - **WHEN** an `openai-compatible` arm runs a call
 - **THEN** the request body carries `stream_options.include_usage: true`
-- **AND** the usage chunk of the server reaches `ChatResponse.usage`
+- **AND** the usage chunk of the server reaches the `ChatUsage` of the call
 

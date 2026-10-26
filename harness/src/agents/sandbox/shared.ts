@@ -18,6 +18,7 @@
  */
 
 import type { Querier } from "../../state/db.js";
+import { createEditIntentStore } from "../../state/edit-intents.js";
 
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -70,7 +71,7 @@ import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, c
 import { createSkillTools } from "../../tools/sandbox/skills.js";
 
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
-import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox/report-blocker.js";
+import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 
 import { toSandboxPath } from "../../workspace/paths.js";
@@ -151,12 +152,11 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     /** Shared resolver. Required only when `meta.tools` declares `resolve_citation`. */
     readonly citationResolver?: CitationResolver;
     /**
-     * Per-run blocker cell (see the harness-sandbox-agents spec). When present, the agent gets a
-     * `report_blocker` tool that records `{ kind: "blocker", reason }` into it;
-     * the sandbox-step body reads the blocker from the transcript, falling back to
-     * the cell. Omit for agents that have no terminal status to declare (such as the data profiler).
+     * The agent gets a `report_blocker` tool (see the harness-sandbox-agents spec), and the
+     * sandbox-step body selects the blocker from the recorded calls of the run. Omit for agents that
+     * have no terminal status to declare (such as the data profiler).
      */
-    readonly blockerHolder?: BlockerHolder;
+    readonly reportsBlocker?: boolean;
     /**
      * When present, the agent declares `submit_file_metadata` from its first request so the
      * tool list stays stable across continuations; the task masks it, the continuation unmasks it.
@@ -294,7 +294,10 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
               lineageCollector,
           });
     const mutateTools = mutator
-        ? [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })]
+        ? [
+              createWriteFileTool({ mutator }),
+              createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir, intents: createEditIntentStore(pool) }),
+          ]
         : [];
 
     const tools = [
@@ -370,7 +373,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         ...(deps.extendAnalysisFarm ? [createLinkPackagesTool({ extendAnalysisFarm: deps.extendAnalysisFarm, analysisId: deps.step.analysisId })] : []),
         ...skillTools,
         ...resolveSandboxTools(deps, meta.tools, workspace.mutator),
-        ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),
+        ...(deps.reportsBlocker === true ? [createReportBlockerTool()] : []),
         ...(deps.fileMetadata ? [createSubmitFileMetadataTool(deps.fileMetadata)] : []),
     ];
 

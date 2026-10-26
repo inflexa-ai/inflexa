@@ -35,8 +35,8 @@ import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import { runToTerminal } from "../loop/run-to-terminal.js";
-import { durableStep } from "../loop/run-step.js";
+import { runWithSalvage, type LoopStep } from "../loop/run-loop.js";
+import { recordedInputOf } from "../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { DbError } from "../lib/db-result.js";
@@ -60,6 +60,8 @@ import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-r
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { createVectorStore } from "../state/vector-store.js";
+import { z } from "zod";
+
 import { ProfileSubmissionSchema, type ProfileSubmission } from "../schemas/data-profile-schemas.js";
 import { computeInputSignature } from "../execution/input-signature.js";
 import { readHeaders } from "../input-scan/enrich.js";
@@ -107,15 +109,50 @@ const DEFAULT_DEADLINE_MS = 1_200_000;
 /** Index entries embedded and upserted per round trip. */
 const INDEX_BATCH_SIZE = 256;
 
+const SUBMIT_PROFILE_TOOL_ID = "submit_profile";
+
+/** What one call of `submit_profile` tells the agent. */
+const SubmitOutcomeSchema = z.discriminatedUnion("status", [
+    z.object({ status: z.literal("needs_repair"), detail: z.string() }),
+    z.object({
+        status: z.literal("accepted"),
+        groups: z.number(),
+        keptFiles: z.number(),
+        unclassifiedFiles: z.number(),
+        unresolvedOperations: z.number(),
+    }),
+]);
+
+type SubmitOutcome = z.infer<typeof SubmitOutcomeSchema>;
+
+/** The submissions of a run, in call order, with the outcome that the tool gave each one. */
+function profileSubmissions(steps: readonly LoopStep[]): { readonly submission: ProfileSubmission; readonly accepted: boolean }[] {
+    const submissions: { submission: ProfileSubmission; accepted: boolean }[] = [];
+    for (const step of steps) {
+        for (const call of step.calls) {
+            if (call.toolName !== SUBMIT_PROFILE_TOOL_ID || call.output?.outcome !== "ok") continue;
+            const submission = recordedInputOf(ProfileSubmissionSchema, call.input);
+            const outcome = SubmitOutcomeSchema.safeParse(call.output.value);
+            if (submission === undefined || !outcome.success) continue;
+            submissions.push({ submission, accepted: outcome.data.status === "accepted" });
+        }
+    }
+    return submissions;
+}
+
 /**
- * Submissions the tool accepts: the first, plus one repair.
- *
- * The repair is a FULL resubmit — the agent replaces the whole operation list and nothing
- * is merged into the prior attempt. Past it the resolution stands as it resolved: an
- * operation that still does not resolve produces no group, and its members land in the
- * visible `unclassified` group rather than blocking a profile that gates planning.
+ * The submission that the profile records: the last accepted one, else the last one. A repair is a FULL
+ * resubmit — nothing merges into the prior attempt. The last submission of a run with no accepted one
+ * resolves as final: an operation that still does not resolve produces no group, and its members land in
+ * the visible `unclassified` group rather than blocking a profile that gates planning.
  */
-const MAX_SUBMIT_ROUNDS = 2;
+function selectedSubmission(
+    steps: readonly LoopStep[],
+): { readonly submission: ProfileSubmission; readonly accepted: boolean; readonly count: number } | undefined {
+    const submissions = profileSubmissions(steps);
+    const chosen = submissions.filter((entry) => entry.accepted).at(-1) ?? submissions.at(-1);
+    return chosen === undefined ? undefined : { ...chosen, count: submissions.length };
+}
 
 /** Where the embedder stages this analysis's inputs (see the data-profile-init spec). */
 const STAGED_INPUT_ROOT = "data/inputs";
@@ -723,37 +760,20 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 deadlineMs: () => deadlineAbs,
             });
 
-            let accepted: { submission: ProfileSubmission; resolution: ProfileResolution } | undefined;
-            let rounds = 0;
-            type SubmitOutcome =
-                | { readonly status: "needs_repair"; readonly detail: string }
-                | {
-                      readonly status: "accepted";
-                      readonly groups: number;
-                      readonly keptFiles: number;
-                      readonly unclassifiedFiles: number;
-                      readonly unresolvedOperations: number;
-                  };
             const submitProfileTool = defineTool({
-                id: "submit_profile",
+                id: SUBMIT_PROFILE_TOOL_ID,
                 description:
-                    "Submit the profiling results. Call this tool once after completing all profiling work — it resolves your " +
-                    "operations against the scan, computes every group's membership and counts, and records the profile. " +
-                    "A submission whose operations do not resolve, or that leaves kept files unclaimed, comes back once with " +
-                    "the errors; the repair is a FULL resubmit of the whole operation list.",
+                    "Submit the profiling results. Call this tool after completing all profiling work — it resolves your " +
+                    "operations against the scan, computes every group's membership and counts, and checks the profile. " +
+                    "A submission whose operations do not resolve, or that leaves kept files unclaimed, comes back with " +
+                    "the errors; the repair is a FULL resubmit of the whole operation list. The last accepted submission is the profile.",
                 inputSchema: ProfileSubmissionSchema,
                 describeCall: "none",
                 execute: (input): Promise<Result<SubmitOutcome, ToolError>> => {
-                    rounds++;
-                    // The last round resolves as final: nothing that follows can repair an
-                    // overlap, so a contested file sweeps rather than being awarded to whichever
-                    // operation the agent happened to write first.
-                    const finalRound = rounds >= MAX_SUBMIT_ROUNDS;
-                    const resolution = resolveProfileSubmission(input, detected, briefingMenu, { finalRound });
-                    if (!finalRound && (resolution.errors.length > 0 || resolution.unclaimed.length > 0)) {
+                    const resolution = resolveProfileSubmission(input, detected, briefingMenu, { finalRound: false });
+                    if (resolution.errors.length > 0 || resolution.unclaimed.length > 0) {
                         return Promise.resolve(ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) }));
                     }
-                    accepted = { submission: input, resolution };
                     return Promise.resolve(
                         ok({
                             status: "accepted",
@@ -779,7 +799,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // path's `Running ${agentId}` serves the same purpose at the same point.
             await activity.agentStarting();
 
-            await runToTerminal(
+            const run = await runWithSalvage(
                 agentDef,
                 [{ role: "user", content: prompt }],
                 childSession,
@@ -790,33 +810,34 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     // is forwarded: the loop's other events (iteration boundaries, model deltas,
                     // tool completions) describe machinery rather than work, and the panel this
                     // feeds carries a single line whose value is that it always names what is
-                    // happening now. Awaited in body order, because `DBOS.writeStream` allocates a
-                    // function id and an unawaited write would race the next operation for the
-                    // counter and desynchronise the recorded sequence on replay.
+                    // happening now. The events of a tool call arrive from inside its step.
                     emit: async (event) => {
-                        if (event.type === "tool-started") await activity.forTool(event.name, event.input, resolveDetail);
+                        if (event.type === "tool-started") await activity.forTool(event.toolUseId, event.name, event.input, resolveDetail);
                     },
-                    runStep: durableStep,
-                    resolved: () => accepted !== undefined,
                     invocationId: workflowId,
                     usageRecorder: deps.usageRecorder,
                     toolOutputStore: deps.toolOutputStore,
-                    isFatalLoopError: (err) => isWorkflowCancellation(err),
                 },
                 {
-                    tools: [submitProfileTool],
+                    tools: [SUBMIT_PROFILE_TOOL_ID],
                     nudge:
-                        "You stopped without calling submit_profile, so no profile was " +
+                        "You stopped without an accepted submit_profile, so no profile was " +
                         "recorded. Call submit_profile now with your operations on the menu, " +
                         "what each resulting group means, and the dimensions you saw with " +
                         "their observations — base it on the scan and the work you already did.",
+                    hasOutcome: (steps) => profileSubmissions(steps).some((entry) => entry.accepted),
                 },
             );
 
-            if (!accepted) {
+            const selected = selectedSubmission(run.steps);
+            if (selected === undefined) {
                 throw new Error("Data profiling failed: agent did not call submit_profile");
             }
-            const { submission, resolution }: { submission: ProfileSubmission; resolution: ProfileResolution } = accepted;
+            const { submission } = selected;
+            // A submission that no call accepted resolves as final: nothing that follows can repair an
+            // overlap, so a contested file sweeps rather than being awarded to whichever operation the
+            // agent happened to write first. The resolution is pure, thus it gives the answer of the call.
+            const resolution: ProfileResolution = resolveProfileSubmission(submission, detected, briefingMenu, { finalRound: !selected.accepted });
 
             // 5. Index into vector store — one entry per group, one per dimension, one per annotated member.
             //
@@ -831,7 +852,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 resolution,
                 dimensions: resolution.dimensions,
                 probes: resolution.probes,
-                repairRounds: rounds - 1,
+                repairRounds: selected.count - 1,
                 absorb: absorb.kind,
             });
 

@@ -12,16 +12,15 @@ sanitization — unicode normalization and redaction of structured, prefixed
 secret formats — applied to incoming user messages without false-positiving on
 biological sequences.
 
-**Each tool owns its durability through a declared execution mode.** Each tool
-declares or defaults to `executionMode: "step" | "inline"`. A `step` tool runs
-through a deterministic durable step wrapper, which caches the whole call. On a
-replay, an external lookup tool gives the cached result, and the rate-limited
-call does not occur again.
-`inline` is reserved for logic whose effects are not durable work. The mode is
-the declaration of the tool, not a policy of the loop.
+**Each tool call is one durable step inside a workflow.** The tool adapter of
+the loop (`loop/tool-adapter.ts`) wraps each tool with `durableTools`. Inside a
+DBOS workflow, each call is one step named `<tool>.<toolCallId>`, which caches
+the whole call. On a replay, an external lookup tool gives the cached result,
+and the rate-limited call does not occur again. Outside a workflow, each call
+runs directly. Thus a tool body must be safe to run again from its start.
 
 **A tool gives its effect on process state as a call record.**
-`execute_command`, `write_file`, and `edit_file` are `step` tools, and the
+`execute_command`, `write_file`, and `edit_file` each run as one step, and the
 sandbox exec of `execute_command` runs inside the step of its call. A replay
 gives the cached result, and it does not run the body. Thus a tool attaches each
 effect on process-local state to its ok value as a call record. The loop folds
@@ -32,7 +31,7 @@ carries no durability seam.
 
 ### Requirement: Tools are defined through a dependency-agnostic primitive
 
-`defineTool({ id, description, inputSchema, execute, executionMode, describeCall })` SHALL package a `Tool` and emit an AI SDK-compatible tool definition from the Zod `inputSchema`. `defineTool` SHALL NOT take or carry dependencies. A tool that needs dependencies SHALL be a factory closure that captures them and calls `defineTool`.
+`defineTool({ id, description, inputSchema, execute, describeCall })` SHALL package a `Tool` and emit an AI SDK-compatible tool definition from the Zod `inputSchema`. `defineTool` SHALL NOT take or carry dependencies. A tool that needs dependencies SHALL be a factory closure that captures them and calls `defineTool`.
 
 `describeCall` is REQUIRED, and SHALL be either a synchronous, pure `(input: z.infer<Schema>) => string` that names what this call is doing, or the literal `"none"` declaring that the tool's input cannot distinguish its calls. A definition supplying neither SHALL fail to typecheck. It is the call-time counterpart of `description`: `description` self-describes the tool at attach time, and `describeCall` self-describes one invocation.
 
@@ -85,7 +84,7 @@ a non-interactive context gets a denial and does not wait.
 `turnUsage` is the optional turn-scoped usage accumulator of the
 llm-usage-accounting capability. It is a call-scoped value that the dispatching
 loop owns, present so a sub-agent-running tool can give it to the child
-`runAgent`. It is request-scoped state, not an injected dependency, and a tool
+`runLoop`. It is request-scoped state, not an injected dependency, and a tool
 that runs no sub-agent ignores it.
 
 `ToolContext` MUST NOT carry a durability seam, a database pool, a sandbox
@@ -191,7 +190,7 @@ example `node` or `Bun/<version>`.
 
 ### Requirement: read_tool_output reads the kept text of a cut tool result
 
-The harness MUST give a tool `read_tool_output`, made by the factory `createReadToolOutputTool(store)`. The factory captures the tool output store, thus `ToolContext` carries no store and no pool. The tool MUST run in the `step` execution mode.
+The harness MUST give a tool `read_tool_output`, made by the factory `createReadToolOutputTool(store)`. The factory captures the tool output store, thus `ToolContext` carries no store and no pool. Inside a workflow, each call of the tool MUST run as one step, the same as each other tool.
 
 The input MUST be one object with these fields:
 

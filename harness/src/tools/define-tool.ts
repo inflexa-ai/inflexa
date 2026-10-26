@@ -12,8 +12,12 @@
  * logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`
- * or a throw. The loop (`dispatchTool`) owns the `is_error` envelope — it maps
- * both `err` and a thrown error to one `tool_result { is_error: true }`.
+ * or a throw. The tool adapter of the loop (`loop/tool-adapter.ts`) maps both
+ * `err` and a thrown error to one error result.
+ *
+ * Each call runs as one durable step inside a workflow. Thus a tool body must be
+ * safe to run again from its start, and its result must carry each fact that a
+ * caller reads later.
  */
 
 import type { Result } from "neverthrow";
@@ -39,14 +43,6 @@ export type ToolError = {
     readonly retryable: boolean;
     readonly cause?: unknown;
 };
-
-/**
- * How the loop runs a tool call. `step` (the default) wraps the whole call in
- * one durable step, thus a replay returns the cached result and never runs the
- * body again. `inline` runs the call with no step, for a tool whose effects are
- * not durable work.
- */
-export type ToolExecutionMode = "step" | "inline";
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
 export function isToolError(value: unknown): value is ToolError {
@@ -124,10 +120,10 @@ export function readToolResultImages(value: unknown): ToolResultImage[] {
  *
  * A call record is what a call leaves for process-local state, for example the
  * lineage collector of a sandbox step. A replay returns the cached result of a
- * step-mode call and never runs its body, thus a side effect of the body on
- * such state is lost on recovery. The record goes into the cached dispatch
- * instead, and the loop hands it to `foldCallRecord` after the call settles, on
- * the first run and on each replay alike.
+ * call and never runs its body, thus a side effect of the body on such state is
+ * lost on recovery. The record goes into the output of the step instead, and
+ * the loop hands it to `foldCallRecord` after each round, on the first run and
+ * on each replay alike.
  *
  * It is a symbol, thus `JSON.stringify` omits it and the model never reads it.
  * The record itself must be plain JSON, because the step cache serializes it.
@@ -174,7 +170,7 @@ export type ToolContext = {
     readonly ask: (request: AskRequest) => Promise<AskApproval>;
     /**
      * The turn's usage accumulator — the mutable total every loop under this
-     * turn folds its LLM calls into. A tool that drives a child `runAgent`
+     * turn folds its LLM calls into. A tool that drives a child loop
      * passes it straight into that run's options, which is what puts the
      * child's tokens in the turn total its root loop reports. A tool that runs
      * no child agent ignores it.
@@ -184,14 +180,13 @@ export type ToolContext = {
 
 /**
  * A packaged tool: identity, the Zod input contract, the emitted AI SDK input
- * schema, execution mode, the optional hooks, and the executor.
+ * schema, the optional hooks, and the executor.
  */
 export type Tool<Input = unknown, Output = unknown> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: z.ZodType<Input>;
     readonly jsonSchema: Record<string, unknown>;
-    readonly executionMode: ToolExecutionMode;
     /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
     describeCall?(input: Input): string | undefined;
     /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
@@ -208,7 +203,6 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> =
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
-    readonly executionMode?: ToolExecutionMode;
     /**
      * One line that names what THIS call does — the call-time counterpart of
      * `description`. `description` self-describes the tool at attach time, so an
@@ -276,7 +270,7 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> =
      * Fold the call record of one settled call into process-local state. The
      * record is the one that `execute` attached with `withToolCallRecord`.
      *
-     * The loop runs the hook after the round settles, in the order of the tool
+     * The loop runs the hook after each round, in the order of the tool
      * calls, on the first run and on each replay alike. Thus state that a
      * replay rebuilds from scratch sees the same records in the same order. A
      * call whose ok value carries no record, and a failed call, never reach it.
@@ -309,14 +303,11 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(d
         );
     }
 
-    const executionMode: ToolExecutionMode = def.executionMode ?? "step";
-
     const packaged: Tool<z.infer<Schema>, Output> = {
         id: def.id,
         description: def.description,
         inputSchema: def.inputSchema,
         jsonSchema,
-        executionMode,
         execute: def.execute.bind(def),
     };
     if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord.bind(def);

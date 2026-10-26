@@ -1,7 +1,8 @@
 /**
  * The chat turn of a host: a turn is `runChatTurn`, which is `openChatTurn` and then the `run` of the
  * open turn. `prepareChatTurn` is the first step of the open. The host gives only its transport
- * values, and the harness stores the opening, each round, and the outcome.
+ * values, and the harness makes the model, the text stream, the usage recorder, and the approval
+ * binding of the turn from its runtime. The harness stores the opening, each round, and the outcome.
  */
 
 import type { ModelMessage } from "ai";
@@ -15,8 +16,7 @@ import { errorNameOf } from "../lib/thrown.js";
 import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction.js";
-import { finalText, runAgent, type AgentFinish, type AgentRound } from "../loop/run-agent.js";
-import { passthroughStep } from "../loop/run-step.js";
+import { finalText, runLoop, type AgentFinish, type AgentRound } from "../loop/run-loop.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
@@ -24,15 +24,15 @@ import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { conversationRecordTurn, createThreadHistory, type ConversationTurn, type TurnClose } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
-import { findProviderError } from "../providers/errors.js";
+import { findProviderError, modelFailureOf } from "../providers/errors.js";
 import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../prompts/compaction.js";
 import { CONVERSATION_PROMPT_CACHE } from "../providers/prompt-cache.js";
-import type { AgentChat, PromptCachePolicy } from "../providers/types.js";
+import type { ChatProvider, PromptCachePolicy } from "../providers/types.js";
 import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { AskApproval, AskRequest } from "../tools/approval/contract.js";
-import { suspensionOfFailure } from "../workflows/suspension.js";
+import type { AskGateway } from "../tools/approval/gateway.js";
 import { assembleMessages, contextRecordsFor, type AssembledMessages } from "./message-assembly.js";
 import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -148,9 +148,19 @@ async function readTurnContext(pool: Querier, analysisId: string): Promise<{ rea
     return { analysisContext: analysisState?.context ?? null, runActivityContext };
 }
 
+/** The runtime values of a turn. `assembleCoreRuntime` gives them as `CoreRuntime.chatTurns`. */
 export type RunChatTurnDeps = PrepareChatTurnDeps & {
     /** The agent of a turn comes from the thread type, which only the preparation knows. */
     readonly agents: ThreadAgentResolver;
+    /** The model of the conversation. A host that switches the model swaps the provider between two turns. */
+    readonly provider: ChatProvider;
+    /** Each model call of the turn reaches it, the calls of a sub-agent included. */
+    readonly usageRecorder: UsageRecorder;
+    /**
+     * The approval binding of `ctx.ask`. Absent, approval resolves to the deny-by-default realization, which is
+     * how a surface that cannot answer stays a write-only sink.
+     */
+    readonly askGateway?: AskGateway;
 };
 
 /**
@@ -169,13 +179,8 @@ export type OpenChatTurnParams = {
 /** The transport values of a turn that is open. */
 export type RunOpenChatTurnParams = {
     readonly session: ChatTurnSession;
-    /** Makes the provider of the turn over the emit sink of the display recorder. */
-    readonly chat: (emit: EmitFn) => AgentChat;
     readonly emit: EmitFn;
     readonly signal: AbortSignal;
-    readonly usageRecorder: UsageRecorder;
-    /** The approval binding. It gets the emit sink of the display recorder, thus the display records each `data-ask`. */
-    readonly ask?: (request: AskRequest, emit: EmitFn) => Promise<AskApproval>;
     /** Who sent the user message. */
     readonly author?: string;
     /** When the host opened the turn. Absent counts from the call to {@link openChatTurn}. */
@@ -324,23 +329,37 @@ async function runOpenTurn(
         await flush();
     };
 
-    const { ask } = params;
-    const compaction = compactionPolicy(deps, turn.analysisId, params, prepared.threadType, agent, recorder.emit);
+    const { askGateway } = deps;
+    // The approval gets the emit sink of the display recorder, thus the display records each `data-ask`.
+    const ask =
+        askGateway === undefined
+            ? undefined
+            : (request: AskRequest): Promise<AskApproval> =>
+                  askGateway.ask(request, {
+                      analysisId: turn.analysisId,
+                      userId: session.identity.user,
+                      threadId: turn.threadId,
+                      signal: params.signal,
+                      emit: recorder.emit,
+                  });
+    const compaction = compactionPolicy(deps, turn.analysisId, prepared.threadType, agent);
     let outcome: ChatTurnOutcome;
     let fallbackText: string | undefined;
     try {
-        const run = await runAgent(agent, prepared.history, session, {
-            provider: params.chat(recorder.emit),
+        const run = await runLoop(agent, prepared.history, session, {
+            provider: deps.provider,
             signal: params.signal,
             emit: recorder.emit,
-            runStep: passthroughStep,
-            usageRecorder: params.usageRecorder,
+            // The text of the root reply streams to the surface. A delta has no source, thus a host frames it
+            // as text of the root agent.
+            onText: (text) => recorder.emit({ type: "text-delta", text }),
+            usageRecorder: deps.usageRecorder,
             toolOutputStore: createToolOutputStore(deps.pool),
             promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
             turnInput: [prepared.userMessage, ...prepared.contextRecords],
             compaction,
             logger: deps.logger,
-            ask: ask === undefined ? undefined : (request: AskRequest) => ask(request, recorder.emit),
+            ask,
             onRound: storeRound,
         });
         outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
@@ -383,24 +402,14 @@ function userTextOf(message: ModelMessage): string {
 
 const WORKING_MEMORY_TOOL_ID = "update_working_memory";
 
-function compactionPolicy(
-    deps: RunChatTurnDeps,
-    analysisId: string,
-    params: RunOpenChatTurnParams,
-    threadType: ThreadType,
-    agent: AgentDefinition,
-    emit: EmitFn,
-): CompactionPolicy | undefined {
+function compactionPolicy(deps: RunChatTurnDeps, analysisId: string, threadType: ThreadType, agent: AgentDefinition): CompactionPolicy | undefined {
     if (agent.compaction === undefined) return undefined;
     // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
     const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
     const workingMemory = createWorkingMemory(deps.pool);
-    // A streaming provider sends each text delta with no source, thus a delta of the summary would show as a reply.
-    const provider = params.chat((event) => (event.type === "text-delta" ? undefined : emit(event)));
     return {
         // The capabilities are read for each turn, because a host can switch the model of the conversation between turns.
-        ...rulesForContextWindow(agent.compaction, provider.capabilities.contextWindow),
-        provider,
+        ...rulesForContextWindow(agent.compaction, deps.provider.capabilities.contextWindow),
         request: remembers ? MEMORY_COMPACTION_REQUEST : SUMMARY_COMPACTION_REQUEST,
         mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
         keepFirstTurn: threadType === "report",
@@ -410,12 +419,17 @@ function compactionPolicy(
 
 /** The reason of a failed turn. It never holds the error message, because each later turn sends the note to the vendor. */
 function failureReasonOf(err: unknown): string {
-    const suspension = suspensionOfFailure(err);
-    if (suspension !== undefined) return suspension.reason;
-    const providerError = findProviderError(err);
-    if (providerError?.type === "auth") return "The model endpoint refused the credential.";
-    if (providerError !== undefined) return "The model request failed.";
-    return "The turn stopped on an internal error.";
+    const failure = modelFailureOf(err);
+    switch (failure.kind) {
+        case "billing":
+            return failure.reason;
+        case "credential":
+            return "The model endpoint refused the credential.";
+        case "outage":
+            return "The model request failed.";
+        case "other":
+            return findProviderError(err) === undefined ? "The turn stopped on an internal error." : "The model request failed.";
+    }
 }
 
 /**

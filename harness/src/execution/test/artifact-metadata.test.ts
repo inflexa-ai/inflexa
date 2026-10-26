@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4CallOptions, LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
 import type { ModelMessage } from "ai";
 import { ok, okAsync } from "neverthrow";
 import { z } from "zod";
@@ -12,61 +13,36 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { AgentSession } from "../../auth/types.js";
 import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { isSyntheticUserMessage } from "../../memory/ai-sdk-message-storage.js";
+import type { LoopStep, LoopToolCall } from "../../loop/run-loop.js";
 import type { AgentDefinition } from "../../loop/types.js";
-import type { ChatProvider, ChatRequest, ChatResponse } from "../../providers/types.js";
+import type { ChatProvider } from "../../providers/types.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { makeMessage, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply } from "../../testing.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createFileMetadataCell, createSubmitFileMetadataTool } from "../../tools/sandbox/submit-file-metadata.js";
 import { createGrepTool, createReadFileTool } from "../../tools/workspace/index.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 
-import { generateFileMetadata, type ArtifactForMetadata, type GenerateFileMetadataOptions } from "../artifact-metadata.js";
+import { generateFileMetadata, submittedDescriptions, type ArtifactForMetadata, type GenerateFileMetadataOptions } from "../artifact-metadata.js";
 import { presentAt, presentFind } from "../../lib/present.js";
 
-type RecordedCall = {
-    readonly req: ChatRequest;
-};
-
-/**
- * Scripted `ChatProvider` that returns one Message per call, in order.
- * `chatStream` is never exercised.
- */
-function makeProvider(responses: readonly ChatResponse[]): {
-    provider: ChatProvider;
-    calls: RecordedCall[];
-} {
-    const calls: RecordedCall[] = [];
-    let i = 0;
-    const provider: ChatProvider = {
-        capabilities: { toolCalling: true },
-        chat(req) {
-            // Snapshot messages: the loop mutates its working array in place.
-            calls.push({ req: { ...req, messages: [...req.messages] } });
-            const r = responses[i++];
-            if (!r) throw new Error(`scripted provider exhausted at call ${i}`);
-            return okAsync(r);
-        },
-        chatStream() {
-            throw new Error("not used");
-        },
-    };
-    return { provider, calls };
+/** A reply that calls `submit_file_metadata` with `files`. */
+function submitCall(id: string, files: unknown[]): ScriptedReply {
+    return callTools(toolCall(id, "submit_file_metadata", { files }));
 }
 
-/** An assistant turn that calls `submit_file_metadata` with `files`. */
-function submitCall(id: string, files: unknown[]): ChatResponse {
-    return makeMessage([toolUseBlock(id, "submit_file_metadata", { files })], "tool_use");
+/** A terminal text reply (the model stops calling tools). */
+function stopTurn(value = "done"): ScriptedReply {
+    return reply([text(value)]);
 }
 
-/** A terminal assistant text turn (the model stops calling tools). */
-function stopTurn(text = "done"): ChatResponse {
-    return makeMessage([textBlock(text)], "end_turn");
+/** A reply that calls `read_file` on a path. */
+function readFileCall(id: string, path: string): ScriptedReply {
+    return callTools(toolCall(id, "read_file", { path }));
 }
 
-/** An assistant turn that calls `read_file` on a path. */
-function readFileCall(id: string, path: string): ChatResponse {
-    return makeMessage([toolUseBlock(id, "read_file", { path })], "tool_use");
+function toolResults(call: LanguageModelV4CallOptions): LanguageModelV4ToolResultPart[] {
+    return call.prompt.flatMap((message) => (message.role === "tool" ? message.content : [])).flatMap((part) => (part.type === "tool-result" ? [part] : []));
 }
 
 function desc(path: string, over: Record<string, unknown> = {}) {
@@ -116,14 +92,14 @@ function options(
 
 describe("generateFileMetadata", () => {
     it("returns empty result for empty input without calling the provider", async () => {
-        const { provider, calls } = makeProvider([]);
+        const { provider, calls } = scriptedModel([]);
         const out = await generateFileMetadata(options(provider, []));
         expect(out).toEqual({ indexed: 0, entries: [], messages: [] });
         expect(calls).toHaveLength(0);
     });
 
     it("describes every file in one submit call, keyed by path", async () => {
-        const { provider } = makeProvider([submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]), stopTurn()]);
+        const { provider } = scriptedModel([submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]), stopTurn()]);
         const out = await generateFileMetadata(options(provider, ARTIFACTS_3));
         expect(out.indexed).toBe(3);
         expect(out.entries).toHaveLength(3);
@@ -136,15 +112,18 @@ describe("generateFileMetadata", () => {
     });
 
     it("continues the conversation of the step agent and returns only the messages of the exchange", async () => {
-        const { provider, calls } = makeProvider([submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]), stopTurn()]);
+        const { provider, calls } = scriptedModel([submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]), stopTurn()]);
         const step = stepAgent();
 
         const out = await generateFileMetadata(options(provider, ARTIFACTS_3, step));
 
-        const first = presentAt(calls, 0).req;
-        expect(first.system).toMatchObject({ content: "You are a test step agent." });
-        expect(Object.keys(first.tools)).toEqual(step.agent.tools.map((t) => t.id));
-        expect(JSON.stringify(first.messages.slice(0, TRANSCRIPT.length))).toBe(JSON.stringify(TRANSCRIPT));
+        const first = presentAt(calls, 0);
+        expect(first.prompt[0]).toMatchObject({ role: "system", content: "You are a test step agent." });
+        expect(first.tools?.map((t) => t.name)).toEqual(step.agent.tools.map((t) => t.id));
+        expect(first.prompt.slice(1, 1 + TRANSCRIPT.length)).toMatchObject([
+            { role: "user", content: [{ type: "text", text: "Produce a count matrix under output/." }] },
+            { role: "assistant", content: [{ type: "text", text: "Wrote the count matrix." }] },
+        ]);
         expect(out.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
         expect(isSyntheticUserMessage(presentAt(out.messages, 0))).toBe(true);
         expect(textOf(presentAt(out.messages, 0).content)).toContain("- b.csv");
@@ -153,7 +132,7 @@ describe("generateFileMetadata", () => {
     it("matches descriptions to files by PATH, not array position", async () => {
         // Returned in reverse order — positional matching would misalign every
         // file; path keying attaches each description to the correct artifact.
-        const { provider } = makeProvider([submitCall("t1", [desc("c.csv"), desc("a.csv"), desc("b.csv")]), stopTurn()]);
+        const { provider } = scriptedModel([submitCall("t1", [desc("c.csv"), desc("a.csv"), desc("b.csv")]), stopTurn()]);
         const out = await generateFileMetadata(options(provider, ARTIFACTS_3));
         const byPath = new Map(out.entries.map((e) => [e.dbPath, e.description]));
         expect(byPath.get("p/a.csv")).toBe("desc a.csv");
@@ -162,7 +141,7 @@ describe("generateFileMetadata", () => {
     });
 
     it("rejects hallucinated paths and lets the model correct on a later call", async () => {
-        const { provider, calls } = makeProvider([
+        const { provider, calls } = scriptedModel([
             // First call: two real, one invented path → unknownPaths + remaining.
             submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("ghost.csv")]),
             // Second call: the missing real file.
@@ -173,13 +152,29 @@ describe("generateFileMetadata", () => {
         expect(out.indexed).toBe(3);
         expect(out.entries.map((e) => e.dbPath).sort()).toEqual(["p/a.csv", "p/b.csv", "p/c.csv"]);
         // The first tool_result must report the bad path so the model can fix it.
-        const toolResult = JSON.stringify(presentAt(calls, 1).req.messages.at(-1));
-        expect(toolResult).toContain("ghost.csv");
-        expect(toolResult).toContain("c.csv");
+        const toolResult = presentFind(toolResults(presentAt(calls, 1)), (part) => part.toolCallId === "t1");
+        expect(toolResult.output).toEqual({ type: "json", value: { accepted: false, unknownPaths: ["ghost.csv"], remaining: ["c.csv"] } });
+    });
+
+    it("keeps the last description of a path that two calls describe", async () => {
+        const { provider } = scriptedModel([
+            submitCall("t1", [desc("a.csv", { description: "first take" }), desc("b.csv")]),
+            submitCall("t2", [desc("a.csv", { description: "second take" }), desc("c.csv")]),
+            stopTurn(),
+        ]);
+
+        const out = await generateFileMetadata(options(provider, ARTIFACTS_3));
+
+        expect(out.indexed).toBe(3);
+        expect(out.entries.map((e) => [e.dbPath, e.description])).toEqual([
+            ["p/a.csv", "second take"],
+            ["p/b.csv", "desc b.csv"],
+            ["p/c.csv", "desc c.csv"],
+        ]);
     });
 
     it("falls back deterministically for files the model never describes", async () => {
-        const { provider } = makeProvider([
+        const { provider } = scriptedModel([
             submitCall("t1", [desc("a.csv")]),
             // Model stops without covering b.csv / c.csv.
             stopTurn(),
@@ -195,14 +190,14 @@ describe("generateFileMetadata", () => {
     });
 
     it("includes size in the fallback description when provided", async () => {
-        const { provider } = makeProvider([stopTurn()]);
+        const { provider } = scriptedModel([stopTurn()]);
         const out = await generateFileMetadata(options(provider, [{ dbPath: "p/x.csv", displayPath: "output/x.csv", sizeBytes: 2048 }]));
         expect(out.indexed).toBe(0);
         expect(presentAt(out.entries, 0).description).toContain("2048 bytes");
     });
 
     it("merges extraMetadata into described and fallback entries alike", async () => {
-        const { provider } = makeProvider([submitCall("t1", [desc("a.csv")]), stopTurn()]);
+        const { provider } = scriptedModel([submitCall("t1", [desc("a.csv")]), stopTurn()]);
         const out = await generateFileMetadata(options(provider, ARTIFACTS_3, { extraMetadata: { source_run: "run-001", source_step: "step-001" } }));
         for (const entry of out.entries) {
             expect(entry.metadata.source_run).toBe("run-001");
@@ -218,7 +213,7 @@ describe("generateFileMetadata", () => {
         await writeFile(join(outDir, "a.csv"), "gene,count\nTP53,42\n");
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) });
 
-        const { provider, calls } = makeProvider([
+        const { provider, calls } = scriptedModel([
             // Inspect the real file before describing.
             readFileCall("r1", "output/a.csv"),
             // Then submit metadata for a.csv only — b.csv/c.csv fall back.
@@ -240,7 +235,7 @@ describe("generateFileMetadata", () => {
         expect(out.entries).toHaveLength(3);
         expect(out.indexed).toBe(1);
         // The read_file tool_result carried the real file contents to the model.
-        const afterRead = JSON.stringify(presentAt(calls, 1).req.messages);
+        const afterRead = JSON.stringify(presentAt(calls, 1).prompt);
         expect(afterRead).toContain("TP53");
         // Undescribed files still get a deterministic fallback (lossless guarantee).
         const b = presentFind(out.entries, (e) => e.dbPath === "p/b.csv");
@@ -259,24 +254,22 @@ describe("generateFileMetadata", () => {
                 return Promise.resolve(ok({ exitCode: 0 }));
             },
         });
-        const { provider, calls } = makeProvider([
-            makeMessage([toolUseBlock("x1", "execute_command", { command: ["ls"] })], "tool_use"),
+        const { provider, calls } = scriptedModel([
+            callTools(toolCall("x1", "execute_command", { command: ["ls"] })),
             submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]),
             stopTurn(),
         ]);
 
         await generateFileMetadata(options(provider, ARTIFACTS_3, stepAgent([execProbe])));
 
-        const refusal = presentAt(calls, 1)
-            .req.messages.flatMap((m) => (m.role === "tool" ? m.content : []))
-            .find((part) => part.type === "tool-result");
-        expect(refusal?.type === "tool-result" ? refusal.output.type : undefined).toBe("error-text");
+        const refusal = presentFind(toolResults(presentAt(calls, 1)), (part) => part.toolCallId === "x1");
+        expect(refusal.output.type).toBe("error-text");
         expect(JSON.stringify(refusal)).toContain("The tools that can run now: submit_file_metadata, read_file, grep, read_tool_output.");
         expect(ran).toBe(false);
     });
 
     it("falls back for all files when the model never calls the tool", async () => {
-        const { provider } = makeProvider([stopTurn("I cannot help")]);
+        const { provider } = scriptedModel([stopTurn("I cannot help")]);
         const out = await generateFileMetadata(options(provider, ARTIFACTS_3));
         expect(out.indexed).toBe(0);
         expect(out.entries).toHaveLength(3);
@@ -284,7 +277,7 @@ describe("generateFileMetadata", () => {
     });
 
     it("gives the fallback to each file with no provider call when the step agent has no output tool", async () => {
-        const { provider, calls } = makeProvider([]);
+        const { provider, calls } = scriptedModel([]);
         const logger = createCapturingLogger();
         const agent: AgentDefinition = {
             id: "test-step-agent",
@@ -307,7 +300,7 @@ describe("generateFileMetadata", () => {
     });
 
     it("records each call under the accounting id file-metadata-describer and the step of the session", async () => {
-        const { provider } = makeProvider([
+        const { provider } = scriptedModel([
             { ...submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]), usage: { inputTokens: 10, outputTokens: 2 } },
             stopTurn(),
         ]);
@@ -328,6 +321,58 @@ describe("generateFileMetadata", () => {
 
         expect(records).toHaveLength(1);
         expect(records[0]).toMatchObject({ agentId: "file-metadata-describer", runId: "run-1", stepId: "T1S1" });
-        expect(presentAt(records, 0).recordKey.endsWith(":file-metadata:llm-0")).toBe(true);
+        expect(presentAt(records, 0).recordKey).toBe("run-1:T1S1:conversation-agent>file-metadata-describer:response-0");
+    });
+});
+
+describe("submittedDescriptions", () => {
+    function submitted(toolCallId: string, files: unknown[], output: LoopToolCall["output"] = { outcome: "ok", value: { accepted: true } }): LoopToolCall {
+        return { toolCallId, toolName: "submit_file_metadata", input: { files }, output, refused: false, answered: true };
+    }
+
+    function stepOf(...calls: LoopToolCall[]): LoopStep {
+        return { finishReason: "tool-calls", calls };
+    }
+
+    const KNOWN = new Set(["a.csv", "b.csv"]);
+
+    it("keeps the last description of each known path, in call order", () => {
+        const steps = [
+            stepOf(submitted("t1", [desc("a.csv", { description: "old" })])),
+            stepOf(submitted("t2", [desc("a.csv", { description: "new" }), desc("b.csv")])),
+        ];
+
+        const descriptions = submittedDescriptions(steps, KNOWN);
+
+        expect([...descriptions.entries()].map(([path, d]) => [path, d.description])).toEqual([
+            ["a.csv", "new"],
+            ["b.csv", "desc b.csv"],
+        ]);
+    });
+
+    it("drops a path outside the known paths", () => {
+        const descriptions = submittedDescriptions([stepOf(submitted("t1", [desc("ghost.csv"), desc("a.csv")]))], KNOWN);
+
+        expect([...descriptions.keys()]).toEqual(["a.csv"]);
+    });
+
+    it("reads no call whose result is an error or that did not run", () => {
+        const steps = [
+            stepOf(submitted("t1", [desc("a.csv")], { outcome: "error", text: "No list of files is known yet." }), {
+                toolCallId: "t2",
+                toolName: "submit_file_metadata",
+                input: { files: [desc("b.csv")] },
+                refused: true,
+                answered: true,
+            }),
+        ];
+
+        expect(submittedDescriptions(steps, KNOWN).size).toBe(0);
+    });
+
+    it("reads a stringified input that the call repaired", () => {
+        const call: LoopToolCall = { ...submitted("t1", []), input: { files: JSON.stringify([desc("a.csv")]) } };
+
+        expect(submittedDescriptions([stepOf(call)], KNOWN).get("a.csv")?.description).toBe("desc a.csv");
     });
 });

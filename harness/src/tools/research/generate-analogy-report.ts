@@ -2,10 +2,12 @@
  * generateAnalogyReport — cross-domain analogy report as a sub-agent tool.
  *
  * An inline harness `AgentDefinition` (mirroring `createLiteratureReviewerTool`)
- * driven by `runToTerminal`. The result reaches the wrapper through one of two
- * terminal tools because the output envelope is a union and `defineTool` takes
- * only a top-level object. A run with no outcome gets one salvage continuation,
- * then an `extraction-failed` envelope, so the frontend never renders raw prose.
+ * driven by `runWithSalvage`. The result reaches the wrapper through one of two
+ * submit tools because the output envelope is a union and `defineTool` takes
+ * only a top-level object. Neither tool ends the run: the wrapper selects the
+ * last accepted report from the recorded calls, else the first blocker. A run
+ * with no outcome gets one salvage request, then an `extraction-failed`
+ * envelope, so the frontend never renders raw prose.
  */
 
 import { errorMessageOf } from "../../lib/thrown.js";
@@ -20,15 +22,15 @@ import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
-import { passthroughStep } from "../../loop/run-step.js";
-import { runToTerminal } from "../../loop/run-to-terminal.js";
+import { runWithSalvage, type LoopStep } from "../../loop/run-loop.js";
+import { recordedInputOf } from "../../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
-import { createReportBlockerToolFor, type BlockerOutcome } from "../sandbox/report-blocker.js";
+import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from "../sandbox/report-blocker.js";
 
 // Cross-domain search tools the analogical-reasoner uses.
 import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
@@ -49,42 +51,37 @@ const ANALOGY_SALVAGE_NUDGE =
     "your report now, or report_blocker if phase 1 cannot run. Do not reply " +
     "with prose.";
 
-type AnalogyOutcome = { readonly kind: "report"; readonly report: AnalogyReport } | BlockerOutcome;
+const SUBMIT_ANALOGY_REPORT_TOOL_ID = "submit_analogy_report";
 
-type AnalogyOutcomeCell = {
-    outcome: AnalogyOutcome | null;
-};
-
-function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
+function createSubmitAnalogyReportTool(): Tool {
     return defineTool({
-        id: "submit_analogy_report",
+        id: SUBMIT_ANALOGY_REPORT_TOOL_ID,
         description:
-            "Terminal. Submit the analogy report: the problem summary, objects, " +
+            "Submit the analogy report: the problem summary, objects, " +
             "relations, and key terms of phase 1, and each analogy with its " +
             "coverage and its cited solutions from phase 2. Call it one time with " +
             "the full report. If it rejects the report, correct the fields that it " +
-            "names and call it again. An accepted call ends the run.",
+            "names and call it again. The last accepted report is the result.",
         inputSchema: AnalogyReportSchema,
         describeCall: "none",
-        execute: (report) => {
-            // A report replaces a blocker, thus the report wins when one round records both.
-            cell.outcome = { kind: "report", report };
-            return Promise.resolve(
-                ok({
-                    recorded: true as const,
-                    message: "Report recorded.",
-                }),
-            );
-        },
+        execute: () => Promise.resolve(ok({ recorded: true as const, message: "Report recorded. Stop now." })),
     });
 }
 
-function createAnalogyBlockerTool(cell: AnalogyOutcomeCell): Tool {
+/** The last report of a run that its call accepted. The input schema of the tool checked it. */
+export function acceptedReportOf(steps: readonly LoopStep[]): AnalogyReport | undefined {
+    let accepted: AnalogyReport | undefined;
+    for (const step of steps) {
+        for (const call of step.calls) {
+            if (call.toolName !== SUBMIT_ANALOGY_REPORT_TOOL_ID || call.output?.outcome !== "ok") continue;
+            accepted = recordedInputOf(AnalogyReportSchema, call.input) ?? accepted;
+        }
+    }
+    return accepted;
+}
+
+function createAnalogyBlockerTool(): Tool {
     return createReportBlockerToolFor({
-        // A blocker never replaces a recorded outcome, thus it never replaces a report.
-        record: (outcome) => {
-            if (cell.outcome === null) cell.outcome = outcome;
-        },
         blockedWhen:
             "Ends the analogy research with no report. Call it only when the " +
             "problem is empty or incoherent, thus phase 1 cannot extract its " +
@@ -217,11 +214,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
         execute: async (input, ctx) => {
             const childSession = forSubAgent(ctx.session, AGENT_ID);
 
-            // Each call builds fresh tool closures over its own cell. Their order and
-            // definitions stay fixed across calls so the cache-keyed prefix holds.
-            const cell: AnalogyOutcomeCell = { outcome: null };
-            const submitReportTool = createSubmitAnalogyReportTool(cell);
-            const blockerTool = createAnalogyBlockerTool(cell);
+            // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
+            const submitReportTool = createSubmitAnalogyReportTool();
+            const blockerTool = createAnalogyBlockerTool();
             const agent: AgentDefinition = {
                 id: AGENT_ID,
                 systemPrompt,
@@ -230,8 +225,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                 maxIterations: RESEARCH_MAX_ITERATIONS,
             };
 
+            let steps: readonly LoopStep[];
             try {
-                await runToTerminal(
+                const run = await runWithSalvage(
                     agent,
                     [{ role: "user", content: buildResearchPrompt(input) }],
                     childSession,
@@ -239,19 +235,22 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                         provider: deps.provider,
                         signal: ctx.signal,
                         emit: ctx.emit,
-                        runStep: passthroughStep,
-                        resolved: () => cell.outcome !== null,
                         logger,
                         usageRecorder: deps.usageRecorder,
                         toolOutputStore: deps.toolOutputStore,
                         // Fold the child's calls into the turn total the root loop reports.
                         turnUsage: ctx.turnUsage,
                         // Keeps the usage record keys of two parallel dispatches disjoint —
-                        // same frame, same call path, same loop-local step names.
+                        // same frame, same call path.
                         invocationId: ctx.invocationId,
                     },
-                    { tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE },
+                    {
+                        tools: [SUBMIT_ANALOGY_REPORT_TOOL_ID, REPORT_BLOCKER_TOOL_ID],
+                        nudge: ANALOGY_SALVAGE_NUDGE,
+                        hasOutcome: (done) => acceptedReportOf(done) !== undefined || blockerOf(done) !== null,
+                    },
                 );
+                steps = run.steps;
             } catch (err) {
                 const message = errorMessageOf(err) ?? textOf(err);
                 return ok({
@@ -263,10 +262,12 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                 } satisfies AnalogicalReasonerOutput);
             }
 
-            const outcome = cell.outcome;
-            if (outcome?.kind === "report") return ok(outcome.report satisfies AnalogicalReasonerOutput);
-            if (outcome?.kind === "blocker") {
-                return ok({ schemaVersion: "1", error: { kind: "extraction-failed", message: outcome.reason } } satisfies AnalogicalReasonerOutput);
+            // A report wins over a blocker.
+            const report = acceptedReportOf(steps);
+            if (report !== undefined) return ok(report satisfies AnalogicalReasonerOutput);
+            const blocker = blockerOf(steps);
+            if (blocker !== null) {
+                return ok({ schemaVersion: "1", error: { kind: "extraction-failed", message: blocker.reason } } satisfies AnalogicalReasonerOutput);
             }
             return ok(buildExtractionFailedEnvelope());
         },

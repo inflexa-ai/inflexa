@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { defineTool } from "../../tools/define-tool.js";
 import { createDetailResolver } from "../../tools/detail-resolver.js";
-import { createEditFileTool } from "../../tools/workspace/edit-file.js";
+import { createEditFileTool, type EditIntentStore } from "../../tools/workspace/edit-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
@@ -37,6 +37,14 @@ describe("stepPartId", () => {
 
 describe("activityForTool", () => {
     // The real sandbox mutate tools, so this covers the hooks a step actually calls.
+    const notDrivenIntents: EditIntentStore = {
+        put: () => {
+            throw new Error("intents.put: not driven by this test");
+        },
+        get: () => {
+            throw new Error("intents.get: not driven by this test");
+        },
+    };
     const notDrivenMutator: WorkspaceMutator = {
         writeFile: () => {
             throw new Error("mutator.writeFile: not driven by this test");
@@ -47,7 +55,7 @@ describe("activityForTool", () => {
     };
     const resolveDetail = createDetailResolver([
         createWriteFileTool({ mutator: notDrivenMutator }),
-        createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1" }),
+        createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1", intents: notDrivenIntents }),
         // Deliberately NOT a real tool id. The fallback needs a hookless tool to exercise, and
         // borrowing a shipped name would assert that tool is hookless — a claim that goes stale the
         // moment it gains one, while the test keeps passing on the fabricated stand-in.

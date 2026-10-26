@@ -1,5 +1,4 @@
-import type { AgentChat } from "../providers/types.js";
-import type { ToolMask } from "./tool-mask.js";
+import type { ToolMask } from "./call-policy.js";
 import type { LoopMessage } from "./types.js";
 
 /** The cap of requests of one compaction exchange: up to 3 rounds of memory edits, and then the summary. */
@@ -30,10 +29,11 @@ export function rulesForContextWindow(rules: CompactionRules, contextWindow: num
     };
 }
 
-/** How the loop compacts its conversation when the last request passed a budget. */
+/**
+ * How the loop compacts its conversation when the last request passed a budget. The exchange streams no
+ * text to the surface, because the summary is no reply.
+ */
 export type CompactionPolicy = CompactionRules & {
-    /** The provider of the conversation, with no text stream to the surface: the summary is no reply. */
-    readonly provider: AgentChat;
     /** The text of the compaction request. */
     readonly request: string;
     /** The tools that can run in the exchange. */

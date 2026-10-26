@@ -39,12 +39,20 @@ async function waitFor(condition: () => boolean | Promise<boolean>, what: string
 /**
  * Cancel a workflow at its crash point, then resume it and release it. `ready`
  * holds when the work before the point is done: a cancel before that point
- * would cut a step whose record must survive the crash.
+ * would cut a step whose record must survive the crash. `ended` settles when
+ * the cancelled execution left the process. A crash leaves nothing behind, but
+ * a cancelled execution still holds its in-memory state until it ends.
  */
-export async function recoverAtCrashPoint<T>(workflowId: string, ready: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<WorkflowHandle<T>> {
+export async function recoverAtCrashPoint<T>(
+    workflowId: string,
+    ready: () => boolean | Promise<boolean>,
+    options: { readonly ended?: Promise<unknown>; readonly timeoutMs?: number } = {},
+): Promise<WorkflowHandle<T>> {
+    const timeoutMs = options.timeoutMs ?? 5_000;
     await waitFor(ready, `the work of ${workflowId} before its crash point`, timeoutMs);
     await DBOS.cancelWorkflow(workflowId);
     await waitFor(async () => (await DBOS.getWorkflowStatus(workflowId))?.status === "CANCELLED", `the cancel of ${workflowId}`, timeoutMs);
+    await options.ended;
     const handle = await DBOS.resumeWorkflow<T>(workflowId);
     await DBOS.send(workflowId, "release", CRASH_TOPIC);
     return handle;

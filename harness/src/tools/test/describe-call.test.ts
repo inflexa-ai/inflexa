@@ -20,7 +20,7 @@ import { createInspectRunTool } from "../research/inspect-run.js";
 import { createResolveCitationTool } from "../research/resolve-citation.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
-import { createEditFileTool } from "../workspace/edit-file.js";
+import { createEditFileTool, type EditIntentStore } from "../workspace/edit-file.js";
 import { createExecuteCommandTool } from "../workspace/execute-command.js";
 import { createGrepTool } from "../workspace/grep.js";
 import { createListFilesTool } from "../workspace/list-files.js";
@@ -72,6 +72,15 @@ const notDrivenEmbedding: EmbeddingProvider = {
 
 const notDrivenLauncher: RunLauncher = {
     launch: () => refuse("runLauncher.launch"),
+};
+
+const notDrivenIntents: EditIntentStore = {
+    put: () => {
+        throw new Error("intents.put: not driven by this test");
+    },
+    get: () => {
+        throw new Error("intents.get: not driven by this test");
+    },
 };
 
 const notDrivenMutator: WorkspaceMutator = {
@@ -310,7 +319,12 @@ describe("describeCall — sandbox mutate surface", () => {
     });
 
     it("edit_file names the path", () => {
-        const tool = createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1" });
+        const tool = createEditFileTool({
+            mutator: notDrivenMutator,
+            workspaceFilesystem: makeFakeWorkspaceFs(),
+            workingDir: "/a/runs/r1/s1",
+            intents: notDrivenIntents,
+        });
 
         expect(describeCall(tool, { path: "scripts/run.py", old_string: "a", new_string: "b", replace_all: false })).toBe("scripts/run.py");
     });

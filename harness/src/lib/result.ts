@@ -23,14 +23,14 @@
  *     dialect of failure:
  *       - HTTP routes `.match(...)` a `Result` into a response.
  *       - The DBOS step boundary throws on an `err` that must fail or retry
- *         the step (`unwrapOrThrow` / `resultStep` in `loop/run-step.ts`):
+ *         the step (`unwrapOrThrow`):
  *         durability records a step as failed — and retries / fails fast —
  *         ONLY on a thrown exception. A step can also return a `Result` as
  *         its value: `runtime/result-serialization.ts` keeps the `Ok` / `Err`
  *         class across the checkpoint, DBOS records the step as a success,
  *         and the body MUST use the `err`.
- *       - Tool dispatch maps `err` into an `is_error` `tool_result`
- *         (`loop/run-agent.ts`).
+ *       - The tool adapter maps `err` into an error tool result
+ *         (`loop/tool-adapter.ts`).
  *
  * Control-flow exceptions (DBOS cancellation, `AbortError`) are NOT failures
  * and live OUTSIDE the `Result` error channel — they are thrown verbatim and
@@ -102,12 +102,11 @@ export function toThrowable(value: unknown): Error {
  *
  * Use it ONLY where a throw is the boundary's failure contract:
  *
- *  - **DBOS workflow/step bodies** (directly, or composed via `resultStep` in
- *    `loop/run-step.ts`). DBOS records a step as failed — and retries / fails
+ *  - **DBOS workflow/step bodies**. DBOS records a step as failed — and retries / fails
  *    fast — only on a thrown exception; a *returned* `err` would be durably
  *    cached as a successful step output and replayed as success forever.
  *  - **Tool `execute` bodies**, where the loop's dispatch catch maps the
- *    throw into a model-visible error tool result (`loop/run-agent.ts`).
+ *    throw into a model-visible error tool result (`loop/tool-adapter.ts`).
  *  - **Driver edges whose protocol is a throw** (e.g. throw-to-rollback).
  *
  * Anywhere else, keep the `Result` flowing: return it, chain

@@ -3,11 +3,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import { createServer, type ServerResponse } from "node:http";
+import { streamText } from "ai";
 
 import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, wrapFetchWithRequestTimeout, type AiSdkProviderConfig } from "../ai-sdk.js";
-import { isProviderError } from "../errors.js";
-import type { ChatRequest, ChatStreamEvent } from "../types.js";
+import { findProviderError, type ProviderError } from "../errors.js";
+import type { ChatProvider } from "../types.js";
 import { presentAt } from "../../lib/present.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -15,11 +16,45 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
-const request: ChatRequest = {
-    system: "You are a test model.",
-    messages: [{ role: "user", content: "hello" }],
-    tools: {},
+/** What a reader of one model call saw. */
+type Outcome = {
+    readonly deltas: readonly string[];
+    readonly text: string;
+    /** The first failure that the call reported, as the AI SDK gave it. */
+    readonly failure: unknown;
+    readonly aborted: boolean;
 };
+
+/** Run one model call over the bound model of `provider`, the same way the loop runs each request. */
+async function drive(provider: ChatProvider, call: { readonly live?: boolean; readonly signal?: AbortSignal } = {}): Promise<Outcome> {
+    const bound = provider.bind({ session: makeSession(), live: call.live ?? false });
+    let failure: unknown;
+    const result = streamText({
+        model: bound.model,
+        ...bound.settings,
+        maxRetries: 0,
+        instructions: "You are a test model.",
+        messages: [{ role: "user", content: "hello" }],
+        abortSignal: call.signal,
+        onError: ({ error }) => {
+            failure ??= error;
+        },
+    });
+    const deltas: string[] = [];
+    let aborted = false;
+    for await (const part of result.stream) {
+        if (part.type === "text-delta") deltas.push(part.text);
+        else if (part.type === "abort") aborted = true;
+    }
+    return { deltas, text: deltas.join(""), failure, aborted };
+}
+
+/** The classified failure of a call that the retry envelope gave up on. */
+function providerErrorOf(outcome: Outcome): ProviderError {
+    const error = findProviderError(outcome.failure);
+    if (error === undefined) throw new Error(`expected a provider error, got ${textOf(outcome.failure)}`, { cause: outcome.failure });
+    return error;
+}
 
 /** A minimal OpenAI-compatible completion stream that the SDK parses to `"ok"`. */
 const OK_COMPLETION = [
@@ -107,14 +142,11 @@ describe("request-timeout guard", () => {
             config: openAiConfig(fetchThatNeverStarts(), { requestTimeoutMs: 30, maxRetries: 0 }),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const failure = providerErrorOf(await drive(provider));
 
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("provider");
-            expect(result.error.retryable).toBe(true);
-            expect(result.error.message).toContain("30");
-        }
+        expect(failure.type).toBe("provider");
+        expect(failure.retryable).toBe(true);
+        expect(failure.message).toContain("30");
     });
 
     it("does not cut a body that outlives the window, because the guard clears at the headers", async () => {
@@ -125,10 +157,10 @@ describe("request-timeout guard", () => {
             config: openAiConfig(fetchWithSteadyBody(OK_COMPLETION, 5, 15), { requestTimeoutMs: 60, maxRetries: 0 }),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        if (result.isOk()) expect(result.value.message).toEqual({ role: "assistant", content: [{ type: "text", text: "ok" }] });
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.text).toBe("ok");
     });
 
     it("keeps a caller abort a cancellation rather than a timeout", async () => {
@@ -140,16 +172,14 @@ describe("request-timeout guard", () => {
 
         const controller = new AbortController();
 
-        try {
-            // The abort lands once the call holds the stalled fetch, so the caller signal, not the guard, ends it.
-            const pending = provider.chat(request, makeSession(), controller.signal);
-            controller.abort();
-            const outcome = await pending;
-            throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
-        } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
-            expect(err.name).toBe("AbortError");
-        }
+        // The abort lands once the call holds the stalled fetch, so the caller signal, not the guard, ends it.
+        const pending = drive(provider, { signal: controller.signal });
+        await sleep(20);
+        controller.abort();
+        const outcome = await pending;
+
+        expect(outcome.aborted).toBe(true);
+        expect(outcome.failure).toBeUndefined();
     });
 
     it("retries a guard expiry with a fresh window and succeeds on the next attempt", async () => {
@@ -163,11 +193,11 @@ describe("request-timeout guard", () => {
             config: openAiConfig(fetch, { requestTimeoutMs: 30 }),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
         expect(calls).toBe(2);
-        expect(result.isOk()).toBe(true);
-        if (result.isOk()) expect(result.value.message).toEqual({ role: "assistant", content: [{ type: "text", text: "ok" }] });
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.text).toBe("ok");
     }, 10_000);
 
     it("bounds the guard retries by the configured maxRetries and names the value on exhaustion", async () => {
@@ -181,15 +211,12 @@ describe("request-timeout guard", () => {
             ),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const failure = providerErrorOf(await drive(provider));
 
         expect(calls).toBe(2);
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("provider");
-            expect(result.error.retryable).toBe(true);
-            expect(result.error.message).toContain("20");
-        }
+        expect(failure.type).toBe("provider");
+        expect(failure.retryable).toBe(true);
+        expect(failure.message).toContain("20");
     }, 10_000);
 
     it("leaves no guard timer alive once the headers arrive", async () => {
@@ -297,9 +324,9 @@ describe("request-timeout transport lift", () => {
             ),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(inits).toHaveLength(1);
         const forwarded = inits[0];
         if (forwarded === undefined) throw new Error("expected one forwarded init");
@@ -327,15 +354,13 @@ describe("request-timeout advertisement", () => {
         // thus the failure is a cancellation, never a request-timeout.
         const controller = new AbortController();
 
-        try {
-            const pending = provider.chat(request, makeSession(), controller.signal);
-            controller.abort();
-            const outcome = await pending;
-            throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
-        } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
-            expect(err.name).toBe("AbortError");
-        }
+        const pending = drive(provider, { signal: controller.signal });
+        await sleep(20);
+        controller.abort();
+        const outcome = await pending;
+
+        expect(outcome.aborted).toBe(true);
+        expect(outcome.failure).toBeUndefined();
     });
 });
 
@@ -430,41 +455,37 @@ function providerOver(baseURL: string, requestTimeoutMs: number) {
     });
 }
 
-/** Drain a chat stream into its events and the failure that ended it, if any. */
-async function drain(stream: AsyncIterable<ChatStreamEvent>): Promise<{ readonly events: ChatStreamEvent[]; readonly failure: unknown }> {
-    const events: ChatStreamEvent[] = [];
-    try {
-        for await (const event of stream) events.push(event);
-    } catch (e) {
-        return { events, failure: e };
-    }
-    return { events, failure: undefined };
-}
-
-describe("SDK chunk bound", () => {
+describe("the stream gap bound", () => {
     it("trips on the gap after the content stops, and not before", async () => {
         // Four deltas, 60 ms apart, run to about 240 ms — longer than the 150 ms
         // bound — and each one reaches the consumer. Thus the response-start guard
-        // cleared at the headers, and the SDK bound owns each gap. The silence
+        // cleared at the headers, and the retry envelope owns each gap. The silence
         // after the last delta then passes the bound, and the turn ends with an
         // error.
         const deltas = ["a", "b", "c", "d"].map(sseDelta);
         const endpoint = await startFakeStreamEndpoint(emitEvery(deltas, 60, false));
         try {
-            const { events, failure } = await drain(providerOver(endpoint.baseURL, 150).chatStream(request, makeSession()));
+            const outcome = await drive(providerOver(endpoint.baseURL, 150), { live: true });
 
-            expect(events).toEqual([
-                { type: "text-delta", text: "a" },
-                { type: "text-delta", text: "b" },
-                { type: "text-delta", text: "c" },
-                { type: "text-delta", text: "d" },
-            ]);
-            expect(isProviderError(failure)).toBe(true);
-            if (isProviderError(failure)) {
-                expect(failure.type).toBe("provider");
-                expect(failure.retryable).toBe(true);
-                expect(failure.message).toContain("150");
-            }
+            expect(outcome.deltas).toEqual(["a", "b", "c", "d"]);
+            const failure = providerErrorOf(outcome);
+            expect(failure.type).toBe("provider");
+            expect(failure.retryable).toBe(true);
+            expect(failure.message).toContain("150");
+        } finally {
+            await endpoint.close();
+        }
+    });
+
+    it("bounds each gap of a buffered call too, inside its attempt", async () => {
+        const deltas = ["a", "b"].map(sseDelta);
+        const endpoint = await startFakeStreamEndpoint(emitEvery(deltas, 40, false));
+        try {
+            const outcome = await drive(providerOver(endpoint.baseURL, 150), { live: false });
+
+            // A buffered call shows the reader nothing of an attempt that failed.
+            expect(outcome.deltas).toEqual([]);
+            expect(providerErrorOf(outcome).message).toContain("150");
         } finally {
             await endpoint.close();
         }
@@ -473,14 +494,12 @@ describe("SDK chunk bound", () => {
     it("trips when a stalled stream sends no content at all", async () => {
         const endpoint = await startFakeStreamEndpoint(emitEvery([], 20, false));
         try {
-            const { events, failure } = await drain(providerOver(endpoint.baseURL, 150).chatStream(request, makeSession()));
+            const outcome = await drive(providerOver(endpoint.baseURL, 150), { live: true });
 
-            expect(events).toEqual([]);
-            expect(isProviderError(failure)).toBe(true);
-            if (isProviderError(failure)) {
-                expect(failure.retryable).toBe(true);
-                expect(failure.message).toContain("150");
-            }
+            expect(outcome.deltas).toEqual([]);
+            const failure = providerErrorOf(outcome);
+            expect(failure.retryable).toBe(true);
+            expect(failure.message).toContain("150");
         } finally {
             await endpoint.close();
         }
@@ -492,11 +511,10 @@ describe("SDK chunk bound", () => {
         const keepAlives = Array.from({ length: 20 }, () => SSE_KEEP_ALIVE);
         const endpoint = await startFakeStreamEndpoint(emitEvery([sseDelta("a"), ...keepAlives], 40, true));
         try {
-            const { events, failure } = await drain(providerOver(endpoint.baseURL, 150).chatStream(request, makeSession()));
+            const outcome = await drive(providerOver(endpoint.baseURL, 150), { live: true });
 
-            expect(events).toEqual([{ type: "text-delta", text: "a" }]);
-            expect(isProviderError(failure)).toBe(true);
-            if (isProviderError(failure)) expect(failure.message).toContain("150");
+            expect(outcome.deltas).toEqual(["a"]);
+            expect(providerErrorOf(outcome).message).toContain("150");
         } finally {
             await endpoint.close();
         }
@@ -508,12 +526,10 @@ describe("SDK chunk bound", () => {
         const deltas = ["a", "b", "c", "d", "e", "f", "g", "h"].map(sseDelta);
         const endpoint = await startFakeStreamEndpoint(emitEvery([...deltas, SSE_END], 40, true));
         try {
-            const { events, failure } = await drain(providerOver(endpoint.baseURL, 150).chatStream(request, makeSession()));
+            const outcome = await drive(providerOver(endpoint.baseURL, 150), { live: true });
 
-            expect(failure).toBeUndefined();
-            const done = events.at(-1);
-            if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-            expect(done.response.message).toEqual({ role: "assistant", content: [{ type: "text", text: "abcdefgh" }] });
+            expect(outcome.failure).toBeUndefined();
+            expect(outcome.text).toBe("abcdefgh");
         } finally {
             await endpoint.close();
         }
@@ -525,16 +541,15 @@ describe("SDK chunk bound", () => {
         const endpoint = await startFakeStreamEndpoint(emitEvery([sseDelta("a")], 20, false));
         const controller = new AbortController();
         try {
-            // The stream pushes one delta per 20 ms, so the abort at 120 ms lands while the stream flows.
-            const pending = drain(providerOver(endpoint.baseURL, 5_000).chatStream(request, makeSession(), controller.signal));
+            // The stream sends one delta at 20 ms and then stays open, so the abort at 120 ms lands while the stream flows.
+            const pending = drive(providerOver(endpoint.baseURL, 5_000), { live: true, signal: controller.signal });
             await sleep(120);
             controller.abort();
-            const { events, failure } = await pending;
+            const outcome = await pending;
 
-            expect(events).toEqual([{ type: "text-delta", text: "a" }]);
-            expect(isProviderError(failure)).toBe(false);
-            if (!(failure instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(failure)}`);
-            expect(failure.name).toBe("AbortError");
+            expect(outcome.deltas).toEqual(["a"]);
+            expect(outcome.aborted).toBe(true);
+            expect(outcome.failure).toBeUndefined();
         } finally {
             await endpoint.close();
         }

@@ -5,7 +5,9 @@ import { fileTargetOf } from "../workspace-search.js";
 describe("fileTargetOf — the file/pattern resolution the tool performs per hit", () => {
     it("resolves a file entry to its stamped metadata path", () => {
         expect(fileTargetOf("/a1/runs/r1/s1/output/x.csv", { type: "output", path: "runs/r1/s1/output/x.csv" })).toBe("runs/r1/s1/output/x.csv");
-        expect(fileTargetOf("/a1/data/inputs/vcf/SUBJ_0001.vcf.gz", { type: "input", path: "data/inputs/vcf/SUBJ_0001.vcf.gz" })).toBe("data/inputs/vcf/SUBJ_0001.vcf.gz");
+        expect(fileTargetOf("/a1/data/inputs/vcf/SUBJ_0001.vcf.gz", { type: "input", path: "data/inputs/vcf/SUBJ_0001.vcf.gz" })).toBe(
+            "data/inputs/vcf/SUBJ_0001.vcf.gz",
+        );
         expect(fileTargetOf("/a1/runs/r1/synthesis.json", { type: "synthesis", path: "runs/r1/synthesis.json" })).toBe("runs/r1/synthesis.json");
     });
 

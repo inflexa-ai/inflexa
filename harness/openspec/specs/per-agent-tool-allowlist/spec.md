@@ -114,7 +114,7 @@ declare a non-empty `tools` array.
 - the workspace mutate tools, omitted in read-only mode
 - `read_tool_output` when a tool output store is supplied, directly after the workspace tools
 - the skill tools of the agent
-- `report_blocker` when a blocker cell is supplied
+- `report_blocker` when the deps set `reportsBlocker`
 - `submit_file_metadata` when a file-metadata cell is supplied, as the last tool of the agent
 
 `BASE_SANDBOX_TOOLS` is part of the allowlist that each meta spreads into its own `tools`, not an extra tool that the root adds. `read_tool_output` is part of the substrate, thus no meta declares it.

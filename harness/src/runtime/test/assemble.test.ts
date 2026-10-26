@@ -8,12 +8,14 @@ import { Pool } from "pg";
 
 import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
 
-import { createConversationAgent } from "../../agents/conversation-agent.js";
+import { CONVERSATION_AGENT_ID, createConversationAgent } from "../../agents/conversation-agent.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createReportSessionAgent } from "../../agents/report-session-agent.js";
+import { runChatTurn } from "../../app/chat-turn.js";
 import { createReportSessionRuntime } from "../../app/report-session-runtime.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { Scope } from "../../auth/types.js";
+import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
@@ -21,15 +23,19 @@ import { constructionWorkflows, refuse, refuseEmbedding, refuseRunLauncher } fro
 import { fakeLookBrowser } from "../../lib/__fixtures__/chrome.js";
 import { setBrowserConnector, type ChromeConfig } from "../../lib/chrome.js";
 import type { AcquireEyes, EyesScope } from "../../lib/eyes.js";
+import { presentFirst } from "../../lib/present.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore } from "../../memory/thread-store.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
+import { makeSession } from "../../providers/__fixtures__/session.js";
+import type { ChatProvider } from "../../providers/types.js";
 import { upsertAnalysis } from "../../state/analyses.js";
 import { upsertPlan } from "../../state/plans.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
+import { reply, scriptedModel, text } from "../../testing.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../../tools/report-authoring/authoring-tools.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
@@ -563,6 +569,80 @@ describe("the tool output store of the composition", () => {
                         .tools.map((tool) => tool.id),
                 ).toContain("read_tool_output");
             }
+        } finally {
+            Reflect.set(dbos.DBOS, "registerWorkflow", register);
+        }
+    });
+});
+
+describe("the chat turns of the composition", () => {
+    const ANALYSIS_ID = "analysis-chat-turn";
+    const THREAD_ID = "thread-chat-turn";
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("assemble_chat_turns"));
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    function chatDeps(provider: ChatProvider, usageRecorder: UsageRecorder): CoreRuntimeDeps {
+        return {
+            conversation: {
+                provider,
+                utilityProvider: unusedChatProvider(),
+                pool,
+                embedding: refuseEmbedding(),
+                workspaceFs: makeFakeWorkspaceFs(),
+                model: "test/model",
+                utilityModel: "test/utility-model",
+                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+                runAuthorizer: createLocalRunAuthorizer(),
+                runLauncher: refuseRunLauncher(),
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                skillsDir: "/skills",
+                chrome: {},
+            },
+            workflows: constructionWorkflows(),
+            usageRecorder,
+        };
+    }
+
+    it("runs a turn of the conversation agent with one call of the host, and each model call reaches the usage recorder of the runtime", async () => {
+        const records: LlmUsageRecord[] = [];
+        const usageRecorder: UsageRecorder = {
+            record: (record) => {
+                records.push(record);
+                return okAsync(undefined);
+            },
+        };
+        const model = scriptedModel([reply([text("the groups differ")], "stop", { inputTokens: 40, outputTokens: 4 })]);
+        const dbos = await import("@dbos-inc/dbos-sdk");
+        const register = dbos.DBOS.registerWorkflow.bind(dbos.DBOS);
+        // The registry of DBOS is global to the process, and a launched engine refuses a registration.
+        Reflect.set(dbos.DBOS, "registerWorkflow", (workflow: unknown) => workflow);
+        try {
+            const runtime = assembleCoreRuntime(chatDeps(model.provider, usageRecorder));
+
+            const result = await runChatTurn(runtime.chatTurns, {
+                analysisId: ANALYSIS_ID,
+                threadId: THREAD_ID,
+                userInput: "compare the two groups",
+                session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_ID, threadId: THREAD_ID } }),
+                emit: () => {},
+                signal: new AbortController().signal,
+            });
+
+            expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true, fallbackText: "the groups differ" });
+            expect(records.map((record) => [record.agentId, record.usage])).toEqual([[CONVERSATION_AGENT_ID, { inputTokens: 40, outputTokens: 4 }]]);
+            const rows = (await createThreadHistory(pool).loadAll(THREAD_ID))._unsafeUnwrap().flat();
+            expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant"]);
+            expect(presentFirst(rows).turn).toMatchObject({ status: "done" });
+            // The approval of a turn goes to the gateway that the host answers through.
+            expect(runtime.chatTurns.askGateway).toBe(runtime.askGateway);
         } finally {
             Reflect.set(dbos.DBOS, "registerWorkflow", register);
         }

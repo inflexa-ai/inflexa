@@ -4,21 +4,21 @@
 
 Analysis plans are produced by the `generate_plan` tool
 (`src/tools/research/generate-plan.ts`), which the conversation agent calls with
-structured context. The tool does not make a single structured `ChatProvider.chat`
-call — it drives an internal `planner` sub-agent (`AgentDefinition`, id
-`"planner"`) through `runToTerminal` (the terminal-salvage wrapper around
-`runAgent`). The planner communicates results EXCLUSIVELY through tool calls; its
-text reply is discarded, and the outcome is read from a closure cell that the
-terminal tools write.
+structured context. The tool does not make a single structured model call — it
+drives an internal `planner` sub-agent (`AgentDefinition`, id `"planner"`)
+through `runWithSalvage` (the salvage wrapper around `runLoop`). The planner
+communicates results EXCLUSIVELY through tool calls; its text reply is
+discarded, and the tool selects the outcome from the recorded results of the
+terminal tool calls.
 
-The planner's inner tools divide by whether they end the loop. The terminal set
-is `submit_plan` (re-validate and persist), `request_clarification`, and
+The planner's inner tools divide by whether they record an outcome. The terminal
+set is `submit_plan` (check a candidate), `request_clarification`, and
 `report_blocker` (the planner's honest "no viable plan" exit); everything else is
 non-terminal and may be called freely — `list_available_refs` (reference-store
 discovery, so a step is only
 committed to reference data the environment actually holds). That split, not the
-size of either set, is the invariant: a plan reaches the caller through exactly
-one terminal call, and non-terminal tools record no outcome. The whole
+size of either set, is the invariant: a plan reaches the caller only through a
+terminal call, and non-terminal tools record no outcome. The whole
 invocation is bounded by one wall-clock guard, merged with the caller's abort
 signal. The guard is 600s, or the advertised provider request timeout when
 larger; the planner loop is iteration-capped at 13. There is no per-attempt
@@ -30,8 +30,8 @@ anywhere in the planning path.
 ### Requirement: Plan generation runs as an internal planner sub-agent loop
 
 The conversation agent SHALL generate plans by calling the `generate_plan` tool,
-which SHALL drive an internal `planner` `AgentDefinition` via `runToTerminal`
-(wrapping `runAgent`) under a child session derived with
+which SHALL drive an internal `planner` `AgentDefinition` via `runWithSalvage`
+(wrapping `runLoop`) under a child session derived with
 `forSubAgent(ctx.session, "planner")`. The planner SHALL communicate its result
 only through terminal tool calls; its text reply SHALL be discarded.
 
@@ -39,12 +39,12 @@ only through terminal tool calls; its text reply SHALL be discarded.
 
 - **WHEN** the conversation agent needs an analysis plan
 - **THEN** it calls `generate_plan` with `{ dataContext, researchQuestion, priorRuns?, userConstraints?, parentPlanId? }`
-- **AND** the tool runs the planner sub-agent via `runToTerminal` under a `forSubAgent` child session
+- **AND** the tool runs the planner sub-agent via `runWithSalvage` under a `forSubAgent` child session
 
-#### Scenario: Planner outcome read from a closure cell
+#### Scenario: Planner outcome selected from the recorded tool results
 
 - **WHEN** the planner finishes its loop
-- **THEN** the tool reads the recorded outcome from the shared closure cell, not from the planner's text reply
+- **THEN** the tool selects the outcome from the recorded results of the terminal tool calls, not from the planner's text reply
 
 ### Requirement: A single wall-clock guard bounds the whole invocation
 
@@ -79,7 +79,7 @@ SHALL return it as a data result (`ok(...)`) in every case — it SHALL NOT thro
 The tool SHALL also **record** that outcome through an injected `Logger`, exactly once per
 invocation, carrying the outcome kind, the elapsed wall-clock of the invocation, and the
 `analysisId`. Returning the outcome is not recording it: `generate_plan` is a conversation-layer
-tool on `passthroughStep`, so it writes no ledger row and owns no durable stream, and the returned
+tool that runs outside a workflow, so it writes no ledger row and owns no durable stream, and the returned
 string is otherwise the entire evidence that the tool ran at all.
 
 The record's level SHALL follow the outcome rather than the return type, which is uniformly
@@ -392,8 +392,8 @@ recording them exposes nothing the conversation transcript does not hold.
 
 #### Scenario: An accepted plan records no rejection
 
-- **GIVEN** a planner whose first `submit_plan` call validates and persists
-- **WHEN** the tool returns `{accepted: true, planId}`
+- **GIVEN** a planner whose first `submit_plan` call validates
+- **WHEN** the tool returns `{accepted: true, plan}`
 - **THEN** no rejection record is written
 
 ### Requirement: The planner prompt states the cross-step feature-selection rule

@@ -132,7 +132,7 @@ export type ToolFinishedEvent = {
 export type FinishEvent = {
     type: "finish";
     source: EventSource;
-    /** What this loop's own LLM calls used, the forced wrap-up included. */
+    /** What this loop's own LLM calls used. */
     usage?: TokenUsageRollup;
     /**
      * The whole turn's total — this loop's calls plus every descendant loop's

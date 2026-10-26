@@ -5,8 +5,8 @@ Guidance for Claude Code that works with the Cortex **harness** package
 
 ## Project Overview
 
-The harness is the **host-agnostic agent runtime** of Cortex. It is a hand-rolled
-agent loop and an execution boundary for long-running bioinformatics analysis. One
+The harness is the **host-agnostic agent runtime** of Cortex. It is an agent loop
+on the AI SDK and an execution boundary for long-running bioinformatics analysis. One
 Conversation Agent handles each interactive task: data discovery, analysis
 planning, workflow triggers, result interpretation, and hypothesis exploration.
 Compute-heavy work in R and Python runs in isolated sandbox containers, and
@@ -50,12 +50,19 @@ that an embedder faces:
 - `RunLauncher`/`createDbosRunLauncher`
 - the `Logger` seam and its realizations (`createConsoleLogger`,
   `createNoopLogger`, `defaultErrorFields`)
-- `defineTool` and `runAgent`
+- `defineTool`, and the chat turn (`openChatTurn` and `runChatTurn`)
 - the public types of the loop, the session, and the provider.
+
+No embedder drives the loop. A host runs a chat turn, and the harness runs each
+loop.
 
 Prefer an import from `@inflexa-ai/harness`, because the bare specifier resolves to
 this barrel. Each deep subpath (`@inflexa-ai/harness/...`) stays importable for
 internal wiring. The barrel is additive, not a wall.
+
+The test kit is `src/testing.ts`. An embedder imports it from
+`@inflexa-ai/harness/testing`. Its `scriptedModel` gives a `ChatProvider` over a
+scripted model, for a test of a chat turn or of a tool that runs a sub-agent.
 
 `harness/package.json` is the package manifest. It declares the name
 `@inflexa-ai/harness` and `type: "module"`. It declares the `exports` map: `.` goes
@@ -117,8 +124,8 @@ file. Use `bun run format` for the format of the full project.
 ## Architecture
 
 **Core Philosophy**: The harness has the agent loop and the execution boundary.
-Chat is regular HTTP. A durable operation is a DBOS workflow. The same `runAgent`
-primitive runs in both. The operative architectural decisions are in
+Chat is regular HTTP. A durable operation is a DBOS workflow. The same loop
+(`runLoop`) runs in both. The operative architectural decisions are in
 [`CONTEXT.md`](CONTEXT.md) and in the OpenSpec specs
 ([`openspec/specs/`](openspec/specs/)).
 
@@ -186,16 +193,16 @@ Obey these rules:
    never changes `tools` or `toolChoice`. `@ai-sdk/anthropic` removes the tools
    from a request with `toolChoice: "none"`, thus that value also changes the
    prefix.
-3. **A tool mask limits the tools that can run.** To stop a tool for one request,
-   give a mask (`loop/tool-mask.ts`). Do not remove the tool. The loop refuses a
-   call outside the mask, or past its budget, with an error result, and the tool
-   does not run.
+3. **A call policy limits the tools that can run.** To stop a tool for one
+   request, give a mask in the call policy (`loop/call-policy.ts`). Do not remove
+   the tool. The policy refuses a call outside the mask, past its budget, or past
+   the guard, as an approval refusal (`toolApproval` of the AI SDK). The refused
+   call gets an error result, and the tool does not run.
 4. **A follow-up task continues the conversation.** For a summary, a metadata
-   request, a salvage, or a wrap-up, use `continueAgent`
-   (`loop/continue-agent.ts`). It appends one harness request, and it keeps the
-   system prompt, the tools, the tool choice, the provider, and the effort. Do not
-   start a new call that sends the transcript again under a different system
-   prompt or tool set.
+   request, or a salvage, use `continueLoop` (`loop/run-loop.ts`). It appends one
+   harness request, and it keeps the system prompt, the tools, the tool choice,
+   the provider, and the effort. Do not start a new call that sends the transcript
+   again under a different system prompt or tool set.
 5. **An unanswered tool call gets a result.** At the exit of the loop, each call
    without a result gets a "not run" error result. Do not remove the call from the
    history.
@@ -343,9 +350,13 @@ is an embedder concern.
   each tool.
 - **Literature Reviewer** (`tools/research/literature-reviewer.ts`): a sub-agent
   that is a tool. It receives a research brief, investigates with the bio-lookup
-  tools, and gives a structured evidence report.
+  tools, and gives a structured evidence report. It runs `runLoop` under a child
+  session (`forSubAgent`). Inside a workflow, the whole tool call is one step, thus
+  the calls of the child run directly inside that step.
 - **`generatePlan` Tool** (`tools/research/generate-plan.ts`): an internal-LLM
-  tool. It captures the planner outcome with closure state (`PlannerOutcome`). The
+  tool. It selects the planner outcome from the recorded results of the terminal
+  tools: the last accepted plan, else the last clarification, else the first
+  blocker. After the run, it persists an accepted plan with `upsertPlan`. The
   planning prompt is in `prompts/`, with an `{{AGENT_CATALOG}}` placeholder that
   the sandbox-agent metadata fills.
 - **`executeAnalysis` Workflow** (`workflows/execute-analysis.ts`, with the
@@ -354,16 +365,18 @@ is an embedder concern.
   each child: the sandbox-agent loop, then `generateFileMetadata`, then
   `generateStepSummary`, then the artifact registration through
   `ArtifactRegistry`, then the index in the vector store. The metadata and the
-  summary continue the conversation of the step agent. The final step of the
-  parent is the literature-grounded synthesis.
-- **Chat turn** (`app/chat-turn.ts`): a turn is `runChatTurn`. The host gives
-  only its transport values: the emit sink, the signal, the provider factory, the
-  usage recorder, and the approval binding. `runChatTurn` prepares the turn with
+  summary are follow-up requests (`continueLoop`) in the conversation of the step
+  agent. The final step of the parent is the literature-grounded synthesis.
+- **Chat turn** (`app/chat-turn.ts`): a turn is `runChatTurn` over
+  `CoreRuntime.chatTurns`. The host gives only its transport values: the emit
+  sink, the abort signal, the author of the user message, and the start time. The
+  harness makes the model, the text stream, the usage recorder, and the approval
+  binding of the turn from its runtime. `runChatTurn` prepares the turn with
   `prepareChatTurn`, resolves the agent of the thread type, and stores the opening.
   A host that must know the agent, or answer a refusal before it streams, calls
   `openChatTurn` and then the `run` of the open turn. The host gives the session
   with no provenance. The harness sets the provenance from the resolved agent.
-  Then it runs `runAgent` with a round sink that stores each round, and it closes
+  Then it runs `runLoop` with a round sink that stores each round, and it closes
   the turn with its outcome. The root loop compacts its view at the conversation
   budget. The host wraps this in its own request handler, because the harness
   ships no HTTP route layer.
@@ -573,8 +586,11 @@ The harness throws an exception only at these places:
 - a step or a workflow that must fail
 - a step that DBOS must retry
 - the self-cancel of a suspension (`cancelSelf`, `src/workflows/suspension.ts`)
-- a tool `execute` body. The dispatch catch of the loop changes the throw into an
-  error tool result.
+- a tool `execute` body. The tool adapter of the loop (`loop/tool-adapter.ts`)
+  changes the throw into an error tool result.
+- a model call that fails after its retries. The AI SDK speaks exceptions, thus
+  the retry envelope of the provider (`providers/ai-sdk.ts`) throws the
+  classified `ProviderError`, and the loop throws it out of the run.
 
 The harness catches an exception only at these places:
 
@@ -584,22 +600,19 @@ The harness catches an exception only at these places:
   outcome
 - a DBOS boundary: a workflow body that gets the throw of a failed step or a
   failed child workflow. Then the body runs its failure path.
-- the dispatch catch of the loop.
+- the tool adapter of the loop. A cancel of the workflow passes through it with no
+  change.
 
 An exception from DBOS, for example `DBOSWorkflowCancelledError`, reaches DBOS with
 no change. A hook call has no `try` and no `catch` around it. `passGate` and
 `deliverNotice` (`src/lib/hooks.ts`) take its `Result`.
 
-The full house rules are at the top of `src/lib/result.ts`. There are two
-sanctioned bridges:
-
-- `unwrapOrThrow(result)` (`src/lib/result.ts`) — the canonical bridge from Result
-  to throw. Use it only inside a DBOS workflow or step body, inside a tool
-  `execute` body (the dispatch catch of the loop maps the throw to an error tool
-  result), and at a throw-protocol driver edge. Never use it in composable domain
-  logic. There, keep the `Result` flowing.
-- `resultStep` (`src/loop/run-step.ts`) — the composed seam that the agent loop
-  uses (`runStep` plus `unwrapOrThrow`).
+The full house rules are at the top of `src/lib/result.ts`. The sanctioned bridge
+is `unwrapOrThrow(result)` (`src/lib/result.ts`), the canonical bridge from Result
+to throw. Use it only inside a DBOS workflow or step body, inside a tool `execute`
+body (the tool adapter maps the throw to an error tool result), and at a
+throw-protocol driver edge. Never use it in composable domain logic. There, keep
+the `Result` flowing.
 
 The `must-use-result` rule runs in `inflexa-typecheck` (`typecheck.config.ts`).
 It recognizes a `Result` that goes directly to `unwrapOrThrow`, `passGate`,
@@ -688,7 +701,8 @@ factory under test. There is no global pool accessor and no test-override seam.
 `setupDbosForTests` from `__tests__/setup/dbos.ts`. The rig launches lazily, shares
 one DBOS engine across `bun test`, and carves out a fresh cortex schema for each
 test with `withSchema()`. Use it for a workflow test or a runtime-shape test. A
-pure body-level unit test must stay on `passthroughStep`.
+pure body-level unit test needs no DBOS engine, because outside a workflow the
+loop runs each call directly.
 
 **Real-upstream integration tests** live under `src/providers/integration/test/`. There
 is one file for each provider, named `<provider>.integration.test.ts`. They hit a

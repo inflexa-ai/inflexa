@@ -20,7 +20,7 @@ import type { z } from "zod";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, RecommendResponse } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { joinEnvironment, type EnvironmentPaths, type RecommendWithEnvironment } from "./environment.js";
@@ -32,15 +32,17 @@ export type KnowledgeRecommendDeps = Omit<EnvironmentPaths, "farmLockFile"> & {
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent, the packages read as unknown. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
     /**
-     * Receives each answer the planner sees. The planner keeps the skeleton of
-     * the invocation, thus `submit_plan` can restore a grounding field that the
+     * Receives each answer the planner saw, after the round of its call, on the
+     * first run and on each replay alike. The planner keeps the skeleton of the
+     * invocation, thus `submit_plan` can restore a grounding field that the
      * model dropped when it copied a skeleton step.
      */
     readonly onAnswer?: (answer: KnowledgeRecommendAnswer) => void;
     /**
-     * The release of the plan. The first answer sets it, and each later call
-     * of this tool and of `knowledge_check` sends it, thus a service that moved
-     * to another release between two calls refuses instead of mixing releases.
+     * The release of the plan. The first answer sets it after the round of its
+     * call, and each later call of this tool and of `knowledge_check` sends it,
+     * thus a service that moved to another release between two calls refuses
+     * instead of mixing releases.
      */
     readonly pin?: SnapshotPin;
 };
@@ -67,7 +69,8 @@ export type KnowledgeRecommendAnswer = {
     reason?: string;
 };
 
-export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
+export type KnowledgeRecommendOutput =
+    WithToolCallRecord<KnowledgeRecommendAnswer, KnowledgeRecommendAnswer> | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 
 function stringList(value: unknown): readonly string[] | undefined {
     return Array.isArray(value) ? value.flatMap((item) => (typeof item === "string" ? [item] : [])) : undefined;
@@ -143,8 +146,13 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
                 refStorePath: deps.refStorePath,
             });
             const planner = toPlannerAnswer(joined);
-            deps.onAnswer?.(planner);
-            return ok(planner);
+            // The answer rides as the call record too. The pin and the memory of the planner
+            // fold it after the round, thus a replay that returns the recorded result sets both.
+            return ok(withToolCallRecord(planner, planner));
+        },
+        foldCallRecord: (answer) => {
+            deps.pin?.set(answer.snapshot.digest);
+            deps.onAnswer?.(answer);
         },
     });
 }

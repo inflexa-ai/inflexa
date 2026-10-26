@@ -424,7 +424,7 @@ replay. A durable cache for them is a deferred follow-up that the typed returns
 make possible.
 
 **The file metadata and the summary continue the conversation of the step
-agent** (`continueAgent`). Each request extends the prefix that the task cached.
+agent** (`continueLoop`). Each request extends the prefix that the task cached.
 Thus each continuation reads that prefix from the cache. The step agent declares
 `submit_file_metadata` from its first request, and the task masks it. The
 file-metadata continuation lets `submit_file_metadata`, `read_file`, and `grep`
@@ -573,29 +573,30 @@ Other facts:
   step cache. Signed provider metadata (an Anthropic thinking signature, a cache
   control) rides provider-scoped in `providerOptions`. A provider is built from an
   AI SDK `LanguageModel` instance that the embedder supplies, or from an endpoint,
-  key, and model configuration (`anthropic` or `openai-compatible`). It advertises
-  `capabilities.toolCalling`. Refer to
-  [harness-providers](openspec/specs/harness-providers/spec.md). It has two
-  methods:
-  - `chat(req, session, signal?) → ResultAsync<ChatResponse, ProviderError>` —
-    non-streaming, for a workflow step and an out-of-band call. It is cacheable as
-    a DBOS step.
-  - `chatStream(req, session, signal?) → AsyncIterable<ChatStreamEvent>` — text
-    deltas, then one terminal `done` event. This is the chat loop.
+  key, and model configuration (`anthropic`, `openai`, or `openai-compatible`). It
+  advertises `capabilities.toolCalling`. Refer to
+  [harness-providers](openspec/specs/harness-providers/spec.md). It has one
+  method:
+  - `bind({ session, reasoning?, live }) → BoundModel` — the model of one run
+    under the retry envelope of the provider, and the call settings of each
+    request. The AI SDK drives each request. A call with a live reader retries
+    only before its first output part. After the last attempt, a failed call
+    throws a `ResultError` that carries the classified `ProviderError`.
 
   An output-token truncation shows as the AI SDK `finishReason: "length"`, thus
   the loop sees exactly one truncation signal.
 - **`EmbeddingProvider`** — a separate narrow interface for the embeddings, and
   `providers/types.ts` declares the two provider interfaces. It
   takes a `Session`.
-- **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, executionMode?, describeCall?})`**
+- **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, describeCall?})`**
   — `ctx` is `ToolContext = {session, signal, emit, ask, invocationId, turnUsage}`,
   which is request-scoped values with no deps. `tools/define-tool.ts` has it. The
   `z.toJSONSchema()` of Zod 4 emits the tool input schema that the AI SDK accepts:
   a top-level object only, and it rejects a union at construction. A tool that
   carries deps is a factory closure (`createXTool(deps)`) that captures the deps
-  and calls `defineTool`. Each tool declares an **`executionMode`** or defaults to
-  one: `step` or `inline`. Refer to *The loop*.
+  and calls `defineTool`. Inside a workflow, each call of a tool is one durable
+  step. Thus a tool body must be safe to run again from its start. Refer to *The
+  loop*.
 
   A tool gives each effect on process-local state as a **call record**: its ok
   value carries the record (`withToolCallRecord`), and its `foldCallRecord`
@@ -637,101 +638,108 @@ Other facts:
   functions, applied one time to the user input in the chat route. The analysis
   context is injected at the message assembly of the chat route.
 - **Sub-agents** — exposed as regular tools. The `execute` of such a tool calls
-  `runAgent(subAgent, prompt, childSession)`, where `childSession` derives the
+  `runLoop(subAgent, prompt, childSession, opts)`, where `childSession` derives the
   agentId and the callPath from the parent, through
   `forSubAgent(ctx.session, childAgentId)`. The examples are `literature-reviewer`
   and `analogical-reasoner`. There is no special delegation
   primitive and no message stripping. A sub-agent transcript is ephemeral. The
-  workflow-decides path uses `runAgent` directly, with no tool wrapper.
-- **The loop** (`loop/run-agent.ts`) —
-  `runAgent(agent, messages, session, {signal, emit, runStep}) → { messages, finish }`,
-  where `finish = { reason, cappedOut, truncationRecoveries }`: the terminal
-  finish reason, whether the iteration cap was hit, and how many truncations were
-  recovered. `runStep` is injected: a passthrough in chat, and `DBOS.runStep` in a
-  workflow. The loop emits orchestration events stamped with `source` from
-  `session.callPath`.
+  workflow-decides path uses `runLoop` directly, with no tool wrapper.
+- **The loop** (`loop/run-loop.ts`) —
+  `runLoop(agent, messages, session, opts) → { messages, finish, steps }`,
+  where `finish = { reason, cappedOut, usage?, turnUsage? }`: the terminal finish
+  reason, and whether the step cap ended the run. `steps` holds each completed
+  request and the tool calls of its reply, with the output of each call. The AI
+  SDK `streamText` drives the requests.
+
+  Inside a DBOS workflow, `durableCalls` of `@dbos-inc/vercel-ai` makes each model
+  call a step named `<agentId>.model`. `durableTools` makes each tool call a step
+  named `<tool>.<toolCallId>`. Outside a workflow, each call runs directly. Thus
+  the same loop serves a chat turn, a workflow step, and a sub-agent. The loop
+  emits orchestration events stamped with `source` from `session.callPath`.
 
   Each request of a conversation declares the same tools and the same tool
   choice. A signed thinking block and the prompt cache bind to that prefix.
 
-  At the iteration cap, the loop does not throw. It runs the wrap-up, a
-  continuation with the mask `"none"` and a cap of 2 requests. The wrap-up
-  request asks for a text answer, and the mask refuses each tool call. At each
-  exit, the loop answers each tool call that has no result with a not-run error
-  result. It removes no message, and it changes no message.
+  At the step cap, the run ends, and the finish reports the cap. A reply cut at
+  the output limit also ends the run. At each exit, the loop answers each tool
+  call that has no result with a not-run error result. It removes no message, and
+  it changes no message.
 
-  `RunAgentOptions.onRound` is an optional round sink. The loop gives the sink each
+  `LoopOptions.onRound` is an optional round sink. The loop gives the sink each
   message that it appended, one round at a time. It calls the sink before each model
   request, at each exit, and before a throw. The loop awaits the sink, and it knows
   no store. A durable loop passes no sink, because a DBOS replay runs the loop body
   again.
 
-  `RunAgentOptions.compaction` is an optional compaction policy. With a policy,
-  each request sends the view of the transcript. Before each task request, the
-  loop estimates the view. When the view exceeds the budget, the loop runs an
-  exchange: a continuation that asks for memory edits and a summary. Then it
-  appends a summary marker, or a drop marker when the exchange gives no summary,
-  and the next request starts at the marker. A durable loop passes no policy.
+  `LoopOptions.compaction` is an optional compaction policy. With a policy, each
+  request sends the view of the transcript. Before each task request, the loop
+  compares the input tokens of the latest request with the budget. Over the
+  budget, the loop runs an exchange: a follow-up request that asks for memory
+  edits and a summary. Then it appends a summary marker, and the next request
+  starts at the marker.
 
-  A `finishReason: "length"` truncation is a
-  **recoverable soft-error, not a stop**. Only the final content part can be
-  truncated. Thus the loop does **not** execute a truncated trailing tool call,
-  because its input can be incomplete in silence. It feeds back a retryable error
-  tool result and continues: an earlier complete tool call still dispatches, and
-  truncated prose gets a steer-and-continue turn. Thus a truncated write never
-  lands a partial file. The step names (`llm-${i}`, `tool-${name}-${id}`) are a
-  documented, deterministic contract. Refer to
-  [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
-- **The tool mask and the tool budget** (`loop/tool-mask.ts`) —
-  `RunAgentOptions.toolMask` gives the tools that can run for each request. It is
-  `"none"`, or `{ allow: [...] }` with the ids of the tools.
-  `RunAgentOptions.toolBudget` gives the maximum count of calls of a tool in one
-  run. A request still declares each tool of the agent.
+  An exchange with no summary appends no marker, and the run compacts no more. A
+  durable loop passes no policy.
 
-  The loop applies the two at dispatch, in the order of the calls of a round. A
-  refused call gets an error result that gives the reason, and its tool does not
-  run. Refer to [harness-agent-loop](openspec/specs/harness-agent-loop/spec.md).
-- **The continuation** (`loop/continue-agent.ts`) —
-  `continueAgent(agent, conversation, request, session, opts)` continues an
+  The outcome of an agent comes from `steps`. Each agent has one selector over the
+  recorded tool calls and their results, for example `blockerOf`
+  (`tools/sandbox/report-blocker.ts`). A submit tool checks one submission, and it
+  does not end the run. Thus a replay selects the same outcome. When a run ends
+  with no outcome and no abort, `runWithSalvage` sends one salvage request. Only
+  the terminal tools of the agent can run in it.
+- **The call policy** (`loop/call-policy.ts`) — `LoopOptions.policy` holds the
+  mask, the budget, and the guard of a run. The mask (`ToolMask`) gives the tools
+  that can run for each request. It is `"none"`, or `{ allow: [...] }` with the
+  ids of the tools. The budget gives the maximum count of calls of a tool in one
+  run. The guard refuses the repeated calls of a set of tools. A request still
+  declares each tool of the agent.
+
+  The loop applies the policy in the `toolApproval` of the AI SDK, in the order of
+  the calls of a round. A refused call gets an error result that gives the reason,
+  and its tool does not run. The run continues. Refer to
+  [harness-agent-loop](openspec/specs/harness-agent-loop/spec.md).
+- **The follow-up request** (`loop/run-loop.ts`) —
+  `continueLoop(agent, conversation, request, session, opts)` continues an
   existing conversation of an agent with one harness request. It appends the
   request as a synthetic user message, thus the request opens no turn in a stored
   thread. It sends the system prompt, the declared tools, and the tool choice of
   the conversation, and a mask limits the tools that run. It returns only the new
-  messages and the finish, and it runs no wrap-up at its cap.
+  messages, the steps, and the finish.
 
-  Its step names carry a namespace (`salvage:llm-0`, `file-metadata:llm-0`), thus
-  a durable key cannot match a key of the conversation. An accounting agent id
-  names its usage records, its token counters, and its run metrics. The salvage of
-  `runToTerminal`, the file metadata, and the step summary are continuations.
-- **The cut of a long tool result** (`loop/tool-output.ts`) — the loop measures
-  the text of each tool result in `dispatchTool`, before the result joins the
-  transcript. Thus each tool and each segment of a conversation get the cut.
+  An accounting agent id names its usage records, its token counters, and its run
+  metrics. The salvage of `runWithSalvage`, the file metadata, and the step
+  summary are follow-up requests.
+- **The cut of a long tool result** (`loop/tool-output.ts`) — the tool adapter
+  measures each tool result inside the step of the call. Thus the step output
+  holds the excerpt, and a rerun of the call gives the same excerpt.
 
   A text longer than `TOOL_RESULT_CAP`, 32,768 characters, becomes an excerpt.
   The excerpt gives a line that states the cut, the first 4,096 characters, a
   marker line, and the last 8,192 characters.
 
   When the run has a `toolOutputStore` and the agent declares
-  `read_tool_output`, the loop keeps the whole text before a request sends the
-  result. Then the excerpt gives the reference of the kept text.
+  `read_tool_output`, the adapter keeps the text. A rerun of the call gives the
+  same reference, and the excerpt gives that reference.
   `read_tool_output` reads a kept text by its reference: a window of characters,
   or the matches of a pattern.
-- **Execution-mode partitioned dispatch**
-  ([harness-tools](openspec/specs/harness-tools/spec.md)). The dispatch obeys the
-  `executionMode` of each tool. A `step` tool is the default: the ~35 external bio
-  and chem API tools, the workspace reads, `execute_command`, `write_file`, and
-  `edit_file`. Each is wrapped in a deterministic `runStep` and runs concurrently
-  (`Promise.all`), and each reserves one function ID synchronously in array order.
-  The sandbox exec of `execute_command` runs inside its tool step. An `inline`
-  tool runs unwrapped, one at a time, after the step tools.
+- **Each tool call is one step**
+  ([harness-tools](openspec/specs/harness-tools/spec.md)). The tool adapter
+  (`loop/tool-adapter.ts`) makes an AI SDK tool from each harness tool, and
+  `durableTools` wraps each one. The AI SDK starts the calls of one reply
+  together, in stream order. No tool runs in the workflow body. The sandbox exec of
+  `execute_command` runs inside its tool step.
 
-  The results are assembled by the original index, thus the tool-result order
-  holds. After the round, the loop folds the call record of each call in call
-  order, on the first run and on each replay. Thus process-local state, for
-  example the lineage collector of a step, gets the same records after a
-  recovery. The loop emits (`iteration`, `tool-started`, `tool-finished`) are
-  awaited, thus each body-path `writeStream` lands at a deterministic function ID
-  on replay ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
+  The adapter changes an `err` and a throw into an error result that the model
+  reads. A cancel of the workflow passes out of the loop. The step output holds the
+  value, the call record, and the pictures. After the round, the loop folds the
+  call record of each call in call order, on the first run and on each replay.
+  Thus process-local state, for example the lineage collector of a step, gets the
+  same records after a recovery.
+
+  The adapter writes the `tool-started` and `tool-finished` events of a call
+  inside the step of the call. A write from a step is at-least-once, and each
+  reader keeps the latest part for each id
+  ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
 
 ### Memory
 
@@ -770,7 +778,7 @@ Other facts:
 
 ### Request headers at the wire boundary
 
-- The session is the compile-time obligation. `ChatProvider.chat(req, session, signal?)`
+- The session is the compile-time obligation. `ChatProvider.bind({ session, ... })`
   and `EmbeddingProvider.embed(texts, session)` both take an `AgentSession`, thus
   you cannot construct a wire call without one. The provider calls its optional
   `resolveRequestHeaders(session)` hook before each attempt of a request. Then it
@@ -791,9 +799,8 @@ A suspension stops a run, and the harness keeps the stored state of the run.
 
 - **Pod-crash recovery** (the harness-durable-runtime spec) replays the body
   with the same input. Each step name is identical, thus the whole body hits the
-  cache. The step names carry no attempt number, for example `llm:${iteration}`,
-  `tool:${name}:${toolUseId}`, `open-running-charge`, and
-  `close-running-charge`.
+  cache. The step names carry no attempt number, for example `<agentId>.model`,
+  `<tool>.<toolCallId>`, `open-running-charge`, and `close-running-charge`.
 - A suspension starts from a model request that fails with a `suspend` error, or
   from a gate refusal with the suspend flag. The suspend map of the provider
   makes the `suspend` error. Its default maps `402` to `payment_required`.

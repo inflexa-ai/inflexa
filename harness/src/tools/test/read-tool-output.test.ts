@@ -33,10 +33,9 @@ async function read(store: ToolOutputStore, input: Record<string, unknown>): Pro
 }
 
 describe("createReadToolOutputTool", () => {
-    it("runs in the step mode, and names the reference or the search of a call", () => {
+    it("names the reference or the search of a call", () => {
         const tool = createReadToolOutputTool(storeWith("x"));
         expect(tool.id).toBe("read_tool_output");
-        expect(tool.executionMode).toBe("step");
         expect(tool.describeCall?.({ ref: REF })).toBe(REF);
         expect(tool.describeCall?.({ ref: REF, pattern: "Traceback" })).toBe(`Traceback in ${REF}`);
     });

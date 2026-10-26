@@ -21,6 +21,7 @@ import type { Connectable } from "../../lib/db-result.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
+import { callTools, scriptedModel, toolCall } from "../../testing.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -181,39 +182,12 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
     };
 }
 
-function routeProvider(agentId = "single-cell-agent", packages?: string[]): { provider: ChatProvider; calls: { count: number } } {
-    const calls = { count: 0 };
-    return {
-        calls,
-        provider: {
-            capabilities: { toolCalling: true },
-            chat: () => {
-                calls.count++;
-                return okAsync({
-                    message: {
-                        role: "assistant",
-                        content: [
-                            {
-                                type: "tool-call",
-                                toolCallId: `route-${calls.count}`,
-                                toolName: "submit_route",
-                                input: {
-                                    agentId,
-                                    resources: { cpu: 2, memoryGb: 4 },
-                                    rationale: `route-${calls.count}`,
-                                    packages,
-                                },
-                            },
-                        ],
-                    },
-                    finishReason: "tool-calls",
-                });
-            },
-            chatStream: () => {
-                throw new Error("the routing probe never streams");
-            },
-        },
-    };
+/** A router model that answers each request with one route. The script holds one reply for each request that a test makes. */
+function routeProvider(agentId = "single-cell-agent", packages?: string[]): { provider: ChatProvider; calls: readonly unknown[] } {
+    const route = (n: number) =>
+        callTools(toolCall(`route-${n}`, "submit_route", { agentId, resources: { cpu: 2, memoryGb: 4 }, rationale: `route-${n}`, packages }));
+    const { provider, calls } = scriptedModel([route(1), route(2), route(3)]);
+    return { provider, calls };
 }
 
 function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: Map<string, Row> } {
@@ -594,7 +568,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         )._unsafeUnwrap();
 
         expect(replay.runId).toBe(first.runId);
-        expect(routing.calls.count).toBe(1);
+        expect(routing.calls).toHaveLength(1);
         expect(launches).toHaveLength(1);
         expect(launchedInput(inputs[0]).steps).toEqual([{ id: "T1S1", depends_on: [] }]);
         expect(launchedInput(inputs[0]).agentByStepId).toEqual({ T1S1: "single-cell-agent" });
@@ -625,7 +599,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
         expect(second.runId).not.toBe(first.runId);
         expect(launches).toHaveLength(2);
-        expect(routing.calls.count).toBe(2);
+        expect(routing.calls).toHaveLength(2);
     });
 
     it("links the packages of the routed step before the launch", async () => {

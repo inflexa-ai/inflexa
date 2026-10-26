@@ -75,7 +75,7 @@ export const SANDBOX_AGENT_META: Readonly<Record<string, AgentMeta>> = {
 
 /**
  * Build every sandbox `AgentDefinition` from the shared deps. The returned
- * record's keys are the agent ids; `runAgent` consumes each value.
+ * record's keys are the agent ids; `runLoop` consumes each value.
  */
 export function createSandboxAgents(deps: SandboxAgentDeps): Record<string, AgentDefinition> {
     return {

@@ -119,7 +119,7 @@ export const KeyReferenceSchema = z.object({
 });
 
 export const RunSynthesisSchema = z.object({
-    runId: z.string().describe("The run being synthesized. Must equal the runId given in the prompt."),
+    runId: z.string().describe("The run being synthesized."),
     overview: z
         .string()
         .describe(
@@ -160,3 +160,8 @@ export type SynthesizedFinding = z.infer<typeof SynthesizedFindingSchema>;
 export type BiologicalTheme = z.infer<typeof BiologicalThemeSchema>;
 export type LiteratureReference = z.infer<typeof LiteratureReferenceSchema>;
 export type KeyReference = z.infer<typeof KeyReferenceSchema>;
+
+/** The synthesis that the synthesizer submits. The host stamps the run id, thus the model never types it. */
+export const SynthesisDraftSchema = RunSynthesisSchema.omit({ runId: true });
+
+export type SynthesisDraft = z.infer<typeof SynthesisDraftSchema>;

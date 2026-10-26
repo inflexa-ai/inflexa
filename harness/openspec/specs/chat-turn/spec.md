@@ -107,7 +107,7 @@ A record carries its kind and its hash in the harness namespace, and it is a syn
 
 ### Requirement: The turn stores each round when it completes
 
-The turn MUST give `runAgent` a round sink. For each round, the sink MUST store the messages of the round and the display projection of the round in one transaction. The display projection holds the parts that the live events of the round carried. The two rounds of a compaction obey their own rule (see "The chat turn stores each compaction round").
+The turn MUST give `runLoop` a round sink. For each round, the sink MUST store the messages of the round and the display projection of the round in one transaction. The display projection holds the parts that the live events of the round carried. The two rounds of a compaction obey their own rule (see "The chat turn stores each compaction round").
 
 A store fault MUST NOT stop the turn. The turn keeps the rows of the failed write. The next write of the turn stores them first, in its transaction and in order. Thus a row never lands before an earlier row of its turn.
 

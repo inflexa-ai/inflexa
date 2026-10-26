@@ -1,53 +1,49 @@
 import { describe, expect, it } from "bun:test";
-import { err, errAsync, okAsync, ResultAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { AgentSession } from "../../auth/types.js";
 import type { Querier } from "../../state/db.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import type { AgentRunUsage } from "../../loop/metrics.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { chatProviderDouble } from "../../providers/__fixtures__/chat-provider.js";
-import type { ChatProvider, ChatResponse } from "../../providers/types.js";
-import type { ProviderError } from "../../providers/errors.js";
+import type { ChatProvider } from "../../providers/types.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptEntry } from "../../testing.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "../ad-hoc-router.js";
 import { presentAt, presentGet } from "../../lib/present.js";
 
 function providerReturning(input: Record<string, unknown>, capture?: { system?: string }): ChatProvider {
-    return chatProviderDouble((request) => {
-        if (capture) capture.system = typeof request.system === "string" ? request.system : "";
-        return okAsync({
-            message: {
-                role: "assistant",
-                content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input }],
-            },
-            finishReason: "tool-calls",
-        });
-    });
+    return scriptedModel([
+        (call) => {
+            if (capture) capture.system = systemTextOf(call);
+            return callTools(toolCall("route-1", "submit_route", input));
+        },
+    ]).provider;
+}
+
+function systemTextOf(call: LanguageModelV4CallOptions): string {
+    const system = call.prompt.find((message) => message.role === "system");
+    return system?.role === "system" ? system.content : "";
 }
 
 function providerWithoutRouteCall(): ChatProvider {
-    return chatProviderDouble(() => okAsync({ message: { role: "assistant", content: "not a tool call" }, finishReason: "stop" }));
+    return scriptedModel([reply([text("not a tool call")])]).provider;
 }
 
 function providerWaitingForAbort(): ChatProvider {
-    return chatProviderDouble(
-        (_request, _session, signal) =>
-            new ResultAsync<ChatResponse, ProviderError>(
-                new Promise((resolve) => {
-                    signal?.addEventListener(
-                        "abort",
-                        () => resolve(err<ChatResponse, ProviderError>({ type: "provider", retryable: false, message: "aborted by the test" })),
-                        { once: true },
-                    );
-                }),
-            ),
-    );
+    return scriptedModel([
+        (call) =>
+            new Promise<ScriptEntry>((resolve) => {
+                call.abortSignal?.addEventListener("abort", () => resolve({ fail: new Error("aborted by the test") }), { once: true });
+            }),
+    ]).provider;
 }
 
 function providerFailingChat(): ChatProvider {
-    return chatProviderDouble(() => errAsync<ChatResponse, ProviderError>({ type: "provider", retryable: false, message: "provider failed" }));
+    return scriptedModel([{ fail: new Error("provider failed") }]).provider;
 }
 
 const emptyPool: Querier = {
@@ -205,6 +201,39 @@ describe("ad hoc routing", () => {
         expect(absentPolicy.resources).toEqual({ cpu: 4, memoryGb: 8 });
         expect(absentPolicy.fallbackClass).toBeUndefined();
     });
+
+    it("throws on an abort of the caller, and gives no route", async () => {
+        const { ctx } = makeToolContext();
+        const caller = new AbortController();
+        const reason = new DOMException("The user cancelled the request.", "AbortError");
+        // The user cancels while the router request is in flight.
+        const { provider } = scriptedModel([
+            () => {
+                caller.abort(reason);
+                return { fail: reason };
+            },
+        ]);
+        const routing = routeAdHocRequest(
+            { provider, model: "utility-model", pool: emptyPool },
+            { analysisId: "analysis-1", request: "Custom calculation", session: ctx.session, signal: caller.signal },
+        );
+
+        await expect(routing).rejects.toBe(reason);
+    });
+
+    it("finishes a route as a clean run, not as a run at its cap", async () => {
+        const { ctx } = makeToolContext();
+        const logger = createCapturingLogger();
+
+        await routeAdHocRequest(
+            { provider: providerReturning({ agentId: "network-agent", rationale: "Network request." }), model: "utility-model", pool: emptyPool, logger },
+            { analysisId: "analysis-1", request: "Score this network", session: ctx.session, signal: ctx.signal },
+        );
+
+        const finished = logger.records.filter((record) => record.msg.endsWith("run finished"));
+        expect(finished).toHaveLength(1);
+        expect(finished[0]).toMatchObject({ level: "info", fields: { reason: "stop", cappedOut: false } });
+    });
 });
 
 describe("ad hoc routing — the packages of the step", () => {
@@ -353,16 +382,13 @@ describe("ad hoc routing — the usage of the router call", () => {
     }
 
     function providerReportingUsage(): ChatProvider {
-        return chatProviderDouble(() =>
-            okAsync({
-                message: {
-                    role: "assistant",
-                    content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input: { agentId: "network-agent" } }],
-                },
+        return scriptedModel([
+            {
+                content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input: { agentId: "network-agent" } }],
                 finishReason: "tool-calls",
                 usage: { inputTokens: 120, outputTokens: 30 },
-            }),
-        );
+            },
+        ]).provider;
     }
 
     /** A session inside a run step, thus the record key is replay-stable. */
@@ -392,7 +418,7 @@ describe("ad hoc routing — the usage of the router call", () => {
             stepId: "step-1",
             usage: { inputTokens: 120, outputTokens: 30 },
         });
-        expect(presentAt(records, 0).recordKey).toBe("run-1:step-1:conversation-agent>adhoc-router:tool-call-1:adhoc-route");
+        expect(presentAt(records, 0).recordKey).toBe("run-1:step-1:conversation-agent>adhoc-router:tool-call-1:response-0");
         // The root finish of the turn reads this accumulator.
         expect(turnUsage).toEqual({ inputTokens: 1_120, outputTokens: 30 });
     });

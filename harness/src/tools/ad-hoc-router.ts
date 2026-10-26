@@ -1,6 +1,6 @@
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
-import { jsonSchema, tool as aiTool, type Tool } from "ai";
+import { ok } from "neverthrow";
 import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
@@ -8,26 +8,26 @@ import { PLANNABLE_AGENT_CATALOG } from "../agents/sandbox-catalog.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
-import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { unwrapOrThrow } from "../lib/result.js";
+import { toThrowable, unwrapOrThrow } from "../lib/result.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
-import { countChatTokens, type AgentRunUsage } from "../loop/metrics.js";
-import { accountForChatCall } from "../loop/run-agent.js";
+import type { AgentRunUsage } from "../loop/metrics.js";
+import { runLoop } from "../loop/run-loop.js";
+import type { AgentDefinition } from "../loop/types.js";
 import { packagesSection, resourceEstimationSection } from "../prompts/planner.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
 import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-identity.js";
 import { loadDataProfileStatus } from "../state/index.js";
+import { defineTool, type Tool } from "./define-tool.js";
 import type { CheckedPackage } from "./sandbox/list-available-packages.js";
 
 export const AD_HOC_ROUTER_AGENT_ID = "adhoc-router";
 export const AD_HOC_ROUTER_TIMEOUT_MS = 10_000;
 export const AD_HOC_FALLBACK_AGENT_ID = "scientific-executor";
-/** Must differ from a loop step name such as `llm-0`, since both share the usage-record key space. */
-const AD_HOC_ROUTE_CALL_NAME = "adhoc-route";
+const SUBMIT_ROUTE_TOOL_ID = "submit_route";
 
 const resourcesSchema = z.object({
     cpu: z.number().positive(),
@@ -219,14 +219,15 @@ async function routePackages(
     return { packages, droppedPackages };
 }
 
-function routeTool(): { submit_route: Tool<unknown, never> } {
-    const schema: Record<string, unknown> = z.toJSONSchema(routeSchema);
-    return {
-        submit_route: aiTool({
-            description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
-            inputSchema: jsonSchema(schema),
-        }),
-    };
+/** The one tool of the router. The route is the input of its call, thus the call itself records nothing. */
+function routeTool(): Tool {
+    return defineTool({
+        id: SUBMIT_ROUTE_TOOL_ID,
+        description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
+        inputSchema: routeSchema,
+        describeCall: "none",
+        execute: () => Promise.resolve(ok({ recorded: true as const })),
+    });
 }
 
 export async function routeAdHocRequest(
@@ -258,50 +259,56 @@ export async function routeAdHocRequest(
     let raw: unknown;
     let failure: AdHocRoute["fallbackClass"];
     try {
-        const response = unwrapOrThrow(
-            await deps.provider
-                .chat(
-                    {
-                        system: [
-                            "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
-                            "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
-                            resourceEstimationSection(deps.resourcePolicy),
-                            resourceBounds(deps.resourcePolicy),
-                            packagesSection(),
-                            "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
-                            "Respond only by calling submit_route.",
-                        ].join("\n\n"),
-                        messages: [
-                            {
-                                role: "user",
-                                content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
-                            },
-                        ],
-                        // No forced tool choice: some Claude models reject it with a
-                        // 400. A reply without the call falls back below as `malformed`.
-                        tools: routeTool(),
-                    },
-                    routerSession,
-                    signal,
-                )
-                .map(countChatTokens(AD_HOC_ROUTER_AGENT_ID)),
+        const router: AgentDefinition = {
+            id: AD_HOC_ROUTER_AGENT_ID,
+            systemPrompt: [
+                "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
+                "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
+                resourceEstimationSection(deps.resourcePolicy),
+                resourceBounds(deps.resourcePolicy),
+                packagesSection(),
+                "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
+                "Respond only by calling submit_route.",
+            ].join("\n\n"),
+            model: deps.model,
+            tools: [routeTool()],
+            // One request: the route is the input of the call, thus no second request is due.
+            maxIterations: 1,
+        };
+        const run = await runLoop(
+            router,
+            [
+                {
+                    role: "user",
+                    content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
+                },
+            ],
+            routerSession,
+            {
+                provider: deps.provider,
+                signal,
+                emit: () => undefined,
+                // One request reads no cache back, thus a cache write is a cost with no return.
+                promptCache: "off",
+                logger: deps.logger,
+                usageRecorder: deps.usageRecorder,
+                // The router call folds its usage into the turn total, and the turn root reports it.
+                turnUsage: input.turnUsage ?? {},
+                invocationId: input.invocationId,
+                stopWhen: (steps) => steps.some((step) => step.calls.some((call) => call.toolName === SUBMIT_ROUTE_TOOL_ID)),
+            },
         );
-        // A failed call throws at unwrapOrThrow above, so no usage is recorded.
-        accountForChatCall(response, {
-            session: routerSession,
-            agentId: AD_HOC_ROUTER_AGENT_ID,
-            callPath: routerSession.provenance.callPath,
-            stepName: AD_HOC_ROUTE_CALL_NAME,
-            invocationId: input.invocationId,
-            usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
-            logger,
-            rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
-        });
-        const call = Array.isArray(response.message.content)
-            ? response.message.content.flatMap((part) => (part.type === "tool-call" && part.toolName === "submit_route" ? [part] : []))[0]
-            : undefined;
-        raw = call?.input;
-        if (!call) failure = "malformed";
+        if (run.finish.reason === "aborted") {
+            if (input.signal.aborted) throw toThrowable(input.signal.reason);
+            failure = "timeout";
+            logger.warn("ad hoc route fell back", { failure });
+        } else {
+            // No forced tool choice: some Claude models reject it with a 400. A reply
+            // without the call falls back below as `malformed`.
+            const call = run.steps.flatMap((step) => step.calls).find((entry) => entry.toolName === SUBMIT_ROUTE_TOOL_ID);
+            raw = call?.input;
+            if (!call) failure = "malformed";
+        }
     } catch (error) {
         if (input.signal.aborted) throw error;
         failure = controller.signal.aborted ? "timeout" : "provider_error";

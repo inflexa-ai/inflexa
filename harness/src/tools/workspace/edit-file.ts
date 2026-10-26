@@ -12,21 +12,31 @@
  * capture-group references, and exactly one of `replace_all=true` or
  * `expected_matches` gates the write. Provenance hashes the post-edit
  * content — the mutator records it through the fold of this tool.
+ *
+ * Inside a durable step, the edit records its intent before the write lands:
+ * the hash of the file before, the hash after, and the result. A rerun of the
+ * step after the write, before its checkpoint, finds the file at the hash
+ * after and gives back the stored result, thus the edit never applies twice.
+ * The file at the hash before applies the edit again, and any other hash is a
+ * conflict.
  */
 
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { errorMessageOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
-import { unwrapOrThrow } from "../../lib/result.js";
+import { computeSha256 } from "../../lib/fs-helpers.js";
+import { unwrapOrThrow, type DomainError } from "../../lib/result.js";
+import { stepExecId } from "../../sandbox/exec.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { noteScriptChange, scriptSha256 } from "./decision-record.js";
-import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
+import type { LandedWrite, WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** The `ok` outcome of an `edit_file` call. */
-type EditFileOk = {
+export type EditFileOk = {
     readonly status: "ok";
     readonly path: string;
     readonly replacements: number;
@@ -99,6 +109,26 @@ const EditFileInputSchema = z.object({
         ),
 });
 
+/** The intent of one `edit_file` call inside a durable step. */
+export type EditIntent = {
+    /** `${workflowId}:${stepId}` of the step that runs the call. */
+    readonly key: string;
+    readonly analysisId: string;
+    /** The `/{analysisId}/…` path of the edited file. */
+    readonly path: string;
+    readonly hashBefore: string;
+    readonly hashAfter: string;
+    readonly result: EditFileOk;
+    readonly callRecord: readonly WriteRecord[];
+};
+
+/** Keeps the intent of each `edit_file` call that runs inside a durable step. */
+export type EditIntentStore = {
+    /** A second put of one key replaces the intent. */
+    put(intent: EditIntent): ResultAsync<void, DomainError>;
+    get(key: string): ResultAsync<EditIntent | null, DomainError>;
+};
+
 export type EditFileDeps = {
     readonly mutator: WorkspaceMutator;
     /** Read seam used to fetch current file content for search/replace. */
@@ -109,7 +139,15 @@ export type EditFileDeps = {
      * root, matching the session-scoped mutator's write prefix.
      */
     readonly workingDir?: string;
+    readonly intents: EditIntentStore;
+    /** The key of the durable step that runs the call, `undefined` outside one. Defaults to {@link durableStepKey}. */
+    readonly stepKey?: () => string | undefined;
 };
+
+/** The key of the DBOS step that runs the call, or `undefined` outside a workflow, where nothing reruns. */
+export function durableStepKey(): string | undefined {
+    return DBOS.isInStep() ? stepExecId() : undefined;
+}
 
 function replaceString(
     content: string,
@@ -181,6 +219,7 @@ function replaceRegex(
 }
 
 export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof EditFileInputSchema>, EditFileResult> {
+    const stepKey = deps.stepKey ?? durableStepKey;
     return defineTool({
         id: "edit_file",
         description:
@@ -221,6 +260,19 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
             if (read.kind === "not_found") return ok({ status: "file_not_found" as const, path });
             if (read.kind === "out_of_scope") return ok({ status: "out_of_scope" as const, path });
 
+            const currentHash = computeSha256(read.content);
+            const key = stepKey();
+            if (key !== undefined) {
+                const intent = unwrapOrThrow(await deps.intents.get(key));
+                if (intent !== null && currentHash === intent.hashAfter) return ok(withToolCallRecord(intent.result, intent.callRecord));
+                if (intent !== null && currentHash !== intent.hashBefore) {
+                    return err({
+                        error: `The file ${path} changed after an earlier run of this edit, thus the edit was not applied. Read the file again before you edit it.`,
+                        retryable: false,
+                    });
+                }
+            }
+
             const content = read.content.toString("utf8");
             const replaced = useRegex
                 ? replaceRegex(content, old_string, new_string, expected_matches)
@@ -242,12 +294,33 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
                 });
             }
 
+            const lines: readonly number[] | undefined = replaced.lines;
+            const resultOf = (landed: LandedWrite): EditFileOk => ({
+                status: "ok",
+                path: landed.path,
+                replacements: replaced.replacements,
+                bytesWritten: landed.bytesWritten,
+                lines,
+            });
+            const intentOf = (stepKey: string, landed: LandedWrite, result: EditFileOk, callRecord: readonly WriteRecord[]): EditIntent => ({
+                key: stepKey,
+                analysisId: ctx.session.scope.analysisId,
+                path: landed.path,
+                hashBefore: currentHash,
+                hashAfter: landed.record.hash,
+                result,
+                callRecord,
+            });
+
             const write = await deps.mutator.writeFile({
                 path,
                 content: replaced.content,
                 toolName: "edit_file",
                 invocationId: ctx.invocationId,
                 session: ctx.session,
+                beforeLand: async (landed) => {
+                    if (key !== undefined) unwrapOrThrow(await deps.intents.put(intentOf(key, landed, resultOf(landed), [landed.record])));
+                },
             });
             if (write.status !== "ok") return ok(write);
             // A rendered script carries a decision record. The edit is a change the curator did not vet, and the
@@ -263,16 +336,13 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
                 note: `edit_file: ${replaced.replacements} replacement(s)`,
                 sha256: scriptSha256(replaced.content),
             });
-            const lines: readonly number[] | undefined = replaced.lines;
-            const result: EditFileOk = {
-                status: "ok",
-                path: write.path,
-                replacements: replaced.replacements,
-                bytesWritten: write.bytesWritten,
-                lines,
-            };
-            if (noted.status === "noted") result.decision_record_noted = true;
-            return ok(withToolCallRecord(result, noted.status === "noted" ? [write.record, noted.write] : [write.record]));
+            const result = resultOf(write);
+            if (noted.status !== "noted") return ok(withToolCallRecord(result, [write.record]));
+            result.decision_record_noted = true;
+            const callRecord = [write.record, noted.write];
+            // The first put holds the edit already, thus a failed update costs a rerun only the note of the decision record.
+            if (key !== undefined) await deps.intents.put(intentOf(key, write, result, callRecord)).unwrapOr(undefined);
+            return ok(withToolCallRecord(result, callRecord));
         },
         foldCallRecord: (records) => {
             for (const record of records) deps.mutator.recordWrite(record);

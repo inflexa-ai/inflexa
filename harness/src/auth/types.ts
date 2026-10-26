@@ -107,8 +107,8 @@ export type AuthContext = {
 /**
  * The session view the agent loop, the provider seam, and tools accept —
  * the union of what every layer below the HTTP door actually reads. The
- * session is a conduit: `runAgent` forwards it to the provider and into each
- * tool; tools forward it to `embed` and into nested `runAgent`s. The deepest
+ * session is a conduit: `runLoop` forwards it to the provider and into each
+ * tool; tools forward it to `embed` and into nested `runLoop`s. The deepest
  * consumer is the provider, which reads every field, so the conduit type is
  * "all fields, generalized to what's read" — `credential` widened to the
  * opaque `Credential` (nothing in the harness branches on the concrete shape),
