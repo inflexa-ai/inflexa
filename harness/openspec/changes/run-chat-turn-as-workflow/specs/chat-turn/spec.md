@@ -17,11 +17,17 @@ After its opening, a chat turn MUST run as a DBOS workflow. The workflow id MUST
 
 ### Requirement: A turn reads the live credential of its host
 
-The harness MUST read the credential of a turn from the memory of the process that started it, by the turn id. A sub-agent of the turn MUST read the same entry. When a recovered turn finds no credential, it MUST end as `failed` with the reason `interrupted`, before its next model call.
+The harness MUST get the credential of a turn from a function that the host gives, by the turn id. The turn MUST ask at its start and after each wait. A sub-agent of the turn MUST ask for the credential of its root turn. When the function gives no credential, the turn MUST end as `failed` with the reason `interrupted`, before its next model call.
+
+#### Scenario: A recovered turn of a host with a fixed credential
+
+- **GIVEN** a host whose function gives the same credential for each turn
+- **WHEN** a turn of that host recovers after a restart
+- **THEN** the turn continues, and it ends with one outcome
 
 #### Scenario: A recovered turn with no credential
 
-- **GIVEN** a turn that ran when its host stopped
+- **GIVEN** a turn that ran when its host stopped, and a host function that gives no credential after the restart
 - **WHEN** the host starts again and DBOS recovers the turn
 - **THEN** the turn makes no model call, its record is `failed` with the reason `interrupted`, and its stream ends with an `error` frame
 
