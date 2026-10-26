@@ -11,13 +11,11 @@
  * step returns its checkpoint without a new call of its closure.
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, type Result } from "neverthrow";
 
-import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { setupDbosForTests, waitForStopped, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine (see "Registration window" in workflow-replay.test.ts).
@@ -59,19 +57,6 @@ const errWorkflow = DBOS.registerWorkflow(
     { name: "result-checkpoint-workflow" },
 );
 
-async function waitForTerminal(workflowId: string, timeoutMs = 5_000): Promise<Awaited<ReturnType<typeof DBOS.getWorkflowStatus>>> {
-    const deadline = Date.now() + timeoutMs;
-    let status: Awaited<ReturnType<typeof DBOS.getWorkflowStatus>> = null;
-    while (Date.now() < deadline) {
-        status = await DBOS.getWorkflowStatus(workflowId);
-        if (status && (status.status === "SUCCESS" || status.status === "ERROR" || status.status === "CANCELLED")) {
-            return status;
-        }
-        await sleep(25);
-    }
-    return status;
-}
-
 let rig: DbosTestRig;
 
 beforeAll(async () => {
@@ -89,8 +74,7 @@ describe("a Result across a DBOS checkpoint", () => {
         const wfId = rig.nextWorkflowId("result-step-");
 
         const first = await DBOS.startWorkflow(errStepMirror, { workflowID: wfId })();
-        first.getResult().catch(() => {});
-        expect((await waitForTerminal(wfId))?.status).toBe("CANCELLED");
+        expect((await waitForStopped(first, wfId))?.status).toBe("CANCELLED");
         expect(stepCalls).toBe(1);
 
         const resumed = await DBOS.resumeWorkflow<{ isErr: boolean; hasMatch: boolean; error: Refusal | null }>(wfId);
