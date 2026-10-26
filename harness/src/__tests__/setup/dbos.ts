@@ -36,6 +36,8 @@
  */
 
 import { afterEach, beforeAll } from "bun:test";
+import { DBOS } from "@dbos-inc/dbos-sdk";
+import { setTimeout as sleep } from "node:timers/promises";
 import { silentLogger } from "./logger.js";
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
@@ -239,4 +241,44 @@ export function registerDbosLifecycle(testName: string, onReady: (rig: DbosTestR
         // No-op: per-test cleanup is the caller's job. This helper exists
         // for tests that want a single rig for an entire `describe` block.
     });
+}
+
+/**
+ * Poll the durable workflow status until it lands in a terminal state.
+ *
+ * Why not `await handle.getResult()`? When a workflow throws, DBOS holds
+ * two reject-chains on the same error: the internally-tracked
+ * `workflowPromise` (registered in `systemDatabase.registerRunningWorkflow`)
+ * and the handle's own promise. Awaiting one leaves the other floating,
+ * and Bun's test runner surfaces the floater as a separate test failure.
+ * The robust pattern is `handle.getResult().catch(() => {})` (silence the
+ * handle's chain) followed by polling `getWorkflowStatus` to read the
+ * durable terminal state.
+ */
+export async function waitForTerminal(workflowId: string, timeoutMs = 5_000): Promise<Awaited<ReturnType<typeof DBOS.getWorkflowStatus>>> {
+    const deadline = Date.now() + timeoutMs;
+    let status: Awaited<ReturnType<typeof DBOS.getWorkflowStatus>> = null;
+    while (Date.now() < deadline) {
+        status = await DBOS.getWorkflowStatus(workflowId);
+        if (status && (status.status === "SUCCESS" || status.status === "ERROR" || status.status === "CANCELLED")) {
+            return status;
+        }
+        await sleep(25);
+    }
+    return status;
+}
+
+/**
+ * Wait for a self-cancelled workflow to stop. The durable status turns CANCELLED at the cancel call, but the
+ * cancelled execution runs on until its next DBOS call. A resume in that gap lets the old execution finish the
+ * workflow, thus the resumed body never runs. The handle settles only when the old execution stops.
+ */
+export async function waitForStopped(
+    handle: { getResult(): Promise<unknown> },
+    workflowId: string,
+): Promise<Awaited<ReturnType<typeof DBOS.getWorkflowStatus>>> {
+    const stopped = handle.getResult().catch(() => undefined);
+    const status = await waitForTerminal(workflowId);
+    await stopped;
+    return status;
 }

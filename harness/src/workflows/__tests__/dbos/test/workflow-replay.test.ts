@@ -47,12 +47,10 @@
  *   This makes the files order-independent within one bun process.
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { setupDbosForTests, waitForStopped, waitForTerminal, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../../../__tests__/setup/logger.js";
 import { captureMetrics } from "../../../../__tests__/setup/metrics.js";
 import { recordRunCompleted, recordStepCompleted } from "../../../../lib/metrics.js";
@@ -316,31 +314,6 @@ const idempotentSyncMirror = DBOS.registerWorkflow(
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/**
- * Poll the durable workflow status until it lands in a terminal state.
- *
- * Why not `await handle.getResult()`? When a workflow throws, DBOS holds
- * two reject-chains on the same error: the internally-tracked
- * `workflowPromise` (registered in `systemDatabase.registerRunningWorkflow`)
- * and the handle's own promise. Awaiting one leaves the other floating,
- * and Bun's test runner surfaces the floater as a separate test failure.
- * The robust pattern is `handle.getResult().catch(() => {})` (silence the
- * handle's chain) followed by polling `getWorkflowStatus` to read the
- * durable terminal state.
- */
-async function waitForTerminal(workflowId: string, timeoutMs = 5_000): Promise<Awaited<ReturnType<typeof DBOS.getWorkflowStatus>>> {
-    const deadline = Date.now() + timeoutMs;
-    let status: Awaited<ReturnType<typeof DBOS.getWorkflowStatus>> = null;
-    while (Date.now() < deadline) {
-        status = await DBOS.getWorkflowStatus(workflowId);
-        if (status && (status.status === "SUCCESS" || status.status === "ERROR" || status.status === "CANCELLED")) {
-            return status;
-        }
-        await sleep(25);
-    }
-    return status;
-}
-
 // ── Lifecycle ───────────────────────────────────────────────────────────
 
 let rig: DbosTestRig;
@@ -372,8 +345,7 @@ describe("Integration test 10.6 — chaos recovery", () => {
         const handle1 = await DBOS.startWorkflow(chaosMirror, {
             workflowID: wfId,
         })();
-        handle1.getResult().catch(() => {});
-        const status1 = await waitForTerminal(wfId);
+        const status1 = await waitForStopped(handle1, wfId);
         expect(status1?.status).toBe("CANCELLED");
 
         expect(llmCallCounter).toBe(1);
@@ -409,8 +381,7 @@ describe("Integration test 10.6 — chaos recovery", () => {
         const handle1 = await DBOS.startWorkflow(threeStepMirror, {
             workflowID: wfId,
         })();
-        handle1.getResult().catch(() => {});
-        const status1 = await waitForTerminal(wfId);
+        const status1 = await waitForStopped(handle1, wfId);
         expect(status1?.status).toBe("CANCELLED");
 
         expect(stepACalls).toBe(1);
@@ -478,8 +449,7 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
         const handle1 = await DBOS.startWorkflow(idempotentSyncMirror, {
             workflowID: wfId,
         })();
-        handle1.getResult().catch(() => {});
-        const status1 = await waitForTerminal(wfId);
+        const status1 = await waitForStopped(handle1, wfId);
         expect(status1?.status).toBe("CANCELLED");
 
         expect(syncCalls).toBe(1);
@@ -517,8 +487,7 @@ describe("run and step outcome metrics across a DBOS replay", () => {
             terminalStepCalls = 0;
             const wfId = rig.nextWorkflowId("metric-replay-");
             const handle1 = await DBOS.startWorkflow(terminalMetricMirror, { workflowID: wfId })();
-            handle1.getResult().catch(() => {});
-            expect((await waitForTerminal(wfId))?.status).toBe("CANCELLED");
+            expect((await waitForStopped(handle1, wfId))?.status).toBe("CANCELLED");
 
             const result = await (await DBOS.resumeWorkflow<{ terminalCalls: number }>(wfId)).getResult();
 
