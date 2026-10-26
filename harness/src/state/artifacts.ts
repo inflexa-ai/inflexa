@@ -373,6 +373,32 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
     });
 }
 
+/** The run and the step that wrote one path, from {@link queryArtifactOrigins}. Both are `null` for an `input` row. */
+export type ArtifactOrigin = {
+    /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
+    path: string;
+    runId: string | null;
+    stepId: string | null;
+};
+
+/**
+ * The run and the step of each path of a list that has a ledger row of the analysis, in one statement through the key
+ * `(analysis_id, path)`. A path with no row has no entry, and the order of the entries is not defined. An empty list
+ * gives `[]` and sends no statement. The cost grows with the length of the list, thus the caller bounds it.
+ */
+export function queryArtifactOrigins(pool: Querier, analysisId: string, paths: readonly string[]): ResultAsync<ArtifactOrigin[], DbError> {
+    return tryQuery("artifacts.queryArtifactOrigins", async () => {
+        if (paths.length === 0) return [];
+        const result = await pool.query<{ path: string; source_run: string | null; source_step: string | null }>({
+            text: `SELECT path, source_run, source_step
+          FROM cortex_artifacts
+          WHERE analysis_id = $1 AND path = ANY($2::text[])`,
+            values: [analysisId, [...paths]],
+        });
+        return result.rows.map((r) => ({ path: r.path, runId: r.source_run ?? null, stepId: r.source_step ?? null }));
+    });
+}
+
 /** The step-output count of one run, from {@link countArtifactsByRuns}. */
 export type RunArtifactCount = {
     runId: string;

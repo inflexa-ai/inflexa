@@ -52,9 +52,11 @@ async function resolveEach(inputs: readonly AnalysisInput[]): Promise<Result<(st
     return ok(out);
 }
 
-// Boundary-safe containment: a path is inside a root when it equals the root or sits under it
-// with a separator boundary, so `/a/bc` is not considered inside `/a/b`.
-function contains(root: string, target: string): boolean {
+/**
+ * Boundary-safe containment: a path is inside a root when it equals the root or sits under it
+ * with a separator boundary, so `/a/bc` is not considered inside `/a/b`.
+ */
+export function contains(root: string, target: string): boolean {
     const r = resolve(root);
     const t = resolve(target);
     if (t === r) return true;
@@ -124,4 +126,14 @@ export function workspaceReadRoot(analysisId: string): ResultAsync<ReadRoot, Wor
     return readableWorkspaceRootForAnalysisId(analysisId).andThen((text) =>
         ResultAsync.fromSafePromise(canonicalPathAsync(text)).map((canonical): ReadRoot => ({ text, canonical })),
     );
+}
+
+/**
+ * The root of a read of the workspace of an analysis, or `null` when its folder cannot be located. That is a normal
+ * state of the database and the folders, thus it is not an error. A `DbError` stays the error.
+ */
+export function locateWorkspaceReadRoot(analysisId: string): ResultAsync<ReadRoot | null, DbError> {
+    return workspaceReadRoot(analysisId)
+        .map((root): ReadRoot | null => root)
+        .orElse((e) => (e.type === "workspace_unavailable" ? okAsync<ReadRoot | null, DbError>(null) : errAsync<ReadRoot | null, DbError>(e)));
 }

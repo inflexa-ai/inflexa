@@ -57,7 +57,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.use("/api/*", credentialAuth(deps.token, sessions));
     app.route(SIGN_IN_PATH, browserSessionRoutes(sessions));
     app.route("/api/v1/server", serverRoutes(deps.boot, deps.lifecycle));
-    app.route("/api/v1/fs", fsRoutes());
+    app.route("/api/v1/fs", fsRoutes(deps.boot));
     app.route("/api/v1/projects", projectRoutes());
     app.route("/api/v1", machineRoutes());
     app.route("/api/v1", storeRoutes());

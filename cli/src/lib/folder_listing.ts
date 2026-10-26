@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readdir, realpath } from "node:fs/promises";
+import { opendir, readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
 
@@ -72,9 +72,12 @@ function entryKind(dirent: Dirent): FolderEntryType {
     return "file";
 }
 
-// The tiebreak is a code-unit compare: the base-sensitivity collator calls `A.txt` and `a.txt` equal, and the
-// order must be the same for each request, so that two requests for two pages agree.
-function compareEntries(a: FolderEntry, b: FolderEntry): number {
+/**
+ * The order of the folder list: each `folder` first, then each other entry, each group in name order. The tiebreak is a
+ * code-unit compare: the base-sensitivity collator calls `A.txt` and `a.txt` equal, and the order must be the same for
+ * each request, so that two requests for two pages agree.
+ */
+export function compareEntries(a: FolderEntry, b: FolderEntry): number {
     if (a.kind !== b.kind && (a.kind === "folder" || b.kind === "folder")) return a.kind === "folder" ? -1 : 1;
     const byName = NAME_COLLATOR.compare(a.name, b.name);
     if (byName !== 0) return byName;
@@ -108,6 +111,32 @@ export function readFolder(path: string, hidden: boolean): ResultAsync<FolderRea
         entries.sort(compareEntries);
         return { path: canonical, entries, rawCount: dirents.length };
     });
+}
+
+/**
+ * Read one folder as a stream: one `opendir`, and an async iteration that holds a small buffer of entries, thus the
+ * memory does not grow with the folder. `visit` gets each entry after the hidden filter, and the result is the count of
+ * these entries. It takes no `stat`. The `path` of an entry joins `path` as given, and the errors map as in {@link readFolder}.
+ */
+export function scanFolder(path: string, hidden: boolean, visit: (entry: FolderEntry) => void): ResultAsync<number, FolderReadError> {
+    return ResultAsync.fromPromise(
+        (async (): Promise<number> => {
+            let count = 0;
+            for await (const dirent of await opendir(path)) {
+                const isHidden = dirent.name.startsWith(".");
+                if (isHidden && !hidden) continue;
+                visit({ name: dirent.name, path: join(path, dirent.name), kind: entryKind(dirent), hidden: isHidden });
+                count += 1;
+            }
+            return count;
+        })(),
+        (cause) => readError(path, cause),
+    );
+}
+
+/** The count of the entries of a folder after the hidden filter, from {@link scanFolder} with no `visit`. */
+export function countFolderEntries(path: string, hidden: boolean): ResultAsync<number, FolderReadError> {
+    return scanFolder(path, hidden, () => undefined);
 }
 
 /**

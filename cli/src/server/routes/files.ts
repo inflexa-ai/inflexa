@@ -4,7 +4,7 @@ import { basename } from "node:path";
 
 import type { Context } from "hono";
 import { getMimeType } from "hono/utils/mime";
-import { ResultAsync } from "neverthrow";
+import { err, ok, ResultAsync, type Result } from "neverthrow";
 
 import { errnoCode } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
@@ -64,13 +64,40 @@ export async function serveFile(
     name: string,
     response: FileResponseOpts,
 ): Promise<Response> {
+    const opened = await openRealPath(c, opts, roots, target, response.notAFile);
+    if (opened.isErr()) return opened.error;
+    return serveHandle(c, opts, opened.value.handle, name, response);
+}
+
+/** An open file or folder from {@link openRealPath}. */
+export type OpenedPath = {
+    /** The caller owns the handle and must close it. */
+    readonly handle: FileHandle;
+    /** The path with each symbolic link resolved, the path that the handle opened. */
+    readonly realPath: string;
+};
+
+/**
+ * The real-path test of `target` against `roots` (`"unlimited"` admits each existing path), and the open of the real path with
+ * the flags that refuse a final symbolic link and never wait on a FIFO. A failure is the response to send: 403
+ * `forbidden` for a path outside the roots or a link that replaced the last part after the test, 404 `not_found` for an
+ * absent path inside a root, `notAFile` for a socket, and 403 with the code of the operating system for each other
+ * failure. A folder opens too, thus the caller tells it from a file with `stat` on the handle.
+ */
+export async function openRealPath(
+    c: Context<ServerEnv>,
+    opts: FileRouteOpts,
+    roots: ReadRoots,
+    target: string,
+    notAFile: (c: Context<ServerEnv>) => Response,
+): Promise<Result<OpenedPath, Response>> {
     const verdict = await classifyRealPath(roots, target);
-    if (verdict.isErr()) return unreadable(c, verdict.error.cause);
+    if (verdict.isErr()) return err(unreadable(c, verdict.error.cause));
     switch (verdict.value.type) {
         case "outside":
-            return apiError(c, "forbidden", FORBIDDEN_MESSAGE);
+            return err(apiError(c, "forbidden", FORBIDDEN_MESSAGE));
         case "absent":
-            return verdict.value.insideAsText ? apiError(c, "not_found", "No file at the path.") : apiError(c, "forbidden", FORBIDDEN_MESSAGE);
+            return err(verdict.value.insideAsText ? apiError(c, "not_found", "No file at the path.") : apiError(c, "forbidden", FORBIDDEN_MESSAGE));
         case "in":
             break;
         default: {
@@ -79,9 +106,10 @@ export async function serveFile(
         }
     }
 
-    const handle = await ResultAsync.fromPromise(opts.open(verdict.value.realPath, OPEN_FLAGS), (cause) => cause);
-    if (handle.isErr()) return openFailure(c, handle.error, response);
-    return serveHandle(c, opts, handle.value, name, response);
+    const { realPath } = verdict.value;
+    const handle = await ResultAsync.fromPromise(opts.open(realPath, OPEN_FLAGS), (cause) => cause);
+    if (handle.isErr()) return err(openFailure(c, handle.error, notAFile));
+    return ok({ handle: handle.value, realPath });
 }
 
 /** The 403 `forbidden` response for a failure of the disk that has no named meaning, with the code of the operating system in `details.code`. */
@@ -90,7 +118,7 @@ export function unreadable(c: Context<ServerEnv>, cause: unknown): Response {
     return apiError(c, "forbidden", `The server cannot read the file: ${reason}`, { code: errnoCode(cause) });
 }
 
-function openFailure(c: Context<ServerEnv>, cause: unknown, response: FileResponseOpts): Response {
+function openFailure(c: Context<ServerEnv>, cause: unknown, notAFile: (c: Context<ServerEnv>) => Response): Response {
     switch (errnoCode(cause)) {
         // `O_NOFOLLOW`: a symbolic link replaced the last part of the path after the test.
         case "ELOOP":
@@ -101,7 +129,7 @@ function openFailure(c: Context<ServerEnv>, cause: unknown, response: FileRespon
         // A Unix socket does not open: `EOPNOTSUPP` on macOS, `ENXIO` on Linux. It is not a regular file, as `serveHandle` tells.
         case "EOPNOTSUPP":
         case "ENXIO":
-            return response.notAFile(c);
+            return notAFile(c);
         default:
             return unreadable(c, cause);
     }
@@ -167,7 +195,7 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
 }
 
 /** Close a handle, and log a failure of the close. Each failure after the response has no one to tell. */
-async function closeHandle(handle: FileHandle): Promise<void> {
+export async function closeHandle(handle: FileHandle): Promise<void> {
     await handle.close().catch((cause: unknown) => getLogger("server").warn({ err: cause }, "could not close a served file"));
 }
 
