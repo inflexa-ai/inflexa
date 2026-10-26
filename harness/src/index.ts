@@ -607,9 +607,17 @@ export type { DataProfileStatus } from "./state/data-profile.js";
 export { queryLatestRunsByAnalyses, queryDataProfileStatusByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./state/analyses-metrics.js";
 export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary } from "./state/analyses-metrics.js";
 
-// The artifact ledger reads of one analysis: one page with an exact total, and the step-output count of each run of a list in one statement.
-export { queryArtifactPage, countArtifactsByRuns } from "./state/artifacts.js";
-export type { ArtifactExtensionCount, ArtifactPage, ArtifactPageEntry, ArtifactPageQuery, ArtifactPageSort, RunArtifactCount } from "./state/artifacts.js";
+// The artifact ledger reads of one analysis: one page with an exact total, the origin of each path of a list, and the step-output count of each run of a list, each list in one statement.
+export { queryArtifactPage, queryArtifactOrigins, countArtifactsByRuns } from "./state/artifacts.js";
+export type {
+    ArtifactExtensionCount,
+    ArtifactOrigin,
+    ArtifactPage,
+    ArtifactPageEntry,
+    ArtifactPageQuery,
+    ArtifactPageSort,
+    RunArtifactCount,
+} from "./state/artifacts.js";
 
 // The validated synthesis record of a run as the flat `data-run-synthesis` part of the run stream, or null.
 export { readRunSynthesis } from "./execution/run-synthesis.js";

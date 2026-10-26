@@ -1,7 +1,7 @@
 import { queryArtifactPage, type ArtifactPage, type ArtifactPageQuery, type DbError, type Pool } from "@inflexa-ai/harness";
 import { Hono } from "hono";
 import { join } from "node:path";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
 
@@ -15,8 +15,7 @@ import type {
     ResolvedArtifacts,
 } from "../../api/artifacts.ts";
 import { getLogger } from "../../lib/log.ts";
-import type { DbError as LocalDbError } from "../../db/errors.ts";
-import { workspaceReadRoot, type ReadRoot } from "../../modules/analysis/boundary.ts";
+import { locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { entryDegraded, materializeTarget, resolveEntryPath, workspaceFileResolvable, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerBoot } from "../boot.ts";
@@ -59,13 +58,6 @@ function parseExtensions(value: string | undefined): string[] {
         .split(",")
         .map((member) => member.trim().toLowerCase())
         .filter((member) => member !== "");
-}
-
-/** The workspace root of the analysis, or `null` when its folder cannot be located. A `DbError` stays the error. */
-function locateRoot(analysisId: string): ResultAsync<ReadRoot | null, LocalDbError> {
-    return workspaceReadRoot(analysisId)
-        .map((root): ReadRoot | null => root)
-        .orElse((e) => (e.type === "workspace_unavailable" ? okAsync<ReadRoot | null, LocalDbError>(null) : errAsync<ReadRoot | null, LocalDbError>(e)));
 }
 
 /** How many entries of one request resolve at one time. Each entry reads the disk, and the body caps the entries at 1000. */
@@ -117,7 +109,7 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         // the server cannot locate is a normal state of the database and the folders, thus it gives `null`
         // paths and not an error.
         const pendingList = opts.listArtifacts(c.get("runtime").pool, analysisId, query);
-        const pendingRoot = locateRoot(analysisId);
+        const pendingRoot = locateWorkspaceReadRoot(analysisId);
         const listed = await pendingList;
         const root = await pendingRoot;
         if (listed.isErr()) return internalError(c, listed.error, "list the artifacts");

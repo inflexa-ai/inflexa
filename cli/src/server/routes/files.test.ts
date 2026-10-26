@@ -11,6 +11,7 @@ import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { idleBoot } from "../../test_support/server.ts";
 import type { ServerEnv } from "../http.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "./fs.ts";
 
@@ -20,7 +21,7 @@ import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "./fs.ts";
 const TEST_FS_ROUTE_OPTS: FsRouteOpts = { ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => ({ acquired: true }) };
 
 function appWith(opts: Partial<FsRouteOpts> = {}): Hono<ServerEnv> {
-    return fsRoutes({ ...TEST_FS_ROUTE_OPTS, ...opts });
+    return fsRoutes(idleBoot(), { ...TEST_FS_ROUTE_OPTS, ...opts });
 }
 
 let app = appWith();

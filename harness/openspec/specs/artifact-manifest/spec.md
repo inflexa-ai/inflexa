@@ -469,6 +469,7 @@ artifact table directly.
 - `queryStepArtifactPaths(pool, resourceId, runId, stepId, limit)`: the step outputs of a step, most consequential first.
 - `queryAnalysisArtifacts(pool, analysisId)`: each artifact of an analysis, ordered by path.
 - `queryArtifactPage(pool, analysisId, query)`: one page of the ledger of an analysis, and the count of the rows that its filters select.
+- `queryArtifactOrigins(pool, analysisId, paths)`: the run and the step of each path of a list that has a row.
 - `countArtifactsByRuns(pool, analysisId, runIds)`: the count of the step outputs of each run of a list.
 - `updateArtifactId(pool, resourceId, path, artifactId, fileType?)` and `updateFileIds(pool, pairs)`: the sync writes.
 
@@ -608,11 +609,35 @@ The run-completed card MUST get its artifact count from this read, with the one 
 - **WHEN** the read runs for a list of 20 run ids
 - **THEN** it sends one query
 
+### Requirement: One read gives the origin of each path of a list
+
+The state module MUST give a read that takes a `Querier`, an analysis id, and a list of workspace-relative paths. It MUST give one entry `{path, runId, stepId}` for each path of the list that has a ledger row of the analysis. `runId` and `stepId` are the `source_run` and the `source_step` of the row, or `null`. A path with no row MUST have no entry.
+
+The read MUST run as one SQL statement for the whole list, through the key `(analysis_id, path)`. An empty list MUST give an empty result and send no query. A failed query MUST ride the error channel as a `DbError`. The caller bounds the length of the list.
+
+#### Scenario: The origins of a page of paths
+
+- **GIVEN** analysis `a1` with the step output `runs/r1/s1/output/de.csv` of run `r1` and step `s1`
+- **AND** the input row `data/inputs/f1/counts.csv` of `a1`, and a row of analysis `a2` at `runs/r1/s1/output/de.csv`
+- **WHEN** the read runs for `a1` with `runs/r1/s1/output/de.csv`, `data/inputs/f1/counts.csv`, and `runs/r1/s1/output/none.csv`
+- **THEN** it gives two entries: `de.csv` with `r1` and `s1`, and `counts.csv` with `null` for each
+- **AND** the path `none.csv` has no entry
+
+#### Scenario: One statement serves the list
+
+- **WHEN** the read runs for a list of 200 paths
+- **THEN** it sends one query
+
+#### Scenario: An empty list
+
+- **WHEN** the read runs for an empty list
+- **THEN** it gives `ok([])` and sends no query
+
 ### Requirement: The package root exports the artifact list reads
 
-The root barrel of the package MUST export the paged ledger read, the grouped run count, and the types of their query and their entries. The type of an entry of `extensionCounts` is one of these types. An embedder MUST reach them with no deep import.
+The root barrel of the package MUST export the paged ledger read, the origin read, and the grouped run count. It MUST also export the types of their query and their entries. The type of an entry of `extensionCounts` is one of these types. An embedder MUST reach them with no deep import.
 
 #### Scenario: An embedder imports the reads from the root
 
-- **WHEN** an embedder imports the two reads and their types from `@inflexa-ai/harness`
+- **WHEN** an embedder imports the reads and their types from `@inflexa-ai/harness`
 - **THEN** the imports resolve

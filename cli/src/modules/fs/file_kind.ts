@@ -13,7 +13,8 @@ const KIND_BY_EXTENSION: ReadonlyMap<string, FileKind> = new Map(
     KIND_EXTENSIONS.flatMap(([kind, extensions]) => extensions.map((extension): [string, FileKind] => [extension, kind])),
 );
 
-function extensionOf(name: string): string | null {
+/** The extension of a name in lower case, or `null` for a name with no extension. A leading dot alone is no extension. */
+export function extensionOf(name: string): string | null {
     const dot = name.lastIndexOf(".");
     return dot <= 0 || dot === name.length - 1 ? null : name.slice(dot + 1).toLowerCase();
 }

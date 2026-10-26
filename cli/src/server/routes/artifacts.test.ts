@@ -283,7 +283,7 @@ describe("GET {A}/artifacts", () => {
         const absolutePath = list.artifacts[0]?.absolutePath;
         expect(absolutePath).toBe(join(root, figure.path));
 
-        const reader = new Hono<ServerEnv>().route("/api/v1/fs", fsRoutes({ ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => ({ acquired: true }) }));
+        const reader = new Hono<ServerEnv>().route("/api/v1/fs", fsRoutes(startingBoot, { ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => ({ acquired: true }) }));
         const response = await reader.request(`/api/v1/fs/read?path=${encodeURIComponent(absolutePath ?? "")}&analysisId=ana-1`);
 
         expect(response.status).toBe(200);

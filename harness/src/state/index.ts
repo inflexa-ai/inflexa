@@ -22,10 +22,12 @@ export {
     updateArtifactId,
     updateFileIds,
     queryArtifactPage,
+    queryArtifactOrigins,
     countArtifactsByRuns,
 } from "./artifacts.js";
 export type {
     RegisterArtifactInput,
+    ArtifactOrigin,
     InputArtifactMeta,
     StepArtifactRef,
     ArtifactExtensionCount,

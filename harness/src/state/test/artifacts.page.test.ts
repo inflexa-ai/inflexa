@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 
 import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
-import { countArtifactsByRuns, queryArtifactPage, type ArtifactPageQuery } from "../artifacts.js";
+import { countArtifactsByRuns, queryArtifactOrigins, queryArtifactPage, type ArtifactPageQuery } from "../artifacts.js";
 import type { Querier } from "../db.js";
 
 type SeedRow = {
@@ -343,6 +343,57 @@ describe("countArtifactsByRuns", () => {
     });
 });
 
+describe("queryArtifactOrigins", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("artifact_origins"));
+        await seed(pool, { analysisId: "org-a1", path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1" });
+        await seed(pool, { analysisId: "org-a1", path: "data/inputs/f1/counts.csv", role: "input" });
+        await seed(pool, { analysisId: "org-a2", path: "runs/r1/s1/output/de.csv", runId: "r9", stepId: "s9" });
+    });
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("gives the run and the step of a step output, null for an input row, and no entry for a path with no row", async () => {
+        const origins = (
+            await queryArtifactOrigins(pool, "org-a1", ["runs/r1/s1/output/de.csv", "data/inputs/f1/counts.csv", "runs/r1/s1/output/none.csv"])
+        )._unsafeUnwrap();
+
+        expect([...origins].sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+            { path: "data/inputs/f1/counts.csv", runId: null, stepId: null },
+            { path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1" },
+        ]);
+    });
+
+    it("reads only the rows of the analysis that it names", async () => {
+        const origins = (await queryArtifactOrigins(pool, "org-a2", ["runs/r1/s1/output/de.csv", "data/inputs/f1/counts.csv"]))._unsafeUnwrap();
+
+        expect(origins).toEqual([{ path: "runs/r1/s1/output/de.csv", runId: "r9", stepId: "s9" }]);
+    });
+
+    it("sends one statement for a list of 200 paths", async () => {
+        const counting = countingQuerier(pool);
+        const paths = Array.from({ length: 200 }, (_, i) => `runs/r1/s1/output/f${i}.csv`);
+
+        const origins = (await queryArtifactOrigins(counting.querier, "org-a1", [...paths, "runs/r1/s1/output/de.csv"]))._unsafeUnwrap();
+
+        expect(counting.calls()).toBe(1);
+        expect(origins).toEqual([{ path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1" }]);
+    });
+
+    it("sends no statement for an empty list", async () => {
+        const counting = countingQuerier(pool);
+
+        const origins = (await queryArtifactOrigins(counting.querier, "org-a1", []))._unsafeUnwrap();
+
+        expect(counting.calls()).toBe(0);
+        expect(origins).toEqual([]);
+    });
+});
+
 describe("a driver failure of the artifact reads", () => {
     // The reads under test call only `query`, thus an object with a rejecting `query` stands for the whole interface.
     const rejecting: Querier = {
@@ -356,6 +407,15 @@ describe("a driver failure of the artifact reads", () => {
         );
 
         expect(error).toMatchObject({ type: "query_failed", op: "artifacts.queryArtifactPage" });
+    });
+
+    it("rides the error channel of queryArtifactOrigins, with the op", async () => {
+        const error = (await queryArtifactOrigins(rejecting, "a1", ["p"])).match(
+            () => null,
+            (failure) => failure,
+        );
+
+        expect(error).toMatchObject({ type: "query_failed", op: "artifacts.queryArtifactOrigins" });
     });
 
     it("rides the error channel of countArtifactsByRuns, with the op", async () => {

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, readdirSync, mkdtempSync, realpathSync, rmSync, s
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { entryDetails, readFolder, type FolderEntry } from "./folder_listing.ts";
+import { countFolderEntries, entryDetails, readFolder, scanFolder, type FolderEntry } from "./folder_listing.ts";
 import { processIdentity } from "./fs.ts";
 
 let root = "";
@@ -132,6 +132,99 @@ describe("readFolder", () => {
         chmodSync(locked, 0o000);
         try {
             const error = (await read(locked))._unsafeUnwrapErr();
+            expect(error).toMatchObject({ type: "unreadable", path: locked });
+            expect(error.cause).toMatchObject({ code: "EACCES" });
+        } finally {
+            chmodSync(locked, 0o755);
+        }
+    });
+});
+
+describe("scanFolder and countFolderEntries", () => {
+    function seed(): void {
+        writeFileSync(join(root, "a.txt"), "x");
+        writeFileSync(join(root, "b.txt"), "x");
+        writeFileSync(join(root, ".env"), "x");
+        mkdirSync(join(root, "sub"));
+    }
+
+    test("counts the entries and drops the hidden ones by default", async () => {
+        seed();
+        expect((await countFolderEntries(root, false))._unsafeUnwrap()).toBe(3);
+    });
+
+    test("counts the hidden entries when asked", async () => {
+        seed();
+        expect((await countFolderEntries(root, true))._unsafeUnwrap()).toBe(4);
+    });
+
+    test("counts the same entries as the length of readFolder", async () => {
+        seed();
+        for (const hidden of [false, true]) {
+            const read = (await readFolder(root, hidden))._unsafeUnwrap();
+            expect((await countFolderEntries(root, hidden))._unsafeUnwrap()).toBe(read.entries.length);
+        }
+    });
+
+    test("gives the entries after the hidden filter to visit, with their type and path", async () => {
+        seed();
+        const seen: FolderEntry[] = [];
+        const count = (await scanFolder(root, false, (entry) => seen.push(entry)))._unsafeUnwrap();
+        expect(count).toBe(3);
+        expect(seen.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+            { name: "a.txt", path: join(root, "a.txt"), kind: "file", hidden: false },
+            { name: "b.txt", path: join(root, "b.txt"), kind: "file", hidden: false },
+            { name: "sub", path: join(root, "sub"), kind: "folder", hidden: false },
+        ]);
+    });
+
+    test("gives the hidden entries to visit when asked", async () => {
+        seed();
+        const hiddenSeen: string[] = [];
+        (
+            await scanFolder(root, true, (entry) => {
+                if (entry.hidden) hiddenSeen.push(entry.name);
+            })
+        )._unsafeUnwrap();
+        expect(hiddenSeen).toEqual([".env"]);
+    });
+
+    test("counts a link to a folder as an entry of the type symlink", async () => {
+        mkdirSync(join(root, "d"));
+        symlinkSync("d", join(root, "l"));
+        const types: string[] = [];
+        (await scanFolder(root, false, (entry) => types.push(`${entry.name}:${entry.kind}`)))._unsafeUnwrap();
+        expect(types.sort()).toEqual(["d:folder", "l:symlink"]);
+    });
+
+    test("counts the entries of a folder reached through a link", async () => {
+        mkdirSync(join(root, "d"));
+        writeFileSync(join(root, "d", "f.txt"), "x");
+        symlinkSync("d", join(root, "l"));
+        expect((await countFolderEntries(join(root, "l"), false))._unsafeUnwrap()).toBe(1);
+    });
+
+    test("gives `absent` for a path that does not exist", async () => {
+        const missing = join(root, "missing");
+        const error = (await countFolderEntries(missing, false))._unsafeUnwrapErr();
+        expect(error).toMatchObject({ type: "absent", path: missing });
+        expect(error.cause).toMatchObject({ code: "ENOENT" });
+    });
+
+    test("gives `not_folder` for a file", async () => {
+        const file = join(root, "f.txt");
+        writeFileSync(file, "x");
+        const error = (await countFolderEntries(file, false))._unsafeUnwrapErr();
+        expect(error).toMatchObject({ type: "not_folder", path: file });
+        expect(error.cause).toMatchObject({ code: "ENOTDIR" });
+    });
+
+    test.skipIf(process.getuid?.() === 0)("gives `unreadable` for a folder with mode 000", async () => {
+        const locked = join(root, "locked");
+        mkdirSync(locked);
+        chmodSync(locked, 0o000);
+        try {
+            const error = (await countFolderEntries(locked, false))._unsafeUnwrapErr();
             expect(error).toMatchObject({ type: "unreadable", path: locked });
             expect(error.cause).toMatchObject({ code: "EACCES" });
         } finally {
