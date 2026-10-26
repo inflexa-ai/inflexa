@@ -24,7 +24,7 @@ Inside a turn workflow, the turn MUST wait for the answer of an ask with a durab
 
 #### Scenario: An answer after a crash
 
-- **GIVEN** a turn that waits for an answer, and then the host stopped and started again
+- **GIVEN** a turn that waits for an answer, and then the host stopped and started again, and the host function gives the credential of the turn
 - **WHEN** the turn recovers and the user answers `once`
 - **THEN** the call runs, and the ask row is `resolved`
 

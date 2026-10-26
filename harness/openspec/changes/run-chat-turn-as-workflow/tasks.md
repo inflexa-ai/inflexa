@@ -14,7 +14,7 @@
 ## 3. The turn workflow
 
 - [ ] 3.1 Register the turn workflow at the assembly, with the turn id as the workflow id and an input with ids and settings only (D1). The first step loads the view of the conversation. Do a test: the stored input holds no user input and no credential.
-- [ ] 3.2 Keep the live credential in an in-process map by the turn id, and build the session of the body from it (D3). A recovered body with no entry ends the turn as `interrupted`. Do a DBOS test for the recovery with no entry.
+- [ ] 3.2 Take the credential from the function `credentialFor` of the host, at the start of the body and after each wait (D3). A body that gets nothing ends the turn as `interrupted`. Do DBOS tests for a recovery with a credential and with none. The CLI gives its local credential, and Cortex adapts later.
 - [ ] 3.3 Make each round write, the close, and the rows of a compaction a step with a key of the turn and the round, with a unique index on the thread and the key (D6). Add the migration. Do a test: a write that runs again stores each row one time.
 - [ ] 3.4 Build the display projection of a round from the frames of the round in the stream of the turn. Do a DBOS test: a replayed round keeps its tool part and its card.
 - [ ] 3.5 Add the stop of a turn through an in-process abort controller that the body puts, and the cancel with a close of the record when no process runs the turn (D5). Do tests for both paths.

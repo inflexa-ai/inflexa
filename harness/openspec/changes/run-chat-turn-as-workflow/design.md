@@ -44,11 +44,16 @@ Rejected: the whole history as the input, because each turn stores the history a
 
 A turn has no mandate, thus no `RunFrame`. Inside a workflow with no `RunFrame`, a key starts with the workflow id: the usage record, the reference of a cut tool output, and the compaction id. A sub-agent child workflow has its own id, `${parentId}-${toolCallId}`, thus its keys do not collide with the keys of its caller. Outside a workflow, a key stays random.
 
-### D3. The live credential stays in the memory of the host
+### D3. The host gives the live credential through a function
 
-The runtime keeps an in-process map from the turn id to the `auth` of the request. The host start puts the value before the workflow starts, and the end of the turn removes it. The body builds the session of the turn from its input and from the map. A child workflow gets the root turn id in its input, and it reads the same entry.
+The host gives the runtime one function: `credentialFor(turn)` gives the `auth` of the turn, or nothing. The body calls it at its start, and after each wait. The body builds the session of the turn from its input and from that value. A child workflow gets the root turn id in its input, and it asks for the credential of the root turn.
 
-A recovered body that finds no entry ends the turn as `failed` with the reason `interrupted`, before its next model call. Stage 3 changes that end to a pause.
+Each host decides where the value comes from:
+
+- The CLI has one local credential, thus its function always gives it. A recovered turn of the CLI continues.
+- Cortex keeps the passport of each live request in the memory of the process. A recovered turn of Cortex finds no passport.
+
+A body that gets nothing ends the turn as `failed` with the reason `interrupted`, before its next model call. Stage 3 changes that end to a pause.
 
 Rejected: the credential in the input (decision Q5). Rejected: a mandate for each turn (decision Q5).
 
@@ -144,7 +149,7 @@ The CLI route opens the turn, starts to read, and serves the frames as SSE. A ne
 
 - [The stream of a long turn grows with each text delta] → The model step writes the deltas in batches. A reader reads a turn only while it runs, or after a lost connection.
 - [A rerun of a step writes its tool events again] → The fold of a tool call by its id is idempotent.
-- [The in-process maps are lost on a restart] → The body puts its stop controller again. The credential is absent by design, and the turn ends as `interrupted`.
+- [The in-process maps are lost on a restart] → The body puts its stop controller again. A host that keeps no credential across a restart gives nothing, and the turn ends as `interrupted`.
 - [`execute_analysis` can mint a second mandate on a rerun] → The enqueue dedups the run. Thus no run uses the second mandate, and it expires at its time to live.
 - [The library is 0.x] → The harness uses only `durableCalls` and `durableTools`. The child workflows and the stream are harness code.
 - [A host with more than one replica cannot stop a turn of another replica in process] → The stop cancels the workflow and closes the record. Cortex adapts later.
