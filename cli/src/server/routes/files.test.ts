@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, u
 import { open, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Hono } from "hono";
+import type { Hono } from "hono";
 
 import type { ApiError } from "../../api/common.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../db/primary_mutation.ts";
@@ -12,12 +12,15 @@ import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modul
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import { freshDb } from "../../test_support/db.ts";
 import type { ServerEnv } from "../http.ts";
-import { DEFAULT_FILE_ROUTE_OPTS, fileRoutes, type FileRouteOpts } from "./files.ts";
+import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "./fs.ts";
 
-// The route alone, mounted at its path with no credential check and no analysis guard: `app.test.ts` covers those.
-// Each `as` cast of a body below reads JSON that the route under test builds from the `ApiError` type.
-function appWith(opts: FileRouteOpts = DEFAULT_FILE_ROUTE_OPTS): Hono<ServerEnv> {
-    return new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/files", fileRoutes(opts));
+// The read route alone, with no credential check and no app: `app.test.ts` covers those. The analysis guard takes
+// no real lock here, because a stub answers for it. Each `as` cast of a body below reads JSON that the route under
+// test builds from the `ApiError` type.
+const TEST_FS_ROUTE_OPTS: FsRouteOpts = { ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => ({ acquired: true }) };
+
+function appWith(opts: Partial<FsRouteOpts> = {}): Hono<ServerEnv> {
+    return fsRoutes({ ...TEST_FS_ROUTE_OPTS, ...opts });
 }
 
 let app = appWith();
@@ -47,16 +50,22 @@ afterEach(() => {
     rmSync(outside, { recursive: true, force: true });
 });
 
+/** `GET /read` of the route under test, with the path as given and `query` after it. */
 function get(path: string, init?: RequestInit, query = ""): Promise<Response> | Response {
-    return app.request(`/api/v1/analyses/ana-1/files?path=${encodeURIComponent(path)}${query}`, init);
+    return app.request(`/read?path=${encodeURIComponent(path)}${query}`, init);
 }
 
-/** Write a workspace file and give its path under the workspace. */
+/** `GET /read` of a path under the workspace root. */
+function getAt(rel: string, init?: RequestInit, query = ""): Promise<Response> | Response {
+    return get(join(root, rel), init, query);
+}
+
+/** Write a workspace file and give its absolute path. */
 function workspaceFile(rel: string, content: string | Uint8Array): string {
     const abs = join(root, rel);
     mkdirSync(join(abs, ".."), { recursive: true });
     writeFileSync(abs, content);
-    return rel;
+    return abs;
 }
 
 async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
@@ -70,148 +79,138 @@ function declareInput(path: string, isDir: boolean): void {
     insertAnalysisInput({ path, isDir, analysisId: "ana-1", anchorId: null })._unsafeUnwrap();
 }
 
-describe("the roots of the form of the path", () => {
-    test("a relative path of a workspace file gives its bytes", async () => {
-        workspaceFile("runs/R/A/figures/volcano.png", "png-bytes");
-        const response = await get("runs/R/A/figures/volcano.png");
+describe("the path of a read", () => {
+    test("a workspace file by its absolute path gives its bytes", async () => {
+        const figure = workspaceFile("runs/R/A/figures/volcano.png", "png-bytes");
+        const response = await get(figure, undefined, "&analysisId=ana-1");
         expect(response.status).toBe(200);
+        expect(response.headers.get("Content-Type")).toBe("image/png");
         expect(await response.text()).toBe("png-bytes");
     });
 
-    test("a relative path with `..` that stays inside the workspace gives its bytes", async () => {
-        workspaceFile("runs/R/A/figures/volcano.png", "png-bytes");
-        const response = await get("runs/R/A/output/../figures/volcano.png");
-        expect(response.status).toBe(200);
-        expect(await response.text()).toBe("png-bytes");
-    });
-
-    test("a relative path whose `..` leaves the workspace gives 403", async () => {
-        // The file exists outside the workspace, next to it.
-        writeFileSync(join(root, "..", "sibling.txt"), "sibling");
-        await expectError(await get("../sibling.txt"), 403, "forbidden");
-    });
-
-    test("an absolute path inside a declared input folder gives its bytes", async () => {
+    test("a file of a declared input by its absolute path gives its bytes", async () => {
         writeFileSync(join(outside, "counts.csv"), "a,b\n1,2\n");
         declareInput(outside, true);
-        const response = await get(join(outside, "counts.csv"));
+        const response = await get(join(outside, "counts.csv"), undefined, "&analysisId=ana-1");
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("a,b\n1,2\n");
     });
 
-    test("the absolute path of a declared input that is one file gives its bytes", async () => {
-        writeFileSync(join(outside, "run1.csv"), "x\n");
-        writeFileSync(join(outside, "run2.csv"), "y\n");
-        declareInput(join(outside, "run1.csv"), false);
-        expect((await get(join(outside, "run1.csv"))).status).toBe(200);
-        await expectError(await get(join(outside, "run2.csv")), 403, "forbidden");
+    test("a file outside the analysis gives its bytes, with and without the analysis id", async () => {
+        writeFileSync(join(outside, "notes.txt"), "notes");
+        for (const query of ["", "&analysisId=ana-1"]) {
+            const response = await get(join(outside, "notes.txt"), undefined, query);
+            expect(response.status).toBe(200);
+            expect(await response.text()).toBe("notes");
+        }
     });
 
-    test("an absolute path of a workspace file that no input holds gives 403", async () => {
-        workspaceFile("runs/R/A/figures/volcano.png", "png-bytes");
-        await expectError(await get(join(root, "runs/R/A/figures/volcano.png")), 403, "forbidden");
-    });
-
-    test("an absolute path of a workspace file that a declared input holds gives its bytes", async () => {
-        workspaceFile("data/in.csv", "z\n");
-        declareInput(join(root, "data"), true);
-        expect((await get(join(root, "data", "in.csv"))).status).toBe(200);
-    });
-
-    test("a path outside each root gives 403, also for a relative path to a file of an input", async () => {
-        writeFileSync(join(outside, "counts.csv"), "a\n");
-        declareInput(outside, true);
-        await expectError(await get("/etc/hosts"), 403, "forbidden");
-        // A relative path reaches the workspace only, never an input.
-        await expectError(await get(`../../../../..${outside}/counts.csv`), 403, "forbidden");
-    });
-
-    test("a symbolic link in the workspace that leaves the roots gives 403 and no byte of the target", async () => {
-        writeFileSync(join(outside, "secret.txt"), "TOP-SECRET");
-        symlinkSync(join(outside, "secret.txt"), join(root, "runs", "R", "A", "leak.txt"));
-        const response = await get("runs/R/A/leak.txt");
-        const body = await expectError(response, 403, "forbidden");
-        expect(JSON.stringify(body)).not.toContain("TOP-SECRET");
-    });
-
-    test("a symbolic link to a folder outside the roots gives 403 for a file under it", async () => {
-        writeFileSync(join(outside, "secret.txt"), "TOP-SECRET");
-        symlinkSync(outside, join(root, "runs", "R", "A", "linked"));
-        await expectError(await get("runs/R/A/linked/secret.txt"), 403, "forbidden");
-    });
-
-    test("a symbolic link that stays inside the workspace gives the bytes of its target", async () => {
-        workspaceFile("runs/R/A/figures/volcano.png", "png-bytes");
-        symlinkSync(join(root, "runs/R/A/figures/volcano.png"), join(root, "latest.png"));
-        const response = await get("latest.png");
+    test("a file that no analysis holds gives its bytes with no analysis id", async () => {
+        const response = await get(workspaceFile("runs/R/A/figures/volcano.png", "png-bytes"));
         expect(response.status).toBe(200);
-        // The requested name gives the type.
-        expect(response.headers.get("Content-Type")).toBe("image/png");
         expect(await response.text()).toBe("png-bytes");
+    });
+
+    test("a `..` segment is removed as text, also when it leaves the workspace", async () => {
+        workspaceFile("runs/R/A/figures/volcano.png", "png-bytes");
+        const inside = await get(`${root}/runs/R/A/output/../figures/volcano.png`);
+        expect(inside.status).toBe(200);
+        expect(await inside.text()).toBe("png-bytes");
+
+        writeFileSync(join(root, "..", "sibling.txt"), "sibling");
+        const leaving = await get(`${root}/runs/../../sibling.txt`);
+        expect(leaving.status).toBe(200);
+        expect(await leaving.text()).toBe("sibling");
+        rmSync(join(root, "..", "sibling.txt"));
+    });
+
+    test("a link gives the bytes of its target with the content type of the requested name", async () => {
+        writeFileSync(join(outside, "run7.csv"), "x\n");
+        symlinkSync(join(outside, "run7.csv"), join(outside, "latest.csv"));
+        const response = await get(join(outside, "latest.csv"));
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
+        expect(await response.text()).toBe("x\n");
+
+        symlinkSync(join(outside, "run7.csv"), join(outside, "latest.png"));
+        expect((await get(join(outside, "latest.png"))).headers.get("Content-Type")).toBe("image/png");
+    });
+
+    test("a link to a folder gives the bytes of a file under it", async () => {
+        writeFileSync(join(outside, "secret.txt"), "under-link");
+        symlinkSync(outside, join(root, "linked"));
+        const response = await get(join(root, "linked", "secret.txt"));
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("under-link");
     });
 });
 
 describe("the errors of a bad request", () => {
     test("no path, an empty path, and a path with a NUL byte give 400", async () => {
-        await expectError(await app.request("/api/v1/analyses/ana-1/files"), 400, "validation_error");
-        await expectError(await get(""), 400, "validation_error");
-        await expectError(await get("runs/a\0b"), 400, "validation_error");
-    });
-
-    test("a `download` value other than 1 gives 400", async () => {
-        workspaceFile("a.txt", "a");
-        await expectError(await get("a.txt", undefined, "&download=true"), 400, "validation_error");
-        await expectError(await get("a.txt", undefined, "&download="), 400, "validation_error");
-    });
-
-    test("a relative path of an analysis whose workspace cannot be located gives 409 with the message of the workspace error", async () => {
-        const body = await expectError(await app.request("/api/v1/analyses/ghost/files?path=a.txt"), 409, "conflict");
-        expect(body.message).toContain("no longer exists");
-    });
-
-    test.skipIf(process.getuid?.() === 0)("a workspace file of an analysis whose folder became read-only gives its bytes", async () => {
-        workspaceFile("runs/R/A/figures/volcano.png", "png");
-        chmodSync(home, 0o555);
-        // The memo holds the root from the setup, while the folder was writable.
-        invalidateWorkspaceRoot();
-        try {
-            const response = await get("runs/R/A/figures/volcano.png");
-            expect(response.status).toBe(200);
-            expect(await response.text()).toBe("png");
-        } finally {
-            chmodSync(home, 0o755);
+        for (const response of [await app.request("/read"), await get(""), await get(`${root}/a\0b`)]) {
+            const body = await expectError(response, 400, "validation_error");
+            expect(body.details).toEqual({ formErrors: [], fieldErrors: { path: ["The path must be absolute."] } });
         }
     });
 
-    test("an absent path inside the workspace gives 404", async () => {
-        await expectError(await get("runs/R/A/figures/absent.png"), 404, "not_found");
-        await expectError(await get("runs/R/A/figures/../../../../runs/R/gone.png"), 404, "not_found");
+    test("a relative path gives 400", async () => {
+        workspaceFile("runs/R/A/figures/volcano.png", "png");
+        const body = await expectError(await get("runs/R/A/figures/volcano.png"), 400, "validation_error");
+        expect(body.details).toEqual({ formErrors: [], fieldErrors: { path: ["The path must be absolute."] } });
     });
 
-    test("a broken link and a loop of links inside the workspace give 404", async () => {
-        symlinkSync(join(outside, "nowhere"), join(root, "broken"));
-        symlinkSync(join(root, "loop-b"), join(root, "loop-a"));
-        symlinkSync(join(root, "loop-a"), join(root, "loop-b"));
-        await expectError(await get("broken"), 404, "not_found");
-        await expectError(await get("loop-a"), 404, "not_found");
+    test("a `download` value other than 1 gives 400", async () => {
+        const file = workspaceFile("a.txt", "a");
+        for (const query of ["&download=true", "&download="]) {
+            const body = await expectError(await get(file, undefined, query), 400, "validation_error");
+            expect(body.details).toEqual({ formErrors: [], fieldErrors: { download: ["must be 1"] } });
+        }
     });
 
-    test("an absent absolute path outside each input gives 403, and inside an input gives 404", async () => {
-        declareInput(outside, true);
-        await expectError(await get(join(home, "absent.txt")), 403, "forbidden");
+    test("an unknown analysis id gives 404 from the guard, and the route opens no file", async () => {
+        const file = workspaceFile("a.txt", "a");
+        let opened = 0;
+        app = appWith({
+            open: (path, flags) => {
+                opened += 1;
+                return open(path, flags);
+            },
+        });
+        const body = await expectError(await get(file, undefined, "&analysisId=nope"), 404, "not_found");
+        expect(body.message).toContain("nope");
+        expect(opened).toBe(0);
+    });
+
+    test("an absent path gives 404", async () => {
+        await expectError(await get(join(root, "runs/R/A/figures/absent.png")), 404, "not_found");
+        await expectError(await get(`${root}/runs/R/A/figures/../../../../runs/R/gone.png`), 404, "not_found");
         await expectError(await get(join(outside, "absent.txt")), 404, "not_found");
     });
 
+    test("a part of the path that is a file gives 404", async () => {
+        const file = workspaceFile("a.txt", "a");
+        await expectError(await get(join(file, "below.txt")), 404, "not_found");
+    });
+
+    test("a broken link and a loop of links give 404", async () => {
+        symlinkSync(join(outside, "nowhere"), join(root, "broken"));
+        symlinkSync(join(root, "loop-b"), join(root, "loop-a"));
+        symlinkSync(join(root, "loop-a"), join(root, "loop-b"));
+        await expectError(await get(join(root, "broken")), 404, "not_found");
+        await expectError(await get(join(root, "loop-a")), 404, "not_found");
+    });
+
     test("a folder gives 400", async () => {
-        const body = await expectError(await get("runs/R/A/figures"), 400, "validation_error");
+        const body = await expectError(await get(join(root, "runs/R/A/figures")), 400, "validation_error");
         expect(body.message).toContain("file");
+        expect(body.details).toEqual({ formErrors: [], fieldErrors: { path: ["The path is not a file."] } });
     });
 
     test("an open that fails with EOPNOTSUPP (macOS) or ENXIO (Linux), which a Unix socket gives, answers 400", async () => {
-        workspaceFile("a.csv", "abc");
+        const file = workspaceFile("a.csv", "abc");
         for (const code of ["EOPNOTSUPP", "ENXIO"]) {
-            app = appWith({ chunkBytes: 1024, open: () => Promise.reject(Object.assign(new Error(code), { code })) });
-            await expectError(await get("a.csv"), 400, "validation_error");
+            app = appWith({ open: () => Promise.reject(Object.assign(new Error(code), { code })) });
+            await expectError(await get(file), 400, "validation_error");
         }
     });
 
@@ -221,17 +220,28 @@ describe("the errors of a bad request", () => {
         writeFileSync(join(locked, "a.txt"), "a");
         chmodSync(locked, 0o000);
         try {
-            const body = await expectError(await get("locked/a.txt"), 403, "forbidden");
+            const body = await expectError(await get(join(locked, "a.txt")), 403, "forbidden");
             expect(body.details).toEqual({ code: "EACCES" });
         } finally {
             chmodSync(locked, 0o755);
         }
     });
 
+    test.skipIf(process.getuid?.() === 0)("a file whose mode is 000 gives 403 with the code of the operating system", async () => {
+        const file = workspaceFile("closed.txt", "a");
+        chmodSync(file, 0o000);
+        try {
+            const body = await expectError(await get(file), 403, "forbidden");
+            expect(body.details).toEqual({ code: "EACCES" });
+        } finally {
+            chmodSync(file, 0o644);
+        }
+    });
+
     test("a FIFO gives 400 at once", async () => {
         const fifo = join(root, "pipe");
         expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
-        await expectError(await get("pipe"), 400, "validation_error");
+        await expectError(await get(fifo), 400, "validation_error");
     });
 });
 
@@ -239,7 +249,7 @@ describe("the headers", () => {
     test("the content type comes from the requested name, with nosniff, the range unit, the length, and a tag", async () => {
         workspaceFile("de.csv", "a,b\n");
         workspaceFile("table.unknownext", "x");
-        const csv = await get("de.csv");
+        const csv = await getAt("de.csv");
         expect(csv.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
         expect(csv.headers.get("X-Content-Type-Options")).toBe("nosniff");
         expect(csv.headers.get("Accept-Ranges")).toBe("bytes");
@@ -248,7 +258,7 @@ describe("the headers", () => {
         expect(csv.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+-[0-9a-f]+"$/);
         expect(csv.headers.get("Content-Security-Policy")).toBeNull();
         expect(csv.headers.get("Content-Disposition")).toBeNull();
-        expect((await get("table.unknownext")).headers.get("Content-Type")).toBe("application/octet-stream");
+        expect((await getAt("table.unknownext")).headers.get("Content-Type")).toBe("application/octet-stream");
     });
 
     test("HTML, XHTML, SVG, and XML files get `Content-Security-Policy: sandbox`, and a PDF file does not", async () => {
@@ -259,20 +269,20 @@ describe("the headers", () => {
             ["data.xml", "application/xml"],
         ] as const) {
             workspaceFile(name, "<x/>");
-            const response = await get(name);
+            const response = await getAt(name);
             expect(response.headers.get("Content-Type")?.split(";")[0]).toBe(type);
             expect(response.headers.get("Content-Security-Policy")).toBe("sandbox");
         }
         workspaceFile("paper.pdf", "%PDF");
-        expect((await get("paper.pdf")).headers.get("Content-Security-Policy")).toBeNull();
+        expect((await getAt("paper.pdf")).headers.get("Content-Security-Policy")).toBeNull();
     });
 
     test("`download=1` adds an attachment with the last part of the requested path, also when the name is not ASCII", async () => {
         workspaceFile("runs/R/A/output/de.csv", "a\n");
-        const plain = await get("runs/R/A/output/de.csv", undefined, "&download=1");
+        const plain = await getAt("runs/R/A/output/de.csv", undefined, "&download=1");
         expect(plain.headers.get("Content-Disposition")).toBe(`attachment; filename="de.csv"; filename*=UTF-8''de.csv`);
         workspaceFile('runs/R/A/output/résumé "q".csv', "a\n");
-        const named = await get('runs/R/A/output/résumé "q".csv', undefined, "&download=1");
+        const named = await getAt('runs/R/A/output/résumé "q".csv', undefined, "&download=1");
         expect(named.headers.get("Content-Disposition")).toBe(`attachment; filename="r_sum_ _q_.csv"; filename*=UTF-8''r%C3%A9sum%C3%A9%20%22q%22.csv`);
     });
 });
@@ -280,21 +290,21 @@ describe("the headers", () => {
 describe("the tag and the conditional request", () => {
     test("`If-None-Match` with the current tag, a list that holds it, a weak form, or `*` gives 304 with no body", async () => {
         workspaceFile("a.csv", "abc");
-        const etag = (await get("a.csv")).headers.get("ETag") ?? "";
+        const etag = (await getAt("a.csv")).headers.get("ETag") ?? "";
         for (const header of [etag, `"other", ${etag}`, `W/${etag}`, "*"]) {
-            const response = await get("a.csv", { headers: { "If-None-Match": header } });
+            const response = await getAt("a.csv", { headers: { "If-None-Match": header } });
             expect(response.status).toBe(304);
             expect(response.headers.get("ETag")).toBe(etag);
             expect(await response.text()).toBe("");
         }
-        expect((await get("a.csv", { headers: { "If-None-Match": '"other"' } })).status).toBe(200);
+        expect((await getAt("a.csv", { headers: { "If-None-Match": '"other"' } })).status).toBe(200);
     });
 
     test("a changed file gives a new tag, and the old tag gives 200 with the new bytes", async () => {
         workspaceFile("a.csv", "abc");
-        const old = (await get("a.csv")).headers.get("ETag") ?? "";
+        const old = (await getAt("a.csv")).headers.get("ETag") ?? "";
         workspaceFile("a.csv", "abcdef");
-        const response = await get("a.csv", { headers: { "If-None-Match": old } });
+        const response = await getAt("a.csv", { headers: { "If-None-Match": old } });
         expect(response.status).toBe(200);
         expect(response.headers.get("ETag")).not.toBe(old);
         expect(await response.text()).toBe("abcdef");
@@ -302,9 +312,9 @@ describe("the tag and the conditional request", () => {
 
     test("a change of the time of the last change with the same size gives a new tag", async () => {
         workspaceFile("a.csv", "abc");
-        const old = (await get("a.csv")).headers.get("ETag") ?? "";
+        const old = (await getAt("a.csv")).headers.get("ETag") ?? "";
         utimesSync(join(root, "a.csv"), new Date(1_000_000), new Date(1_000_000));
-        expect((await get("a.csv")).headers.get("ETag")).not.toBe(old);
+        expect((await getAt("a.csv")).headers.get("ETag")).not.toBe(old);
     });
 });
 
@@ -320,7 +330,7 @@ describe("the range", () => {
     }
 
     test("`bytes=0-99` gives 206 with the first 100 bytes", async () => {
-        const response = await get("big.bin", { headers: { Range: "bytes=0-99" } });
+        const response = await getAt("big.bin", { headers: { Range: "bytes=0-99" } });
         expect(response.status).toBe(206);
         expect(response.headers.get("Content-Range")).toBe("bytes 0-99/1000");
         expect(response.headers.get("Content-Length")).toBe("100");
@@ -328,25 +338,25 @@ describe("the range", () => {
     });
 
     test("an open range, a suffix range, and a `<last>` past the end give the part to the end", async () => {
-        const open = await get("big.bin", { headers: { Range: "bytes=990-" } });
+        const open = await getAt("big.bin", { headers: { Range: "bytes=990-" } });
         expect(open.status).toBe(206);
         expect(open.headers.get("Content-Range")).toBe("bytes 990-999/1000");
         expect(await bytes(open)).toEqual([...body.subarray(990)]);
 
-        const suffix = await get("big.bin", { headers: { Range: "bytes=-10" } });
+        const suffix = await getAt("big.bin", { headers: { Range: "bytes=-10" } });
         expect(suffix.headers.get("Content-Range")).toBe("bytes 990-999/1000");
         expect(await bytes(suffix)).toEqual([...body.subarray(990)]);
 
-        const past = await get("big.bin", { headers: { Range: "bytes=995-5000" } });
+        const past = await getAt("big.bin", { headers: { Range: "bytes=995-5000" } });
         expect(past.headers.get("Content-Range")).toBe("bytes 995-999/1000");
 
-        const longSuffix = await get("big.bin", { headers: { Range: "bytes=-5000" } });
+        const longSuffix = await getAt("big.bin", { headers: { Range: "bytes=-5000" } });
         expect(longSuffix.headers.get("Content-Range")).toBe("bytes 0-999/1000");
     });
 
     test("`bytes=1000-` and a suffix of 0 give 416 `range_not_satisfiable` with `Content-Range: bytes */1000`", async () => {
         for (const range of ["bytes=1000-", "bytes=-0", "bytes=2000-3000"]) {
-            const response = await get("big.bin", { headers: { Range: range } });
+            const response = await getAt("big.bin", { headers: { Range: range } });
             await expectError(response, 416, "range_not_satisfiable");
             expect(response.headers.get("Content-Range")).toBe("bytes */1000");
         }
@@ -354,17 +364,17 @@ describe("the range", () => {
 
     test("any range of an empty file gives 416", async () => {
         workspaceFile("empty.txt", "");
-        const response = await get("empty.txt", { headers: { Range: "bytes=0-0" } });
+        const response = await getAt("empty.txt", { headers: { Range: "bytes=0-0" } });
         await expectError(response, 416, "range_not_satisfiable");
         expect(response.headers.get("Content-Range")).toBe("bytes */0");
-        const full = await get("empty.txt");
+        const full = await getAt("empty.txt");
         expect(full.status).toBe(200);
         expect(await full.text()).toBe("");
     });
 
     test("more than one range, a different unit, a bad form, and a `<last>` below `<first>` give 200 with the full file", async () => {
         for (const range of ["bytes=0-9,20-29", "items=0-9", "bytes=abc", "bytes=-", "bytes=50-10"]) {
-            const response = await get("big.bin", { headers: { Range: range } });
+            const response = await getAt("big.bin", { headers: { Range: range } });
             expect(response.status).toBe(200);
             expect(response.headers.get("Content-Range")).toBeNull();
             expect((await bytes(response)).length).toBe(1000);
@@ -372,29 +382,29 @@ describe("the range", () => {
     });
 
     test("`If-Range` with the current tag keeps the range, and an old tag or a date gives 200 with the full file", async () => {
-        const etag = (await get("big.bin")).headers.get("ETag") ?? "";
-        const kept = await get("big.bin", { headers: { Range: "bytes=0-9", "If-Range": etag } });
+        const etag = (await getAt("big.bin")).headers.get("ETag") ?? "";
+        const kept = await getAt("big.bin", { headers: { Range: "bytes=0-9", "If-Range": etag } });
         expect(kept.status).toBe(206);
         for (const ifRange of ['"old-tag"', "Wed, 21 Oct 2015 07:28:00 GMT"]) {
-            const response = await get("big.bin", { headers: { Range: "bytes=0-9", "If-Range": ifRange } });
+            const response = await getAt("big.bin", { headers: { Range: "bytes=0-9", "If-Range": ifRange } });
             expect(response.status).toBe(200);
             expect((await bytes(response)).length).toBe(1000);
         }
     });
 
     test("`If-None-Match` is tested before the range", async () => {
-        const etag = (await get("big.bin")).headers.get("ETag") ?? "";
-        const response = await get("big.bin", { headers: { Range: "bytes=0-9", "If-None-Match": etag } });
+        const etag = (await getAt("big.bin")).headers.get("ETag") ?? "";
+        const response = await getAt("big.bin", { headers: { Range: "bytes=0-9", "If-None-Match": etag } });
         expect(response.status).toBe(304);
     });
 });
 
 describe("the stream of the body", () => {
     /** The options that count the handles that the route opens and closes, and that run `wrap` on each open handle. */
-    function tracked(wrap?: (handle: FileHandle) => void): { opts: FileRouteOpts; opened: () => number; closed: () => number } {
+    function tracked(wrap?: (handle: FileHandle) => void): { opts: Pick<FsRouteOpts, "open" | "chunkBytes">; opened: () => number; closed: () => number } {
         let opened = 0;
         let closed = 0;
-        const opts: FileRouteOpts = {
+        const opts: Pick<FsRouteOpts, "open" | "chunkBytes"> = {
             chunkBytes: 1024,
             open: async (path, flags) => {
                 const handle = await open(path, flags);
@@ -416,7 +426,7 @@ describe("the stream of the body", () => {
         workspaceFile("big.bin", content);
         const { opts, opened, closed } = tracked();
         app = appWith(opts);
-        const response = await get("big.bin");
+        const response = await getAt("big.bin");
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(content);
         expect([opened(), closed()]).toEqual([1, 1]);
     });
@@ -425,7 +435,7 @@ describe("the stream of the body", () => {
         const content = Uint8Array.from({ length: 10_000 }, (_, i) => i % 253);
         workspaceFile("big.bin", content);
         app = appWith(tracked().opts);
-        const response = await get("big.bin", { headers: { Range: "bytes=1500-4499" } });
+        const response = await getAt("big.bin", { headers: { Range: "bytes=1500-4499" } });
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(content.subarray(1500, 4500));
     });
 
@@ -433,7 +443,7 @@ describe("the stream of the body", () => {
         workspaceFile("a.csv", "abc");
         const { opts, opened, closed } = tracked();
         app = appWith(opts);
-        const response = await get("a.csv", { method: "HEAD" });
+        const response = await getAt("a.csv", { method: "HEAD" });
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Length")).toBe("3");
         expect(response.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
@@ -446,11 +456,11 @@ describe("the stream of the body", () => {
         workspaceFile("empty.txt", "");
         const { opts, opened, closed } = tracked();
         app = appWith(opts);
-        const etag = (await get("a.csv", { method: "HEAD" })).headers.get("ETag") ?? "";
-        expect((await get("a.csv", { headers: { "If-None-Match": etag } })).status).toBe(304);
-        expect((await get("a.csv", { headers: { Range: "bytes=10-" } })).status).toBe(416);
-        expect((await get("runs")).status).toBe(400);
-        expect((await get("empty.txt")).status).toBe(200);
+        const etag = (await getAt("a.csv", { method: "HEAD" })).headers.get("ETag") ?? "";
+        expect((await getAt("a.csv", { headers: { "If-None-Match": etag } })).status).toBe(304);
+        expect((await getAt("a.csv", { headers: { Range: "bytes=10-" } })).status).toBe(416);
+        expect((await getAt("runs")).status).toBe(400);
+        expect((await getAt("empty.txt")).status).toBe(200);
         expect([opened(), closed()]).toEqual([5, 5]);
     });
 
@@ -458,7 +468,7 @@ describe("the stream of the body", () => {
         workspaceFile("big.bin", new Uint8Array(100_000));
         const { opts, opened, closed } = tracked();
         app = appWith(opts);
-        const response = await get("big.bin");
+        const response = await getAt("big.bin");
         // A 200 response with a non-empty file always has a body stream.
         const reader = response.body!.getReader();
         expect((await reader.read()).done).toBe(false);
@@ -474,7 +484,7 @@ describe("the stream of the body", () => {
             handle.read = (() => Promise.reject(Object.assign(new Error("EIO: i/o error"), { code: "EIO" }))) as unknown as FileHandle["read"];
         });
         app = appWith(opts);
-        const response = await get("big.bin");
+        const response = await getAt("big.bin");
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Length")).toBe("100000");
         await expect(response.arrayBuffer()).rejects.toThrow("EIO");
@@ -495,7 +505,7 @@ describe("the stream of the body", () => {
             }) as unknown as FileHandle["read"];
         });
         app = appWith(opts);
-        const response = await get("big.bin");
+        const response = await getAt("big.bin");
         await expect(response.arrayBuffer()).rejects.toThrow("ended before");
         expect(closed()).toBe(1);
     });
@@ -506,7 +516,7 @@ describe("the stream of the body", () => {
             chunkBytes: 1024,
             open: () => Promise.reject(Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })),
         });
-        const body = await expectError(await get("a.csv"), 403, "forbidden");
+        const body = await expectError(await getAt("a.csv"), 403, "forbidden");
         expect(body.details).toEqual({ code: "EACCES" });
     });
 
@@ -516,7 +526,7 @@ describe("the stream of the body", () => {
         workspaceFile("a.csv", "abc");
         // A link that replaces the file between the test and the open: the open gets the link, not the real path.
         app = appWith({ chunkBytes: 1024, open: (_path, flags) => open(join(root, "late-link"), flags) });
-        const body = await expectError(await get("a.csv"), 403, "forbidden");
+        const body = await expectError(await getAt("a.csv"), 403, "forbidden");
         expect(JSON.stringify(body)).not.toContain("TOP-SECRET");
     });
 });

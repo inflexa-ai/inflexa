@@ -1,6 +1,7 @@
 import { queryArtifactPage, type ArtifactPage, type ArtifactPageQuery, type DbError, type Pool } from "@inflexa-ai/harness";
 import { Hono } from "hono";
-import type { ResultAsync } from "neverthrow";
+import { join } from "node:path";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
 
@@ -14,6 +15,8 @@ import type {
     ResolvedArtifacts,
 } from "../../api/artifacts.ts";
 import { getLogger } from "../../lib/log.ts";
+import type { DbError as LocalDbError } from "../../db/errors.ts";
+import { workspaceReadRoot, type ReadRoot } from "../../modules/analysis/boundary.ts";
 import { entryDegraded, materializeTarget, resolveEntryPath, workspaceFileResolvable, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerBoot } from "../boot.ts";
@@ -58,6 +61,13 @@ function parseExtensions(value: string | undefined): string[] {
         .filter((member) => member !== "");
 }
 
+/** The workspace root of the analysis, or `null` when its folder cannot be located. A `DbError` stays the error. */
+function locateRoot(analysisId: string): ResultAsync<ReadRoot | null, LocalDbError> {
+    return workspaceReadRoot(analysisId)
+        .map((root): ReadRoot | null => root)
+        .orElse((e) => (e.type === "workspace_unavailable" ? okAsync<ReadRoot | null, LocalDbError>(null) : errAsync<ReadRoot | null, LocalDbError>(e)));
+}
+
 /** How many entries of one request resolve at one time. Each entry reads the disk, and the body caps the entries at 1000. */
 const RESOLVE_WIDTH = 8;
 
@@ -68,7 +78,8 @@ const RESOLVE_WIDTH = 8;
  * `runId`, `stepId`, `fileType`, `path` (an exact path), `q` (a part of the path), and `extension` (a list with
  * a comma between the members) combine with AND. The response adds `extensionCounts` for the selected rows.
  * The cost of a request grows with the ledger of the one analysis, because the exact `total` reads each
- * filtered row.
+ * filtered row. Each entry gets `absolutePath`: the canonical workspace root, located one time for each
+ * request, joined with its relative `path`. It is `null` for each entry when the folder cannot be located.
  *
  * `POST /resolve` (draft 2.5) gives the path on disk and the degraded mark of each openable entry of a card.
  * With `materialize`, it first writes the echart or svg file of each entry into the `presentations/` folder
@@ -91,7 +102,7 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         const q = filterValue(c.req.query("q"));
         const path = filterValue(c.req.query("path"));
         const extensions = parseExtensions(filterValue(c.req.query("extension")));
-        const listed = await opts.listArtifacts(c.get("runtime").pool, analysisId, {
+        const query: ArtifactPageQuery = {
             ...(runId === undefined ? {} : { runId }),
             ...(stepId === undefined ? {} : { stepId }),
             ...(fileType === undefined ? {} : { fileType }),
@@ -101,9 +112,21 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
             sort: sort.data,
             limit: page.perPage,
             offset: page.page * page.perPage,
-        });
+        };
+        // One lookup of the root for the request, in parallel with the ledger read. A workspace folder that
+        // the server cannot locate is a normal state of the database and the folders, thus it gives `null`
+        // paths and not an error.
+        const pendingList = opts.listArtifacts(c.get("runtime").pool, analysisId, query);
+        const pendingRoot = locateRoot(analysisId);
+        const listed = await pendingList;
+        const root = await pendingRoot;
         if (listed.isErr()) return internalError(c, listed.error, "list the artifacts");
-        const entries = listed.value.entries.map((entry): ArtifactEntry => ({ ...entry }));
+        if (root.isErr()) return internalError(c, root.error, "locate the workspace folder");
+        const base = root.value;
+        const entries = listed.value.entries.map((entry): ArtifactEntry => ({
+            ...entry,
+            absolutePath: base === null ? null : join(base.canonical, entry.path),
+        }));
         const extensionCounts = listed.value.extensionCounts.map((count): ArtifactExtensionCount => ({ ...count }));
         return c.json<ArtifactList>({ ...listEnvelope("artifacts", entries, listed.value.total, page), extensionCounts });
     });

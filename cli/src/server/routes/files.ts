@@ -1,17 +1,17 @@
 import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename } from "node:path";
 
-import { Hono, type Context } from "hono";
+import type { Context } from "hono";
 import { getMimeType } from "hono/utils/mime";
-import { err, ok, ResultAsync, type Result } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 
 import { errnoCode } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
-import { classifyRealPath, inputReadRoots, workspaceReadRoot, type ReadRoot } from "../../modules/analysis/boundary.ts";
-import { apiError, holdConnection, internalError, type ServerEnv } from "../http.ts";
+import { classifyRealPath, type ReadRoots } from "../../modules/analysis/boundary.ts";
+import { apiError, type ServerEnv } from "../http.ts";
 
-/** The disk reads of the file route. A test replaces one to make a read fail or to count the closes. */
+/** The disk reads of {@link serveFile}. A test replaces one to make a read fail or to count the closes. */
 export type FileRouteOpts = {
     /** Opens the real path that passed the test. The route gives the flags that refuse a final symbolic link and never wait on a FIFO. */
     readonly open: (path: string, flags: number) => Promise<FileHandle>;
@@ -33,7 +33,7 @@ type ByteRange = { start: number; end: number };
 /** What the `Range` header asks for: one range, nothing (absent, ignored, or a form that the route does not serve), or a range that no byte satisfies. */
 type RangeRequest = ByteRange | "none" | "unsatisfiable";
 
-const FORBIDDEN_MESSAGE = "The path is outside the files of the analysis.";
+const FORBIDDEN_MESSAGE = "The path is outside the folders that the server serves.";
 
 /** What differs between the callers of {@link serveFile}. */
 export type FileResponseOpts = {
@@ -49,51 +49,17 @@ export type FileResponseOpts = {
     readonly notAFile: (c: Context<ServerEnv>) => Response;
 };
 
-/** The {@link FileResponseOpts} of the file route of an analysis. */
-const FILE_ROUTE_RESPONSE: FileResponseOpts = { download: false, headers: {}, notAFile };
-
 /**
- * The route `GET {A}/files?path=<path>`: the bytes of one file of an analysis. A relative path must have its real path
- * inside the workspace root, and an absolute path must have its real path inside a declared input. The body streams
- * from the open file. The route needs no harness runtime, thus it has no `requireRuntime`.
- */
-export function fileRoutes(opts: FileRouteOpts = DEFAULT_FILE_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
-
-    routes.get("/", async (c) => {
-        const path = c.req.query("path");
-        if (path === undefined || path === "" || path.includes("\0")) {
-            return apiError(c, "validation_error", "`path` must be a path that is not empty.", {
-                formErrors: [],
-                fieldErrors: { path: ["A path is necessary."] },
-            });
-        }
-        const download = c.req.query("download");
-        if (download !== undefined && download !== "1") {
-            return apiError(c, "validation_error", "`download` is 1 or absent.", { formErrors: [], fieldErrors: { download: ["must be 1"] } });
-        }
-        // The real path of a file on a hung mount can take more than 10 s.
-        holdConnection(c);
-
-        const located = await locateTarget(c, c.req.param("analysisId") ?? "", path);
-        if (located.isErr()) return located.error;
-        return serveFile(c, opts, located.value.roots, located.value.target, path, { ...FILE_ROUTE_RESPONSE, download: download === "1" });
-    });
-
-    return routes;
-}
-
-/**
- * The response for `target`: the real-path test against `roots`, the open that refuses a final symbolic link, and
+ * The response for `target`: the real-path test against `roots` (`"unlimited"` admits each existing path), the open that refuses a final symbolic link, and
  * the stat, the tag, the range, and the streamed body. `name` gives the content type and the download name. The
- * file route of an analysis and the page route of a report session both call it, thus one implementation opens and
- * streams each served file. A test failure gives 403 `forbidden`, and an absent path inside a root gives 404
+ * read route `GET /api/v1/fs/read` and the page route of a report session both call it, thus one implementation
+ * opens and streams each served file. A test failure gives 403 `forbidden`, and an absent path inside a root gives 404
  * `not_found`.
  */
 export async function serveFile(
     c: Context<ServerEnv>,
     opts: FileRouteOpts,
-    roots: readonly ReadRoot[],
+    roots: ReadRoots,
     target: string,
     name: string,
     response: FileResponseOpts,
@@ -118,25 +84,6 @@ export async function serveFile(
     return serveHandle(c, opts, handle.value, name, response);
 }
 
-/**
- * The roots of the form of the path and the absolute path to test. A relative path joins the workspace root,
- * and an absolute path stays as it is. The error channel holds the response to send.
- */
-async function locateTarget(c: Context<ServerEnv>, analysisId: string, path: string): Promise<Result<{ roots: ReadRoot[]; target: string }, Response>> {
-    if (isAbsolute(path)) {
-        const roots = await inputReadRoots(analysisId);
-        if (roots.isErr()) return err(internalError(c, roots.error, "read the inputs"));
-        return ok({ roots: roots.value, target: resolve(path) });
-    }
-    const root = await workspaceReadRoot(analysisId);
-    if (root.isErr()) {
-        return err(
-            root.error.type === "workspace_unavailable" ? apiError(c, "conflict", root.error.message) : internalError(c, root.error, "locate the workspace"),
-        );
-    }
-    return ok({ roots: [root.value], target: resolve(root.value.text, path) });
-}
-
 /** The 403 `forbidden` response for a failure of the disk that has no named meaning, with the code of the operating system in `details.code`. */
 export function unreadable(c: Context<ServerEnv>, cause: unknown): Response {
     const reason = cause instanceof Error ? cause.message : String(cause);
@@ -158,10 +105,6 @@ function openFailure(c: Context<ServerEnv>, cause: unknown, response: FileRespon
         default:
             return unreadable(c, cause);
     }
-}
-
-function notAFile(c: Context<ServerEnv>): Response {
-    return apiError(c, "validation_error", "`path` must name a file.", { formErrors: [], fieldErrors: { path: ["The path is not a file."] } });
 }
 
 /**

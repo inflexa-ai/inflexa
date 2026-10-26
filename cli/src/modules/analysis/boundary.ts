@@ -7,7 +7,7 @@ import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { errnoCode, type FsError } from "../../lib/fs.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { ensureOutputDir, readableWorkspaceRootForAnalysisId, type WorkspaceError } from "./output.ts";
-import { inputAbsolutePaths, resolveInputPath } from "./input.ts";
+import { resolveInputPath } from "./input.ts";
 
 /** The structural read/write roots for an analysis's agent. */
 export type Roots = {
@@ -91,43 +91,37 @@ export type RealPathVerdict = { type: "in"; realPath: string } | { type: "outsid
 /** The `realpath` codes that mean the path leads to nothing: it is absent, a part of it is not a folder, or the links loop. */
 const ABSENT_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
 
+/** The roots of a read, or `"unlimited"` for a read that no root limits. An empty list means that no root admits a path. */
+export type ReadRoots = readonly ReadRoot[] | "unlimited";
+
 /**
  * The real-path test of a read: one `realpath` of `absPath` off the event loop, then the boundary-safe `contains`
  * against the canonical form of each root. A real path equal to a root is inside it, thus an input that is one
  * file passes. Each `realpath` failure that is not in {@link ABSENT_CODES} is the error, with its cause.
  * Unlike `computeRoots`, it is not lexical: a symbolic link that leaves the roots is `outside`.
+ *
+ * With `"unlimited"`, no root limits the read: an existing path is `in` with its real path wherever it leads, and an
+ * absent path is `absent` and inside as text. An empty list is different: it admits no path.
  */
-export function classifyRealPath(roots: readonly ReadRoot[], absPath: string): ResultAsync<RealPathVerdict, FsError> {
+export function classifyRealPath(roots: ReadRoots, absPath: string): ResultAsync<RealPathVerdict, FsError> {
     // With no root, each path is outside, and an absent path is outside as text: the answer needs no disk.
-    if (roots.length === 0) return okAsync({ type: "outside" });
+    if (roots !== "unlimited" && roots.length === 0) return okAsync({ type: "outside" });
+    const inRoots = (root: (r: ReadRoot) => string, path: string): boolean => roots === "unlimited" || roots.some((r) => contains(root(r), path));
     return ResultAsync.fromPromise(realpath(absPath), (cause): FsError => ({ type: "io_failed", op: "classifyRealPath", cause }))
-        .map((real): RealPathVerdict => (roots.some((root) => contains(root.canonical, real)) ? { type: "in", realPath: real } : { type: "outside" }))
+        .map((real): RealPathVerdict => (inRoots((r) => r.canonical, real) ? { type: "in", realPath: real } : { type: "outside" }))
         .orElse((e): ResultAsync<RealPathVerdict, FsError> => {
             if (!ABSENT_CODES.has(errnoCode(e.cause) ?? "")) return errAsync(e);
-            return okAsync({ type: "absent", insideAsText: roots.some((root) => contains(root.text, absPath)) });
+            return okAsync({ type: "absent", insideAsText: inRoots((r) => r.text, absPath) });
         });
 }
 
 /**
- * The root of a read of a relative path: the workspace root of the analysis. It makes no folder, records no
+ * The root of a read of the workspace of an analysis: its workspace root. It makes no folder, records no
  * sighting, and does not require a writable folder. The error is a `workspace_unavailable` with its message, or a
  * `DbError`.
  */
 export function workspaceReadRoot(analysisId: string): ResultAsync<ReadRoot, WorkspaceError> {
     return readableWorkspaceRootForAnalysisId(analysisId).andThen((text) =>
         ResultAsync.fromSafePromise(canonicalPathAsync(text)).map((canonical): ReadRoot => ({ text, canonical })),
-    );
-}
-
-/**
- * The roots of a read of an absolute path: the declared inputs of the analysis that resolve. An input whose anchor
- * folder cannot be located is not a root. It writes nothing, because `inputAbsolutePaths` records no sighting. For an
- * input the text form and the canonical form are the same path.
- */
-export function inputReadRoots(analysisId: string): ResultAsync<ReadRoot[], DbError> {
-    return listAnalysisInputs(analysisId).asyncAndThen((inputs) =>
-        ResultAsync.fromSafePromise(inputAbsolutePaths(inputs)).map((paths): ReadRoot[] =>
-            [...paths.values()].filter((p): p is string => p !== null).map((p) => ({ text: p, canonical: p })),
-        ),
     );
 }

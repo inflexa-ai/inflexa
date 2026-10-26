@@ -89,11 +89,11 @@ describe("the file system routes", () => {
     });
 });
 
-describe("the file route", () => {
+describe("the read route", () => {
     const { boot } = fakeBoot(STARTING);
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
-    const FIGURE = "runs/R/A/figures/volcano.png";
     let home = "";
+    let figure = "";
 
     beforeEach(async () => {
         freshDb();
@@ -104,7 +104,8 @@ describe("the file route", () => {
         insertAnalysis({ id: "a1", createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
         const root = (await workspaceRootForAnalysisId("a1"))._unsafeUnwrap();
         mkdirSync(join(root, "runs", "R", "A", "figures"), { recursive: true });
-        writeFileSync(join(root, FIGURE), "png-bytes");
+        figure = join(root, "runs", "R", "A", "figures", "volcano.png");
+        writeFileSync(figure, "png-bytes");
     });
 
     afterEach(() => {
@@ -112,25 +113,35 @@ describe("the file route", () => {
         rmSync(home, { recursive: true, force: true });
     });
 
+    function readUrl(query = ""): string {
+        return `/api/v1/fs/read?path=${encodeURIComponent(figure)}${query}`;
+    }
+
     test("a browser with the session cookie of `signIn` gets the figure, and the bearer token gets it too", async () => {
         const cookie = await signIn(app, TOKEN);
-        const response = await app.request(`/api/v1/analyses/a1/files?path=${FIGURE}`, { headers: { Cookie: cookie } });
+        const response = await app.request(readUrl(), { headers: { Cookie: cookie } });
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Type")).toBe("image/png");
         expect(await response.text()).toBe("png-bytes");
-        expect((await app.request(`/api/v1/analyses/a1/files?path=${FIGURE}`, { headers: AUTH })).status).toBe(200);
+        expect((await app.request(readUrl("&analysisId=a1"), { headers: AUTH })).status).toBe(200);
     });
 
     test("a request with no credential gets 401", async () => {
-        const response = await app.request(`/api/v1/analyses/a1/files?path=${FIGURE}`);
+        const response = await app.request(readUrl());
         expect(response.status).toBe(401);
         expect(await response.json()).toMatchObject({ error: "unauthorized" });
     });
 
     test("an unknown analysis gets 404 from the guard", async () => {
-        const response = await app.request(`/api/v1/analyses/nope/files?path=${FIGURE}`, { headers: AUTH });
+        const response = await app.request(readUrl("&analysisId=nope"), { headers: AUTH });
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({ error: "not_found", message: expect.stringContaining("nope") });
+    });
+
+    test("the route `GET {A}/files` does not exist: a known analysis gets the not-found message of the app, not the guard", async () => {
+        const response = await app.request("/api/v1/analyses/a1/files?path=runs/R/A/figures/volcano.png", { headers: AUTH });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ error: "not_found", message: "No route for GET /api/v1/analyses/a1/files." });
     });
 });
 

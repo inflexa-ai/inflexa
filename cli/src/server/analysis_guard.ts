@@ -1,8 +1,8 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler, Next } from "hono";
 
 import { getAnalysis } from "../db/primary_query.ts";
 import { acquireInstanceLock, holdsInstanceLock, type LockOutcome } from "../lib/lock.ts";
-import { apiError, internalError, type ServerEnv } from "./http.ts";
+import { apiError, filterValue, internalError, type ServerEnv } from "./http.ts";
 
 /** The instance lock of {@link analysisGuard}. Tests replace it. */
 export type AnalysisGuardOpts = {
@@ -28,20 +28,32 @@ export const DEFAULT_ANALYSIS_GUARD_OPTS: AnalysisGuardOpts = {
  * `/api/v1/analyses/resolve`. Mount each `{A}` route after it, or the route answers before the guard runs.
  */
 export function analysisGuard(opts: AnalysisGuardOpts = DEFAULT_ANALYSIS_GUARD_OPTS): MiddlewareHandler<ServerEnv> {
-    return async (c, next) => {
-        const analysisId = c.req.param("analysisId") ?? "";
-        const found = getAnalysis(analysisId);
-        if (found.isErr()) return internalError(c, found.error, "read the analysis");
-        if (found.value === null) return apiError(c, "not_found", `No analysis has the id ${analysisId}.`);
+    return (c, next) => guardAnalysis(c, next, c.req.param("analysisId") ?? "", opts);
+}
 
-        const lock = opts.acquireLock(analysisId);
-        if (!lock.acquired) {
-            // `acquireInstanceLock` reports an unknown holder as -1 on the reclaim race: the pid clause then reads as a bug.
-            const pidClause = lock.holderPid >= 0 ? ` (pid ${lock.holderPid})` : "";
-            return apiError(c, "locked", `"${found.value.name}" is already open in another instance${pidClause}. Close it there, then try again.`, {
-                holderPid: lock.holderPid,
-            });
-        }
-        await next();
+/**
+ * The middleware of each route under `/api/v1/fs`: the steps of {@link analysisGuard} for the optional query value
+ * `analysisId`. An absent or empty value names no analysis, and the request passes with no lock.
+ */
+export function analysisQueryGuard(opts: AnalysisGuardOpts = DEFAULT_ANALYSIS_GUARD_OPTS): MiddlewareHandler<ServerEnv> {
+    return (c, next) => {
+        const analysisId = filterValue(c.req.query("analysisId"));
+        return analysisId === undefined ? next() : guardAnalysis(c, next, analysisId, opts);
     };
+}
+
+async function guardAnalysis(c: Context<ServerEnv>, next: Next, analysisId: string, opts: AnalysisGuardOpts): Promise<Response | void> {
+    const found = getAnalysis(analysisId);
+    if (found.isErr()) return internalError(c, found.error, "read the analysis");
+    if (found.value === null) return apiError(c, "not_found", `No analysis has the id ${analysisId}.`);
+
+    const lock = opts.acquireLock(analysisId);
+    if (!lock.acquired) {
+        // `acquireInstanceLock` reports an unknown holder as -1 on the reclaim race: the pid clause then reads as a bug.
+        const pidClause = lock.holderPid >= 0 ? ` (pid ${lock.holderPid})` : "";
+        return apiError(c, "locked", `"${found.value.name}" is already open in another instance${pidClause}. Close it there, then try again.`, {
+            holderPid: lock.holderPid,
+        });
+    }
+    await next();
 }

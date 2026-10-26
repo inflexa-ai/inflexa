@@ -56,3 +56,6 @@ export type FolderList = ListEnvelope<"entries", FolderEntryView> & {
     /** The facts of the listed folder. */
     folder: FolderFacts;
 };
+
+/** The kind of a file, from the extension of its name. A client shows it as a badge and keeps no map of its own. */
+export type FileKind = "table" | "figure" | "code" | "log" | "data" | "doc";
