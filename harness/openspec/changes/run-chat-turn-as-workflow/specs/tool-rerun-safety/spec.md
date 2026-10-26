@@ -1,0 +1,56 @@
+# Spec Delta
+
+## Purpose
+
+A tool call that runs again after a crash gives the same effect and the same result. A crash can come after the write of a tool and before the checkpoint of its step.
+
+## ADDED Requirements
+
+### Requirement: A tool call that writes keys its write by the call
+
+A tool that writes MUST key its write by the step of its call. A second run of the same call MUST find the first write, and it MUST give the result of the first run. It MUST NOT write a second row, start a second run, or refuse its own earlier write.
+
+#### Scenario: A rerun of execute_analysis
+
+- **GIVEN** an `execute_analysis` call that launched its run, and then the host stopped before the checkpoint
+- **WHEN** the call runs again
+- **THEN** the call gives the same run id, and no second run starts
+
+#### Scenario: A rerun of start_report_session
+
+- **WHEN** a `start_report_session` call runs again after a crash
+- **THEN** it gives the same child thread and the same chat part, and it does not answer `existing-session`
+
+#### Scenario: A rerun of an authoring call
+
+- **WHEN** an `add_block` call runs again after its block landed
+- **THEN** it gives its stored result, and it does not refuse its own block id
+
+#### Scenario: A rerun of a memory edit
+
+- **WHEN** an `update_working_memory` call that adds an entry runs again after a crash
+- **THEN** the section holds the entry one time, and the call gives ok
+
+#### Scenario: A rerun of record_report_version
+
+- **WHEN** a `record_report_version` call runs again after a crash
+- **THEN** it gives the same version, and the result does not say `replaced`
+
+### Requirement: A derivation runs inside its tool call
+
+A derivation of a table and an extraction of values MUST run their sandbox command inside the step of their tool call. The sandbox and the command MUST take their identity from the step. Thus a rerun adopts the same sandbox, and the sandbox server gives the record of the same command. A derivation MUST NOT mint a mandate.
+
+#### Scenario: A rerun of derive_table
+
+- **GIVEN** a `derive_table` call whose command completed, and then the host stopped
+- **WHEN** the call runs again
+- **THEN** the command does not run again, and the call gives the same table
+
+### Requirement: A cut tool output and a usage record of a turn have stable keys
+
+A workflow can run with no run frame. Then the reference of a cut tool output and the key of a usage record MUST come from the id of the workflow. A rerun of the call MUST give the same reference and the same key.
+
+#### Scenario: A rerun of a long tool result in a chat turn
+
+- **WHEN** a tool call of a chat turn with a long result runs again after a crash
+- **THEN** the excerpt names the same reference, and the store holds one row for it
