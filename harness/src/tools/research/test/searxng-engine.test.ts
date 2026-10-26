@@ -7,6 +7,7 @@
  * assert the error variant each failure bucket names.
  */
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { afterEach, describe, expect, it } from "bun:test";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -31,7 +32,7 @@ afterEach(() => {
 function serve(body: unknown, status = 200): void {
     const text = typeof body === "string" ? body : JSON.stringify(body);
     globalThis.fetch = fetchDouble((url) => {
-        requested.push(String(url));
+        requested.push(requestUrlText(url));
         return Promise.resolve(new Response(text, { status, headers: { "content-type": "application/json" } }));
     });
 }

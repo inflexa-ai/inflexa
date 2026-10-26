@@ -33,6 +33,8 @@
  * capabilities.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { lstatSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -248,7 +250,7 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
         }
         await sleep(HEALTH_POLL_MS);
     }
-    throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+    throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${errorMessageOf(lastErr) ?? textOf(lastErr)}`);
 }
 
 /**
@@ -453,10 +455,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(write && plan.writableStepPath
                             ? [`${tailWritePrefix({ workspaceRoot: hostTreePath, tail: write.tail })}:${plan.writableStepPath}:rw`]
                             : []),
-                        ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
+                        ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${String(plan.libsPath)}:ro`] : []),
                         ...(libsMounted && farm && plan.farmPath ? [`${farm.farmPath}:${plan.farmPath}:ro`] : []),
                         ...(libsMounted && cacheBindable && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
-                        ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
+                        ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${String(plan.refsPath)}:ro`] : []),
                         ...cpuBinds,
                     ];
 

@@ -26,7 +26,7 @@ function readPath(value: unknown, ...keys: Array<string | number>): unknown {
     return current;
 }
 
-function repairAgainst(schema: z.ZodType, input: unknown): unknown | undefined {
+function repairAgainst(schema: z.ZodType, input: unknown): unknown {
     const parsed = schema.safeParse(input);
     expect(parsed.success).toBe(false);
     return parsed.success ? undefined : repairToolInput(input, parsed.error);

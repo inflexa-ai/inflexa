@@ -111,7 +111,7 @@ export type CreateThreadInput = {
     readonly analysisId: string;
     readonly title?: string | null;
     /** Omitted is `conversation` — what a thread is when nothing says otherwise. The store refuses a value outside the closed set at runtime: an untyped caller (a JSON body across a package boundary) can hand in any string, and `unknown_thread_type` is the declared refusal for it. */
-    readonly type?: ThreadType | string;
+    readonly type?: string;
     /**
      * The thread this one is spawned from. It must belong to the same analysis
      * as the child; whether it exists at all is the foreign key's verdict, not

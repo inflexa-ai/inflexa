@@ -48,6 +48,7 @@ function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existin
             return Promise.resolve({ metadata: { name: body.metadata?.name, uid: "job-uid-1" } });
         },
         deleteNamespacedJob: ({ name }: { namespace: string; name: string }) => {
+            // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the double rejects the scripted delete failure in the exact shape the client carries, and the test matches on it.
             if (deletedError) return Promise.reject(deletedError);
             existingDeleted = true;
             deletedJobs.push(name);

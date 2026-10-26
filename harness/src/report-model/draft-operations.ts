@@ -150,13 +150,13 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
     if ("title" in operation) {
         return err({ reason: "payload-kind-mismatch", detail: `the block ${operation.targetId} is an atom, and it takes a full block, not a title` });
     }
-    const payload = operation.block;
-    if (payload === null || typeof payload !== "object") {
+    const payload = parseUnknownRecord(operation.block);
+    if (payload === undefined) {
         return err({ reason: "malformed-block", detail: "the payload is not an object" });
     }
     // The id stamp sets the target id on the payload before the parse. Thus an id mismatch is
     // unrepresentable, and a replacement always keeps the id of its target.
-    const withId = { ...parseUnknownRecord(payload), id: operation.targetId };
+    const withId = { ...payload, id: operation.targetId };
     // The hash stamp then fills each absent reference hash from the snapshot, thus the grammar reads a
     // complete pin. The two stamps are independent, because one reads the block and one reads a reference.
     const hashed = stampReferenceHashes(withId, snapshot);
@@ -202,7 +202,7 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
     const movedPath = target.path;
 
     const place = operation.destination?.place;
-    if (place !== undefined && typeof place === "object") {
+    if (place !== undefined && place !== "start" && place !== "end") {
         const anchorId = "before" in place ? place.before : place.after;
         if (anchorId === operation.targetId) {
             return err({ reason: "unknown-target", detail: `the block ${operation.targetId} cannot anchor its own move` });
@@ -257,7 +257,7 @@ function resolveDestination(document: DraftDocument, destination: DraftDestinati
     const place: DraftPlace = destination?.place ?? "end";
     const parentId = destination?.parentId;
 
-    if (typeof place === "object") {
+    if (place !== "start" && place !== "end") {
         const anchorId = "before" in place ? place.before : place.after;
         const anchor = locate(document, anchorId);
         if (anchor === undefined) {

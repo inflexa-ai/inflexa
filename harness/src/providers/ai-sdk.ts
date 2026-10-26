@@ -1,3 +1,5 @@
+import { errorOf, errorNameOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { createHash } from "node:crypto";
 
 import {
@@ -19,7 +21,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
+import { retryWithExponentialBackoff, type RetryFunction } from "@ai-sdk/provider-utils";
 import { trace } from "@opentelemetry/api";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -28,7 +30,9 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughTracer } from "../lib/otel-spans.js";
+
 import { isUnknownArray } from "../lib/unknown-array.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
 import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
@@ -347,9 +351,10 @@ function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undef
     const entries = metadata?.["anthropic"]?.["iterations"];
     if (!isUnknownArray(entries)) return undefined;
     for (const entry of entries) {
-        if (typeof entry !== "object" || entry === null || !("type" in entry)) continue;
-        if (entry["type"] !== "fallback_message") continue;
-        return "model" in entry && typeof entry["model"] === "string" ? entry["model"] : "";
+        const record = parseUnknownRecord(entry);
+        if (record === undefined || !("type" in record)) continue;
+        if (record["type"] !== "fallback_message") continue;
+        return "model" in record && typeof record["model"] === "string" ? record["model"] : "";
     }
     return undefined;
 }
@@ -370,9 +375,9 @@ function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTr
     const entries = metadata?.["anthropic"]?.["inputTransformations"];
     if (!isUnknownArray(entries)) return [];
     return entries.map((entry: unknown) => {
+        const record = parseUnknownRecord(entry);
         const text = (key: string): string | undefined => {
-            if (entry === null || typeof entry !== "object" || !(key in entry)) return undefined;
-            const value: unknown = Reflect.get(entry, key);
+            const value = record?.[key];
             return typeof value === "string" ? value : undefined;
         };
         return { type: text("type"), path: text("path"), reason: text("reason") };
@@ -380,9 +385,7 @@ function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTr
 }
 
 function isAbortError(value: unknown): boolean {
-    if (value instanceof DOMException && value.name === "AbortError") return true;
-    if (value instanceof Error && value.name === "AbortError") return true;
-    return false;
+    return errorNameOf(value) === "AbortError";
 }
 
 /**
@@ -394,7 +397,8 @@ function isAbortError(value: unknown): boolean {
 function apiCallErrorOf(error: unknown): APICallError | undefined {
     if (APICallError.isInstance(error)) return error;
     if (error === null || typeof error !== "object" || !("cause" in error)) return undefined;
-    if (APICallError.isInstance(error.cause)) return error.cause;
+    const cause: unknown = error.cause;
+    if (APICallError.isInstance(cause)) return cause;
     return undefined;
 }
 
@@ -514,7 +518,7 @@ export function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): P
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
  */
-export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall) {
+export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall): RetryFunction {
     let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries,
@@ -645,7 +649,7 @@ function responseFromMessages(input: {
 }): ChatResponse {
     const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId, provider } = input;
     const usage = toChatUsage(input.usage);
-    const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
+    const message = [...messages].reverse().find((m) => m.role === "assistant");
     if (message === undefined) {
         return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
     }
@@ -761,8 +765,9 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
  * `[object Object]` and reaches the classifier with no status at all.
  */
 function streamPartFailure(error: unknown): unknown {
-    if (error instanceof Error) return error;
-    if (typeof error !== "object" || error === null) return new Error(String(error));
+    const thrownError = errorOf(error);
+    if (thrownError !== undefined) return thrownError;
+    if (typeof error !== "object" || error === null) return new Error(textOf(error));
     const type = "type" in error && typeof error.type === "string" ? error.type : undefined;
     const message = "message" in error && typeof error.message === "string" ? error.message : undefined;
     const failure = new Error(message ?? type ?? "The provider reported a stream error.", { cause: error });
@@ -919,7 +924,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // deltas, and `chatStream` stays the seam that forwards them.
                     const result = streamText({
                         model: capture.model,
-                        system: req.system,
+                        instructions: req.system,
                         messages: sanitizeMessages(req.messages),
                         tools: req.tools,
                         toolChoice: req.toolChoice ?? "auto",
@@ -943,7 +948,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // point of the stream re-runs the whole attempt and the envelope
                     // keeps its whole-call scope. No delta reaches a consumer here —
                     // `chatStream` is the seam that forwards them.
-                    const iterator = result.fullStream[Symbol.asyncIterator]();
+                    const iterator = result.stream[Symbol.asyncIterator]();
                     let text = "";
                     for (let pull = await pullNextDelta(iterator); pull.kind !== "end"; pull = await pullNextDelta(iterator)) {
                         // A caller abort rides out as the reason of its own signal, thus
@@ -1008,7 +1013,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
                 const result = streamText({
                     model: capture.model,
-                    system: req.system,
+                    instructions: req.system,
                     messages: sanitizeMessages(req.messages),
                     tools: req.tools,
                     toolChoice: req.toolChoice ?? "auto",
@@ -1029,7 +1034,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     providerOptions,
                     reasoning,
                 });
-                const iterator = result.fullStream[Symbol.asyncIterator]();
+                const iterator = result.stream[Symbol.asyncIterator]();
                 const first = await pullNextDelta(iterator);
                 // The chunk bound can stop the stream before any content arrives. The
                 // throw carries the sentinel, thus the envelope gives the attempt a
@@ -1116,6 +1121,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
             const failure = failureOf(e, workloadOf(session), suspendOn);
             logFailure(session, failure, e);
+            // oxlint-disable-next-line typescript/only-throw-error -- the structured `ProviderError` payload rides as-is; the boundary classifier reads it structurally, and an `Error` wrapper would erase its identity.
             throw failure;
         }
     }

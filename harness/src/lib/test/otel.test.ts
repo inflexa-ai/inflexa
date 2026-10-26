@@ -11,6 +11,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { textOf } from "../unknown-text.js";
 import { createServer, type Server } from "node:http";
 import { metrics, trace } from "@opentelemetry/api";
 import { z } from "zod";
@@ -71,6 +72,7 @@ beforeEach(() => {
     saved = {};
     for (const key of ENV_KEYS) {
         saved[key] = process.env[key];
+        // oxlint-disable-next-line typescript/no-dynamic-delete -- the test must mutate the live env of this process; a Map stand-in would not reach the module under test.
         delete process.env[key];
     }
 });
@@ -79,6 +81,7 @@ afterEach(async () => {
     await __resetOtelForTest();
     for (const key of ENV_KEYS) {
         const value = saved[key];
+        // oxlint-disable-next-line typescript/no-dynamic-delete -- the test must restore the live env of this process; a Map stand-in would not reach the module under test.
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }
@@ -94,7 +97,7 @@ function registeredResourceAttributes(): Record<string, unknown> {
 /** The resource attributes on the metrics the exporter posted to the collector. */
 function exportedMetricResourceAttributes(): Record<string, unknown> {
     expect(metricBodies.length).toBeGreaterThan(0);
-    const payload = parseUnknownRecord(parseJsonAs(presentAt(metricBodies, 0), z.unknown()));
+    const payload = parseUnknownRecord(parseJsonAs(presentAt(metricBodies, 0), z.json()));
     const resourceMetrics = Array.isArray(payload?.resourceMetrics) ? payload.resourceMetrics : [];
     const first = parseUnknownRecord(resourceMetrics[0]);
     const resource = parseUnknownRecord(first?.resource);
@@ -104,7 +107,7 @@ function exportedMetricResourceAttributes(): Record<string, unknown> {
     for (const entry of entries) {
         const kv = parseUnknownRecord(entry);
         const value = parseUnknownRecord(kv?.value);
-        attributes[String(kv?.key)] = value?.stringValue;
+        attributes[textOf(kv?.key)] = value?.stringValue;
     }
     return attributes;
 }

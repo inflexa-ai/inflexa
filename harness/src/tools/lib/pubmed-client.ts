@@ -15,15 +15,16 @@ import {
     type ArticleSection,
     type FullTextResult,
     type PubmedSearchOptions,
+    type PubmedSource,
     type PubMedSummary,
 } from "../../literature/sources/pubmed.js";
 import type { SourceHttpResult } from "../../literature/sources/http.js";
 
-export type { PubMedSummary, ArticleDetail, ArticleSection, FullTextResult };
+export type { PubMedSummary, ArticleDetail, ArticleSection, FullTextResult } from "../../literature/sources/pubmed.js";
 
 export type SearchOptions = PubmedSearchOptions;
 
-function pubmedSource(ncbiApiKey: string | undefined) {
+function pubmedSource(ncbiApiKey: string | undefined): PubmedSource {
     return createPubmedSource({
         apiKey: ncbiApiKey,
         maxRetries: 3,

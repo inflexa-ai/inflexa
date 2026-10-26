@@ -20,14 +20,16 @@ import { scopeResource } from "../../auth/types.js";
 import { tryQuery } from "../../lib/db-result.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 
 /** pgvector / Postgres "undefined_table" — the index has no rows indexed yet. */
 const UNDEFINED_TABLE = "42P01";
 
 /** True when a captured driver cause is the "undefined_table" SQLSTATE. */
+const UndefinedTableCause = z.object({ code: z.literal(UNDEFINED_TABLE) });
+
 function isUndefinedTable(cause: unknown): boolean {
-    return !!cause && typeof cause === "object" && "code" in cause && cause.code === UNDEFINED_TABLE;
+    return UndefinedTableCause.safeParse(cause).success;
 }
 
 function indexName(analysisId: string): string {
@@ -40,9 +42,9 @@ function indexName(analysisId: string): string {
 
 function isSqlIdentifier(name: string): boolean {
     if (name.length === 0) return false;
-    const isLetterOrUnderscore = (char: string) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || char === "_";
-    const isWordChar = (char: string) => isLetterOrUnderscore(char) || (char >= "0" && char <= "9");
-    return isLetterOrUnderscore(name.charAt(0)) && [...name].every(isWordChar);
+    const isLetterOrUnderscore = (char: string): boolean => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || char === "_";
+    const isWordChar = (char: string): boolean => isLetterOrUnderscore(char) || (char >= "0" && char <= "9");
+    return isLetterOrUnderscore(name.charAt(0)) && Array.from(name).every(isWordChar);
 }
 
 /** Entry types that address a pattern spanning many files, never a single one. */
@@ -69,12 +71,29 @@ export function fileTargetOf(id: string, metadata: unknown): string | undefined 
 /** One search-hit row, as the pgvector SELECT returns it. */
 type SearchHitRow = { id: string; score: number; metadata: unknown };
 
+/** One ranked entry the tool returns: the row plus the workspace path it addresses. */
+type WorkspaceSearchHit = { id: string; score: number; path: string | undefined; metadata: unknown };
+
+type WorkspaceSearchOutput = { results: WorkspaceSearchHit[] };
+
+const WorkspaceSearchInputSchema = z.object({
+    query: z.string().min(1).describe("What to search for, in natural language"),
+    type: z
+        .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
+        .optional()
+        .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
+    limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
+});
+
 /** What the workspace search reads of the pool: its one row-reading query. A real `Pool` satisfies it. */
 export type WorkspaceSearchQuerier = {
     query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: SearchHitRow[]; rowCount: number | null }>;
 };
 
-export function createWorkspaceSearchTool(pool: WorkspaceSearchQuerier, embedding: EmbeddingProvider) {
+export function createWorkspaceSearchTool(
+    pool: WorkspaceSearchQuerier,
+    embedding: EmbeddingProvider,
+): Tool<z.infer<typeof WorkspaceSearchInputSchema>, WorkspaceSearchOutput> {
     return defineTool({
         id: "workspace_search",
         description:
@@ -94,14 +113,7 @@ export function createWorkspaceSearchTool(pool: WorkspaceSearchQuerier, embeddin
             "metadata, e.g. search input-group for a group's display pattern, then list the tree for " +
             "its members. Most input files carry no entry of their own — find them through their " +
             "group and the listing tools.",
-        inputSchema: z.object({
-            query: z.string().min(1).describe("What to search for, in natural language"),
-            type: z
-                .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
-                .optional()
-                .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
-            limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
-        }),
+        inputSchema: WorkspaceSearchInputSchema,
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),
         execute: async ({ query, type, limit }, ctx) => {
             const [vector] = unwrapOrThrow(await embedding.embed([query], ctx.session));

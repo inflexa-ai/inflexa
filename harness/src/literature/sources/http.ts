@@ -1,3 +1,5 @@
+import { errorOf, errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { setTimeout as timerSleep } from "node:timers/promises";
 
 import { z } from "zod";
@@ -26,7 +28,7 @@ export type SourceHttpResult<T> =
 const RETRYABLE_STATUSES = new Set([429, 503]);
 
 function cancellationReason(signal: AbortSignal): Error {
-    return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+    return errorOf(signal.reason) ?? new DOMException("The operation was aborted", "AbortError");
 }
 
 async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
@@ -86,7 +88,7 @@ async function request(url: string, options: SourceHttpOptions, signal: AbortSig
                 await sleep(backoff(attempt), signal);
                 continue;
             }
-            return { status: "unavailable", detail: error instanceof Error ? error.message : String(error) };
+            return { status: "unavailable", detail: errorMessageOf(error) ?? textOf(error) };
         }
     }
 }
@@ -105,7 +107,7 @@ export async function requestJson<S extends z.ZodType>(
         if (!parsed.success) return { status: "unavailable", detail: `response schema mismatch: ${parsed.error.issues[0]?.message ?? "unknown"}` };
         return { status: "ok", value: parsed.data };
     } catch (error) {
-        return { status: "unavailable", detail: `invalid JSON response: ${error instanceof Error ? error.message : String(error)}` };
+        return { status: "unavailable", detail: `invalid JSON response: ${errorMessageOf(error) ?? textOf(error)}` };
     }
 }
 
@@ -115,6 +117,6 @@ export async function requestText(url: string, options: SourceHttpOptions, signa
     try {
         return { status: "ok", value: await response.value.text() };
     } catch (error) {
-        return { status: "unavailable", detail: `invalid text response: ${error instanceof Error ? error.message : String(error)}` };
+        return { status: "unavailable", detail: `invalid text response: ${errorMessageOf(error) ?? textOf(error)}` };
     }
 }

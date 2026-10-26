@@ -15,8 +15,12 @@
  * reconstruction.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { isDataUIPart, validateUIMessages, type DataUIPart, type UIMessage } from "ai";
 import { z } from "zod";
+
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 
 import type {
     AskPart,
@@ -158,10 +162,6 @@ export function envelopeDisplayMessages(messages: readonly ConversationUIMessage
     };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Strip every `data-*` part the current vocabulary cannot render.
  *
@@ -184,10 +184,12 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
     const schemaMismatch: string[] = [];
 
     const filtered = messages.map((message) => {
-        if (!isRecord(message) || !Array.isArray(message.parts)) return message;
-        const parts = message.parts.filter((part) => {
-            if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("data-")) return true;
-            const key = part.type.slice("data-".length);
+        const record = parseUnknownRecord(message);
+        if (record === undefined || !Array.isArray(record.parts)) return message;
+        const parts = record.parts.filter((part: unknown) => {
+            const partRecord = parseUnknownRecord(part);
+            if (partRecord === undefined || typeof partRecord.type !== "string" || !partRecord.type.startsWith("data-")) return true;
+            const key = partRecord.type.slice("data-".length);
             // `Object.hasOwn` before the index: a part typed `data-constructor`
             // would otherwise resolve up the prototype chain to something that is
             // not a schema at all, and throw where it should have been dropped.
@@ -195,16 +197,16 @@ function dropUnrenderableDataParts(messages: readonly unknown[], identity: strin
             // prototype name the same way.
             const schema = dataSchemaOf(key);
             if (schema === undefined) {
-                unknownKey.push(part.type);
+                unknownKey.push(partRecord.type);
                 return false;
             }
-            if (!schema.safeParse(part.data).success) {
-                schemaMismatch.push(part.type);
+            if (!schema.safeParse(partRecord.data).success) {
+                schemaMismatch.push(partRecord.type);
                 return false;
             }
             return true;
         });
-        return parts.length === message.parts.length ? message : { ...message, parts };
+        return parts.length === record.parts.length ? message : { ...record, parts };
     });
 
     if (unknownKey.length > 0 || schemaMismatch.length > 0) {
@@ -236,7 +238,7 @@ export async function parseStoredDisplayEnvelope(value: unknown, identity: strin
         });
         return { ...header.data, messages };
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessageOf(error) ?? textOf(error);
         throw new Error(`Invalid stored conversation display envelope at ${identity}: ${message}`, { cause: error });
     }
 }

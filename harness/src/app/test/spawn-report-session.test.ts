@@ -394,8 +394,8 @@ describe("spawnReportSession seed", () => {
         expect(transcript[0]).toContain(`Objective: ${BRIEF.objective}`);
         expect(transcript[0]).toContain(`Audience: ${BRIEF.audience}`);
         expect(transcript[0]).toContain(`Angle: ${BRIEF.angle}`);
-        expect(transcript[0]).toContain(`Exclusions: ${BRIEF.exclusions}`);
-        expect(transcript[0]).toContain(`Open questions: ${BRIEF.openQuestions}`);
+        expect(transcript[0]).toContain(`Exclusions: ${String(BRIEF.exclusions)}`);
+        expect(transcript[0]).toContain(`Open questions: ${String(BRIEF.openQuestions)}`);
         expect(transcript[0]).toContain("# Working Memory");
         expect(transcript[0]).toContain("Find the batch effect");
     });
@@ -433,7 +433,7 @@ describe("spawnReportSession pin", () => {
     /** A spawn whose anchor operation is the real session runtime over the same pool. */
     function pinningSpawn(): ReportSessionSpawn {
         const runtime = createReportSessionRuntime({ pool });
-        return createReportSessionSpawn({ pool, chrome: WITH_BROWSER, anchorSession: runtime.ensureSessionState });
+        return createReportSessionSpawn({ pool, chrome: WITH_BROWSER, anchorSession: runtime.ensureSessionState.bind(runtime) });
     }
 
     it("pins the snapshot of the child before any turn of the child runs", async () => {

@@ -240,7 +240,7 @@ describe("createAnalysisPurge", () => {
         }
 
         // A child step workflow of the first run — reachable only as a descendant.
-        const childWorkflowId = `${runIds[0]}-step-0`;
+        const childWorkflowId = `${String(runIds[0])}-step-0`;
         await ledger.seedWorkflow(childWorkflowId, runIds[0]);
 
         // The data-profile attempt, reachable only through its id namespace.

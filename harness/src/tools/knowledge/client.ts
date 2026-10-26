@@ -22,6 +22,7 @@ import { z } from "zod";
 
 import { apiFetchValidated, describeApiError, type ApiError } from "../lib/api-utils.js";
 import { parseJsonAs, safeParseJsonAs } from "../../lib/parse-json.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 import type { SituationFieldsSchema } from "./situation.js";
 
@@ -47,7 +48,7 @@ const MethodRefSchema = z.looseObject({ id: z.string(), label: z.string() });
 /** Two rules of equal specificity and strength disagree on a parameter. The step omits the parameter and names both. */
 const ProcedureConflictSchema = z.looseObject({
     parameter: z.string(),
-    entries: z.array(z.looseObject({ rule: z.string(), value: z.unknown() })),
+    entries: z.array(z.looseObject({ rule: z.string(), value: z.json() })),
 });
 
 /** The step method is a declared substitute: `for` names the method of record it stands in for. */
@@ -77,7 +78,7 @@ const ProcedureStepSchema = z.looseObject({
     flags: z.array(z.looseObject({ rule: z.string(), severity: z.string(), message: z.string(), outcome: z.string().optional() })).optional(),
     alternatives: z.array(z.looseObject({ method: z.string(), label: z.string(), when: z.string(), rules: z.array(z.string()) })).optional(),
     disputed: z.looseObject({ rule: z.string(), sides: z.array(z.string()) }).optional(),
-    parameters: z.array(z.looseObject({ name: z.string(), value: z.unknown(), default_source: z.string().optional() })).optional(),
+    parameters: z.array(z.looseObject({ name: z.string(), value: z.json(), default_source: z.string().optional() })).optional(),
     conflicts: z.array(ProcedureConflictSchema).optional(),
     substitution: ProcedureSubstitutionSchema.optional(),
     limit: ProcedureLimitSchema.optional(),
@@ -85,7 +86,7 @@ const ProcedureStepSchema = z.looseObject({
     /** The runtime package the step installs, when the service names one. */
     package: z.looseObject({ name: z.string() }).optional(),
     /** The forbidden method ids, read defensively by the grounding report. */
-    forbids: z.unknown().optional(),
+    forbids: z.json().optional(),
 });
 
 const ClaimSchema = z.looseObject({
@@ -149,7 +150,7 @@ export const RenderResponseSchema = z.looseObject({
     slots: z.array(
         z.looseObject({
             name: z.string(),
-            value: z.unknown().optional(),
+            value: z.json().optional(),
             source: z.string(),
             adaptable: z.boolean(),
             lines: z.array(z.number()),
@@ -161,7 +162,7 @@ export const RenderResponseSchema = z.looseObject({
     environment: z.looseObject({ match: z.string() }),
     syntax: z.looseObject({ status: z.string() }),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
-    decision_record: z.record(z.string(), z.unknown()),
+    decision_record: z.record(z.string(), z.json()),
 });
 export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
@@ -278,6 +279,19 @@ export type KnowledgeSnapshotMismatch = {
     readonly served: { readonly date: string; readonly digest: string };
 };
 
+/** The runtime shape of that answer, for the paths whose type says it cannot arrive. */
+const SnapshotMismatchAnswerSchema = z.looseObject({
+    match: z.literal("snapshot_mismatch"),
+    message: z.string(),
+});
+
+/** True when `call` answered a mismatch envelope on a route whose type says it cannot carry one. */
+function isSnapshotMismatchAnswer<S extends z.ZodType>(
+    answer: z.infer<S> | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch,
+): answer is KnowledgeSnapshotMismatch {
+    return SnapshotMismatchAnswerSchema.safeParse(answer).success;
+}
+
 /** The service refused the request and named the field or the slot and the permitted values. */
 export type KnowledgeRejected = {
     readonly match: "rejected";
@@ -342,8 +356,8 @@ export type HttpKnowledgeClientConfig = {
 /** The `message` of an error envelope, or the body itself when it is not one. */
 function messageOf(body: string): string | undefined {
     try {
-        const raw = parseJsonAs(body, z.unknown());
-        if (raw !== null && typeof raw === "object" && "message" in raw && typeof raw.message === "string") return raw.message;
+        const message = parseUnknownRecord(parseJsonAs(body, z.json()))?.["message"];
+        if (typeof message === "string") return message;
     } catch {
         // Not JSON: the body is the message.
     }
@@ -429,7 +443,7 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
     async function lookup<S extends z.ZodType>(path: string, schema: S, notFoundField: string): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected> {
         const answer = await call("GET", path, undefined, schema, notFoundField);
         // A GET without a body has no pin, thus a 409 is not among its answers; the guard keeps the type honest.
-        if (typeof answer === "object" && answer !== null && "match" in answer && answer.match === "snapshot_mismatch") {
+        if (isSnapshotMismatchAnswer(answer)) {
             return { match: "unavailable", reason: answer.message };
         }
         return answer;

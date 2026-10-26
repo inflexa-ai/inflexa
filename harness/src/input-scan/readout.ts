@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import { parseJsonAs } from "../lib/parse-json.js";
 import { isUnknownArray } from "../lib/unknown-array.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { collapseWhitespace, splitLines } from "../lib/text.js";
 import { presentAt, presentFirst } from "../lib/present.js";
 
@@ -80,7 +81,7 @@ async function decompressBounded(raw: Buffer, wrapper: string): Promise<Buffer |
         const chunks: Buffer[] = [];
         let total = 0;
         let settled = false;
-        const finish = () => {
+        const finish = (): void => {
             if (settled) return;
             settled = true;
             stream.removeAllListeners();
@@ -272,11 +273,13 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     if (isUnknownArray(whole)) {
         const first = whole[0];
         const fields: PrefixReadout["fields"] = { jsonType: "array", elementCount: whole.length };
-        if (isRecord(first)) fields.firstElementKeys = joinKeys(Object.keys(first));
+        const firstRecord = parseUnknownRecord(first);
+        if (firstRecord !== undefined) fields.firstElementKeys = joinKeys(Object.keys(firstRecord));
         return { fields };
     }
-    if (isRecord(whole)) {
-        const keys = Object.keys(whole);
+    const wholeRecord = parseUnknownRecord(whole);
+    if (wholeRecord !== undefined) {
+        const keys = Object.keys(wholeRecord);
         return { fields: { jsonType: "object", keyCount: keys.length, keys: joinKeys(keys) } };
     }
     if (whole !== undefined) return { fields: { jsonType: typeof whole } };
@@ -285,7 +288,7 @@ function jsonFields(text: string, lines: readonly string[]): PrefixReadout {
     const candidates = lines.slice(0, MAX_META_LINES);
     const parsed = candidates.map((line) => parseJson(line));
     const complete = parsed.filter((value) => value !== undefined);
-    const record = parsed.find(isRecord);
+    const record = parsed.reduce<Record<string, unknown> | undefined>((found, value) => found ?? parseUnknownRecord(value), undefined);
     if (record !== undefined && complete.length >= Math.max(1, candidates.length - 1)) {
         return { fields: { jsonType: "json-lines", recordsInPrefix: lines.length, keys: joinKeys(Object.keys(record)) } };
     }
@@ -331,14 +334,10 @@ function markdownFields(lines: readonly string[]): PrefixReadout {
 
 function parseJson(text: string): unknown {
     try {
-        return parseJsonAs(text, z.unknown());
+        return parseJsonAs(text, z.json());
     } catch {
         return undefined;
     }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function joinKeys(keys: readonly string[]): string {

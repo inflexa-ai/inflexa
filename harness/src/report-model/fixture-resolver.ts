@@ -53,7 +53,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
     // cell that no real artifact holds. Thus the refusal comes before the read of the rows.
     const valueFileType = artifact.fileType;
     if (fileTypeHoldsNoCell(valueFileType)) {
-        return fail(reference, "unreadable-artifact", `the ${valueFileType} at ${reference.path} holds no cell to read`);
+        return fail(reference, "unreadable-artifact", `the ${String(valueFileType)} at ${reference.path} holds no cell to read`);
     }
 
     // An artifact with no rows is pinned whole, thus it addresses no cell and every locator over it lands
@@ -122,7 +122,7 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
 
     const tableFileType = artifact.fileType;
     if (fileTypeHoldsNoCell(tableFileType)) {
-        return fail(reference, "unreadable-artifact", `the ${tableFileType} at ${reference.path} holds no cell to read`);
+        return fail(reference, "unreadable-artifact", `the ${String(tableFileType)} at ${reference.path} holds no cell to read`);
     }
 
     // The bound ranks the rows as the artifact holds them, thus a bound over a column that the subset

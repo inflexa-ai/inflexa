@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ArtifactValueReference } from "../../contracts/report-reference.js";
 import type { DraftDocument } from "../draft.js";
-import { finishDraft, type FinishGap } from "../draft-finish.js";
+import { finishDraft } from "../draft-finish.js";
 import type { ReportSnapshot } from "../reference-resolver.js";
 
 const OUTPUT_PATH = "runs/run-1/step-a/output/de.csv";
@@ -135,9 +135,7 @@ describe("finishDraft", () => {
         };
         const result = finishDraft(draft, snapshot);
         expect(result.valid).toBe(false);
-        const gaps = result.valid
-            ? []
-            : result.gaps.filter((gap): gap is Extract<FinishGap, { kind: "unresolved-reference" }> => gap.kind === "unresolved-reference");
+        const gaps = result.valid ? [] : result.gaps.flatMap((gap) => (gap.kind === "unresolved-reference" ? [gap] : []));
         expect(gaps.map((gap) => [gap.blockId, gap.slot, gap.failure.reason])).toEqual([
             ["km1", "track", "artifact-missing"],
             ["km1", "statistic:0", "artifact-missing"],
@@ -173,9 +171,7 @@ describe("finishDraft", () => {
             ],
         };
         const result = finishDraft(draft, snapshot);
-        const gaps = result.valid
-            ? []
-            : result.gaps.filter((gap): gap is Extract<FinishGap, { kind: "unresolved-reference" }> => gap.kind === "unresolved-reference");
+        const gaps = result.valid ? [] : result.gaps.flatMap((gap) => (gap.kind === "unresolved-reference" ? [gap] : []));
         expect(gaps.map((gap) => [gap.blockId, gap.slot, gap.failure.reason])).toEqual([["hm1", "tree:y", "artifact-missing"]]);
     });
 

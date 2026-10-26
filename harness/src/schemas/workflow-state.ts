@@ -189,7 +189,7 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("plan"), plan: AnalysisPlanSchema }),
     z.object({
         type: z.literal("json"),
-        data: z.record(z.string(), z.unknown()),
+        data: z.record(z.string(), z.json()),
         label: z.string().optional(),
     }),
     z.object({ type: z.literal("text"), text: z.string() }),
@@ -205,7 +205,7 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
  */
 export const SuspensionActionSchema = z.object({
     label: z.string(),
-    value: z.record(z.string(), z.unknown()),
+    value: z.record(z.string(), z.json()),
     variant: z.enum(["default", "outline", "destructive"]).optional(),
     icon: z.enum(["check", "x", "alert-circle"]).optional(),
 });

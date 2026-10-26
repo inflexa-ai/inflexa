@@ -10,6 +10,7 @@ const BOX_PATH_WIDTH = /^M0 [-\d.]+l([\d.]+) 0/;
  * gallery runs from the FAB subtype through the FLT3 status to the vital status.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
@@ -71,7 +72,7 @@ function nodeEntries(series: EchartOption): Array<[string, EchartOption]> {
     return optionList(series.data).map((node) => {
         const record = optionOf(node);
         const name = record.name;
-        if (typeof name !== "string") throw new Error(`a sankey node holds the name ${String(name)}`);
+        if (typeof name !== "string") throw new Error(`a sankey node holds the name ${textOf(name)}`);
         return [name, record];
     });
 }

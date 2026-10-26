@@ -11,6 +11,7 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { type Connectable, type DbError } from "../lib/db-result.js";
 import { presentFirst } from "../lib/present.js";
+import { errorNameOf } from "../lib/thrown.js";
 import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction.js";
@@ -348,7 +349,7 @@ async function runOpenTurn(
         fallbackText = finalText(run.messages.slice(prepared.history.length).filter((message) => compactionExchangeOf(message) === undefined));
     } catch (cause) {
         // A provider failure that races an abort stays a failure, thus both facts must hold.
-        const aborted = params.signal.aborted && cause instanceof Error && cause.name === "AbortError";
+        const aborted = params.signal.aborted && errorNameOf(cause) === "AbortError";
         outcome = aborted ? { status: "aborted" } : { status: "failed", reason: failureReasonOf(cause), cause };
     }
 

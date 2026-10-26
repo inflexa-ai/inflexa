@@ -46,7 +46,7 @@ export const PlanStepSchema = z.object({
 export const PresentationContentSchema = z.discriminatedUnion("kind", [
     z.object({
         kind: z.literal("echart"),
-        spec: z.record(z.string(), z.unknown()),
+        spec: z.record(z.string(), z.json()),
         // Analysis-rooted CSV path the host resolves to `dataset.source` at render time; optional
         // because a self-contained spec may embed its own data.
         dataPath: z.string().optional(),

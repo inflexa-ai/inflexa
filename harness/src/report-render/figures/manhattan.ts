@@ -28,6 +28,7 @@
  * draws each of them over the payload points.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, type ChartBlock, type ChartComposition } from "../../contracts/report-blocks.js";
@@ -348,7 +349,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
     // The composition splits the series in the order of the rows, thus each series takes the color of the
     // genome place of its chromosome, and never of its place in the series list.
     const places = new Map(found.map((chromosome, place) => [categoryName(chromosome.name), place]));
-    const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(String(name)) ?? 0) % MANHATTAN_COLORS.length] ?? CHART_PALETTE[0];
+    const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(textOf(name)) ?? 0) % MANHATTAN_COLORS.length] ?? CHART_PALETTE[0];
     const low = smallest(found.map((chromosome) => chromosome.low));
     const high = largest(found.map((chromosome) => chromosome.high));
     const top = niceCeiling(Math.max(peak, line, zeroRows.length > 0 ? zeroY : 0));

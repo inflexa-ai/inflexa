@@ -12,6 +12,8 @@
  * 4. All steps have resources defined
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
@@ -119,7 +121,7 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         } else if (err instanceof DependencyError) {
             errors.push(`Step "${err.stepId}" depends on "${err.missingDependency}" which does not exist in the plan`);
         } else {
-            errors.push(`Topological sort failed: ${err instanceof Error ? err.message : String(err)}`);
+            errors.push(`Topological sort failed: ${errorMessageOf(err) ?? textOf(err)}`);
         }
     }
 

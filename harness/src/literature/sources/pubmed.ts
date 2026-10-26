@@ -1,3 +1,4 @@
+import { textOf } from "../../lib/unknown-text.js";
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
@@ -148,7 +149,7 @@ function getAuthorsFromDocSum(items: unknown): string {
         .map((author) => author["#text"] ?? "")
         .filter(Boolean);
     if (names.length <= 3) return names.join(", ");
-    return `${names[0]} et al.`;
+    return `${String(names[0])} et al.`;
 }
 
 export function parseEsummary(xml: string): PubMedSummary[] {
@@ -158,7 +159,7 @@ export function parseEsummary(xml: string): PubMedSummary[] {
     return recordList(docSums).map((document) => {
         const publicationDate = getItemValue(document.Item, "PubDate");
         return {
-            pmid: String(document.Id ?? ""),
+            pmid: textOf(document.Id ?? ""),
             title: getItemValue(document.Item, "Title"),
             journal: getItemValue(document.Item, "FullJournalName") || getItemValue(document.Item, "Source"),
             year: publicationDate.slice(0, 4),
@@ -176,14 +177,14 @@ export function parseEfetch(xml: string): ArticleDetail[] {
         const citation = childRecord(entry, "MedlineCitation");
         const articleData = childRecord(citation, "Article");
         const pmidValue = citation?.PMID;
-        const pmid = isRecord(pmidValue) ? String(pmidValue["#text"] ?? "") : String(pmidValue ?? "");
+        const pmid = isRecord(pmidValue) ? textOf(pmidValue["#text"] ?? "") : textOf(pmidValue ?? "");
         const abstractValue = childRecord(articleData, "Abstract")?.AbstractText;
         const abstract = (abstractValue === undefined ? [] : Array.isArray(abstractValue) ? abstractValue : [abstractValue])
             .map((value) => {
                 if (typeof value === "string") return value;
                 if (!isRecord(value)) return String(value);
-                const text = String(value["#text"] ?? "");
-                return value["@_Label"] === undefined ? text : `${String(value["@_Label"])}: ${text}`;
+                const text = textOf(value["#text"] ?? "");
+                return value["@_Label"] === undefined ? text : `${textOf(value["@_Label"])}: ${text}`;
             })
             .join("\n\n");
         const authors = recordList(childRecord(articleData, "AuthorList")?.Author).map((author) => {
@@ -204,16 +205,16 @@ export function parseEfetch(xml: string): ArticleDetail[] {
             .map((heading) => {
                 const descriptor = heading.DescriptorName;
                 if (typeof descriptor === "string") return descriptor;
-                return isRecord(descriptor) ? String(descriptor["#text"] ?? "") : "";
+                return isRecord(descriptor) ? textOf(descriptor["#text"] ?? "") : "";
             })
             .filter(Boolean);
         return {
             pmid,
-            title: String(articleData?.ArticleTitle ?? ""),
+            title: textOf(articleData?.ArticleTitle ?? ""),
             abstract,
             authors,
-            journal: String(journalData?.Title ?? journalData?.ISOAbbreviation ?? ""),
-            year: String(publicationDate?.Year ?? ""),
+            journal: textOf(journalData?.Title ?? journalData?.ISOAbbreviation ?? ""),
+            year: textOf(publicationDate?.Year ?? ""),
             doi,
             meshTerms,
             pmcId: null,
@@ -236,7 +237,7 @@ function flattenTextContent(node: unknown): string {
     return Object.entries(node)
         .flatMap(([key, value]) => {
             if (key.startsWith("@_") || key === "fig" || key === "table-wrap" || key === "supplementary-material") return [];
-            if (key === "#text") return [String(value)];
+            if (key === "#text") return [textOf(value)];
             return Array.isArray(value) ? value.map(flattenTextContent) : [flattenTextContent(value)];
         })
         .filter(Boolean)

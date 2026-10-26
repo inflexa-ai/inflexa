@@ -6,6 +6,8 @@
  * workflow function to keep the assertion surface focused.
  */
 
+import { errorOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -220,24 +222,24 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
     const query = (q: { text: string; values?: unknown[] }) => {
         const values = q.values ?? [];
         if (q.text.includes("SELECT plan FROM cortex_plans")) {
-            const plan = plans.get(String(values[0]));
+            const plan = plans.get(textOf(values[0]));
             return Promise.resolve({ rows: plan === undefined ? [] : [{ plan }], rowCount: plan === undefined ? 0 : 1 });
         }
         if (q.text.includes("INSERT INTO cortex_plans")) {
-            const planId = String(values[0]);
-            if (!plans.has(planId)) plans.set(planId, parseJsonAs(String(values[2]), z.unknown()));
+            const planId = textOf(values[0]);
+            if (!plans.has(planId)) plans.set(planId, parseJsonAs(textOf(values[2]), z.json()));
             return Promise.resolve({ rows: [], rowCount: 1 });
         }
         if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {
-            const runId = String(values[0]);
+            const runId = textOf(values[0]);
             if (runs.has(runId)) return Promise.resolve({ rows: [], rowCount: 0 });
             const row = {
                 run_id: runId,
-                analysis_id: String(values[1]),
+                analysis_id: textOf(values[1]),
                 thread_id: values[2] ?? null,
-                workflow_name: String(values[3]),
+                workflow_name: textOf(values[3]),
                 status: "running",
-                started_at: String(values[4]),
+                started_at: textOf(values[4]),
                 completed_at: null,
                 error: null,
                 synthesis_status: null,
@@ -251,7 +253,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
             return Promise.resolve({ rows: [{ run_id: runId }], rowCount: 1 });
         }
         if (q.text.includes("FROM cortex_runs") && q.text.includes("WHERE run_id = $1")) {
-            const row = runs.get(String(values[0]));
+            const row = runs.get(textOf(values[0]));
             return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
         }
         if (q.text.includes("UPDATE cortex_runs")) return Promise.resolve({ rows: [], rowCount: 1 });
@@ -1178,6 +1180,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
 function interceptingPool(pool: Pool, intercept: (text: string) => Error | undefined | Promise<Error | undefined>): Querier & Connectable {
     const guarded =
         (query: Querier["query"]) =>
+        // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- R mirrors the caller-bound Querier.query shape this double wraps; callers bind the row type.
         async <R extends QueryResultRow>(textOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: R[]; rowCount: number | null }> => {
             const error = await intercept(typeof textOrConfig === "string" ? textOrConfig : textOrConfig.text);
             if (error) throw error;
@@ -1564,8 +1567,9 @@ describe("the launch of a stored plan, over a real database", () => {
             )._unsafeUnwrapErr();
 
             expect(refusal.type).toBe("launch_failed");
-            if (!("cause" in refusal) || !(refusal.cause instanceof Error)) throw new Error("launch_failed carries an Error cause");
-            expect(refusal.cause.message).toBe("launch boom");
+            const launchCause = "cause" in refusal ? errorOf(refusal.cause) : undefined;
+            if (launchCause === undefined) throw new Error("launch_failed carries an Error cause");
+            expect(launchCause.message).toBe("launch boom");
             expect(revokes).toEqual(["workflow-start-failed"]);
             expect(await runRows()).toMatchObject([{ status: "failed", error: "workflow start failed" }]);
         });
@@ -1802,8 +1806,9 @@ describe("the launch of a stored plan, over a real database", () => {
                 .run()
                 .catch((error: unknown) => error);
 
-            if (!(failure instanceof Error)) throw new Error("the call fails with an Error");
-            expect(failure.cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
+            const failureError = errorOf(failure);
+            if (failureError === undefined) throw new Error("the call fails with an Error");
+            expect(failureError.cause).toMatchObject({ type: "query_failed", op: "plans.loadPlan" });
         });
 
         it("runs a plan again after its run ended", async () => {

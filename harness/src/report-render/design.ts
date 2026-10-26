@@ -1566,7 +1566,43 @@ export const CHART_INLINE_OPTION_BOUND = 100_000;
  * style. The text size scales the text alone: the page, the print export, and the slide export each register
  * one theme.
  */
-export function chartTheme(textPx: number) {
+type ChartAxisTheme = {
+    axisLine: { show: boolean; lineStyle: { color: string; width: number } };
+    axisTick: { show: boolean; inside: boolean; lineStyle: { color: string; width: number } };
+    axisLabel: { color: string; fontSize: number };
+    splitLine: { show: boolean };
+    nameTextStyle: { color: string; fontSize: number };
+};
+
+type ChartTheme = {
+    color: string[];
+    backgroundColor: string;
+    textStyle: { fontFamily: string; fontSize: number; color: string };
+    title: { show: boolean };
+    legend: {
+        bottom: number;
+        borderWidth: number;
+        textStyle: { fontFamily: string; fontSize: number; color: string };
+        itemGap: number;
+        itemWidth: number;
+        itemHeight: number;
+    };
+    grid: { left: number; right: number; top: number; bottom: number; containLabel: boolean };
+    tooltip: { backgroundColor: string; borderColor: string; textStyle: { color: string; fontSize: number }; extraCssText: string };
+    categoryAxis: ChartAxisTheme;
+    valueAxis: ChartAxisTheme;
+    logAxis: ChartAxisTheme;
+    timeAxis: ChartAxisTheme;
+    visualMap: { textStyle: { fontFamily: string; fontSize: number; color: string } };
+    radar: {
+        axisName: { color: string; fontSize: number };
+        axisLine: { lineStyle: { color: string } };
+        splitLine: { lineStyle: { color: string } };
+        splitArea: { show: boolean };
+    };
+};
+
+export function chartTheme(textPx: number): ChartTheme {
     const axis = {
         axisLine: { show: true, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },
         axisTick: { show: true, inside: false, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },

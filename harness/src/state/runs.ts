@@ -142,7 +142,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
         return (result.rowCount ?? 0) > 0;
     }).andThen((inserted) =>
         tryQuery("runs.reserveRunById.reload", async () => {
-            const result = await pool.query<Record<string, unknown>>({
+            const result = await pool.query({
                 text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                        status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                        mandate_jti, mandate_expires_at, plan_id
@@ -173,7 +173,7 @@ function isPartialUniqueViolation(err: unknown): boolean {
  */
 export function queryActiveRun(pool: Querier, analysisId: string, planId: string | null): ResultAsync<CortexRunRow | null, DbError> {
     return tryQuery("runs.queryActiveRun", async () => {
-        const result = await pool.query<Record<string, unknown>>({
+        const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -398,7 +398,7 @@ export function countRunsByAnalysis(pool: Querier, analysisId: string, { q }: Ru
               ${text}`,
             values,
         });
-        return Number(result.rows[0]?.total ?? 0);
+        return result.rows[0]?.total ?? 0;
     });
 }
 
@@ -448,14 +448,14 @@ export function queryNewestPlanRun(
  */
 export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string, limit = 20): ResultAsync<RunPage, DbError> {
     return tryQuery("runs.queryNonTerminalRunsByAnalysis", async () => {
-        const countResult = await pool.query<Record<string, unknown>>({
+        const countResult = await pool.query({
             text: `SELECT COUNT(*)::int AS total
             FROM cortex_runs
             WHERE analysis_id = $1
               AND status = 'running'`,
             values: [analysisId],
         });
-        const rowsResult = await pool.query<Record<string, unknown>>({
+        const rowsResult = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id
@@ -582,7 +582,7 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
     let parts: unknown = row.parts;
     if (typeof parts === "string") {
         try {
-            parts = parseJsonAs(parts, z.unknown());
+            parts = parseJsonAs(parts, z.json());
         } catch {
             parts = null;
         }

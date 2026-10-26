@@ -58,6 +58,7 @@ function isBlankLine(line: string): boolean {
  * One typed list as list markup. The flag selects the element: an ordered list numbers its items, and an
  * unordered one bullets them. Each item is one inline line, thus no item holds a list of its own.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function TextListView({ list, mark }: { list: TextList; mark: Record<string, string> }) {
     const items = list.items.map((item) => <li class="report-list-item">{item}</li>);
     return list.ordered ? (
@@ -83,6 +84,7 @@ export function renderText(block: TextBlock): string {
     const list = block.content.list;
     const mark = blockMark(block.id);
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <>
             {paragraphs.map((paragraph) => (
                 <p class={PARAGRAPH_CLASS} {...mark}>
@@ -127,6 +129,7 @@ export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger, view: Vi
             </>
         );
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         view.lineage ? (
             <div {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, block.bindings)}>
                 {body}
@@ -151,6 +154,7 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
     const level = Math.min(depth + 2, 4);
     const Heading = level === 2 ? "h2" : level === 3 ? "h3" : "h4";
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <section id={section.id} class="report-section" {...blockMark(section.id)}>
             <Heading class={headingClass(level)}>{section.title}</Heading>
             {raw(childrenHtml)}
@@ -165,6 +169,7 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
  */
 export function renderNav(topSections: SectionBlock[]): string {
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <aside id="report-sidebar" class="report-nav" aria-label="Report navigation">
             <div class="report-nav-brand">
                 <a class="report-nav-brand-name" href={BRAND_HREF}>

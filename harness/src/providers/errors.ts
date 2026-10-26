@@ -18,6 +18,8 @@
  * different kind.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { redactSecrets } from "../input-sanitization.js";
 import { collapseWhitespace } from "../lib/text.js";
 
@@ -144,7 +146,7 @@ export function toProviderError(e: unknown, workload: string, suspendOn: Suspend
         };
     }
     const classified = classifyProviderError(e, suspendOn);
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = errorMessageOf(e) ?? textOf(e);
     if (classified.kind === "auth") {
         return {
             type: "auth",
@@ -215,7 +217,7 @@ function excerptResponseBody(body: string): string {
     const singleLine = collapseWhitespace(redactSecrets(body));
     // Slice by CODE POINT, not UTF-16 unit: a raw byte body can carry astral characters, and a plain
     // `.slice` could bisect a surrogate pair into a lone half that renders as U+FFFD.
-    const chars = [...singleLine];
+    const chars = Array.from(singleLine);
     return chars.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? chars.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1).join("") + "…" : singleLine;
 }
 
@@ -271,8 +273,12 @@ const CONNECTION_ERROR_PHRASES = [
  */
 function findInCauseChain<T>(err: unknown, probe: (link: object) => T | undefined): T | undefined {
     let cursor: unknown = err;
-    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        if (typeof cursor !== "object") return undefined;
+    for (let i = 0; i < MAX_CAUSE_HOPS; i++) {
+        // A link of a cause chain is whatever a `throw` carried — most links are Error
+        // instances, whose own fields a record schema cannot reach — so the gate is the
+        // hand object check (a null-prototype thrown value fails `instanceof Object`),
+        // and each probe narrows the fields it reads.
+        if (cursor === null || typeof cursor !== "object") return undefined;
         const found = probe(cursor);
         if (found !== undefined) return found;
         cursor = "cause" in cursor ? cursor.cause : undefined;

@@ -96,7 +96,7 @@ async function collectMetrics(): Promise<MetricData[]> {
 /** The histogram sum of the first data point, or a failed test when the point is not a histogram. */
 function sumOf(point: MetricData["dataPoints"][number]): number {
     const value = point.value;
-    if (typeof value !== "object" || !("sum" in value) || typeof value.sum !== "number") {
+    if (typeof value === "number" || !("sum" in value) || typeof value.sum !== "number") {
         throw new Error("expected a histogram data point with a numeric sum");
     }
     return value.sum;

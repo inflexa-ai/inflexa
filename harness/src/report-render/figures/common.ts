@@ -18,6 +18,7 @@
  * Each helper gives plain data, because the option rides to the page as inline JSON.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChannelOrder, type ChartEncoding, type ChartTransform } from "../../contracts/report-blocks.js";
@@ -76,7 +77,7 @@ export function toNumber(cell: unknown): number | null {
  * value stays in the data rows, thus the provenance loses nothing.
  */
 export function categoryName(value: unknown): string {
-    return String(value).replaceAll("_", " ");
+    return textOf(value).replaceAll("_", " ");
 }
 
 /**
@@ -183,7 +184,7 @@ export function orderCategories<T>(
                 ),
             );
         }
-        const held = keys.get(String(category));
+        const held = keys.get(textOf(category));
         if (held === undefined) {
             keys.set(String(category), key);
         } else if (compareCell(held, key) !== 0) {
@@ -198,7 +199,7 @@ export function orderCategories<T>(
     const direction = order.order === "desc" ? -1 : 1;
     return ok(
         categories
-            .map((category, place) => ({ category, place, key: keys.get(String(category)) ?? "" }))
+            .map((category, place) => ({ category, place, key: keys.get(textOf(category)) ?? "" }))
             .sort((a, b) => direction * compareCell(a.key, b.key) || a.place - b.place)
             .map((entry) => entry.category),
     );
@@ -756,7 +757,10 @@ export function legendIconOf(series: EchartOption): string {
 function seriesOf(option: EchartOption): EchartOption[] {
     const series = option.series;
     if (!Array.isArray(series)) return [];
-    return series.filter((entry): entry is EchartOption => typeof entry === "object" && entry !== null);
+    return series.flatMap((entry) => {
+        const record = parseUnknownRecord(entry);
+        return record === undefined ? [] : [record];
+    });
 }
 
 /**

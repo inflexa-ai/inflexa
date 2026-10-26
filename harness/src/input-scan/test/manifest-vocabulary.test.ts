@@ -15,6 +15,7 @@ import { buildSetMenu } from "../menu.js";
 import { buildManifest } from "../scan.js";
 import type { InputScanManifest, ScannedFile } from "../types.js";
 import { presentAt } from "../../lib/present.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 function file(path: string): ScannedFile {
     return { path, size: 10, extensions: ["vcf", "gz"], format: "vcf", wrapper: "bgzip" };
@@ -29,11 +30,11 @@ function keysDeep(value: unknown, out: Set<string> = new Set()): Set<string> {
         for (const item of value) keysDeep(item, out);
         return out;
     }
-    if (value && typeof value === "object") {
-        for (const [key, child] of Object.entries(value)) {
-            out.add(key);
-            keysDeep(child, out);
-        }
+    const record = parseUnknownRecord(value);
+    if (record === undefined) return out;
+    for (const [key, child] of Object.entries(record)) {
+        out.add(key);
+        keysDeep(child, out);
     }
     return out;
 }

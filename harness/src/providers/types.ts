@@ -6,16 +6,16 @@
  * attribution is resolved lazily at the provider wire boundary.
  */
 
-import type { FinishReason, LanguageModel, ModelMessage, SystemModelMessage, ToolSet } from "ai";
+import type { FinishReason, ModelMessage, SystemModelMessage, ToolSet } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ResultAsync } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
 import type { TokenUsageField } from "../contracts/usage.js";
 import type { ProviderError } from "./errors.js";
 
-export type { FinishReason, LanguageModel, ModelMessage, ProviderOptions, ToolSet };
+export type { FinishReason, LanguageModel, ModelMessage, ToolSet } from "ai";
+export type { ProviderOptions } from "@ai-sdk/provider-utils";
 
 export type ProviderCapabilities = {
     readonly toolCalling: boolean;
@@ -137,7 +137,7 @@ export type ChatUsage = {
 // the two sits on this side of the boundary. Key-set equality in both
 // directions: a count added here with no home on the wire is as much a drift as
 // one added there and never reported.
-type _AssertChatUsageFields = Exclude<keyof ChatUsage, TokenUsageField> | Exclude<TokenUsageField, keyof ChatUsage> extends never ? true : never;
+type _AssertChatUsageFields = [Exclude<keyof ChatUsage, TokenUsageField>, Exclude<TokenUsageField, keyof ChatUsage>] extends [never, never] ? true : never;
 const _assertChatUsageFields: _AssertChatUsageFields = true;
 
 export type ChatResponse = {

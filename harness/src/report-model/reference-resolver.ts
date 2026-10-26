@@ -257,7 +257,7 @@ export function applyRowBound(rows: Array<Record<string, string | number>>, boun
 
     // A row with no rank stays behind every ranked row, and the direction never lifts it. The two lists
     // keep their source order, thus the tail is as stable as the head.
-    const rankable = ranked.filter((entry): entry is RankableRow => !holdsNoRank(entry, numeric));
+    const rankable = ranked.flatMap(({ cell, ...rest }) => (cell !== undefined && !(numeric && rest.value === undefined) ? [{ ...rest, cell }] : []));
     const unrankable = ranked.filter((entry) => holdsNoRank(entry, numeric));
 
     const sorted = [...rankable].sort((left, right) => {

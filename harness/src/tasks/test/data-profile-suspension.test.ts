@@ -4,6 +4,7 @@
  * of its usage records (llm-usage-accounting spec).
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -134,7 +135,7 @@ describe("the data profile — a refused spawn", () => {
 
         const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
         expect(failed).toHaveLength(1);
-        expect(String(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
+        expect(textOf(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
         expect(revoked).toEqual(["data-profile-failed"]);
         expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(false);
     });

@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { textOf } from "../../lib/unknown-text.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -146,7 +147,7 @@ describe("generateFileMetadata", () => {
         expect(JSON.stringify(first.messages.slice(0, TRANSCRIPT.length))).toBe(JSON.stringify(TRANSCRIPT));
         expect(out.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
         expect(isSyntheticUserMessage(presentAt(out.messages, 0))).toBe(true);
-        expect(String(presentAt(out.messages, 0).content)).toContain("- b.csv");
+        expect(textOf(presentAt(out.messages, 0).content)).toContain("- b.csv");
     });
 
     it("matches descriptions to files by PATH, not array position", async () => {

@@ -131,7 +131,7 @@ export function updateStepExecution(pool: Querier, runId: string, stepId: string
     // position-wise via the `values` array length.
     const sets: string[] = [];
     const values: (string | number | boolean | null)[] = [];
-    const push = (col: string, val: string | number | boolean | null) => {
+    const push = (col: string, val: string | number | boolean | null): void => {
         values.push(val);
         sets.push(`${col} = $${values.length}`);
     };

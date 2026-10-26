@@ -65,7 +65,7 @@ export type ReadableBlock = AuthoringAtomBlock | ShallowSection;
  * were the whole one.
  */
 function clip(text: string): string {
-    const points = [...text];
+    const points = Array.from(text);
     if (points.length <= PROSE_CLIP) {
         return text;
     }

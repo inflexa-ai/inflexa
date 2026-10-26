@@ -9,6 +9,7 @@
  * true context limit.
  */
 
+import { textOf } from "../lib/unknown-text.js";
 import type { ModelMessage } from "ai";
 import { getEncoding, type Tiktoken } from "js-tiktoken";
 
@@ -68,9 +69,9 @@ function tokenizableText(block: unknown): string {
         case "image":
             return "";
         case "tool-call":
-            return `${String(part.toolName ?? "")} ${JSON.stringify(part.input ?? {})}`;
+            return `${textOf(part.toolName ?? "")} ${JSON.stringify(part.input ?? {})}`;
         case "tool-result": {
-            return `${String(part.toolName ?? "")} ${toolResultText(part.output)}`;
+            return `${textOf(part.toolName ?? "")} ${toolResultText(part.output)}`;
         }
         default:
             return JSON.stringify(part);

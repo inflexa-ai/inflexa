@@ -170,7 +170,7 @@ function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRe
                 release: () => {
                     released.push(options.browserUrl);
                     if (options.hangRelease === true) {
-                        return neverSettles<void>();
+                        return neverSettles<never>();
                     }
                     return options.failRelease !== undefined ? Promise.reject(options.failRelease) : Promise.resolve();
                 },
@@ -526,8 +526,8 @@ describe("the block look", () => {
     it("names the block in the call detail, and the page when the input names none", () => {
         const tool = createExaminePageTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => Promise.resolve("/unused"), chrome: {} });
 
-        expect(tool.describeCall).toBeDefined();
-        const describeCall = tool.describeCall;
+        expect(tool.describeCall?.bind(tool)).toBeDefined();
+        const describeCall = tool.describeCall?.bind(tool);
         if (describeCall === undefined) throw new Error("the tool declares no call detail");
         expect(describeCall({ blockId: "sec-results" })).toBe("look at sec-results");
         expect(describeCall({})).toBe("look at the page");
@@ -736,8 +736,8 @@ describe("the transport precedence", () => {
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string | undefined {
-        expect(tool.describeResult).toBeDefined();
-        const describeResult = tool.describeResult;
+        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        const describeResult = tool.describeResult?.bind(tool);
         if (describeResult === undefined) throw new Error("the tool declares no result detail");
         return describeResult({}, result);
     }

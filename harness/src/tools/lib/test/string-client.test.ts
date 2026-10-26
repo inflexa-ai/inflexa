@@ -41,7 +41,7 @@ describe("the STRING enrichment twin", () => {
         // The `/api/json` renderer sends an array on every row. The twin holds
         // the string form, thus the reject assertion above guards the schema
         // against a widening back onto a union.
-        const drift = z.array(z.object({ preferredNames: z.unknown() }).passthrough()).parse(readFixture("string", "enrichment_gabaa.drift.json"));
+        const drift = z.array(z.looseObject({ preferredNames: z.json() })).parse(readFixture("string", "enrichment_gabaa.drift.json"));
 
         expect(typeof presentAt(drift, 0).preferredNames).toBe("string");
     });

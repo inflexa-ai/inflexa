@@ -29,68 +29,64 @@ import type { FarmLocation, FarmSource } from "./types.js";
 export const FARM_LOCK_FILE = "inflexa.lock";
 
 /** One linked distribution. `requested` obeys the PEP 376 meaning: true for a direct ask, false for a transitive dependency. */
-export const FarmLockPackageSchema = z
-    .object({
-        name: z.string(),
-        version: z.string(),
-        /** The link subtree of the package (for example `python`, `cran`, `bioconductor`). */
-        track: z.string(),
-        store_dir: z.string(),
-        /** The full sha256 of the sorted store tree. */
-        hash: z.string(),
-        requested: z.boolean(),
-    })
-    .passthrough();
+export const FarmLockPackageSchema = z.looseObject({
+    name: z.string(),
+    version: z.string(),
+    /** The link subtree of the package (for example `python`, `cran`, `bioconductor`). */
+    track: z.string(),
+    store_dir: z.string(),
+    /** The full sha256 of the sorted store tree. */
+    hash: z.string(),
+    requested: z.boolean(),
+});
+
+/**
+ * Whatever `JSON.parse` yields: a JSON value, plus Infinity — an over-large
+ * literal such as `1e999` reads as Infinity, which `z.json()` refuses.
+ * `JSON.parse` output never holds `undefined`, so the check is exact for that feed.
+ */
+const ParsedJsonValue = z.custom<unknown>((value) => value !== undefined);
 
 /**
  * `inflexa.lock` at schema version 1. Additive fields pass through — a
  * breaking change to the shape must move the schema number instead.
  */
-export const FarmLockSchema = z
-    .object({
-        schema: z.literal(1),
-        arch: z.enum(["amd64", "arm64"]),
-        packages: z.array(FarmLockPackageSchema),
-        /** Per-language provenance. Each language object owns its own fields. */
-        languages: z
-            .object({
-                python: z.object({ version: z.string(), index: z.string() }).passthrough().optional(),
-                r: z
-                    .object({
-                        version: z.string(),
-                        bioc_releases: z.array(z.string()),
-                        /** The embedded pak lock of the build, verbatim. */
-                        pak_lock: z.unknown().optional(),
-                    })
-                    .passthrough()
-                    .optional(),
+export const FarmLockSchema = z.looseObject({
+    schema: z.literal(1),
+    arch: z.enum(["amd64", "arm64"]),
+    packages: z.array(FarmLockPackageSchema),
+    /** Per-language provenance. Each language object owns its own fields. */
+    languages: z.looseObject({
+        python: z.looseObject({ version: z.string(), index: z.string() }).optional(),
+        r: z
+            .looseObject({
+                version: z.string(),
+                bioc_releases: z.array(z.string()),
+                /** The embedded pak lock of the build, verbatim. */
+                pak_lock: ParsedJsonValue.optional(),
             })
-            .passthrough(),
-        /** The warm replay record. Present in the catalog farm only. */
-        warm: z
-            .record(
-                z.string(),
-                z
-                    .object({
-                        script_sha256: z.string(),
-                        cache_entries: z.array(z.string()),
-                    })
-                    .passthrough(),
-            )
             .optional(),
-        /** The top-level entries that the link merge kept-first or skipped. */
-        merge_conflicts: z
-            .array(
-                z
-                    .object({
-                        entry: z.string(),
-                        action: z.enum(["kept-first", "skipped"]),
-                    })
-                    .passthrough(),
-            )
-            .optional(),
-    })
-    .passthrough();
+    }),
+    /** The warm replay record. Present in the catalog farm only. */
+    warm: z
+        .record(
+            z.string(),
+            z.looseObject({
+                script_sha256: z.string(),
+                cache_entries: z.array(z.string()),
+            }),
+        )
+        .optional(),
+    /** The top-level entries that the link merge kept-first or skipped. */
+    merge_conflicts: z
+        .array(
+            z.looseObject({
+                entry: z.string(),
+                action: z.enum(["kept-first", "skipped"]),
+            }),
+        )
+        .optional(),
+});
 export type FarmLock = z.infer<typeof FarmLockSchema>;
 
 export type FarmLockError =

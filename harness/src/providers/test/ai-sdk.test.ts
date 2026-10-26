@@ -1,6 +1,9 @@
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the unpadded base64url digest of the session key, whose shape is a pattern
 const BASE64URL_DIGEST_43 = /^[A-Za-z0-9_-]{43}$/;
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe, expect, it } from "bun:test";
@@ -308,7 +311,7 @@ describe("createAiSdkProvider", () => {
             const result = await provider.chat(request, makeSession(), signal);
             throw new Error(`expected abort to be rethrown, got a ${result.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
             expect(err.name).toBe("AbortError");
         }
     });
@@ -494,7 +497,7 @@ describe("usage reporting", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
         expect(done.response.usage).toEqual({
             inputTokens: 2000,
             outputTokens: 42,
@@ -603,7 +606,7 @@ describe("usage reporting", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
         expect(done.response.usage?.reasoningTokens).toBe(40);
     });
 });
@@ -842,6 +845,14 @@ describe("computeRetryDelayMs", () => {
         const wrapped = new Error("rewrapped by the SDK", { cause: apiError503({ "retry-after-ms": "1200" }) });
         expect(computeRetryDelayMs(wrapped, 8_000, () => 0.1)).toBe(1_200);
     });
+
+    it("reads the retry-after header through a null-prototype wrapper", () => {
+        // A proxy can rethrow the SDK error inside a bare object with no prototype; the
+        // one-hop walk must still reach the APICallError on its cause.
+        const wrapper: Record<string, unknown> = { cause: apiError503({ "retry-after-ms": "1200" }) };
+        Object.setPrototypeOf(wrapper, null);
+        expect(computeRetryDelayMs(wrapper, 8_000, () => 0.1)).toBe(1_200);
+    });
 });
 
 describe("createAiSdkProvider chat retry", () => {
@@ -1004,7 +1015,7 @@ describe("createAiSdkProvider abort during backoff", () => {
             const outcome = await pending;
             throw new Error(`expected the abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
             expect(err.name).toBe("AbortError");
         }
 
@@ -1032,7 +1043,7 @@ describe("createAiSdkProvider abort during backoff", () => {
             const outcome = await provider.chat(request, makeSession(), controller.signal);
             throw new Error(`expected the expiry to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
             expect(err.name).toBe("TimeoutError");
         }
 
@@ -1439,7 +1450,7 @@ describe("model identity", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBe("fake-model-20260101");
     });
@@ -1456,7 +1467,7 @@ describe("model identity", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBeUndefined();
     });
@@ -1483,7 +1494,7 @@ describe("model identity", () => {
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
 
         const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
         expect(done.response.requestedModelId).toBe("fake-model");
         expect(done.response.servedModelId).toBe("fake-model-20260101");
     });
@@ -1535,6 +1546,25 @@ describe("stream error parts", () => {
             expect(result.error.message).toContain("Overloaded");
         }
     });
+
+    it("reads a null-prototype stream error part the same way", async () => {
+        // A proxied payload can arrive as a bare object with no prototype; the part
+        // gate must still read its fields.
+        const part: Record<string, unknown> = { type: "overloaded_error", message: "Overloaded" };
+        Object.setPrototypeOf(part, null);
+        const provider = createAiSdkProvider({
+            model: fakeModel(() => Promise.resolve(okResult("unused")), erroringStream(part)),
+            maxRetries: 0,
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.retryable).toBe(true);
+            expect(result.error.message).toContain("Overloaded");
+        }
+    });
 });
 
 describe("failure logging", () => {
@@ -1549,7 +1579,7 @@ describe("failure logging", () => {
             },
             with: () => logger,
             named: () => logger,
-            errorFields: (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+            errorFields: (err) => ({ error: errorMessageOf(err) ?? textOf(err) }),
         };
         return { logger, errors };
     }
@@ -1578,6 +1608,7 @@ describe("failure logging", () => {
         const provider = createAiSdkProvider({
             model: fakeModel(() => {
                 controller.abort();
+                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the abort reason rides as-is; the awaiter classifies the abort by its name.
                 return Promise.reject(controller.signal.reason);
             }),
             maxRetries: 0,
@@ -1735,7 +1766,7 @@ describe("a reply that a fallback model served", () => {
 
     const partTypesOf = (content: unknown): string[] => {
         if (!isUnknownArray(content)) return [];
-        return content.map((part) => (typeof part === "object" && part !== null && "type" in part ? String(part.type) : ""));
+        return content.map((part) => textOf(parseUnknownRecord(part)?.type));
     };
 
     it("drops the thinking of the turn, keeps every other part, and names the model that answered", async () => {

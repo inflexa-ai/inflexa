@@ -79,6 +79,6 @@ describe("GithubReposResponseSchema", () => {
         const output = await searchOver("01-new-repos-nodesc.drift.json");
 
         expect(output.success).toBe(false);
-        expect(output.success === false ? output.error : "").toContain("did not match the expected schema");
+        expect(!output.success ? output.error : "").toContain("did not match the expected schema");
     });
 });

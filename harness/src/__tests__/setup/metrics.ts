@@ -9,6 +9,7 @@ import { type Attributes, metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
 import { __resetMetricsForTest } from "../../lib/metrics.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 export type MetricsCapture = {
     /** `[attributes, value]` of each data point of a counter; `[]` when the instrument exported nothing. */
@@ -45,9 +46,9 @@ export function captureMetrics(): MetricsCapture {
         async histograms(name) {
             const metric = await find(name);
             return (metric?.dataPoints ?? []).flatMap((dp) => {
-                const pointValue: unknown = dp.value;
-                if (typeof pointValue !== "object" || pointValue === null || !("count" in pointValue) || !("sum" in pointValue)) return [];
-                const { count, sum } = pointValue;
+                const point = parseUnknownRecord(dp.value);
+                if (point === undefined) return [];
+                const { count, sum } = point;
                 if (typeof count !== "number") return [];
                 return [[dp.attributes, { count, sum: typeof sum === "number" ? sum : undefined }] as const];
             });

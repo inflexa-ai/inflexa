@@ -8,6 +8,8 @@
  * takes no lock on a Cortex table.
  */
 
+import { errorOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Migrator, type Migration } from "kysely/migration";
 import type { Pool } from "pg";
@@ -52,7 +54,7 @@ export async function initCortexState(pool: Querier & Pick<Pool, "connect" | "op
             if (result.status === "Success") logger.info("migration applied", { migration: result.migrationName });
         }
         if (error !== undefined) {
-            throw error instanceof Error ? error : new Error(`cortex state migration failed: ${String(error)}`);
+            throw errorOf(error) ?? new Error(`cortex state migration failed: ${textOf(error)}`);
         }
     } finally {
         await db.destroy();

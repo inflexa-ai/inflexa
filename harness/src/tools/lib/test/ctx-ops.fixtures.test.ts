@@ -147,7 +147,7 @@ runFixtureSuite("CompTox golden fixtures", [
 
 describe("the CompTox oracles and the corrected fields", () => {
     const OpenApiExcerptSchema = z.object({
-        components: z.object({ schemas: z.record(z.string(), z.object({ properties: z.record(z.string(), z.unknown()) })) }),
+        components: z.object({ schemas: z.record(z.string(), z.object({ properties: z.record(z.string(), z.json()) })) }),
     });
 
     function oracleSchemas(domain: string): Record<string, { properties: Record<string, unknown> }> {
@@ -177,7 +177,7 @@ describe("the CompTox oracles and the corrected fields", () => {
         const props = Object.keys(presentGet(oracleSchemas("chemical"), "ChemicalDetailStandard", "the ChemicalDetailStandard schema").properties);
         expect(props).toContain("monoisotopicMass");
         expect(props).not.toContain("averageMass");
-        const detail = z.record(z.string(), z.unknown()).parse(readFixture("comptox", "chemical-detail.json"));
+        const detail = z.record(z.string(), z.json()).parse(readFixture("comptox", "chemical-detail.json"));
         expect("averageMass" in detail).toBe(false);
     });
 

@@ -7,6 +7,8 @@
  * database to this schema, and the migrator records it.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { CompiledQuery, sql } from "kysely";
 import type { Migration } from "kysely/migration";
 import { backfillAiSdkMessageEnvelopes } from "../../memory/message-backfill.js";
@@ -643,7 +645,7 @@ export function baseline(logger: Logger): Migration {
             try {
                 await sql.raw("CREATE EXTENSION IF NOT EXISTS vector").execute(db);
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
+                const msg = errorMessageOf(err) ?? textOf(err);
                 throw new Error(
                     `Cortex requires the pgvector extension. ` +
                         `CREATE EXTENSION IF NOT EXISTS vector failed: ${msg}. ` +

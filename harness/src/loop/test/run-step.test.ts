@@ -26,7 +26,7 @@ let originalRunStep: unknown;
 
 async function stubRunStep() {
     const dbos = await import("@dbos-inc/dbos-sdk");
-    originalRunStep ??= dbos.DBOS.runStep;
+    originalRunStep ??= dbos.DBOS.runStep.bind(dbos.DBOS);
     const stub = mock(async (fn: () => Promise<unknown>, _config?: { name?: string }) => fn());
     Reflect.set(dbos.DBOS, "runStep", stub);
     return stub;

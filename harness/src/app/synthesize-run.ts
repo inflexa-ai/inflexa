@@ -15,6 +15,8 @@
  * a `skipped` phase.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
@@ -181,7 +183,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             synthesisReason: null,
         };
     } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorMessageOf(err) ?? textOf(err);
         await onProgress("failed", "Synthesis could not be completed — step summaries are still available", { error: msg });
         // A genuine synthesis failure must fail the run loudly (D10): re-throw so
         // the synthesis step errors and the parent workflow goes to ERROR. The

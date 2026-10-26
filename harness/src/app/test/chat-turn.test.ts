@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { textOf } from "../../lib/unknown-text.js";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { err, errAsync, ok, okAsync } from "neverthrow";
@@ -26,6 +27,7 @@ import { deriveThreadTitle } from "../../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../../memory/working-memory.js";
 import { presentAt, presentFind, presentFirst, presentLast } from "../../lib/present.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ProviderError } from "../../providers/errors.js";
 import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../../prompts/compaction.js";
@@ -44,7 +46,7 @@ import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } fr
 /** The tool-result parts of a stored tool message, or a failed test on any other message. */
 function toolResultParts(message: ModelMessage): ToolResultPart[] {
     if (message.role !== "tool") throw new Error("expected a tool message");
-    return message.content.filter((part): part is ToolResultPart => part.type === "tool-result");
+    return message.content.flatMap((part) => (part.type === "tool-result" ? [part] : []));
 }
 
 const ANALYSIS_A = "analysis-a";
@@ -73,7 +75,7 @@ function announcedIds(events: readonly TurnEvent[]): { user: string[]; assistant
 function contentText(content: unknown): string {
     if (typeof content === "string") return content;
     if (isUnknownArray(content)) {
-        return content.map((b) => (typeof b === "object" && b && "text" in b ? String(b.text) : "")).join("\n");
+        return content.map((b) => textOf(parseUnknownRecord(b)?.text)).join("\n");
     }
     return "";
 }
@@ -1016,8 +1018,8 @@ describe("runChatTurn — compaction", () => {
         const rows = (await storedRows()).map((row) => row.message);
         const afterMarker = rows.slice(rows.findIndex((message) => compactionMarkerOf(message) !== undefined) + 1);
         const memory = afterMarker.find((message) => contextRecordOf(message)?.kind === "working-memory");
-        expect(String(memory?.content)).toContain("Use an FDR of 0.01.");
-        expect(presentLast(provider.calls).messages.some((message) => String(message.content).includes("Use an FDR of 0.01."))).toBe(true);
+        expect(contentText(memory?.content)).toContain("Use an FDR of 0.01.");
+        expect(presentLast(provider.calls).messages.some((message) => contentText(message.content).includes("Use an FDR of 0.01."))).toBe(true);
     });
 
     it("keeps the seed and the summary marker first on a report turn, runs no tool in the exchange, and adds no working-memory record", async () => {
@@ -1129,7 +1131,7 @@ describe("runChatTurn — compaction", () => {
     /** The frames of the compaction before and after the `message-start` of `messageId`. */
     function compactionAround(forwarded: readonly TurnEvent[], messageId: string | undefined): { before: TurnEvent[]; after: TurnEvent[] } {
         const start = forwarded.findIndex((event) => event.type === "message-start" && event.messageId === messageId);
-        if (start === -1) throw new Error(`the stream announced no id ${messageId}`);
+        if (start === -1) throw new Error(`the stream announced no id ${String(messageId)}`);
         const compaction = (events: readonly TurnEvent[]) => events.filter((event) => event.type === "data-compaction");
         return { before: compaction(forwarded.slice(0, start)), after: compaction(forwarded.slice(start)) };
     }
@@ -1191,8 +1193,8 @@ describe("runChatTurn — compaction", () => {
         // The divider is no message of the turn, and the stream names its id as the id of the compaction part.
         const donePart = forwarded.find((event) => {
             if (event.type !== "data-compaction") return false;
-            const { data } = event;
-            return typeof data === "object" && data !== null && "status" in data && data.status === "done" && "id" in data && data.id === replay[0]?.id;
+            const record = parseUnknownRecord(event.data);
+            return record !== undefined && record.status === "done" && record.id === replay[0]?.id;
         });
         expect(donePart).toBeDefined();
         expect(await storedDisplay()).toEqual(TURN_START_DISPLAY);

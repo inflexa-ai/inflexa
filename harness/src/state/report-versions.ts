@@ -35,7 +35,7 @@ import type { DomainError } from "../lib/result.js";
 import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 import { parseSnapshot, reduceIssues, type SchemaIssue } from "./snapshot-parse.js";
 
-export type { SchemaIssue };
+export type { SchemaIssue } from "./snapshot-parse.js";
 
 /**
  * The name of the unique constraint on thread_id. The write names it as its

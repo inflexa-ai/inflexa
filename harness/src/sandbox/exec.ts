@@ -13,6 +13,8 @@
  * the caller gets the events of the exec again.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS, Error as DBOSErrors, StatusString } from "@dbos-inc/dbos-sdk";
@@ -180,7 +182,7 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
         }
         return { kind: "ok", raw: await res.text() };
     } catch (cause) {
-        return { kind: "unavailable", detail: cause instanceof Error ? cause.message : String(cause) };
+        return { kind: "unavailable", detail: errorMessageOf(cause) ?? textOf(cause) };
     } finally {
         clearTimeout(timer);
     }
@@ -197,8 +199,8 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
  */
 async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, deps: ExecDeps): Promise<ExecResult> {
     const fetchImpl = deps.fetch ?? fetch;
-    const now = deps.clock?.now ?? systemClock.now;
-    const wait = deps.clock?.wait ?? systemClock.wait;
+    const now = deps.clock?.now.bind(deps.clock) ?? systemClock.now.bind(systemClock);
+    const wait = deps.clock?.wait.bind(deps.clock) ?? systemClock.wait.bind(systemClock);
     const warn = deps.warn ?? ((message: string) => DBOS.logger.warn(message));
     const isCancelled = deps.isCancelled ?? workflowCancelled;
 

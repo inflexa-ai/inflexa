@@ -8,6 +8,7 @@
  * that parses a payload of a route that nobody calls proves nothing.
  */
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { afterEach, describe, expect, it } from "bun:test";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -65,7 +66,7 @@ afterEach(() => {
 function serve(body: unknown, status = 200): void {
     const text = JSON.stringify(body);
     globalThis.fetch = fetchDouble((url) => {
-        requested.push(String(url));
+        requested.push(requestUrlText(url));
         return Promise.resolve(new Response(text, { status, headers: { "content-type": "application/json" } }));
     });
 }

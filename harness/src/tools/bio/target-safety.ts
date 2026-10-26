@@ -12,6 +12,8 @@
  * there is one and resolved from the gene symbol when there is not.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -125,7 +127,7 @@ const inputSchema = z
             .optional()
             .describe(`'opentargets' only. Max liabilities per target (default ${DEFAULT_LIABILITY_LIMIT}, max 100); \`liabilityCount\` gives the true total.`),
     })
-    .refine((d) => (d.sources ?? [...SOURCES]).includes("opentargets") === false || d.identifiers.length <= MAX_OPENTARGETS_IDENTIFIERS, {
+    .refine((d) => !(d.sources ?? [...SOURCES]).includes("opentargets") || d.identifiers.length <= MAX_OPENTARGETS_IDENTIFIERS, {
         message:
             `identifiers is capped at ${MAX_OPENTARGETS_IDENTIFIERS} when source 'opentargets' is included (one request per target). ` +
             `Either narrow the list, or pass sources: ['panel'] to sweep up to ${MAX_PANEL_IDENTIFIERS} against the local panel first and follow up on the hits.`,
@@ -200,7 +202,7 @@ export const targetSafetyTool = defineTool({
                         row.liabilityCount = result.safetyLiabilities.length;
                         row.liabilities = result.safetyLiabilities.slice(0, limit);
                     } catch (error) {
-                        opentargetsError = error instanceof Error ? error.message : String(error);
+                        opentargetsError = errorMessageOf(error) ?? textOf(error);
                         row.opentargetsNote = "Open Targets could not be reached";
                     }
                 }),

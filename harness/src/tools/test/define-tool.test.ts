@@ -97,7 +97,7 @@ describe("defineTool", () => {
                 execute: () => Promise.resolve(ok({})),
             });
 
-            expect(tool.describeCall).toBeUndefined();
+            expect(tool.describeCall?.bind(tool)).toBeUndefined();
             expect("describeCall" in tool).toBe(false);
         });
 
@@ -200,7 +200,7 @@ describe("defineTool", () => {
                 execute: () => Promise.resolve(ok({})),
             });
 
-            expect(tool.describeResult).toBeUndefined();
+            expect(tool.describeResult?.bind(tool)).toBeUndefined();
             expect("describeResult" in tool).toBe(false);
         });
 

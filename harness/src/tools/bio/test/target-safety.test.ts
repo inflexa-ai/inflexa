@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { isAllDigits } from "../../../lib/text.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import { targetSafetyTool } from "../target-safety.js";
 import { presentAt } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
 
-const GqlVariablesSchema = z.object({ variables: z.record(z.string(), z.unknown()) });
+const GqlVariablesSchema = z.object({ variables: z.record(z.string(), z.json()) });
 
 const realFetch = globalThis.fetch;
 
@@ -29,7 +30,7 @@ function gqlResponse(data: unknown): Response {
 function stubOpenTargets(responder: () => Response): Record<string, unknown>[] {
     const seen: Record<string, unknown>[] = [];
     globalThis.fetch = fetchDouble((_url: unknown, init?: RequestInit) => {
-        seen.push(parseJsonAs(String(init?.body ?? "{}"), GqlVariablesSchema).variables);
+        seen.push(parseJsonAs(typeof init?.body === "string" ? init.body : "{}", GqlVariablesSchema).variables);
         return Promise.resolve(responder());
     });
     return seen;
@@ -119,11 +120,11 @@ describe("targetSafety — Open Targets liabilities", () => {
 
     it("resolves a gene symbol that is not on the panel", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble((url: unknown, init?: RequestInit) => {
-            const u = String(url);
+        globalThis.fetch = fetchDouble((url: string | URL | Request, init?: RequestInit) => {
+            const u = requestUrlText(url);
             seen.push(u);
             if (u.includes("ensembl")) return Promise.resolve(new Response(JSON.stringify({ id: "ENSG00000141510" }), { status: 200 }));
-            const body = parseJsonAs(String(init?.body ?? "{}"), GqlVariablesSchema);
+            const body = parseJsonAs(typeof init?.body === "string" ? init.body : "{}", GqlVariablesSchema);
             expect(body.variables).toEqual({ ensemblId: "ENSG00000141510" });
             return Promise.resolve(gqlResponse({ target: { id: "ENSG00000141510", approvedSymbol: "TP53", safetyLiabilities: [] } }));
         });

@@ -19,6 +19,7 @@ import { isTracingSuppressed } from "@opentelemetry/core";
 import type { ToolCallPart } from "ai";
 
 import type { AgentSession } from "../auth/types.js";
+import { errorNameOf, errorOf } from "../lib/thrown.js";
 import type { ToolOutcome } from "./tool-outcome.js";
 
 type AgentRun = {
@@ -117,11 +118,14 @@ function withSpan<T>(name: string, options: SpanOptions, run: (span: Span) => Pr
         try {
             return await run(span);
         } catch (err) {
-            // A cancellation is the caller's decision, not a failure.
-            const cancelled = err instanceof Error && err.name === "AbortError";
+            // A cancellation is the caller's decision, not a failure. The name read
+            // is structural, so an abort DOMException — not an `Error` subclass —
+            // counts as the cancellation it names.
+            const cancelled = errorNameOf(err) === "AbortError";
             if (!cancelled) {
                 span.setStatus({ code: SpanStatusCode.ERROR });
-                if (err instanceof Error) span.recordException(err);
+                const exception = errorOf(err);
+                if (exception !== undefined) span.recordException(exception);
             }
             throw err;
         } finally {

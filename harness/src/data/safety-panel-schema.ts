@@ -25,7 +25,7 @@ const EnsemblGeneSchema = z.string().regex(ENSEMBL_GENE_RE, "must match ENSG\\d{
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a reference is one of the two prefixed provenance forms; the alternation is the rule.
 const REFERENCE_RE = /^(PMID:\d+|DOI:.+)$/;
 const ReferenceSchema = z.string().regex(REFERENCE_RE, "must be PMID:<digits> or DOI:<doi>");
-const IsoDateSchema = z.string().date();
+const IsoDateSchema = z.iso.date();
 
 export const SafetyTargetSchema = z.object({
     chembl_id: ChemblIdSchema,

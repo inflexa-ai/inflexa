@@ -7,6 +7,7 @@ import { constants as fsConstants, createReadStream } from "node:fs";
 import { access, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { isAllHex } from "./text.js";
+import { errorOf } from "./thrown.js";
 
 /**
  * Compute SHA-256 hash of in-memory content.
@@ -43,8 +44,8 @@ export function hasValidContentHash(hash: string | undefined): boolean {
     const colon = hash.indexOf(":");
     if (colon === -1) return false;
     const algorithm = hash.slice(0, colon).toLowerCase();
-    const isAlgorithmChar = (char: string) => (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
-    return algorithm.length > 0 && [...algorithm].every(isAlgorithmChar) && colon + 1 < hash.length && isAllHex(hash.slice(colon + 1));
+    const isAlgorithmChar = (char: string): boolean => (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+    return algorithm.length > 0 && Array.from(algorithm).every(isAlgorithmChar) && colon + 1 < hash.length && isAllHex(hash.slice(colon + 1));
 }
 
 /**
@@ -120,7 +121,8 @@ export async function classifyWithinRoot(confinementRoot: string, absPath: strin
     } catch (cause) {
         // Node's fs rejects with an `ErrnoException`, so the code read covers every real rejection;
         // a non-Error throw carries no errno code and propagates.
-        const code = cause instanceof Error && "code" in cause ? cause.code : undefined;
+        const causeError = errorOf(cause);
+        const code = causeError !== undefined && "code" in causeError ? causeError.code : undefined;
         // A path (or symlink target) that does not resolve leaks nothing; let the
         // caller's own not-found/fallback path handle it. Genuine faults (e.g.
         // EACCES traversing a directory) propagate.

@@ -25,11 +25,13 @@
  * than sending them a query they cannot read.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
 import type { Logger } from "../../lib/logger.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 import { getSomaticMutationFrequencies, type MutationFrequency } from "../lib/cbioportal-client.js";
 import { filterInformative, searchClinvar, type ClinvarVariant } from "../lib/clinvar-client.js";
 import { DISGENET_SOURCES, searchDisgenet, type Gda } from "../lib/disgenet-client.js";
@@ -193,14 +195,18 @@ async function runSource<T>(source: Source, fetch: () => Promise<{ records: T[];
                 source,
                 status: "unavailable",
                 returned: 0,
-                detail: error instanceof Error ? error.message : String(error),
+                detail: errorMessageOf(error) ?? textOf(error),
             },
             records: [],
         };
     }
 }
 
-export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disgenetApiKey: string; logger?: Logger }) {
+export function createGeneDiseaseEvidenceTool(deps: {
+    ncbiApiKey?: string;
+    disgenetApiKey: string;
+    logger?: Logger;
+}): Tool<z.infer<typeof inputSchema>, GeneDiseaseEvidenceOutput> {
     return defineTool({
         id: "gene_disease_evidence",
         description:

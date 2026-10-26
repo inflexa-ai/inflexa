@@ -15,9 +15,12 @@
  */
 
 import { ok, type Result } from "neverthrow";
+import type { z } from "zod";
+
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, RecommendResponse } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { joinEnvironment, type EnvironmentPaths, type RecommendWithEnvironment } from "./environment.js";
@@ -66,12 +69,8 @@ export type KnowledgeRecommendAnswer = {
 
 export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function stringList(value: unknown): readonly string[] | undefined {
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+    return Array.isArray(value) ? value.flatMap((item) => (typeof item === "string" ? [item] : [])) : undefined;
 }
 
 /** The one representation: the envelope, the skeleton, and the claims. The procedure stays host-side. */
@@ -79,7 +78,7 @@ export function toPlannerAnswer(joined: RecommendWithEnvironment): KnowledgeReco
     const answer: KnowledgeRecommendAnswer = {
         match: joined.match,
         snapshot: joined.snapshot,
-        situation: isRecord(joined.situation) ? joined.situation : undefined,
+        situation: parseUnknownRecord(joined.situation),
         flags: joined.flags,
         uncovered: joined.uncovered,
         environment_source: joined.environment_source,
@@ -95,7 +94,7 @@ export function toPlannerAnswer(joined: RecommendWithEnvironment): KnowledgeReco
     return answer;
 }
 
-export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
+export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool<z.infer<typeof SituationFieldsSchema>, KnowledgeRecommendOutput> {
     return defineTool({
         id: "knowledge_recommend",
         description:

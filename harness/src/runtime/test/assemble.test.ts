@@ -380,6 +380,7 @@ const START_BRIEF = {
  * thus an empty stub stands for each of them.
  */
 function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, pool: Pool): AgentDefinition {
+    const reportRuntime = createReportSessionRuntime({ pool });
     return createConversationAgent({
         provider: unusedChatProvider(),
         utilityProvider: unusedChatProvider(),
@@ -392,10 +393,11 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
             try {
                 return Promise.resolve(refuse("executeAnalysisWorkflow"));
             } catch (err) {
+                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rejection reason is the thrown value itself; the awaiter reads its identity, and a wrapper would erase it.
                 return Promise.reject(err);
             }
         },
-        anchorReportSession: createReportSessionRuntime({ pool }).ensureSessionState,
+        anchorReportSession: reportRuntime.ensureSessionState.bind(reportRuntime),
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: refuseRunLauncher(),
@@ -547,7 +549,7 @@ describe("the tool output store of the composition", () => {
 
     it("gives the conversation agent and the report agent read_tool_output", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const register = dbos.DBOS.registerWorkflow;
+        const register = dbos.DBOS.registerWorkflow.bind(dbos.DBOS);
         // The registry of DBOS is global to the process, and a launched engine refuses a registration.
         Reflect.set(dbos.DBOS, "registerWorkflow", (workflow: unknown) => workflow);
         try {
@@ -659,7 +661,7 @@ describe("the approval of the composition", () => {
             workflows: constructionWorkflows(),
         };
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const register = dbos.DBOS.registerWorkflow;
+        const register = dbos.DBOS.registerWorkflow.bind(dbos.DBOS);
         // The registry of DBOS is global to the process, and a launched engine refuses a registration.
         Reflect.set(dbos.DBOS, "registerWorkflow", (workflow: unknown) => workflow);
         try {

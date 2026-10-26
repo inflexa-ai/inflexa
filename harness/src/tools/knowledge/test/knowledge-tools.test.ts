@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { isSha256Hash } from "../../../lib/test/text-shapes.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,8 +37,9 @@ const SITUATION = {
 
 /** The JSON of a written decision record, narrowed to the object the tool wrote. */
 function asRecord(json: unknown): Record<string, unknown> {
-    if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error("the decision record stored no object");
-    return { ...json };
+    const record = parseUnknownRecord(json);
+    if (record === undefined) throw new Error("the decision record stored no object");
+    return record;
 }
 
 describe("createKnowledgeTools", () => {
@@ -557,7 +559,7 @@ describe("knowledge_template", () => {
         expect(script).toBe('COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n');
         expect(out.local_slots).toEqual(["counts_path"]);
         expect(isSha256Hash(out.written_sha256)).toBe(true);
-        const record = asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.unknown()));
+        const record = asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.json()));
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",
             version: "1.0.0",

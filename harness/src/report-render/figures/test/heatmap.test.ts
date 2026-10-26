@@ -2,6 +2,7 @@
  * The heatmap over excerpts of the pasilla top-gene heatmap and the sample distance table.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
@@ -233,7 +234,7 @@ describe("the height of a heatmap of many rows", () => {
         const render = deriveChartRender(block(TRACKED), rows, undefined, { key: "h1", columns: [] })._unsafeUnwrap();
         const grid = optionArray(render.option, "grid")[0];
         if (grid === undefined) throw new Error("the render holds no matrix grid");
-        const bottom = (Number.parseFloat(String(grid.bottom)) * render.bodyPx) / 100;
+        const bottom = (Number.parseFloat(textOf(grid.bottom)) * render.bodyPx) / 100;
         return (render.bodyPx - optionNumber(grid.top) - bottom) / genes;
     }
 

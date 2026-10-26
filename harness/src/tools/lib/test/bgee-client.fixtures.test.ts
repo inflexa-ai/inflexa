@@ -33,7 +33,7 @@ describe("Bgee golden fixtures", () => {
         const body = z
             .object({
                 data: z.object({
-                    calls: z.array(z.object({ expressionScore: z.object({ expressionScore: z.unknown() }).optional() })),
+                    calls: z.array(z.object({ expressionScore: z.object({ expressionScore: z.json() }).optional() })),
                 }),
             })
             .parse(readFixture("bgee", "expr-TP53-human.json"));

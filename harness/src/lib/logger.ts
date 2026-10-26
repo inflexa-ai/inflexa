@@ -20,6 +20,8 @@
  * is the one sanctioned console site.
  */
 
+import { textOf } from "./unknown-text.js";
+
 /** Severity of a log record, ascending. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -93,5 +95,5 @@ export function defaultErrorFields(err: unknown): LogFields {
     if (err instanceof Error) {
         return err.stack ? { err: err.message, stack: err.stack } : { err: err.message };
     }
-    return { err: String(err) };
+    return { err: textOf(err) };
 }

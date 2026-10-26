@@ -90,7 +90,7 @@ export function installedPackages(paths: Pick<EnvironmentPaths, "farmLockFile" |
 function tokens(text: string): string[] {
     const tokens: string[] = [];
     let token = "";
-    const flush = () => {
+    const flush = (): void => {
         if (token.length > 1) tokens.push(token);
         token = "";
     };

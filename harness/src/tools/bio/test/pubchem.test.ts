@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { pubchemTool } from "../pubchem.js";
 import { presentAt } from "../../../lib/present.js";
@@ -16,7 +17,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = fetchDouble((url) => Promise.resolve(response(String(url))));
+    globalThis.fetch = fetchDouble((url) => Promise.resolve(response(requestUrlText(url))));
 }
 
 function json(body: unknown, status = 200): Response {

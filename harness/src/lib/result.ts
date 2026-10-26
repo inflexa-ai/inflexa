@@ -40,6 +40,8 @@
  * directly from `neverthrow`; this module owns only the cortex-specific glue.
  */
 
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
+import { textOf } from "../lib/unknown-text.js";
 import { Err, Ok, type Result } from "neverthrow";
 
 /**
@@ -70,15 +72,16 @@ export class ResultError extends Error {
 
 function describe(value: unknown): string {
     if (value instanceof Error) return value.message;
-    if (value && typeof value === "object" && "type" in value) {
+    const record = parseUnknownRecord(value);
+    if (record !== undefined && "type" in record) {
         // Prefer a human `message` field when the structured error carries one
         // (e.g. a `ProviderError`) so the wrapped `Error.message` names the
         // failure; fall back to the `type` discriminant otherwise.
-        const message = "message" in value ? value.message : undefined;
+        const message = record["message"];
         if (typeof message === "string" && message.length > 0) return message;
-        return String(value.type);
+        return textOf(record["type"]);
     }
-    return String(value);
+    return textOf(value);
 }
 
 /**

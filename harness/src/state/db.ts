@@ -15,6 +15,7 @@
 import type { QueryConfig, QueryResultRow } from "pg";
 
 export type Querier = {
+    // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- R is caller-bound: each call names its row shape (pool.query<{...}>(...)); the default only types the unbound calls.
     query<R extends QueryResultRow = Record<string, unknown>>(
         queryTextOrConfig: string | QueryConfig,
         values?: unknown[],

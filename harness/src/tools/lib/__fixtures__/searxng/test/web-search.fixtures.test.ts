@@ -55,10 +55,10 @@ runFixtureSuite("searxng golden fixtures — the web search response", [
 
 describe("the searxng twin", () => {
     it("breaks the answer type against the positive fixture", () => {
-        const positive = z.object({ answers: z.array(z.unknown()) }).parse(readFixture("searxng", "01-search-general.json"));
-        const drift = z.object({ answers: z.array(z.unknown()) }).parse(readFixture("searxng", "01-search-general.drift.json"));
+        const positive = z.object({ answers: z.array(z.record(z.string(), z.json())) }).parse(readFixture("searxng", "01-search-general.json"));
+        const drift = z.object({ answers: z.array(z.string()) }).parse(readFixture("searxng", "01-search-general.drift.json"));
 
-        expect(positive.answers.every((answer) => typeof answer === "object")).toBe(true);
+        expect(positive.answers.length).toBeGreaterThan(0);
         expect(drift.answers.every((answer) => typeof answer === "string")).toBe(true);
     });
 });

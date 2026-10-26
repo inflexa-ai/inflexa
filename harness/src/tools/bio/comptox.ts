@@ -18,7 +18,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import {
     fetchCtxChemicalDetail,
     fetchCtxChemicalProperties,
@@ -141,7 +141,7 @@ type ComptoxOutput =
     | { found: true; detail: ChemicalDetail; properties?: PropertySummary[] }
     | ({ found: true; dtxsid: string } & CtxExposureData);
 
-export function createComptoxTool(deps: { apiKey: string }) {
+export function createComptoxTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, ComptoxOutput> {
     return defineTool({
         id: "comptox",
         description:

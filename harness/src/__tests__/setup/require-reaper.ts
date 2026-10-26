@@ -38,6 +38,8 @@
  *    exemption.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { getContainerRuntimeClient, getReaper } from "testcontainers";
 
 /** testcontainers' own switch: "true" swaps the real reaper for a no-op stand-in. */
@@ -124,5 +126,5 @@ export async function assertContainerWillBeReaped(): Promise<void> {
 }
 
 function describe(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
+    return errorMessageOf(err) ?? textOf(err);
 }

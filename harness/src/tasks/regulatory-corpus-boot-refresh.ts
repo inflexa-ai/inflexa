@@ -15,6 +15,7 @@
  * is what we serialize.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
 import type { Pool, PoolClient } from "pg";
 import { buildMaintenanceEmbedder, refreshRegulatoryCorpus, type RefreshOptions } from "./refresh-regulatory-corpus.js";
 
@@ -58,7 +59,7 @@ async function checkFreshness(pool: Pool, intervalDays: number): Promise<{ stale
     );
     const row = rows[0];
     const lastIndexedAt = row?.last_indexed_at ?? null;
-    const ageDays = row?.age_days != null ? Number(row.age_days) : null;
+    const ageDays = row?.age_days != null ? row.age_days : null;
     const stale = lastIndexedAt === null || (ageDays ?? Infinity) >= intervalDays;
     return { stale, lastIndexedAt, ageDays };
 }
@@ -110,12 +111,12 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     try {
         freshness = await checkFreshness(pool, intervalDays);
     } catch (err) {
-        log.warn("[boot] Regulatory corpus freshness check failed; skipping auto-refresh:", err instanceof Error ? err.message : err);
+        log.warn("[boot] Regulatory corpus freshness check failed; skipping auto-refresh:", errorMessageOf(err) ?? err);
         return "error";
     }
 
     if (!freshness.stale) {
-        log.log(`[boot] Regulatory corpus is fresh (age ${freshness.ageDays?.toFixed(1)}d < ${intervalDays}d); skipping refresh`);
+        log.log(`[boot] Regulatory corpus is fresh (age ${String(freshness.ageDays?.toFixed(1))}d < ${intervalDays}d); skipping refresh`);
         return "skipped-fresh";
     }
 
@@ -132,12 +133,12 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
                 embeddingModel: deps.embeddingModel ?? "",
             });
         } catch (err) {
-            log.warn("[boot] Could not load env for regulatory corpus refresh; skipping:", err instanceof Error ? err.message : err);
+            log.warn("[boot] Could not load env for regulatory corpus refresh; skipping:", errorMessageOf(err) ?? err);
             return "skipped-unconfigured";
         }
     }
     if (!embedder) {
-        const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${freshness.ageDays?.toFixed(1)}d`;
+        const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${String(freshness.ageDays?.toFixed(1))}d`;
         log.warn(
             `[boot] Regulatory corpus is stale (${ageStr}) but ` +
                 "REGULATORY_CORPUS_OPENAI_API_KEY is unset; skipping auto-refresh. " +
@@ -158,7 +159,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
         acquired = await tryAcquireLock(client);
     } catch (err) {
         client.release();
-        log.warn("[boot] Regulatory corpus advisory-lock attempt failed; skipping auto-refresh:", err instanceof Error ? err.message : err);
+        log.warn("[boot] Regulatory corpus advisory-lock attempt failed; skipping auto-refresh:", errorMessageOf(err) ?? err);
         return "error";
     }
 
@@ -168,7 +169,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
         return "skipped-locked";
     }
 
-    const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${freshness.ageDays?.toFixed(1)}d`;
+    const ageStr = freshness.lastIndexedAt === null ? "empty" : `age ${String(freshness.ageDays?.toFixed(1))}d`;
     log.log(`[boot] Regulatory corpus is stale (${ageStr}); starting async refresh in background`);
 
     // Detached promise — startup must not wait for this to finish.
@@ -182,7 +183,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
             });
             log.log(`[boot] Regulatory corpus refresh complete: ok=${result.ok} fail=${result.fail}`);
         } catch (err) {
-            log.error("[boot] Regulatory corpus refresh threw:", err instanceof Error ? err.message : err);
+            log.error("[boot] Regulatory corpus refresh threw:", errorMessageOf(err) ?? err);
         } finally {
             await releaseLock(client);
             client.release();

@@ -1,3 +1,5 @@
+import { textOf } from "../lib/unknown-text.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { createHash } from "node:crypto";
 
 import { modelMessageSchema, type AssistantModelMessage, type ModelMessage, type UserContent } from "ai";
@@ -69,6 +71,8 @@ export const CONTEXT_HASH_KEY = "contextHash";
 
 const CONTEXT_KINDS = ["analysis-context", "run-activity", "working-memory"] as const;
 
+const ContextKindSchema = z.enum(CONTEXT_KINDS);
+
 /** The kinds of per-turn context that a chat turn stores after its user message. */
 export type ContextKind = (typeof CONTEXT_KINDS)[number];
 
@@ -85,17 +89,13 @@ export function contextRecordMessage(kind: ContextKind, text: string): ModelMess
     };
 }
 
-function isContextKind(value: unknown): value is ContextKind {
-    return CONTEXT_KINDS.some((kind) => kind === value);
-}
-
 /** The kind and the hash of a context record, or `undefined` for a message that is no record. */
 export function contextRecordOf(message: ModelMessage): { readonly kind: ContextKind; readonly hash: string } | undefined {
     const harness = message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE];
-    const kind = harness?.[CONTEXT_KIND_KEY];
+    const kind = ContextKindSchema.safeParse(harness?.[CONTEXT_KIND_KEY]);
     const hash = harness?.[CONTEXT_HASH_KEY];
-    if (typeof hash !== "string" || !isContextKind(kind)) return undefined;
-    return { kind, hash };
+    if (typeof hash !== "string" || !kind.success) return undefined;
+    return { kind: kind.data, hash };
 }
 
 /**
@@ -286,7 +286,7 @@ function providerOptionsFromLegacy(block: Record<string, unknown>): ProviderOpti
     const anthropic: Record<string, JSONValue> = {};
     if (typeof block.signature === "string") anthropic.signature = block.signature;
     const cacheControl = block.cache_control;
-    if (typeof cacheControl === "object" && cacheControl !== null && isJSONValue(cacheControl)) {
+    if (cacheControl !== null && isJSONValue(cacheControl) && parseUnknownRecord(cacheControl) !== undefined) {
         anthropic.cacheControl = cacheControl;
     }
     return Object.keys(anthropic).length > 0 ? { anthropic } : undefined;
@@ -322,10 +322,10 @@ export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessa
         const unrepresentable = content.find((block) => !(block.type === "text" && typeof block.text === "string"));
         if (unrepresentable !== undefined) {
             throw new Error(
-                `Legacy user row ${row.threadId}/${row.seq} contains unrepresentable block type "${String(unrepresentable.type)}"; failing rather than writing a lossy envelope`,
+                `Legacy user row ${row.threadId}/${row.seq} contains unrepresentable block type "${textOf(unrepresentable.type)}"; failing rather than writing a lossy envelope`,
             );
         }
-        const userContent = content.map((block) => ({ type: "text" as const, text: String(block.text), providerOptions: providerOptionsFromLegacy(block) }));
+        const userContent = content.map((block) => ({ type: "text" as const, text: textOf(block.text), providerOptions: providerOptionsFromLegacy(block) }));
         return {
             role: "user",
             content: userContent,
@@ -360,7 +360,7 @@ export function legacyAnthropicToModelMessage(row: LegacyMessageRow): ModelMessa
             // Any other block (e.g. redacted_thinking) may carry signed provider
             // data required for continuation; fail the row instead of dropping it.
             throw new Error(
-                `Legacy assistant row ${row.threadId}/${row.seq} contains unrepresentable block type "${String(block.type)}"; failing rather than writing a lossy envelope`,
+                `Legacy assistant row ${row.threadId}/${row.seq} contains unrepresentable block type "${textOf(block.type)}"; failing rather than writing a lossy envelope`,
             );
         }
         return {

@@ -18,6 +18,7 @@
  * follows the table.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartEncoding } from "../../contracts/report-blocks.js";
@@ -456,8 +457,8 @@ function panelGrids(legendLines: number): EchartOption[] {
  * empty, and a set that dips under zero leaves the bottom left empty.
  */
 function statisticsText(context: FigureContext, panel: EchartOption, corner: "top-right" | "bottom-left"): EchartOption[] {
-    const top = Number.parseFloat(String(panel.top));
-    const height = Number.parseFloat(String(panel.height));
+    const top = Number.parseFloat(textOf(panel.top));
+    const height = Number.parseFloat(textOf(panel.height));
     return statisticsGraphic(context.statistics, corner).map((element) =>
         corner === "top-right"
             ? { ...element, right: percent(GRID_RIGHT + STATISTICS_INSET), top: percent(top + STATISTICS_INSET) }

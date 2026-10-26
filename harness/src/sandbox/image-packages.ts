@@ -37,52 +37,42 @@ import { safeParseJsonAs } from "../lib/parse-json.js";
 export const IMAGE_PACKAGES_FILE = "image-packages.json";
 
 /** The image the record describes. The pair of tags shares one version string. */
-export const ImageIdentitySchema = z
-    .object({
-        repository: z.string(),
-        version: z.string(),
-        arch: z.enum(["amd64", "arm64"]),
-    })
-    .passthrough();
+export const ImageIdentitySchema = z.looseObject({
+    repository: z.string(),
+    version: z.string(),
+    arch: z.enum(["amd64", "arm64"]),
+});
 
 /** The interpreter versions of the image, so a reader can compare them against the lock. */
-export const ImageRuntimesSchema = z
-    .object({
-        python: z.string(),
-        r: z.string(),
-        node: z.string(),
-    })
-    .passthrough();
+export const ImageRuntimesSchema = z.looseObject({
+    python: z.string(),
+    r: z.string(),
+    node: z.string(),
+});
 
 /**
  * One conda tool of the image. `executable` carries the binary name when it
  * differs from the package name (the manifest `binaries:` map holds those
  * exceptions), because an agent invokes the binary and not the package.
  */
-export const ImageSystemToolSchema = z
-    .object({
-        name: z.string(),
-        version: z.string(),
-        executable: z.string().optional(),
-    })
-    .passthrough();
+export const ImageSystemToolSchema = z.looseObject({
+    name: z.string(),
+    version: z.string(),
+    executable: z.string().optional(),
+});
 
 /** One Node package of the image. */
-export const ImageNodePackageSchema = z
-    .object({
-        name: z.string(),
-        version: z.string(),
-    })
-    .passthrough();
+export const ImageNodePackageSchema = z.looseObject({
+    name: z.string(),
+    version: z.string(),
+});
 
 /** One R package that ships with the R runtime of the image: a base package or a recommended package. */
-export const ImageRBasePackageSchema = z
-    .object({
-        name: z.string(),
-        version: z.string(),
-        priority: z.enum(["base", "recommended"]),
-    })
-    .passthrough();
+export const ImageRBasePackageSchema = z.looseObject({
+    name: z.string(),
+    version: z.string(),
+    priority: z.enum(["base", "recommended"]),
+});
 
 /**
  * `image-packages.json` at schema version 1. The keys `system_tools` and
@@ -92,16 +82,14 @@ export const ImageRBasePackageSchema = z
  * lists. It is optional, because a record from before the field existed is
  * still a valid record of its image.
  */
-export const ImagePackagesSchema = z
-    .object({
-        schema: z.literal(1),
-        image: ImageIdentitySchema,
-        runtimes: ImageRuntimesSchema,
-        system_tools: z.array(ImageSystemToolSchema),
-        node: z.array(ImageNodePackageSchema),
-        r_base: z.array(ImageRBasePackageSchema).optional(),
-    })
-    .passthrough();
+export const ImagePackagesSchema = z.looseObject({
+    schema: z.literal(1),
+    image: ImageIdentitySchema,
+    runtimes: ImageRuntimesSchema,
+    system_tools: z.array(ImageSystemToolSchema),
+    node: z.array(ImageNodePackageSchema),
+    r_base: z.array(ImageRBasePackageSchema).optional(),
+});
 export type ImagePackages = z.infer<typeof ImagePackagesSchema>;
 
 export type ImagePackagesError =

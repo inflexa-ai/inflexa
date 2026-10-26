@@ -71,6 +71,7 @@ ${CHART_THEMES.map((theme) => `  echarts.registerTheme(${JSON.stringify(theme.na
 export function renderBand(index: number, inner: string): string {
     const surface = index % 2 === 0 ? "report-band-white texture-dots" : "report-band-slate texture-grid";
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <section class={`report-band ${surface} texture-noise`}>
             <div class="report-container fade-in">
                 <div class="report-content">{raw(inner)}</div>
@@ -95,6 +96,7 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
     if (references === "") {
         return "";
     }
+    // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
     const heading = String(<h2 class="report-heading report-heading-3 report-ref-title">{REFERENCES_TITLE}</h2>);
     return renderBand(index, heading + references);
 }
@@ -137,6 +139,7 @@ export function assemblePage(title: string, nav: string, content: string, refere
     return (
         "<!doctype html>" +
         String(
+            // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
             <html lang="en">
                 <head>
                     <meta charset="utf-8" />

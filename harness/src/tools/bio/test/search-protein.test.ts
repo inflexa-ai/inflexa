@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { z } from "zod";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -26,7 +27,7 @@ afterEach(() => {
 
 function stubResponse(status: number, body: unknown): void {
     globalThis.fetch = fetchDouble((input) => {
-        requestedUrls.push(String(input));
+        requestedUrls.push(requestUrlText(input));
         return Promise.resolve(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
     });
 }
@@ -197,7 +198,7 @@ describe("searchProtein — no match", () => {
 
 describe("searchProtein — the bound on the answer", () => {
     it("trims to the limit and reports that more rows existed", async () => {
-        const row = z.object({ results: z.array(z.unknown()) }).parse(readFixture("uniprot", "search_BRCA1_reviewed.json")).results[0];
+        const row = z.object({ results: z.array(z.json()) }).parse(readFixture("uniprot", "search_BRCA1_reviewed.json")).results[0];
         if (row === undefined) throw new Error("row is absent");
         // The client asks for `limit + 1` rows, thus three rows for a limit of 2
         // is what "UniProt held more" looks like on the wire.

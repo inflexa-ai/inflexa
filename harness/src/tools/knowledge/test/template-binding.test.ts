@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,12 +58,13 @@ describe("knowledge_template with a binding", () => {
     }
 
     function asRecord(value: unknown): Record<string, unknown> {
-        if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("the decision record is no object");
-        return { ...value };
+        const record = parseUnknownRecord(value);
+        if (record === undefined) throw new Error("the decision record is no object");
+        return record;
     }
 
     async function recordOf(workingDir: string): Promise<Record<string, unknown>> {
-        return asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.unknown()));
+        return asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.json()));
     }
 
     it("rides the bound slots into the render request when the model sends no value for them", async () => {

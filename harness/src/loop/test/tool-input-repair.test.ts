@@ -61,7 +61,7 @@ async function callWith(tool: Tool, input: unknown): Promise<ToolResultPart> {
     expect(toolMessage.role).toBe("tool");
     const content = toolMessage.content;
     if (typeof content === "string") throw new Error("the tool message carries string content");
-    return presentFirst(content.filter((part): part is ToolResultPart => part.type === "tool-result"));
+    return presentFirst(content.flatMap((part) => (part.type === "tool-result" ? [part] : [])));
 }
 
 function errorText(result: ToolResultPart): string {

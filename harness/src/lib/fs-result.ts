@@ -30,6 +30,8 @@
  * → fall back to a chip" behaviour.
  */
 
+import { z } from "zod";
+
 import { ResultAsync, err, ok } from "neverthrow";
 
 import type { DomainError } from "./result.js";
@@ -61,11 +63,11 @@ const ABSENT_CODES = new Set(["ENOENT", "ENOTDIR"]);
 /** errno codes that mean "permission denied". */
 const PERMISSION_CODES = new Set(["EACCES", "EPERM"]);
 
+const ErrnoCauseSchema = z.object({ code: z.string() });
+
 export function errnoOf(cause: unknown): string | undefined {
-    if (cause && typeof cause === "object" && "code" in cause) {
-        return typeof cause.code === "string" ? cause.code : undefined;
-    }
-    return undefined;
+    const parsed = ErrnoCauseSchema.safeParse(cause);
+    return parsed.success ? parsed.data.code : undefined;
 }
 
 /** True when the throw is a plain "this path isn't here" — `ENOENT`/`ENOTDIR`. */

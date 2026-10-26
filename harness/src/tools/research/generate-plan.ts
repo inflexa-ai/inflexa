@@ -24,6 +24,8 @@
  * terminal-tool surface above.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -147,7 +149,11 @@ const MODEL_AUTHORED_KEY = "modelAuthored";
 
 /** Nest model-authored prose under {@link MODEL_AUTHORED_KEY}, or contribute nothing when there is none. */
 function modelAuthored(fields: Record<string, string | undefined>): LogFields {
-    const present = Object.entries(fields).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0);
+    const present = Object.entries(fields).reduce<[string, string][]>((kept, entry) => {
+        const value = entry[1];
+        if (value !== undefined && value.length > 0) kept.push([entry[0], value]);
+        return kept;
+    }, []);
     return present.length === 0 ? {} : { [MODEL_AUTHORED_KEY]: Object.fromEntries(present) };
 }
 
@@ -428,7 +434,7 @@ async function persistPlan(
         );
         return { ok: true, planId };
     } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
+        const raw = errorMessageOf(err) ?? textOf(err);
         const lower = raw.toLowerCase();
         const isParentValidation = lower.startsWith("parent plan ") && (lower.endsWith("not found") || lower.endsWith("belongs to a different analysis"));
         logger.error("plan persistence failed", {
@@ -860,8 +866,9 @@ function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execut
         return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
     }
     const value = result.value;
-    if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") {
-        return `## ${label}\n\n${value.content}`;
+    const content = parseUnknownRecord(value)?.["content"];
+    if (typeof content === "string") {
+        return `## ${label}\n\n${content}`;
     }
     return `## ${label}\n\n${JSON.stringify(value)}`;
 }
@@ -1024,7 +1031,7 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
         return { output: { event: "error", error: "Plan generation was cancelled." }, kind: "cancelled" };
     }
     if (runError) {
-        const msg = runError instanceof Error ? runError.message : String(runError);
+        const msg = errorMessageOf(runError) ?? textOf(runError);
         return { output: { event: "error", error: `Plan generation failed: ${msg}` }, kind: "loop_error" };
     }
     return {

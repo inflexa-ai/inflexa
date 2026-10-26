@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,7 +71,7 @@ describe("KEGG golden fixtures", () => {
     it("gives the pathway memberships of a gene over the three golden bodies", async () => {
         const seen: string[] = [];
         globalThis.fetch = fetchDouble((input) => {
-            const url = String(input);
+            const url = requestUrlText(input);
             seen.push(url);
             if (url.includes("/find/hsa/")) return Promise.resolve(new Response(readTextFixture("kegg", "find-hsa-TP53.txt")));
             if (url.includes("/link/pathway/")) return Promise.resolve(new Response(readTextFixture("kegg", "link-pathway-hsa7157.txt")));

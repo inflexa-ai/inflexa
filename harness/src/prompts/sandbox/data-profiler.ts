@@ -26,7 +26,7 @@ function renderGroupCategories(): string {
 }
 
 function renderDimensionCategories(scope: DimensionScope): string {
-    const treatment = (entry: DimensionCategoryEntry) => (entry.defaultTreatment === "split" ? "DEFAULT: split" : "DEFAULT: dimension");
+    const treatment = (entry: DimensionCategoryEntry): string => (entry.defaultTreatment === "split" ? "DEFAULT: split" : "DEFAULT: dimension");
     return DIMENSION_CATEGORIES.filter((entry) => entry.scope === scope)
         .map((entry) => `- \`${entry.id}\` (${treatment(entry)}) — ${entry.definition} ${entry.note}`)
         .join("\n");

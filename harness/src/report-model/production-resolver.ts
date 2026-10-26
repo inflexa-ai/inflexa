@@ -326,7 +326,7 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
                 i += 1;
                 let closed = false;
                 while (i < n) {
-                    const ch = text[i];
+                    const ch = text.charAt(i);
                     if (ch === '"') {
                         if (text[i + 1] === '"') {
                             field += '"';
@@ -349,7 +349,7 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
                 }
             } else {
                 while (i < n) {
-                    const ch = text[i];
+                    const ch = text.charAt(i);
                     if (ch === delimiter || ch === "\r" || ch === "\n") {
                         break;
                     }
@@ -424,15 +424,21 @@ export function parseDelimited(text: string, delimiter: string): Row[] | undefin
     return rows;
 }
 
+/** A cell of a JSON table: the scalars JSON carries. A non-finite number stays a cell — `JSON.parse`
+ * reads an over-large literal as Infinity, and the coercion drops it. A nested value is structural doubt. */
+const JsonTableCell = z.custom<string | number | boolean | null>(
+    (cell) => cell === null || typeof cell === "number" || typeof cell === "string" || typeof cell === "boolean",
+);
+
 /**
- * Parse a JSON file into rows. The strict shape is an array of flat objects. A parse fault, a top-level
- * value that is not an array, and a nested cell are structural doubt, thus each gives back `undefined` and
- * the file falls through.
+ * Parse a JSON file into rows. The strict shape is an array of flat objects with scalar cells. A parse
+ * fault, a top-level value that is not an array, and a nested cell are structural doubt, thus each gives
+ * back `undefined` and the file falls through.
  */
 function parseJsonTable(text: string): Row[] | undefined {
-    let table: readonly Record<string, unknown>[];
+    let table: readonly Record<string, string | number | boolean | null>[];
     try {
-        table = parseJsonAs(text, z.array(z.record(z.string(), z.unknown())));
+        table = parseJsonAs(text, z.array(z.record(z.string(), JsonTableCell)));
     } catch {
         return undefined;
     }
@@ -440,9 +446,6 @@ function parseJsonTable(text: string): Row[] | undefined {
     for (const fields of table) {
         const row: Row = {};
         for (const [key, cell] of Object.entries(fields)) {
-            if (cell !== null && typeof cell === "object") {
-                return undefined;
-            }
             const coerced = coerceCell(cell);
             if (coerced !== undefined) {
                 row[key] = coerced;
@@ -759,7 +762,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             return err({ reference, reason: "hash-mismatch", detail: `expected ${reference.hash} but the artifact hash is ${identity.onDiskHash}` });
         }
         if (fileTypeHoldsNoCell(identity.fileType)) {
-            return err({ reference, reason: "unreadable-artifact", detail: `the ${identity.fileType} at ${reference.path} holds no cell to read` });
+            return err({ reference, reason: "unreadable-artifact", detail: `the ${String(identity.fileType)} at ${reference.path} holds no cell to read` });
         }
         const cells = await getCells(reference.path, identity);
         if (cells.kind === "unavailable") {

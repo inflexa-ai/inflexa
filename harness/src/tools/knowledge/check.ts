@@ -10,7 +10,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { SituationFieldsSchema, toSituation } from "./situation.js";
@@ -78,7 +78,11 @@ function describeFindings(result: CheckResponse): string {
     return notAssessed > 0 ? `${findings}, ${notAssessed} not assessed` : findings;
 }
 
-export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
+const KnowledgeCheckInputSchema = SituationFieldsSchema.extend({
+    steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
+});
+
+export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer<typeof KnowledgeCheckInputSchema>, KnowledgeCheckOutput> {
     let calls = 0;
     return defineTool({
         id: "knowledge_check",
@@ -90,9 +94,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
             "`not_assessed` lists the steps that no rule covers; the check neither passed nor failed them, so submit them as drafted. " +
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the one your recommend answer came from; in both cases submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
-        inputSchema: SituationFieldsSchema.extend({
-            steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
-        }),
+        inputSchema: KnowledgeCheckInputSchema,
         describeCall: ({ steps }) => `${steps.length} drafted step(s)`,
         describeResult: (_input, result: KnowledgeCheckOutput) => ("ok" in result ? describeFindings(result) : result.match),
         execute: async (input): Promise<Result<KnowledgeCheckOutput, ToolError>> => {

@@ -130,7 +130,7 @@ describe("WorkspaceMutator provenance recording", () => {
 
         const out = (await tool.execute({ path: "output/notes.md", content: "# notes\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
-        const foldCallRecord = tool.foldCallRecord;
+        const foldCallRecord = tool.foldCallRecord?.bind(tool);
         if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
         foldCallRecord(readToolCallRecord(out));
 
@@ -351,7 +351,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();
         expect(written.status).toBe("ok");
-        const foldWritten = writeTool.foldCallRecord;
+        const foldWritten = writeTool.foldCallRecord?.bind(writeTool);
         if (foldWritten === undefined) throw new Error("the write tool folds no call record");
         foldWritten(readToolCallRecord(written));
 
@@ -359,7 +359,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
             await editTool.execute({ path: "notes/draft.md", old_string: "beta", new_string: "gamma", replace_all: false, regex: false }, ctx)
         )._unsafeUnwrap();
         expect(edited.status).toBe("ok");
-        const foldEdited = editTool.foldCallRecord;
+        const foldEdited = editTool.foldCallRecord?.bind(editTool);
         if (foldEdited === undefined) throw new Error("the edit tool folds no call record");
         foldEdited(readToolCallRecord(edited));
         expect(readFileSync(join(basePath, "analysis-001", "notes", "draft.md"), "utf8")).toBe("alpha gamma\n");

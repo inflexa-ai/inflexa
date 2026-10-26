@@ -32,9 +32,9 @@ import { presentAt } from "../lib/present.js";
  */
 function isSqlIdentifierShape(name: string): boolean {
     if (name.length === 0) return false;
-    const isLowerOrUnderscore = (char: string) => (char >= "a" && char <= "z") || char === "_";
-    const isWordChar = (char: string) => isLowerOrUnderscore(char) || (char >= "0" && char <= "9");
-    return isLowerOrUnderscore(name.charAt(0)) && [...name].every(isWordChar);
+    const isLowerOrUnderscore = (char: string): boolean => (char >= "a" && char <= "z") || char === "_";
+    const isWordChar = (char: string): boolean => isLowerOrUnderscore(char) || (char >= "0" && char <= "9");
+    return isLowerOrUnderscore(name.charAt(0)) && Array.from(name).every(isWordChar);
 }
 const MAX_SQL_IDENTIFIER_BYTES = 63;
 

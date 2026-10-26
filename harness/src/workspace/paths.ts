@@ -327,7 +327,7 @@ export function isSafeId(value: string): boolean {
 
 function isSafeIdCharset(value: string): boolean {
     if (value.length === 0) return false;
-    return [...value].every(
+    return Array.from(value).every(
         (char) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9") || char === "_" || char === "." || char === "-",
     );
 }

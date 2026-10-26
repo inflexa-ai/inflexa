@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -28,14 +29,14 @@ function json(body: unknown, status = 200): Response {
 }
 
 /** Route a stubbed fetch by URL substring, and record each request. Unmatched URLs 404. */
-const PatentLookupSchema = z.object({ data: z.array(z.unknown()) });
+const PatentLookupSchema = z.object({ data: z.array(z.json()) });
 
 function stubFetch(routes: Array<[string, () => Response]>): SeenRequest[] {
     const seen: SeenRequest[] = [];
     globalThis.fetch = fetchDouble((input, init) => {
         const request: SeenRequest = {
-            url: new URL(String(input)),
-            body: typeof init?.body === "string" ? parseJsonAs(init.body, z.unknown()) : undefined,
+            url: new URL(requestUrlText(input)),
+            body: typeof init?.body === "string" ? parseJsonAs(init.body, z.json()) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {

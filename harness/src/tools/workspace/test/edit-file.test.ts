@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { isUnknownArray } from "../../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { createEditFileTool } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
@@ -21,8 +22,9 @@ const STEP = "step-1";
 
 /** The JSON of a written decision record, narrowed to the object the tool wrote. */
 function asRecord(json: unknown): Record<string, unknown> {
-    if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error("the decision record stored no object");
-    return { ...json };
+    const record = parseUnknownRecord(json);
+    if (record === undefined) throw new Error("the decision record stored no object");
+    return record;
 }
 
 describe("edit_file tool", () => {
@@ -107,13 +109,13 @@ describe("edit_file tool", () => {
         )._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
 
-        const record = asRecord(parseJsonAs(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"), z.unknown()));
+        const record = asRecord(parseJsonAs(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"), z.json()));
         expect(record.written_sha256).toBe("sha256:old");
         const edits = record.unvetted_edits;
         if (!isUnknownArray(edits) || edits.length !== 1) throw new Error("the record stored no unvetted edit");
-        const [edit] = edits;
-        if (typeof edit !== "object" || edit === null || !("sha256" in edit)) throw new Error("the edit carries no sha256");
-        const { sha256, ...editShape } = edit;
+        const editRecord = parseUnknownRecord(edits[0]);
+        if (editRecord === undefined || !("sha256" in editRecord)) throw new Error("the edit carries no sha256");
+        const { sha256, ...editShape } = editRecord;
         expect(editShape).toEqual({ path: "scripts/de.R", note: "edit_file: 1 replacement(s)" });
         expect(typeof sha256 === "string" && isSha256Hash(sha256)).toBe(true);
         const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");

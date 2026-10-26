@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { MediaFeature, ScreenshotOptions, Viewport } from "puppeteer-core";
 
+import { errorOf } from "../thrown.js";
 import { setBrowserConnector, type CaptureArea, type ConnectedBrowser, type LookContext, type LookPage } from "../chrome.js";
 import { capturePage } from "../page-capture.js";
 import { presentAt } from "../present.js";
@@ -271,8 +272,9 @@ describe("the degraded capture", () => {
         await expect(capture).rejects.toThrow("the browser is broken");
         // The report of a dead look names the second refusal, thus the first one rides on it as the cause.
         const thrown = await capture.catch((cause: unknown) => cause);
-        if (!(thrown instanceof Error)) throw new Error("expected an Error");
-        expect(thrown.cause).toBe(refusedFullPage);
+        const thrownError = errorOf(thrown);
+        if (thrownError === undefined) throw new Error("expected an Error");
+        expect(thrownError.cause).toBe(refusedFullPage);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
     });
 });

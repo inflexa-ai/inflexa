@@ -22,7 +22,7 @@ function operationNameOf(query: string): string {
     return query.slice(at + "query ".length, end);
 }
 
-const GqlBodySchema = z.object({ query: z.string(), variables: z.record(z.string(), z.unknown()) });
+const GqlBodySchema = z.object({ query: z.string(), variables: z.record(z.string(), z.json()) });
 
 const realFetch = globalThis.fetch;
 
@@ -43,7 +43,7 @@ type GqlRequest = {
 function stubOpenTargets(responder: (req: GqlRequest) => Response): GqlRequest[] {
     const seen: GqlRequest[] = [];
     globalThis.fetch = fetchDouble((_url, init) => {
-        const body = GqlBodySchema.parse(parseJsonAs(String(init?.body ?? "{}"), z.unknown()));
+        const body = GqlBodySchema.parse(parseJsonAs(typeof init?.body === "string" ? init.body : "{}", z.json()));
         const operation = operationNameOf(body.query);
         const req: GqlRequest = { operation, variables: body.variables };
         seen.push(req);

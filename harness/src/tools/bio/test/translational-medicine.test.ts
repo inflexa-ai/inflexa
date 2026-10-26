@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchClinicalTrialsTool } from "../search-clinical-trials.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
@@ -110,7 +111,7 @@ describe("searchClinicalTrials — action 'details'", () => {
     it("reads one study back by its NCT id, with its outcomes and adverse events", async () => {
         const seen: string[] = [];
         globalThis.fetch = fetchDouble((input) => {
-            seen.push(String(input));
+            seen.push(requestUrlText(input));
             return Promise.resolve(
                 trialsResponse({
                     protocolSection: {

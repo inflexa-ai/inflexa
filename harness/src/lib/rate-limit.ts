@@ -1,5 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { errorOf } from "./thrown.js";
+
 export type RateLimitConfig = {
     readonly maxConcurrency: number;
     readonly requestsPerSecond: number;
@@ -18,7 +20,7 @@ export type RateLimitRuntime = {
 };
 
 function abortReason(signal: AbortSignal): Error {
-    return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+    return errorOf(signal.reason) ?? new DOMException("The operation was aborted", "AbortError");
 }
 
 export function sleepWithSignal(milliseconds: number, signal?: AbortSignal): Promise<void> {

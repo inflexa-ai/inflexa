@@ -41,6 +41,7 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { z, ZodError } from "zod";
 
 import { presentFirst } from "../lib/present.js";
+import { errorMessageOf } from "../lib/thrown.js";
 import { unwrapOrThrow, type DomainError } from "../lib/result.js";
 import type { FarmLockError } from "./farm.js";
 import type { SandboxRef } from "./types.js";
@@ -190,12 +191,12 @@ function causeLine(cause: unknown): string | undefined {
         if (!issue) return undefined;
         const path = issue.path.join(".");
         text = path.length > 0 ? `${path}: ${issue.message}` : issue.message;
-    } else if (cause instanceof Error) {
-        text = cause.message;
     } else if (typeof cause === "string") {
         text = cause;
     } else {
-        return undefined;
+        const message = errorMessageOf(cause);
+        if (message === undefined) return undefined;
+        text = message;
     }
     const first = presentFirst(text.split("\n", 1), "the first cause line").trim();
     if (first.length === 0) return undefined;

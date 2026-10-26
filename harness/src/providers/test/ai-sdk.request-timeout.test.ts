@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import { createServer, type ServerResponse } from "node:http";
 
@@ -57,8 +58,12 @@ function fetchThatNeverStarts(onCall?: () => void): typeof fetch {
         return new Promise<Response>((_resolve, reject) => {
             const signal = init?.signal;
             if (signal === null || signal === undefined) return;
+            // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the abort reason rides as-is; the awaiter classifies the abort by its name.
             if (signal.aborted) return reject(signal.reason);
-            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            signal.addEventListener("abort", () => {
+                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the abort reason rides as-is; the awaiter classifies the abort by its name.
+                reject(signal.reason);
+            });
         });
     });
 }
@@ -142,7 +147,7 @@ describe("request-timeout guard", () => {
             const outcome = await pending;
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
             expect(err.name).toBe("AbortError");
         }
     });
@@ -328,7 +333,7 @@ describe("request-timeout advertisement", () => {
             const outcome = await pending;
             throw new Error(`expected the caller abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
         } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(err)}`, { cause: err });
+            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
             expect(err.name).toBe("AbortError");
         }
     });
@@ -507,7 +512,7 @@ describe("SDK chunk bound", () => {
 
             expect(failure).toBeUndefined();
             const done = events.at(-1);
-            if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+            if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
             expect(done.response.message).toEqual({ role: "assistant", content: [{ type: "text", text: "abcdefgh" }] });
         } finally {
             await endpoint.close();
@@ -528,7 +533,7 @@ describe("SDK chunk bound", () => {
 
             expect(events).toEqual([{ type: "text-delta", text: "a" }]);
             expect(isProviderError(failure)).toBe(false);
-            if (!(failure instanceof DOMException)) throw new Error(`expected a DOMException, got ${String(failure)}`);
+            if (!(failure instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(failure)}`);
             expect(failure.name).toBe("AbortError");
         } finally {
             await endpoint.close();

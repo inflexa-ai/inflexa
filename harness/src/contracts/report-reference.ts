@@ -13,6 +13,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { safeParseJsonAs } from "../lib/parse-json.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 
 /**
  * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
@@ -321,14 +322,13 @@ function sortKeysDeep(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(sortKeysDeep);
     }
-    if (value !== null && typeof value === "object") {
-        const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(value).sort()) {
-            sorted[key] = sortKeysDeep(Reflect.get(value, key));
-        }
-        return sorted;
+    const record = parseUnknownRecord(value);
+    if (record === undefined) return value;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+        sorted[key] = sortKeysDeep(record[key]);
     }
-    return value;
+    return sorted;
 }
 
 /**

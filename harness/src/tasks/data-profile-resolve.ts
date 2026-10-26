@@ -550,7 +550,7 @@ function resolveDimensions(
         const ctx: ObservationContext = { detected, menuSets, groupsBySet, label: dimension.label, errors };
         const observations = dimension.observations
             .map((observation) => resolveObservation(observation, ctx))
-            .filter((observation): observation is DataProfileObservation => observation !== undefined);
+            .filter((observation) => observation !== undefined);
         if (observations.length === 0) {
             errors.push(`dimension "${dimension.label}": every observation failed to resolve, so nothing evidences it.`);
             continue;
@@ -684,7 +684,7 @@ export function resolveProfileSubmission(
         } else {
             for (const path of contested) {
                 const owners = presentGet(claimants, path, `the claimants of "${path}"`);
-                errors.push(`"${path}" is claimed by both "${owners[0]}" and "${owners[1]}". A kept file belongs to exactly one group.`);
+                errors.push(`"${path}" is claimed by both "${String(owners[0])}" and "${String(owners[1])}". A kept file belongs to exactly one group.`);
             }
             // The repair round decides who keeps it. Until then the first claimant holds it,
             // so the accounting handed back to the agent still sums.

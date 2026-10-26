@@ -7,6 +7,7 @@ import { unwrapOrThrow } from "../../lib/result.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createWorkspaceFilesystem, type PresignedFallback, type WorkspaceFilesystem } from "../filesystem.js";
 import { presentFind } from "../../lib/present.js";
+import { errorOf } from "../../lib/thrown.js";
 
 const ANALYSIS = "analysis-001";
 
@@ -200,8 +201,9 @@ describe("createWorkspaceFilesystem", () => {
         if (result.isErr()) {
             expect(result.error.type).toBe("fetch_failed");
             const cause = result.error.cause;
-            if (!(cause instanceof Error)) throw new Error("expected an Error cause");
-            expect(cause.message).toContain("upstream 502");
+            const causeError = errorOf(cause);
+            if (causeError === undefined) throw new Error("expected an Error cause");
+            expect(causeError.message).toContain("upstream 502");
         }
         // The tool edge would `unwrapOrThrow` this Result. `fetch_failed` carries no
         // `message` field, so the thrown `ResultError.message` falls back to the

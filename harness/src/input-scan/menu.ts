@@ -236,7 +236,7 @@ export function buildSetMenu(detected: DetectedSets, options: BuildSetMenuOption
 function renderHeader(readout: HeaderReadout | undefined): string | undefined {
     if (!readout) return undefined;
     const fields = Object.entries(readout.fields)
-        .map(([key, value]) => `${key}=${value}`)
+        .map(([key, value]) => `${key}=${String(value)}`)
         .join(", ");
     return `  - readout (${readout.path}): ${fields || readout.unavailable || "no fields read"}`;
 }
@@ -244,7 +244,7 @@ function renderHeader(readout: HeaderReadout | undefined): string | undefined {
 function renderSlot(slot: SetSlot): string {
     const position = `${slot.location} ${slot.index}`;
     const affix = [slot.prefix ? `after "${slot.prefix}"` : undefined, slot.suffix ? `before "${slot.suffix}"` : undefined]
-        .filter((part): part is string => part !== undefined)
+        .filter((part) => part !== undefined)
         .join(", ");
     const identity = slot.sameAsSlot
         ? `, same identity as ${slot.sameAsSlot}${slot.crossCheckMismatches ? ` (${slot.crossCheckMismatches} members disagreed)` : ""}`
@@ -353,7 +353,7 @@ export function renderSetMenu(menu: SetMenu, root: string): string {
             if (overlap.onlyInSecond > 0) gaps.push(`${overlap.onlyInSecond} only in ${overlap.slots[1]} (${overlap.onlyInSecondSample.join(", ")})`);
             lines.push(
                 `- ${overlap.slots[0]} vs ${overlap.slots[1]}: ${overlap.shared} shared values (${overlap.sharedSample.join(", ")})` +
-                    `${gaps.length > 0 ? `; ${gaps.join("; ")}` : "; no gaps"}`,
+                    (gaps.length > 0 ? `; ${gaps.join("; ")}` : "; no gaps"),
             );
         }
     }

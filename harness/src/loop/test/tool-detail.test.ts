@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { hasLoneHighSurrogate, hasLoneLowSurrogate } from "../../lib/test/text-shapes.js";
 import { ok } from "neverthrow";
 import { z } from "zod";
@@ -20,7 +22,7 @@ function recordingLogger(): { logger: Logger; debugs: { msg: string; fields?: Lo
         },
         with: () => logger,
         named: () => logger,
-        errorFields: (err) => ({ error: err instanceof Error ? err.message : String(err) }),
+        errorFields: (err) => ({ error: errorMessageOf(err) ?? textOf(err) }),
     };
     return { logger, debugs };
 }

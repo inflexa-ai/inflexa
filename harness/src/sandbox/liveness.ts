@@ -10,6 +10,8 @@
  * {@link createEscalationPolicy} arms.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import type { ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
 
 /**
@@ -61,7 +63,7 @@ export async function probeLiveness(isAlive: (ref: SandboxRef) => Promise<Sandbo
     try {
         liveness = await isAlive(ref);
     } catch (cause) {
-        return { kind: "inconclusive", detail: cause instanceof Error ? cause.message : String(cause) };
+        return { kind: "inconclusive", detail: errorMessageOf(cause) ?? textOf(cause) };
     }
     return liveness.alive ? { kind: "alive" } : { kind: "dead", oomKilled: liveness.oomKilled };
 }

@@ -104,7 +104,7 @@ describe("launchDbos / shutdownDbos", () => {
     it("shutdownDbos swallows errors and resets state", async () => {
         __setDbosStateForTest({ launched: true, recoveryStarted: true });
         const dbos = await import("@dbos-inc/dbos-sdk");
-        originalShutdown ??= dbos.DBOS.shutdown;
+        originalShutdown ??= dbos.DBOS.shutdown.bind(dbos.DBOS);
         const stub = mock(() => Promise.reject(new Error("boom")));
         Reflect.set(dbos.DBOS, "shutdown", stub);
 

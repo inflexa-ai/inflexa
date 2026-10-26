@@ -130,7 +130,7 @@ describe("buildSessionSubPaths", () => {
         expect(subPaths.rw).toBe("an-1/runs/run-1/step-a");
         // The RW subPath matches the container RW mount path sans leading slash — the two
         // sides of the same directory.
-        expect(`/${subPaths.rw}`).toBe(buildMountPlan(COORDS, { libs: false, refs: false }).writableStepPath ?? "");
+        expect(`/${String(subPaths.rw)}`).toBe(buildMountPlan(COORDS, { libs: false, refs: false }).writableStepPath ?? "");
     });
 
     test("tracks a workspace root that is NOT laid out as {pvcRoot}/{analysisId}", () => {

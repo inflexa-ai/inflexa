@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { PLAN_ID_RE } from "../../../contracts/schemas/chat-parts.js";
 import { okAsync } from "neverthrow";
 import { z } from "zod";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import type { Pool } from "pg";
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -365,7 +366,7 @@ describe("generatePlan loop-driving tool", () => {
     describe("data context", () => {
         it("takes no dataset field from the caller at all", () => {
             const schema = z
-                .object({ properties: z.record(z.string(), z.unknown()), required: z.array(z.string()).optional() })
+                .object({ properties: z.record(z.string(), z.json()), required: z.array(z.string()).optional() })
                 .parse(
                     createGeneratePlanTool({ conversation: { provider: scriptedProvider([]), model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS }).jsonSchema,
                 );
@@ -1020,8 +1021,8 @@ describe("generatePlan loop-driving tool", () => {
             expect(record.fields.loop).toMatchObject({ finishReason: "stop", salvaged: true, firstFinishReason: "stop", toolCalls: [] });
             // The planner's last words — the single artifact that explains a run which stopped
             // talking instead of calling a terminal tool, and which nothing else preserves.
-            const authored = record.fields.modelAuthored;
-            if (typeof authored !== "object" || authored === null || Array.isArray(authored)) throw new Error("the outcome carries no model-authored record");
+            const authored = parseUnknownRecord(record.fields.modelAuthored);
+            if (authored === undefined) throw new Error("the outcome carries no model-authored record");
             if (!("plannerFinalProse" in authored)) throw new Error("the model-authored record carries no planner prose");
             expect(authored.plannerFinalProse).toContain("think about this out loud");
         });

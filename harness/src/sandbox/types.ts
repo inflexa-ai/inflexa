@@ -227,7 +227,7 @@ export type ExecResult = z.infer<typeof ExecResultSchema>;
  */
 export const PollEventSchema = z.object({
     seq: z.number().int(),
-    payload: z.unknown(),
+    payload: z.json(),
 });
 export type PollEvent = z.infer<typeof PollEventSchema>;
 

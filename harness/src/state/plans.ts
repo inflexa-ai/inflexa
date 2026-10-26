@@ -145,7 +145,7 @@ export function upsertPlan(pool: Querier, input: UpsertPlanInput): ResultAsync<v
  * to the caller, which is the multi-tenancy invariant. Absence is NOT an
  * error.
  */
-export function loadPlan(pool: Querier, planId: string, opts: { analysisId: string }): ResultAsync<unknown | null, DbError> {
+export function loadPlan(pool: Querier, planId: string, opts: { analysisId: string }): ResultAsync<unknown, DbError> {
     return tryQuery("plans.loadPlan", async () => {
         const result = await pool.query<{ plan: unknown }>({
             text: `SELECT plan FROM cortex_plans
@@ -169,7 +169,7 @@ export type PlanRecord = {
 
 /** The `cortex_plans` row of {@link loadPlanRecord}, as the SELECT returns it. */
 const PlanRecordRowSchema = z.object({
-    plan: z.unknown(),
+    plan: z.json(),
     parent_plan_id: z.string().nullable(),
     created_at: z.string(),
     superseded_by: z.string().nullable(),

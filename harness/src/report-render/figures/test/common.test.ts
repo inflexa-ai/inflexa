@@ -3,6 +3,7 @@
  * the size legend, the palette, and the legend icons.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
@@ -177,7 +178,7 @@ describe("the legend icons", () => {
     /** The icon of each legend entry of one option. */
     function icons(option: EchartOption): Record<string, unknown> {
         const data = optionArray(optionAt(option, "legend"), "data");
-        return Object.fromEntries(data.map((entry): [string, unknown] => [String(entry.name), entry.icon]));
+        return Object.fromEntries(data.map((entry): [string, unknown] => [textOf(entry.name), entry.icon]));
     }
 
     const rows: ChartRow[] = [

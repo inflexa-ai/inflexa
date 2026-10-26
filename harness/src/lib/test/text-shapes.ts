@@ -6,7 +6,7 @@
  */
 
 function isLowerHex(text: string): boolean {
-    return [...text].every((char) => (char >= "0" && char <= "9") || (char >= "a" && char <= "f"));
+    return Array.from(text).every((char) => (char >= "0" && char <= "9") || (char >= "a" && char <= "f"));
 }
 
 /** Whether `text` is exactly `length` lowercase hex characters. */

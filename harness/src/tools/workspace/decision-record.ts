@@ -33,7 +33,7 @@ export function decisionRecordPath(scriptFile: string): string {
     const isSuffixAlnum =
         dot !== -1 &&
         suffix.length > 0 &&
-        [...suffix].every((char) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9"));
+        Array.from(suffix).every((char) => (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9"));
     const stem = isSuffixAlnum ? scriptFile.slice(0, dot) : scriptFile;
     return `output/decision_record_${stem}.json`;
 }

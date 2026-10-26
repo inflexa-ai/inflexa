@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { PharmgkbResponseSchema, searchPharmgkb } from "../pharmgkb-client.js";
 import { presentAt } from "../../../lib/present.js";
@@ -16,7 +17,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(requestUrlText(input))));
 }
 
 function json(body: unknown, status = 200): Response {

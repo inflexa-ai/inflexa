@@ -1,3 +1,5 @@
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import type { QueryResultRow } from "pg";
 
 import { envelopeMessage, legacyAnthropicToModelMessage } from "./ai-sdk-message-storage.js";
@@ -39,7 +41,7 @@ export async function backfillAiSdkMessageEnvelopes(client: BackfillClient<Legac
                 row.seq,
             ]);
         } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = errorMessageOf(err) ?? textOf(err);
             throw new Error(`Failed to backfill AI SDK message envelope for ${identity}: ${message}`, { cause: err });
         }
     }

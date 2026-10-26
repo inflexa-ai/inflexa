@@ -14,6 +14,7 @@ const saved = new Map(TOUCHED.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
     for (const [key, value] of saved) {
+        // oxlint-disable-next-line typescript/no-dynamic-delete -- the test must restore the live env of this process; a Map stand-in would not reach the reaper guard.
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }

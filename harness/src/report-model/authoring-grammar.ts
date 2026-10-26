@@ -66,7 +66,7 @@ const AuthoringReferenceSchema = z.discriminatedUnion("kind", [
 const AuthoringScalarReferenceSchema = z.discriminatedUnion("kind", [AuthoringValueReferenceSchema, AuthoringDerivationReferenceSchema]);
 
 /** The tree of one heatmap axis on the authoring surface: the contract tree with an authoring binding. */
-function authoringTree() {
+function authoringTree(): ReturnType<typeof ChartTreeSchema.extend<{ binding: typeof AuthoringTableReferenceSchema }>> {
     return ChartTreeSchema.extend({ binding: AuthoringTableReferenceSchema.describe(ChartTreeSchema.shape.binding.description ?? "") });
 }
 

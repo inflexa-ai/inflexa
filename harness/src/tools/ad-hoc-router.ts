@@ -1,4 +1,6 @@
-import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
+import { jsonSchema, tool as aiTool, type Tool } from "ai";
 import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
@@ -130,7 +132,7 @@ async function profileOrientation(pool: Querier, analysisId: string, logger: Log
         if (!status?.result) return "No persisted data-profile facts are available.";
         return buildDataProfileOrientation(status.result, analysisId, DATA_PROFILE_ORIENTATION_MAX_CHARS);
     } catch (error) {
-        logger.warn("could not load data profile for ad hoc routing", { error: error instanceof Error ? error.message : String(error) });
+        logger.warn("could not load data profile for ad hoc routing", { error: errorMessageOf(error) ?? textOf(error) });
         return "The persisted data profile could not be loaded; route from the request alone.";
     }
 }
@@ -163,7 +165,7 @@ async function routePackages(
     const seen = new Set<string>();
     for (const element of entries) {
         if (typeof element !== "string") {
-            droppedPackages.push({ entry: String(element), reason: "unparsable" });
+            droppedPackages.push({ entry: textOf(element), reason: "unparsable" });
             continue;
         }
         const entry = element.trim();
@@ -186,7 +188,7 @@ async function routePackages(
     } catch (error) {
         // A resolution that throws is the same condition as an inventory that
         // reports itself unavailable: it says nothing about the packages.
-        logger.warn("ad hoc package resolution failed", { error: error instanceof Error ? error.message : String(error) });
+        logger.warn("ad hoc package resolution failed", { error: errorMessageOf(error) ?? textOf(error) });
         rows = null;
     }
     if (rows === null) return { packages: asWritten(), droppedPackages };
@@ -217,7 +219,7 @@ async function routePackages(
     return { packages, droppedPackages };
 }
 
-function routeTool() {
+function routeTool(): { submit_route: Tool<unknown, never> } {
     const schema: Record<string, unknown> = z.toJSONSchema(routeSchema);
     return {
         submit_route: aiTool({
@@ -296,14 +298,14 @@ export async function routeAdHocRequest(
             rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
         });
         const call = Array.isArray(response.message.content)
-            ? response.message.content.find((part): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route")
+            ? response.message.content.flatMap((part) => (part.type === "tool-call" && part.toolName === "submit_route" ? [part] : []))[0]
             : undefined;
         raw = call?.input;
         if (!call) failure = "malformed";
     } catch (error) {
         if (input.signal.aborted) throw error;
         failure = controller.signal.aborted ? "timeout" : "provider_error";
-        logger.warn("ad hoc route fell back", { failure, error: error instanceof Error ? error.message : String(error) });
+        logger.warn("ad hoc route fell back", { failure, error: errorMessageOf(error) ?? textOf(error) });
     } finally {
         clearTimeout(timer);
     }

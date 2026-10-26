@@ -59,7 +59,13 @@ function prefixIssues(prefix: string, issues: SchemaIssue[]): SchemaIssue[] {
     }));
 }
 
-/** A stored map is a plain object. An array and a null carry no own key that a map read can use. */
+/**
+ * A stored map is a plain object. An array and a null carry no own key that a map read can use.
+ *
+ * The check stays a hand predicate because the walk below must address the ORIGINAL object: a
+ * zod record parse rebuilds the value through string-keyed assignment, and a `__proto__` own key
+ * does not survive that rebuild — the pin contract this module keeps.
+ */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }

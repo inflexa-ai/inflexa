@@ -1,3 +1,5 @@
+import { errorMessageOf, errorOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { aggregateCitationResolution } from "./aggregate.js";
 import { BoundedTtlCache } from "../lib/cache.js";
 import { createArxivCitationClient } from "./clients/arxiv.js";
@@ -111,7 +113,7 @@ function cacheable(outcomes: readonly CitationSourceOutcome[]): "positive" | "ne
 }
 
 function abortReason(signal: AbortSignal): Error {
-    return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+    return errorOf(signal.reason) ?? new DOMException("The operation was aborted", "AbortError");
 }
 
 function withCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -127,6 +129,7 @@ function withCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise
             },
             (error: unknown) => {
                 signal.removeEventListener("abort", onAbort);
+                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rejection reason is the thrown value itself; the awaiter reads its identity, and a wrapper would erase it.
                 reject(error);
             },
         );
@@ -158,7 +161,7 @@ function registrationAgencyEvidence(outcome: CitationSourceOutcome | undefined):
 async function runSource(client: CitationSourceClient, requests: readonly CitationSourceRequest[], signal?: AbortSignal): Promise<CitationSourceOutcome[]> {
     const unavailable = (request: CitationSourceRequest, detail: string): CitationSourceOutcome =>
         sourceOutcome(client.source, request.plan.operation, "unavailable", 0, [], detail);
-    const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+    const describe = (error: unknown): string => errorMessageOf(error) ?? textOf(error);
 
     if (client.resolveMany === undefined) {
         const settled = await Promise.allSettled(requests.map((request) => client.resolve(request, signal)));

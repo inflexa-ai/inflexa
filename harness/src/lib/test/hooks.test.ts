@@ -11,12 +11,12 @@ describe("passGate", () => {
     });
 
     it("turns a gate err into a failed refusal that carries the reason of the host", async () => {
-        const refusal = (await passGate("RunCharge.open", errAsync<void, GateFailure>({ reason: "r", suspend: false })))._unsafeUnwrapErr();
+        const refusal = (await passGate("RunCharge.open", errAsync<never, GateFailure>({ reason: "r", suspend: false })))._unsafeUnwrapErr();
         expect(refusal).toEqual({ kind: "failed", gate: "RunCharge.open", reason: "r" });
     });
 
     it("turns a gate err with suspend into a suspended refusal, not a failed one", async () => {
-        const refusal = (await passGate("RunAuthorizer.authorize", errAsync<void, GateFailure>({ reason: "r", suspend: true })))._unsafeUnwrapErr();
+        const refusal = (await passGate("RunAuthorizer.authorize", errAsync<never, GateFailure>({ reason: "r", suspend: true })))._unsafeUnwrapErr();
         expect(refusal).toEqual({ kind: "suspended", gate: "RunAuthorizer.authorize", reason: "r" });
     });
 
@@ -47,13 +47,13 @@ describe("passGate", () => {
 describe("deliverNotice", () => {
     it("resolves true for a notice that succeeds, and logs nothing", async () => {
         const log = createCapturingLogger();
-        expect(await deliverNotice(log, "RunCharge.close", okAsync<void, NoticeFailure>(undefined))).toBe(true);
+        expect(await deliverNotice(log, "RunCharge.close", okAsync<undefined, NoticeFailure>(undefined))).toBe(true);
         expect(log.records).toEqual([]);
     });
 
     it("logs the reason of a notice err at the error level, and the outcome stays a success", async () => {
         const log = createCapturingLogger();
-        const delivered = await deliverNotice(log, "RunAuthorizer.revoke", errAsync<void, NoticeFailure>({ reason: "r" }));
+        const delivered = await deliverNotice(log, "RunAuthorizer.revoke", errAsync<never, NoticeFailure>({ reason: "r" }));
         expect(delivered).toBe(false);
         expect(log.records).toEqual([{ level: "error", msg: "a notice of the host failed", fields: { notice: "RunAuthorizer.revoke", reason: "r" } }]);
     });

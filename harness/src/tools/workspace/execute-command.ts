@@ -31,7 +31,7 @@ import { posix as posixPath } from "node:path";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { ProvenanceFrame, SandboxRef } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
@@ -117,7 +117,9 @@ export type ExecuteCommandDeps = {
     readonly mutator?: WorkspaceMutator;
 };
 
-export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
+export function createExecuteCommandTool(
+    deps: ExecuteCommandDeps,
+): Tool<z.infer<typeof ExecuteCommandInputSchema>, ExecuteCommandResult | WithToolCallRecord<ExecuteCommandResult, ExecCallRecord>> {
     const { sandboxClient, sandbox, deadlineMs, defaultCwd, lineageCollector, mountRoot } = deps;
 
     return defineTool({

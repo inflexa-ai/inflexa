@@ -59,7 +59,7 @@ export function resultTextOf(output: ToolResultPart["output"]): string | undefin
         case "error-text":
             return output.value;
         case "content":
-            return output.value.map((part) => (part.type === "text" ? part.text : "")).join("");
+            return output.value.map((part) => ("text" in part ? part.text : "")).join("");
         case "execution-denied":
             return undefined;
     }
@@ -109,7 +109,7 @@ export function withExcerpt(part: ToolResultPart, excerpt: string): ToolResultPa
         case "error-text":
             return { ...part, output: { type: "error-text", value: excerpt } };
         case "content":
-            return { ...part, output: { type: "content", value: [{ type: "text", text: excerpt }, ...output.value.filter((p) => p.type !== "text")] } };
+            return { ...part, output: { type: "content", value: [{ type: "text", text: excerpt }, ...output.value.filter((p) => !("text" in p))] } };
         case "execution-denied":
             return part;
     }

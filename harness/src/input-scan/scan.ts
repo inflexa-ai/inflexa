@@ -127,7 +127,7 @@ export function formatBytes(bytes: number): string {
         value /= 1024;
         unit++;
     }
-    return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+    return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${String(units[unit])}`;
 }
 
 /**
@@ -169,7 +169,7 @@ export function renderInputScanManifest(manifest: InputScanManifest): string {
             }
             if (shape.header) {
                 const fields = Object.entries(shape.header.fields)
-                    .map(([key, value]) => `${key}=${value}`)
+                    .map(([key, value]) => `${key}=${String(value)}`)
                     .join(", ");
                 lines.push(`  - header (${shape.header.path}): ${fields || shape.header.unavailable || "no fields read"}`);
             } else {

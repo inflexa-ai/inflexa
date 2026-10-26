@@ -7,7 +7,7 @@ export function normalizeWhitespace(s: string): string {
     let out = "";
     let inSpaceRun = false;
     let newlineRun = 0;
-    const flushNewlineRun = () => {
+    const flushNewlineRun = (): void => {
         out += "\n".repeat(Math.min(newlineRun, 2));
         newlineRun = 0;
     };

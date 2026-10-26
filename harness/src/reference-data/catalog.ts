@@ -2,6 +2,8 @@ import { posix as posixPath } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import { presentGet } from "../lib/present.js";
+import { isUnknownArray } from "../lib/unknown-array.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { z } from "zod";
 
 /** Schema version for the checked-in reference-data catalog. */
@@ -143,11 +145,17 @@ export function referenceArtifactKey(dataset: { readonly id: string; readonly ve
     return `${dataset.id}/${dataset.version}/${artifact.path}`;
 }
 
+// The walk freezes the original container: a rebuild would freeze a copy and
+// leave the real value mutable. z.custom passes the value through on success, so
+// the check decides "record or array" without producing a second object.
+const FreezableContainer = z.custom<object>((value) => isUnknownArray(value) || parseUnknownRecord(value) !== undefined);
+
 function deepFreeze<T>(value: T): T {
-    if (value && typeof value === "object" && !Object.isFrozen(value)) {
-        for (const nested of Object.values(value)) deepFreeze(nested);
-        Object.freeze(value);
-    }
+    const parsed = FreezableContainer.safeParse(value);
+    if (!parsed.success) return value;
+    if (Object.isFrozen(parsed.data)) return value;
+    for (const nested of Object.values(parsed.data)) deepFreeze(nested);
+    Object.freeze(parsed.data);
     return value;
 }
 

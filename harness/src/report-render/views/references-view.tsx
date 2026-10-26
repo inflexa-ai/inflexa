@@ -27,6 +27,7 @@ import { LineageControl } from "./lineage.js";
  * marker that names no place carries no control. The page shows the control only where a stamp gives the
  * script a key to walk.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 export function Marker({ n, lineage }: { n: number; lineage?: number }) {
     return (
         <span class="report-marker">
@@ -37,21 +38,25 @@ export function Marker({ n, lineage }: { n: number; lineage?: number }) {
 }
 
 /** The kind label of one reference entry. */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function RefKind({ children }: PropsWithChildren) {
     return <span class="report-ref-kind">{children}</span>;
 }
 
 /** A path in a monospace code span. */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function PathCode({ children }: PropsWithChildren) {
     return <code class="report-ref-path">{children}</code>;
 }
 
 /** A plain detail such as a locator or an external id. */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function Detail({ children }: PropsWithChildren) {
     return <span class="report-ref-detail">{children}</span>;
 }
 
 /** The head of a content hash in a monospace span. */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function HashCode({ children }: PropsWithChildren) {
     return <code class="report-ref-hash">{children}</code>;
 }
@@ -79,6 +84,7 @@ function hashHead(hash: string): string {
  * The hash head stays the text of the link. Thus the reader reads the same head as before, and the click
  * opens the script itself. A chain with no staged script shows the head alone.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function ScriptLink({ chain }: { chain: DerivationChain }) {
     const head = <HashCode>{hashHead(chain.scriptHash)}</HashCode>;
     return chain.scriptSource === undefined ? (
@@ -102,6 +108,7 @@ function ScriptLink({ chain }: { chain: DerivationChain }) {
  * host. Each hash head stays beside its link, because the head is what a reader compares against the name of
  * a staged file.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function ChainLine({ chain }: { chain: DerivationChain }) {
     return (
         <div class="report-ref-chain">
@@ -156,6 +163,7 @@ function describeLocator(locator: ArtifactValueReference["locator"]): string {
  * the reference pins one cell. A derivation entry names its operation and its two inputs, each by path and
  * locator.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function ReferenceBody({ reference }: { reference: ArtifactReference }) {
     switch (reference.kind) {
         case "artifact-value":
@@ -197,6 +205,7 @@ function ReferenceBody({ reference }: { reference: ArtifactReference }) {
  * A path that no record names renders the body alone, thus a page over pinned artifacts alone reads exactly
  * as it did before the chains existed.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function ArtifactEntry({ reference, chains }: { reference: ArtifactReference; chains: DerivationChains | undefined }) {
     const path = pathOf(reference);
     const chain = path === undefined ? undefined : chains?.get(path);
@@ -216,6 +225,7 @@ function ArtifactEntry({ reference, chains }: { reference: ArtifactReference; ch
  * The description sits in the appendix and never on the card. The card sits in the body of the report,
  * where a paragraph about the paper competes with the prose around it.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function CitationEntry({ reference, records }: { reference: CitationReference; records: CitationRecords | undefined }) {
     const key = citationKeyOf(reference);
     const record = citationRecordOf(records, key);
@@ -235,6 +245,7 @@ function CitationEntry({ reference, records }: { reference: CitationReference; r
 }
 
 /** One appendix entry. The kind of the reference selects the shape, and the two shapes share the ladder. */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function ReferenceEntry({ reference, records, chains }: { reference: Reference; records: CitationRecords | undefined; chains: DerivationChains | undefined }) {
     return reference.kind === "citation" ? <CitationEntry reference={reference} records={records} /> : <ArtifactEntry reference={reference} chains={chains} />;
 }
@@ -256,6 +267,7 @@ export function renderReferences(ledger: ReferenceLedger, records?: CitationReco
         return "";
     }
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <ol class="report-references">
             {entries.map((reference, index) => (
                 <li id={`ref-${index + 1}`} class="report-ref-item">

@@ -12,7 +12,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 export type WebSearchAnswer = {
     readonly answer?: string;
@@ -107,7 +107,24 @@ export type WebSearchToolDeps = {
     readonly engine: WebSearchEngine;
 };
 
-export function createWebSearchTool(deps: WebSearchToolDeps) {
+const WebSearchInputSchema = z
+    .object({
+        query: z.string().min(1).optional().describe("One free-text search, for example a method name with its domain."),
+        queries: z
+            .array(z.string().min(1))
+            .min(1)
+            .max(5)
+            .optional()
+            .describe("Up to 5 searches that run in one pass. Answers and results merge into one bounded list."),
+        numResults: z.number().int().min(1).max(20).default(5).describe("Maximum merged results (1–20, default 5)."),
+        recencyFilter: z.enum(["day", "week", "month", "year"]).optional().describe("Keep only results from this recency."),
+        domainFilter: z.string().optional().describe('One domain the search stays in, for example "nih.gov". A leading "-" excludes the domain instead.'),
+    })
+    .refine((input) => (input.query !== undefined) !== (input.queries !== undefined), {
+        message: "Give exactly one of `query` or `queries`.",
+    });
+
+export function createWebSearchTool(deps: WebSearchToolDeps): Tool<z.infer<typeof WebSearchInputSchema>, WebSearchOutput> {
     return defineTool({
         id: "web_search",
         description:
@@ -118,25 +135,7 @@ export function createWebSearchTool(deps: WebSearchToolDeps) {
             "week, month, or year. Read one of the returned pages with `web_fetch`.\n" +
             "ABSENCE IS NORMAL: an empty results array means no page matched, and a status of http_error, retryable_status, " +
             "schema_mismatch, or not_json names a search that did not answer. Report either one and continue, do not retry unchanged.",
-        inputSchema: z
-            .object({
-                query: z.string().min(1).optional().describe("One free-text search, for example a method name with its domain."),
-                queries: z
-                    .array(z.string().min(1))
-                    .min(1)
-                    .max(5)
-                    .optional()
-                    .describe("Up to 5 searches that run in one pass. Answers and results merge into one bounded list."),
-                numResults: z.number().int().min(1).max(20).default(5).describe("Maximum merged results (1–20, default 5)."),
-                recencyFilter: z.enum(["day", "week", "month", "year"]).optional().describe("Keep only results from this recency."),
-                domainFilter: z
-                    .string()
-                    .optional()
-                    .describe('One domain the search stays in, for example "nih.gov". A leading "-" excludes the domain instead.'),
-            })
-            .refine((input) => (input.query !== undefined) !== (input.queries !== undefined), {
-                message: "Give exactly one of `query` or `queries`.",
-            }),
+        inputSchema: WebSearchInputSchema,
         describeCall: "none",
         execute: async ({ query, queries, numResults, recencyFilter, domainFilter }): Promise<Result<WebSearchOutput, ToolError>> => {
             const filter = parseDomainFilter(domainFilter);

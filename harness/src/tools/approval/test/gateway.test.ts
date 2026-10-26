@@ -32,7 +32,7 @@ const AskPartDataSchema = z.object({
     reply: z.string().optional(),
 });
 
-const AskStateRowSchema = z.object({ status: z.string(), reply: z.unknown() });
+const AskStateRowSchema = z.object({ status: z.string(), reply: z.json() });
 
 const CountRowSchema = z.object({ n: z.number() });
 

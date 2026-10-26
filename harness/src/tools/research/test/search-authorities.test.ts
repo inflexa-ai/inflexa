@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchArxivTool } from "../search-arxiv.js";
 import { createSearchSemanticScholarTool } from "../search-semantic-scholar.js";
@@ -19,7 +20,7 @@ describe("shared authority discovery adapters", () => {
     it("preserves the search_arxiv input and output contract", async () => {
         let seen: URL | undefined;
         globalThis.fetch = fetchDouble((url) => {
-            seen = new URL(String(url));
+            seen = new URL(requestUrlText(url));
             return Promise.resolve(
                 new Response(`
                 <feed>
@@ -47,7 +48,7 @@ describe("shared authority discovery adapters", () => {
     it("preserves the search_semantic_scholar input and output contract", async () => {
         let seen: URL | undefined;
         globalThis.fetch = fetchDouble((url) => {
-            seen = new URL(String(url));
+            seen = new URL(requestUrlText(url));
             return Promise.resolve(
                 Response.json({
                     data: [

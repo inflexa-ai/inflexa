@@ -25,7 +25,7 @@ export type PoolConfig = {
     readonly poolMax?: string;
 };
 
-function poolOptions(config: PoolConfig) {
+function poolOptions(config: PoolConfig): pg.PoolConfig {
     return {
         host: config.host,
         port: parseInt(config.port, 10),

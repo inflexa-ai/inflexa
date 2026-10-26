@@ -140,19 +140,19 @@ function formatOrganism(organism: DataProfileResult["organism"]): string | undef
 /** `(20000 x 24, CSV)` — whichever of dimensions / format the profiler recorded. */
 function formatFileFacts(file: { rows?: number | null; cols?: number | null; format?: string }): string {
     const dims = typeof file.rows === "number" && typeof file.cols === "number" ? `${file.rows} x ${file.cols}` : undefined;
-    const facts = [dims, present(file.format)].filter((f): f is string => f !== undefined);
+    const facts = [dims, present(file.format)].filter((f) => f !== undefined);
     return facts.length > 0 ? ` (${facts.join(", ")})` : "";
 }
 
 /** What the dataset IS, or — on a snapshot carrying no structured identity — its summary. */
 function identityLine(result: DataProfileResult): string {
     const identity = [
-        [present(result.domain), present(result.subtype)].filter((f): f is string => f !== undefined).join(" / ") || undefined,
+        [present(result.domain), present(result.subtype)].filter((f) => f !== undefined).join(" / ") || undefined,
         formatOrganism(result.organism),
-        present(result.tissue) ? `tissue: ${present(result.tissue)}` : undefined,
-        present(result.cellType) ? `cells: ${present(result.cellType)}` : undefined,
-        present(result.condition) ? `condition: ${present(result.condition)}` : undefined,
-    ].filter((f): f is string => f !== undefined);
+        present(result.tissue) ? `tissue: ${String(present(result.tissue))}` : undefined,
+        present(result.cellType) ? `cells: ${String(present(result.cellType))}` : undefined,
+        present(result.condition) ? `condition: ${String(present(result.condition))}` : undefined,
+    ].filter((f) => f !== undefined);
 
     return `Dataset: ${identity.length > 0 ? identity.join(" — ") : clip(result.summary, MAX_IDENTITY_CHARS)}`;
 }
@@ -234,7 +234,7 @@ function slotsLine(group: DataProfileGroup | undefined, members: number): string
 /** One group: what it is and how many, then the positions its members vary at. */
 function groupEntry(view: ProfileGroupView, group: DataProfileGroup | undefined): readonly string[] {
     const facts = [`${view.count}x`, formatCensus(view, group), present(group?.categoryLabel ?? group?.category)]
-        .filter((fact): fact is string => fact !== undefined)
+        .filter((fact) => fact !== undefined)
         .join(", ");
     const line = `- ${clip(view.name, MAX_GROUP_NAME_CHARS)} (${facts}) — ${clip(view.memberRepresents, MAX_GROUP_DESCRIPTION_CHARS)}`;
     const slots = slotsLine(group, view.count);
@@ -378,7 +378,7 @@ function composeBody(result: DataProfileResult, analysisId: string, groups: read
 
     const caveats = profileCaveats(result)
         .map((c) => present(c))
-        .filter((c): c is string => c !== undefined);
+        .filter((c) => c !== undefined);
     if (caveats.length > 0) {
         // Three caps, and only one of them is elision: the per-item and share caps are the
         // section's own and already report themselves through `(+N more)`, so the marker is
@@ -418,7 +418,7 @@ export function buildDataProfileOrientation(result: DataProfileResult, analysisI
     // what remains, so the one line saying how much of the dataset is accounted for
     // cannot be the line the body's budget drops.
     const identityBudget = Math.max(0, Math.min(MAX_IDENTITY_CHARS, maxChars - (census ? census.length + 1 : 0)));
-    const header = [clamp(identityLine(result), identityBudget), census].filter((line): line is string => Boolean(line)).join("\n");
+    const header = [clamp(identityLine(result), identityBudget), census].flatMap((line) => (line ? [line] : [])).join("\n");
     const headerText = clamp(header, maxChars);
     const bodyBudget = maxChars - headerText.length - 1;
     if (bodyBudget <= 0) return headerText;

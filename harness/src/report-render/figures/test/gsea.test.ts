@@ -4,6 +4,7 @@
  * ranked metric as an area.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import * as echarts from "echarts";
 
@@ -97,7 +98,7 @@ function drawn(series: EchartOption): number[][] {
 
 /** The grid of one panel as numbers: the top, the height, the left, and the right, in percent. */
 function place(grid: EchartOption): { top: number; height: number; left: number; right: number } {
-    const read = (value: unknown): number => Number.parseFloat(String(value));
+    const read = (value: unknown): number => Number.parseFloat(textOf(value));
     return { top: read(grid.top), height: read(grid.height), left: read(grid.left), right: read(grid.right) };
 }
 
@@ -258,10 +259,10 @@ describe("the gsea figure", () => {
         const topGrid = list(option, "grid")[0];
         if (topGrid === undefined) throw new Error("the option holds no top grid");
         const top = place(topGrid);
-        const offset = Number.parseFloat(String(text.top));
+        const offset = Number.parseFloat(textOf(text.top));
         expect(offset).toBeGreaterThan(top.top);
         expect(offset).toBeLessThan(top.top + top.height / 2);
-        expect(Number.parseFloat(String(text.right))).toBeGreaterThan(top.right);
+        expect(Number.parseFloat(textOf(text.right))).toBeGreaterThan(top.right);
     });
 
     it("prints the statistics at the bottom left of the top panel for a set that dips under zero", () => {
@@ -273,7 +274,7 @@ describe("the gsea figure", () => {
         const topGrid = list(option, "grid")[0];
         if (topGrid === undefined) throw new Error("the option holds no top grid");
         const top = place(topGrid);
-        const fromBottom = Number.parseFloat(String(text.bottom));
+        const fromBottom = Number.parseFloat(textOf(text.bottom));
         expect(100 - fromBottom).toBeLessThan(top.top + top.height);
         expect(100 - fromBottom).toBeGreaterThan(top.top + top.height / 2);
     });

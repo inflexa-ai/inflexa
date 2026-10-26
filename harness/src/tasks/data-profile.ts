@@ -18,6 +18,8 @@
  * UPDATE wins); each winning attempt starts a workflow under a per-attempt id.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -659,7 +661,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
             ),
         );
-        if (spawned.isErr()) return await suspendProfile(suspensionOfSpawnRefusal(spawned.error));
+        if (spawned.isErr()) {
+            await suspendProfile(suspensionOfSpawnRefusal(spawned.error));
+            return;
+        }
         const sandbox = spawned.value;
 
         try {
@@ -856,7 +861,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     } catch (err) {
         if (selfCancelled || err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
         const suspension = suspensionOfFailure(err);
-        if (suspension !== undefined) return await suspendProfile(suspension);
+        if (suspension !== undefined) {
+            await suspendProfile(suspension);
+            return;
+        }
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
         await settleTerminalWrite(
@@ -1203,7 +1211,7 @@ export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfile
  */
 const PROFILE_ERROR_MAX_LEN = 200;
 function profileFailureReason(err: unknown): string {
-    const raw = err instanceof Error ? err.message : String(err);
+    const raw = errorMessageOf(err) ?? textOf(err);
     const firstLine = collapseWhitespace(presentFirst(raw.split("\n", 1), "the first line of the error"));
     return firstLine.length > PROFILE_ERROR_MAX_LEN ? firstLine.slice(0, PROFILE_ERROR_MAX_LEN - 1) + "…" : firstLine || "Data profiling failed";
 }

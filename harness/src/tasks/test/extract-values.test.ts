@@ -85,7 +85,7 @@ describe("buildExtractionExec", () => {
         // the script can refuse a file that drifted from the pin.
         const execEnv = body.env;
         if (execEnv === undefined) throw new Error("the exec carries no environment");
-        const parsed = parseJsonAs(execEnv[EXTRACTION_INPUT_ENV] ?? "", z.unknown());
+        const parsed = parseJsonAs(execEnv[EXTRACTION_INPUT_ENV] ?? "", z.json());
         if (!isUnknownArray(parsed)) throw new Error("the exec carries no request list");
         expect(parsed).toEqual([
             { path: "data/x.tsv", format: "tsv", hash: "h1" },
@@ -101,7 +101,7 @@ describe("buildExtractionExec", () => {
 
         const execEnv = body.env;
         if (execEnv === undefined) throw new Error("the exec carries no environment");
-        const parsed = parseJsonAs(execEnv[EXTRACTION_INPUT_ENV] ?? "", z.unknown());
+        const parsed = parseJsonAs(execEnv[EXTRACTION_INPUT_ENV] ?? "", z.json());
         if (!isUnknownArray(parsed)) throw new Error("the exec carries no request list");
         expect(parsed).toEqual([{ path: "data/x.csv", format: "tsv", hash: "h1" }]);
     });

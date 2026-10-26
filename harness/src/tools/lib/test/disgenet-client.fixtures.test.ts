@@ -66,7 +66,7 @@ runFixtureSuite("DisGeNET golden fixtures", [
 
 describe("the DisGeNET envelope", () => {
     it("is the live shape of the one keyless route", () => {
-        const body = z.record(z.string(), z.unknown()).parse(readFixture("disgenet", "v1-public-version.json"));
+        const body = z.record(z.string(), z.json()).parse(readFixture("disgenet", "v1-public-version.json"));
         expect(Object.keys(body)).toEqual(["status", "payload", "httpStatus"]);
         expect(body.status).toBe("OK");
         expect(body.httpStatus).toBe(200);

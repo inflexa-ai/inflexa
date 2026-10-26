@@ -174,7 +174,7 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         if (starts.length === 0) return options.sink(event);
         // The calls start in the order of the stream with no await between them: a later emit that its caller does
         // not await, for example a text delta, must not reach the sink before them.
-        return Promise.all([...starts, event].map((next) => options.sink(next))).then(() => undefined);
+        return Promise.all([...starts, event].map((next) => Promise.resolve(options.sink(next)))).then(() => undefined);
     };
 
     function takeOpening(): ConversationUIMessage[] {

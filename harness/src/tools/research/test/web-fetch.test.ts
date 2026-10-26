@@ -231,7 +231,7 @@ async function startLocalServer(host: "127.0.0.1" | "localhost" | "::1"): Promis
         server.listen(0, host, () => resolve());
     });
     const address = server.address();
-    if (typeof address !== "object" || address === null) throw new Error("expected a local address");
+    if (address === null || typeof address === "string") throw new Error("expected a local address");
     const { port } = address;
     return {
         server,
@@ -251,7 +251,7 @@ async function startAuthEchoServer(): Promise<LocalServer> {
         server.listen(0, "127.0.0.1", () => resolve());
     });
     const address = server.address();
-    if (typeof address !== "object" || address === null) throw new Error("expected a local address");
+    if (address === null || typeof address === "string") throw new Error("expected a local address");
     const { port } = address;
     return {
         server,
@@ -954,7 +954,7 @@ describe("web_fetch — the returned text and the kept remainder", () => {
 
         expect(output.status).toBe("ok");
         const ref = output.status === "ok" ? output.kept?.ref : undefined;
-        expect(rows.get(`analysis-001:${ref}`)).toMatchObject({ threadId: "thread-77" });
+        expect(rows.get(`analysis-001:${String(ref)}`)).toMatchObject({ threadId: "thread-77" });
     });
 
     it("says that the remainder is not kept when no store is present", async () => {

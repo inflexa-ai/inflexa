@@ -22,6 +22,8 @@ import { z } from "zod";
 
 import { optionAt, optionList, optionOf } from "./options.js";
 
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+
 import type { ReportDocument } from "../../contracts/report-blocks.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { DESIGN_CSS, SCATTER_CROWD_ROWS } from "../design.js";
@@ -38,7 +40,7 @@ import type { RenderValues } from "../types.js";
  */
 const moduleResolver = createRequire(import.meta.url);
 const loaded: unknown = moduleResolver("csstree-validator");
-const validateCssRaw: unknown = typeof loaded === "object" && loaded !== null && "validate" in loaded ? loaded.validate : undefined;
+const validateCssRaw: unknown = parseUnknownRecord(loaded)?.validate;
 
 /** One `csstree-validator` finding. It names the property at fault, the class of the fault, and the message. */
 type CssFinding = { name: string; message: string; property?: string };
@@ -186,7 +188,7 @@ describe("a raw script sink stays hardened", () => {
         if (match === null) {
             throw new Error("The page holds no application/json script element.");
         }
-        const parsed = optionOf(parseJsonAs(match[1] ?? "", z.unknown()));
+        const parsed = optionOf(parseJsonAs(match[1] ?? "", z.json()));
         expect(optionList(optionAt(parsed, "xAxis").data)).toContain(hostileCell);
         expect(JSON.stringify(parsed)).toContain(hostileCell);
     });

@@ -140,7 +140,7 @@ type Semaphore = {
 function createSemaphore(max: number): Semaphore {
     let active = 0;
     const queue: Array<() => void> = [];
-    const release = () => {
+    const release = (): void => {
         active--;
         const next = queue.shift();
         if (next) next();
@@ -148,7 +148,7 @@ function createSemaphore(max: number): Semaphore {
     return {
         acquire(): Promise<() => void> {
             return new Promise((resolve) => {
-                const grant = () => {
+                const grant = (): void => {
                     active++;
                     resolve(release);
                 };
@@ -218,7 +218,7 @@ export async function getBrowser(browserUrl?: string, injected?: Logger): Promis
             logger.info("connected", { wsEndpoint: b.wsEndpoint() });
             return b;
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
             logger.error("failed to connect to browser", logger.errorFields(err));
             // A failed connect leaves nothing to reuse. The entry goes, thus a run of looks that each name a
             // new endpoint and each fail cannot grow the map. The two guards match the disconnect listener,

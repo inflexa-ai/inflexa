@@ -74,6 +74,8 @@
  *       via `inspectRun`)
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { DBOS, Error as DBOSErrors, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
@@ -1098,6 +1100,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // still run the terminal block (close charge + revoke run authorization), and re-throw
     // after so the workflow record goes to ERROR.
     let synthesisError: unknown = null;
+    let synthesisMessage: string | undefined;
     let synthesisSuspension: Suspension | null = null;
     let synthesisFindings: readonly RunFinding[] = [];
     // Null when synthesis never ran (disabled or no completed steps): the ledger
@@ -1155,7 +1158,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 logger.warn("synthesizeFindings suspended — suspending the run", { runId, reason: suspended.reason });
             } else {
                 synthesisError = err;
-                synthesisOutcome = { status: "failed", reason: err instanceof Error ? err.message : String(err) };
+                synthesisMessage = errorMessageOf(err);
+                synthesisOutcome = { status: "failed", reason: errorMessageOf(err) ?? textOf(err) };
                 rowOutcome = synthesisOutcome;
                 logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
             }
@@ -1190,13 +1194,14 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         canceled: final.canceled,
         suspension,
         usage: final.usage,
-        failureReason: synthesisError
-            ? synthesisError instanceof Error
-                ? `synthesis-failed: ${synthesisError.message}`
-                : "synthesis-failed"
-            : final.suspension === null && synthesisSuspension !== null
-              ? synthesisSuspension.reason
-              : final.failureReason,
+        failureReason:
+            synthesisError === null
+                ? final.suspension === null && synthesisSuspension !== null
+                    ? synthesisSuspension.reason
+                    : final.failureReason
+                : synthesisMessage === undefined
+                  ? "synthesis-failed"
+                  : `synthesis-failed: ${synthesisMessage}`,
         forceFailed: synthesisError !== null,
         findings: synthesisFindings,
         synthesisOutcome,
@@ -1215,6 +1220,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     if (suspension !== null && synthesisError === null) return cancelSelf("self-cancel-suspended");
 
     // Re-throw after the terminal block so the workflow record goes to ERROR.
+    // oxlint-disable-next-line typescript/only-throw-error -- the caught synthesis failure rides as-is so the workflow record fails with the original cause; a wrapper would erase its identity.
     if (synthesisError !== null) throw synthesisError;
 
     return result;
@@ -1456,7 +1462,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                     });
                 }
                 halted = true;
-                failureReason = `step "${scheduled.neverFits[0]}" exceeds the machine resource budget`;
+                failureReason = `step "${String(scheduled.neverFits[0])}" exceeds the machine resource budget`;
                 await cancelInFlight(inFlight, "fail_fast", canceledByParent);
                 await emitDagSnapshot();
                 return;
@@ -1601,7 +1607,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 // `stepRuntime` (the DAG snapshot) has no canceled tier; the graceful-cancel branch above
                 // likewise renders canceled steps as "failed", so this stays consistent with it.
                 status: "failed",
-                error: settled.err instanceof Error ? settled.err.message : String(settled.err),
+                error: errorMessageOf(settled.err) ?? textOf(settled.err),
             });
             stepStatus = "canceled";
             stepDurationMs = undefined;
@@ -1622,11 +1628,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // suspension). A throw is treated exactly like a step failure:
             // dependents doomed, siblings continue.
             failed.add(settled.stepId);
-            failureReason ??= settled.err instanceof Error ? settled.err.message : String(settled.err);
+            failureReason ??= errorMessageOf(settled.err) ?? textOf(settled.err);
             markDependentsSkipped(settled.stepId);
             stepRuntime.set(settled.stepId, {
                 status: "failed",
-                error: settled.err instanceof Error ? settled.err.message : String(settled.err),
+                error: errorMessageOf(settled.err) ?? textOf(settled.err),
             });
             stepStatus = "failed";
             // A child that settled by throwing carries no durable duration.

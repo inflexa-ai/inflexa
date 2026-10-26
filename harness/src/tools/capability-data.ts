@@ -19,7 +19,7 @@ import { z } from "zod";
 
 import { declaredDataRequirements } from "../agents/sandbox-catalog.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
-import { defineTool, type ToolError } from "./define-tool.js";
+import { defineTool, type Tool, type ToolError } from "./define-tool.js";
 import { readInstalledDatasetIds } from "./sandbox/list-available-refs.js";
 
 export type InspectCapabilityDataDeps = Pick<EnvironmentStorePaths, "refStorePath">;
@@ -50,7 +50,7 @@ function renderRows(rows: readonly CapabilityDataRow[], storeReadable: boolean):
     const lines = rows.map((row) => {
         const state = storeReadable
             ? [row.absent.length > 0 ? `absent: ${row.absent.join(", ")}` : null, row.installed.length > 0 ? `installed: ${row.installed.join(", ")}` : null]
-                  .filter((part): part is string => part !== null)
+                  .filter((part) => part !== null)
                   .join(" | ")
             : `declared: ${[...row.installed, ...row.absent].sort().join(", ")}`;
         return `- ${row.agentId} — "${row.capability}"\n  ${state}`;
@@ -66,7 +66,9 @@ function renderRows(rows: readonly CapabilityDataRow[], storeReadable: boolean):
  * the conversation must show as installed on the next call, and a cached answer would have the
  * agent offer a download the user already approved.
  */
-export function createInspectCapabilityDataTool(deps: InspectCapabilityDataDeps = {}) {
+const CapabilityDataInputSchema = z.object({});
+
+export function createInspectCapabilityDataTool(deps: InspectCapabilityDataDeps = {}): Tool<z.infer<typeof CapabilityDataInputSchema>, CapabilityDataResult> {
     return defineTool({
         id: "inspect_capability_data",
         description:
@@ -75,7 +77,7 @@ export function createInspectCapabilityDataTool(deps: InspectCapabilityDataDeps 
             "Each entry names a catalog dataset id, which is exactly what an install takes; a surface with a way to provision can act on it directly. " +
             "It takes no arguments and the whole set is small, so one call is the complete answer. " +
             "An unreadable store answers UNKNOWN rather than absent, so a store that cannot be read never reads as a store that holds nothing.",
-        inputSchema: z.object({}),
+        inputSchema: CapabilityDataInputSchema,
         describeCall: () => "declared capability data",
         execute: async (): Promise<Result<CapabilityDataResult, ToolError>> => {
             const declared = declaredDataRequirements();

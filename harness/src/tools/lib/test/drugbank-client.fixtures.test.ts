@@ -6,6 +6,7 @@
  * because the refresh script has no request to replay.
  */
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { afterEach, describe, expect, it } from "bun:test";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -28,7 +29,7 @@ afterEach(() => {
 /** Answer every request with the given payload, and record each URL. */
 function stubFetch(body: unknown): void {
     globalThis.fetch = fetchDouble((input) => {
-        requested.push(String(input));
+        requested.push(requestUrlText(input));
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
     });
 }

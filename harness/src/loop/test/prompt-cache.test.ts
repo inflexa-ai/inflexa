@@ -503,7 +503,7 @@ describe("runAgent cache-token metrics", () => {
 
 /** The captured body the canned fetch saw, or a failed test. */
 function seenBody(init: RequestInit | undefined): Record<string, unknown> {
-    const parsed = parseUnknownRecord(parseJsonAs(String(init?.body), z.unknown()));
+    const parsed = parseUnknownRecord(parseJsonAs(typeof init?.body === "string" ? init.body : "{}", z.json()));
     if (parsed === undefined) throw new Error("the canned provider saw a non-object request body");
     return parsed;
 }
@@ -623,7 +623,7 @@ describe("the bedrock marker on the wire", () => {
             messages: [...withPromptCacheBreakpoint([userText("first"), assistantText("second"), userText("third")], policy)],
         });
 
-        const messages = z.array(z.object({ content: z.array(z.record(z.string(), z.unknown())) })).parse(bodies[0]?.["messages"] ?? []);
+        const messages = z.array(z.object({ content: z.array(z.record(z.string(), z.json())) })).parse(bodies[0]?.["messages"] ?? []);
         return messages.at(-1)?.content ?? [];
     }
 
@@ -651,11 +651,11 @@ describe("the bedrock marker on the wire", () => {
 
         await generateText({
             model: bedrock("anthropic.claude-sonnet-5"),
-            system: withSystemPromptBreakpoint("You are a test agent.", DEFAULT_PROMPT_CACHE),
+            instructions: withSystemPromptBreakpoint("You are a test agent.", DEFAULT_PROMPT_CACHE),
             messages: [userText("first")],
         });
 
-        const system = z.array(z.record(z.string(), z.unknown())).parse(bodies[0]?.["system"] ?? []);
+        const system = z.array(z.record(z.string(), z.json())).parse(bodies[0]?.["system"] ?? []);
         expect(system.at(-1)).toEqual({ cachePoint: { type: "default", ttl: "5m" } });
         expect(system.at(-2)).toEqual({ text: "You are a test agent." });
     });

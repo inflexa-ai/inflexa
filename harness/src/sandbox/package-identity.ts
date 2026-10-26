@@ -183,9 +183,9 @@ function prefixWordOf(entry: string): string | undefined {
     const first = word.charAt(0);
     const isLeadingLetter = (first >= "A" && first <= "Z") || (first >= "a" && first <= "z");
     if (!isLeadingLetter) return undefined;
-    const isWordChar = (char: string) =>
+    const isWordChar = (char: string): boolean =>
         (char >= "A" && char <= "Z") || (char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "_" || char === "." || char === "-";
-    return [...word].every(isWordChar) ? word : undefined;
+    return Array.from(word).every(isWordChar) ? word : undefined;
 }
 
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the specifier grammar is a run of comparison characters; the parser reads the first run verbatim to accept only `==` and to report any other run.

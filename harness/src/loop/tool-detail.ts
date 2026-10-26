@@ -23,7 +23,7 @@ import { collapseWhitespace } from "../lib/text.js";
 import type { Logger } from "../lib/logger.js";
 import type { Tool } from "../tools/define-tool.js";
 
-export type { ToolCallDetail };
+export type { ToolCallDetail } from "../contracts/chat-events.js";
 
 /**
  * The length cap, in characters. A full workspace path with a line range fits
@@ -123,8 +123,8 @@ export function computeDetail(tool: Tool, rawInput: unknown, log: Logger): ToolC
     // an open list — an embedder contributes its own through the host-tools seam —
     // so a `describeCall` that is not callable is reachable. Such a tool counts as
     // undescribed, because the alternative is a TypeError on every one of its calls.
-    const describeCall = tool.describeCall;
-    if (typeof describeCall !== "function") return undefined;
+    if (typeof tool.describeCall !== "function") return undefined;
+    const describeCall = tool.describeCall.bind(tool);
 
     try {
         // The parse is INSIDE the guard, not before it. `safeParse` returns an
@@ -165,8 +165,8 @@ export function computeResultDetail(tool: Tool, parsedInput: unknown, result: un
     // The guard tests for a function, not for presence, for the same reason as in
     // `computeDetail`: a packaged tool comes from an open list, thus a
     // `describeResult` that is not callable is reachable.
-    const describeResult = tool.describeResult;
-    if (typeof describeResult !== "function") return undefined;
+    if (typeof tool.describeResult !== "function") return undefined;
+    const describeResult = tool.describeResult.bind(tool);
 
     try {
         return normalizeDetail(describeResult(parsedInput, result));
