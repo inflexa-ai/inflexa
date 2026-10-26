@@ -3,12 +3,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../db/primary_mutation.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { writeMarker } from "../anchor/marker.ts";
-import { canRead, canWrite, classifyRealPath, inputReadRoots, workspaceReadRoot, type ReadRoot, type Roots } from "./boundary.ts";
+import { canRead, canWrite, classifyRealPath, workspaceReadRoot, type ReadRoot, type Roots } from "./boundary.ts";
 import { invalidateWorkspaceRoot } from "./output.ts";
 
 const roots: Roots = {
@@ -121,9 +121,42 @@ describe("classifyRealPath", () => {
     test("no root gives `outside` with no disk read", async () => {
         expect((await classifyRealPath([], join(dir, "root", "sub", "a.txt")))._unsafeUnwrap()).toEqual({ type: "outside" });
     });
+
+    test("`unlimited` gives `in` with the real path for an existing file anywhere", async () => {
+        expect((await classifyRealPath("unlimited", join(dir, "root", "sub", "a.txt")))._unsafeUnwrap()).toEqual({
+            type: "in",
+            realPath: join(dir, "root", "sub", "a.txt"),
+        });
+        expect((await classifyRealPath("unlimited", join(dir, "outside", "secret.txt")))._unsafeUnwrap()).toEqual({
+            type: "in",
+            realPath: join(dir, "outside", "secret.txt"),
+        });
+    });
+
+    test("`unlimited` resolves a link to its target, even a target outside the folder of the link", async () => {
+        symlinkSync(join(dir, "outside", "secret.txt"), join(dir, "root", "leak.txt"));
+        expect((await classifyRealPath("unlimited", join(dir, "root", "leak.txt")))._unsafeUnwrap()).toEqual({
+            type: "in",
+            realPath: join(dir, "outside", "secret.txt"),
+        });
+    });
+
+    test("`unlimited` gives `absent` and inside as text for an absent path, a broken link, and a loop of links", async () => {
+        symlinkSync(join(dir, "nowhere"), join(dir, "root", "broken"));
+        symlinkSync(join(dir, "root", "loop-b"), join(dir, "root", "loop-a"));
+        symlinkSync(join(dir, "root", "loop-a"), join(dir, "root", "loop-b"));
+        for (const path of [join(dir, "elsewhere", "gone.txt"), join(dir, "root", "broken"), join(dir, "root", "loop-a")]) {
+            expect((await classifyRealPath("unlimited", path))._unsafeUnwrap()).toEqual({ type: "absent", insideAsText: true });
+        }
+    });
+
+    test("`unlimited` keeps a failure other than an absent path as the error", async () => {
+        const error = (await classifyRealPath("unlimited", join(dir, "root", "a\0b")))._unsafeUnwrapErr();
+        expect(error).toMatchObject({ type: "io_failed", op: "classifyRealPath", cause: { code: "ERR_INVALID_ARG_VALUE" } });
+    });
 });
 
-describe("the roots of a read", () => {
+describe("the workspace root of a read", () => {
     const created: string[] = [];
 
     beforeEach(() => {
@@ -148,25 +181,10 @@ describe("the roots of a read", () => {
         insertAnalysis({ id: "ana-1", createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
     }
 
-    test("the input roots are the anchored input and the absolute input, and an input with a lost anchor is not a root", async () => {
-        const home = tmp();
-        const elsewhere = tmp();
-        mkdirSync(join(home, "data"));
-        await seedAnalysis(home);
-        insertAnalysisInput({ path: "data", isDir: true, analysisId: "ana-1", anchorId: "A1" })._unsafeUnwrap();
-        insertAnalysisInput({ path: elsewhere, isDir: true, analysisId: "ana-1", anchorId: null })._unsafeUnwrap();
-
-        const roots = (await inputReadRoots("ana-1"))._unsafeUnwrap();
-        expect(roots.map((r) => r.canonical).sort()).toEqual([join(home, "data"), elsewhere].sort());
-        for (const r of roots) expect(r.text).toBe(r.canonical);
-    });
-
-    test("the lookups write no anchor sighting", async () => {
+    test("the lookup writes no anchor sighting", async () => {
         const home = tmp();
         await seedAnalysis(home);
-        insertAnalysisInput({ path: ".", isDir: true, analysisId: "ana-1", anchorId: "A1" })._unsafeUnwrap();
 
-        (await inputReadRoots("ana-1"))._unsafeUnwrap();
         (await workspaceReadRoot("ana-1"))._unsafeUnwrap();
         expect(getAnchor("A1")._unsafeUnwrap()?.lastSeen).toBe(1);
     });

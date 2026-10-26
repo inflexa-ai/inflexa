@@ -5,7 +5,11 @@ import { join } from "node:path";
 
 import type { ApiError } from "../../api/common.ts";
 import type { FolderList, HomeFolder } from "../../api/fs.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { entryDetails } from "../../lib/folder_listing.ts";
+import type { LockOutcome } from "../../lib/lock.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { freshDb } from "../../test_support/db.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes } from "./fs.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. Each `as` cast of a body below
@@ -42,10 +46,90 @@ function seedSortFolder(): void {
 }
 
 describe("GET /api/v1/fs/home", () => {
-    test("gives the home folder of the server user", async () => {
+    test("gives the canonical home folder of the server user", async () => {
         const response = await routes.request("/home");
         expect(response.status).toBe(200);
-        expect((await response.json()) as HomeFolder).toEqual({ path: homedir() });
+        expect((await response.json()) as HomeFolder).toEqual({ path: realpathSync(homedir()) });
+    });
+
+    test("gives the real path of a home folder behind a link", async () => {
+        const real = join(root, "real-home");
+        mkdirSync(real);
+        symlinkSync(real, join(root, "home-link"));
+        const linked = fsRoutes({ ...DEFAULT_FS_ROUTE_OPTS, homedir: () => join(root, "home-link") });
+        const response = await linked.request("/home");
+        expect(response.status).toBe(200);
+        expect((await response.json()) as HomeFolder).toEqual({ path: real });
+    });
+
+    test("gives the home path as the operating system gives it when the server cannot resolve it", async () => {
+        const missing = join(root, "no-such-home");
+        const missingHome = fsRoutes({ ...DEFAULT_FS_ROUTE_OPTS, homedir: () => missing });
+        const response = await missingHome.request("/home");
+        expect(response.status).toBe(200);
+        expect((await response.json()) as HomeFolder).toEqual({ path: missing });
+    });
+});
+
+describe("the analysis guard of the fs routes", () => {
+    let acquired: string[] = [];
+    let outcome: LockOutcome = { acquired: true };
+    let guarded = fsRoutes();
+
+    beforeEach(() => {
+        freshDb();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: root, markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: "a1", createdAt: 1, updatedAt: 1, name: asStr256("Study"), slug: "study", anchorId: "A1", projectId: null })._unsafeUnwrap();
+        acquired = [];
+        outcome = { acquired: true };
+        guarded = fsRoutes({
+            ...DEFAULT_FS_ROUTE_OPTS,
+            acquireLock: (analysisId) => {
+                acquired.push(analysisId);
+                return outcome;
+            },
+        });
+    });
+
+    function guardedList(analysisId: string): Promise<Response> {
+        return Promise.resolve(guarded.request(`/list?path=${encodeURIComponent(root)}&analysisId=${encodeURIComponent(analysisId)}`));
+    }
+
+    test("404 `not_found` for an unknown analysis on /list, with no lock call", async () => {
+        const response = await guardedList("nope");
+        expect(response.status).toBe(404);
+        const body = (await response.json()) as ApiError;
+        expect(body.error).toBe("not_found");
+        expect(body.message).toContain("nope");
+        expect(acquired).toEqual([]);
+    });
+
+    test("404 `not_found` for an unknown analysis on /home", async () => {
+        const response = await guarded.request("/home?analysisId=nope");
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+    });
+
+    test("409 `locked` with the pid of the holder from a different live process", async () => {
+        outcome = { acquired: false, holderPid: 4242 };
+        const response = await guardedList("a1");
+        expect(response.status).toBe(409);
+        const body = (await response.json()) as ApiError;
+        expect(body.error).toBe("locked");
+        expect(body.details).toEqual({ holderPid: 4242 });
+        expect(acquired).toEqual(["a1"]);
+    });
+
+    test("takes no lock for an absent or an empty analysis id", async () => {
+        expect((await guarded.request(`/list?path=${encodeURIComponent(root)}`)).status).toBe(200);
+        expect((await guardedList("")).status).toBe(200);
+        expect(acquired).toEqual([]);
+    });
+
+    test("takes one lock for a known analysis", async () => {
+        const response = await guardedList("a1");
+        expect(response.status).toBe(200);
+        expect(acquired).toEqual(["a1"]);
     });
 });
 

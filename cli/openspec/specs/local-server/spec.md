@@ -381,10 +381,12 @@ The routes MUST be under `/api/v1`, in these groups:
 - the conversation of `{A}`: the threads, the chat, the turns, the asks, and the access of a report-session page
 - the runs of `{A}`: the runs, one run, its stream, its synthesis, its cancel, its seen mark, one plan, and its approval
 - the profile of `{A}`: the chat context, the data profile, the sandbox readiness, and the farm heal and link
-- the records of `{A}`: the usage, the provenance, the artifacts, and the bytes of a file
+- the records of `{A}`: the usage, the provenance, and the artifacts
 - the package store: the state, the transfers, and the failed flights (retry and delete)
 - the browser sign-in (`/api/v1/session`): the nonce and the sign-in link
-- the file system (`/api/v1/fs`): the home folder and the list of a folder
+- the file system (`/api/v1/fs`): the home folder, the list of a folder, and the bytes of a file
+
+These routes MUST be in the file system group: each folder list, each read of the bytes of a file, and each search of the file system. A route of a different group can read the disk for its own work, for example `POST {A}/artifacts/resolve`. No route under `/api/v1/analyses/:analysisId` gives the bytes of a file.
 
 The page of a report session (`/report-sessions/...`) is the one route of data outside `/api/v1`. A page grant guards it, and no API credential does.
 
@@ -416,6 +418,11 @@ A client can call a route with no request body. If such a route can work for lon
 
 - **WHEN** a client sends `POST /api/v1/store/reclaim`
 - **THEN** the server answers 404 `not_found`
+
+#### Scenario: The server gives no file route of an analysis
+
+- **WHEN** a client sends `GET /api/v1/analyses/a1/files?path=runs/R/A/figures/volcano.png`
+- **THEN** the server answers 404 `not_found`, because no route has the path
 
 ### Requirement: An analysis route checks the analysis and its instance lock
 
@@ -981,7 +988,7 @@ The answer MUST be 200 `{ "opened": boolean }`. `opened` is true when the server
 
 ### Requirement: The server gives the home folder and the entries of a folder
 
-`GET /api/v1/fs/home` MUST give `{path}`, the home folder of the OS user that runs the server.
+`GET /api/v1/fs/home` MUST give `{path}`, the canonical path of the home folder of the OS user that runs the server. When the server cannot resolve the home folder, it MUST give the home path as the operating system gives it.
 
 `GET /api/v1/fs/list?path=<absolute path>` MUST give the entries of one folder in the list shape, with the key `entries`. The response MUST also give `folder: {path, readable}`. `folder.path` is the canonical path of the folder, with each symbolic link resolved. `folder.readable` is the verdict of the mode bits and the owner ids for the server user.
 
@@ -1012,7 +1019,13 @@ The server MUST run each read of the list off the event loop. A folder on a hung
 #### Scenario: The home folder
 
 - **WHEN** a client sends `GET /api/v1/fs/home`
-- **THEN** the server answers 200 with the home folder of the server user in `path`
+- **THEN** the server answers 200 with the canonical path of the home folder of the server user in `path`
+
+#### Scenario: A home folder behind a link
+
+- **GIVEN** a server user whose home path holds a symbolic link
+- **WHEN** a client sends `GET /api/v1/fs/home`
+- **THEN** `path` is the real path of the home folder, with each link resolved
 
 #### Scenario: A folder lists folders first
 
@@ -1077,30 +1090,38 @@ The list route MUST answer 400 `validation_error` when `path` is absent, is not 
 - **WHEN** a client lists the folder
 - **THEN** the server answers 403 `forbidden`, the message names the denied permission, and `details.code` is `EACCES`
 
-### Requirement: The file system routes give metadata only
+### Requirement: The file system routes read each path with no root limit
 
-The file system routes MUST NOT give the content of a file. They MUST NOT limit a path to a root, because the facts of an entry are what `ls -l` shows to the same OS user. They MUST NOT write to the disk. They use no harness runtime, thus they MUST answer while the boot of the runtime is not ready.
+Each route under `/api/v1/fs` MUST take each path as an absolute path. The client MUST expand `~` with the home path before it sends a path. The server MUST remove each `.` and `..` segment of a path as text, before it resolves a symbolic link. Each path that a route gives MUST be absolute, with each symbolic link of its folders resolved. The one exception is `link.target` of a list entry, because it is the text that the link stores. The server MUST change a path to a relative path only inside its own code.
+
+The routes MUST NOT limit a path to a root. A person can browse and preview each place on the machine. The routes give what the same OS user can read with `ls -l` and `cat`. The routes MUST NOT write to the disk. The one exception is the lock file of the instance lock that the guard of `analysisId` takes. The routes use no harness runtime, thus they MUST answer while the boot of the runtime is not ready.
 
 #### Scenario: A folder outside each analysis
 
 - **WHEN** a client lists `/` before the runtime boot is ready
 - **THEN** the server answers 200 with the entries of `/`, and no entry carries the content of a file
 
-### Requirement: The server gives the bytes of a file of an analysis
+#### Scenario: A file outside each analysis
 
-`GET {A}/files?path=<path>` MUST give the bytes of one file from the readable roots of the analysis. The form of the path selects the roots:
+- **GIVEN** a file outside each workspace and outside each declared input
+- **WHEN** a client reads the absolute path of the file before the runtime boot is ready
+- **THEN** the server answers 200 with the bytes of the file
 
-- A relative path resolves against the workspace root of the analysis. Its root is the workspace root.
-- An absolute path stays as it is. Its roots are the declared inputs of the analysis that resolve. The user gave consent for an input when the user declared it.
+#### Scenario: A path with a parent segment
 
-The search for the roots MUST NOT make a folder, and it MUST NOT record an anchor sighting. It can repair the stored path of a moved anchor, as each workspace lookup does.
+- **GIVEN** the file `/data/study/counts.csv`
+- **WHEN** a client reads `/data/study/raw/../counts.csv`
+- **THEN** the server answers 200 with the bytes of `/data/study/counts.csv`
 
-The server MUST then do these steps:
+### Requirement: The server gives the bytes of a file at an absolute path
 
-- It resolves each symbolic link of the path, and gets the real path of the file.
-- The real path MUST be inside the real path of a root of the form of the path. A real path equal to a root is inside it, thus a declared input that is one file passes. The test is boundary-safe: `/a/bc` is not inside `/a/b`.
-- An absolute path inside the workspace gets 403, unless a declared input holds it. The client uses the relative form of that path.
-- The server reads the bytes from the real path that passed the test. A symbolic link that replaces the last part of the path after the test MUST NOT give the bytes of its target.
+`GET /api/v1/fs/read?path=<absolute path>` MUST give the bytes of the file at the path. The path can name each file of the machine: a file of a workspace, a file of a declared input, or a file outside each analysis. The query value `analysisId` MUST NOT change which file the route reads.
+
+The server MUST do these steps:
+
+- It removes each `.` and `..` segment of the path as text.
+- It resolves each symbolic link of the path, and gets the real path of the file. Thus a link gives the bytes of its target.
+- It reads the bytes from the real path. A symbolic link that replaces the last part of the real path after this resolve MUST NOT give the bytes of its target.
 
 The response MUST have these headers:
 
@@ -1111,7 +1132,7 @@ The response MUST have these headers:
 - `Cache-Control: no-cache`, thus a browser asks again with the tag before it uses a copy
 - `Content-Length`
 
-A type that a browser runs as a document with script MUST also get `Content-Security-Policy: sandbox`. These types are HTML, XHTML, SVG, and XML. Thus a script in such a file cannot use the session of the browser on the origin of the server.
+A type that a browser runs as a document with script MUST also get `Content-Security-Policy: sandbox`. These types are HTML, XHTML, SVG, and XML. Thus a script in such a file cannot use the session of the browser on the origin of the server. Without this header, a script in a file can read each file on the machine through this route.
 
 The query value `download=1` MUST add `Content-Disposition: attachment` with the last part of the requested path as the file name.
 
@@ -1123,7 +1144,7 @@ A range that starts at or after the size of the file MUST get 416 `range_not_sat
 
 A `HEAD` request MUST get the same status and headers as the `GET`, and no body.
 
-The server MUST stream the body from the open file, and it MUST NOT read a whole file into memory. It MUST run each disk operation of the route off the event loop. A file on a hung mount MUST stop only its own request. The route MUST lift the idle timeout of its connection.
+The server MUST stream the body from the open file, and it MUST NOT read a whole file into memory. It MUST run each disk operation of the route off the event loop. A file on a hung mount MUST stop only its own request. The route MUST lift the idle timeout of its connection. This rule does not cover the guard of `analysisId`. That guard reads the database and takes the lock as the guard of each `{A}` route does.
 
 A read that fails after the server sent the status MUST end the body with an error, and the server MUST close the file. The client then gets fewer bytes than `Content-Length`, and it cannot read the cut body as complete.
 
@@ -1131,120 +1152,197 @@ The route accepts the bearer token or the session cookie of a browser sign-in, a
 
 #### Scenario: A figure of a run
 
-- **GIVEN** a browser that signed in, and the file `runs/R/A/figures/volcano.png` in the workspace of analysis `a1`
-- **WHEN** the browser sends `GET /api/v1/analyses/a1/files?path=runs/R/A/figures/volcano.png` with its session cookie
+- **GIVEN** a browser that signed in, and the file `runs/R/A/figures/volcano.png` in the workspace `<W>` of analysis `a1`
+- **WHEN** the browser sends `GET /api/v1/fs/read?path=<W>/runs/R/A/figures/volcano.png&analysisId=a1` with its session cookie
 - **THEN** the server answers 200 with the bytes of the file, `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, and an `ETag`
 
 #### Scenario: A file of a declared input
 
 - **GIVEN** a declared input folder `/data/study`, outside the workspace, that holds `counts.csv`
-- **WHEN** a client asks for the absolute path `/data/study/counts.csv`
+- **WHEN** a client reads the absolute path `/data/study/counts.csv`
 - **THEN** the server answers 200 with the bytes of the file
 
-#### Scenario: A declared input that is one file
+#### Scenario: A file outside the analysis
 
-- **GIVEN** a declared input that is the file `/data/run1.csv`
-- **WHEN** a client asks for the absolute path `/data/run1.csv`
+- **GIVEN** analysis `a1`, and the file `/tmp/notes.txt` outside its workspace and outside each of its declared inputs
+- **WHEN** a client sends `GET /api/v1/fs/read?path=/tmp/notes.txt&analysisId=a1`
 - **THEN** the server answers 200 with the bytes of the file
 
-#### Scenario: An absolute path inside the workspace
+#### Scenario: A link gives the bytes of its target
 
-- **GIVEN** no declared input holds the workspace of the analysis
-- **WHEN** a client asks for the absolute path of a file in the workspace
-- **THEN** the server answers 403 `forbidden`
-
-#### Scenario: A relative path that leaves the workspace
-
-- **WHEN** a client asks for `../other/runs/R/A/figures/volcano.png`, and that file exists outside the workspace
-- **THEN** the server answers 403 `forbidden`
-
-#### Scenario: A link that leaves the roots
-
-- **GIVEN** a symbolic link `runs/R/A/leak.txt` in the workspace, to a file outside each readable root
-- **WHEN** a client asks for `runs/R/A/leak.txt`
-- **THEN** the server answers 403 `forbidden`, and it gives no byte of the target
-
-#### Scenario: A path outside each root
-
-- **WHEN** a client asks for the absolute path of a file outside the workspace and outside each declared input
-- **THEN** the server answers 403 `forbidden`
+- **GIVEN** a symbolic link `/data/latest.csv` to the file `/data/run7.csv`
+- **WHEN** a client reads `/data/latest.csv`
+- **THEN** the server answers 200 with the bytes of `/data/run7.csv` and `Content-Type: text/csv`
 
 #### Scenario: A part of a file
 
-- **GIVEN** a file of 1000 bytes in the workspace
-- **WHEN** a client asks for it with `Range: bytes=0-99`
+- **GIVEN** a file of 1000 bytes
+- **WHEN** a client reads it with `Range: bytes=0-99`
 - **THEN** the server answers 206 with `Content-Range: bytes 0-99/1000` and the first 100 bytes
 
 #### Scenario: A range past the end of the file
 
-- **GIVEN** a file of 1000 bytes in the workspace
-- **WHEN** a client asks for it with `Range: bytes=1000-`
+- **GIVEN** a file of 1000 bytes
+- **WHEN** a client reads it with `Range: bytes=1000-`
 - **THEN** the server answers 416 `range_not_satisfiable` with `Content-Range: bytes */1000`
 
 #### Scenario: An unchanged file
 
 - **GIVEN** a client that got a file and its `ETag`
-- **WHEN** the client asks for the same file with `If-None-Match` set to that tag, and the file did not change
+- **WHEN** the client reads the same file with `If-None-Match` set to that tag, and the file did not change
 - **THEN** the server answers 304 with no body
 
 #### Scenario: A changed file
 
 - **GIVEN** a client that got a file and its `ETag`
-- **WHEN** a run writes the file again with a different size, and the client asks with `If-None-Match` set to the old tag
+- **WHEN** a run writes the file again with a different size, and the client reads it with `If-None-Match` set to the old tag
 - **THEN** the server answers 200 with the new bytes and a different `ETag`
 
 #### Scenario: A download
 
-- **WHEN** a client asks for `runs/R/A/output/de.csv` with `download=1`
+- **WHEN** a client reads `<W>/runs/R/A/output/de.csv` with `download=1`
 - **THEN** the response has `Content-Disposition: attachment` with the file name `de.csv`
 
 #### Scenario: An HTML file runs in a sandbox
 
-- **WHEN** a client asks for an HTML file of the workspace
+- **WHEN** a client reads an HTML file
 - **THEN** the response has a `text/html` content type and `Content-Security-Policy: sandbox`
+
+#### Scenario: An SVG file runs in a sandbox
+
+- **WHEN** a client reads an SVG file
+- **THEN** the response has an `image/svg+xml` content type and `Content-Security-Policy: sandbox`
 
 #### Scenario: A HEAD request
 
-- **WHEN** a client sends `HEAD` for a file of the workspace
+- **WHEN** a client sends `HEAD` for a file
 - **THEN** the server answers 200 with the headers of the `GET`, and no body
 
-### Requirement: The file route refuses a bad request with a named error
+### Requirement: The read route refuses a bad request with a named error
 
-The file route MUST give these errors before it sends a status of success:
+The read route MUST give these errors before it sends a status of success:
 
-- 400 `validation_error` when `path` is absent or empty, or holds a NUL byte
+- 400 `validation_error` when `path` is absent or empty, is not absolute, or holds a NUL byte
 - 400 `validation_error` when `download` is present and is not `1`
-- 409 `conflict` with the message of the workspace error, when the path is relative and the server cannot locate the workspace root. A folder that the server can read but not write is located. The read MUST NOT require a write permission.
-- 403 `forbidden` when the real path is outside each root of the form of the path
-- 404 `not_found` when the path does not exist, and the path is inside a root of its form as text. "As text" means with each `.` and `..` resolved, and no symbolic link resolved. A symbolic link to a path that does not exist, and a loop of symbolic links, also get 404.
-- 403 `forbidden` when the path does not exist, and the path is outside each root of its form as text
-- 400 `validation_error` when the path names a folder, or a different entry that is not a regular file. A platform can fail the real path of a socket. Then the server cannot do the test of the roots, and the socket gets 403 by the last rule.
-- 403 `forbidden` for each other failure of the open or of the facts of the file. The message names the cause, and `details.code` holds the error code of the operating system.
+- 404 `not_found` when the path does not exist. A symbolic link to a path that does not exist also gets 404. A loop of symbolic links, and a path with a part that is not a folder, also get 404.
+- 400 `validation_error` when the path names a folder, or a different entry that is not a regular file. A platform can fail the real path of a socket. Then the socket gets 403 by the last rule.
+- 403 `forbidden` when a symbolic link replaces the last part of the real path after the server resolved it
+- 403 `forbidden` for each other failure of the resolve, of the open, or of the facts of the file. The message names the cause, and `details.code` holds the error code of the operating system.
+
+The errors of the query value `analysisId` come from the guard of the file system routes.
 
 #### Scenario: No path
 
-- **WHEN** a client sends `GET /api/v1/analyses/a1/files` with no `path`
+- **WHEN** a client sends `GET /api/v1/fs/read` with no `path`
+- **THEN** the server answers 400 `validation_error`
+
+#### Scenario: A relative path
+
+- **WHEN** a client sends `GET /api/v1/fs/read?path=runs/R/A/figures/volcano.png`
 - **THEN** the server answers 400 `validation_error`
 
 #### Scenario: A path that does not exist
 
-- **WHEN** a client asks for `runs/R/A/figures/absent.png`, and the workspace holds no such file
+- **WHEN** a client reads an absolute path that does not exist
 - **THEN** the server answers 404 `not_found`
-
-#### Scenario: An absent path outside each root
-
-- **WHEN** a client asks for an absolute path that does not exist, outside each declared input
-- **THEN** the server answers 403 `forbidden`, not 404
 
 #### Scenario: A folder
 
-- **WHEN** a client asks for `runs/R/A/figures`, which is a folder
+- **WHEN** a client reads the absolute path of a folder
 - **THEN** the server answers 400 `validation_error`
 
-#### Scenario: An unknown analysis
+#### Scenario: An unreadable file
 
-- **WHEN** a client asks for a file of an analysis id that no analysis has
-- **THEN** the server answers 404 `not_found`, from the guard of each analysis route
+- **GIVEN** a file whose mode is 000, and a server that does not run as root
+- **WHEN** a client reads the file
+- **THEN** the server answers 403 `forbidden`, and `details.code` is `EACCES`
+
+### Requirement: A file system route guards the analysis of its query value
+
+Each route under `/api/v1/fs` MUST take the optional query value `analysisId`, and it MUST guard the analysis that the value names. An absent or empty value names no analysis. Then the route takes no instance lock.
+
+With a value, the server MUST do the steps of the guard of each route under `/api/v1/analyses/:analysisId`, before the route reads the disk:
+
+- It answers 404 `not_found` when no analysis has the id.
+- It takes the instance lock of the analysis at the first request for that analysis, and it holds the lock until it exits.
+- It answers 409 `locked` with `details.holderPid` when a different live process holds the lock.
+
+A route that a later change adds under `/api/v1/fs` MUST get the same guard.
+
+#### Scenario: An unknown analysis on a read
+
+- **WHEN** a client sends `GET /api/v1/fs/read?path=<the absolute path of a file>&analysisId=nope`, and no analysis has the id `nope`
+- **THEN** the server answers 404 `not_found`, and it reads no byte of the file
+
+#### Scenario: An unknown analysis on a list
+
+- **WHEN** a client sends `GET /api/v1/fs/list?path=/&analysisId=nope`, and no analysis has the id `nope`
+- **THEN** the server answers 404 `not_found`
+
+#### Scenario: An analysis that a different process holds
+
+- **GIVEN** a different live process that holds the instance lock of analysis `a1`
+- **WHEN** a client sends `GET /api/v1/fs/list?path=/&analysisId=a1`
+- **THEN** the server answers 409 `locked` with the pid of the holder
+
+#### Scenario: A known analysis
+
+- **GIVEN** analysis `a1`, and no other process that holds its instance lock
+- **WHEN** a client reads a file with `analysisId=a1`
+- **THEN** the server answers 200, and it holds the instance lock of `a1`
+
+#### Scenario: No analysis
+
+- **WHEN** a client sends `GET /api/v1/fs/list?path=/` with no `analysisId`, or with an empty `analysisId`
+- **THEN** the server answers 200, and it takes no instance lock
+
+### Requirement: The file system routes take the kind of a file from its extension
+
+The server MUST hold one map from the extension of a file name to the kind of the file. A route that gives the kind of a file MUST use this map, thus a client keeps no map of its own. The kinds and their extensions are:
+
+- `table`: `csv`, `tsv`, `txt`, `xlsx`, `parquet`
+- `figure`: `png`, `svg`, `jpg`
+- `code`: `py`, `r`, `ipynb`, `toml`, `sh`
+- `log`: `log`
+- `data`: `json`, `h5ad`, `gz`, `bam`
+- `doc`: `md`, `docx`, `pdf`
+
+The extension of a file name is the text after its last dot. The match MUST have no regard to case. A file name has no extension in each of these cases:
+
+- It has no dot.
+- Its only dot is its first character.
+- It ends with a dot.
+
+A file name with no extension, and a file name whose extension the map does not know, MUST give `null`.
+
+A file name whose extension is `gz` MUST take the kind of the extension before `.gz`, when the map knows that extension. Otherwise it MUST take the kind `data`.
+
+The kind MUST come from the file name only. The folder of the file does not change the kind. Thus the kind can differ from the `fileType` of the artifact ledger, which comes from the folder.
+
+#### Scenario: A table
+
+- **WHEN** the server takes the kind of `counts.csv` and of `Counts.CSV`
+- **THEN** each kind is `table`
+
+#### Scenario: A compressed table
+
+- **WHEN** the server takes the kind of `counts.csv.gz`
+- **THEN** the kind is `table`
+
+#### Scenario: A compressed file of an unknown kind
+
+- **WHEN** the server takes the kind of `reads.gz` and of `archive.tar.gz`
+- **THEN** each kind is `data`
+
+#### Scenario: An R script
+
+- **WHEN** the server takes the kind of `analysis.R`
+- **THEN** the kind is `code`
+
+#### Scenario: A name with no known kind
+
+- **WHEN** the server takes the kind of `notes.xyz`, `Makefile`, `.bashrc`, and `draft.`
+- **THEN** each kind is `null`
 
 ### Requirement: The server keeps the page grants of the report sessions
 
@@ -1285,7 +1383,7 @@ The server MUST serve `GET` and `HEAD` of `/report-sessions/{analysisId}/{thread
 - A request with no `t` MUST need no grant when its path is `assets/<file>`, for a `file` of the page asset manifest of the harness (`PAGE_ASSETS`). These public files are the libraries and the fonts that the preview stages under `assets/deps/` beside each page. A sandboxed page fetches a font in CORS mode, and that fetch carries no cookie. Each other file under `assets/deps/` needs a grant. A public file MUST be a regular file at its own path. A symbolic link at a public path MUST get 403 `forbidden`, because its bytes are not the bytes that the preview staged.
 - Each other request with no `t` MUST carry the cookie `__ic`. The cookie MUST hold the token of a live grant for the analysis and the thread of its path. Otherwise the server MUST answer 401 `unauthorized`, with the same message.
 
-The route MUST serve a file only when its real path is inside the real path of the session folder. The session folder is `report-sessions/{threadId}/` under the workspace root. The real path of the session folder MUST be the real path of the workspace root joined with `report-sessions/{threadId}`. Otherwise the route MUST answer 403 `forbidden`, because a link moved the folder. A session folder that does not exist gets 404 `not_found`. The test is the real-path test of the file route of an analysis. A symbolic link that leaves that folder MUST give no byte of its target. A symbolic link that replaces the last part of the path after the test MUST NOT give the bytes of its target.
+The route MUST serve a file only when its real path is inside the real path of the session folder. The session folder is `report-sessions/{threadId}/` under the workspace root. The real path of the session folder MUST be the real path of the workspace root joined with `report-sessions/{threadId}`. Otherwise the route MUST answer 403 `forbidden`, because a link moved the folder. A session folder that does not exist gets 404 `not_found`. The test resolves each symbolic link of the path, and it is boundary-safe: `/a/bc` is not inside `/a/b`. A symbolic link that leaves that folder MUST give no byte of its target. A symbolic link that replaces the last part of the path after the test MUST NOT give the bytes of its target.
 
 The route MUST run its checks in this order: the form of the ids and of the path, the proof, then the file. Thus a request with no proof never learns whether a guarded file exists.
 
@@ -1307,7 +1405,7 @@ Each response of the route MUST have these headers. This includes an error respo
 
 A response for a public file MUST also have `Access-Control-Allow-Origin: *`. Without it, the browser refuses a font that a sandboxed page fetches.
 
-The route MUST give these parts as the file route of an analysis gives them: the content type, the `ETag`, the `If-None-Match` answer, the `Range` answer, and the streamed body. A `HEAD` request MUST get the status and the headers of the `GET`, and no body.
+The route MUST give these parts as the read route of the file system (`GET /api/v1/fs/read`) gives them: the content type, the `ETag`, the `If-None-Match` answer, the `Range` answer, and the streamed body. A `HEAD` request MUST get the status and the headers of the `GET`, and no body.
 
 #### Scenario: The entry request sets the cookie
 
@@ -1672,12 +1770,15 @@ A route MUST read the pending asks one time for each request, whatever the count
 
 `GET {A}/artifacts` MUST give one page of the artifact ledger of the analysis in the list shape, with the key `artifacts`. Each item MUST carry these fields:
 
-- `path`, relative to the workspace folder of the analysis. `GET {A}/files?path=` takes the same form.
+- `path`, relative to the workspace folder of the analysis. The query value `path` takes the same form.
+- `absolutePath`: the canonical path of the workspace folder joined with `path`. `GET /api/v1/fs/read?path=` takes this form. It is `null` when the server cannot locate the workspace folder. When the located folder does not exist on disk, the server joins the path of the folder as it located it.
 - `size`, in bytes
 - `fileType`, or `null`
 - `role`, `input` or `step_output`
 - `runId` and `stepId`, or `null`
 - `createdAt`, the time of the first registration of the path
+
+The server MUST locate the workspace folder one time for each request, not one time for each item. The search MUST NOT make a folder, and it MUST NOT record an anchor sighting. It can repair the stored path of a moved anchor, as each workspace lookup does. A workspace folder that the server cannot locate MUST NOT fail the request. A failed read of the database MUST give 500 `internal_error`.
 
 The query values `runId`, `stepId`, and `fileType` MUST each select the rows with that exact value. The query value `path` MUST select the row whose path is equal to the value, and case is significant. The query value `q` MUST select the rows whose path holds the text, with no regard to case. An absent or empty value MUST select each row. The filters MUST combine with AND, and `total` MUST count the rows that they select.
 
@@ -1700,6 +1801,19 @@ Each request MUST send one paged read of the harness ledger, with the limit and 
 - **GIVEN** analysis `a1` with a volcano figure in run `r1`, a volcano figure in run `r2`, and a volcano table of the type `output`
 - **WHEN** a client sends `GET /api/v1/analyses/a1/artifacts?fileType=figure&q=volcano`
 - **THEN** the server answers with the two figures, each with its `runId` and its `stepId`, and `total` is 2
+
+#### Scenario: An absolute path for each item
+
+- **GIVEN** analysis `a1` whose workspace folder has the canonical path `<W>`, and the ledger row `runs/r1/s1/figures/volcano.png`
+- **WHEN** a client lists the artifacts of `a1`
+- **THEN** the item has `path` `runs/r1/s1/figures/volcano.png` and `absolutePath` `<W>/runs/r1/s1/figures/volcano.png`
+- **AND** `GET /api/v1/fs/read?path=<W>/runs/r1/s1/figures/volcano.png` gives the bytes of the figure
+
+#### Scenario: A workspace folder that the server cannot locate
+
+- **GIVEN** analysis `a1` whose anchor folder is gone, and a ledger with rows for `a1`
+- **WHEN** a client lists the artifacts of `a1`
+- **THEN** the server answers 200, and each item has `absolutePath` `null`
 
 #### Scenario: The newest artifacts first
 

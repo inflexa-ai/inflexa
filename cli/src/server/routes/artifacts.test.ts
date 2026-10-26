@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ArtifactPage, ArtifactPageQuery, Pool } from "@inflexa-ai/harness";
@@ -18,6 +18,7 @@ import type { ServerBoot } from "../boot.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerEnv } from "../http.ts";
 import { artifactRoutes, type ArtifactRoutesOpts } from "./artifacts.ts";
+import { DEFAULT_FS_ROUTE_OPTS, fsRoutes } from "./fs.ts";
 
 // The route alone, mounted at its path with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each `as` cast of a body below reads JSON that the route under test builds from the same
@@ -52,7 +53,8 @@ const created: string[] = [];
 
 /** Seed a resolvable analysis (anchor marker + rows) and return its workspace root, made on disk. */
 async function seedAnalysis(analysisId: string): Promise<string> {
-    const home = mkdtempSync(join(tmpdir(), "inflexa-artifact-route-"));
+    // The canonical path, because the list route joins the canonical workspace root and macOS reaches `tmpdir()` through a link.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-artifact-route-")));
     created.push(home);
     (await writeMarker(home, "A1"))._unsafeUnwrap();
     insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
@@ -243,10 +245,88 @@ describe("GET {A}/artifacts", () => {
         const list = (await response.json()) as ArtifactList;
 
         expect(response.status).toBe(200);
-        expect(list).toEqual({ artifacts: [entry], total: 2, page: 0, perPage: 100, hasMore: false, extensionCounts: [{ extension: "png", count: 2 }] });
+        expect(list).toEqual({
+            artifacts: [{ ...entry, absolutePath: null }],
+            total: 2,
+            page: 0,
+            perPage: 100,
+            hasMore: false,
+            extensionCounts: [{ extension: "png", count: 2 }],
+        });
         expect(reads).toEqual([
             { analysisId: "a1", query: { fileType: "figure", q: "volcano", runId: "r1", stepId: "s1", sort: "path", limit: 100, offset: 0 } },
         ]);
+    });
+
+    test("gives each entry its absolute path under the canonical workspace root", async () => {
+        const root = await seedAnalysis("ana-1");
+        const second = { ...entry, path: "runs/r1/s1/output/de.csv" };
+        const { app: routes } = listing({ entries: [entry, second], total: 2, extensionCounts: [] });
+
+        const response = await routes.request("/api/v1/analyses/ana-1/artifacts");
+        const list = (await response.json()) as ArtifactList;
+
+        expect(response.status).toBe(200);
+        expect(list.artifacts.map((item) => item.path)).toEqual([entry.path, second.path]);
+        expect(list.artifacts.map((item) => item.absolutePath)).toEqual([join(root, entry.path), join(root, second.path)]);
+        expect(root).toBe(realpathSync(root));
+    });
+
+    test("the absolute path of an entry reads the bytes of the file through `fs/read`", async () => {
+        const root = await seedAnalysis("ana-1");
+        const figure = { ...entry, path: "runs/r1/s1/figures/volcano.png" };
+        mkdirSync(join(root, "runs", "r1", "s1", "figures"), { recursive: true });
+        const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+        writeFileSync(join(root, figure.path), bytes);
+        const { app: routes } = listing({ entries: [figure], total: 1, extensionCounts: [] });
+        const list = (await (await routes.request("/api/v1/analyses/ana-1/artifacts")).json()) as ArtifactList;
+        const absolutePath = list.artifacts[0]?.absolutePath;
+        expect(absolutePath).toBe(join(root, figure.path));
+
+        const reader = new Hono<ServerEnv>().route("/api/v1/fs", fsRoutes({ ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => ({ acquired: true }) }));
+        const response = await reader.request(`/api/v1/fs/read?path=${encodeURIComponent(absolutePath ?? "")}&analysisId=ana-1`);
+
+        expect(response.status).toBe(200);
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    });
+
+    test("gives the canonical workspace root when the stored anchor path goes through a symbolic link", async () => {
+        const real = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-artifact-real-")));
+        const link = join(realpathSync(mkdtempSync(join(tmpdir(), "inflexa-artifact-link-"))), "home");
+        created.push(real, join(link, ".."));
+        symlinkSync(real, link);
+        mkdirSync(join(real, ".inflexa", "analyses", "a"), { recursive: true });
+        (await writeMarker(real, "A1"))._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: link, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: "ana-1", createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
+        const { app: routes } = listing();
+
+        const list = (await (await routes.request("/api/v1/analyses/ana-1/artifacts")).json()) as ArtifactList;
+
+        expect(list.artifacts[0]?.absolutePath).toBe(join(real, ".inflexa", "analyses", "a", entry.path));
+    });
+
+    test("gives a null absolute path for each entry, with status 200, when the analysis has no workspace folder", async () => {
+        const { app: routes } = listing({ entries: [entry, { ...entry, path: "runs/r1/s1/output/de.csv" }], total: 2, extensionCounts: [] });
+
+        const response = await routes.request("/api/v1/analyses/no-such-analysis/artifacts");
+        const list = (await response.json()) as ArtifactList;
+
+        expect(response.status).toBe(200);
+        expect(list.artifacts.map((item) => item.absolutePath)).toEqual([null, null]);
+        expect(list.total).toBe(2);
+    });
+
+    test("gives a null absolute path when the anchor folder is gone", async () => {
+        const root = await seedAnalysis("ana-1");
+        rmSync(join(root, "..", "..", ".."), { recursive: true, force: true });
+        invalidateWorkspaceRoot();
+        const { app: routes } = listing();
+
+        const response = await routes.request("/api/v1/analyses/ana-1/artifacts");
+
+        expect(response.status).toBe(200);
+        expect(((await response.json()) as ArtifactList).artifacts.map((item) => item.absolutePath)).toEqual([null]);
     });
 
     test("sends one read with the limit and the offset of the page", async () => {
@@ -319,6 +399,17 @@ describe("GET {A}/artifacts", () => {
 
         expect(response.status).toBe(503);
         expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+    });
+
+    test("500 `internal_error` when the read of the analysis for the workspace folder fails", async () => {
+        const database = freshDb();
+        database.run("ALTER TABLE analyses RENAME TO analyses_unreadable");
+        const { app: routes } = listing();
+
+        const response = await routes.request("/api/v1/analyses/ana-1/artifacts");
+
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
     });
 
     test("500 `internal_error` when the ledger read fails", async () => {

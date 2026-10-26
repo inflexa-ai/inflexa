@@ -47,8 +47,13 @@ export type ArtifactSort = "path" | "recent";
 
 /** One row of the artifact ledger, as `GET {A}/artifacts` gives it. */
 export type ArtifactEntry = {
-    /** Relative to the workspace folder of the analysis. `GET {A}/files?path=` takes the same form. */
+    /** Relative to the workspace folder of the analysis. The `path` query value of this list takes the same form. */
     path: string;
+    /**
+     * The canonical path of the workspace folder joined with `path`. `GET /api/v1/fs/read?path=` takes this form.
+     * `null` when the server cannot locate the workspace folder of the analysis.
+     */
+    absolutePath: string | null;
     /** Bytes. */
     size: number;
     fileType: string | null;
