@@ -107,5 +107,5 @@ export function checkCitationAssertion(reference: Reference, expected: string | 
     if (expected === undefined || expected === resolved) {
         return undefined;
     }
-    return { reference, reason: "assertion-failed", detail: `expected ${String(expected)} but resolved citation ${resolved}` };
+    return { reference, reason: "assertion-failed", detail: `expected ${expected} but resolved citation ${resolved}` };
 }

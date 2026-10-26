@@ -365,7 +365,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const conversationAgent = createConversationAgent({
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
-        anchorReportSession: reportSession.ensureSessionState,
+        anchorReportSession: reportSession.ensureSessionState.bind(reportSession),
         resourcePolicy,
         usageRecorder,
         toolOutputStore,
@@ -448,7 +448,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
 
     return {
         agents: createThreadAgentResolver(agents),
-        reportSession: { ensureSessionState: reportSession.ensureSessionState },
+        reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
             executeAnalysis,
             sandboxStep,

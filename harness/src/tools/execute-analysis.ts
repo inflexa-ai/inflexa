@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 import { type Connectable } from "../lib/db-result.js";
+import { errorNameOf } from "../lib/thrown.js";
 import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
@@ -44,7 +45,7 @@ import {
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-hoc-router.js";
 import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
-import { defineTool, type ToolContext } from "./define-tool.js";
+import { defineTool, type Tool, type ToolContext } from "./define-tool.js";
 import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
 import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 
@@ -121,7 +122,7 @@ export class PlanValidationError extends Error {
 }
 
 function isDedupCollision(err: unknown): boolean {
-    return err instanceof RunDedupCollisionError || (err instanceof Error && err.name === "RunDedupCollisionError");
+    return err instanceof RunDedupCollisionError || errorNameOf(err) === "RunDedupCollisionError";
 }
 
 /**
@@ -143,7 +144,7 @@ export class PlanPackagesMissingError extends Error {
                 : null,
             missing.length > 0 ? `the pool does not hold: ${missing.join(", ")}` : null,
             collisions.length > 0 ? `a collision refused: ${collisions.join(", ")}` : null,
-        ].filter((p): p is string => p !== null);
+        ].filter((p) => p !== null);
         super(`The packages of this plan cannot link — ${parts.join("; ")}`);
         this.name = "PlanPackagesMissingError";
     }
@@ -166,7 +167,7 @@ export class PlanReferencesMissingError extends Error {
                 ? `the store cannot answer (${unavailable}) — this says nothing about the datasets themselves, so do not re-request them`
                 : null,
             missing.length > 0 ? `the store does not hold: ${missing.join(", ")}` : null,
-        ].filter((part): part is string => part !== null);
+        ].filter((part) => part !== null);
         super(`The reference data of this plan is not installed — ${parts.join(" ")}`);
         this.name = "PlanReferencesMissingError";
     }
@@ -310,7 +311,7 @@ async function linkPlanPackages(
         .map(
             (o) =>
                 `${o.spelling} — two store directories claim it, ${o.storeDirs[0]} and ${o.storeDirs[1]}` +
-                `${o.detail === undefined ? "" : ` (${o.detail})`}` +
+                (o.detail === undefined ? "" : ` (${o.detail})`) +
                 `; when the two directories are one spelling in two tracks, name the track in the plan, as ` +
                 `${formatQuery({ spelling: o.spelling, track: "python" })} or ${formatQuery({ spelling: o.spelling, track: "r" })}`,
         );
@@ -776,7 +777,7 @@ function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_
     }
 }
 
-export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
+export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z.infer<typeof inputSchema>, { runId: string; status: "in_progress" }> {
     return defineTool({
         id: "execute_analysis",
         description:
@@ -799,7 +800,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             } else {
                 planId = adHocPlanId(analysisId, ctx.invocationId);
             }
-            const emitRunCard = async (runId: string) => {
+            const emitRunCard = async (runId: string): Promise<void> => {
                 const card = await buildRunCardData(deps.pool, { planId, analysisId, runId }).unwrapOr(null);
                 if (card) await ctx.emit({ type: "data-run-card", source: ctx.session.provenance, data: card });
             };

@@ -19,6 +19,8 @@
  * re-sends the hop.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { lookup as dnsLookup, type LookupAddress, type LookupAllOptions } from "node:dns";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -34,7 +36,7 @@ import { hasWhitespace } from "../../lib/text.js";
 
 import { keptTextOf, pairSafeIndex, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "../../loop/tool-output.js";
 import { AskRejectedError, type AskRequest } from "../approval/contract.js";
-import { defineTool, type ToolContext, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
 import { HARNESS_USER_AGENT } from "../lib/api-utils.js";
 import { isGuardedAddress } from "./guarded-address.js";
 
@@ -245,24 +247,24 @@ function sendHop(url: URL, state: HopState): Promise<HopOutcome> {
         const { ctx } = state;
         let settled = false;
         let liveResponse: WebFetchHopResponse | undefined;
-        const finish = () => {
+        const finish = (): void => {
             settled = true;
             ctx.signal.removeEventListener("abort", onAbort);
         };
-        const settle = (outcome: HopOutcome) => {
+        const settle = (outcome: HopOutcome): void => {
             if (settled) return;
             finish();
             if (outcome.kind !== "response") clearDeadline();
             resolve(outcome);
         };
-        const fail = (error: Error) => {
+        const fail = (error: Error): void => {
             if (settled) return;
             finish();
             clearDeadline();
             reject(error);
         };
 
-        const onAbort = () => {
+        const onAbort = (): void => {
             request.destroy(abortError());
         };
         ctx.signal.addEventListener("abort", onAbort, { once: true });
@@ -307,7 +309,7 @@ function sendHop(url: URL, state: HopState): Promise<HopOutcome> {
             request.destroy(error);
         }, HOP_TIMEOUT_MS);
         deadline.unref();
-        const clearDeadline = () => clearTimeout(deadline);
+        const clearDeadline = (): void => clearTimeout(deadline);
         request.on("timeout", () => {
             request.destroy(hopTimeoutError(url));
         });
@@ -344,13 +346,13 @@ function readBody(response: WebFetchHopResponse, encoding: string, limitBytes: n
         const chunks: Buffer[] = [];
         let total = 0;
 
-        const settle = (result: BodyRead) => {
+        const settle = (result: BodyRead): void => {
             if (settled) return;
             settled = true;
             ctx.signal.removeEventListener("abort", onAbort);
             resolve(result);
         };
-        const onDecodedChunk = (chunk: Buffer) => {
+        const onDecodedChunk = (chunk: Buffer): void => {
             total += chunk.length;
             if (total > limitBytes) {
                 response.destroy();
@@ -360,7 +362,7 @@ function readBody(response: WebFetchHopResponse, encoding: string, limitBytes: n
             }
             chunks.push(chunk);
         };
-        const onAbort = () => {
+        const onAbort = (): void => {
             response.destroy(abortError());
         };
 
@@ -562,7 +564,7 @@ async function extractBody(contentType: string, body: Buffer): Promise<Extracted
             const pdfCut = result.total > result.pages.length ? { totalPages: result.total, pagesRead: result.pages.length } : undefined;
             return { kind: "text", text: result.text.trim(), pdfCut };
         } catch (error) {
-            return { kind: "unextractable", detail: `the PDF parser failed: ${error instanceof Error ? error.message : String(error)}` };
+            return { kind: "unextractable", detail: `the PDF parser failed: ${errorMessageOf(error) ?? textOf(error)}` };
         } finally {
             await parser.destroy();
         }
@@ -744,7 +746,11 @@ async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolCont
     }
 }
 
-export function createWebFetchTool(deps: WebFetchToolDeps = {}) {
+const WebFetchInputSchema = z.object({
+    url: z.string().min(1).max(2048).describe("The http or https URL of one page to read, for example a page a web_search result named."),
+});
+
+export function createWebFetchTool(deps: WebFetchToolDeps = {}): Tool<z.infer<typeof WebFetchInputSchema>, WebFetchOutput> {
     return defineTool({
         id: "web_fetch",
         description:
@@ -756,9 +762,7 @@ export function createWebFetchTool(deps: WebFetchToolDeps = {}) {
             "unsupported_scheme (a scheme that is not http or https), refused (a guarded address the user did not " +
             "approve), http_error, redirect_limit, body_too_large, unextractable, and request_failed each name what " +
             "happened. Report the status and continue, do not retry unchanged.",
-        inputSchema: z.object({
-            url: z.string().min(1).max(2048).describe("The http or https URL of one page to read, for example a page a web_search result named."),
-        }),
+        inputSchema: WebFetchInputSchema,
         describeCall: ({ url }) => url,
         execute: async ({ url }, ctx): Promise<Result<WebFetchOutput, ToolError>> => ok(await fetchOneUrl(url, deps, ctx)),
     });

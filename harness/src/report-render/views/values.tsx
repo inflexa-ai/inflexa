@@ -97,6 +97,7 @@ export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value:
     const n = ledger.mark(block.value);
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <div class="stat-card corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.value])}>
             <div class="stat-card-value" title={shown.full}>
                 {shown.text}
@@ -116,6 +117,7 @@ export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value:
  */
 export function renderMetricGrid(cardsHtml: string): string {
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <div class="report-metric-grid fade-in" data-delay="100">
             {raw(cardsHtml)}
         </div>,
@@ -256,6 +258,7 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
     const download = tableSidecarName(binding.hash, binding.path);
     const bound = boundText(binding);
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <div class="report-table" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [binding])}>
             <div class="report-table-title">
                 {block.title}
@@ -297,6 +300,7 @@ export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value:
     const n = ledger.mark(block.binding);
     const caption = block.caption;
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <figure class="report-figure corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [block.binding])}>
             <img src={value.src} alt={caption !== undefined ? caption : ""} class="report-figure-image" />
             <figcaption class="report-caption">
@@ -330,6 +334,7 @@ export function renderCitation(block: CitationBlock, ledger: ReferenceLedger, re
     const binding = block.binding;
     const key = citationKeyOf(binding);
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <div class="report-citation corner-accents" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, [binding])}>
             <Marker n={n} lineage={lineagePlace(view.lineage, binding)} />
             {record !== undefined ? (

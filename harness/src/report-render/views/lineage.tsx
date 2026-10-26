@@ -71,6 +71,7 @@ const LINEAGE_GLYPH_CLASS = "report-lineage-glyph";
  * both reach the drawing and the sheet holds one color for the two states. The glyph is decoration, thus
  * it hides from a reader who hears the page and the label of the button answers instead.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 function LineageGlyph() {
     return (
         <svg class={LINEAGE_GLYPH_CLASS} width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -153,6 +154,7 @@ export function lineagePlace(on: boolean, reference: Reference, index = 0): numb
  * The control names its place and never its key. The stamp of the block holds the keys, thus one page
  * carries one copy of each key and a claim of several bindings repeats none of them.
  */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
 export function LineageControl({ place }: { place: number }) {
     return (
         <button

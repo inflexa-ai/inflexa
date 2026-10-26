@@ -4,6 +4,7 @@
  * The decode of the page reads the same shape, thus a test here states what the page script consumes.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 
@@ -133,7 +134,7 @@ describe("tableDataAsset", () => {
     function cellRow(value: unknown): ChartRow {
         if (!isRecord(value)) throw new Error("a fixture row holds no record");
         const pairs = Object.entries(value).map(([key, cell]): [string, string | number] => {
-            if (typeof cell !== "string" && typeof cell !== "number") throw new Error(`the fixture row holds the cell ${String(cell)} under ${key}`);
+            if (typeof cell !== "string" && typeof cell !== "number") throw new Error(`the fixture row holds the cell ${textOf(cell)} under ${key}`);
             return [key, cell];
         });
         return Object.fromEntries(pairs);

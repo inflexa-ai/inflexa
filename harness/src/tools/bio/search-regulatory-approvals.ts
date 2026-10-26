@@ -16,7 +16,7 @@ import { err, ok, type Result } from "neverthrow";
 import { presentFirst } from "../../lib/present.js";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import {
     describeAmassError,
     getRegulatoryRecord,
@@ -122,7 +122,7 @@ function failure(e: AmassError): Result<never, ToolError> {
     throw new Error(describeAmassError(e));
 }
 
-export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }) {
+export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, RegulatoryApprovalsOutput> {
     return defineTool({
         id: "search_regulatory_approvals",
         description:

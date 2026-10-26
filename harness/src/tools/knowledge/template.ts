@@ -31,9 +31,9 @@ import { presentGet } from "../../lib/present.js";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { decisionRecordPath, scriptSha256 } from "../workspace/decision-record.js";
-import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "../workspace/mutator.js";
+import type { WorkspaceMutator, WriteFileResult, WriteOutcome, WriteRecord } from "../workspace/mutator.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "./client.js";
 import { installedPackages } from "./environment.js";
 import { bindLocalSlots, localParameters, validateLocalSlot, type BoundLocalSlot } from "./local-slots.js";
@@ -203,7 +203,33 @@ function splitSlots(slots: Readonly<Record<string, unknown>>, names: ReadonlySet
     return { local, remote };
 }
 
-export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
+const KnowledgeTemplateInputSchema = z.object({
+    template: z
+        .string()
+        .regex(TEMPLATE_REF, "a template id, optionally with @version")
+        .describe("The template id from the Grounding of the step, with its version, for example `tpl-deseq2-two-group@1.0.0`."),
+    slots: z
+        .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]))
+        .describe(
+            "The slot values, by slot name. Only the adaptable slots of the template; a pinned slot is refused. Strings, numbers, booleans, and lists of strings.",
+        ),
+    overrides: z
+        .array(
+            z.object({
+                slot: z.string().min(1).describe("The name of the bound slot whose value you change."),
+                reason: z.string().min(1).describe("Why the plan value does not hold for this step, in one sentence."),
+            }),
+        )
+        .optional()
+        .describe("One entry per bound slot whose value you change from the plan value. Absent when you send every bound value as it is."),
+    script_name: z
+        .string()
+        .regex(SCRIPT_NAME_RE)
+        .optional()
+        .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
+});
+
+export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z.infer<typeof KnowledgeTemplateInputSchema>, KnowledgeTemplateResult> {
     return defineTool({
         id: "knowledge_template",
         description:
@@ -218,31 +244,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             "A slot value the template refuses comes back as `match: rejected` with the slot and the permitted values; correct it and call again. " +
             "A change the slots do not cover: use `edit_file` on a line marked `# [adaptable: ...]` in the rendered script, and keep the edit small; the record lists each such edit. " +
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the plan pinned; in both cases write the script yourself as you would without this tool, and state it in your summary.",
-        inputSchema: z.object({
-            template: z
-                .string()
-                .regex(TEMPLATE_REF, "a template id, optionally with @version")
-                .describe("The template id from the Grounding of the step, with its version, for example `tpl-deseq2-two-group@1.0.0`."),
-            slots: z
-                .record(z.string(), z.unknown())
-                .describe(
-                    "The slot values, by slot name. Only the adaptable slots of the template; a pinned slot is refused. Strings, numbers, booleans, and lists of strings.",
-                ),
-            overrides: z
-                .array(
-                    z.object({
-                        slot: z.string().min(1).describe("The name of the bound slot whose value you change."),
-                        reason: z.string().min(1).describe("Why the plan value does not hold for this step, in one sentence."),
-                    }),
-                )
-                .optional()
-                .describe("One entry per bound slot whose value you change from the plan value. Absent when you send every bound value as it is."),
-            script_name: z
-                .string()
-                .regex(SCRIPT_NAME_RE)
-                .optional()
-                .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
-        }),
+        inputSchema: KnowledgeTemplateInputSchema,
         describeCall: ({ template }) => template,
         describeResult: (_input, result: KnowledgeTemplateResult) =>
             "status" in result ? (result.status === "ok" ? `${result.script_path} (${result.environment_match})` : result.status) : result.match,
@@ -314,7 +316,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             const scriptPath = `scripts/${scriptFile}`;
             // Each landed write rides the call record, also when a later write is refused.
             const records: WriteRecord[] = [];
-            const write = async (path: string, content: string) => {
+            const write = async (path: string, content: string): Promise<WriteOutcome> => {
                 const outcome = await deps.mutator.writeFile({
                     path,
                     content,

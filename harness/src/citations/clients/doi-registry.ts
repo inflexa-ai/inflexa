@@ -5,22 +5,20 @@ import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common
 import { firstSegmentOf } from "../../lib/text.js";
 import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
 
-const HandleResponseSchema = z.object({ responseCode: z.number() }).passthrough();
-const RegistrationAgencySchema = z.array(z.object({ DOI: z.string().optional(), RA: z.string().optional() }).passthrough());
-const CslMetadataSchema = z
-    .object({
-        DOI: z.string().optional(),
-        id: z.string().optional(),
-        title: z.union([z.string(), z.array(z.string())]).optional(),
-        author: z.array(z.object({ given: z.string().optional(), family: z.string().optional(), literal: z.string().optional() }).passthrough()).optional(),
-        issued: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
-        published: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
-        "container-title": z.union([z.string(), z.array(z.string())]).optional(),
-        volume: z.string().optional(),
-        page: z.string().optional(),
-        URL: z.string().optional(),
-    })
-    .passthrough();
+const HandleResponseSchema = z.looseObject({ responseCode: z.number() });
+const RegistrationAgencySchema = z.array(z.looseObject({ DOI: z.string().optional(), RA: z.string().optional() }));
+const CslMetadataSchema = z.looseObject({
+    DOI: z.string().optional(),
+    id: z.string().optional(),
+    title: z.union([z.string(), z.array(z.string())]).optional(),
+    author: z.array(z.looseObject({ given: z.string().optional(), family: z.string().optional(), literal: z.string().optional() })).optional(),
+    issued: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
+    published: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
+    "container-title": z.union([z.string(), z.array(z.string())]).optional(),
+    volume: z.string().optional(),
+    page: z.string().optional(),
+    URL: z.string().optional(),
+});
 
 function scalar(value: string | string[] | undefined): string | undefined {
     return Array.isArray(value) ? firstNonEmpty(value) : firstNonEmpty([value]);
@@ -29,7 +27,7 @@ function scalar(value: string | string[] | undefined): string | undefined {
 function cslRecord(doi: string, registrationAgency: string | undefined, metadata: z.infer<typeof CslMetadataSchema> | undefined): CitationRecord {
     const authors = metadata?.author
         ?.map((author) => firstNonEmpty([author.literal, [author.given, author.family].filter(Boolean).join(" ")]))
-        .filter((author): author is string => author !== undefined);
+        .filter((author) => author !== undefined);
     const dateParts = metadata?.issued?.["date-parts"]?.[0] ?? metadata?.published?.["date-parts"]?.[0];
     const title = scalar(metadata?.title);
     const venue = scalar(metadata?.["container-title"]);
@@ -88,7 +86,7 @@ export function createDoiRegistryClient(options: SourceHttpOptions = {}): Citati
                 agencyResult.status === "unavailable" ? agencyResult.detail : undefined,
                 metadataResult.status === "unavailable" ? metadataResult.detail : undefined,
             ]
-                .filter((value): value is string => value !== undefined)
+                .filter((value) => value !== undefined)
                 .join("; ");
             return {
                 ...sourceOutcome(

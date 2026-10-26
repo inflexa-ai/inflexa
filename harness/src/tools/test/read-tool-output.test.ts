@@ -102,7 +102,7 @@ describe("createReadToolOutputTool", () => {
     });
 
     it("keeps a surrogate pair whole at each edge of a window", async () => {
-        const text = `ab${"😀"}cd${"😀"}ef`;
+        const text = "ab😀cd😀ef";
 
         const result = await read(storeWith(text), { ref: REF, offset: 3, limit: 5 });
 

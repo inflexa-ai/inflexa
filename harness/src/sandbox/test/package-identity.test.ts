@@ -52,7 +52,7 @@ describe("package-identity — the conformance fixture", () => {
         for (const entry of conformance.parse) {
             parseQuery(entry.entry).match(
                 (query) => {
-                    if ("error" in entry) throw new Error(`"${entry.entry}" parsed, and the fixture expects the error "${entry.error}"`);
+                    if ("error" in entry) throw new Error(`"${entry.entry}" parsed, and the fixture expects the error "${String(entry.error)}"`);
                     if (entry.query === undefined) throw new Error(`"${entry.entry}" expects a query in the fixture`);
                     expect(query).toEqual(entry.query);
                 },

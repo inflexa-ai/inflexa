@@ -3,6 +3,7 @@
  * the cancel read. Every effect is injected, thus no test touches DBOS or a socket.
  */
 
+import { requestUrlText } from "../../lib/test/request-url.js";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
@@ -51,7 +52,7 @@ type SeenRequest = {
 function seenBody(request: SeenRequest): Record<string, unknown> {
     const raw = request.init?.body;
     if (typeof raw !== "string") throw new Error("the test writes only string bodies");
-    return parseUnknownRecord(parseJsonAs(raw, z.unknown())) ?? {};
+    return parseUnknownRecord(parseJsonAs(raw, z.json())) ?? {};
 }
 
 /**
@@ -61,7 +62,7 @@ function seenBody(request: SeenRequest): Record<string, unknown> {
 function sandbox(polls: (Record<string, unknown> | "unavailable")[], seen: SeenRequest[] = []): typeof fetch {
     let i = 0;
     const double = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        seen.push({ url: String(input), init });
+        seen.push({ url: requestUrlText(input), init });
         if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ status: "started" }), { status: 202 }));
         const item = i < polls.length ? presentAt(polls, i++) : presentLast(polls);
         return Promise.resolve(item === "unavailable" ? new Response("unknown execId", { status: 404 }) : pollResponse(item));
@@ -130,7 +131,7 @@ describe("the submit", () => {
         const seen: SeenRequest[] = [];
         const failing = Object.assign(
             (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-                seen.push({ url: String(input), init });
+                seen.push({ url: requestUrlText(input), init });
                 return Promise.resolve(new Response("boom", { status: 503 }));
             },
             { preconnect: fetch.preconnect },
@@ -402,6 +403,7 @@ describe("the liveness escalation", () => {
                 try {
                     return Promise.resolve(presentAt(verdicts, probe++));
                 } catch (err) {
+                    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rejection reason is the thrown value itself; the awaiter reads its identity, and a wrapper would erase it.
                     return Promise.reject(err);
                 }
             },

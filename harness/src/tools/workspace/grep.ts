@@ -8,6 +8,8 @@
  * `out_of_scope`. Only unexpected I/O failures throw.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { posix as posixPath } from "node:path";
 
 import { ok, type Result } from "neverthrow";
@@ -15,7 +17,7 @@ import { presentAt } from "../../lib/present.js";
 import { splitLines } from "../../lib/text.js";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ListEntry, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
@@ -60,7 +62,7 @@ type GrepOutput =
       }
     | { status: "ok"; path: string; pattern: string; matches: Match[] };
 
-export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
+export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof GrepInputSchema>, GrepOutput> {
     return defineTool({
         id: "grep",
         description:
@@ -84,7 +86,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
                 return ok({
                     status: "invalid_pattern" as const,
                     pattern,
-                    error: err instanceof Error ? err.message : String(err),
+                    error: errorMessageOf(err) ?? textOf(err),
                 });
             }
 

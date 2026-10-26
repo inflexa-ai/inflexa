@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createConsoleLogger, createNoopLogger } from "../console-logger.js";
 import type { Logger } from "../logger.js";
 import { presentAt } from "../present.js";
+import { parseUnknownRecord } from "../unknown-containers.js";
 
 /**
  * The emitted record IS this module's observable output, so the console methods
@@ -12,8 +13,9 @@ import { presentAt } from "../present.js";
 type Captured = { level: string; msg: string; fields: Record<string, unknown> };
 
 function asRecord(value: unknown): Record<string, unknown> {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("the sink received no record object");
-    return { ...value };
+    const record = parseUnknownRecord(value);
+    if (record === undefined) throw new Error("the sink received no record object");
+    return record;
 }
 
 describe("createConsoleLogger", () => {
@@ -140,6 +142,7 @@ describe("errorFields", () => {
         // handling (pino's `err` serializer, the `exception.*` semconv) instead of
         // the shipped mapping. Overriding must reach the harness's call sites.
         const base = createConsoleLogger();
+        // oxlint-disable-next-line typescript/no-base-to-string -- the realization under test maps with the default String form of an Error; textOf would JSON-render it as `{}` and change the pinned "Error: boom" value.
         const custom: Logger = { ...base, errorFields: (err) => ({ "exception.message": String(err) }) };
 
         expect(custom.errorFields(new Error("boom"))).toEqual({ "exception.message": "Error: boom" });

@@ -27,6 +27,7 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { collapseWhitespace } from "../../lib/text.js";
+import { errorOf } from "../../lib/thrown.js";
 import {
     ON_CONFLICT_DO_NOTHING,
     ON_CONFLICT_DO_UPDATE,
@@ -165,14 +166,14 @@ async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
 
     originalDbosFns ??= {
-        runStep: dbos.DBOS.runStep,
-        startWorkflow: dbos.DBOS.startWorkflow,
-        writeStream: dbos.DBOS.writeStream,
-        cancelWorkflow: dbos.DBOS.cancelWorkflow,
-        waitFirst: dbos.DBOS.waitFirst,
-        recv: dbos.DBOS.recv,
-        now: dbos.DBOS.now,
-        setEvent: dbos.DBOS.setEvent,
+        runStep: dbos.DBOS.runStep.bind(dbos.DBOS),
+        startWorkflow: dbos.DBOS.startWorkflow.bind(dbos.DBOS),
+        writeStream: dbos.DBOS.writeStream.bind(dbos.DBOS),
+        cancelWorkflow: dbos.DBOS.cancelWorkflow.bind(dbos.DBOS),
+        waitFirst: dbos.DBOS.waitFirst.bind(dbos.DBOS),
+        recv: dbos.DBOS.recv.bind(dbos.DBOS),
+        now: dbos.DBOS.now.bind(dbos.DBOS),
+        setEvent: dbos.DBOS.setEvent.bind(dbos.DBOS),
     };
     originalStepStatus ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "stepStatus");
 
@@ -383,8 +384,8 @@ function makeFakePool(rowByText: Record<string, FakeAnswer | ((call: number) => 
                 callsByPrefix.set(prefix, call + 1);
                 const configured = presentGet(rowByText, prefix);
                 const rows = typeof configured === "function" ? configured(call) : configured;
-                if (rows instanceof Error) return Promise.reject(rows);
-                return Promise.resolve({ rows, rowCount: rows.length });
+                if (Array.isArray(rows)) return Promise.resolve({ rows, rowCount: rows.length });
+                return Promise.reject(rows);
             }
         }
         return Promise.resolve({ rows: [], rowCount: 0 });
@@ -430,11 +431,15 @@ function suspendWrites(pool: FakePool): Array<{ text: string; values?: readonly 
 
 // ── Fake handle factory ──────────────────────────────────────────────
 
+function isStepResult(value: SandboxStepResult | Error): value is SandboxStepResult {
+    return errorOf(value) === undefined;
+}
+
 function handleFor(workflowID: string, result: SandboxStepResult | Error): FakeWorkflowHandle {
     return {
         workflowID,
         getResult(): Promise<SandboxStepResult> {
-            if (result instanceof Error) return Promise.reject(result);
+            if (!isStepResult(result)) return Promise.reject(result);
             return Promise.resolve(result);
         },
     };

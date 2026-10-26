@@ -28,6 +28,8 @@
  * The script sits outside `src/`, thus the build never emits it into `dist/`.
  */
 
+import { errorMessageOf } from "../src/lib/thrown.js";
+import { textOf } from "../src/lib/unknown-text.js";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -36,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { sleep } from "../src/lib/async-utils.js";
+import { parseUnknownRecord } from "../src/lib/unknown-containers.js";
 import { parseJsonAs, safeParseJsonAs } from "../src/lib/parse-json.js";
 import { FixtureManifestSchema, type FixtureManifest, type FixtureManifestEntry } from "../src/tools/lib/__fixtures__/manifest.js";
 
@@ -173,7 +176,7 @@ async function readManifest(provider: string, path: string): Promise<FixtureMani
     } catch (error) {
         // A missing or malformed file is a normal condition of an edit in progress. Report the cause and
         // continue with the other providers, because a stack trace here hides the drift report.
-        reject(provider, [error instanceof Error ? error.message : String(error)]);
+        reject(provider, [errorMessageOf(error) ?? textOf(error)]);
         return null;
     }
 
@@ -207,7 +210,7 @@ async function replay(provider: string, file: string, entry: FixtureManifestEntr
         if (!response.ok) return { kind: "failed", reason: `HTTP ${response.status} from ${url}` };
         body = await response.text();
     } catch (error) {
-        return { kind: "failed", reason: `${error instanceof Error ? error.message : String(error)} (${url})` };
+        return { kind: "failed", reason: `${errorMessageOf(error) ?? textOf(error)} (${url})` };
     }
 
     const path = join(FIXTURES_DIR, provider, file);
@@ -268,14 +271,10 @@ async function politeFetch(url: string, entry: FixtureManifestEntry): Promise<Re
 /** Parse JSON text. A body that is not JSON stays a string, thus the diff reports it instead of throwing. */
 function safeJson(text: string): unknown {
     try {
-        return parseJsonAs(text, z.unknown());
+        return parseJsonAs(text, z.json());
     } catch {
         return text;
     }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Does an ignore path cover this path? A `*` segment matches one segment, and an entry covers what is under it. */
@@ -312,9 +311,11 @@ function diffJson(stored: unknown, live: unknown, ignorePaths: string[][], path:
         return out;
     }
 
-    if (isRecord(stored) && isRecord(live)) {
-        const keys = [...new Set([...Object.keys(stored), ...Object.keys(live)])].sort();
-        for (const key of keys) diffJson(stored[key], live[key], ignorePaths, [...path, key], out);
+    const storedRecord = parseUnknownRecord(stored);
+    const liveRecord = parseUnknownRecord(live);
+    if (storedRecord !== undefined && liveRecord !== undefined) {
+        const keys = [...new Set([...Object.keys(storedRecord), ...Object.keys(liveRecord)])].sort();
+        for (const key of keys) diffJson(storedRecord[key], liveRecord[key], ignorePaths, [...path, key], out);
         return out;
     }
 
@@ -335,7 +336,7 @@ function stringifyJson(value: unknown): string | undefined {
 
 function renderValue(value: unknown): string {
     if (value === undefined) return "(absent)";
-    const text = stringifyJson(value) ?? String(value);
+    const text = stringifyJson(value) ?? textOf(value);
     return text.length > MAX_RENDERED_VALUE ? `${text.slice(0, MAX_RENDERED_VALUE)}…` : text;
 }
 

@@ -8,6 +8,8 @@
  * then an `extraction-failed` envelope, so the frontend never renders raw prose.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -251,7 +253,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                     { tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE },
                 );
             } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
+                const message = errorMessageOf(err) ?? textOf(err);
                 return ok({
                     schemaVersion: "1",
                     error: {

@@ -216,7 +216,12 @@ export function smallest(values: readonly number[]): number | undefined {
 /** The series of an option, as objects. */
 export function seriesOf(option: EchartOption): EchartOption[] {
     const series = option.series;
-    return Array.isArray(series) ? series.filter((entry): entry is EchartOption => typeof entry === "object" && entry !== null) : [];
+    return Array.isArray(series)
+        ? series.flatMap((entry) => {
+              const record = parseUnknownRecord(entry);
+              return record === undefined ? [] : [record];
+          })
+        : [];
 }
 
 /** The axis of an option as one object. A composition of one grid gives one object for each axis. */

@@ -550,7 +550,10 @@ async function searchApprovedDrugsByName(query: string, limit: number): Promise<
     const approved = (res.value.molecules ?? []).filter((mol) => mol.max_phase != null && mol.max_phase >= APPROVED_MAX_PHASE);
     if (approved.length === 0) return [];
 
-    const moleculeChemblIds = approved.map((mol) => mol.molecule_chembl_id).filter((id): id is string => id !== undefined && id.length > 0);
+    const moleculeChemblIds = approved.flatMap((mol) => {
+        const id = mol.molecule_chembl_id;
+        return id !== undefined && id.length > 0 ? [id] : [];
+    });
     const indications = await fetchIndicationsOf(moleculeChemblIds);
     return approved.map((raw) => mapDrug(raw, indications.get(raw.molecule_chembl_id ?? "") ?? null));
 }
@@ -700,7 +703,7 @@ export async function getModulatorOnTargetPchembl(modulatorChemblId: string, tar
         reportSkippedMolecule(log, res.error, modulatorChemblId);
         return null;
     }
-    const values = (res.value.activities ?? []).map((a) => a.pchembl_value).filter((v): v is number => v != null);
+    const values = (res.value.activities ?? []).map((a) => a.pchembl_value).filter((v) => v != null);
     if (values.length === 0) return null;
     values.sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);

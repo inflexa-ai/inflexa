@@ -56,7 +56,7 @@ import {
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
-    return new ResultAsync(Promise.resolve(ok<void, E>(undefined)));
+    return new ResultAsync(Promise.resolve(ok<undefined, E>(undefined)));
 }
 
 type MessageRow = {
@@ -460,7 +460,7 @@ function insertGroup(client: TransactionQuerier, threadId: string, startSeq: num
                     ),
                 ).map(() => undefined),
             ),
-        okVoid<DbError>(),
+        okVoid(),
     );
 }
 
@@ -509,7 +509,7 @@ function touchThread(client: TransactionQuerier, threadId: string, op: string): 
             // so COMMIT releases the savepoint on the success path.
             tryMutation(`${op}.touchThread.rewind`, () => client.query("ROLLBACK TO SAVEPOINT touch_thread"))
                 .map(() => undefined)
-                .orElse(() => okVoid<DbError>()),
+                .orElse(() => okVoid()),
         );
 }
 
@@ -706,7 +706,7 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
                     }
                     if (close !== undefined) steps.push(() => closeTurnRecord(client, threadId, startSeq, close));
                     steps.push(() => touchThread(client, threadId, "thread-history.writeTurn"));
-                    return steps.reduce((chain, step) => chain.andThen(step), okVoid<DbError>()).map(() => ({ startSeq }));
+                    return steps.reduce((chain, step) => chain.andThen(step), okVoid()).map(() => ({ startSeq }));
                 }),
         );
     }

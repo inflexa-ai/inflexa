@@ -18,15 +18,13 @@ import { errAsync, okAsync } from "neverthrow";
 
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import type { ChatPart, StepActivityPart } from "../../contracts/chat-parts.js";
+import type { ChatPart } from "../../contracts/chat-parts.js";
 import type { DbError } from "../../lib/db-result.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { insertRun, markRunCanceledIfActive } from "../../state/runs.js";
 import type { RunStatus } from "../../state/schema.js";
 import { insertStepExecution, queryStepsByRun } from "../../state/step-executions.js";
 import { createRunEventStream, type RunEventRunRead, type RunEventStreamDeps } from "../run-event-stream.js";
-
-// The summary arm the reads narrow to.
-type StepSummaryPart = Extract<ChatPart, { type: "data-step-summary" }>;
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -149,7 +147,7 @@ async function settlesWithin<T>(promise: Promise<T>, timeoutMs: number, label: s
 
 const typesOf = (parts: readonly ChatPart[]): string[] => parts.map((p) => p.type);
 
-const activitiesOf = (parts: readonly ChatPart[]): StepActivityPart[] => parts.filter((p): p is StepActivityPart => p.type === "data-step-activity");
+const activitiesOf = (parts: readonly ChatPart[]) => parts.flatMap((p) => (p.type === "data-step-activity" ? [p] : []));
 
 // ── Data-profile fixtures ────────────────────────────────────────────
 
@@ -191,7 +189,7 @@ describe("run-event stream — one workflow", () => {
         );
 
         expect(typesOf(seen)).toEqual(["data-dag-state", "data-step-summary", "data-step-summary", "data-run-completed"]);
-        const summaries = seen.filter((p): p is StepSummaryPart => p.type === "data-step-summary");
+        const summaries = seen.flatMap((p) => (p.type === "data-step-summary" ? [p] : []));
         expect(summaries[0]?.markdown).toBe("first");
         expect(summaries[1]?.markdown).toBe("second");
     });
@@ -298,7 +296,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await settlesWithin(stream.subscribe({ runId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }), 20_000, "fan-in subscription");
 
         // Ordering holds within a stream, not across them — assert on the set.
-        const summaries = seen.filter((p): p is StepSummaryPart => p.type === "data-step-summary").map((p) => p.markdown);
+        const summaries = seen.flatMap((p) => (p.type === "data-step-summary" ? [p] : [])).map((p) => p.markdown);
         expect(summaries.sort()).toEqual(["A", "B"]);
         expect(typesOf(seen).filter((t) => t === "data-run-completed")).toHaveLength(1);
         expect(typesOf(seen).filter((t) => t === "data-step-activity")).toHaveLength(1);
@@ -329,7 +327,7 @@ describe("run-event stream — parent and child fan-in", () => {
         await parent.getResult();
         await settlesWithin(subscription, 20_000, "subscription after the run finished");
 
-        expect(seen.find((p): p is StepSummaryPart => p.type === "data-step-summary")?.markdown).toBe("late child");
+        expect(seen.flatMap((p) => (p.type === "data-step-summary" ? [p] : [])).at(0)?.markdown).toBe("late child");
         expect(typesOf(seen)).toContain("data-run-completed");
     });
 
@@ -443,7 +441,7 @@ describe("run-event stream — lifecycle", () => {
 
         // The history the subscriber missed is replayed...
         expect(typesOf(seen)).toContain("data-dag-state");
-        expect(seen.find((p): p is StepSummaryPart => p.type === "data-step-summary")?.markdown).toBe("early summary");
+        expect(seen.flatMap((p) => (p.type === "data-step-summary" ? [p] : [])).at(0)?.markdown).toBe("early summary");
         // ...and the reconciling activity ends on the run's current value.
         const activities = activitiesOf(seen);
         expect(activities.at(-1)?.phase).toBe("complete");
@@ -724,7 +722,7 @@ describe("run-event stream — a data profile", () => {
         expect(activities.at(-1)?.phase).toBe("complete");
         expect(activities.at(-1)?.activity).toBe("Profile complete");
         // The fold worked despite — in fact because of — one id across the lot.
-        expect([...new Set(activities.map((p) => `${p.id}|${p.runId}|${p.stepId}`))]).toEqual([
+        expect([...new Set(activities.map((p) => `${textOf(p.id)}|${textOf(p.runId)}|${textOf(p.stepId)}`))]).toEqual([
             `step-activity-${PROFILE_RUN_ID}-${PROFILE_STEP_ID}|${PROFILE_RUN_ID}|${PROFILE_STEP_ID}`,
         ]);
     });
@@ -792,8 +790,8 @@ describe("run-event stream — a data profile", () => {
 
         const alphaActivities = activitiesOf(seenAlpha);
         const betaActivities = activitiesOf(seenBeta);
-        expect(alphaActivities.map((p) => p.activity).every((a) => a.endsWith("(alpha)"))).toBe(true);
-        expect(betaActivities.map((p) => p.activity).every((a) => a.endsWith("(beta)"))).toBe(true);
+        expect(alphaActivities.map((p) => textOf(p.activity)).every((a) => a.endsWith("(alpha)"))).toBe(true);
+        expect(betaActivities.map((p) => textOf(p.activity)).every((a) => a.endsWith("(beta)"))).toBe(true);
         expect(alphaActivities.at(-1)?.activity).toBe("Profile complete (alpha)");
         expect(betaActivities.at(-1)?.activity).toBe("Profile complete (beta)");
         // The identity really is shared, so the isolation above is the stream's

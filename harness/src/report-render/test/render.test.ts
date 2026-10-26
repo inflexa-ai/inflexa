@@ -48,6 +48,7 @@ const CHART_MENU_CLOSED_RULE = /\.report-chart-menu \{[^}]*display: none;/;
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the long path data of the dense point cloud, which no short path reaches
 const LONG_PATH_D = /<path d="([^"]{1000,})"/;
 
+import { textOf } from "../../lib/unknown-text.js";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { collapseWhitespace, isAllDigits } from "../../lib/text.js";
 import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
@@ -309,7 +310,7 @@ function cellRows(value: unknown): Record<string, Cell>[] {
     return optionList(value).map((row) => {
         if (!isRecord(row)) throw new Error("a fixture row holds no record");
         const pairs = Object.entries(row).map(([key, cell]): [string, Cell] => {
-            if (typeof cell !== "string" && typeof cell !== "number") throw new Error(`the fixture row holds the cell ${String(cell)} under ${key}`);
+            if (typeof cell !== "string" && typeof cell !== "number") throw new Error(`the fixture row holds the cell ${textOf(cell)} under ${key}`);
             return [key, cell];
         });
         return Object.fromEntries(pairs);
@@ -840,7 +841,7 @@ describe("the lineage stamp and the popover control", () => {
     /** The keys that one block stamped, read back from the container of the block. */
     function keysOf(html: string, blockId: string): unknown[] {
         const value = load(html)(`[${LINEAGE_BLOCK_ATTRIBUTE}="${blockId}"]`).attr(LINEAGE_KEYS_ATTRIBUTE);
-        return value === undefined ? [] : optionList(parseJsonAs(value, z.unknown()));
+        return value === undefined ? [] : optionList(parseJsonAs(value, z.json()));
     }
 
     /** The place that each control of one block names, in document order. */
@@ -2063,7 +2064,7 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page("li#ref-3").text()).toContain("pvalue");
         expect(page("li#ref-4").text()).toContain("hr");
         // The option prints each statistic in the number format of its column.
-        const option = optionOf(parseJsonAs(page(".report-chart script[type='application/json']").text(), z.unknown()));
+        const option = optionOf(parseJsonAs(page(".report-chart script[type='application/json']").text(), z.json()));
         const graphic = optionArray(option, "graphic")[0];
         if (graphic === undefined) throw new Error("the option holds no graphic");
         expect(optionAt(graphic, "style").text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
@@ -2139,7 +2140,7 @@ describe("the evidentiary bindings in the appendix", () => {
             .toArray()
             .map((node) => page(node).attr("href"));
         expect(targets.length).toBe(4);
-        expect(targets.filter((target) => page(`li${target}`).length === 1).length).toBe(4);
+        expect(targets.filter((target) => page(`li${String(target)}`).length === 1).length).toBe(4);
         expect(page("ol.report-references li").length).toBe(3);
         // Every entry names the derived path, thus every entry states the chain of that path.
         expect(page("ol.report-references li .report-ref-chain").length).toBe(3);
@@ -2312,7 +2313,7 @@ describe("the section scrollspy", () => {
         expect(margin).not.toBeNull();
         // The script is browser source text, thus the test reads it as text. The fallback measures the same
         // box that the observer takes, and one constant feeds both. Thus the two readings cannot drift.
-        expect(SECTION_SPY).toContain(`(100 - ${margin?.[1]})`);
+        expect(SECTION_SPY).toContain(`(100 - ${String(margin?.[1])})`);
         expect(SECTION_SPY).toContain("clientHeight");
         expect(SECTION_SPY).toContain("getBoundingClientRect().top <= end");
         expect(SECTION_SPY).toContain("active = nearestAbove()");
@@ -3501,7 +3502,7 @@ describe("the chart exports", () => {
     it("puts the toolbox of the chart type into the page option, with each handler as the name of a page function", async () => {
         const page = chartPage(bars, barRows);
         const rendered = (await renderReportPage(page.document, page.values))._unsafeUnwrap();
-        const option = optionOf(parseJsonAs(load(rendered.html)("script[type='application/json']").text(), z.unknown()));
+        const option = optionOf(parseJsonAs(load(rendered.html)("script[type='application/json']").text(), z.json()));
         expect(option.toolbox).toEqual(chartToolbox("bar"));
         // Each export removes the toolbox, thus a file never shows it.
         for (const asset of rendered.dataAssets.filter((entry) => entry.name.endsWith(".svg"))) expect(asset.bytes).not.toContain("Download");
@@ -3606,7 +3607,7 @@ describe("the chart exports", () => {
         const page = chartPage(faceted, rows);
         const svgs = (await renderReportPage(page.document, page.values))._unsafeUnwrap().dataAssets.filter((asset) => asset.name.endsWith(".svg"));
         const single = exportSizeFor(CHART_EXPORT_SIZES.single, CHART_BODY_PX + FACET_ROW_PX);
-        expect(svgs.find((asset) => asset.name.endsWith("-89mm.svg"))?.bytes).toContain(`<svg width="89mm" height="${single.heightMm}mm"`);
+        expect(svgs.find((asset) => asset.name.endsWith("-89mm.svg"))?.bytes).toContain(`<svg width="89mm" height="${String(single.heightMm)}mm"`);
     });
 
     it("keeps the container of each new form with zero rows, and reports no problem", async () => {

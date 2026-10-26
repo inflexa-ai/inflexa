@@ -3,6 +3,7 @@
  * the value labels, the new forms, the facet, and the removal of the toolbox.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition } from "../../contracts/report-blocks.js";
@@ -639,8 +640,8 @@ describe("the facet", () => {
         const xAxes = asArr(option.xAxis).map(asObj);
         const yAxes = asArr(option.yAxis).map(asObj);
         expect(xAxes.length).toBe(4);
-        expect(new Set(xAxes.map((axis) => `${String(axis.min)}:${String(axis.max)}`)).size).toBe(1);
-        expect(new Set(yAxes.map((axis) => `${String(axis.min)}:${String(axis.max)}`)).size).toBe(1);
+        expect(new Set(xAxes.map((axis) => `${textOf(axis.min)}:${textOf(axis.max)}`)).size).toBe(1);
+        expect(new Set(yAxes.map((axis) => `${textOf(axis.min)}:${textOf(axis.max)}`)).size).toBe(1);
         expect(yAxes[0]?.max).toBeGreaterThanOrEqual(16);
         const series = seriesOf(option);
         expect(series.map((entry) => entry.xAxisIndex)).toEqual([0, 1, 2, 3]);
@@ -1010,7 +1011,7 @@ describe("the second review round", () => {
         }
         const option = derive(quick("scatter", { x: "x", y: "y", color: "c", facet: "sample" }), rows);
         const grids = asArr(option.grid).map(asObj);
-        const ends = grids.map((grid) => Number.parseFloat(String(grid.left)) + Number.parseFloat(String(grid.width)));
+        const ends = grids.map((grid) => Number.parseFloat(textOf(grid.left)) + Number.parseFloat(textOf(grid.width)));
         // The scale stands at the right edge in a band of 18 percent, thus every panel ends before the band.
         expect(Math.max(...ends)).toBeLessThanOrEqual(82);
         expect(firstMap(option).right).toBe(0);

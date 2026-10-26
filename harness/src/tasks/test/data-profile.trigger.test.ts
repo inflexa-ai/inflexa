@@ -336,7 +336,6 @@ describe("triggerDataProfile seed-first guard", () => {
         const raced: DataProfileTriggerDeps = {
             ...tripwireDeps(pool),
             pool: {
-                ...pool,
                 // Wipe the seed the instant the guard finishes reading it, before the CAS runs.
                 query: async (...args: Parameters<Querier["query"]>) => {
                     const res = await pool.query(...args);

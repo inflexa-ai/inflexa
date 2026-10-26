@@ -1,5 +1,6 @@
+import { errorMessageOf, errorNameOf, errorOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { randomUUID } from "node:crypto";
-
 import {
     jsonSchema,
     tool as aiTool,
@@ -12,7 +13,8 @@ import {
     type ToolResultPart,
     type ModelMessage,
 } from "ai";
-import type { z } from "zod";
+import { z } from "zod";
+import type { ResultAsync } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
@@ -20,7 +22,6 @@ import type { UsageRecorder, LlmUsageRecord } from "../billing/usage-recorder.js
 import type { CompactionPart } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
-import { isUnknownArray } from "../lib/unknown-array.js";
 import { presentAt, presentLast } from "../lib/present.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
@@ -282,7 +283,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const wrapUp = await loop.runSegment({
         mask: "none",
         maxRequests: WRAP_UP_MAX_REQUESTS,
-        stepNames: { llm: (k) => formatStepName.llm(agent.maxIterations + k), tool: formatStepName.tool },
+        stepNames: { llm: (k) => formatStepName.llm(agent.maxIterations + k), tool: (name, id) => formatStepName.tool(name, id) },
         firstIndex: agent.maxIterations,
         requestText: WRAP_UP_REQUEST,
         closesCappedRun: true,
@@ -347,8 +348,7 @@ export function openLoop(
     // AbortError is control flow, not a tool failure. Always compose it with the
     // host's fatal predicate so request cancellation cannot be converted into a
     // model-visible error result and retried by the loop.
-    const isFatalLoopError = (err: unknown): boolean =>
-        ((err instanceof Error || err instanceof DOMException) && err.name === "AbortError") || configuredFatalLoopError(err);
+    const isFatalLoopError = (err: unknown): boolean => errorNameOf(err) === "AbortError" || configuredFatalLoopError(err);
     if (agent.tools.length > 0 && !provider.capabilities.toolCalling) {
         throw new Error(`Provider/model cannot run tool-required agent "${agent.id}"`);
     }
@@ -507,7 +507,7 @@ export function openLoop(
             ...reasoningField,
         };
         if (opts.toolChoice !== undefined) request.toolChoice = opts.toolChoice;
-        const chat = () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
+        const chat = (): ResultAsync<ChatResponse, ProviderError> => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
         if (!endsOnRequestRefusal) {
             const reply = await resultStep(callStep)(stepName, chat);
             accountForChatCall(reply, { ...accounting, stepName });
@@ -611,7 +611,7 @@ export function openLoop(
         names: StepNameFormatter,
     ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> => {
         const refusals = refusalsFor(calls, mask, opts.toolBudget, used);
-        return dispatchTools(calls, refusals, toolsById, toolCtx, isFatalLoopError, callStep, names.tool, encoding, cut);
+        return dispatchTools(calls, refusals, toolsById, toolCtx, isFatalLoopError, callStep, names.tool.bind(names), encoding, cut);
     };
 
     const stopOnResolved = async (index: number): Promise<RunAgentResult> => {
@@ -635,7 +635,8 @@ export function openLoop(
         const id = randomUUID();
         const stepNamespace = `compaction-${compactions++}`;
         const startedAt = performance.now();
-        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">) => emit({ type: "data-compaction", source, data: { ...data, trigger } });
+        const emitPart = (data: Omit<CompactionPart, "type" | "trigger">): void | Promise<void> =>
+            emit({ type: "data-compaction", source, data: { ...data, trigger } });
         await emitPart({ id, status: "running", tokensBefore });
         const { onRound: _onRound, compaction: _compaction, turnInput: _turnInput, ...conversationOptions } = opts;
         let settled = false;
@@ -1018,7 +1019,7 @@ function recordKeyFor(session: AgentSession, invocationId: string | undefined, s
 
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {
     if (typeof message.content === "string") return [];
-    return message.content.filter((part): part is ToolCallPart => part.type === "tool-call");
+    return message.content.filter((part) => part.type === "tool-call");
 }
 
 /** Whether an aborted partial carries any content worth persisting — an empty partial contributes no message. */
@@ -1389,11 +1390,14 @@ function markToolFailure(tu: ToolCallPart, tool: Tool, failure: unknown, log: Lo
     const toolError = modeledToolError(failure);
     if (toolError !== undefined) {
         labelToolFailure("tool_error", toolError.error);
-    } else if (failure instanceof Error) {
-        recordToolException(failure);
-        log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failure) });
     } else {
-        labelToolFailure("_OTHER");
+        const failureError = errorOf(failure);
+        if (failureError !== undefined) {
+            recordToolException(failureError);
+            log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failureError) });
+        } else {
+            labelToolFailure("_OTHER");
+        }
     }
 }
 
@@ -1410,19 +1414,11 @@ function modeledToolError(failure: unknown): ToolError | undefined {
  * types rather than scanned bytes, so nothing produces one.
  */
 function jsonValue(value: unknown): JSONValue {
-    // The stringify/parse round trip holds only JSON values, so the guard never
+    // The stringify/parse round trip holds only JSON values, so the parse never
     // refuses; it moves the parser's `any` out of the tool-result field.
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the NUL-stripping reviver walks a value this code serialized one line above, not text of unknown shape; a schema proves nothing here.
     const serialized: unknown = JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
-    if (!isJsonValue(serialized)) throw new Error("the JSON round trip of a tool result produced a non-JSON value");
-    return serialized;
-}
-
-function isJsonValue(value: unknown): value is JSONValue {
-    if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
-    if (isUnknownArray(value)) return value.every(isJsonValue);
-    if (typeof value === "object") return Object.values(value).every(isJsonValue);
-    return false;
+    return z.json().parse(serialized);
 }
 
 /**
@@ -1485,7 +1481,7 @@ function toolErrorContent(value: unknown): string {
         return JSON.stringify({ error: stripNulCharacters(toolError.error), retryable: toolError.retryable });
     }
     const { retryable } = classifyProviderError(value);
-    const error = stripNulCharacters(value instanceof Error ? value.message : String(value));
+    const error = stripNulCharacters(errorMessageOf(value) ?? textOf(value));
     return JSON.stringify({ error, retryable });
 }
 
@@ -1502,7 +1498,7 @@ function errorResult(toolCall: ToolCallPart, content: string): ToolResultPart {
 function isAskRejected(err: unknown): err is AskRejectedError {
     // Name-based fallback recognizes a rejection thrown from a different module
     // realm, where `instanceof` against this file's class reference would miss it.
-    return err instanceof AskRejectedError || (err instanceof Error && err.name === "AskRejectedError");
+    return err instanceof AskRejectedError || errorNameOf(err) === "AskRejectedError";
 }
 
 /**
@@ -1556,7 +1552,7 @@ export function finalText(messages: readonly LoopMessage[]): string {
     if (last === undefined || last.role !== "assistant") return "";
     if (typeof last.content === "string") return last.content;
     return last.content
-        .filter((block): block is { type: "text"; text: string } & typeof block => block.type === "text")
+        .filter((block) => block.type === "text")
         .map((block) => block.text)
         .join("");
 }

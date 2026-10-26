@@ -735,7 +735,7 @@ describe("persistSynthesis", () => {
                 synthesis,
             });
             expect(path.endsWith("synthesis.json")).toBe(true);
-            const written = parseUnknownRecord(parseJsonAs(await readFile(path, "utf8"), z.unknown()));
+            const written = parseUnknownRecord(parseJsonAs(await readFile(path, "utf8"), z.json()));
             expect(written?.runId).toBe(RUN_ID);
         } finally {
             await rm(tempDir, { recursive: true, force: true });

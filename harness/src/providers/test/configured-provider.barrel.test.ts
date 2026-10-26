@@ -88,7 +88,7 @@ type CapturedRequest = {
 function capturingFetch(respond: (text: string, model: string) => Response): { fetch: typeof fetch; requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
     const fetch = fetchDouble((_input, init) => {
-        const body = init?.body ? (parseUnknownRecord(parseJsonAs(String(init.body), z.unknown())) ?? {}) : {};
+        const body = typeof init?.body === "string" ? (parseUnknownRecord(parseJsonAs(init.body, z.json())) ?? {}) : {};
         // `Headers` folds each name to lowercase, thus an assertion does not
         // depend on the spelling that the SDK forwards.
         const headers = Object.fromEntries(new Headers(init?.headers));

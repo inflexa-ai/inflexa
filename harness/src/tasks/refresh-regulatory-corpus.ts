@@ -10,12 +10,14 @@
  *   - `regulatory-corpus-boot-refresh.ts` — automatic 90-day-stale boot trigger
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
 import { presentAt } from "../lib/present.js";
-import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
-import { fetchIchListing, fetchAndExtractIchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
+import { fetchFdaGuidanceListing, fetchAndExtractFdaDoc, type FdaDoc, type FdaDocStub } from "../lib/regulatory-corpus/fetch-fda-guidance.js";
+import { fetchIchListing, fetchAndExtractIchDoc, type IchDoc, type IchStub } from "../lib/regulatory-corpus/fetch-ich.js";
 import { chunkText, upsertChunks, type ChunkRow } from "../lib/regulatory-corpus.js";
 import { z } from "zod";
 
@@ -114,7 +116,7 @@ async function listForSource(source: RegulatoryCorpusSource): Promise<Array<FdaD
 }
 
 // Each source's listing carries only its own stub kind, thus the stub's own shape picks the fetcher.
-async function fetchOne(source: RegulatoryCorpusSource, stub: FdaDocStub | IchStub) {
+async function fetchOne(source: RegulatoryCorpusSource, stub: FdaDocStub | IchStub): Promise<FdaDoc | IchDoc> {
     return "center" in stub ? await fetchAndExtractFdaDoc(stub) : await fetchAndExtractIchDoc(stub);
 }
 
@@ -159,7 +161,7 @@ async function indexSource(
             log.log(`  ok ${doc.doc_id} (${chunks.length} chunks)`);
         } catch (err) {
             fail++;
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = errorMessageOf(err) ?? textOf(err);
             log.error(`  FAIL ${stub.doc_id}: ${msg}`);
         }
     }

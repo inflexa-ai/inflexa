@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { classifyProviderError, findSuspendError, isProviderError, RequestTimeoutError, toProviderError } from "../errors.js";
+import { classifyProviderError, extractStatus, findSuspendError, isProviderError, RequestTimeoutError, toProviderError } from "../errors.js";
 import { presentAt } from "../../lib/present.js";
 
 /** Build a synthetic API error carrying an HTTP status, SDK-shaped. */
@@ -121,6 +121,16 @@ describe("classifyProviderError", () => {
             reason: "payment_required",
             status: 402,
         });
+    });
+
+    it("reads a status carried on a null-prototype cause link", () => {
+        // A gate or a proxy can throw a bare object with no prototype; the cause walk
+        // must still reach its fields.
+        const link: Record<string, unknown> = { statusCode: 503 };
+        Object.setPrototypeOf(link, null);
+        const wrapped = new Error("wrapped", { cause: link });
+        expect(extractStatus(wrapped)).toBe(503);
+        expect(classifyProviderError(wrapped)).toEqual({ kind: "provider", retryable: true });
     });
 
     it("never classifies a suspension from the text of a message", () => {

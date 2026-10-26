@@ -14,7 +14,7 @@ import { allWithConcurrency } from "../lib/async-utils.js";
 import { walkBlocks, type AnyBlock, type ChartSlot, type CollectedReference, type ReportWarning } from "./block-walk.js";
 import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
-export type { ReportWarning };
+export type { ReportWarning } from "./block-walk.js";
 
 /**
  * The cap on how many references resolve at the same time.

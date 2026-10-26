@@ -96,6 +96,8 @@
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { SystemModelMessage } from "ai";
 
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
+
 import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.js";
 
 /**
@@ -210,8 +212,9 @@ function canHostBreakpoint(message: ModelMessage): boolean {
     if (typeof content === "string") return content.length > 0;
     if (!Array.isArray(content)) return false;
     const last: unknown = content.at(-1);
-    if (typeof last !== "object" || last === null) return false;
-    return !("type" in last) || last.type !== "reasoning";
+    const part = parseUnknownRecord(last);
+    if (part === undefined) return false;
+    return !("type" in part) || part["type"] !== "reasoning";
 }
 
 /** The index of the last message that can host the breakpoint, or `-1` when none can. */
@@ -247,7 +250,7 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
         const bag = remaining[namespace];
         if (bag?.[key] === undefined) continue;
         const { [key]: _dropped, ...rest } = bag;
-        if (Object.keys(rest).length === 0) delete remaining[namespace];
+        if (Object.keys(rest).length === 0) Reflect.deleteProperty(remaining, namespace);
         else remaining[namespace] = rest;
     }
     return { ...message, providerOptions: remaining };

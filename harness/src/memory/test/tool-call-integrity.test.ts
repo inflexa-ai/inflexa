@@ -21,7 +21,7 @@ function assistantContent(message: ModelMessage | undefined): AssistantModelMess
 
 function toolParts(message: ModelMessage | undefined): ToolResultPart[] {
     if (message === undefined || message.role !== "tool") throw new Error("expected the tool message");
-    return message.content.filter((part): part is ToolResultPart => part.type === "tool-result");
+    return message.content.flatMap((part) => (part.type === "tool-result" ? [part] : []));
 }
 
 describe("answerUnansweredToolCalls", () => {

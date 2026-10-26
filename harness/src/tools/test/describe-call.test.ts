@@ -81,8 +81,8 @@ const notDrivenMutator: WorkspaceMutator = {
 
 /** Run a tool's hook, asserting it declares one. */
 function describeCall(tool: Tool, input: unknown): string | undefined {
-    expect(tool.describeCall).toBeDefined();
-    const describe = tool.describeCall;
+    expect(tool.describeCall?.bind(tool)).toBeDefined();
+    const describe = tool.describeCall?.bind(tool);
     if (describe === undefined) throw new Error("the tool declares no call detail");
     return describe(input);
 }

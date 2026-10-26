@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import type { ChemblOutput } from "../chembl.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { chemblTool } from "../chembl.js";
@@ -29,7 +30,7 @@ afterEach(() => {
  */
 function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
     globalThis.fetch = fetchDouble((input) => {
-        const url = String(input);
+        const url = requestUrlText(input);
         requestedUrls.push(url);
         for (const [pattern, body] of routes) {
             if (url.includes(pattern)) {
@@ -42,7 +43,7 @@ function stubRoutes(routes: Array<[pattern: string, body: unknown]>): void {
 
 function stubStatus(status: number, body = "upstream said no"): void {
     globalThis.fetch = fetchDouble((input) => {
-        requestedUrls.push(String(input));
+        requestedUrls.push(requestUrlText(input));
         return Promise.resolve(new Response(body, { status }));
     });
 }

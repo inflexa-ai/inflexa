@@ -20,6 +20,9 @@
  * `workflow_status`, so they go with the status row.
  */
 
+import { textOf } from "../lib/unknown-text.js";
+import { z } from "zod";
+
 import { DBOSClient, type DLogger } from "@dbos-inc/dbos-sdk";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
@@ -44,9 +47,10 @@ const SYSTEM_SCHEMA = "dbos";
  */
 const UNDEFINED_TABLE = "42P01";
 
+const UndefinedTableCause = z.object({ code: z.literal(UNDEFINED_TABLE) });
+
 function isUndefinedTable(e: DbError): boolean {
-    const cause: unknown = e.cause;
-    return cause !== null && typeof cause === "object" && "code" in cause && cause.code === UNDEFINED_TABLE;
+    return UndefinedTableCause.safeParse(e.cause).success;
 }
 
 /**
@@ -65,7 +69,7 @@ function isUndefinedTable(e: DbError): boolean {
  * message and drops the one stack the SDK bothered to hand over.
  */
 function asEngineLogger(logger: Logger): DLogger {
-    const render = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
+    const render = (entry: unknown): string => (typeof entry === "string" ? entry : textOf(entry));
     return {
         debug: (entry) => logger.debug(render(entry)),
         info: (entry) => logger.info(render(entry)),
@@ -204,7 +208,7 @@ export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflo
                 .map(() => {
                     logger.debug("cancelled workflows", { requested: workflowIds.length });
                 })
-                .orElse(whenLedgerAbsent<void>(undefined));
+                .orElse(whenLedgerAbsent<undefined>(undefined));
         },
 
         deleteWorkflows(workflowIds, includeDescendants = false) {

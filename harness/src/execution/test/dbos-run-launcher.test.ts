@@ -24,7 +24,7 @@ beforeEach(async () => {
     provider.register();
 
     const dbos = await import("@dbos-inc/dbos-sdk");
-    originalStartWorkflow ??= dbos.DBOS.startWorkflow;
+    originalStartWorkflow ??= dbos.DBOS.startWorkflow.bind(dbos.DBOS);
     contextAtStart = undefined;
     inputAtStart = undefined;
     Reflect.set(dbos.DBOS, "startWorkflow", () => (input: unknown) => {

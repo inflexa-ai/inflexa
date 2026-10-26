@@ -22,6 +22,7 @@
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { scopeWorkloadId } from "../auth/types.js";
+import { errorNameOf } from "../lib/thrown.js";
 import { type ProviderError, toProviderError } from "./errors.js";
 import type { AgentChat, ChatProvider, ChatResponse } from "./types.js";
 
@@ -62,7 +63,7 @@ export function createStreamingChat(provider: ChatProvider, onText: (text: strin
                     // aborted, that raced failure is noise: resolving with the partial
                     // serves their intent, while an error banner would blame their own
                     // keypress.
-                    const aborted = ((e instanceof DOMException || e instanceof Error) && e.name === "AbortError") || signal?.aborted === true;
+                    const aborted = errorNameOf(e) === "AbortError" || signal?.aborted === true;
                     if (aborted) {
                         // A complete response already in hand beats a partial reconstruction: if the
                         // stream had yielded its terminal `done` before the abort threw, that whole

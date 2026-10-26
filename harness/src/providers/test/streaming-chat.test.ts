@@ -19,6 +19,7 @@ function streamOf(events: ChatStreamEvent[], toThrow?: unknown): AsyncIterable<C
                     i += 1;
                     return Promise.resolve({ done: false, value });
                 }
+                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rig rejects with the exact abort reason the production stream carries (DOMException or Error), and the test matches it.
                 if (toThrow !== undefined) return Promise.reject(toThrow);
                 return Promise.resolve({ done: true, value: undefined });
             },

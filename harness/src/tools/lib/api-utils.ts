@@ -9,6 +9,8 @@
  * `isErr()` and read `value` / `error` (see `result.ts` for the house rules).
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -202,7 +204,7 @@ async function runFetch(url: string, options: ApiFetchOptions): Promise<Result<u
             if (e instanceof DOMException && e.name === "TimeoutError") {
                 return err({ type: "timeout", timeoutMs });
             }
-            lastError = e instanceof Error ? e.message : String(e);
+            lastError = errorMessageOf(e) ?? textOf(e);
             if (attempt < maxRetries) {
                 await wait(Math.min(maxRetryDelayMs, retryDelayMs * 2 ** attempt));
                 continue;

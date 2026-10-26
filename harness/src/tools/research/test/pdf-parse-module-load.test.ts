@@ -20,7 +20,7 @@ describe("web_fetch pdf-parse module load", () => {
         expect(child.stderr.toString()).toBe("");
         const report = z
             .object({ agent: z.boolean(), parallelism: z.union([z.number(), z.literal("undefined")]) })
-            .parse(parseJsonAs(child.stdout.toString(), z.unknown()));
+            .parse(parseJsonAs(child.stdout.toString(), z.json()));
         expect(report.agent).toBe(true);
         expect(report.parallelism).not.toBe("undefined");
         expect(report.parallelism).toBeGreaterThan(0);

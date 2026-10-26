@@ -728,6 +728,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         // Non-resumable failure — tear down, mark failed (scrubbed), re-raise so
         // the parent's `getResult` sees ERROR and the fail-fast cascade fires.
         // `failStep` always throws; the outer `throw` is for control-flow analysis.
+        // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
         throw await failStep("agent_loop", err);
     }
 
@@ -905,12 +906,14 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     } catch (attestationErr) {
         if (attestationErr instanceof DBOSErrors.DBOSWorkflowCancelledError) throw attestationErr;
         await syncStepArtifacts();
+        // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
         throw await failStep("lineage_attestation", attestationErr);
     }
     await syncStepArtifacts();
     if (registered.isErr()) {
         const refused = registered.error.kind === "refused" ? suspensionOfRefusal(registered.error.refusal) : undefined;
         if (refused !== undefined) return suspendStep(refused);
+        // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path.
         throw await failStep("lineage_attestation", new Error(describeStepRegistrationFailure(registered.error)));
     }
     const reconciledManifest = registered.value;

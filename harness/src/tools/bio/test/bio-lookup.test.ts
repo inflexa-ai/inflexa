@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { searchGeneTool } from "../search-gene.js";
 import { presentAt } from "../../../lib/present.js";
@@ -87,7 +88,7 @@ describe("searchGene (bio-lookup family)", () => {
     it("resolves an Ensembl gene ID to its approved symbol before it reaches Ensembl", async () => {
         const seen: string[] = [];
         globalThis.fetch = fetchDouble((input) => {
-            const url = String(input);
+            const url = requestUrlText(input);
             seen.push(url);
             const { hostname, pathname } = new URL(url);
             if (hostname === "rest.genenames.org") {
@@ -124,7 +125,7 @@ describe("searchGene (bio-lookup family)", () => {
 
     it("reports an identifier that anchors on no human gene as notFound, not an error", async () => {
         globalThis.fetch = fetchDouble((input) => {
-            const url = String(input);
+            const url = requestUrlText(input);
             if (new URL(url).hostname === "rest.ensembl.org") return Promise.resolve(json({ id: "", display_name: "" }));
             return Promise.resolve(json({}));
         });

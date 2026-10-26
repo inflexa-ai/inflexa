@@ -3,6 +3,8 @@
  * most significant signal points, and the symmetric effect axis.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
@@ -38,7 +40,7 @@ const LABEL_SIDES = ["right", "left", "top"] as const satisfies readonly LeaderN
 /** The label side that one placed name carries, or a failed test. */
 function labelSide(label: EchartOption): LeaderName["side"] {
     const side = LABEL_SIDES.find((candidate) => candidate === label.position);
-    if (side === undefined) throw new Error(`a name label carries the position ${String(label.position)}`);
+    if (side === undefined) throw new Error(`a name label carries the position ${textOf(label.position)}`);
     return side;
 }
 
@@ -94,16 +96,19 @@ function firstOf<T>(items: readonly T[], label: string): T {
 
 /** The item style of one side, with its members narrowed. */
 function styleOf(series: EchartOption): Record<string, unknown> {
-    const style = series.itemStyle;
-    if (typeof style !== "object" || style === null || Array.isArray(style)) throw new Error("the series holds no item style");
-    return { ...style };
+    const style = parseUnknownRecord(series.itemStyle);
+    if (style === undefined) throw new Error("the series holds no item style");
+    return style;
 }
 
 /** The names of the points of one series that carry a shown label. */
 function labeled(series: EchartOption): string[] {
     return optionList(series.data)
-        .filter((item): item is EchartOption => typeof item === "object" && item !== null && !Array.isArray(item) && "label" in item)
-        .map((item) => String(item.name));
+        .flatMap((item) => {
+            const record = parseUnknownRecord(item);
+            return record !== undefined && "label" in record ? [record] : [];
+        })
+        .map((item) => textOf(item.name));
 }
 
 describe("the volcano figure", () => {
@@ -169,7 +174,7 @@ describe("the volcano figure", () => {
         const boxes = items.map((item) => {
             const [x, y] = optionPair(item.value);
             const placed: LeaderName = { x, y, side: labelSide(optionAt(item, "label")) };
-            return leaderNameBox(placed, String(item.name), plot, PAGE_PLOT_FRAME);
+            return leaderNameBox(placed, textOf(item.name), plot, PAGE_PLOT_FRAME);
         });
         for (const [index, box] of boxes.entries()) {
             for (const other of boxes.slice(index + 1)) expect(overlaps(box, other)).toBe(false);
@@ -322,7 +327,7 @@ describe("the volcano names at each size", () => {
             const boxes = items.map((item) => {
                 const [nameX, nameY] = optionPair(item.value);
                 const placed: LeaderName = { x: nameX, y: nameY, side: labelSide(optionAt(item, "label")) };
-                return leaderNameBox(placed, String(item.name), plot, frame);
+                return leaderNameBox(placed, textOf(item.name), plot, frame);
             });
             for (const [index, box] of boxes.entries()) {
                 for (const other of boxes.slice(index + 1)) expect(overlaps(box, other)).toBe(false);

@@ -5,6 +5,7 @@
  * the GIANT consortium.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
@@ -289,7 +290,7 @@ describe("the regional association plot", () => {
             const render = deriveChartRender(locuszoom(), ROWS, undefined, { key: "lz", columns: [] }, inputs, OPTS)._unsafeUnwrap();
             const plot = optionArray(render.option, "grid")[0];
             if (plot === undefined) throw new Error("the render holds no plot grid");
-            const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
+            const share = 100 - Number.parseFloat(textOf(plot.top)) - Number.parseFloat(textOf(plot.bottom));
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
         };
         const grown = layout(10);

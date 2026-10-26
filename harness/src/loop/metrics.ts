@@ -107,7 +107,9 @@ export type AgentRunUsage = {
 // Key-set equality in both directions is what makes them bite: an `extends`
 // check would accept a shape carrying an extra count, which is precisely the
 // drift that leaves a new field silently unfolded and unreported.
-type _AssertRunUsageFields = Exclude<keyof AgentRunUsage, TokenUsageField> | Exclude<TokenUsageField, keyof AgentRunUsage> extends never ? true : never;
+type _AssertRunUsageFields = [Exclude<keyof AgentRunUsage, TokenUsageField>, Exclude<TokenUsageField, keyof AgentRunUsage>] extends [never, never]
+    ? true
+    : never;
 const _assertRunUsageFields: _AssertRunUsageFields = true;
 
 /** Fold one call's reported usage into a run's running total. */

@@ -152,6 +152,7 @@ export function queryInputArtifacts(pool: Querier, analysisId: string, paths: st
         return result.rows.map((r) => ({
             path: r.path,
             hash: r.hash,
+            // oxlint-disable-next-line typescript/no-unnecessary-type-conversion -- pg returns a bigint column as text; the row annotation says number, the driver gives a string, and the conversion is real.
             size: Number(r.size),
             fileId: r.file_id ?? null,
         }));
@@ -337,7 +338,7 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
           ORDER BY 1 ASC NULLS LAST`,
             values,
         });
-        const extensionCounts = countResult.rows.map((r) => ({ extension: r.extension ?? null, count: Number(r.n) }));
+        const extensionCounts = countResult.rows.map((r) => ({ extension: r.extension ?? null, count: r.n }));
         // `path` is unique in one analysis, thus it breaks each tie and two pages never overlap.
         const order = query.sort === "recent" ? "created_at DESC, path ASC" : "path ASC";
         const rowsResult = await pool.query<{
@@ -393,7 +394,7 @@ export function countArtifactsByRuns(pool: Querier, analysisId: string, runIds: 
           GROUP BY source_run`,
             values: [analysisId, [...runIds]],
         });
-        return result.rows.map((r) => ({ runId: r.source_run, count: Number(r.n) }));
+        return result.rows.map((r) => ({ runId: r.source_run, count: r.n }));
     });
 }
 

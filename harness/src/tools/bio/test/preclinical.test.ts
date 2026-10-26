@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { genePreclinicalProfileTool } from "../gene-preclinical-profile.js";
 import { presentFirst } from "../../../lib/present.js";
@@ -25,7 +26,7 @@ function json(body: unknown, status = 200): Response {
 /** Route a stubbed fetch by URL substring. */
 function stubFetch(routes: Array<[string, () => Response]>): void {
     globalThis.fetch = fetchDouble((url) => {
-        const u = String(url);
+        const u = requestUrlText(url);
         for (const [needle, make] of routes) {
             if (u.includes(needle)) return Promise.resolve(make());
         }
@@ -189,7 +190,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
     it("stays out of the default include set", async () => {
         const seen: string[] = [];
         globalThis.fetch = fetchDouble((url) => {
-            const u = String(url);
+            const u = requestUrlText(url);
             seen.push(u);
             if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
             if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));
@@ -211,7 +212,7 @@ describe("genePreclinicalProfile — both halves", () => {
     it("fetches expression and knockout together by default", async () => {
         const seen: string[] = [];
         globalThis.fetch = fetchDouble((url) => {
-            const u = String(url);
+            const u = requestUrlText(url);
             seen.push(u);
             if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
             if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));

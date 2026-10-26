@@ -177,7 +177,7 @@ const FDA_APPLICATION_PREFIXES = ["NDA", "BLA", "ANDA"] as const;
  * thus goes as all three prefixes, in one request at the price of one.
  */
 export function fdaApplicationForms(input: string): string[] {
-    const compact = [...input]
+    const compact = Array.from(input)
         .filter((char) => char !== "-" && !hasWhitespace(char))
         .join("")
         .toUpperCase();
@@ -192,7 +192,9 @@ export function fdaApplicationForms(input: string): string[] {
 export function productNdcOf(input: string): string {
     const trimmed = input.trim();
     const segments = trimmed.split("-");
-    return segments.length === 3 && segments.every((segment) => segment.length > 0 && isAllDigits(segment)) ? `${segments[0]}-${segments[1]}` : trimmed;
+    return segments.length === 3 && segments.every((segment) => segment.length > 0 && isAllDigits(segment))
+        ? `${String(segments[0])}-${String(segments[1])}`
+        : trimmed;
 }
 
 // ---------------------------------------------------------------------------

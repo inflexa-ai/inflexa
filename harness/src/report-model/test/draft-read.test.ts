@@ -107,7 +107,7 @@ describe("buildOutline", () => {
             ],
         };
         for (const entry of buildOutline(draft)) {
-            expect([...entry.label].length).toBe(80);
+            expect(Array.from(entry.label).length).toBe(80);
             expect(entry.label.endsWith("…")).toBe(true);
         }
     });
@@ -225,7 +225,7 @@ describe("buildOutline", () => {
 
         // A prose of whitespace alone names nothing either, thus the item stands in and it clips as prose.
         const label = buildOutline(draft).find((entry) => entry.id === "t1")?.label ?? "";
-        expect([...label].length).toBe(80);
+        expect(Array.from(label).length).toBe(80);
         expect(label.endsWith("…")).toBe(true);
     });
 

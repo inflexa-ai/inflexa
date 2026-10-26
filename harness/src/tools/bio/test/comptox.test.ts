@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createComptoxTool } from "../comptox.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
@@ -22,7 +23,7 @@ function json(body: unknown, status = 200): Response {
 /** Route a stubbed fetch by URL substring; unmatched URLs 404. */
 function stubFetch(routes: Array<[string, () => Response]>): void {
     globalThis.fetch = fetchDouble((url) => {
-        const u = String(url);
+        const u = requestUrlText(url);
         for (const [needle, make] of routes) {
             if (u.includes(needle)) return Promise.resolve(make());
         }

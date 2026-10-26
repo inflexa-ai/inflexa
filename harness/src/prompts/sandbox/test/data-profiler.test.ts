@@ -10,6 +10,7 @@ const CAMEL_TOKEN = /`[a-z]+[A-Z][A-Za-z]*`/g;
 
 import { describe, expect, it } from "bun:test";
 import { collapseWhitespace, splitLines } from "../../../lib/text.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 
 import { z } from "zod";
 
@@ -157,12 +158,12 @@ function schemaFieldNames(node: unknown, into: Set<string> = new Set()): Set<str
         for (const entry of node) schemaFieldNames(entry, into);
         return into;
     }
-    if (node === null || typeof node !== "object") return into;
-    const record = z.record(z.string(), z.unknown()).parse(node);
+    const record = parseUnknownRecord(node);
+    if (record === undefined) return into;
     for (const [key, value] of Object.entries(record)) {
-        if (key === "properties" && value !== null && typeof value === "object") {
-            const properties = z.record(z.string(), z.unknown()).parse(value);
-            for (const property of Object.keys(properties)) into.add(property);
+        if (key === "properties") {
+            const properties = parseUnknownRecord(value);
+            if (properties !== undefined) for (const property of Object.keys(properties)) into.add(property);
         }
         schemaFieldNames(value, into);
     }

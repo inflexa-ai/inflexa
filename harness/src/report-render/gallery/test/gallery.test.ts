@@ -11,6 +11,7 @@
  * manifest and the document run in each case.
  */
 
+import { textOf as leafText } from "../../../lib/unknown-text.js";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { appendFile, cp, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -107,7 +108,7 @@ function everyBlock(blocks: readonly Block[]): Block[] {
 }
 
 /** Each chart block of the gallery. */
-const CHARTS = everyBlock(GALLERY_DOCUMENT.sections).filter((block): block is ChartBlock => block.kind === "chart");
+const CHARTS = everyBlock(GALLERY_DOCUMENT.sections).flatMap((block) => (block.kind === "chart" ? [block] : []));
 
 /** Each file under a directory, as a path relative to the gallery directory. */
 async function filesUnder(dir: string): Promise<string[]> {
@@ -119,7 +120,7 @@ let gallery: GalleryLoad;
 let manifest: ManifestEntry[];
 
 beforeAll(async () => {
-    manifest = optionList(parseJsonAs(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"), z.unknown())).map((item) => manifestEntry(item));
+    manifest = optionList(parseJsonAs(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8"), z.json())).map((item) => manifestEntry(item));
     if (!NO_DATA) gallery = (await loadGallery())._unsafeUnwrap();
 });
 
@@ -167,7 +168,7 @@ function axisOf(option: EchartOption, key: "xAxis" | "yAxis", index = 0): Echart
 function graphicTexts(option: EchartOption): string[] {
     const walk = (elements: unknown): string[] =>
         (Array.isArray(elements) ? elements : []).flatMap((element: EchartOption) => [
-            ...(element.type === "text" ? [String(optionAt(element, "style").text)] : []),
+            ...(element.type === "text" ? [leafText(optionAt(element, "style").text)] : []),
             ...walk(element.children),
         ]);
     return walk(option.graphic);
@@ -304,7 +305,7 @@ describe("the gallery manifest", () => {
         );
         expect(pins.size).toBeGreaterThan(0);
         for (const [path, hash] of pins) {
-            expect({ path, hash: `sha256:${manifest.find((entry) => entry.path === path)?.sha256}` }).toEqual({ path, hash });
+            expect({ path, hash: `sha256:${String(manifest.find((entry) => entry.path === path)?.sha256)}` }).toEqual({ path, hash });
         }
     });
 });
@@ -446,13 +447,13 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const up = countRows("bulk-volcano", (row) => significant(row) && Number(row.log2FoldChange) > 0);
         const names = seriesOf(option).map((series) => series.name);
         expect(names.slice(0, 2)).toEqual([`Down (${down})`, `Up (${up})`]);
-        const label = String(names[2]);
+        const label = leafText(names[2]);
         const inner = label.slice("Not significant (".length, -1);
         expect(
             label.startsWith("Not significant (") &&
                 label.endsWith(")") &&
                 inner.length > 0 &&
-                [...inner].every((char) => (char >= "0" && char <= "9") || char === ","),
+                Array.from(inner).every((char) => (char >= "0" && char <= "9") || char === ","),
         ).toBe(true);
         expect(axisOf(option, "xAxis").min).toBe(-optionNumber(axisOf(option, "xAxis").max));
     });
@@ -553,7 +554,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         const rows = valueOf("enrichment-ora").rows;
         const largest = rows.reduce((best, row) => (Number(row.gene_ratio) > Number(best.gene_ratio) ? row : best));
         // A long term wraps to two lines and ends with an ellipsis, thus the first category reads the head of the term.
-        const first = String(optionList(axisOf(option, "yAxis").data)[0]);
+        const first = leafText(optionList(axisOf(option, "yAxis").data)[0]);
         const head = first.replaceAll("\n", " ");
         const headWithoutEllipsis = head.endsWith("…") ? head.slice(0, -1) : head;
         expect(String(largest.term).startsWith(headWithoutEllipsis)).toBe(true);
@@ -753,7 +754,7 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(axisOf(option, "xAxis").name).toBe("Position on chr16 (Mb)");
         // The genes draw in the order of their starts, and two genes of one lane never overlap.
         const genes = optionOf(series.find((entry) => entry.name === GENE_NAMES));
-        const placed = optionArray(genes, "data").map((gene) => ({ name: String(gene.name), lane: optionNumbers(gene.value)[1] }));
+        const placed = optionArray(genes, "data").map((gene) => ({ name: leafText(gene.name), lane: optionNumbers(gene.value)[1] }));
         expect(placed.map((gene) => gene.name)).toEqual(["RBL2", "AKTIP", "RPGRIP1L", "FTO"]);
         const spans = new Map<string, [number, number]>(
             (valueOf("gwas-locuszoom").track?.rows ?? []).map((row) => [String(row.gene), [Number(row.start), Number(row.end)]]),

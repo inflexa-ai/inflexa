@@ -21,7 +21,7 @@ import type { RegisterArtifactInput } from "../state/index.js";
 import { upsertArtifacts, updateArtifactId } from "../state/index.js";
 import type { ArtifactRegistry, ArtifactRegistrationInput } from "./artifact-registry.js";
 
-export type { ArtifactRegistrationInput };
+export type { ArtifactRegistrationInput } from "./artifact-registry.js";
 
 export type ArtifactRegistrationResult = {
     /** Number of artifacts written to the local ledger. */

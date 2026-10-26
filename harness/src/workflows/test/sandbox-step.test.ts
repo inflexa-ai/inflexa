@@ -20,6 +20,7 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T.*Z$/;
  * parent.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
 import { STEP_EXECUTIONS_UPDATE } from "./sql-writes.js";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
@@ -121,11 +122,11 @@ async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
 
     originalDbosFns ??= {
-        runStep: dbos.DBOS.runStep,
-        writeStream: dbos.DBOS.writeStream,
-        now: dbos.DBOS.now,
-        send: dbos.DBOS.send,
-        cancelWorkflow: dbos.DBOS.cancelWorkflow,
+        runStep: dbos.DBOS.runStep.bind(dbos.DBOS),
+        writeStream: dbos.DBOS.writeStream.bind(dbos.DBOS),
+        now: dbos.DBOS.now.bind(dbos.DBOS),
+        send: dbos.DBOS.send.bind(dbos.DBOS),
+        cancelWorkflow: dbos.DBOS.cancelWorkflow.bind(dbos.DBOS),
     };
 
     // Every `DBOS.runStep` runs its body inline — the body under test only needs
@@ -513,7 +514,8 @@ describe("sandbox-step activity history", () => {
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
     return request.messages
         .flatMap((message) => (message.role === "tool" ? message.content : []))
-        .find((part): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
+        .flatMap((part) => (part.type === "tool-result" && part.toolCallId === toolCallId ? [part] : []))
+        .at(0);
 }
 
 describe("sandbox-step file-metadata output tool", () => {
@@ -595,7 +597,7 @@ describe("sandbox-step post-step continuations", () => {
     it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {
         await seedStepOutput();
         const dbos = await import("@dbos-inc/dbos-sdk");
-        const runInline = dbos.DBOS.runStep;
+        const runInline = dbos.DBOS.runStep.bind(dbos.DBOS);
         const cached = [{ dbPath: `runs/${USAGE_RUN_ID}/${USAGE_STEP_ID}/output/result.csv`, description: "cached description", metadata: { format: "csv" } }];
         Reflect.set(
             dbos.DBOS,
@@ -691,7 +693,7 @@ describe("sandbox-step kept tool outputs", () => {
         expect(store.puts[0]).not.toHaveProperty("threadId");
         const excerpt = toolResultIn(presentAt(provider.calls, 1), "tu-x");
         if (excerpt === undefined) throw new Error("excerpt is absent");
-        if (excerpt.output.type !== "text") throw new Error(`expected a text excerpt, got ${String(excerpt.output.type)}`);
+        if (excerpt.output.type !== "text") throw new Error(`expected a text excerpt, got ${excerpt.output.type}`);
         const tail = excerpt.output.value.split("\n").at(-1);
         if (tail === undefined) throw new Error("tail is absent");
         expect(tail).toContain("ValueError: no batch column");
@@ -729,7 +731,7 @@ describe("sandbox-step kept tool outputs", () => {
         expect(provider.calls).toHaveLength(4);
         const read = toolResultIn(presentAt(provider.calls, 3), "tu-read");
         if (read === undefined) throw new Error("read is absent");
-        if (read.output.type !== "json") throw new Error(`expected a json excerpt, got ${String(read.output.type)}`);
+        if (read.output.type !== "json") throw new Error(`expected a json excerpt, got ${read.output.type}`);
         expect(read.output.value).toMatchObject({ status: "ok", offset: 0 });
     });
 
@@ -837,7 +839,7 @@ describe("sandbox-step suspension", () => {
         const pool: Querier = {
             query: (arg, params) => {
                 const text = typeof arg === "string" ? arg : arg.text;
-                const values = typeof arg === "object" && "values" in arg ? (arg.values ?? []) : (params ?? []);
+                const values = typeof arg === "string" ? (params ?? []) : "values" in arg ? (arg.values ?? []) : (params ?? []);
                 statements.push({ text, values });
                 return Promise.resolve({ rows: [], rowCount: 0 });
             },
@@ -981,7 +983,7 @@ describe("sandbox-step lineage attestation", () => {
     /** The `step failure` record — the only account of why a scrubbed step died. */
     function stepFailure(logger: CapturingLogger): { errorClass: unknown; err: string } | undefined {
         const rec = logger.records.find((r) => r.msg.endsWith("step failure"));
-        return rec ? { errorClass: rec.fields.errorClass, err: String(rec.fields.err) } : undefined;
+        return rec ? { errorClass: rec.fields.errorClass, err: textOf(rec.fields.err) } : undefined;
     }
 
     it("uploads the bytes even when registration is rejected", async () => {
@@ -1087,7 +1089,7 @@ describe("sandbox-step capped-out empty manifest", () => {
         const values: unknown[] = [];
         const pool: Querier = {
             query: (arg, params) => {
-                if (typeof arg === "object" && "values" in arg) {
+                if (typeof arg !== "string" && "values" in arg) {
                     const fromConfig: readonly unknown[] = arg.values ?? [];
                     values.push(...fromConfig);
                 }

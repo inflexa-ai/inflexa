@@ -50,6 +50,8 @@
  * and no outcome would ever arrive.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
@@ -64,7 +66,7 @@ import type { GateFailure } from "../../lib/hooks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { capturePage, type CaptureCoverage, type CaptureOptions, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
+import { capturePage, type CaptureCoverage, type CaptureOptions, type CapturePage, type PageCapture } from "../../lib/page-capture.js";
 import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolResultImages, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
@@ -72,7 +74,7 @@ import { digestPageFaults, type ConsoleErrorEntry, type FailedRequestEntry } fro
 
 // The capture shapes live beside the chrome connection. The tool keeps them on its own surface, thus a
 // consumer of the tool imports one module.
-export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture };
+export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture } from "../../lib/page-capture.js";
 
 /**
  * The URL formation of one look. It maps the page of the thread onto the URL that the browser opens.
@@ -272,6 +274,7 @@ function startSeamCall<T>(call: () => Promise<T>): Promise<T> {
     try {
         return call();
     } catch (cause) {
+        // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rejection reason is the thrown value itself; the awaiter reads its identity, and a wrapper would erase it.
         return Promise.reject(cause);
     }
 }
@@ -466,7 +469,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             if (looked.isErr()) {
                 const { stage, cause } = looked.error;
                 logger.warn(LOOK_FAULT_MESSAGE[stage], { threadId, analysisId, ...defaultErrorFields(cause) });
-                return ok({ outcome: "capture-failed", detail: cause instanceof Error ? cause.message : String(cause) });
+                return ok({ outcome: "capture-failed", detail: errorMessageOf(cause) ?? textOf(cause) });
             }
             const captured: PageCapture = looked.value;
             if (blockId !== undefined && captured.coverage.kind === "no-block") {

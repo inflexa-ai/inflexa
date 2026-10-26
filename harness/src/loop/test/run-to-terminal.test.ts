@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolResultPart } from "ai";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -353,13 +352,13 @@ describe("runToTerminal", () => {
                     if (typeof content === "string") throw new Error("the tool message carries string content");
                     return content;
                 })
-                .filter((r): r is ToolResultPart => r.type === "tool-result"),
+                .flatMap((r) => (r.type === "tool-result" ? [r] : [])),
             (r) => r.toolCallId === "s1",
         );
         expect(refused.output.type).toBe("error-text");
         const refusedOutput = refused.output;
         if (refusedOutput.type !== "error-text") throw new Error("the refused call holds no error text");
-        expect(parseJsonAs(refusedOutput.value, z.unknown())).toEqual({
+        expect(parseJsonAs(refusedOutput.value, z.json())).toEqual({
             error: "The tool search is not available for this request, thus it did not run. The tools that can run now: submit.",
             retryable: false,
         });

@@ -20,6 +20,7 @@
  * draws each PNG through it.
  */
 
+import { textOf } from "../lib/unknown-text.js";
 import { isUnknownArray } from "../lib/unknown-array.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { CustomSeriesRenderItemReturn as EchartsRenderItemReturn } from "echarts";
@@ -125,7 +126,7 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
     const alongX = api.value(4) === 0;
     const offset = api.value(5);
     const inner = api.value(6) === 1;
-    const clipped = Number(api.value(7)) || 0;
+    const clipped = api.value(7) || 0;
     const band = alongX ? api.size([0, 1])[1] : api.size([1, 0])[0];
     const shift = offset * band;
     const from = api.coord(alongX ? [low, y] : [x, low]);
@@ -401,7 +402,7 @@ function fittedCategories(axis: unknown, textPx: number, widthPx: number): unkno
     let rotate = label.rotate;
     if (typeof rotate !== "number" || rotate === 0) {
         let longest = 0;
-        for (const name of data) longest = Math.max(longest, String(name).length);
+        for (const name of data) longest = Math.max(longest, textOf(name).length);
         const need = longest * textPx * CHARACTER_SHARE;
         const room = (widthPx * LABEL_ROOM) / data.length;
         if (need <= room) return axis;
@@ -479,7 +480,7 @@ function stillScale(map: unknown, textPx: number, widthPx: number): unknown {
         ...fields,
         top: STILL_SCALE_TOP,
         itemHeight: STILL_SCALE_LINES * textPx,
-        text: [title === "" ? upper : `${wrappedTitle(title, textPx, widthPx)}\n${upper}`, text[1]],
+        text: [title === "" ? upper : `${wrappedTitle(title, textPx, widthPx)}\n${String(upper)}`, text[1]],
     };
 }
 
@@ -575,11 +576,11 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
         if (bottom <= 0) continue;
         const fields = parseUnknownRecord(grid);
         if (fields === undefined) continue;
-        const top = Number.parseFloat(String(fields.top));
+        const top = Number.parseFloat(textOf(fields.top));
         if (tops.indexOf(top) < 0) tops.push(top);
         if (bottom <= lowest) continue;
         lowest = bottom;
-        height = Number.parseFloat(String(fields.height));
+        height = Number.parseFloat(textOf(fields.height));
     }
     tops.sort((a, b) => a - b);
     const partOf = (legendPx: number): number => Math.max(0, lowest - ((heightPx - legendPx - title) / heightPx) * 100) / tops.length;
@@ -598,8 +599,8 @@ function facetOverLegend(option: Record<string, unknown>, textPx: number, widthP
             if (panelBottom(grid) <= 0) return grid;
             const fields = parseUnknownRecord(grid);
             if (fields === undefined) return grid;
-            const top = Number.parseFloat(String(fields.top));
-            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((Number.parseFloat(String(fields.height)) - part) * 1e4) / 1e4}%` };
+            const top = Number.parseFloat(textOf(fields.top));
+            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((Number.parseFloat(textOf(fields.height)) - part) * 1e4) / 1e4}%` };
         });
     }
     if (Array.isArray(option.graphic)) {

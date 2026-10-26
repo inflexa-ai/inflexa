@@ -17,12 +17,23 @@ import { unwrapOrThrow } from "../../lib/result.js";
 import { queryRun, queryRunsForInspection, queryStepsByRun } from "../../state/index.js";
 import type { CortexRunRow, StepExecutionRow } from "../../state/schema.js";
 import { SYNTHESIS_STEP_ID } from "../../workspace/paths.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 const DEFAULT_PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 1_000;
 
-type FormattedRun = ReturnType<typeof formatRun>;
+type FormattedRun = {
+    runId: string;
+    workflowName: string;
+    status: CortexRunRow["status"];
+    startedAt: string;
+    completedAt: string | null;
+    planId: string | null;
+    synthesisPath: string | null;
+    synthesisStatus: CortexRunRow["synthesisStatus"];
+    error: string | null | undefined;
+    synthesisReason?: string;
+};
 
 type FormattedStep = {
     stepId: string;
@@ -70,7 +81,7 @@ function isTerminal(status: CortexRunRow["status"]): boolean {
     return status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
 }
 
-function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)) {
+function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)): FormattedRun {
     const run = {
         runId: r.runId,
         workflowName: r.workflowName,
@@ -131,14 +142,14 @@ const inputSchema = z
     .superRefine((input, refinement) => {
         if (input.runId && (input.page !== undefined || input.pageSize !== undefined)) {
             refinement.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "page and pageSize are valid only when runId is omitted",
                 path: input.page !== undefined ? ["page"] : ["pageSize"],
             });
         }
         if (!input.runId && input.waitForTerminalSeconds !== undefined) {
             refinement.addIssue({
-                code: z.ZodIssueCode.custom,
+                code: "custom",
                 message: "waitForTerminalSeconds requires runId",
                 path: ["waitForTerminalSeconds"],
             });
@@ -158,7 +169,7 @@ export type InspectRunQuerier = {
  * Build the run-inspection tool. The optional clock is an internal testing
  * seam for deterministic cutoff and transition coverage.
  */
-export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunClock = systemClock) {
+export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunClock = systemClock): Tool<z.infer<typeof inputSchema>, InspectRunOutput> {
     return defineTool({
         id: "inspect_run",
         description:

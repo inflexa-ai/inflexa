@@ -5,6 +5,7 @@
  * The rows are an excerpt of the survival curve of the NCCTG lung table, by sex, as `survfit` gives it.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
@@ -222,7 +223,7 @@ describe("the km figure", () => {
             const render = deriveChartRender(block, rows, undefined, { key: "km1", columns: [] }, {}, { figures: { km: KM_FIGURE } })._unsafeUnwrap();
             const plot = optionArray(render.option, "grid")[0];
             if (plot === undefined) throw new Error("the render holds no plot grid");
-            const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
+            const share = 100 - Number.parseFloat(textOf(plot.top)) - Number.parseFloat(textOf(plot.bottom));
             return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
         };
         const three = layout(3);

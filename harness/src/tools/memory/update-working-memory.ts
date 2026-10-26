@@ -34,7 +34,7 @@ import { scopeResource } from "../../auth/types.js";
 import { toThrowable, unwrapOrThrow } from "../../lib/result.js";
 import { isWorkingMemoryRejection, WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { queryRun } from "../../state/index.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 const { goalChars, entryChars, constraints, hypotheses, findings } = WORKING_MEMORY_LIMITS;
 
@@ -136,7 +136,7 @@ type UpdateOutput = {
     readonly section: Input["section"];
 };
 
-export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore, pool: Pool) {
+export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore, pool: Pool): Tool<z.infer<typeof inputSchema>, UpdateOutput> {
     /** Write one amendment, mapping a refused write to a model-visible error. */
     async function apply<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): Promise<Result<UpdateOutput, ToolError>> {
         const written = await workingMemory.updateSection(analysisId, section, value);

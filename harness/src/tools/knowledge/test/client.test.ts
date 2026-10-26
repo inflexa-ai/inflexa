@@ -90,7 +90,7 @@ describe("createHttpKnowledgeClient", () => {
     });
 
     function client(apiKey = "secret") {
-        return createHttpKnowledgeClient({ baseUrl: `http://127.0.0.1:${server.port}/`, apiKey, maxRetries: 0, timeoutMs: 5_000 });
+        return createHttpKnowledgeClient({ baseUrl: `http://127.0.0.1:${String(server.port)}/`, apiKey, maxRetries: 0, timeoutMs: 5_000 });
     }
 
     it("posts the situation with the bearer key and parses the answer", async () => {

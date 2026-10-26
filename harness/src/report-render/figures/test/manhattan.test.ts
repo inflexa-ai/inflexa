@@ -3,6 +3,8 @@
  * their points, the genome-wide and the suggestive lines, and the names of the lead variants.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { describe, expect, it } from "bun:test";
 import { isAllDigits } from "../../../lib/text.js";
 import * as echarts from "echarts";
@@ -38,7 +40,7 @@ const LABEL_SIDES = ["right", "left", "top"] as const satisfies readonly LeaderN
 /** The label side that one placed name carries, or a failed test. */
 function labelSide(label: EchartOption): LeaderName["side"] {
     const side = LABEL_SIDES.find((candidate) => candidate === label.position);
-    if (side === undefined) throw new Error(`a name label carries the position ${String(label.position)}`);
+    if (side === undefined) throw new Error(`a name label carries the position ${textOf(label.position)}`);
     return side;
 }
 
@@ -205,7 +207,7 @@ describe("the Manhattan figure", () => {
         expect(shownLabels(option)).toEqual(["rs6545814", "rs657452"]);
         // The points carry no label of the runtime, thus no name hides.
         for (const points of seriesOf(option).slice(0, 3)) {
-            expect(optionList(points.data).some((item) => typeof item === "object" && item !== null && "label" in item)).toBe(false);
+            expect(optionList(points.data).some((item) => parseUnknownRecord(item)?.label !== undefined)).toBe(false);
         }
     });
 
@@ -243,7 +245,7 @@ describe("the Manhattan figure", () => {
             Object.fromEntries(
                 seriesOf(option)
                     .slice(0, 3)
-                    .map((entry): [string, unknown] => [String(entry.name), optionAt(entry, "itemStyle").color]),
+                    .map((entry): [string, unknown] => [textOf(entry.name), optionAt(entry, "itemStyle").color]),
             );
         const dataOf = (option: EchartOption, name: string): unknown => seriesOf(option).find((entry) => entry.name === name)?.data;
         expect(colors(byP)).toEqual(colors(byPosition));
@@ -269,7 +271,7 @@ describe("the Manhattan figure", () => {
         const colors = Object.fromEntries(
             seriesOf(option)
                 .slice(0, 7)
-                .map((entry): [string, unknown] => [String(entry.name), optionAt(entry, "itemStyle").color]),
+                .map((entry): [string, unknown] => [textOf(entry.name), optionAt(entry, "itemStyle").color]),
         );
         const [blue, gray] = MANHATTAN_COLORS;
         expect(colors).toEqual({ "1": blue, "2": gray, "10": blue, X: gray, Y: blue, MT: gray, Un: blue });
@@ -383,7 +385,7 @@ describe("the Manhattan text at each size", () => {
             const boxes = dataOf(render, POINT_NAMES).map((item) => {
                 const [nameX, nameY] = optionPair(item.value);
                 const placed: LeaderName = { x: nameX, y: nameY, side: labelSide(optionAt(item, "label")) };
-                return leaderNameBox(placed, String(item.name), plot, frame);
+                return leaderNameBox(placed, textOf(item.name), plot, frame);
             });
             expect(boxes.length).toBeGreaterThan(0);
             for (const [index, box] of boxes.entries()) {
@@ -395,7 +397,7 @@ describe("the Manhattan text at each size", () => {
             const toPx = (value: number): number => ((value - plot.x.min) / (plot.x.max - plot.x.min)) * frame.widthPx;
             const spans = dataOf(render, "Chromosome names").map((item) => {
                 const middle = toPx(optionPair(item.value)[0]);
-                const half = textWidthPx(String(item.name), frame.textPx) / 2;
+                const half = textWidthPx(textOf(item.name), frame.textPx) / 2;
                 return [middle - half, middle + half] as const;
             });
             expect(spans.length).toBeGreaterThan(0);

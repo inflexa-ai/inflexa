@@ -11,24 +11,22 @@ import { requestJson, type SourceHttpOptions, type SourceHttpResult } from "./ht
 const BASE_URL = "https://api.semanticscholar.org/graph/v1";
 const FIELDS = "paperId,title,abstract,year,venue,citationCount,url,authors,externalIds";
 
-const WirePaperSchema = z
-    .object({
-        paperId: z.string().optional(),
-        title: z.string().nullable().optional(),
-        abstract: z.string().nullable().optional(),
-        year: z.number().nullable().optional(),
-        venue: z.string().nullable().optional(),
-        citationCount: z.number().nullable().optional(),
-        url: z.string().nullable().optional(),
-        authors: z.array(z.object({ name: z.string().nullable().optional() })).optional(),
-        // An external id is a string, but `CorpusId` is a JSON integer on every
-        // observed paper. A string-only value type drops it at the map site below.
-        externalIds: z
-            .record(z.string(), z.union([z.string(), z.number()]))
-            .nullable()
-            .optional(),
-    })
-    .passthrough();
+const WirePaperSchema = z.looseObject({
+    paperId: z.string().optional(),
+    title: z.string().nullable().optional(),
+    abstract: z.string().nullable().optional(),
+    year: z.number().nullable().optional(),
+    venue: z.string().nullable().optional(),
+    citationCount: z.number().nullable().optional(),
+    url: z.string().nullable().optional(),
+    authors: z.array(z.object({ name: z.string().nullable().optional() })).optional(),
+    // An external id is a string, but `CorpusId` is a JSON integer on every
+    // observed paper. A string-only value type drops it at the map site below.
+    externalIds: z
+        .record(z.string(), z.union([z.string(), z.number()]))
+        .nullable()
+        .optional(),
+});
 export const ExactPaperSchema = WirePaperSchema.extend({ paperId: z.string() });
 export const SearchResponseSchema = z.object({ data: z.array(WirePaperSchema).optional() });
 

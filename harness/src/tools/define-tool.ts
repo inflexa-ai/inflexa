@@ -24,7 +24,7 @@ import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn } from "../loop/types.js";
 import type { AskApproval, AskRequest } from "./approval/contract.js";
 
-export type { EmitFn };
+export type { EmitFn } from "../loop/types.js";
 
 /**
  * The error channel of a tool's `Result`. `error` is the message surfaced to
@@ -204,7 +204,7 @@ export type Tool<Input = unknown, Output = unknown> = {
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
-export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>, unknown>, Output> = {
+export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
@@ -295,7 +295,7 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>, unknown>, 
  * the first LLM call). Union-shaped inputs must be modelled as a flat object
  * with a discriminator field.
  */
-export function defineTool<Schema extends z.ZodType<z.output<Schema>, unknown>, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
     const jsonSchema: Record<string, unknown> = z.toJSONSchema(def.inputSchema);
     delete jsonSchema.$schema;
 
@@ -317,9 +317,9 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>, unknown>, 
         inputSchema: def.inputSchema,
         jsonSchema,
         executionMode,
-        execute: def.execute,
+        execute: def.execute.bind(def),
     };
-    if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord;
+    if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord.bind(def);
     // A tool that declines carries no `describeCall` key at all, so "has a
     // hook" is one property check. `typeof` is the discriminator, not equality
     // with the sentinel, so a hook that returns the string `"none"` still

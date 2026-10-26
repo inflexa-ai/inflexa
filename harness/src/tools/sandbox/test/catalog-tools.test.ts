@@ -506,7 +506,7 @@ describe("list_available_packages — reading the inventory", () => {
         });
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        if (result.available !== false) throw new Error("the refused read returns the unavailable arm");
+        if (result.available) throw new Error("the refused read returns the unavailable arm");
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");
@@ -546,7 +546,7 @@ describe("list_available_packages — reading the inventory", () => {
     it("reports the package set as UNKNOWN when the inventory cannot be read, naming no packages", async () => {
         const missing = join(tmpdir(), "packages-does-not-exist-xyz", "inflexa.lock");
         const result = (await createListAvailablePackagesTool({ farmLockFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        if (result.available !== false) throw new Error("the refused read returns the unavailable arm");
+        if (result.available) throw new Error("the refused read returns the unavailable arm");
 
         expect(result.available).toBe(false);
         expect(result.content).toContain("UNKNOWN");

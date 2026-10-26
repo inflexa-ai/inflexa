@@ -45,7 +45,7 @@ export function firstSegmentOf(text: string | undefined, separators: string): st
 
 /** Whether any character of `text` is whitespace. */
 export function hasWhitespace(text: string): boolean {
-    return [...text].some(isWhitespace);
+    return Array.from(text).some(isWhitespace);
 }
 
 /** Strip every trailing character that appears in `cutset`. */
@@ -63,12 +63,12 @@ const HEX_DIGITS = "0123456789abcdefABCDEF";
 
 /** Whether every character of `text` is a decimal digit; the empty text is all digits. */
 export function isAllDigits(text: string): boolean {
-    return [...text].every(isAsciiDigit);
+    return Array.from(text).every(isAsciiDigit);
 }
 
 /** Whether every character of `text` is a hexadecimal digit; the empty text is all hex. */
 export function isAllHex(text: string): boolean {
-    return [...text].every((char) => HEX_DIGITS.includes(char));
+    return Array.from(text).every((char) => HEX_DIGITS.includes(char));
 }
 
 /** Whether `text` spells the dash-separated calendar form `YYYY-MM-DD`; the digit runs stay unchecked against the calendar. */

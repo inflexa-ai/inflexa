@@ -1,22 +1,20 @@
 import { z } from "zod";
 
-export const FileMetadataSchema = z
-    .object({
-        role: z.enum(["input", "step_output"]),
-        dataType: z.string(),
-        format: z.string(),
-        rows: z.number().optional(),
-        cols: z.number().optional(),
-        producerStep: z.string().optional(),
-        producerRun: z.string().optional(),
-        producerAgent: z.string().optional(),
-        omicsType: z.string().optional(),
-        organism: z.string().optional(),
-        featureType: z.string().optional(),
-        tags: z.array(z.string()).optional(),
-        warnings: z.array(z.string()).optional(),
-    })
-    .passthrough();
+export const FileMetadataSchema = z.looseObject({
+    role: z.enum(["input", "step_output"]),
+    dataType: z.string(),
+    format: z.string(),
+    rows: z.number().optional(),
+    cols: z.number().optional(),
+    producerStep: z.string().optional(),
+    producerRun: z.string().optional(),
+    producerAgent: z.string().optional(),
+    omicsType: z.string().optional(),
+    organism: z.string().optional(),
+    featureType: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    warnings: z.array(z.string()).optional(),
+});
 export type FileMetadata = z.infer<typeof FileMetadataSchema>;
 
 /**

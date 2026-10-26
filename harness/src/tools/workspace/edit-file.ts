@@ -14,10 +14,12 @@
  * content — the mutator records it through the fold of this tool.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { noteScriptChange, scriptSha256 } from "./decision-record.js";
@@ -164,7 +166,7 @@ function replaceRegex(
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caller-supplied match pattern is the tool's input; the dynamic form is the feature, and an invalid pattern is the handled error below.
         compiled = new RegExp(pattern, "gm");
     } catch (err) {
-        return { kind: "invalid_pattern", error: err instanceof Error ? err.message : String(err) };
+        return { kind: "invalid_pattern", error: errorMessageOf(err) ?? textOf(err) };
     }
     const matches = [...content.matchAll(compiled)];
     if (matches.length === 0) return { kind: "not_found" };
@@ -178,7 +180,7 @@ function replaceRegex(
     return { kind: "ok", content: content.replace(compiled, replacement), replacements: matches.length, lines };
 }
 
-export function createEditFileTool(deps: EditFileDeps) {
+export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof EditFileInputSchema>, EditFileResult> {
     return defineTool({
         id: "edit_file",
         description:
@@ -194,9 +196,10 @@ export function createEditFileTool(deps: EditFileDeps) {
         inputSchema: EditFileInputSchema,
         // The path only. The replaced text is file content, not a description.
         describeCall: ({ path }) => path,
-        execute: async ({ path, old_string, new_string, replace_all, regex, expected_matches }, ctx): Promise<Result<EditFileResult, ToolError>> => {
-            const replaceAll = replace_all === true;
-            const useRegex = regex === true;
+        execute: async (
+            { path, old_string, new_string, replace_all: replaceAll, regex: useRegex, expected_matches },
+            ctx,
+        ): Promise<Result<EditFileResult, ToolError>> => {
             if (!useRegex && expected_matches !== undefined) {
                 return ok({ status: "invalid_arguments" as const, path, reason: "expected_matches requires regex=true." });
             }

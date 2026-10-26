@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
@@ -11,6 +12,7 @@ import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { presentAt, presentFind, presentFirst, presentLast } from "../../lib/present.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import {
     compactionExchangeOf,
     compactionMarkerOf,
@@ -87,11 +89,15 @@ function toolResultParts(message: ModelMessage | undefined): ToolResultPart[] {
     if (message === undefined || message.role !== "tool") throw new Error("the message is not a tool message");
     const content = message.content;
     if (typeof content === "string") throw new Error("the tool message carries string content");
-    return content.filter((part): part is ToolResultPart => part.type === "tool-result");
+    return content.flatMap((part) => (part.type === "tool-result" ? [part] : []));
 }
 
 function outputValue(result: ToolResultPart): unknown {
     return result.output.type === "json" || result.output.type === "text" || result.output.type === "error-text" ? result.output.value : result.output;
+}
+
+function outputText(result: ToolResultPart): string {
+    return textOf(outputValue(result));
 }
 
 function isErrorResult(result: ToolResultPart): boolean {
@@ -379,7 +385,7 @@ describe("runAgent — max-iteration wrap-up", () => {
         expect(runs()).toBe(3);
         const refused = presentFirst(toolResultParts(messages.at(-2)));
         expect(refused.toolCallId).toBe("tu-3");
-        expect(String(outputValue(refused))).toContain("No tool can run for this request");
+        expect(outputText(refused)).toContain("No tool can run for this request");
         expect(presentLast(messages).content).toEqual([{ type: "text", text: "answer" }]);
         expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
     });
@@ -439,7 +445,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("kaboom");
+        expect(outputText(result)).toContain("kaboom");
         expect(presentLast(messages).role).toBe("assistant");
     });
 
@@ -500,7 +506,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("segfault core dumped");
+        expect(outputText(result)).toContain("segfault core dumped");
         expect(JSON.stringify(messages)).not.toContain("\\u0000");
     });
 
@@ -518,7 +524,7 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
-        expect(parseJsonAs(String(outputValue(result)), z.unknown())).toEqual({
+        expect(parseJsonAs(outputText(result), z.json())).toEqual({
             error: "upstream down",
             retryable: true,
         });
@@ -541,8 +547,8 @@ describe("runAgent — tool-error boundary", () => {
 
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).not.toContain("[object Object]");
-        expect(parseJsonAs(String(outputValue(result)), z.unknown())).toEqual({
+        expect(outputText(result)).not.toContain("[object Object]");
+        expect(parseJsonAs(outputText(result), z.json())).toEqual({
             error: "sandbox refused the exec",
             retryable: false,
         });
@@ -570,7 +576,7 @@ describe("runAgent — tool-error boundary", () => {
         expect(executed).toBe(false);
         const result = presentFirst(toolResultParts(messages[2]));
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("input validation failed");
+        expect(outputText(result)).toContain("input validation failed");
     });
 
     it("re-raises a fatal error of an inline tool instead of returning an error tool result", async () => {
@@ -664,12 +670,12 @@ describe("runAgent — a picture on a tool result", () => {
         if (output.type !== "content") throw new Error("the result carries no content output");
         const parts = output.value;
         // The text part carries the faults, and it holds no bytes.
-        const textPart = parts.find((p) => p.type === "text");
+        const textPart = parts.find((p) => "text" in p);
         if (textPart === undefined) throw new Error("the content holds no text part");
-        expect(parseJsonAs(textPart.text, z.unknown())).toEqual({ faults: ["boom"] });
+        expect(parseJsonAs(textPart.text, z.json())).toEqual({ faults: ["boom"] });
         expect(textPart.text).not.toContain("PNGBYTES");
         // The file part carries the picture bytes and the media type.
-        const filePart = parts.find((p) => p.type === "file");
+        const filePart = parts.find((p) => "data" in p);
         if (filePart === undefined) throw new Error("the content holds no file part");
         expect(filePart.mediaType).toBe("image/png");
         expect(filePart.data).toEqual({ type: "data", data: "PNGBYTES" });
@@ -884,7 +890,7 @@ describe("runAgent — a picture on a user message", () => {
         expect(results.map((r) => r.toolCallId)).toEqual(["tu-1", "tu-cut"]);
         expect(presentFirst(results).output).toEqual({ type: "json", value: { faults: ["boom"] } });
         expect(isErrorResult(presentAt(results, 1))).toBe(true);
-        expect(String(outputValue(presentAt(results, 1)))).toContain("cut off");
+        expect(outputText(presentAt(results, 1))).toContain("cut off");
         // One fallback message trails the tool message, and it names the call that ran.
         const fallback = presentAt(messages, 3);
         expect(userParts(fallback)).toEqual([
@@ -927,7 +933,7 @@ describe("runAgent — max_tokens recovery", () => {
         expect(result.type).toBe("tool-result");
         expect(result.toolCallId).toBe("tu-cut");
         expect(isErrorResult(result)).toBe(true);
-        expect(String(outputValue(result))).toContain("cut off");
+        expect(outputText(result)).toContain("cut off");
 
         // The loop continued to a clean terminal reply and counted the recovery.
         expect(finish.reason).toBe("stop");
@@ -962,7 +968,7 @@ describe("runAgent — max_tokens recovery", () => {
         expect(messages).toHaveLength(4);
         const steer = presentAt(messages, 2);
         expect(steer.role).toBe("user");
-        expect(String(steer.content)).toContain("cut off");
+        expect(textOf(steer.content)).toContain("cut off");
         // The steer must be marked synthetic. It carries the `user` role only because the wire format
         // demands one after a truncated assistant message — a reader that took it for user input would
         // see a turn boundary in the middle of this turn, and a tail-turn removal would cut there.
@@ -1018,7 +1024,7 @@ describe("runAgent — tool mask and budget", () => {
         const ran = presentAt(parts, 1);
         expect(refused.toolCallId).toBe("tu-w");
         expect(isErrorResult(refused)).toBe(true);
-        expect(String(outputValue(refused))).toContain("writer is not available for this request");
+        expect(outputText(refused)).toContain("writer is not available for this request");
         expect(isErrorResult(ran)).toBe(false);
         // Each request still declares both tools: the mask limits what runs, not the prefix.
         expect(provider.calls.map((call) => Object.keys(call.tools))).toEqual([
@@ -1046,7 +1052,7 @@ describe("runAgent — tool mask and budget", () => {
         const fourth = presentFirst(toolResultParts(messages[8]));
         expect(fourth.toolCallId).toBe("tu-3");
         expect(isErrorResult(fourth)).toBe(true);
-        expect(String(outputValue(fourth))).toContain("limit of 3 calls");
+        expect(outputText(fourth)).toContain("limit of 3 calls");
     });
 
     it("counts the earlier calls of the same round against the budget", async () => {
@@ -1120,7 +1126,7 @@ describe("runAgent — tool mask and budget", () => {
 
         expect(rec.names).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
         expect(counts.get("echo")).toBeUndefined();
-        expect(String(outputValue(presentFirst(toolResultParts(messages[2]))))).toContain("No tool can run for this request");
+        expect(outputText(presentFirst(toolResultParts(messages[2])))).toContain("No tool can run for this request");
     });
 
     it("keeps the step sequence of a round the same with and without the mask", async () => {
@@ -1199,7 +1205,7 @@ describe("runAgent — tool mask and budget", () => {
         expect(store.names()).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
         expect(counts.get("echo")).toBeUndefined();
         // The cached result of the earlier build is the result of the replay.
-        expect(String(outputValue(presentFirst(toolResultParts(messages[2]))))).toContain("unknown tool: echo");
+        expect(outputText(presentFirst(toolResultParts(messages[2])))).toContain("unknown tool: echo");
         expect(finish.reason).toBe("stop");
     });
 
@@ -1219,8 +1225,8 @@ describe("runAgent — tool mask and budget", () => {
 
         expect(counts.size).toBe(0);
         const parts = toolResultParts(messages[2]);
-        expect(String(outputValue(presentAt(parts, 0)))).toContain("writer is not available for this request");
-        expect(String(outputValue(presentAt(parts, 1)))).toContain("cut off");
+        expect(outputText(presentAt(parts, 0))).toContain("writer is not available for this request");
+        expect(outputText(presentAt(parts, 1))).toContain("cut off");
     });
 
     it("dispatches each call as before with no mask and no budget", async () => {
@@ -1724,7 +1730,7 @@ function isLoopEvent(event: Parameters<EmitFn>[0]): event is EmitEvent {
 
 /** Every `tool-started` / `tool-finished` event a run emitted, in order. */
 function toolEvents(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[] {
-    return events.filter((e): e is Extract<EmitEvent, { type: "tool-started" | "tool-finished" }> => e.type === "tool-started" || e.type === "tool-finished");
+    return events.flatMap((e) => (e.type === "tool-started" || e.type === "tool-finished" ? [e] : []));
 }
 
 /** Run one scripted turn, returning the tool events it emitted. */
@@ -1969,8 +1975,9 @@ describe("runAgent — tool result detail", () => {
             async function step(name: string, fn: () => Promise<unknown>): Promise<unknown>;
             async function step(name: string, fn: () => Promise<unknown>): Promise<unknown> {
                 const settled: unknown = await fn();
-                if (typeof settled !== "object" || settled === null || !("result" in settled)) return settled;
-                return settled.result ?? settled;
+                const pair = parseUnknownRecord(settled);
+                if (pair === undefined || !("result" in pair)) return settled;
+                return pair.result ?? settled;
             }
             return step;
         })();
@@ -2055,7 +2062,7 @@ describe("runAgent — tool-finished outcome", () => {
 function finishedDurationMs(events: readonly Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[], toolUseId: string): number {
     // The predicate narrows to the union member itself rather than to a cast
     // shape. Thus a `durationMs` dropped from `EmitEvent` fails here.
-    const finishedOnes = events.filter((e): e is Extract<EmitEvent, { type: "tool-finished" }> => e.type === "tool-finished");
+    const finishedOnes = events.flatMap((e) => (e.type === "tool-finished" ? [e] : []));
     const { durationMs } = presentFind(finishedOnes, (e) => e.toolUseId === toolUseId);
     if (durationMs === undefined) throw new Error(`the tool-finished event for ${toolUseId} carries no durationMs`);
     return durationMs;
@@ -2706,7 +2713,7 @@ describe("runAgent — compaction", () => {
         expect(writes).toBe(0);
         const refused = presentFirst(toolResultParts(messages[5]));
         expect(isErrorResult(refused)).toBe(true);
-        expect(String(outputValue(refused))).toContain("writer is not available for this request");
+        expect(outputText(refused)).toContain("writer is not available for this request");
     });
 
     it("writes no marker and keeps the view when the exchange calls a tool in each of its requests", async () => {

@@ -7,6 +7,7 @@
 
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { CHART_SOURCE_MEMBER, type EchartOption } from "../chart.js";
 import { pageExports } from "./page-function.js";
 
@@ -17,7 +18,7 @@ function stringifyJson(value: unknown): string | undefined {
 }
 
 function fail(what: string, value: unknown): never {
-    const shown = stringifyJson(value)?.slice(0, 80) ?? String(value);
+    const shown = stringifyJson(value)?.slice(0, 80) ?? textOf(value);
     throw new Error(`the produced option holds ${what} in another shape: ${shown}`);
 }
 

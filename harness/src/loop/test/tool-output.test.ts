@@ -95,7 +95,7 @@ function onlyResult(messages: readonly ModelMessage[]): ToolResultPart {
     if (tool === undefined) throw new Error("the tool message is absent");
     const content = tool.content;
     if (typeof content === "string") throw new Error("the tool message carries string content");
-    const results = content.filter((part): part is ToolResultPart => part.type === "tool-result");
+    const results = content.flatMap((part) => (part.type === "tool-result" ? [part] : []));
     return presentFirst(results);
 }
 
@@ -201,7 +201,7 @@ describe("runAgent — long tool results", () => {
         expect(parts).toHaveLength(2);
         expect(parts[0]).toMatchObject({ type: "text" });
         const first = parts[0];
-        if (first === undefined || first.type !== "text") throw new Error("the first part is not text");
+        if (first === undefined || !("text" in first)) throw new Error("the first part is not text");
         expect(first.text.startsWith("[Tool result cut: ")).toBe(true);
         expect(parts[1]).toEqual({ type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } });
     });
@@ -348,7 +348,7 @@ describe("runAgent — long tool results", () => {
         if (toolMessage === undefined) throw new Error("the tool message is absent");
         const messageContent = toolMessage.content;
         if (typeof messageContent === "string") throw new Error("the tool message carries string content");
-        const results = messageContent.filter((part): part is ToolResultPart => part.type === "tool-result");
+        const results = messageContent.flatMap((part) => (part.type === "tool-result" ? [part] : []));
         expect(results.map((r) => r.toolCallId)).toEqual(["tu-A", "tu-B"]);
         expect(textOf(presentFirst(results)).startsWith("[Tool result cut: 40000 characters")).toBe(true);
         expect(store.puts.map((kept) => kept.toolCallId)).toEqual(["tu-A"]);
@@ -387,7 +387,7 @@ describe("runAgent — long tool results", () => {
     it("keeps a surrogate pair whole at each cut point", async () => {
         const length = 40_000;
         // The JSON text starts with a quote, thus index `i` of the value is index `i + 1` of the text.
-        const chars = [...fill(length - 2)];
+        const chars = Array.from(fill(length - 2));
         const pairAt = (textIndex: number): void => {
             chars[textIndex - 1] = "\uD83D";
             chars[textIndex] = "\uDE00";
@@ -433,7 +433,7 @@ describe("runAgent — long tool results", () => {
         const toolMessages = messages.filter((m) => m.role === "tool");
         const readContent = presentAt(toolMessages, 1).content;
         if (typeof readContent === "string") throw new Error("the tool message carries string content");
-        const read = presentFirst(readContent.filter((part): part is ToolResultPart => part.type === "tool-result"));
+        const read = presentFirst(readContent.flatMap((part) => (part.type === "tool-result" ? [part] : [])));
         if (read.output.type !== "json") throw new Error("the result carries no json output");
         expect(read.output.value).toMatchObject({
             status: "ok",

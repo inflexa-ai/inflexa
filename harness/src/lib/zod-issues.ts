@@ -47,6 +47,7 @@ import { z } from "zod";
 
 import { parseJsonAs } from "./parse-json.js";
 import { isUnknownArray } from "./unknown-array.js";
+import { parseUnknownRecord, UnknownRecordSchema } from "./unknown-containers.js";
 
 /**
  * Strings longer than this are neither parsed nor repaired. A real argument
@@ -121,7 +122,7 @@ export function hintForZodIssue(issue: z.core.$ZodIssue, input: unknown): string
  * untouched branch and clones only along the paths it patches. Repaired content
  * is not re-examined — one pass, no recursion — and no input causes a throw.
  */
-export function repairToolInput(input: unknown, error: z.ZodError): unknown | undefined {
+export function repairToolInput(input: unknown, error: z.ZodError): unknown {
     try {
         let repaired: unknown = input;
         let didRepair = false;
@@ -198,14 +199,12 @@ function repairableExpectation(issue: z.core.$ZodIssue): "object" | "array" | un
  * matches either expectation, but the cell keeps the caller's checks honest.
  */
 function parseAs(raw: string, expected: "object" | "array"): { readonly value: unknown } | undefined {
-    let parsed: unknown;
     try {
-        parsed = parseJsonAs(raw, z.unknown());
+        if (expected === "array") return { value: parseJsonAs(raw, z.array(z.json())) };
+        return { value: parseJsonAs(raw, UnknownRecordSchema) };
     } catch {
         return undefined;
     }
-    if (expected === "array") return Array.isArray(parsed) ? { value: parsed } : undefined;
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? { value: parsed } : undefined;
 }
 
 /**
@@ -262,10 +261,9 @@ function quoteSnippet(removed: string): string {
 function resolvePath(input: unknown, path: readonly PropertyKey[]): unknown {
     let current: unknown = input;
     for (const key of path) {
-        if (current === null || (typeof current !== "object" && typeof current !== "function")) {
-            return undefined;
-        }
-        current = Reflect.get(current, key);
+        const container = isUnknownArray(current) ? current : parseUnknownRecord(current);
+        if (container === undefined) return undefined;
+        current = Reflect.get(container, key);
     }
     return current;
 }
@@ -279,13 +277,17 @@ function setAtPath(root: unknown, path: readonly PropertyKey[], value: unknown):
 
     const [key, ...rest] = path;
     if (key === undefined) return value;
-    if (root === null || typeof root !== "object") return root;
 
-    const child = setAtPath(Reflect.get(root, key), rest, value);
-    if (isUnknownArray(root) && typeof key === "number") {
+    const array = isUnknownArray(root);
+    if (array) {
+        const child = setAtPath(Reflect.get(root, key), rest, value);
+        if (typeof key !== "number") return { ...Object.fromEntries(root.entries()), [key]: child };
         const copy = [...root];
         copy[key] = child;
         return copy;
     }
-    return { ...root, [key]: child };
+    const record = parseUnknownRecord(root);
+    if (record === undefined) return root;
+    const child = setAtPath(Reflect.get(record, key), rest, value);
+    return { ...record, [key]: child };
 }

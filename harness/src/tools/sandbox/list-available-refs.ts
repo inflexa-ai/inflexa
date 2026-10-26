@@ -43,7 +43,7 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
-import { defineTool } from "../define-tool.js";
+import { defineTool, type Tool } from "../define-tool.js";
 
 /**
  * Container path the ref store is mounted at: every reported path is rendered
@@ -281,7 +281,7 @@ async function readReceipts(root: string): Promise<unknown[]> {
         // A shared try would abandon the loop and silently drop every receipt sorting
         // after the bad one, quietly stripping metadata from datasets that are fine.
         try {
-            receipts.push(parseJsonAs(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8"), z.unknown()));
+            receipts.push(parseJsonAs(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8"), z.json()));
             totalBytes += entry.bytes;
         } catch {
             continue;
@@ -324,7 +324,7 @@ export async function readInstalledDatasetIds(deps: ListAvailableRefsDeps): Prom
         // Per-file, so one malformed receipt costs only its own dataset. A shared try would drop
         // every receipt after the bad one and read as a store that holds almost nothing.
         try {
-            const receipt = parseReferenceInstallReceipt(parseJsonAs(await readFile(hostJoin(receiptsDirectory, name), "utf-8"), z.unknown()));
+            const receipt = parseReferenceInstallReceipt(parseJsonAs(await readFile(hostJoin(receiptsDirectory, name), "utf-8"), z.json()));
             if (receipt) ids.add(receipt.datasetId);
         } catch {
             continue;
@@ -340,7 +340,7 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
         if (await crossesSymlink(root, "registry.json")) return [];
         const registryPath = hostJoin(root, "registry.json");
         if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
-        const registry = parseJsonAs(await readFile(registryPath, "utf-8"), z.unknown());
+        const registry = parseJsonAs(await readFile(registryPath, "utf-8"), z.json());
         const registryRecord = parseUnknownRecord(registry);
         if (!registryRecord) return [];
         const files = parseUnknownRecord(registryRecord.files);
@@ -650,7 +650,7 @@ export async function readReferenceInventory(
     return { available: raw.state !== "unavailable", entries: enrichEntries(raw.entries, raw) };
 }
 
-export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
+export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z.infer<typeof ListAvailableRefsInputSchema>, ReferenceInventoryResult> {
     const storeRoot = deps.refStorePath ?? REFS_ROOT;
     return defineTool({
         id: "list_available_refs",
@@ -701,7 +701,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             // The budget comes off the rendered filter, never off a count of its
             // parts, thus it cannot drift from the template above. One code point
             // pays for the joining space.
-            return `${capCodePoints(named, DETAIL_MAX_LENGTH - [...filter].length - 1)} ${filter}`;
+            return `${capCodePoints(named, DETAIL_MAX_LENGTH - Array.from(filter).length - 1)} ${filter}`;
         },
         execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.

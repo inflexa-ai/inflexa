@@ -106,27 +106,27 @@ function isAlphanumeric(char: string): boolean {
 }
 
 function hasAsciiUpper(value: string): boolean {
-    return [...value].some(isAsciiUpper);
+    return Array.from(value).some(isAsciiUpper);
 }
 
 function hasAsciiLower(value: string): boolean {
-    return [...value].some(isAsciiLower);
+    return Array.from(value).some(isAsciiLower);
 }
 
 function hasAsciiLetter(value: string): boolean {
-    return [...value].some(isAsciiLetter);
+    return Array.from(value).some(isAsciiLetter);
 }
 
 function hasAsciiDigit(value: string): boolean {
-    return [...value].some(isAsciiDigit);
+    return Array.from(value).some(isAsciiDigit);
 }
 
 function hasAlphanumeric(value: string): boolean {
-    return [...value].some(isAlphanumeric);
+    return Array.from(value).some(isAlphanumeric);
 }
 
 function isBase64UrlRun(value: string): boolean {
-    return value.length > 0 && [...value].every((char) => isAlphanumeric(char) || isBase64UrlSymbol(char));
+    return value.length > 0 && Array.from(value).every((char) => isAlphanumeric(char) || isBase64UrlSymbol(char));
 }
 
 function isHexRun(value: string): boolean {
@@ -138,7 +138,7 @@ function charClassCount(value: string): number {
     if (hasAsciiUpper(value)) classes++;
     if (hasAsciiLower(value)) classes++;
     if (hasAsciiDigit(value)) classes++;
-    if ([...value].some(isBase64UrlSymbol)) classes++;
+    if (Array.from(value).some(isBase64UrlSymbol)) classes++;
     return classes;
 }
 
@@ -305,7 +305,7 @@ export function classifyValues(values: readonly string[]): ValueClass {
         const lengths = values.map((value) => value.length);
         return { tokenClass: "opaque-id", minLength: Math.min(...lengths), maxLength: Math.max(...lengths) };
     }
-    if (values.every((value) => value.length > 0 && [...value].every(isAsciiLetter))) return { tokenClass: "word" };
+    if (values.every((value) => value.length > 0 && Array.from(value).every(isAsciiLetter))) return { tokenClass: "word" };
     const skeletons = new Set(values.map((value) => maskSegment(value)));
     const [skeleton] = skeletons;
     if (skeleton !== undefined && skeletons.size === 1 && (skeleton.includes(DIGIT_SYMBOL) || skeleton.includes(ID_SYMBOL) || skeleton.includes(DATE_SYMBOL))) {

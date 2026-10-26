@@ -7,6 +7,7 @@
  * parent workflow actually drives.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import {
     type BudgetAdmission,
@@ -176,7 +177,7 @@ describe("validatePlanDag", () => {
             caught = err;
         }
         expect(caught).toBeInstanceOf(MissingDependencyError);
-        if (!(caught instanceof MissingDependencyError)) throw new Error(`expected MissingDependencyError, got ${String(caught)}`);
+        if (!(caught instanceof MissingDependencyError)) throw new Error(`expected MissingDependencyError, got ${textOf(caught)}`);
         expect(caught.stepId).toBe("B");
         expect(caught.missingDependency).toBe("A");
     });
@@ -189,7 +190,7 @@ describe("validatePlanDag", () => {
             caught = err;
         }
         expect(caught).toBeInstanceOf(CycleError);
-        if (!(caught instanceof CycleError)) throw new Error(`expected CycleError, got ${String(caught)}`);
+        if (!(caught instanceof CycleError)) throw new Error(`expected CycleError, got ${textOf(caught)}`);
         expect(new Set(caught.involvedSteps)).toEqual(new Set(["A", "B"]));
     });
 

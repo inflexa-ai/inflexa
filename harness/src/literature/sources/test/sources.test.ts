@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { createArxivSource } from "../arxiv.js";
 import { createPubmedSource } from "../pubmed.js";
 import { createSemanticScholarSource } from "../semantic-scholar.js";
@@ -37,7 +38,7 @@ describe("shared literature authority sources", () => {
         const seen: URL[] = [];
         const source = createArxivSource({
             fetch: fetchDouble((url) => {
-                seen.push(new URL(String(url)));
+                seen.push(new URL(requestUrlText(url)));
                 return Promise.resolve(new Response(ARXIV_XML));
             }),
         });
@@ -56,7 +57,7 @@ describe("shared literature authority sources", () => {
         const source = createSemanticScholarSource({
             apiKey: "test-key",
             fetch: fetchDouble((url, init) => {
-                const parsed = new URL(String(url));
+                const parsed = new URL(requestUrlText(url));
                 seen.push({ url: parsed, apiKey: new Headers(init?.headers).get("x-api-key") });
                 const paper = {
                     paperId: "paper-1",
@@ -84,7 +85,7 @@ describe("shared literature authority sources", () => {
         const source = createPubmedSource({
             apiKey: "ncbi-key",
             fetch: fetchDouble((url) => {
-                const parsed = new URL(String(url));
+                const parsed = new URL(requestUrlText(url));
                 seen.push(parsed);
                 return Promise.resolve(
                     parsed.pathname.endsWith("esearch.fcgi")
@@ -108,7 +109,7 @@ describe("shared literature authority sources", () => {
         const source = createPubmedSource({
             apiKey: "",
             fetch: fetchDouble((url) => {
-                seen.push(new URL(String(url)));
+                seen.push(new URL(requestUrlText(url)));
                 return Promise.resolve(Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } }));
             }),
         });

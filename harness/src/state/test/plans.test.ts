@@ -3,6 +3,8 @@ const PARENT_INDEX_DDL = /ON \S*cortex_plans USING btree \(parent_plan_id\)$/;
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the runs index definition that the migration declares, over the qualified table name
 const RUNS_INDEX_DDL = /ON \S*cortex_runs USING btree \(analysis_id, plan_id, started_at DESC, run_id DESC\)$/;
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
@@ -18,7 +20,7 @@ async function countPlans(pool: Pool, planId: string): Promise<number> {
     });
     const row = r.rows[0];
     if (row === undefined) throw new Error("the count query returned no row");
-    return Number(row.n);
+    return row.n;
 }
 
 describe("upsertPlan", () => {
@@ -77,7 +79,7 @@ describe("upsertPlan", () => {
                 })
             )._unsafeUnwrap();
         } catch (err) {
-            message = err instanceof Error ? err.message : String(err);
+            message = errorMessageOf(err) ?? textOf(err);
         }
         expect(message).toContain("different analysis");
         // The child row was never written — the throw short-circuits before INSERT.

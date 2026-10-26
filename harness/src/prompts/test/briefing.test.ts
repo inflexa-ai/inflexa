@@ -2,6 +2,7 @@
 const EMPTY_HEADING = /##[^\n]*\n\s*(\n|$)/;
 
 import { describe, expect, it } from "bun:test";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../../app/data-profile-orientation.js";
 import type { DataProfileResult } from "../../state/data-profile.js";
@@ -605,11 +606,11 @@ describe("AnalysisStep field-coverage guard", () => {
             // (the settings) keeps one object whose string members carry it.
             const withSentinel = (value: unknown): unknown => {
                 if (Array.isArray(value)) {
-                    const first: unknown = value[0];
-                    return typeof first === "object" && first !== null ? [withSentinel(first)] : [sentinel];
+                    return parseUnknownRecord(value[0]) !== undefined ? [withSentinel(value[0])] : [sentinel];
                 }
-                if (typeof value === "object" && value !== null) {
-                    return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, withSentinel(member)]));
+                const record = parseUnknownRecord(value);
+                if (record !== undefined) {
+                    return Object.fromEntries(Object.entries(record).map(([key, member]) => [key, withSentinel(member)]));
                 }
                 return typeof value === "string" ? sentinel : value;
             };

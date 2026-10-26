@@ -64,7 +64,7 @@ import { isSqlIdentifier } from "./vector-store.js";
  */
 function isPurgeableAnalysisIdShape(analysisId: string): boolean {
     if (analysisId.length === 0) return false;
-    return [...analysisId].every((char) => (char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "_" || char === "-");
+    return Array.from(analysisId).every((char) => (char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "_" || char === "-");
 }
 
 /**

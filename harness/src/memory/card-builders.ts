@@ -29,10 +29,6 @@ import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export type PlanCardData = {
     id: string;
     planId: string;
@@ -173,8 +169,9 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
         const source = typeof rest.url === "string" ? parseStructureUrl(rest.url) : null;
         if (source === null) return null;
         content = { kind, format: source.format, url: source.url, provider: source.provider, accession: source.accession, version: source.version };
-    } else if (kind === "echart" && isRecord(rest.spec)) {
-        content = { kind, ...rest, spec: normalizeEchartSpec(rest.spec, { title: cardTitle }) };
+    } else if (kind === "echart") {
+        const spec = parseUnknownRecord(rest.spec);
+        content = spec !== undefined ? { kind, ...rest, spec: normalizeEchartSpec(spec, { title: cardTitle }) } : { kind, ...rest };
     } else {
         // Every other kind (and an echart the model called without a `spec`) is carried through
         // untouched — there is no layout to normalize, and no spec to invent.

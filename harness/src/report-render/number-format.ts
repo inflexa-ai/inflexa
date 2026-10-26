@@ -384,7 +384,9 @@ const SUPERSCRIPT_MINUS = "⁻";
 export function typographicExponent(text: string): string {
     return text.replace(SCIENTIFIC_IN_TEXT, (_form, coefficient: string, exponent: string) => {
         const power = Number(exponent);
-        const digits = [...String(Math.abs(power))].map((digit) => SUPERSCRIPT_DIGITS[Number(digit)]).join("");
+        const digits = Array.from(String(Math.abs(power)))
+            .map((digit) => SUPERSCRIPT_DIGITS[Number(digit)])
+            .join("");
         return `${shownMinus(coefficient)} × 10${power < 0 ? SUPERSCRIPT_MINUS : ""}${digits}`;
     });
 }
@@ -496,7 +498,7 @@ function groupDigits(digits: string): string {
         if (index > 0 && (digits.length - index) % GROUP_SIZE === 0) {
             grouped += ",";
         }
-        grouped += digits[index];
+        grouped += digits.charAt(index);
     }
     return grouped;
 }

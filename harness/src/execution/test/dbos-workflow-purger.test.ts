@@ -23,6 +23,7 @@ import { Pool } from "pg";
 import { createDbosLedgerSeeder, type DbosLedgerSeeder } from "../../__tests__/setup/dbos-ledger.js";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { createDbosWorkflowPurger, dbosClientFor } from "../dbos-workflow-purger.js";
 import type { WorkflowPurger } from "../workflow-purger.js";
 
@@ -196,8 +197,8 @@ function failingPool(code: string, systemSchema: "present" | "absent"): Pool {
     const failure = Object.assign(new Error(`relation "dbos.workflow_status" does not exist (${code})`), { code });
     const textOf = (config: unknown): string => {
         if (typeof config === "string") return config;
-        if (typeof config === "object" && config !== null && "text" in config) return String(config.text);
-        return "";
+        const record = parseUnknownRecord(config);
+        return record === undefined ? "" : textOf(record.text);
     };
     const base = new Pool();
     return Object.assign(base, {

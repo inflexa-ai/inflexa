@@ -62,7 +62,8 @@ const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
     return request.messages
         .flatMap((message) => (message.role === "tool" ? message.content : []))
-        .find((part): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
+        .flatMap((part) => (part.type === "tool-result" && part.toolCallId === toolCallId ? [part] : []))
+        .at(0);
 }
 
 describe("generateAnalogyReport sub-agent tool", () => {

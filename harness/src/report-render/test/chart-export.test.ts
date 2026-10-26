@@ -21,6 +21,7 @@ const TEXT_CONTENT = />([^<]*)<\/text>/g;
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the positioned label that the axis paints over the grid, read for its origin
 const PAINT_ORDER_LABEL = /<text[^>]*?y="(-?[\d.]+)"[^>]*transform="translate\((-?[\d.]+) (-?[\d.]+)\)"[^>]*paint-order="stroke"[^>]*>10<\/text>/g;
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import { isLowerHexOfLength } from "../../lib/test/text-shapes.js";
 import * as echarts from "echarts";
@@ -157,7 +158,7 @@ describe("the SVG export", () => {
         expect(tokens.every((token) => token.startsWith("zr0-"))).toBe(true);
         // A clip path and a gradient each carry an id, and an element names it in a `url(#...)`.
         for (const id of svg.matchAll(SVG_ID)) {
-            expect(svg).toContain(`url(#${id[1]})`);
+            expect(svg).toContain(`url(#${String(id[1])})`);
         }
     });
 
@@ -377,7 +378,7 @@ describe("the export option", () => {
             // Each panel keeps its labels inside its own box, and the box ends over the title and the legend.
             expect(grid.outerBoundsMode).toBe("same");
             expect(grid.top).toBe("10%");
-            expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
+            expect(((Number.parseFloat(textOf(grid.top)) + Number.parseFloat(textOf(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
         }
         const title = optionArray(print, "graphic").find((element) => element.bottom !== undefined);
         expect(title?.bottom).toBe(band);
@@ -395,8 +396,8 @@ describe("the export option", () => {
         const room = 253 - band - Math.round(CHART_PRINT_TEXT_PX * 1.6);
         for (const grid of optionArray(print, "grid")) {
             // The panel of the page is 70 percent high, thus the export keeps 35 percent of the height at least.
-            expect(Number.parseFloat(String(grid.height))).toBeGreaterThanOrEqual(35);
-            expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
+            expect(Number.parseFloat(textOf(grid.height))).toBeGreaterThanOrEqual(35);
+            expect(((Number.parseFloat(textOf(grid.top)) + Number.parseFloat(textOf(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
         }
         expect(optionArray(print, "graphic").find((element) => element.bottom !== undefined)?.bottom).toBe(band);
         // The chart runtime draws the one line and the page count of the legend in the file.
@@ -785,7 +786,7 @@ describe("the export of a faceted chart", () => {
         const size = exportSizeFor(CHART_EXPORT_SIZES.single, derived.bodyPx);
         const page = derived.inline;
         const exported = exportOption(page, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx);
-        const percentOf = (value: unknown): number => Number.parseFloat(String(value));
+        const percentOf = (value: unknown): number => Number.parseFloat(textOf(value));
         const heights = optionArray(exported, "grid").map((grid) => percentOf(grid.height));
         // Four rows of three panels share the room of the band, thus each panel keeps one height.
         expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1e-3);

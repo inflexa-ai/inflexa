@@ -25,16 +25,13 @@ function canonicalize(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map(canonicalize);
     }
-    if (value !== null && typeof value === "object") {
-        const record = parseUnknownRecord(value);
-        if (record === undefined) return value;
-        const sorted: Record<string, unknown> = {};
-        for (const key of Object.keys(record).sort()) {
-            sorted[key] = canonicalize(record[key]);
-        }
-        return sorted;
+    const record = parseUnknownRecord(value);
+    if (record === undefined) return value;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+        sorted[key] = canonicalize(record[key]);
     }
-    return value;
+    return sorted;
 }
 
 /** The sha256 hash of the draft, over a JSON serialization with sorted keys. */

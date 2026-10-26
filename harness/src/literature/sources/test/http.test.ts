@@ -20,6 +20,7 @@ describe("shared source HTTP request policy", () => {
             schedule: createRateLimitSchedule({ maxConcurrency: 1, requestsPerSecond: 25, maxRetries: 0, maxRetryDelayMs: 0 }),
             timeoutMs: 60,
             fetch: fetchDouble((_url, init) => {
+                // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the abort reason rides as-is; the awaiter classifies the abort by its name.
                 if (init?.signal?.aborted) return Promise.reject(init.signal.reason);
                 return Promise.resolve(Response.json({ ok: true }));
             }),
@@ -37,7 +38,10 @@ describe("shared source HTTP request policy", () => {
                 (_url, init) =>
                     new Promise((_resolve, reject) => {
                         const signal = init?.signal;
-                        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                        signal?.addEventListener("abort", () => {
+                            // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the abort reason rides as-is; the awaiter classifies the abort by its name.
+                            reject(signal.reason);
+                        });
                     }),
             ),
         });

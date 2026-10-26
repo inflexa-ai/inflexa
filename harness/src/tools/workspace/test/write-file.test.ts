@@ -177,7 +177,7 @@ describe("write_file tool", () => {
         expect(collector.getRecords()).toEqual([]);
 
         // A replay returns the cached value and folds its record again, into fresh process state.
-        const foldCallRecord = tool.foldCallRecord;
+        const foldCallRecord = tool.foldCallRecord?.bind(tool);
         if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
         foldCallRecord(readToolCallRecord(out));
         const records = collector.getRecords();

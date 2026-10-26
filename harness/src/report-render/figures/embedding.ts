@@ -171,8 +171,7 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const groups = group === undefined ? undefined : channelValues(rows, group);
     const colors = color === undefined ? undefined : channelValues(rows, color);
     const facets = facet === undefined ? undefined : rows.map((row) => row[channelColumn(facet)] ?? null);
-    const panelNames =
-        facets === undefined ? [] : firstAppearance(facets.filter((cell): cell is Cell => cell !== null).map((cell) => `${typeof cell}:${String(cell)}`));
+    const panelNames = facets === undefined ? [] : firstAppearance(facets.filter((cell) => cell !== null).map((cell) => `${typeof cell}:${String(cell)}`));
     const panelOf = new Map(panelNames.map((key, place) => [key, place]));
 
     const cells: EmbeddedCell[] = [];

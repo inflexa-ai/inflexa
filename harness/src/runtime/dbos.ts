@@ -13,6 +13,9 @@
  * See `openspec/changes/harness-dbos-runtime`.
  */
 
+import { z } from "zod";
+
+import { textOf } from "../lib/unknown-text.js";
 import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
 import type { Querier } from "../state/db.js";
 
@@ -146,7 +149,7 @@ export function dbosSdkLogger(logger: Logger, logLevel: string | undefined): DLo
         if (attributes === undefined && stack === undefined) return undefined;
         return { ...attributes, stack };
     };
-    const message = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
+    const message = (entry: unknown): string => (typeof entry === "string" ? entry : textOf(entry));
     return {
         debug: (entry, metadata) => {
             if (passes("debug")) sink.debug(message(entry), fields(metadata));
@@ -291,7 +294,7 @@ export async function sweepEphemeralWorkflows({
         }
     } catch (err) {
         // First-ever boot: DBOS has not created its schema yet — nothing to sweep.
-        if (err && typeof err === "object" && "code" in err && err.code === "42P01") {
+        if (z.object({ code: z.literal("42P01") }).safeParse(err).success) {
             return;
         }
         logger.error("legacy ephemeral-row sweep failed", { executorID, ...logger.errorFields(err) });

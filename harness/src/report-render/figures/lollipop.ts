@@ -12,6 +12,7 @@
  * the lanes follow the order of the track rows.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock } from "../../contracts/report-blocks.js";
@@ -138,7 +139,7 @@ function deriveLollipop(block: ChartBlock, rows: readonly ChartRow[], context: F
         itemWidth: LEGEND_ICON_PX,
         itemHeight: LEGEND_ICON_PX,
         itemGap: LEGEND_GAP_PX,
-        data: series.filter((entry) => entry.renderItem === STEM_RENDERER).map((entry) => String(entry.name)),
+        data: series.filter((entry) => entry.renderItem === STEM_RENDERER).map((entry) => textOf(entry.name)),
     };
     if (boxes.value === undefined) {
         return ok({ tooltip: { trigger: "item" }, xAxis: valueAxis("x", positionTitle, { min: 0, max: length }), yAxis: countAxis, series, legend });

@@ -17,11 +17,19 @@ import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { PLAN_ID_RE } from "../../contracts/schemas/chat-parts.js";
 import type { PlanRowQuerier } from "../../state/plans.js";
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 type ShowPlanOutput = { shown: false; reason: "plan_not_found" } | { shown: true; id: string };
 
-export function createShowPlanTool(pool: PlanRowQuerier) {
+const ShowPlanInputSchema = z.object({
+    planId: z
+        .string()
+        .regex(PLAN_ID_RE, "planId must match pln-<8hex>")
+        .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
+    title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
+});
+
+export function createShowPlanTool(pool: PlanRowQuerier): Tool<z.infer<typeof ShowPlanInputSchema>, ShowPlanOutput> {
     return defineTool({
         id: "show_plan",
         description:
@@ -32,13 +40,7 @@ export function createShowPlanTool(pool: PlanRowQuerier) {
             "NOT for a plan you are drafting in conversation (that is `generate_plan`), NOT for other synthesized content " +
             "(`show_user`), NOT for analysis files (`show_file`). Never re-type a plan's steps into a `show_user` markdown " +
             "card — that renders a second, divergent copy of the same plan.",
-        inputSchema: z.object({
-            planId: z
-                .string()
-                .regex(PLAN_ID_RE, "planId must match pln-<8hex>")
-                .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
-            title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
-        }),
+        inputSchema: ShowPlanInputSchema,
         describeCall: ({ planId }) => planId,
         execute: async ({ planId, title }, ctx): Promise<Result<ShowPlanOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;

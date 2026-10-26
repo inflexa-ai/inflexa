@@ -31,6 +31,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { errorOf } from "./thrown.js";
 import { withPage, type CaptureArea, type ChromeConfig, type LookPage } from "./chrome.js";
 import { PAGE_NAV_TIMEOUT_MS, PAGE_READY_TIMEOUT_MS, THEME_READY_EVENT, THEME_READY_SENTINEL } from "../report-render/page.js";
 import { BLOCK_ID_ATTRIBUTE } from "../report-render/views/block-mark.js";
@@ -263,8 +264,9 @@ async function captureShots(page: LookPage): Promise<Shots> {
         } catch (refusedViewport) {
             // The two refusals together are the account of a dead look, and the caller reports the second one
             // alone. Thus the first one rides as the cause, and no reader of that report loses half of it.
-            if (refusedViewport instanceof Error && refusedViewport.cause === undefined) {
-                refusedViewport.cause = refused;
+            const refusedViewportError = errorOf(refusedViewport);
+            if (refusedViewportError !== undefined && refusedViewportError.cause === undefined) {
+                refusedViewportError.cause = refused;
             }
             throw refusedViewport;
         }

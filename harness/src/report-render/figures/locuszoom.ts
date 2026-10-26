@@ -201,7 +201,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
         return err(
             chartProblem(
                 context.blockId,
-                `The locuszoom draws one region of one chromosome, and the "${chromosome}" column holds "${chromosomes[0]}" and "${chromosomes[1]}".`,
+                `The locuszoom draws one region of one chromosome, and the "${String(chromosome)}" column holds "${String(chromosomes[0])}" and "${String(chromosomes[1])}".`,
             ),
         );
     }
@@ -211,7 +211,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
         return err(
             chartProblem(
                 context.blockId,
-                `The locuszoom reads the "${r2}" column as the r² with the lead variant, and row ${outside + 1} holds ${r2s[outside]}, which is outside 0 to 1.`,
+                `The locuszoom reads the "${r2}" column as the r² with the lead variant, and row ${outside + 1} holds ${String(r2s[outside])}, which is outside 0 to 1.`,
             ),
         );
     }

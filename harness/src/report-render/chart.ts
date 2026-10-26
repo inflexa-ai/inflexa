@@ -26,6 +26,7 @@
  * string, and each consumer of the option binds the name (`chart-renderers.ts`).
  */
 
+import { textOf } from "../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 
 import {
@@ -113,7 +114,7 @@ import { SHAPED_SCATTER_FIGURE } from "./figures/pca.js";
 import { formatNumberCell, selectNumberKind } from "./number-format.js";
 import type { RenderProblem, RenderStatistic, RenderTrack, RenderTrees } from "./types.js";
 
-export { transformColumn };
+export { transformColumn } from "./figures/common.js";
 
 /** One cell of a resolved row. A cell is one string or one number. */
 export type Cell = string | number;
@@ -673,7 +674,7 @@ function declaredMembers(block: ChartBlock): FigureMember[] {
 /** The sentence that names the chart types that read one member that the canonical figures add. */
 function readersSentence(member: FigureOnlyMember): string {
     const readers = FIGURE_MEMBER_READERS[member];
-    const list = readers.length <= 2 ? readers.join(" and ") : `${readers.slice(0, -1).join(", ")}, and ${readers[readers.length - 1]}`;
+    const list = readers.length <= 2 ? readers.join(" and ") : `${readers.slice(0, -1).join(", ")}, and ${String(readers[readers.length - 1])}`;
     switch (member) {
         case "statistics":
             return `The statistics are legal on the ${list} charts.`;
@@ -758,7 +759,7 @@ function deriveFigure(
             if (described !== undefined && option.isOk()) {
                 // The names of the composition output let the pass tell it apart from a series that the
                 // figure adds after it.
-                described.composed = Array.isArray(option.value.series) ? option.value.series.map((entry) => String(parseUnknownRecord(entry)?.name)) : [];
+                described.composed = Array.isArray(option.value.series) ? option.value.series.map((entry) => textOf(parseUnknownRecord(entry)?.name)) : [];
             }
             return option;
         },
@@ -2504,7 +2505,7 @@ function labeledSeries(context: CompositionContext, emitted: readonly EmittedSer
 
 /** The names of the drawn series, in series order. An auxiliary series names no entry of its own. */
 function drawnNames(emitted: readonly EmittedSeries[]): string[] {
-    return emitted.filter((entry) => !entry.auxiliary).map((entry) => String(entry.option.name));
+    return emitted.filter((entry) => !entry.auxiliary).map((entry) => textOf(entry.option.name));
 }
 
 /**
@@ -2615,7 +2616,7 @@ function intervalAlongX(entry: ResolvedSeries, axes: AxisPair): boolean {
 /** The place of each category of one axis, keyed by the text of the category, or `undefined` for a value axis. */
 function categoryPlaces(axis: EchartOption): Map<string, number> | undefined {
     if (axis.type !== "category" || !isUnknownArray(axis.data)) return undefined;
-    return new Map(axis.data.map((category, place) => [String(category), place]));
+    return new Map(axis.data.map((category, place) => [textOf(category), place]));
 }
 
 /**
@@ -3739,7 +3740,7 @@ function barCategoryAxis(
     if (declared?.scale !== undefined) {
         return compositionAxis(context, channel, axis, declared, preset);
     }
-    const ordered = orderChannel(context, channel, firstAppearance(channel.values.filter((value): value is Cell => value !== null)));
+    const ordered = orderChannel(context, channel, firstAppearance(channel.values.filter((value) => value !== null)));
     if (ordered.isErr()) return err(ordered.error);
     const typeFields = axis === "x" ? { type: "category" } : { ...HORIZONTAL_CATEGORY_AXIS };
     return ok({ ...typeFields, data: ordered.value, ...axisNameFields(axis, categoryAxisTitle(context.labels, channel.name, declared?.title)) });

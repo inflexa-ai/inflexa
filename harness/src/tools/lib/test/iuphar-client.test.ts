@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { z } from "zod";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -17,7 +18,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(requestUrlText(input))));
 }
 
 function json(body: unknown, status = 200): Response {

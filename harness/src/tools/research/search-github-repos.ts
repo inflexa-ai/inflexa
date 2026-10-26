@@ -13,7 +13,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
@@ -60,8 +60,8 @@ export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
         if (record === undefined || typeof record.html_url !== "string" || typeof record.full_name !== "string") return [];
         return [
             {
-                url: String(record.html_url),
-                fullName: String(record.full_name),
+                url: record.html_url,
+                fullName: record.full_name,
                 description: typeof record.description === "string" ? record.description : undefined,
                 stars: typeof record.stargazers_count === "number" ? record.stargazers_count : 0,
                 language: typeof record.language === "string" ? record.language : undefined,
@@ -71,7 +71,13 @@ export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
     });
 }
 
-export function createSearchGithubReposTool(deps: { githubToken?: string }) {
+const SearchGithubReposInputSchema = z.object({
+    query: z.string().describe("GitHub search syntax. Plain text matches anywhere; qualifiers " + 'like "topic:bioinformatics" or "stars:>100" are supported.'),
+    language: z.string().optional().describe('Optional language filter (e.g., "python").'),
+    limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
+});
+
+export function createSearchGithubReposTool(deps: { githubToken?: string }): Tool<z.infer<typeof SearchGithubReposInputSchema>, SearchGithubReposOutput> {
     return defineTool({
         id: "search_github_repos",
         description:
@@ -86,13 +92,7 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }) {
             "and `success: false` with an `error` string means GitHub could not be " +
             "reached or refused the request (the low unauthenticated rate limit " +
             "lands here). Report either one and continue, do not retry unchanged.",
-        inputSchema: z.object({
-            query: z
-                .string()
-                .describe("GitHub search syntax. Plain text matches anywhere; qualifiers " + 'like "topic:bioinformatics" or "stars:>100" are supported.'),
-            language: z.string().optional().describe('Optional language filter (e.g., "python").'),
-            limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
-        }),
+        inputSchema: SearchGithubReposInputSchema,
         describeCall: "none",
         execute: async ({ query, language, limit }): Promise<Result<SearchGithubReposOutput, ToolError>> => {
             const q = language ? `${query} language:${language}` : query;

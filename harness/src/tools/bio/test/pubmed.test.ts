@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createPubMedTool } from "../pubmed.js";
 import { presentAt, presentFind } from "../../../lib/present.js";
@@ -26,7 +27,7 @@ const tool = createPubMedTool({});
 function stubNcbi(responder: (url: URL) => Response): URL[] {
     const seen: URL[] = [];
     globalThis.fetch = fetchDouble((url) => {
-        const parsed = new URL(String(url));
+        const parsed = new URL(requestUrlText(url));
         seen.push(parsed);
         return Promise.resolve(responder(parsed));
     });

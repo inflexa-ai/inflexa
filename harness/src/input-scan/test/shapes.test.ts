@@ -73,7 +73,7 @@ describe("observeShapes", () => {
     it("collapses files sharing no name structure into one aggregate", () => {
         const words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"];
         const files = Array.from({ length: 3000 }, (_, i) =>
-            file(`data/inputs/misc/${words[i % words.length]}-${i}-${words[(i * 7) % words.length]}-${i * 13}.dat`, { format: "unknown" }),
+            file(`data/inputs/misc/${String(words[i % words.length])}-${i}-${String(words[(i * 7) % words.length])}-${i * 13}.dat`, { format: "unknown" }),
         );
 
         const observed = observeShapes(files);

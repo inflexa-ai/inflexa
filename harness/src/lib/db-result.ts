@@ -22,13 +22,15 @@
  * (a throw becomes an `is_error` tool_result via dispatch).
  */
 
+import { z } from "zod";
+
 import { ResultAsync, err, ok } from "neverthrow";
 import type { Pool, PoolClient, QueryConfig, QueryResultRow } from "pg";
 
 import type { DomainError } from "./result.js";
 
 /** A query/mutation/connection accepted by the data-access layer. */
-type Querier = Pool | PoolClient;
+export type Querier = Pool | PoolClient;
 
 /**
  * What a transaction body reads of the client `withTransaction` opens: one
@@ -36,6 +38,7 @@ type Querier = Pool | PoolClient;
  * does a test double that answers `query` alone.
  */
 export type TransactionQuerier = {
+    // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- R is caller-bound: each call names its row shape (query<{...}>(...)); the default only types the unbound calls.
     query<R extends QueryResultRow = Record<string, unknown>>(
         queryTextOrConfig: string | QueryConfig,
         values?: unknown[],
@@ -91,20 +94,19 @@ const CONSTRAINT_SQLSTATE: Record<string, string> = {
     "23514": "check",
 };
 
+const SqlstateCauseSchema = z.object({ code: z.string() });
+
 function sqlstate(cause: unknown): string | undefined {
-    if (cause && typeof cause === "object" && "code" in cause) {
-        return typeof cause.code === "string" ? cause.code : undefined;
-    }
-    return undefined;
+    const parsed = SqlstateCauseSchema.safeParse(cause);
+    return parsed.success ? parsed.data.code : undefined;
 }
 
 /** pg surfaces the tripped constraint's name on `.constraint`. */
+const ConstraintCauseSchema = z.object({ constraint: z.string().min(1) });
+
 function constraintName(cause: unknown): string {
-    if (cause && typeof cause === "object" && "constraint" in cause) {
-        const name = cause.constraint;
-        if (typeof name === "string" && name.length > 0) return name;
-    }
-    return "unknown";
+    const parsed = ConstraintCauseSchema.safeParse(cause);
+    return parsed.success ? parsed.data.constraint : "unknown";
 }
 
 /** A read throw → `connection_failed` for a connection SQLSTATE, else `query_failed`. */
@@ -251,5 +253,3 @@ export function withTransaction<T>(pool: Connectable, op: string, fn: (client: T
         })(),
     );
 }
-
-export type { Querier };

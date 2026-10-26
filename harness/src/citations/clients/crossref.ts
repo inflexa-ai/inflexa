@@ -5,21 +5,19 @@ import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common
 import { firstSegmentOf } from "../../lib/text.js";
 import { requestJson, type SourceHttpOptions, type SourceHttpResult } from "../../literature/sources/http.js";
 
-const CrossrefItemSchema = z
-    .object({
-        DOI: z.string().optional(),
-        URL: z.string().optional(),
-        title: z.array(z.string()).optional(),
-        author: z.array(z.object({ given: z.string().optional(), family: z.string().optional(), name: z.string().optional() }).passthrough()).optional(),
-        issued: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
-        published: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
-        "container-title": z.array(z.string()).optional(),
-        volume: z.string().optional(),
-        page: z.string().optional(),
-    })
-    .passthrough();
+const CrossrefItemSchema = z.looseObject({
+    DOI: z.string().optional(),
+    URL: z.string().optional(),
+    title: z.array(z.string()).optional(),
+    author: z.array(z.looseObject({ given: z.string().optional(), family: z.string().optional(), name: z.string().optional() })).optional(),
+    issued: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
+    published: z.object({ "date-parts": z.array(z.array(z.number())).optional() }).optional(),
+    "container-title": z.array(z.string()).optional(),
+    volume: z.string().optional(),
+    page: z.string().optional(),
+});
 const ExactSchema = z.object({ message: CrossrefItemSchema });
-const SearchSchema = z.object({ message: z.object({ items: z.array(CrossrefItemSchema) }).passthrough() });
+const SearchSchema = z.object({ message: z.looseObject({ items: z.array(CrossrefItemSchema) }) });
 
 export type CrossrefClientOptions = SourceHttpOptions & {
     readonly mailto?: string;
@@ -35,7 +33,7 @@ function crossrefRecord(item: z.infer<typeof CrossrefItemSchema>, index: number)
     const venue = firstNonEmpty(item["container-title"] ?? []);
     const authors = item.author
         ?.map((author) => firstNonEmpty([author.name, [author.given, author.family].filter(Boolean).join(" ")]))
-        .filter((author): author is string => author !== undefined);
+        .filter((author) => author !== undefined);
     const dateParts = item.issued?.["date-parts"]?.[0] ?? item.published?.["date-parts"]?.[0];
     return {
         source: "crossref",

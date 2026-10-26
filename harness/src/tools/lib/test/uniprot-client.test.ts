@@ -71,7 +71,7 @@ describe("the UniProtKB oracle", () => {
                         z.string(),
                         z.object({
                             required: z.array(z.string()).optional(),
-                            properties: z.record(z.string(), z.unknown()).optional(),
+                            properties: z.record(z.string(), z.json()).optional(),
                         }),
                     ),
                 }),

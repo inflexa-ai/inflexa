@@ -16,7 +16,7 @@ import { buildViabilityCalls, derivedViability, parsePhenotypeResponse } from ".
 import { presentAt } from "../../../lib/present.js";
 
 const SolrEnvelopeSchema = z.object({
-    response: z.object({ numFound: z.number().optional(), docs: z.array(z.record(z.string(), z.unknown())) }),
+    response: z.object({ numFound: z.number().optional(), docs: z.array(z.record(z.string(), z.json())) }),
 });
 
 describe("IMPC golden fixtures", () => {

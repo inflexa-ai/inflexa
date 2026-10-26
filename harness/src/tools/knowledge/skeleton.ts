@@ -29,6 +29,7 @@
  * vetted default, and the agent can state another value with its reason.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import type { GroundingSetting } from "../../schemas/workflow-state.js";
 import type { RecommendWithEnvironment, StepEnvironment } from "./environment.js";
 
@@ -134,7 +135,7 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
 function settingValue(value: unknown): GroundingSetting["value"] {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
     if (Array.isArray(value)) return value.map(String);
-    return String(value);
+    return textOf(value);
 }
 
 /** The settings of the steps of a group: one entry per parameter, with the step it belongs to. */
@@ -152,13 +153,13 @@ function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
 /** The forbidden method ids of a step. The client schema reads the field through the loose object. */
 function forbidsOf(step: ProcedureStep): readonly string[] {
     const forbids = step.forbids;
-    return Array.isArray(forbids) ? forbids.filter((method): method is string => typeof method === "string") : [];
+    return Array.isArray(forbids) ? forbids.flatMap((method) => (typeof method === "string" ? [method] : [])) : [];
 }
 
 /** `a and b`, or `a, b and c` for a longer list. */
 function joinWithAnd(items: readonly string[]): string {
     if (items.length <= 1) return items.join("");
-    return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+    return `${items.slice(0, -1).join(", ")} and ${String(items[items.length - 1])}`;
 }
 
 /**
@@ -208,12 +209,12 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
     const kept = GROUPS.filter((group) => group.steps.some((step) => present.has(step)));
     const keptIds = new Set(kept.map((group) => group.id));
     return kept.map((group) => {
-        const steps = group.steps.map((step) => byStep.get(step)).filter((step): step is ProcedureStep => step !== undefined);
+        const steps = group.steps.map((step) => byStep.get(step)).filter((step) => step !== undefined);
         const central = steps.find((step) => step.step === "differential_expression") ?? steps.find((step) => step.method !== undefined) ?? steps[0];
         const flags = steps.flatMap((step) => step.flags ?? []);
         const hardFlag = flags.find((flag) => flag.severity === "flag");
         const claims = [...new Set(steps.flatMap((step) => step.rules))];
-        const packages = [...new Set(steps.map((step) => step.package?.name).filter((name): name is string => name !== undefined))];
+        const packages = [...new Set(steps.map((step) => step.package?.name).flatMap((name) => (name !== undefined ? [name] : [])))];
         const caveats = [...flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message), ...steps.flatMap(stepCaveats)];
         const method = central?.method;
         // A rule covers the group when a step of the group carries one. A method
@@ -250,7 +251,7 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
                     : method
                       ? `${method.label} per ${claims[0] ?? "the procedure"}`
                       : covered
-                        ? `${group.name} per ${claims[0]}`
+                        ? `${group.name} per ${String(claims[0])}`
                         : "no rule covers this step",
             },
         };

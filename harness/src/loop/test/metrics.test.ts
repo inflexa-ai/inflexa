@@ -104,7 +104,7 @@ describe("runAgent metrics", () => {
         if (iterations === undefined) throw new Error("the iterations metric is absent");
         expect(iterations.dataPoints).toHaveLength(1);
         const histogram = iterations.dataPoints[0]?.value;
-        if (histogram === undefined || typeof histogram !== "object" || !("count" in histogram) || !("sum" in histogram)) {
+        if (histogram === undefined || typeof histogram === "number" || !("count" in histogram) || !("sum" in histogram)) {
             throw new Error("the iterations metric exported no histogram value");
         }
         expect(histogram.count).toBe(1);
@@ -144,7 +144,7 @@ describe("runAgent metrics", () => {
         expect(iterations).toBeDefined();
         if (iterations === undefined) throw new Error("the iterations metric is absent");
         const histogram = iterations.dataPoints[0]?.value;
-        if (histogram === undefined || typeof histogram !== "object" || !("sum" in histogram))
+        if (histogram === undefined || typeof histogram === "number" || !("sum" in histogram))
             throw new Error("the iterations metric exported no histogram value");
         expect(histogram.sum).toBe(2);
     });

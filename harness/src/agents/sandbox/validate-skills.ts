@@ -6,6 +6,8 @@
  * in agent meta before the first analysis runs.
  */
 
+import { errorMessageOf } from "../../lib/thrown.js";
+import { textOf } from "../../lib/unknown-text.js";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,7 +28,7 @@ export function validateAgentSkills(skillsDir: string, catalog: Readonly<Record<
             throw new Error(`SKILLS_DIR "${skillsDir}" is not a directory`);
         }
     } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = errorMessageOf(err) ?? textOf(err);
         throw new Error(
             `SKILLS_DIR "${skillsDir}" is not accessible: ${msg}. ` + `Set SKILLS_DIR to a directory containing skill subfolders (one SKILL.md each).`,
             { cause: err },

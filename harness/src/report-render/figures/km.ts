@@ -412,7 +412,7 @@ function medianOf(curve: KmCurve): number | undefined {
  * to the time axis at the median of each curve that crosses 0.5. No curve that crosses gives no series.
  */
 function medianSeries(curves: readonly KmCurve[]): EchartOption | undefined {
-    const medians = curves.map(medianOf).filter((median): median is number => median !== undefined);
+    const medians = curves.map(medianOf).filter((median) => median !== undefined);
     if (medians.length === 0) return undefined;
     const latest = Math.max(...medians);
     const lines = [

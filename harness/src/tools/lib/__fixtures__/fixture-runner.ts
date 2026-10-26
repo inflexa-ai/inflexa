@@ -67,7 +67,7 @@ export function fixtureCase<S extends z.ZodType>(testCase: FixtureCase<S>): Eras
 
 /** Read one fixture file of a provider directory and parse it as JSON. */
 export function readFixture(provider: string, file: string): unknown {
-    return parseJsonAs(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"), z.unknown());
+    return parseJsonAs(readFileSync(join(FIXTURES_DIR, provider, file), "utf8"), z.json());
 }
 
 /** Register the accept, map, and reject assertions for each row of a fixture table. */
@@ -82,7 +82,7 @@ export function runFixtureSuite(suiteName: string, cases: readonly ErasedFixture
                     expect(parsed.success ? [] : describeIssues(parsed.error)).toEqual([]);
                 });
 
-                const assertOutput = testCase.assertOutput;
+                const assertOutput = testCase.assertOutput?.bind(testCase);
                 if (assertOutput) {
                     it("maps the positive fixture to the expected output", () => {
                         assertOutput(testCase.schema.parse(readFixture(testCase.provider, testCase.fixture)));

@@ -25,6 +25,7 @@
 import { z } from "zod";
 
 import { isUnknownArray } from "../../lib/unknown-array.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { apiFetchValidated, describeApiError, zWireNumber, type ApiError } from "./api-utils.js";
 import { EPA_CCTE_BASE } from "./toxcast-config.js";
@@ -55,11 +56,11 @@ export const CtxChemicalSearchRowSchema = z.object({
 function isNoMatchProblemDetail(error: ApiError): boolean {
     if (error.type !== "http_status" || error.status !== 400) return false;
     try {
-        const body = parseJsonAs(error.body, z.unknown());
+        const body = parseUnknownRecord(parseJsonAs(error.body, z.json()));
         // `suggestions` separates the no-match answer from a generic 400
         // `ProblemDetail`, which carries `title` and `detail` alone. Without it,
         // a malformed request reads as a clean no-match.
-        return typeof body === "object" && body !== null && "detail" in body && "title" in body && "suggestions" in body;
+        return body !== undefined && "detail" in body && "title" in body && "suggestions" in body;
     } catch {
         return false;
     }
@@ -114,7 +115,7 @@ const ToxcastMc5ParamSchema = z.object({
 });
 
 const ToxcastMc6ParamSchema = z.object({
-    flag: z.unknown().optional(),
+    flag: z.json().optional(),
 });
 type ToxcastMc6Param = z.infer<typeof ToxcastMc6ParamSchema>;
 
@@ -140,10 +141,6 @@ const ToxcastAssayAnnotationSchema = z.object({
  * and an equality against 1 counts almost nothing.
  */
 const ACTIVE_HIT_CALL = 0.9;
-
-function isString(value: unknown): value is string {
-    return typeof value === "string";
-}
 
 function isActive(row: ToxcastBioactivityRow): boolean {
     return (row.hitc ?? 0) >= ACTIVE_HIT_CALL;
@@ -179,7 +176,7 @@ export async function fetchToxcastBioactivity(
     const results = page.map((r) => {
         const aeid = r.aeid ?? 0;
         const mc6: ToxcastMc6Param = r.mc6Param ?? {};
-        const flags = isUnknownArray(mc6.flag) ? mc6.flag.filter(isString) : [];
+        const flags = isUnknownArray(mc6.flag) ? mc6.flag.flatMap((flag) => (typeof flag === "string" ? [flag] : [])) : [];
 
         return {
             aeid,
@@ -206,9 +203,9 @@ function extractAc50(r: ToxcastBioactivityRow): number {
 
 function extractAc50Raw(r: ToxcastBioactivityRow): number | null {
     const mc5 = r.mc5Param;
-    if (mc5 && typeof mc5 === "object") {
-        if (typeof mc5.ac50 === "number") return mc5.ac50;
-        if (typeof mc5.acc === "number") return mc5.acc;
+    if (mc5 !== null && mc5 !== undefined) {
+        if (mc5.ac50 !== undefined) return mc5.ac50;
+        if (mc5.acc !== undefined) return mc5.acc;
     }
     return null;
 }
@@ -225,7 +222,7 @@ function extractAc50Raw(r: ToxcastBioactivityRow): number | null {
  */
 async function fetchAssayNames(rows: readonly ToxcastBioactivityRow[], headers: Record<string, string>): Promise<Map<number, string>> {
     const map = new Map<number, string>();
-    const aeids = [...new Set(rows.map((r) => r.aeid).filter((aeid): aeid is number => aeid != null))];
+    const aeids = [...new Set(rows.map((r) => r.aeid).filter((aeid) => aeid != null))];
     if (aeids.length === 0) return map;
 
     const url = `${EPA_CCTE_BASE}/bioactivity/assay/search/by-aeid/`;

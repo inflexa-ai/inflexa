@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { errorOf } from "../../../lib/thrown.js";
+import { textOf } from "../../../lib/unknown-text.js";
 import { okAsync } from "neverthrow";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -116,9 +118,10 @@ describe("createReadFileTool", () => {
         try {
             await awaitOk(tool.execute({ path: "data/inputs/cold.csv" }, ctx));
         } catch (e) {
-            if (!(e instanceof Error)) throw new Error(`expected an Error, got ${String(e)}`, { cause: e });
+            const thrown = errorOf(e);
+            if (thrown === undefined) throw new Error(`expected an Error, got ${textOf(e)}`, { cause: e });
             threw = true;
-            expect(e.message).toContain("upstream 502");
+            expect(thrown.message).toContain("upstream 502");
         }
         expect(threw).toBe(true);
     });

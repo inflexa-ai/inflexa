@@ -72,7 +72,7 @@ export const CortexRunRowSchema = z.object({
     // synthesis never recorded an outcome.
     synthesisStatus: SynthesisStatus.nullable(),
     synthesisReason: z.string().nullable(),
-    parts: z.array(z.any()).nullable(),
+    parts: z.array(z.json()).nullable(),
     mandateJti: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     mandateExpiresAt: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     planId: z.string().nullable(),
@@ -124,7 +124,7 @@ export type StepExecutionRow = z.infer<typeof StepExecutionRowSchema>;
 export const CortexPlanRowSchema = z.object({
     planId: z.string(),
     analysisId: z.string(),
-    plan: z.record(z.string(), z.unknown()),
+    plan: z.record(z.string(), z.json()),
     parentPlanId: z.string().nullable(),
     createdAt: z.string(),
 });

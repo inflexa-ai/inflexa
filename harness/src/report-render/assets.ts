@@ -65,7 +65,7 @@ export function tableSidecarName(hash: string, path: string): string {
 
 /** Each character outside the letters and digits leaves the text. */
 function keepAlphanumeric(text: string): string {
-    return [...text].filter(isNameChar).join("");
+    return Array.from(text).filter(isNameChar).join("");
 }
 
 /** Each run of characters outside `[a-zA-Z0-9._-]` becomes one dash. */

@@ -235,7 +235,7 @@ function makeAuthorizer(): FakeAuthorizer {
     const revoked: string[] = [];
     const authorizer: RunAuthorizer = {
         authorize(input) {
-            frames.push(`${input.frame.runId}/${input.frame.stepId}/${input.provenance.agentId}`);
+            frames.push(`${input.frame.runId}/${String(input.frame.stepId)}/${input.provenance.agentId}`);
             return local.authorize(input);
         },
         revoke(_authorization, reason) {
@@ -418,7 +418,7 @@ describe("the derived table", () => {
         // Each declared input rides as the path that the container reads, with the hash of the membership.
         const inputEnv = body.env?.[DERIVE_INPUT_ENV];
         if (inputEnv === undefined) throw new Error("the derive input env is absent");
-        expect(parseJsonAs(inputEnv, z.unknown())).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
+        expect(parseJsonAs(inputEnv, z.json())).toEqual([{ path: `/${DEFAULT_ANALYSIS_ID}/${PINNED_PATH}`, hash: PINNED_HASH }]);
         // The output path rides too, thus the script names no directory of its own.
         expect(body.env?.[DERIVE_OUTPUT_ENV]).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived/yield.csv`);
     });
@@ -774,7 +774,7 @@ describe("buildDerivationExec", () => {
         expect(body.timeoutSeconds).toBe(300);
         const inputEnv = body.env?.[DERIVE_INPUT_ENV];
         if (inputEnv === undefined) throw new Error("the derive input env is absent");
-        expect(parseJsonAs(inputEnv, z.unknown())).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
+        expect(parseJsonAs(inputEnv, z.json())).toEqual([{ path: "/an-1/data/x.csv", hash: "sha256:h1" }]);
         expect(body.env?.[DERIVE_OUTPUT_ENV]).toBe("/an-1/report-sessions/t1/derived/y.csv");
     });
 });

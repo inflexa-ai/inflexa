@@ -131,8 +131,9 @@ const UniprotResponseSchema = z.object({
         .optional(),
 });
 type UniprotResponse = z.infer<typeof UniprotResponseSchema>;
+type UniprotDoc = NonNullable<UniprotResponse["results"]>[number];
 
-async function fetchHgncBy(field: string, value: string) {
+async function fetchHgncBy(field: string, value: string): Promise<HgncDoc | null> {
     const url = `${HGNC_BASE}/${field}/${encodeURIComponent(value)}`;
     const res = await apiFetchValidated(url, HgncResponseSchema, { headers: HGNC_HEADERS });
     if (res.isErr()) return null;
@@ -140,14 +141,14 @@ async function fetchHgncBy(field: string, value: string) {
     return docs[0] ?? null;
 }
 
-async function fetchUniprotByAccession(accession: string) {
+async function fetchUniprotByAccession(accession: string): Promise<UniprotDoc | null> {
     const url = `${UNIPROT_BASE}?query=accession:${encodeURIComponent(accession)}&format=json&size=1`;
     const res = await apiFetchValidated(url, UniprotResponseSchema, { headers: UNIPROT_HEADERS });
     if (res.isErr()) return null;
     return res.value.results?.[0] ?? null;
 }
 
-async function fetchUniprotBySymbol(symbol: string) {
+async function fetchUniprotBySymbol(symbol: string): Promise<UniprotDoc | null> {
     const query = `gene_exact:${symbol} AND organism_id:9606 AND reviewed:true`;
     const url = `${UNIPROT_BASE}?query=${encodeURIComponent(query)}&format=json&size=1`;
     const res = await apiFetchValidated(url, UniprotResponseSchema, { headers: UNIPROT_HEADERS });
@@ -288,8 +289,8 @@ export async function resolveTarget(input: string, logger?: Logger): Promise<Res
     }
 
     const synonyms = new Set<string>();
-    for (const s of hgncDoc?.alias_symbol ?? []) synonyms.add(String(s));
-    for (const s of hgncDoc?.prev_symbol ?? []) synonyms.add(String(s));
+    for (const s of hgncDoc?.alias_symbol ?? []) synonyms.add(s);
+    for (const s of hgncDoc?.prev_symbol ?? []) synonyms.add(s);
     for (const g of uniprotDoc?.genes ?? []) {
         for (const syn of g.synonyms ?? []) {
             if (syn.value) synonyms.add(syn.value);
@@ -359,7 +360,7 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
     if (!trimmed) return null;
     const upper = trimmed.toUpperCase();
 
-    async function lookupHgnc() {
+    async function lookupHgnc(): Promise<HgncDoc | null> {
         return (
             (await fetchHgncBy("symbol", upper).catch(() => null)) ??
             (await fetchHgncBy("alias_symbol", upper).catch(() => null)) ??
@@ -384,7 +385,7 @@ export async function searchTargetByName(symbol: string): Promise<AutocompleteCa
     // landing in the synonyms list.
     const seenLower = new Set<string>([resolvedSymbol.toLowerCase()]);
     const synonyms: string[] = [];
-    const addSynonym = (raw: string | undefined | null) => {
+    const addSynonym = (raw: string | undefined | null): void => {
         if (!raw) return;
         const key = raw.toLowerCase();
         if (seenLower.has(key)) return;

@@ -43,7 +43,7 @@ function readSeam(contents: Record<string, Buffer>): { fs: WorkspaceFilesystem; 
         readBytes({ path, length }: { path: string; length: number }) {
             reads.push({ path, length });
             const bytes = contents[path];
-            return okAsync<ReadBytesResult, never>(bytes ? { kind: "ok", bytes: bytes.subarray(0, length) } : { kind: "not_found" });
+            return okAsync<ReadBytesResult>(bytes ? { kind: "ok", bytes: bytes.subarray(0, length) } : { kind: "not_found" });
         },
         stat: () => okAsync<StatResult>({ kind: "not_found" }),
         list: () => okAsync<ListResult>({ kind: "not_found" }),

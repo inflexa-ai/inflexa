@@ -19,6 +19,7 @@ import { okAsync } from "neverthrow";
 
 import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
 import { presentFirst } from "../../lib/present.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { RunSynthesis } from "../../schemas/run-synthesis.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
@@ -241,7 +242,7 @@ describe("synthesizeRun", () => {
             // The produced path does not warn.
             expect(h.logs.some((r) => r.level === "warn")).toBe(false);
             // The final run-synthesis chat part was emitted.
-            expect(emitted.some((e) => typeof e === "object" && e !== null && "type" in e && e.type === "data-run-synthesis")).toBe(true);
+            expect(emitted.some((e) => parseUnknownRecord(e)?.type === "data-run-synthesis")).toBe(true);
             // synthesis.json was written under the run directory.
             const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);

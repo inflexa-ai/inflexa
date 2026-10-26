@@ -56,6 +56,7 @@ import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup
 import { silentLogger } from "../../../../__tests__/setup/logger.js";
 import { captureMetrics } from "../../../../__tests__/setup/metrics.js";
 import { recordRunCompleted, recordStepCompleted } from "../../../../lib/metrics.js";
+import { errorOf } from "../../../../lib/thrown.js";
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine (see "Registration window" above).
@@ -449,9 +450,10 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
 
         // The sync's own failure does not displace the registration rejection.
         const err = status?.error;
-        if (err !== undefined && !(err instanceof Error)) throw new Error("the sync failure is not an Error");
-        expect(err?.message).toContain(REGISTRATION_REJECTION);
-        expect(err?.message).not.toContain(SYNC_UNREACHABLE);
+        const syncError = err === undefined ? undefined : errorOf(err);
+        if (err !== undefined && syncError === undefined) throw new Error("the sync failure is not an Error");
+        expect(syncError?.message).toContain(REGISTRATION_REJECTION);
+        expect(syncError?.message).not.toContain(SYNC_UNREACHABLE);
 
         // The sync attempt is a bare await, so it takes no DBOS function id: the
         // block's checkpoint sequence is what it would be without it.

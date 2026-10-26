@@ -1,6 +1,7 @@
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the refusal names the thread and the redacted_thinking part in that order
 const THREAD_REDACTED_REFUSAL = /thread-1\/5.*redacted_thinking/;
 
+import { textOf } from "../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 
@@ -140,9 +141,8 @@ describe("backfillAiSdkMessageEnvelopes", () => {
 
         await backfillAiSdkMessageEnvelopes(fake);
         expect(fake.updates).toHaveLength(1);
-        expect(parseJsonAs(String(presentAt(fake.updates, 0)[0]), z.unknown())).toEqual(
-            envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
-        );
+        const parsed: unknown = parseJsonAs(textOf(presentAt(fake.updates, 0)[0]), z.json());
+        expect(parsed).toEqual(envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }));
 
         fake.legacyRows = [];
         await backfillAiSdkMessageEnvelopes(fake);

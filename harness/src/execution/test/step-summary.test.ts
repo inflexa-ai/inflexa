@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
+import { errorOf } from "../../lib/thrown.js";
 import { errAsync, ok, okAsync } from "neverthrow";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { z } from "zod";
@@ -43,8 +44,9 @@ function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provide
             // iterations, so snapshot it at call time before it's appended to.
             calls.push({ req: { ...req, messages: [...req.messages] } });
             const r = responses[i++];
-            if (r instanceof Error) return errAsync(toProviderError(r, "test"));
-            if (!r) throw new Error(`scripted provider exhausted at call ${i}`);
+            const scripted = errorOf(r);
+            if (scripted !== undefined) return errAsync(toProviderError(scripted, "test"));
+            if (!r || !("finishReason" in r)) throw new Error(`scripted provider exhausted at call ${i}`);
             return okAsync(r);
         },
         chatStream() {
@@ -125,7 +127,7 @@ function options(provider: ChatProvider, over: Partial<GenerateStepSummaryOption
 }
 
 function toolResults(request: ChatRequest): ToolResultPart[] {
-    return request.messages.flatMap((m) => (m.role === "tool" ? m.content : [])).filter((part): part is ToolResultPart => part.type === "tool-result");
+    return request.messages.flatMap((m) => (m.role === "tool" ? m.content : [])).flatMap((part) => (part.type === "tool-result" ? [part] : []));
 }
 
 describe("generateStepSummary", () => {

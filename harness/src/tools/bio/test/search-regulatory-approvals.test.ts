@@ -1,6 +1,7 @@
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the refusal that names the code and then the credit state, in that order
 const PAYMENT_REFUSAL = /PAYMENT_REQUIRED.*No credits left/;
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
@@ -42,10 +43,10 @@ function stubFetch(routes: Array<[string, (request: SeenRequest) => Response]>):
     const seen: SeenRequest[] = [];
     globalThis.fetch = fetchDouble((input, init) => {
         const request: SeenRequest = {
-            url: new URL(String(input)),
+            url: new URL(requestUrlText(input)),
             method: init?.method ?? "GET",
             authorization: new Headers(init?.headers).get("authorization"),
-            body: typeof init?.body === "string" ? parseJsonAs(init.body, z.unknown()) : undefined,
+            body: typeof init?.body === "string" ? parseJsonAs(init.body, z.json()) : undefined,
         };
         seen.push(request);
         for (const [needle, make] of routes) {
@@ -93,7 +94,7 @@ describe("search_regulatory_approvals — the key", () => {
 
 describe("search_regulatory_approvals — action 'search'", () => {
     it("keeps 5 matched sections of a record, grouped by document, with the true count", async () => {
-        const base = z.object({ data: z.array(z.record(z.string(), z.unknown())) }).parse(readFixture("amass", "regulatory-search.json")).data[0];
+        const base = z.object({ data: z.array(z.record(z.string(), z.json())) }).parse(readFixture("amass", "regulatory-search.json")).data[0];
         if (base === undefined) throw new Error("base is absent");
         const label = { docType: "FDA_LABEL", textType: "Label", sourceUrl: "https://example.test/label.pdf", sourceDate: "2026-07-15" };
         const sections = Array.from({ length: 16 }, (_, i) => ({
@@ -200,7 +201,7 @@ describe("search_regulatory_approvals — action 'details'", () => {
     });
 
     it("gives not_found for an in-band lookup miss, with no get request", async () => {
-        const lookup = z.object({ data: z.array(z.looseObject({ error: z.unknown().optional() })) }).parse(readFixture("amass", "regulatory-lookup.json"));
+        const lookup = z.object({ data: z.array(z.looseObject({ error: z.json().optional() })) }).parse(readFixture("amass", "regulatory-lookup.json"));
         const seen = stubFetch([["/records/lookup", () => json({ data: lookup.data.filter((item) => item.error !== undefined) })]]);
 
         const result = (await run({ action: "details", emaProductNumber: "EMEA/H/C/999999" }))._unsafeUnwrap();

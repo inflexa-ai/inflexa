@@ -108,7 +108,7 @@ export function validatePlanDag<S extends PlanStep>(steps: readonly S[]): Map<st
  * Iterative DFS cycle detection — Kahn-style would also work, but DFS lets
  * us surface the participating step ids directly when a cycle is found.
  */
-function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
+function detectCycle(steps: readonly PlanStep[]): void {
     const VISITING = 1;
     const DONE = 2;
     const state = new Map<string, number>();
@@ -166,15 +166,15 @@ function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
  * not fit never blocks a later, smaller one. Determinism holds because every
  * input derives from the workflow input and checkpointed completion state.
  */
-export function scheduleReady<S extends PlanStep>(steps: readonly S[], completedSet: ReadonlySet<string>, startedSet?: ReadonlySet<string>): string[];
-export function scheduleReady<S extends PlanStep>(
-    steps: readonly S[],
+export function scheduleReady(steps: readonly PlanStep[], completedSet: ReadonlySet<string>, startedSet?: ReadonlySet<string>): string[];
+export function scheduleReady(
+    steps: readonly PlanStep[],
     completedSet: ReadonlySet<string>,
     startedSet: ReadonlySet<string>,
     admission: BudgetAdmission,
 ): ScheduledSteps;
-export function scheduleReady<S extends PlanStep>(
-    steps: readonly S[],
+export function scheduleReady(
+    steps: readonly PlanStep[],
     completedSet: ReadonlySet<string>,
     startedSet: ReadonlySet<string> = new Set(),
     admission?: BudgetAdmission,
@@ -230,7 +230,7 @@ export function scheduleReady<S extends PlanStep>(
  * Pre-condition: `validatePlanDag` has been called (no cycles, no missing
  * deps). Behaviour is undefined on an invalid DAG.
  */
-export function computeTopologicalLevels<S extends PlanStep>(steps: readonly S[]): Map<string, number> {
+export function computeTopologicalLevels(steps: readonly PlanStep[]): Map<string, number> {
     const stepById = new Map(steps.map((s) => [s.id, s] as const));
     const levels = new Map<string, number>();
 

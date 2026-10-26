@@ -110,6 +110,7 @@ describe("CitationResolver batch orchestration", () => {
                         }),
                     );
                 } catch (err) {
+                    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the rejection reason is the thrown value itself; the awaiter reads its identity, and a wrapper would erase it.
                     return Promise.reject(err);
                 }
             },
@@ -193,7 +194,10 @@ describe("CitationResolver batch orchestration", () => {
         const clients = clientSet(async (source, request, signal) => {
             if (source !== "doi_registry") return noData(source, request);
             await new Promise<void>((_resolve, reject) => {
-                signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                signal?.addEventListener("abort", () => {
+                    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the abort reason rides as-is; the awaiter classifies the abort by its name.
+                    reject(signal.reason);
+                });
             });
             return noData(source, request);
         });

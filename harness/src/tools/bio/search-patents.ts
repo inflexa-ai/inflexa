@@ -12,7 +12,7 @@ import { err, ok, type Result } from "neverthrow";
 import { presentFirst } from "../../lib/present.js";
 import { z } from "zod";
 
-import { defineTool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import {
     describeAmassError,
     getPatentRecord,
@@ -30,7 +30,7 @@ const MAX_LIMIT = 20;
 
 const IDENTIFIER_FIELDS = ["amassId", "publicationNumber", "applicationNumber"] as const;
 
-function dateField(description: string) {
+function dateField(description: string): z.ZodOptional<z.ZodString> {
     return z.string().refine(isIsoDate).optional().describe(`'search' only. ${description}, YYYY-MM-DD.`);
 }
 
@@ -93,7 +93,7 @@ function failure(e: AmassError): Result<never, ToolError> {
     throw new Error(describeAmassError(e));
 }
 
-export function createSearchPatentsTool(deps: { apiKey: string }) {
+export function createSearchPatentsTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, PatentsOutput> {
     return defineTool({
         id: "search_patents",
         description:

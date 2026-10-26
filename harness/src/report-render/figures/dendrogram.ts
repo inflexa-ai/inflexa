@@ -79,8 +79,8 @@ export function checkTree(blockId: string, axis: "x" | "y", tree: FigureTree, ca
 
     const roots = [...childrenOf.keys()].filter((node) => !parentOf.has(node));
     const root = roots[0];
-    if (root === undefined) return fault(`holds a cycle through the node "${edges[0]?.parent}".`);
-    if (roots.length > 1) return fault(`holds more than one root, for example "${roots[0]}" and "${roots[1]}". A tree holds one root.`);
+    if (root === undefined) return fault(`holds a cycle through the node "${String(edges[0]?.parent)}".`);
+    if (roots.length > 1) return fault(`holds more than one root, for example "${String(roots[0])}" and "${String(roots[1])}". A tree holds one root.`);
 
     // Each child has one parent and the root has none, thus a walk from the root meets each node one time. A
     // node that the walk never meets sits on a cycle apart from the root.

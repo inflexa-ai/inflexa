@@ -361,9 +361,9 @@ export function describeSlot(rawValues: readonly string[], location: SlotLocatio
 export function slotToken(slot: DraftSlot): string {
     switch (slot.tokenClass) {
         case "digits-fixed":
-            return `<digits:${slot.width}>`;
+            return `<digits:${String(slot.width)}>`;
         case "pattern":
-            return `<pattern:${slot.skeleton}>`;
+            return `<pattern:${String(slot.skeleton)}>`;
         default:
             return `<${slot.tokenClass}>`;
     }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { textOf } from "../../lib/unknown-text.js";
 import * as echarts from "echarts";
 
 import type { ChartBlock, ChartType } from "../../contracts/report-blocks.js";
@@ -160,7 +161,7 @@ describe("the toolbox of a page chart", () => {
         const toolbox = chartToolbox("bar");
         expect(Object.keys(features(toolbox))).toEqual(["dataView", "myExport"]);
         expect(features(toolbox).myExport).toMatchObject({ show: true, onclick: EXPORT_MENU_FUNCTION });
-        expect(String(features(toolbox).myExport?.icon).startsWith("path://")).toBe(true);
+        expect(textOf(features(toolbox).myExport?.icon).startsWith("path://")).toBe(true);
         expect(features(toolbox).dataView).toMatchObject({ readOnly: true, optionToContent: DATA_VIEW_FUNCTION });
         expect(toolbox).toMatchObject({ show: true, top: 0 });
         expect(toolbox.right).toBeTypeOf("number");

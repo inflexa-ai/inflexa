@@ -9,6 +9,8 @@ const HEIGHT_DECL = /(?:^|;)\s*height\s*:\s*([^;]+)/g;
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a nonzero length value with a css unit, which the chart box needs
 const NONZERO_LENGTH = /^[1-9][\d.]*(?:px|rem|em|vh|%)$/;
 
+import { textOf } from "../../lib/unknown-text.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock, ChartComposition, ChartTransform } from "../../contracts/report-blocks.js";
@@ -88,7 +90,10 @@ function asArr(value: unknown): unknown[] {
  * whose value is the pair. Every other item is the pair itself.
  */
 function pairsOf(data: unknown): unknown[] {
-    return asArr(data).map((item) => (typeof item === "object" && item !== null && !Array.isArray(item) ? asObj(item).value : item));
+    return asArr(data).map((item) => {
+        const record = parseUnknownRecord(item);
+        return record !== undefined ? record.value : item;
+    });
 }
 
 /** Derive an option and unwrap the ok value, or fail the test on a refusal. */
@@ -615,7 +620,7 @@ describe("the axis name placement", () => {
             const derived = derive(chartBlock(entry.chartType, entry.encoding, { labels: entry.labels }), entry.rows).xAxis;
             // A box of a thin category adds the hidden slot axis after its category axis.
             const xAxis = asObj(Array.isArray(derived) ? derived[0] : derived);
-            const column = String(entry.encoding.x);
+            const column = textOf(entry.encoding.x);
             expect(xAxis.name).toBe(entry.labels?.[column] ?? column);
             // The ECharts default `nameLocation` of `"end"` puts the name at the right end of the axis, past
             // the right grid margin that the shared normalizer sets. The panel then clips the name. The
@@ -1285,7 +1290,8 @@ describe("the point labels across a series split", () => {
         const names: string[] = [];
         for (const entry of asArr(option.series)) {
             for (const point of asArr(asObj(entry).data)) {
-                if (typeof point === "object" && point !== null && "label" in point) names.push(String(asObj(point).name));
+                const record = parseUnknownRecord(point);
+                if (record !== undefined && "label" in record) names.push(textOf(record.name));
             }
         }
         return names;
@@ -1961,7 +1967,7 @@ describe("a dense category axis", () => {
         expect(axes.length).toBe(2);
         for (const axis of axes) {
             const label = asObj(axis.axisLabel);
-            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(String(grids[optionNumber(axis.gridIndex)]?.width))) / 100;
+            const panelPx = (CHART_PAGE_WIDTH_PX * Number.parseFloat(textOf(grids[optionNumber(axis.gridIndex)]?.width))) / 100;
             expect(label.rotate).toBe(90);
             expect(printedLabels(200, label)).toBeLessThanOrEqual(Math.floor(panelPx / (CHART_PAGE_TEXT_PX * LINE_SHARE)));
         }

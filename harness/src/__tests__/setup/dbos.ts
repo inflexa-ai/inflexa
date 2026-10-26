@@ -116,14 +116,14 @@ function poolConnectionEnv(pool: Pool): {
 } {
     const cfg = pool.options;
     if (cfg.connectionString) {
-        return parseConnectionStringToEnv(String(cfg.connectionString));
+        return parseConnectionStringToEnv(cfg.connectionString);
     }
     return {
-        host: String(cfg.host ?? "127.0.0.1"),
+        host: cfg.host ?? "127.0.0.1",
         port: String(cfg.port ?? "5432"),
-        user: String(cfg.user ?? "cortex"),
+        user: cfg.user ?? "cortex",
         password: String(cfg.password ?? "cortex"),
-        database: String(cfg.database ?? "cortex"),
+        database: cfg.database ?? "cortex",
     };
 }
 
@@ -170,7 +170,7 @@ async function ensureDbosLaunched(basePool: Pool): Promise<void> {
 
         if (!shared.shutdownRegistered) {
             shared.shutdownRegistered = true;
-            const shutdown = () => {
+            const shutdown = (): void => {
                 // Fire-and-forget — exit handlers can't await.
                 void shutdownDbos({ logger: silentLogger });
             };
@@ -193,7 +193,7 @@ export async function setupDbosForTests(testName: string): Promise<DbosTestRig> 
     const { pool, schemaName, drop } = await withSchema(testName);
 
     let dropped = false;
-    const safeDrop = async () => {
+    const safeDrop = async (): Promise<void> => {
         if (dropped) return;
         dropped = true;
         await drop();

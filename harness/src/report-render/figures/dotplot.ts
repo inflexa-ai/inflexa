@@ -15,6 +15,7 @@
  * and the page builds no such move, thus the rows stay inline whatever their count.
  */
 
+import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel, type ChartComposition } from "../../contracts/report-blocks.js";
@@ -190,7 +191,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         return {
             ...fields,
             data: (isUnknownArray(fields.data) ? fields.data : []).flatMap((item) => {
-                const place = places.get(String(itemValue(item)?.[1]));
+                const place = places.get(textOf(itemValue(item)?.[1]));
                 return place === undefined ? [] : [placedItem(item, place)];
             }),
         };

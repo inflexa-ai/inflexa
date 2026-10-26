@@ -145,7 +145,7 @@ export function parseArxivAtom(xml: string): ArxivPaper[] {
         const idMatch = afterMarker(rawId, "abs/");
         const authors = allMatches(entry, "author")
             .map((author) => firstMatch(author, "name"))
-            .filter((name): name is string => name !== undefined)
+            .filter((name) => name !== undefined)
             .map(collapseWhitespace);
         const htmlUrl = linkAttribute(entry, (attributes) => attributes.includes('rel="alternate"') && attributes.includes('type="text/html"'));
         const pdfUrl = linkAttribute(entry, (attributes) => attributes.includes('title="pdf"'));

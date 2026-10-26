@@ -271,7 +271,7 @@ function applyFindingOp(findings: Findings, op: FindingOp): Result<Findings, Wor
             const next = { ...findings };
             // An emptied run bucket is dropped whole: memory references a run only
             // for as long as it holds a finding from it.
-            if (kept.length === 0) delete next[runId];
+            if (kept.length === 0) Reflect.deleteProperty(next, runId);
             else next[runId] = kept;
             return ok(next);
         }
@@ -433,7 +433,7 @@ export function createWorkingMemory(pool: Querier & Connectable): WorkingMemoryS
                     // storage failure. The transaction commits having written nothing, and the
                     // rejection is lifted back into the error channel below.
                     amended.isErr()
-                        ? okAsync<Result<void, WorkingMemoryRejection>, DbError>(err(amended.error))
+                        ? okAsync<Result<undefined, WorkingMemoryRejection>, DbError>(err(amended.error))
                         : tryMutation("working-memory.updateSection.upsert", () =>
                               client.query(
                                   `INSERT INTO cortex_working_memory (analysis_id, data, updated_at)
@@ -442,7 +442,7 @@ export function createWorkingMemory(pool: Querier & Connectable): WorkingMemoryS
                DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
                                   [analysisId, JSON.stringify(amended.value)],
                               ),
-                          ).map(() => ok<void, WorkingMemoryRejection>(undefined)),
+                          ).map(() => ok<undefined, WorkingMemoryRejection>(undefined)),
                 ),
         ).andThen((written) => written);
     }

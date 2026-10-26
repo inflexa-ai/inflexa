@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { CtSearchResponseSchema, CtStudySchema, getTrialDetails, mapClinicalTrialStudy, searchTrials } from "../clinical-trials-client.js";
 import { presentAt } from "../../../lib/present.js";
@@ -20,7 +21,7 @@ afterEach(() => {
 /** Answer every request with the given payload, and record each URL. */
 function stubFetch(body: unknown): void {
     globalThis.fetch = fetchDouble((input) => {
-        requested.push(String(input));
+        requested.push(requestUrlText(input));
         return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
     });
 }

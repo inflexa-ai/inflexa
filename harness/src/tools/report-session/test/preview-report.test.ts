@@ -1180,8 +1180,8 @@ describe("the session refusal", () => {
 describe("the result detail", () => {
     /** Run the tool's result hook, asserting that the tool declares one. */
     function detailOf(tool: ReturnType<typeof createPreviewReportTool>, result: PreviewReportResult): string | undefined {
-        expect(tool.describeResult).toBeDefined();
-        const describeResult = tool.describeResult;
+        expect(tool.describeResult?.bind(tool)).toBeDefined();
+        const describeResult = tool.describeResult?.bind(tool);
         if (describeResult === undefined) throw new Error("the tool declares no result detail");
         return describeResult({}, result);
     }
@@ -1593,7 +1593,7 @@ describe("the provenance export", () => {
         const afterSecond = await stagedProvenance(root);
         expect(afterSecond).toHaveLength(1);
         expect(afterSecond[0]).not.toBe(afterFirst[0]);
-        expect(await readFile(join(root, "report-sessions", "t1", "index.html"), "utf8")).toContain(`assets/${afterSecond[0]}`);
+        expect(await readFile(join(root, "report-sessions", "t1", "index.html"), "utf8")).toContain(`assets/${String(afterSecond[0])}`);
     });
 
     it("logs a throw of the source, and the page lands with no provenance asset", async () => {

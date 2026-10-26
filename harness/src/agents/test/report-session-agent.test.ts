@@ -250,7 +250,7 @@ describe("createReportSessionAgent", () => {
         // A clustered heatmap carries its dendrograms, thus the edge table of each clustered axis binds as a tree.
         expect(paragraph).toContain("binds as the tree of that axis");
         // The paragraph names the mechanism and no dataset, and it states no count.
-        expect([...paragraph].some((char) => char >= "0" && char <= "9")).toBe(false);
+        expect(Array.from(paragraph).some((char) => char >= "0" && char <= "9")).toBe(false);
     });
 
     test("the prompt teaches the headline derivation", () => {

@@ -115,6 +115,7 @@ export function renderChart(
     const stem = kebabFilename(block.title ?? block.id);
     const hybrid = card.svg === undefined && holdsPointLayer(option);
     return String(
+        // oxlint-disable-next-line typescript/no-base-to-string -- hono JSXNode.toString() renders these sync element trees to HTML; the rule sees only its declared `string | Promise<string>` return.
         <div class="report-chart" {...blockMark(block.id)} {...lineageStamp(view.lineage, block.id, references)}>
             <div class="report-chart-title">
                 {block.title}
@@ -137,7 +138,7 @@ export function renderChart(
                 <div id={chartMenuId(containerId)} class="report-chart-menu" role="menu" aria-label={MENU_LABEL}>
                     {SVG_EXPORTS.map((kind) => {
                         const size = exportSizeFor(CHART_EXPORT_SIZES[kind], card.bodyPx);
-                        const file = `${stem}-${size.widthMm}mm.svg`;
+                        const file = `${stem}-${String(size.widthMm)}mm.svg`;
                         const label = `SVG · ${size.label}`;
                         if (card.svg !== undefined) {
                             return (

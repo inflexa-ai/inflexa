@@ -5,6 +5,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
+import { requestUrlText } from "../../../lib/test/request-url.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createDrugGeneInteractionsTool } from "../drug-gene-interactions.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
@@ -16,7 +17,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: (url: string) => Response): void {
-    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(String(input))));
+    globalThis.fetch = fetchDouble((input) => Promise.resolve(response(requestUrlText(input))));
 }
 
 function json(body: unknown, status = 200): Response {
@@ -124,7 +125,7 @@ describe("drugGeneInteractions — DGIdb corpus", () => {
         const result = (await tool.execute({ query: ["EGFR", "NOTAGENE"], direction: "gene_to_drugs" }, ctx))._unsafeUnwrap();
 
         expect(result.dgidb).toHaveLength(2);
-        expect(result.dgidb?.every((r) => r.found === false)).toBe(true);
+        expect(result.dgidb?.every((r) => !r.found)).toBe(true);
     });
 
     it("applies the minSources filter", async () => {

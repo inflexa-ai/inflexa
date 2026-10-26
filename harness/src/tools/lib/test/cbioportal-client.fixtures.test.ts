@@ -6,7 +6,7 @@ import { RawCancerStudySchema, RawMutationRowSchema } from "../cbioportal-client
 import { presentAt } from "../../../lib/present.js";
 
 const OpenApiOracleSchema = z.object({
-    definitions: z.record(z.string(), z.object({ properties: z.record(z.string(), z.unknown()) })),
+    definitions: z.record(z.string(), z.object({ properties: z.record(z.string(), z.json()) })),
 });
 
 /** The named definition of the oracle document, failing the test when absent. */
@@ -63,7 +63,7 @@ runFixtureSuite("cBioPortal golden fixtures", [
 
 describe("the cBioPortal oracle and the wire", () => {
     it("shows no mutationCount on any observed mutation row", () => {
-        const rows = z.array(z.record(z.string(), z.unknown())).parse(readFixture("cbioportal", "mutations-fetch-SUMMARY.json"));
+        const rows = z.array(z.record(z.string(), z.json())).parse(readFixture("cbioportal", "mutations-fetch-SUMMARY.json"));
         for (const row of rows) expect("mutationCount" in row).toBe(false);
     });
 
@@ -74,7 +74,7 @@ describe("the cBioPortal oracle and the wire", () => {
         const oracle = oracleDefinition("TypeOfCancer");
         expect(Object.keys(oracle.properties)).toContain("cancerTypeId");
 
-        const detailed = z.array(z.object({ cancerType: z.record(z.string(), z.unknown()) })).parse(readFixture("cbioportal", "studies-DETAILED.json"));
+        const detailed = z.array(z.object({ cancerType: z.record(z.string(), z.json()) })).parse(readFixture("cbioportal", "studies-DETAILED.json"));
         expect(Object.keys(presentAt(detailed, 0).cancerType)).toContain("id");
         expect(Object.keys(presentAt(detailed, 0).cancerType)).not.toContain("cancerTypeId");
     });

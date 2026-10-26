@@ -61,8 +61,8 @@ import { defineTool, type Tool, type ToolContext, type ToolError } from "../defi
  * The grammar is the authoring one, thus no artifact reference of the published schema carries a hash. The
  * pinned snapshot owns that value, and the land path stamps it from the path.
  *
- * The `z.unknown()` member keeps the runtime parse permissive. Thus a malformed payload still reaches the
- * core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
+ * The `z.unknown()` member keeps the runtime parse permissive. Thus a malformed payload still reaches
+ * the core, which parses it with the draft grammar and refuses `malformed-block` as typed data in the ok
  * channel. A strict input schema would turn that designed refusal into a hard input-validation error from
  * the loop. A payload that carries a hash rides the same arm, and the stamp drops the value before the
  * parse.
@@ -438,7 +438,7 @@ function decodeBlockPayload(block: unknown): unknown {
         return block;
     }
     try {
-        return parseJsonAs(block, z.unknown());
+        return parseJsonAs(block, z.json());
     } catch {
         return block;
     }

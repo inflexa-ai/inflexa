@@ -3,6 +3,8 @@
  * zero, and the symmetric effect axis.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../../contracts/report-blocks.js";
@@ -56,14 +58,14 @@ function firstTwo(option: EchartOption): [EchartOption, EchartOption] {
 }
 
 function names(series: EchartOption): string[] {
-    return optionArray(series, "data").map((item) => String(item.name));
+    return optionArray(series, "data").map((item) => textOf(item.name));
 }
 
 /** The item style of one series, with its members narrowed. */
 function styleOf(series: EchartOption): Record<string, unknown> {
-    const style = series.itemStyle;
-    if (typeof style !== "object" || style === null || Array.isArray(style)) throw new Error("the series holds no item style");
-    return { ...style };
+    const style = parseUnknownRecord(series.itemStyle);
+    if (style === undefined) throw new Error("the series holds no item style");
+    return style;
 }
 
 describe("the MA figure", () => {

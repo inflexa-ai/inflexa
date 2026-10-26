@@ -9,6 +9,8 @@
  * The export renumbers each token in order of first appearance, and two renders give one byte sequence.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { createHash } from "node:crypto";
 
 import type * as Echarts from "echarts";
@@ -84,7 +86,7 @@ export function rendererApi(api: Echarts.CustomSeriesRenderItemAPI): RenderApi {
         value: (dimension) => Number(api.value(dimension)),
         coord: (point) => pixelPair(api.coord(point)),
         size: (delta) => pixelPair(api.size?.(delta) ?? []),
-        visual: (name) => String(api.visual(name)),
+        visual: (name) => textOf(api.visual(name)),
     };
 }
 
@@ -113,7 +115,7 @@ export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size
         chart.setOption(exportOption(option, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx));
         return ok(finishedSvg(chart.renderToSVGString(), size));
     } catch (cause) {
-        return err(cause instanceof Error ? cause.message : String(cause));
+        return err(errorMessageOf(cause) ?? textOf(cause));
     } finally {
         Math.random = random;
         chart?.dispose();
@@ -218,7 +220,7 @@ function polygonCoordinates(item: unknown): number {
 /** One SVG asset: the content-addressed name, with the column in millimeters, and the text. */
 function svgAsset(bytes: string, size: ChartExportSize): DataAsset {
     const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
-    return { name: `c-${hash}-${size.widthMm}mm.svg`, bytes };
+    return { name: `c-${hash}-${String(size.widthMm)}mm.svg`, bytes };
 }
 
 /**

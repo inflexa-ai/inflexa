@@ -48,14 +48,14 @@ const ORGAN_SYSTEM_MAP: Record<string, string> = {
 };
 
 // A single IMPC Solr document — fields vary by core; all optional. `top_level_mp_term_name`
-// and `sex` are `z.unknown()` because the code reads them defensively (`Array.isArray`,
+// and `sex` ride as JSON values: the code reads them defensively (`Array.isArray`,
 // `typeof === "string"`) rather than trusting a wire type.
 const ImpcSolrDocSchema = z.object({
     mp_term_id: z.string().optional(),
     mp_term_name: z.string().optional(),
     p_value: z.number().optional(),
-    top_level_mp_term_name: z.unknown().optional(),
-    sex: z.unknown().optional(),
+    top_level_mp_term_name: z.json().optional(),
+    sex: z.json().optional(),
     parameter_stable_id: z.string().optional(),
     parameter_name: z.string().optional(),
     marker_symbol: z.string().optional(),
@@ -222,8 +222,8 @@ async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol
     const doc = docs[0];
     if (doc === undefined || !doc.marker_symbol || !doc.mgi_accession_id) return null;
     return {
-        mouseMarkerSymbol: String(doc.marker_symbol),
-        mgiAccessionId: String(doc.mgi_accession_id),
+        mouseMarkerSymbol: doc.marker_symbol,
+        mgiAccessionId: doc.mgi_accession_id,
     };
 }
 
@@ -235,7 +235,7 @@ async function fetchPhenotypes(mouseSym: string): Promise<{ raw: unknown; numFou
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { raw: { response: { docs: [] } }, numFound: 0 };
     }
-    const numFound = Number(res.value.response?.numFound ?? 0);
+    const numFound = res.value.response?.numFound ?? 0;
     return { raw: res.value, numFound };
 }
 

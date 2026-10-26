@@ -3,6 +3,7 @@
  * percent text, and the unaltered samples. The rows are an excerpt of the TCGA LAML table of the gallery.
  */
 
+import { textOf } from "../../../lib/unknown-text.js";
 import { describe, expect, it } from "bun:test";
 import { isHexColor } from "../../../lib/test/text-shapes.js";
 
@@ -264,7 +265,7 @@ describe("the height of an oncoprint of many genes", () => {
         const render = deriveChartRender(oncoprint(encoding), rows, undefined, { key: "onco", columns: [] })._unsafeUnwrap();
         const matrix = optionArray(render.option, "grid")[0];
         if (matrix === undefined) throw new Error("the oncoprint holds no grid");
-        const share = 100 - Number.parseFloat(String(matrix.top)) - Number.parseFloat(String(matrix.bottom));
+        const share = 100 - Number.parseFloat(textOf(matrix.top)) - Number.parseFloat(textOf(matrix.bottom));
         return (render.bodyPx * share) / 100 / 20;
     }
 

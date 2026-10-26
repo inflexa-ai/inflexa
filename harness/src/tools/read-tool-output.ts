@@ -3,6 +3,8 @@
  * Each result stays under the cap of the loop, thus the loop never cuts a result of this tool.
  */
 
+import { errorMessageOf } from "../lib/thrown.js";
+import { textOf } from "../lib/unknown-text.js";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -85,7 +87,7 @@ function search(ref: string, text: string, start: number, limit: number | undefi
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caller-supplied search pattern is the tool's input; the dynamic form is the feature, and an invalid pattern is the handled error below.
         regex = new RegExp(pattern, "g");
     } catch (err) {
-        return { status: "invalid_pattern", pattern, error: err instanceof Error ? err.message : String(err) };
+        return { status: "invalid_pattern", pattern, error: errorMessageOf(err) ?? textOf(err) };
     }
 
     const stop = limit === undefined ? text.length : windowEnd(text, start, limit);

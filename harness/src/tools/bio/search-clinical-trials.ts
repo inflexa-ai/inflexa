@@ -94,15 +94,7 @@ export const searchClinicalTrialsTool = defineTool({
             path: ["nctId"],
         }),
     describeCall: "none",
-    execute: async ({
-        action = "search",
-        query,
-        nctId,
-        phase,
-        status,
-        limit = 10,
-        includeSummaries = false,
-    }): Promise<Result<ClinicalTrialsOutput, ToolError>> => {
+    execute: async ({ action, query, nctId, phase, status, limit, includeSummaries }): Promise<Result<ClinicalTrialsOutput, ToolError>> => {
         if (action === "details") {
             if (nctId === undefined) throw new Error("details requires nctId");
             return ok({ trial: await getTrialDetails(nctId) });
