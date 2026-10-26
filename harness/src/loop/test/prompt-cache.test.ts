@@ -2,12 +2,13 @@
  * Prompt caching through the agent loop: the directive the loop attaches to
  * every request, and the token accounting that comes back.
  *
- * These assert on *state* — the `ChatRequest` values the provider actually
- * received, and the metric values actually exported — never on call counts.
+ * These assert on *state* — the requests the model actually received, and the
+ * metric values actually exported — never on call counts.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import type { LanguageModelV4CallOptions, LanguageModelV4Prompt } from "@ai-sdk/provider";
 import { generateText } from "ai";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
@@ -20,12 +21,12 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../../providers/ai-sdk.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../../providers/prompt-cache.js";
-import type { ModelMessage, PromptCachePolicy } from "../../providers/types.js";
+import { DEFAULT_REASONING } from "../../providers/reasoning.js";
+import type { ChatUsage, ModelMessage, PromptCachePolicy, ProviderOptions } from "../../providers/types.js";
 import { defineTool } from "../../tools/define-tool.js";
-import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "../__fixtures__/scripted-provider.js";
+import { reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptedPart, type ScriptedReply } from "../../testing.js";
 import { __resetMetricsForTest } from "../metrics.js";
-import { runAgent, type RunAgentOptions } from "../run-agent.js";
-import { passthroughStep } from "../run-step.js";
+import { runLoop, type LoopOptions } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
 
 const ANTHROPIC_5M = { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } };
@@ -50,19 +51,29 @@ function agentDef(maxIterations = 8): AgentDefinition {
 
 const GO = [{ role: "user" as const, content: "go" }];
 
-function opts(provider: RunAgentOptions["provider"], overrides: Partial<RunAgentOptions> = {}): RunAgentOptions {
+function opts(provider: LoopOptions["provider"], overrides: Partial<LoopOptions> = {}): LoopOptions {
     return {
         provider,
         signal: new AbortController().signal,
         emit: () => {},
-        runStep: passthroughStep,
         ...overrides,
     };
 }
 
-/** A script that calls a tool in each reply, thus the loop runs both wrap-up requests. */
-function neverTerminating(): ScriptedProvider {
-    return scriptedProvider(() => makeMessage([toolUseBlock("t", "echo", {})], "tool_use"));
+/** A script of `requests` replies that each call a tool, thus a run with that cap never ends on its own. */
+function neverTerminating(requests: number, usage?: ChatUsage): ScriptedModel {
+    return scriptedModel(Array.from({ length: requests }, (_, i) => reply([toolCall(`t${i}`, "echo", {})], "tool-calls", usage)));
+}
+
+/** The system message of a request. */
+function systemOf(call: LanguageModelV4CallOptions): LanguageModelV4Prompt[number] | undefined {
+    return call.prompt[0];
+}
+
+/** The messages of a request after its system message. */
+function messagesOf(call: LanguageModelV4CallOptions): LanguageModelV4Prompt {
+    expect(call.prompt[0]?.role).toBe("system");
+    return call.prompt.slice(1);
 }
 
 describe("promptCacheProviderOptions", () => {
@@ -98,7 +109,7 @@ describe("promptCacheProviderOptions", () => {
 // non-retryable 400 that wedges a whole thread.
 
 /** Every message index carrying a cache marker. */
-function breakpointsOf(messages: readonly ModelMessage[]): number[] {
+function breakpointsOf(messages: readonly { readonly providerOptions?: ProviderOptions }[]): number[] {
     return messages.flatMap((m, i) => (m.providerOptions?.["anthropic"]?.["cacheControl"] === undefined ? [] : [i]));
 }
 
@@ -227,38 +238,30 @@ describe("withSystemPromptBreakpoint", () => {
     });
 });
 
-describe("runAgent prompt-cache directive", () => {
-    it("marks the last message on every iteration, the wrap-up included", async () => {
-        const chat = neverTerminating();
+describe("runLoop prompt-cache directive", () => {
+    it("marks the last message on every iteration", async () => {
+        const { provider, calls } = neverTerminating(3);
 
-        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(3), GO, makeSession(), opts(provider));
 
-        // 3 iterations + 2 wrap-up requests.
-        expect(chat.calls).toHaveLength(5);
-        for (const call of chat.calls) {
-            expect(breakpointsOf(call.messages)).toEqual([call.messages.length - 1]);
-            expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
-        }
-
-        // Each wrap-up request carries the tool set of the loop and no tool
-        // choice, thus it keeps the prefix. A mask refuses each call.
-        for (const wrapUp of chat.calls.slice(3)) {
-            expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(presentFirst(chat.calls).tools));
-            expect("toolChoice" in wrapUp).toBe(false);
-            expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
+        expect(calls).toHaveLength(3);
+        for (const call of calls) {
+            const messages = messagesOf(call);
+            expect(breakpointsOf(messages)).toEqual([messages.length - 1]);
+            expect(messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
     });
 
-    it("sends the same marked system message on every call, the wrap-up included", async () => {
-        const chat = neverTerminating();
+    it("sends the same marked system message on every call", async () => {
+        const { provider, calls } = neverTerminating(3);
 
-        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(3), GO, makeSession(), opts(provider));
 
-        // 3 iterations + 2 wrap-up requests. The system prompt depends only on the
-        // agent's type, so one marked message serves the whole run.
-        expect(chat.calls).toHaveLength(5);
-        for (const call of chat.calls) {
-            expect(call.system).toEqual({
+        // The system prompt depends only on the agent's type, so one marked
+        // message serves the whole run.
+        expect(calls).toHaveLength(3);
+        for (const call of calls) {
+            expect(systemOf(call)).toEqual({
                 role: "system",
                 content: "You are a test agent.",
                 providerOptions: { ...ANTHROPIC_5M, bedrock: { cachePoint: { type: "default", ttl: "5m" } } },
@@ -267,93 +270,89 @@ describe("runAgent prompt-cache directive", () => {
     });
 
     it("writes no request-level directive on any call", async () => {
-        const chat = neverTerminating();
+        const { provider, calls } = neverTerminating(3);
 
-        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(3), GO, makeSession(), opts(provider));
 
         // The regression guard. A request-level bag reaches Anthropic as a top-level
         // `cache_control`, which is a breakpoint no intermediary can count —
         // CLIProxyAPI then trims its own markers to four and sends five.
-        for (const call of chat.calls) {
-            expect("providerOptions" in call).toBe(false);
+        for (const call of calls) {
+            expect(call.providerOptions).toBeUndefined();
         }
     });
 
     it("rolls the breakpoint forward as the transcript grows", async () => {
-        const chat = neverTerminating();
+        const { provider, calls } = neverTerminating(3);
 
-        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(3), GO, makeSession(), opts(provider));
 
         // Each iteration appends the assistant reply and its tool results, and the
         // breakpoint advances with them: a pinned one would re-process the whole
         // tool transcript uncached on every iteration.
-        const marked = chat.calls.map((call) => presentFirst(breakpointsOf(call.messages)));
+        const marked = calls.map((call) => presentFirst(breakpointsOf(messagesOf(call))));
         for (let i = 1; i < marked.length; i++) {
             expect(presentAt(marked, i)).toBeGreaterThan(presentAt(marked, i - 1));
         }
     });
 
     it("leaves the transcript it returns unmarked", async () => {
-        const chat = neverTerminating();
+        const { provider } = neverTerminating(3);
 
-        const result = await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+        const result = await runLoop(agentDef(3), GO, makeSession(), opts(provider));
 
         // The host persists this array. A marker in it would be stored and replayed.
         expect(breakpointsOf(result.messages)).toEqual([]);
     });
 
     it("honours an explicit 1h policy from the composition root", async () => {
-        const chat = neverTerminating();
+        const { provider, calls } = neverTerminating(2);
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: { ttl: "1h" } }));
+        await runLoop(agentDef(2), GO, makeSession(), opts(provider, { promptCache: { ttl: "1h" } }));
 
-        for (const call of chat.calls) {
-            expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+        expect(calls).toHaveLength(2);
+        for (const call of calls) {
+            expect(messagesOf(call).at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
         }
     });
 
     it("sends no directive when the host turns caching off", async () => {
-        const chat = neverTerminating();
+        const { provider, calls } = neverTerminating(2);
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" }));
+        await runLoop(agentDef(2), GO, makeSession(), opts(provider, { promptCache: "off" }));
 
-        // 2 iterations + 2 wrap-up requests.
-        expect(chat.calls).toHaveLength(4);
-        // Caching off leaves no marker, no bag, and a plain-string system prompt.
-        // The loop sends no reasoning, so it writes no vendor key either.
-        for (const call of chat.calls) {
-            expect(call.system).toBe("You are a test agent.");
-            expect(breakpointsOf(call.messages)).toEqual([]);
-            expect("providerOptions" in call).toBe(false);
-            expect("reasoning" in call).toBe(false);
+        expect(calls).toHaveLength(2);
+        // Caching off leaves no marker, no bag, and an unmarked system prompt.
+        for (const call of calls) {
+            expect(systemOf(call)).toEqual({ role: "system", content: "You are a test agent." });
+            expect(breakpointsOf(messagesOf(call))).toEqual([]);
+            expect(call.providerOptions).toBeUndefined();
         }
     });
 });
 
-describe("runAgent reasoning directive", () => {
-    it("sends no reasoning on any call when the caller gives none, and writes no vendor key", async () => {
-        const chat = neverTerminating();
+describe("runLoop reasoning directive", () => {
+    it("sends the configured effort of the provider on each call when the caller gives none, and writes no vendor key", async () => {
+        const { provider, calls } = neverTerminating(3);
 
-        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(3), GO, makeSession(), opts(provider));
 
-        // 3 iterations + 2 wrap-up requests. The provider applies its configured
-        // effort when a request sets none, so the loop omits the field.
-        expect(chat.calls).toHaveLength(5);
-        for (const call of chat.calls) {
-            expect("reasoning" in call).toBe(false);
+        // The provider applies its configured effort when the run sets none.
+        expect(calls).toHaveLength(3);
+        for (const call of calls) {
+            expect(call.reasoning).toBe(DEFAULT_REASONING);
             // A provider option would bypass the per-model table, so the request carries none.
-            expect("providerOptions" in call).toBe(false);
+            expect(call.providerOptions).toBeUndefined();
         }
     });
 
-    it("sends an explicit depth from the composition root on each call, the wrap-up included", async () => {
-        const chat = neverTerminating();
+    it("sends an explicit depth from the composition root on each call", async () => {
+        const { provider, calls } = neverTerminating(2);
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat, { reasoning: "low" }));
+        await runLoop(agentDef(2), GO, makeSession(), opts(provider, { reasoning: "low" }));
 
-        // 2 iterations + 2 wrap-up requests.
-        expect(chat.calls).toHaveLength(4);
-        for (const call of chat.calls) {
+        expect(calls).toHaveLength(2);
+        for (const call of calls) {
             expect(call.reasoning).toBe("low");
         }
     });
@@ -367,9 +366,12 @@ const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
 const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
 const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
 
-const SERVED = { servedModelId: "claude-opus-5-5", provider: "anthropic.messages" } as const;
+/** A reply that names the model that served it. The scripted model reports the provider `scripted`. */
+function served(content: readonly ScriptedPart[], finishReason: ScriptedReply["finishReason"], usage: ChatUsage): ScriptedReply {
+    return { ...reply(content, finishReason, usage), modelId: "claude-opus-5-5" };
+}
 
-describe("runAgent cache-token metrics", () => {
+describe("runLoop cache-token metrics", () => {
     let exporter: InMemoryMetricExporter;
     let provider: MeterProvider;
 
@@ -407,65 +409,52 @@ describe("runAgent cache-token metrics", () => {
     }
 
     it("sums usage across every iteration of a run and reports it per agent, model, and provider", async () => {
-        const chat = scriptedProvider([
-            {
-                ...makeMessage([toolUseBlock("t0", "echo", {})], "tool_use", {
-                    inputTokens: 1000,
-                    outputTokens: 20,
-                    cacheCreationInputTokens: 900,
-                    cacheReadInputTokens: 0,
-                }),
-                ...SERVED,
-            },
-            {
-                ...makeMessage([toolUseBlock("t1", "echo", {})], "tool_use", {
-                    inputTokens: 1100,
-                    outputTokens: 30,
-                    cacheCreationInputTokens: 100,
-                    cacheReadInputTokens: 900,
-                }),
-                ...SERVED,
-            },
-            {
-                ...makeMessage([textBlock("done")], "end_turn", {
-                    inputTokens: 1200,
-                    outputTokens: 40,
-                    cacheCreationInputTokens: 0,
-                    cacheReadInputTokens: 1000,
-                }),
-                ...SERVED,
-            },
+        const chat = scriptedModel([
+            served([toolCall("t0", "echo", {})], "tool-calls", {
+                inputTokens: 1000,
+                outputTokens: 20,
+                cacheCreationInputTokens: 900,
+                cacheReadInputTokens: 0,
+            }),
+            served([toolCall("t1", "echo", {})], "tool-calls", {
+                inputTokens: 1100,
+                outputTokens: 30,
+                cacheCreationInputTokens: 100,
+                cacheReadInputTokens: 900,
+            }),
+            served([text("done")], "stop", {
+                inputTokens: 1200,
+                outputTokens: 40,
+                cacheCreationInputTokens: 0,
+                cacheReadInputTokens: 1000,
+            }),
         ]);
 
-        await runAgent(agentDef(8), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(8), GO, makeSession(), opts(chat.provider));
 
-        const labels = { agent_id: "cache-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
+        const labels = { agent_id: "cache-agent", model: "claude-opus-5-5", provider: "scripted" };
         expect(await counterTotal(INPUT_TOKENS_METRIC, labels)).toBe(3300);
         expect(await counterTotal(OUTPUT_TOKENS_METRIC, labels)).toBe(90);
         expect(await counterTotal(CACHE_READ_METRIC, labels)).toBe(1900);
         expect(await counterTotal(CACHE_WRITE_METRIC, labels)).toBe(1000);
     });
 
-    it("counts the tokens of each wrap-up request too", async () => {
+    it("counts the tokens of each request of a capped run", async () => {
         const usage = { inputTokens: 500, outputTokens: 10, cacheCreationInputTokens: 500, cacheReadInputTokens: 0 };
-        const chat = scriptedProvider(() => makeMessage([toolUseBlock("t", "echo", {})], "tool_use", usage));
+        const chat = neverTerminating(2, usage);
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(2), GO, makeSession(), opts(chat.provider));
 
-        // 2 iterations + 2 wrap-up requests = 4 calls, all reporting the same usage.
-        expect(chat.calls).toHaveLength(4);
-        for (const wrapUp of chat.calls.slice(2)) {
-            expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
-            expect("toolChoice" in wrapUp).toBe(false);
-        }
-        expect(await counterTotal(INPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(2000);
-        expect(await counterTotal(CACHE_WRITE_METRIC, { agent_id: "cache-agent" })).toBe(2000);
+        // 2 calls, all reporting the same usage.
+        expect(chat.calls).toHaveLength(2);
+        expect(await counterTotal(INPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(1000);
+        expect(await counterTotal(CACHE_WRITE_METRIC, { agent_id: "cache-agent" })).toBe(1000);
     });
 
     it("records nothing rather than a false zero when the provider reports no usage", async () => {
-        const chat = scriptedProvider([makeMessage([textBlock("done")], "end_turn")]);
+        const chat = scriptedModel([reply([text("done")])]);
 
-        await runAgent(agentDef(8), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(8), GO, makeSession(), opts(chat.provider));
 
         // Absent means "not reported" — the counters must not have been touched.
         expect(await counterTotal(INPUT_TOKENS_METRIC)).toBeUndefined();
@@ -475,26 +464,24 @@ describe("runAgent cache-token metrics", () => {
 
     it("keeps each agent's cache accounting separate", async () => {
         const usage = { inputTokens: 100, outputTokens: 5, cacheReadInputTokens: 80 };
-        const chat = scriptedProvider(() => makeMessage([textBlock("done")], "end_turn", usage));
+        const done = (): ScriptedModel => scriptedModel([reply([text("done")], "stop", usage)]);
 
-        await runAgent({ ...agentDef(4), id: "agent-a" }, GO, makeSession(), opts(chat));
-        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
-        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
+        await runLoop({ ...agentDef(4), id: "agent-a" }, GO, makeSession(), opts(done().provider));
+        await runLoop({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(done().provider));
+        await runLoop({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(done().provider));
 
         expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-a" })).toBe(80);
         expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-b" })).toBe(160);
     });
 
     it("counts the reported reasoning tokens under the provider that reported them", async () => {
-        const chat = scriptedProvider([
-            { ...makeMessage([textBlock("done")], "end_turn", { inputTokens: 100, outputTokens: 90, reasoningTokens: 40 }), ...SERVED },
-        ]);
+        const chat = scriptedModel([served([text("done")], "stop", { inputTokens: 100, outputTokens: 90, reasoningTokens: 40 })]);
 
-        await runAgent(agentDef(4), GO, makeSession(), opts(chat));
+        await runLoop(agentDef(4), GO, makeSession(), opts(chat.provider));
 
         // Providers do not agree on whether the output total includes the
         // reasoning tokens, thus the series of one provider sums one meaning.
-        expect(await counterTotal(REASONING_TOKENS_METRIC, { agent_id: "cache-agent", provider: "anthropic.messages" })).toBe(40);
+        expect(await counterTotal(REASONING_TOKENS_METRIC, { agent_id: "cache-agent", provider: "scripted" })).toBe(40);
         expect(await counterTotal(OUTPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(90);
     });
 });
@@ -545,7 +532,7 @@ describe("prompt caching against an openai-compatible provider", () => {
             },
         });
 
-        const result = await runAgent(agentDef(4), GO, makeSession(), opts(provider));
+        const result = await runLoop(agentDef(4), GO, makeSession(), opts(provider));
 
         // The run completed normally: the foreign `anthropic` namespace was ignored
         // by the provider rather than rejected.
@@ -572,15 +559,15 @@ describe("prompt caching against an openai-compatible provider", () => {
             },
         });
 
-        const reply = (await provider.chat({ system: "s", messages: GO, tools: {} }, makeSession()))._unsafeUnwrap();
+        const { finish } = await runLoop(agentDef(4), GO, makeSession(), opts(provider));
 
-        expect(reply.usage).toMatchObject({
+        expect(finish.usage).toMatchObject({
             inputTokens: 100,
             outputTokens: 7,
             cacheReadInputTokens: 80,
         });
         // That family bills no separate cache write.
-        expect(reply.usage?.cacheCreationInputTokens).toBeUndefined();
+        expect(finish.usage?.cacheCreationInputTokens).toBeUndefined();
     });
 });
 

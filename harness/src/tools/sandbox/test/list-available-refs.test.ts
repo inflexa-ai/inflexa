@@ -65,7 +65,6 @@ describe("list_available_refs", () => {
         const tool = createTool(root);
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(tool.executionMode).not.toBe("workflow");
         expect(result).toMatchObject({ available: true, state: "populated", truncated: false });
         expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
         expect(presentAt(result.entries, 0).metadata).toBeUndefined();

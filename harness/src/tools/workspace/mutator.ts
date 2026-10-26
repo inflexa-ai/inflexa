@@ -26,12 +26,18 @@
  * The landing is hardened beyond the lexical resolver: missing parent
  * directories are created only inside the write prefix, the deepest existing
  * ancestor is realpath-checked against the realpath'd prefix (a symlinked
- * ancestor cannot re-aim the write), and the final open uses `O_NOFOLLOW`
- * (a symlinked final component is refused, never followed).
+ * ancestor cannot re-aim the write), and a symlinked final component is
+ * refused, never followed.
+ *
+ * The landing is atomic: the bytes go to a temporary file in the target's
+ * directory, and a rename puts that file over the target. A reader of the
+ * target sees the old file or the new file whole, never a part of one, and a
+ * process that dies mid-write leaves the target as it was.
  */
 
+import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join as joinPath, relative as relativePath, resolve as resolvePath, sep } from "node:path";
 
 import type { AgentSession } from "../../auth/types.js";
@@ -68,9 +74,11 @@ export type WriteRecord = {
     readonly invocationId: string;
 };
 
+/** A write that lands: the result, and the record of the write for `recordWrite`. */
+export type LandedWrite = { readonly status: "ok"; readonly path: string; readonly bytesWritten: number; readonly record: WriteRecord };
+
 /** `writeFile` gives back the result, and on success the record of the write for `recordWrite`. */
-export type WriteOutcome =
-    { readonly status: "ok"; readonly path: string; readonly bytesWritten: number; readonly record: WriteRecord } | Exclude<WriteFileResult, { status: "ok" }>;
+export type WriteOutcome = LandedWrite | Exclude<WriteFileResult, { status: "ok" }>;
 
 /**
  * Agent-visible name of the tool driving a confined write. Rides the write args
@@ -78,7 +86,9 @@ export type WriteOutcome =
  * (`inflexa:tool` in the signed document) — the seam records the write without
  * inspecting its caller.
  */
-export type MutateToolName = "write_file" | "edit_file" | "knowledge_template" | "execute_command";
+export const MUTATE_TOOL_NAMES = ["write_file", "edit_file", "knowledge_template", "execute_command"] as const;
+
+export type MutateToolName = (typeof MUTATE_TOOL_NAMES)[number];
 
 export type WorkspaceMutatorDeps = {
     /** Absolute host root of this analysis's workspace tree — used by the resolver. */
@@ -109,6 +119,10 @@ export type WorkspaceMutator = {
      * and its provenance attribution from it.
      *
      * Records nothing: a successful write gives back its record for `recordWrite`.
+     *
+     * `beforeLand` runs when the new bytes wait in the temporary file and the
+     * target is still unchanged. It gets the outcome that the write gives back.
+     * A rejection lands nothing, and the write rejects with it.
      */
     writeFile(args: {
         readonly path: string;
@@ -116,6 +130,7 @@ export type WorkspaceMutator = {
         readonly toolName: MutateToolName;
         readonly invocationId: string;
         readonly session: AgentSession;
+        readonly beforeLand?: (write: LandedWrite) => Promise<void>;
     }): Promise<WriteOutcome>;
     /**
      * Record one landed write in provenance. A tool calls it from its call-record
@@ -142,14 +157,20 @@ type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied";
  *      the created directory and refuse when it lands outside the prefix — a
  *      symlink raced into a missing segment between the ancestor check and the
  *      recursive mkdir would re-aim the tail of the path.
- *   4. Refuse a symlinked final component (lstat), then open with
- *      `O_NOFOLLOW` so a symlink raced in after the check still cannot be
- *      followed.
+ *   4. Refuse a symlinked final component (lstat), then stage the bytes in a
+ *      temporary file beside it and rename that file over it. The rename
+ *      replaces a symlink raced in after the check, and never follows it.
  *
  * Refusals are data; a genuine I/O failure throws (the loop's dispatch catch
- * maps it to an error tool result).
+ * maps it to an error tool result). A throw removes the temporary file.
  */
-async function landBytes(prefix: string, absolute: string, bytes: Buffer): Promise<LandingStatus> {
+async function landBytes(
+    prefix: string,
+    absolute: string,
+    bytes: Buffer,
+    stagingKey: string,
+    beforeRename: (() => Promise<void>) | undefined,
+): Promise<LandingStatus> {
     unwrapOrThrow(await tryFsWrite("mutator.mkdirPrefix", () => mkdir(prefix, { recursive: true }), { path: prefix }));
     const realPrefix = unwrapOrThrow(await tryFs("mutator.realpathPrefix", () => realpath(prefix), { path: prefix }));
 
@@ -174,8 +195,8 @@ async function landBytes(prefix: string, absolute: string, bytes: Buffer): Promi
         // a symlink raced into a missing segment after the ancestor check would
         // re-aim the tail. The canonical path of the created directory exposes
         // it; a directory that vanished before the check is hostile too. The
-        // open below uses the canonical path, so the write never traverses the
-        // raced segment again.
+        // staging below uses the canonical path, so the write never traverses
+        // the raced segment again.
         const realTarget = unwrapOrThrow(
             await tryFs<string | null>("mutator.realpathTarget", () => realpath(targetDir), { path: targetDir, onAbsent: () => null }),
         );
@@ -188,19 +209,47 @@ async function landBytes(prefix: string, absolute: string, bytes: Buffer): Promi
     const finalStat = unwrapOrThrow(await tryFs<Stats | null>("mutator.lstatFinal", () => lstat(finalPath), { path: finalPath, onAbsent: () => null }));
     if (finalStat !== null && finalStat.isSymbolicLink()) return "symlink_denied";
 
-    // `O_NOFOLLOW` backstops the lstat refusal: a symlink raced in between the
-    // two calls fails the open (`ELOOP`) instead of being followed.
+    const stagingPath = joinPath(landingDir, stagingNameFor(stagingKey, finalPath));
+    let landed = false;
+    try {
+        await stageBytes(stagingPath, bytes, finalStat?.isFile() === true ? finalStat.mode : undefined);
+        if (beforeRename !== undefined) await beforeRename();
+        unwrapOrThrow(await tryFsWrite("mutator.rename", () => rename(stagingPath, finalPath), { path: finalPath }));
+        landed = true;
+    } finally {
+        if (!landed) await tryFsWrite("mutator.removeStaging", () => unlink(stagingPath), { path: stagingPath }).unwrapOr(undefined);
+    }
+    return "ok";
+}
+
+/**
+ * The name of the temporary file of one write. A rerun of the same call writes
+ * the same name, thus it replaces a file that a dead process left behind.
+ */
+function stagingNameFor(stagingKey: string, finalPath: string): string {
+    return `.${createHash("sha256").update(`${stagingKey}\0${finalPath}`).digest("hex").slice(0, 32)}.tmp`;
+}
+
+/**
+ * Write `bytes` to the temporary file. The file takes the permission bits of
+ * the file that it replaces, thus an edit keeps, for example, the execute bit
+ * of a script.
+ */
+async function stageBytes(stagingPath: string, bytes: Buffer, replacedMode: number | undefined): Promise<void> {
+    // `O_NOFOLLOW` refuses a symlink planted at the staging name (`ELOOP`).
     const handle = unwrapOrThrow(
-        await tryFsWrite("mutator.open", () => open(finalPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW), {
-            path: finalPath,
+        await tryFsWrite("mutator.openStaging", () => open(stagingPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW), {
+            path: stagingPath,
         }),
     );
     try {
-        unwrapOrThrow(await tryFsWrite("mutator.writeBytes", () => handle.writeFile(bytes), { path: finalPath }));
+        unwrapOrThrow(await tryFsWrite("mutator.writeBytes", () => handle.writeFile(bytes), { path: stagingPath }));
+        if (replacedMode !== undefined) {
+            unwrapOrThrow(await tryFsWrite("mutator.chmodStaging", () => handle.chmod(replacedMode & 0o7777), { path: stagingPath }));
+        }
     } finally {
-        unwrapOrThrow(await tryFsWrite("mutator.close", () => handle.close(), { path: finalPath }));
+        unwrapOrThrow(await tryFsWrite("mutator.close", () => handle.close(), { path: stagingPath }));
     }
-    return "ok";
 }
 
 /** One landed confined write: the paths in both frames, and the exact bytes on disk. */
@@ -217,7 +266,8 @@ type ConfinedWriteOk = {
  * The shared write gauntlet both realizations run: resolve + confine
  * (`resolveForWrite`), then the hardened landing. A refusal comes back as data;
  * an ok carries what the caller's provenance record needs — the
- * analysis-relative path and the exact bytes that landed.
+ * analysis-relative path and the exact bytes that landed. `beforeLand` gets
+ * the same ok while the bytes wait in the temporary file.
  */
 async function confinedWrite(args: {
     readonly workspaceRoot: string;
@@ -225,6 +275,8 @@ async function confinedWrite(args: {
     readonly workingDir: string;
     readonly path: string;
     readonly content: string;
+    readonly invocationId: string;
+    readonly beforeLand: ((staged: ConfinedWriteOk) => Promise<void>) | undefined;
 }): Promise<{ readonly status: Exclude<LandingStatus, "ok"> | "out_of_scope" } | ConfinedWriteOk> {
     const scoped = resolveForWrite({
         workspaceRoot: args.workspaceRoot,
@@ -243,37 +295,43 @@ async function confinedWrite(args: {
     const bytes = Buffer.from(args.content, "utf8");
     const prefix = resolvePath(args.workingDir);
 
-    const landed = await landBytes(prefix, scoped.absolute, bytes);
+    const confined: ConfinedWriteOk = { status: "ok", relative, agentPath, bytes };
+    const { beforeLand } = args;
+    const landed = await landBytes(prefix, scoped.absolute, bytes, args.invocationId, beforeLand === undefined ? undefined : () => beforeLand(confined));
     if (landed !== "ok") return { status: landed };
-    return { status: "ok", relative, agentPath, bytes };
+    return confined;
 }
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
     return {
-        async writeFile({ path, content, toolName, invocationId }) {
+        async writeFile({ path, content, toolName, invocationId, beforeLand }) {
+            const landedWrite = (landed: ConfinedWriteOk): LandedWrite => {
+                // `invocationId` is replay-stable: the model turn that minted the tool
+                // call is a durably cached step, so a re-execution replays the same id.
+                // That is what lets the bridge key a DETERMINISTIC call-activity
+                // identifier on it — a wall-clock stamp here would be re-minted per
+                // replay and must never reach an identifier or a formal PROV position.
+                const record: WriteRecord = {
+                    analysisId: deps.analysisId,
+                    path: landed.relative,
+                    hash: computeSha256(landed.bytes),
+                    size: landed.bytes.length,
+                    toolName,
+                    invocationId,
+                };
+                return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
+            };
             const landed = await confinedWrite({
                 workspaceRoot: deps.workspaceRoot,
                 analysisId: deps.analysisId,
                 workingDir: deps.workingDir,
                 path,
                 content,
+                invocationId,
+                beforeLand: beforeLand === undefined ? undefined : (staged) => beforeLand(landedWrite(staged)),
             });
             if (landed.status !== "ok") return { status: landed.status, path };
-
-            // `invocationId` is replay-stable: the model turn that minted the tool
-            // call is a durably cached step, so a re-execution replays the same id.
-            // That is what lets the bridge key a DETERMINISTIC call-activity
-            // identifier on it — a wall-clock stamp here would be re-minted per
-            // replay and must never reach an identifier or a formal PROV position.
-            const record: WriteRecord = {
-                analysisId: deps.analysisId,
-                path: landed.relative,
-                hash: computeSha256(landed.bytes),
-                size: landed.bytes.length,
-                toolName,
-                invocationId,
-            };
-            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
+            return landedWrite(landed);
         },
         recordWrite(record) {
             deps.lineageCollector?.recordFileToolWrite({
@@ -319,8 +377,20 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
     const logger = (deps.logger ?? createNoopLogger()).named("workspace-mutator");
     const observe = bindSessionEmit(deps.provenance, logger);
     return {
-        async writeFile({ path, content, toolName, invocationId, session }) {
+        async writeFile({ path, content, toolName, invocationId, session, beforeLand }) {
             const scope = session.scope;
+            const landedWrite = (landed: ConfinedWriteOk): LandedWrite => {
+                const record: WriteRecord = {
+                    analysisId: scope.analysisId,
+                    path: landed.relative,
+                    hash: computeSha256(landed.bytes),
+                    size: landed.bytes.length,
+                    toolName,
+                    invocationId,
+                };
+                if (scope.threadId !== undefined) record.threadId = scope.threadId;
+                return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
+            };
 
             // Rejects on an unknown analysis — the loop's dispatch catch maps
             // it to an error tool result, like any unexpected host failure.
@@ -331,19 +401,11 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
                 workingDir: workspaceRoot,
                 path,
                 content,
+                invocationId,
+                beforeLand: beforeLand === undefined ? undefined : (staged) => beforeLand(landedWrite(staged)),
             });
             if (landed.status !== "ok") return { status: landed.status, path };
-
-            const record: WriteRecord = {
-                analysisId: scope.analysisId,
-                path: landed.relative,
-                hash: computeSha256(landed.bytes),
-                size: landed.bytes.length,
-                toolName,
-                invocationId,
-            };
-            if (scope.threadId !== undefined) record.threadId = scope.threadId;
-            return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
+            return landedWrite(landed);
         },
         recordWrite(record) {
             const event: Extract<SessionProvenanceEvent, { type: "write-file" }> = {

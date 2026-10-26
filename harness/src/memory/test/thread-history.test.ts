@@ -703,8 +703,8 @@ describe("retractLastTurn", () => {
     });
 
     it("removes a turn containing a loop-synthesized nudge whole, not from the nudge onward", async () => {
-        // The truncated-reply nudge (`run-agent.ts`) carries the `user` role because the wire format
-        // needs one after a cut-off assistant message, and it is persisted with the rest of the turn.
+        // A harness request (`syntheticUserMessage`) carries the `user` role because the wire format
+        // needs one after an assistant message, and it is persisted with the rest of the turn.
         // Taken for user input it would read as this turn's head, and the delete would cut THERE —
         // leaving the opening question and the truncated reply behind as a headless fragment.
         const turn1 = [userText("opening question"), assistantText("opening answer")];

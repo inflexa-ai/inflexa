@@ -1,8 +1,8 @@
 /**
  * The reasoning depth of a call.
  *
- * The effort resolves in order: `ChatRequest.reasoning` (set only through
- * `RunAgentOptions.reasoning`), the provider configuration's `reasoning`, then
+ * The effort resolves in order: the effort of the run (`LoopOptions.reasoning`),
+ * the provider configuration's `reasoning`, then
  * {@link DEFAULT_REASONING}. Anthropic discards its message cache when the
  * top-level effort changes between calls.
  *

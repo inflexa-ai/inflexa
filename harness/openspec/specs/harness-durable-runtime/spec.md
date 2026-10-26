@@ -14,9 +14,10 @@ step row per LLM/tool call) for every turn buys little. Only the operations the
 user has explicitly asked to be durable — analyses, data-profile, and
 ephemeral exploration — run as DBOS workflows, started from
 tools and independent of the chat turn that triggered them. The single
-`runAgent` primitive runs in both contexts: in-process behind a no-op
-`passthroughStep` for chat, and behind a `durableStep` that wraps each call as a
-named `DBOS.runStep` inside a workflow body. The loop body never imports DBOS.
+`runLoop` primitive runs in both contexts. Inside a workflow body,
+`@dbos-inc/vercel-ai` makes each model call a step named `<agentId>.model`, and
+each tool call a step named `<tool>.<toolCallId>`. Outside a workflow, each call
+runs directly.
 
 Composition is centralized. `assembleCoreRuntime` is the one host-neutral
 assembly point: it registers the durable workflows and builds the conversation
@@ -47,8 +48,9 @@ data-profile task) SHALL run as DBOS
 workflows started from tools and SHALL be independent of the chat turn that
 triggered them. Planned and ad hoc analysis modes SHALL both launch
 `executeAnalysis`; there SHALL be no separate turn-scoped computation workflow.
-The same `runAgent` body SHALL serve both modes through an injected `RunStep` —
-`passthroughStep` in chat, `durableStep` inside workflow steps.
+The same `runLoop` body SHALL serve both modes: inside a workflow, each model
+call and each tool call is one checkpointed DBOS step, and in chat each call
+runs directly.
 
 #### Scenario: A tool starts a workflow that outlives the chat turn
 
@@ -508,13 +510,14 @@ The harness MUST throw an exception only at these places:
 - A step or a workflow that must fail.
 - A step that DBOS must retry, because DBOS retries a step only on a throw.
 - The self-cancel of a suspension.
-- A tool `execute` body. The dispatch catch of the loop changes the throw into an error tool result.
+- A tool `execute` body. The tool adapter of the loop changes the throw into an error tool result.
+- A model call that fails after its retries. The retry envelope of the provider throws the classified `ProviderError`, and the loop throws it out of the run.
 
 `unwrapOrThrow` MUST be the one bridge from a `Result` to a throw. A failure that must fail a step MUST cross the
 DBOS boundary as a throw, as the workspace-root-resolution spec also states. Then DBOS records the step as failed.
 
-The harness MUST catch an exception only at a DBOS boundary, an API boundary, a client boundary, or the dispatch
-catch of the loop. A DBOS boundary is a workflow body that gets the throw of a failed step or a failed child workflow.
+The harness MUST catch an exception only at a DBOS boundary, an API boundary, a client boundary, or the tool
+adapter of the loop. A DBOS boundary is a workflow body that gets the throw of a failed step or a failed child workflow.
 Then the body runs its failure path. An API boundary is an entry point
 where a caller outside the harness gets the outcome of a call. A client boundary is a thin wrapper around a call to
 code outside the harness, for example the `pg` driver or a third-party SDK. The wrapper changes the throw into an

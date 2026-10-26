@@ -1,6 +1,6 @@
 /**
  * Per-step interpretive summary. Continues the step agent's conversation
- * (`continueAgent`) so the request reuses the cached prefix and keeps
+ * (`continueLoop`) so the request reuses the cached prefix and keeps
  * signed thinking blocks valid.
  *
  * Contract:
@@ -9,7 +9,7 @@
  *     summary as its final assistant text.
  *   - Returns `{ stepId, agentId, markdown }` on non-empty final text;
  *     `undefined` on empty text, on a throw, or when the request cap is hit
- *     before a final answer (a continuation runs no wrap-up). Non-fatal.
+ *     before a final answer. Non-fatal.
  *   - `Session` is taken explicitly (see the harness-durable-runtime spec).
  *
  * Honest empty: with no output artifacts the request directs the model to
@@ -23,12 +23,10 @@
  */
 
 import type { AgentSession } from "../auth/types.js";
-import { continueAgent, type ContinuationResult } from "../loop/continue-agent.js";
-import { finalText } from "../loop/run-agent.js";
-import { passthroughStep } from "../loop/run-step.js";
+import { continueLoop, finalText, type FollowUpResult } from "../loop/run-loop.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
-import type { AgentChat } from "../providers/types.js";
+import type { ChatProvider } from "../providers/types.js";
 import { stepSummaryPrompt } from "../prompts/execute-analysis/step-summary.js";
 import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js";
 
@@ -65,7 +63,7 @@ export type GenerateStepSummaryOptions = {
     /** The store of the task, thus the loop of the continuation keeps its texts where the read tool of the agent reads them. */
     readonly toolOutputStore?: ToolOutputStore;
     /** The provider of the task, thus each request extends the prefix that the task cached. */
-    readonly provider: AgentChat;
+    readonly provider: ChatProvider;
     readonly session: AgentSession;
     /** The step agent: the continuation sends its system prompt and its declared tools. */
     readonly agent: AgentDefinition;
@@ -82,16 +80,15 @@ export type GenerateStepSummaryOptions = {
 export async function generateStepSummary(opts: GenerateStepSummaryOptions): Promise<StepSummary | undefined> {
     const logger = (opts.logger ?? createNoopLogger()).named("step-summary").with({ runId: opts.runId, stepId: opts.stepId, agentId: opts.agentId });
 
-    let result: ContinuationResult;
+    let result: FollowUpResult;
     try {
-        result = await continueAgent(
+        result = await continueLoop(
             opts.agent,
             opts.conversation,
             {
                 text: summaryRequest(opts.artifactPaths),
                 mask: { allow: SUMMARY_TOOLS },
                 maxRequests: SUMMARY_MAX_REQUESTS,
-                stepNamespace: "step-summary",
                 accountingAgentId: SUMMARY_AGENT_ID,
             },
             opts.session,
@@ -99,7 +96,6 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
                 provider: opts.provider,
                 signal: opts.signal ?? new AbortController().signal,
                 emit: () => {},
-                runStep: passthroughStep,
                 usageRecorder: opts.usageRecorder,
                 toolOutputStore: opts.toolOutputStore,
             },

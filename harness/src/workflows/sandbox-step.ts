@@ -7,10 +7,10 @@
  *
  *  1. `mark-running`        — update `cortex_step_executions` to running.
  *  2. `createSandbox`       — provision the sandbox; persist its handle.
- *  3. `runAgent`            — the harness agent loop. Every LLM and tool
- *                             call inside is its own durableStep.
- *  4. `generateFileMetadata`— the file-metadata continuation of the step agent.
- *  5. `generateStepSummary` — the summary continuation of the step agent,
+ *  3. `runLoop`             — the harness agent loop. Every model call and
+ *                             tool call inside is its own durable step.
+ *  4. `generateFileMetadata`— the file-metadata follow-up request of the step agent.
+ *  5. `generateStepSummary` — the summary follow-up request of the step agent,
  *                             producing `output/summary.md`.
  *  6. `reconcile + register`— write artifact manifest entries to cortex_artifacts.
  *  7. `syncArtifacts`       — register provenance + upload missing file_ids
@@ -43,14 +43,21 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
-import { runAgent } from "../loop/run-agent.js";
-import { durableStep } from "../loop/run-step.js";
-import { maskExcept } from "../loop/tool-mask.js";
+import { maskExcept } from "../loop/call-policy.js";
+import { runLoop, type LoopStep } from "../loop/run-loop.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
-import { activityEmission, activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
+import {
+    activityEmission,
+    activityForTool,
+    applyTreeDelta,
+    isChatDataPart,
+    sandboxTreeDelta,
+    stepPartId,
+    toolActivityKey,
+} from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
-import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
+import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
@@ -74,7 +81,7 @@ import type { ResourceSpec } from "../config/resource-limits.js";
 import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
 import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
-import { createBlockerHolder, recordedBlocker, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
+import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import type { TemplateBinding } from "../tools/knowledge/template.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "./suspension.js";
@@ -255,11 +262,8 @@ export type SandboxAgentBuildContext = {
      * input/script edges). Same instance on both paths.
      */
     readonly lineageCollector: ProvenanceCollector;
-    /**
-     * Per-run blocker cell that `report_blocker` writes. The body prefers the
-     * blocker read from the transcript and falls back to this cell.
-     */
-    readonly blockerHolder: BlockerHolder;
+    /** The step agent declares `report_blocker`, and the body selects the blocker from the recorded calls. */
+    readonly reportsBlocker: true;
     /**
      * Cell for the file-metadata continuation. `submit_file_metadata` is
      * declared up front for prefix stability but masked until then.
@@ -296,8 +300,8 @@ export type SandboxStepDeps = {
     readonly toolOutputStore?: ToolOutputStore;
     /** Shared resolver threaded from `assembleCoreRuntime`. */
     readonly citationResolver: CitationResolver;
-    /** Non-streaming chat — drives the agent loop + the post-step continuations. */
-    readonly provider: AgentChat;
+    /** Drives the agent loop and the post-step follow-up requests. */
+    readonly provider: ChatProvider;
     /** Write-side embedder for the post-step vector index. */
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
@@ -319,7 +323,7 @@ export type SandboxStepDeps = {
     /**
      * Build the agent definition for this step. The parent resolves the
      * agent from the catalog, wires its workspace tools, and returns the
-     * configured `AgentDefinition` runAgent will drive.
+     * configured `AgentDefinition` that `runLoop` will drive.
      */
     buildAgent(ctx: SandboxAgentBuildContext): Promise<AgentDefinition>;
     /**
@@ -482,7 +486,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // Stamp the sandbox agent's id into provenance so loop events carry
     // `source.agentId === input.agentId` (the parent's RunSession still reads
-    // "conversation-agent"). `run-agent.ts` builds source from
+    // "conversation-agent"). `run-loop.ts` builds source from
     // `session.provenance.agentId`, and billing tags ride the same provenance.
     const session = forSubAgent(input.runSession, input.agentId);
     const writePrefix = await deps.resolveWritePrefix(input);
@@ -526,7 +530,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         { name: "sandbox.recheck-alive" },
     );
 
-    // (3) runAgent — the harness loop with durableStep.
+    // (3) runLoop — the harness loop, each call a durable step.
     // The step deadline is captured ONCE at step start from the checkpointed
     // clock so it reproduces on replay — a raw `Date.now()` here would grow the
     // deadline on each recovery (see the harness-durable-runtime spec). `deadlineMs` is a getter so
@@ -534,7 +538,6 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // fresh `now + timeout` per call would make a step with N tool calls runnable
     // for up to N × `timeoutSeconds`.
     const stepDeadlineMs = (await DBOS.now()) + (input.timeoutSeconds ?? DEFAULT_STEP_TIMEOUT_SECONDS) * 1000;
-    const blockerHolder = createBlockerHolder();
     const fileMetadata = createFileMetadataCell();
     const agent = await deps.buildAgent({
         input,
@@ -543,7 +546,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         stepWritePrefix: writePrefix,
         deadlineMs: () => stepDeadlineMs,
         lineageCollector,
-        blockerHolder,
+        reportsBlocker: true,
         fileMetadata,
         citationResolver: deps.citationResolver,
         toolOutputStore: deps.toolOutputStore,
@@ -563,12 +566,11 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // `tool-finished`) and model-output deltas are wrapped under the
     // `data-loop-event` envelope so the SSE consumer can route them.
     //
-    // Every emit is `await`ed in order (the loop awaits its own emits, and the
-    // exec awaits its sandbox-event emits). A body-path `DBOS.writeStream` lands
+    // Every emit is `await`ed in order. A body-path `DBOS.writeStream` lands
     // at a deterministic function-ID on replay (see the harness-durable-runtime
     // spec) — no fire-and-forget tail racing the next real op for the counter.
-    // A sandbox event arrives from inside the step of its tool call; a write from
-    // a step takes no function-ID, and a recovered step writes its events again.
+    // The events of a tool call arrive from inside the step of the call; a write
+    // from a step takes no function-ID, and a recovered step writes its events again.
     // `safeEmit` swallows a stream-write failure: a dropped UI frame is
     // non-fatal and must not fail the step.
     // Pattern A (fan-in at route): write to the CHILD's own `"events"` stream.
@@ -589,10 +591,10 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // two parts share one checkpointed clock read. `activitySeq` advances before the clock read and the
     // writes, and each write fails alone through `safeEmit`.
     let activitySeq = 0;
-    const emitActivity = async (phase: StepPhase, activity: string): Promise<void> => {
-        const seq = activitySeq++;
+    const emitActivity = async (phase: StepPhase, activity: string, toolUseId?: string): Promise<void> => {
+        const key = toolUseId === undefined ? activitySeq++ : toolActivityKey(toolUseId);
         const at = new Date(await DBOS.now()).toISOString();
-        const parts = activityEmission(input, seq, phase, activity, at);
+        const parts = activityEmission(input, key, phase, activity, at);
         await safeEmit(parts.activity);
         await safeEmit(parts.entry);
     };
@@ -684,7 +686,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         // envelope, and surface each tool call as live step activity.
         await safeEmit({ type: "data-loop-event" as const, data: { stepId: input.stepId, event } });
         if (event.type === "tool-started") {
-            await emitActivity("executing", activityForTool(event.name, event.input, resolveDetail));
+            await emitActivity("executing", activityForTool(event.name, event.input, resolveDetail), event.toolUseId);
         }
     };
 
@@ -697,28 +699,31 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     const neverAbort = new AbortController().signal;
 
     let transcript: LoopMessage[];
+    let steps: readonly LoopStep[];
     let finishReason: string;
     // `false` until the loop reports otherwise: a loop that throws never reached its cap.
     let hitMaxSteps = false;
     let stepUsage: TokenUsageRollup | undefined;
     try {
-        const agentResult = await runAgent(agent, initial, session, {
+        const agentResult = await runLoop(agent, initial, session, {
             provider: deps.provider,
             signal: neverAbort,
             emit,
-            runStep: durableStep,
             usageRecorder: deps.usageRecorder,
             toolOutputStore: deps.toolOutputStore,
-            formatStepName: {
-                llm: (iteration) => `llm:${iteration}`,
-                tool: (toolName, toolUseId) => `tool:${toolName}:${toolUseId}`,
+            // The agent declares the output tool of the file-metadata follow-up
+            // request from its first request, and the task must not use it.
+            policy: {
+                mask: maskExcept(
+                    agent.tools.map((tool) => tool.id),
+                    [SUBMIT_FILE_METADATA_TOOL_ID],
+                ),
             },
-            // The agent declares the output tool of the file-metadata
-            // continuation from its first request, and the task must not use it.
-            toolMask: maskExcept(agent.tools, [SUBMIT_FILE_METADATA_TOOL_ID]),
-            isFatalLoopError: (err) => isWorkflowCancellation(err),
+            // A blocker ends the step: the agent declared that it cannot do the work.
+            stopWhen: (done) => blockerOf(done) !== null,
         });
         transcript = agentResult.messages;
+        steps = agentResult.steps;
         finishReason = agentResult.finish.reason;
         hitMaxSteps = agentResult.finish.cappedOut;
         stepUsage = agentResult.finish.usage;
@@ -783,9 +788,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // reason. A capped-out step WITH artifacts stays on the completed path,
     // because partial output is real output.
     //
-    // A replay does not rerun `execute`, so the cell is empty then; the
-    // transcript is the durable record and takes precedence over the cell.
-    const blockerOutcome = recordedBlocker(transcript) ?? blockerHolder.outcome;
+    // The recorded calls give the blocker on the first run and on each replay alike.
+    const blockerOutcome = blockerOf(steps);
     const cappedOutEmpty = hitMaxSteps && manifest.length === 0;
     if (blockerOutcome || cappedOutEmpty) {
         const blockedReason = blockerOutcome?.reason ?? CAPPED_OUT_EMPTY_REASON;

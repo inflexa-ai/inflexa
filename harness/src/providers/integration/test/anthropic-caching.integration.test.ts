@@ -3,7 +3,7 @@
  *
  * Proves the whole chain end to end against a live endpoint: the harness's
  * neutral `PromptCachePolicy` → the `anthropic.cacheControl` marker on the last
- * message → a served cache read → `ChatResponse.usage.cacheReadInputTokens`. If
+ * message → a served cache read → the `cacheReadInputTokens` of the usage. If
  * any link breaks, the second identical request reports a zero cache read.
  *
  * ## Why this is gated on a direct API key — read this first
@@ -28,12 +28,13 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { jsonSchema, tool as aiTool } from "ai";
+import { jsonSchema, streamText, tool as aiTool } from "ai";
 
+import type { AgentSession } from "../../../auth/types.js";
 import { makeSession } from "../../__fixtures__/session.js";
-import { createConfiguredAiSdkProvider } from "../../ai-sdk.js";
+import { createConfiguredAiSdkProvider, toChatUsage } from "../../ai-sdk.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../../prompt-cache.js";
-import type { ChatRequest } from "../../types.js";
+import type { ChatProvider, ChatUsage } from "../../types.js";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const BASE_URL = process.env.ANTHROPIC_BASE_URL;
@@ -50,7 +51,7 @@ const LARGE_SYSTEM = Array.from(
 ).join(" ");
 
 /**
- * Carries both cache markers `runAgent` places (system-prompt end, last message).
+ * Carries both cache markers `runLoop` places (system-prompt end, last message).
  * Each caches everything before it, since render order is tools → system → messages.
  *
  * The placement is the part under test as much as the caching is: each marker has
@@ -60,20 +61,27 @@ const LARGE_SYSTEM = Array.from(
  * Byte-identical across both calls — that is the whole point: the prefix must
  * not shift or nothing is read back.
  */
-const CACHED_REQUEST: ChatRequest = {
-    system: withSystemPromptBreakpoint(LARGE_SYSTEM, DEFAULT_PROMPT_CACHE),
-    // Built exactly as `runAgent` builds its `toolDefs`.
-    tools: {
-        noop: aiTool({
-            description: "A placeholder tool that does nothing.",
-            inputSchema: jsonSchema({
-                type: "object",
-                properties: { value: { type: "string" } },
+async function cachedCall(provider: ChatProvider, session: AgentSession): Promise<ChatUsage | undefined> {
+    const bound = provider.bind({ session, live: false });
+    const result = streamText({
+        model: bound.model,
+        ...bound.settings,
+        maxRetries: 0,
+        instructions: withSystemPromptBreakpoint(LARGE_SYSTEM, DEFAULT_PROMPT_CACHE),
+        tools: {
+            noop: aiTool({
+                description: "A placeholder tool that does nothing.",
+                inputSchema: jsonSchema({
+                    type: "object",
+                    properties: { value: { type: "string" } },
+                }),
             }),
-        }),
-    },
-    messages: withPromptCacheBreakpoint([{ role: "user", content: "Reply with the single word: ok" }], DEFAULT_PROMPT_CACHE),
-};
+        },
+        toolChoice: "auto",
+        messages: [...withPromptCacheBreakpoint([{ role: "user", content: "Reply with the single word: ok" }], DEFAULT_PROMPT_CACHE)],
+    });
+    return toChatUsage(await result.usage);
+}
 
 describe.skipIf(!API_KEY)("Anthropic prompt caching", () => {
     it("creates a cache entry, then reads it back on an identical repeat call", async () => {
@@ -87,13 +95,13 @@ describe.skipIf(!API_KEY)("Anthropic prompt caching", () => {
         });
         const session = makeSession();
 
-        const first = (await provider.chat(CACHED_REQUEST, session))._unsafeUnwrap();
+        const first = await cachedCall(provider, session);
         // The first call seeds the cache. (A warm cache from a previous run of
         // this test would instead read it straight back, so accept either.)
-        const seeded = (first.usage?.cacheCreationInputTokens ?? 0) + (first.usage?.cacheReadInputTokens ?? 0);
+        const seeded = (first?.cacheCreationInputTokens ?? 0) + (first?.cacheReadInputTokens ?? 0);
         expect(seeded).toBeGreaterThan(0);
 
-        const second = (await provider.chat(CACHED_REQUEST, session))._unsafeUnwrap();
-        expect(second.usage?.cacheReadInputTokens ?? 0).toBeGreaterThan(0);
+        const second = await cachedCall(provider, session);
+        expect(second?.cacheReadInputTokens ?? 0).toBeGreaterThan(0);
     }, 60_000);
 });

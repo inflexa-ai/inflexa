@@ -18,8 +18,8 @@
  *    workflow-call seam (its `finally` only rolls back and releases).
  *
  * Consumers unwrap per their edge: HTTP routes `.match(...)`; DBOS step bodies
- * `resultStep(runStep)` / `unwrapOrThrow`; tool `execute` bodies `unwrapOrThrow`
- * (a throw becomes an `is_error` tool_result via dispatch).
+ * `unwrapOrThrow`; tool `execute` bodies `unwrapOrThrow` (the tool adapter of
+ * the loop turns a throw into an error tool result).
  */
 
 import { z } from "zod";

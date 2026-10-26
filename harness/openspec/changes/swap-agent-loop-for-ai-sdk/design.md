@@ -49,7 +49,7 @@ Alternative: keep `runAgent` and call the library helpers from it. Rejected, bec
 
 - The model gets `durableCalls` with a fixed `name`, thus the identity of a step holds no model id.
 - The tools get `durableTools`, with retries off (the library default).
-- A workflow takes its model configuration from its own input. Thus a change of the configured model never breaks a replay.
+- The calls of a recovered run that did not complete use the model that the host configures at the time of the recovery. Stage 2 puts the model configuration into the input of the workflow.
 
 The old step names go. A workflow in flight at the switch cannot replay, and the switch runs during downtime.
 

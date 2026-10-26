@@ -18,7 +18,7 @@ import type { Querier } from "../state/db.js";
 
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { LoopMessage } from "../loop/types.js";
-import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
+import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
@@ -50,8 +50,8 @@ export type PostStepPipelineDeps = {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the task, thus a reference of the task stays readable in the metadata + summary continuations. */
     readonly toolOutputStore?: ToolOutputStore;
-    /** Non-streaming chat — the provider of the task, which the metadata + summary continuations extend. */
-    readonly provider: AgentChat;
+    /** The provider of the task, which the metadata and summary follow-up requests extend. */
+    readonly provider: ChatProvider;
     /** Write-side embedder for the vector index. */
     readonly embedding: EmbeddingProvider;
     readonly artifactRegistry: ArtifactRegistry;

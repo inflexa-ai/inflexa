@@ -6,6 +6,9 @@ import { Pool } from "pg";
 
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { createReportSessionAgent, REPORT_SESSION_AGENT_ID } from "../report-session-agent.js";
+import { runLoop } from "../../loop/run-loop.js";
+import { makeSession } from "../../providers/__fixtures__/session.js";
+import { reply, scriptedModel, text } from "../../testing.js";
 import { reportSessionPrompt } from "../../prompts/report-session.js";
 import { createRegistry } from "../../tools/registry.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
@@ -115,6 +118,19 @@ describe("createReportSessionAgent", () => {
         // A full session drives more small tool calls than a conversation turn,
         // thus the cap matches the report runner (REPORT_AGENT_MAX_STEPS).
         expect(agent.maxIterations).toBe(200);
+    });
+
+    test("asks for one tool call for each reply on each request of the conversation", async () => {
+        const agent = buildAgent();
+        const { provider, calls } = scriptedModel([reply([text("done")])], { capabilities: { toolCalling: true } });
+
+        await runLoop(agent, [{ role: "user", content: "Write the report." }], makeSession(), {
+            provider,
+            emit: () => undefined,
+            signal: new AbortController().signal,
+        });
+
+        expect(calls[0]?.providerOptions).toMatchObject({ anthropic: { disableParallelToolUse: true }, openai: { parallelToolCalls: false } });
     });
 
     test("holds the analysis read surface", () => {

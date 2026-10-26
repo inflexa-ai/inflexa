@@ -3,148 +3,84 @@ const BASE64URL_DIGEST_43 = /^[A-Za-z0-9_-]{43}$/;
 
 import { errorMessageOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
-import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
+import { streamText, type LanguageModelUsage, type ModelMessage } from "ai";
+import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { APICallError } from "@ai-sdk/provider";
-import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type {
-    LanguageModelV4,
     LanguageModelV4CallOptions,
-    LanguageModelV4GenerateResult,
     LanguageModelV4StreamPart,
     LanguageModelV4StreamResult,
     LanguageModelV4Usage,
+    SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
+import { ResultAsync, errAsync, ok, okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { makeSession } from "../__fixtures__/session.js";
 import {
     computeRetryDelayMs,
     createAiSdkProvider,
     createConfiguredAiSdkProvider,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    fallbackModelOf,
     RETRY_BACKOFF_FACTOR,
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
     RETRY_MAX_RETRIES,
     sessionKeyDigestOf,
     sessionKeyOf,
+    toChatUsage,
 } from "../ai-sdk.js";
 import { forSubAgent, type AgentSession, type RunFrame, type Scope } from "../../auth/types.js";
+import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
-import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { GateFailure } from "../../lib/hooks.js";
-import { isProviderError } from "../errors.js";
-import type { ChatProvider, ChatRequest, ReasoningPolicy } from "../types.js";
+import { runLoop, type LoopOptions } from "../../loop/run-loop.js";
+import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
+import { reasoning, scriptedModel, text, type ScriptedReply } from "../../testing.js";
+import { defineTool } from "../../tools/define-tool.js";
+import { findProviderError, type ProviderError } from "../errors.js";
+import type { ChatProvider, ReasoningPolicy } from "../types.js";
 import { presentAt } from "../../lib/present.js";
 
-const usage: LanguageModelV4Usage = {
+const USAGE: LanguageModelV4Usage = {
     inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
     outputTokens: { total: 0, text: 0, reasoning: 0 },
 };
 
-function okResult(text = "ok"): LanguageModelV4GenerateResult {
-    return {
-        content: [{ type: "text", text }],
-        finishReason: { unified: "stop", raw: "stop" },
-        usage,
-        warnings: [],
-    };
+type StreamDouble = (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4StreamResult>;
+
+/** A model double that records each attempt in `doStreamCalls`. */
+function fakeModel(doStream: StreamDouble): MockLanguageModelV4 {
+    return new MockLanguageModelV4({ provider: "fake-provider", modelId: "fake-model", doStream });
 }
 
-function streamResult(deltas: readonly string[]): LanguageModelV4StreamResult {
-    return {
-        stream: new ReadableStream({
-            start(controller) {
-                controller.enqueue({ type: "stream-start", warnings: [] });
-                controller.enqueue({ type: "text-start", id: "txt-1" });
-                for (const delta of deltas) {
-                    controller.enqueue({ type: "text-delta", id: "txt-1", delta });
-                }
-                controller.enqueue({ type: "text-end", id: "txt-1" });
-                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-                controller.close();
-            },
-        }),
-    };
+function finishPart(options: { readonly usage?: LanguageModelV4Usage; readonly providerMetadata?: SharedV4ProviderMetadata } = {}): LanguageModelV4StreamPart {
+    return { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: options.usage ?? USAGE, providerMetadata: options.providerMetadata };
 }
 
-/**
- * Replay a generate-shaped double as a stream. Both provider entry points drive
- * the same wire, so one fixture has to reach `doStream` as well: the parts carry
- * the same content, identity, finish reason and usage the generate result holds.
- * A rejecting `impl` rejects here too, which is what the retry tests need.
- */
-function streamFromGenerate(
-    impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>,
-): (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4StreamResult> {
-    return async (options) => {
-        const generated = await impl(options);
-        return {
-            stream: new ReadableStream({
-                start(controller) {
-                    controller.enqueue({ type: "stream-start", warnings: generated.warnings });
-                    const modelId = generated.response?.modelId;
-                    if (modelId !== undefined) controller.enqueue({ type: "response-metadata", modelId });
-                    let seq = 0;
-                    for (const content of generated.content) {
-                        if (content.type === "text") {
-                            const id = `txt-${(seq += 1)}`;
-                            controller.enqueue({ type: "text-start", id });
-                            controller.enqueue({ type: "text-delta", id, delta: content.text });
-                            controller.enqueue({ type: "text-end", id });
-                            continue;
-                        }
-                        // The signature of a thinking block rides on the metadata of its
-                        // delta, which is where the Anthropic package puts it.
-                        if (content.type === "reasoning") {
-                            const id = `rsn-${(seq += 1)}`;
-                            controller.enqueue({ type: "reasoning-start", id });
-                            controller.enqueue({
-                                type: "reasoning-delta",
-                                id,
-                                delta: content.text,
-                                providerMetadata: content.providerMetadata,
-                            });
-                            controller.enqueue({ type: "reasoning-end", id });
-                            continue;
-                        }
-                        if (content.type === "tool-call") controller.enqueue(content);
-                    }
-                    controller.enqueue({
-                        type: "finish",
-                        finishReason: generated.finishReason,
-                        usage: generated.usage,
-                        providerMetadata: generated.providerMetadata,
-                    });
-                    controller.close();
-                },
-            }),
-        };
-    };
+/** A clean reply that streams `deltas` as one text part. A reply with no delta has no text part. */
+function replyOf(deltas: readonly string[], finish: LanguageModelV4StreamPart = finishPart()): LanguageModelV4StreamResult {
+    const textParts: LanguageModelV4StreamPart[] =
+        deltas.length === 0
+            ? []
+            : [
+                  { type: "text-start", id: "txt-1" },
+                  ...deltas.map((delta): LanguageModelV4StreamPart => ({ type: "text-delta", id: "txt-1", delta })),
+                  { type: "text-end", id: "txt-1" },
+              ];
+    return { stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([{ type: "stream-start", warnings: [] }, ...textParts, finish]) };
 }
 
-function fakeModel(
-    impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>,
-    streamImpl?: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4StreamResult>,
-): LanguageModelV4 {
-    return {
-        specificationVersion: "v4",
-        provider: "fake-provider",
-        modelId: "fake-model",
-        supportedUrls: {},
-        doGenerate: impl,
-        doStream: streamImpl ?? streamFromGenerate(impl),
-    };
+/** A model that gives the same clean reply to each call. */
+function replyingModel(deltas: readonly string[] = ["ok"], finish?: LanguageModelV4StreamPart): MockLanguageModelV4 {
+    return fakeModel(() => Promise.resolve(replyOf(deltas, finish)));
 }
-
-const request: ChatRequest = {
-    system: "You are a test model.",
-    messages: [{ role: "user", content: "hello" }],
-    tools: {},
-};
 
 /**
  * A real 503 `APICallError` naming a zero-millisecond `retry-after-ms` by
@@ -165,38 +101,13 @@ function apiError503(responseHeaders: Record<string, string> = { "retry-after-ms
     });
 }
 
-/**
- * A stream that fails during establishment by erroring before any text delta
- * reaches the consumer, so the failure surfaces at the retried closure's first
- * `textStream` pull. This is one of two distinct SDK surfacing paths the retry
- * envelope covers — the other is a `doStream` promise rejection, which
- * `streamText` defers past a clean first pull to the result promises — so each
- * flavor is exercised on its own.
- */
+/** A stream that fails before its first output part: the stream itself errors, with no `error` part. */
 function streamErrorsBeforeDelta(error: unknown): LanguageModelV4StreamResult {
     return {
         stream: new ReadableStream<LanguageModelV4StreamPart>({
             start(controller) {
                 controller.enqueue({ type: "stream-start", warnings: [] });
                 controller.error(error);
-            },
-        }),
-    };
-}
-
-/**
- * A well-formed stream that finishes cleanly without ever emitting a text part —
- * a genuine text-less turn. Pins that awaiting the deferred result promises
- * inside the envelope resolves such a turn instead of mistaking its empty first
- * pull for an establishment failure to retry.
- */
-function streamWithNoText(): LanguageModelV4StreamResult {
-    return {
-        stream: new ReadableStream<LanguageModelV4StreamPart>({
-            start(controller) {
-                controller.enqueue({ type: "stream-start", warnings: [] });
-                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-                controller.close();
             },
         }),
     };
@@ -223,52 +134,145 @@ function streamDeltaThenError(delta: string, error: unknown): LanguageModelV4Str
     };
 }
 
+type DriveCall = {
+    readonly session?: AgentSession;
+    readonly reasoning?: ReasoningPolicy;
+    readonly live?: boolean;
+    readonly signal?: AbortSignal;
+    readonly messages?: ModelMessage[];
+    /** Sees the type of each part of the full stream, in order. */
+    readonly onPart?: (type: string) => void;
+};
+
+/** What a reader of one model call saw. */
+type Outcome = {
+    readonly deltas: readonly string[];
+    readonly text: string;
+    /** The first failure that the call reported, as the AI SDK gave it. */
+    readonly failure: unknown;
+    readonly aborted: boolean;
+    readonly finishReason?: string;
+    readonly usage?: LanguageModelUsage;
+};
+
+/** Run one model call over the bound model of `provider`, the same way the loop runs each request. */
+async function drive(provider: ChatProvider, call: DriveCall = {}): Promise<Outcome> {
+    const bound = provider.bind({ session: call.session ?? makeSession(), reasoning: call.reasoning, live: call.live ?? false });
+    let failure: unknown;
+    const result = streamText({
+        model: bound.model,
+        ...bound.settings,
+        maxRetries: 0,
+        messages: call.messages ?? [{ role: "user", content: "hello" }],
+        abortSignal: call.signal,
+        onError: ({ error }) => {
+            failure ??= error;
+        },
+    });
+    const deltas: string[] = [];
+    let aborted = false;
+    let finishReason: string | undefined;
+    let usage: LanguageModelUsage | undefined;
+    for await (const part of result.stream) {
+        call.onPart?.(part.type);
+        if (part.type === "text-delta") deltas.push(part.text);
+        else if (part.type === "abort") aborted = true;
+        else if (part.type === "finish-step") {
+            finishReason = part.finishReason;
+            usage = part.usage;
+        }
+    }
+    return { deltas, text: deltas.join(""), failure, aborted, finishReason, usage };
+}
+
+/** The classified failure of a call that the retry envelope gave up on. */
+function providerErrorOf(outcome: Outcome): ProviderError {
+    const error = findProviderError(outcome.failure);
+    if (error === undefined) throw new Error(`expected a provider error, got ${textOf(outcome.failure)}`, { cause: outcome.failure });
+    return error;
+}
+
+/** The headers of one call, with each name folded to lowercase: a header name is case-insensitive on the wire. */
+function headersOf(call: LanguageModelV4CallOptions): Record<string, string | undefined> {
+    return Object.fromEntries(Object.entries(call.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+}
+
+type LogRecord = { readonly level: "warn" | "error"; readonly msg: string; readonly fields?: LogFields };
+
+/** A logger that keeps each record at `warn` and at `error`. */
+function recordingLogger(): { logger: Logger; records: LogRecord[] } {
+    const records: LogRecord[] = [];
+    const base = createNoopLogger();
+    const keep =
+        (level: LogRecord["level"]) =>
+        (msg: string, fields?: LogFields): void => {
+            records.push(fields === undefined ? { level, msg } : { level, msg, fields });
+        };
+    const logger: Logger = {
+        ...base,
+        warn: keep("warn"),
+        error: keep("error"),
+        with: () => logger,
+        named: () => logger,
+        errorFields: (err) => ({ error: errorMessageOf(err) ?? textOf(err) }),
+    };
+    return { logger, records };
+}
+
+function recordingUsage(): { usageRecorder: UsageRecorder; records: LlmUsageRecord[] } {
+    const records: LlmUsageRecord[] = [];
+    return {
+        records,
+        usageRecorder: {
+            record: (record) => {
+                records.push(record);
+                return okAsync(undefined);
+            },
+        },
+    };
+}
+
+function agentWith(tools: AgentDefinition["tools"] = []): AgentDefinition {
+    return { id: "test-agent", systemPrompt: "You are a test agent.", model: "fake-model", tools, maxIterations: 1 };
+}
+
+function loopOptions(provider: ChatProvider, extra: Partial<LoopOptions> = {}): LoopOptions {
+    return { provider, emit: () => undefined, signal: new AbortController().signal, ...extra };
+}
+
 describe("createAiSdkProvider", () => {
     it("runs an embedder-supplied AI SDK language model and adds the headers of the hook as the hook gives them", async () => {
-        const calls: LanguageModelV4CallOptions[] = [];
+        const model = replyingModel(["done"]);
         const provider = createAiSdkProvider({
-            model: fakeModel((options) => {
-                calls.push(options);
-                return Promise.resolve(okResult("done"));
-            }),
+            model,
             resolveRequestHeaders: () => okAsync({ "x-attribution": "a1", "x-no-harness-name": "v2" }),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        expect(result._unsafeUnwrap().message).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
-        // A header name is case-insensitive on the wire, thus the assertion folds
-        // the case rather than pinning the spelling the SDK happens to forward.
-        const sent = Object.fromEntries(Object.entries(presentAt(calls, 0).headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
-        expect(sent).toMatchObject({
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.text).toBe("done");
+        expect(headersOf(presentAt(model.doStreamCalls, 0))).toMatchObject({
             "x-attribution": "a1",
             "x-no-harness-name": "v2",
         });
     });
 
     it("adds no header from a hook when the provider has no hook", async () => {
-        const calls: LanguageModelV4CallOptions[] = [];
-        const provider = createAiSdkProvider({
-            model: fakeModel((options) => {
-                calls.push(options);
-                return Promise.resolve(okResult("done"));
-            }),
-        });
+        const model = replyingModel(["done"]);
+        const provider = createAiSdkProvider({ model });
 
-        expect((await provider.chat(request, makeSession())).isOk()).toBe(true);
-        const sent = Object.keys(presentAt(calls, 0).headers ?? {}).map((name) => name.toLowerCase());
-        expect(sent.filter((name) => name.startsWith("x-attribution"))).toEqual([]);
+        expect((await drive(provider)).failure).toBeUndefined();
+        expect(Object.keys(headersOf(presentAt(model.doStreamCalls, 0))).filter((name) => name.startsWith("x-attribution"))).toEqual([]);
     });
 
     it("gives a 402 as a suspend error with the default reason, and no budget word", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                return Promise.reject(Object.assign(new Error("payment required"), { status: 402 }));
-            }),
+            model: fakeModel(() => Promise.reject(Object.assign(new Error("payment required"), { status: 402 }))),
         });
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        const failure = providerErrorOf(await drive(provider));
+
         expect(failure).toMatchObject({ type: "suspend", status: 402, reason: "payment_required", retryable: false });
         expect(failure.message).toContain("HTTP 402");
         const lowerMessage = failure.message.toLowerCase();
@@ -277,162 +281,149 @@ describe("createAiSdkProvider", () => {
 
     it("gives an unmapped 403 as a non-retryable provider error", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                return Promise.reject(Object.assign(new Error("forbidden"), { status: 403 }));
-            }),
+            model: fakeModel(() => Promise.reject(Object.assign(new Error("forbidden"), { status: 403 }))),
         });
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
-        expect(failure).toMatchObject({ type: "provider", retryable: false });
+        expect(providerErrorOf(await drive(provider))).toMatchObject({ type: "provider", retryable: false });
     });
 
     it("uses a map from the host in place of the default map", async () => {
         const failing = (status: number) =>
             createAiSdkProvider({
-                model: fakeModel(() => {
-                    return Promise.reject(Object.assign(new Error("refused"), { status }));
-                }),
+                model: fakeModel(() => Promise.reject(Object.assign(new Error("refused"), { status }))),
                 suspendOn: { 429: "quota" },
             });
 
-        expect((await failing(429).chat(request, makeSession()))._unsafeUnwrapErr()).toMatchObject({ type: "suspend", status: 429, reason: "quota" });
-        expect((await failing(402).chat(request, makeSession()))._unsafeUnwrapErr()).toMatchObject({ type: "provider", retryable: false });
+        expect(providerErrorOf(await drive(failing(429)))).toMatchObject({ type: "suspend", status: 429, reason: "quota" });
+        expect(providerErrorOf(await drive(failing(402)))).toMatchObject({ type: "provider", retryable: false });
     });
 
-    it("rethrows aborts instead of classifying them", async () => {
-        const signal = AbortSignal.abort();
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                return Promise.reject(new DOMException("aborted", "AbortError"));
-            }),
+    it("ends an aborted call as an abort, and classifies nothing", async () => {
+        const controller = new AbortController();
+        const model = fakeModel(() => {
+            controller.abort();
+            return Promise.reject(new DOMException("aborted", "AbortError"));
         });
+        const provider = createAiSdkProvider({ model });
 
-        try {
-            const result = await provider.chat(request, makeSession(), signal);
-            throw new Error(`expected abort to be rethrown, got a ${result.isOk() ? "ok" : "err"} result`);
-        } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
-            expect(err.name).toBe("AbortError");
-        }
+        const outcome = await drive(provider, { signal: controller.signal });
+
+        expect(outcome.aborted).toBe(true);
+        expect(outcome.failure).toBeUndefined();
+        expect(model.doStreamCalls).toHaveLength(1);
     });
 
-    it("streams deltas through the AI SDK streaming primitive", async () => {
-        const generateCalls: LanguageModelV4CallOptions[] = [];
-        const streamCalls: LanguageModelV4CallOptions[] = [];
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                (options) => {
-                    generateCalls.push(options);
-                    return Promise.resolve(okResult("should not be used"));
-                },
-                (options) => {
-                    streamCalls.push(options);
-                    return Promise.resolve(streamResult(["he", "llo"]));
-                },
-            ),
-            resolveRequestHeaders: () => okAsync({ "x-attribution": "a1" }),
-        });
+    it("streams the deltas of a live call as the model sends them", async () => {
+        const model = replyingModel(["he", "llo"]);
+        const provider = createAiSdkProvider({ model, resolveRequestHeaders: () => okAsync({ "x-attribution": "a1" }) });
 
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) {
-            events.push(event);
-        }
+        const outcome = await drive(provider, { live: true });
 
-        expect(generateCalls).toHaveLength(0);
-        expect(streamCalls).toHaveLength(1);
-        expect(presentAt(streamCalls, 0).headers).toMatchObject({ "x-attribution": "a1" });
-        expect(events).toEqual([
-            { type: "text-delta", text: "he" },
-            { type: "text-delta", text: "llo" },
-            {
-                type: "done",
-                response: {
-                    message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
-                    finishReason: "stop",
-                    rawFinishReason: "stop",
-                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
-                    requestedModelId: "fake-model",
-                    provider: "fake-provider",
-                },
-            },
-        ]);
+        expect(outcome.deltas).toEqual(["he", "llo"]);
+        expect(outcome.finishReason).toBe("stop");
+        expect(model.doStreamCalls).toHaveLength(1);
+        expect(headersOf(presentAt(model.doStreamCalls, 0))).toMatchObject({ "x-attribution": "a1" });
     });
 
-    it("rejects tool-required agents before the first model call when tool calling is disabled", () => {
-        const calls: LanguageModelV4CallOptions[] = [];
-        const provider = createAiSdkProvider({
-            model: fakeModel((options) => {
-                calls.push(options);
-                return Promise.resolve(okResult());
-            }),
-            capabilities: { toolCalling: false },
+    it("rejects a tool-required agent before the first model call when tool calling is off", async () => {
+        const model = replyingModel();
+        const provider = createAiSdkProvider({ model, capabilities: { toolCalling: false } });
+        const tool = defineTool({
+            id: "echo",
+            description: "Echo the text.",
+            inputSchema: z.object({ text: z.string() }),
+            describeCall: "none",
+            execute: (input) => Promise.resolve(ok({ echoed: input.text })),
         });
 
         expect(provider.capabilities.toolCalling).toBe(false);
-        expect(calls).toHaveLength(0);
+        await expect(runLoop(agentWith([tool]), [{ role: "user", content: "go" }], makeSession(), loopOptions(provider))).rejects.toThrow(
+            'Provider/model cannot run tool-required agent "test-agent"',
+        );
+        expect(model.doStreamCalls).toHaveLength(0);
+    });
+
+    it("turns tool calling on when the caller states nothing", () => {
+        expect(createAiSdkProvider({ model: replyingModel() }).capabilities.toolCalling).toBe(true);
     });
 
     // An absent picture flag means "cannot carry", never "unknown". Thus the
     // factory copies a stated flag, and it invents no value for an absent one.
-    it("copies a stated user-message picture flag, and leaves an absent one absent", () => {
-        const declared = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult())),
-            capabilities: { imageUserMessages: true },
-        });
-        const silent = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult())),
-            capabilities: { toolCalling: true },
-        });
+    it("copies a stated picture flag and context window, and leaves absent ones absent", () => {
+        const declared = createAiSdkProvider({ model: replyingModel(), capabilities: { imageToolResults: true, contextWindow: 200_000 } });
+        const silent = createAiSdkProvider({ model: replyingModel(), capabilities: { toolCalling: true } });
 
-        expect(declared.capabilities.imageUserMessages).toBe(true);
-        expect(silent.capabilities.imageUserMessages).toBeUndefined();
+        expect(declared.capabilities.imageToolResults).toBe(true);
+        expect(declared.capabilities.contextWindow).toBe(200_000);
         expect(silent.capabilities.imageToolResults).toBeUndefined();
+        expect(silent.capabilities.contextWindow).toBeUndefined();
+    });
+
+    it("advertises the request timeout of the deps, and none when the deps name none", () => {
+        expect(createAiSdkProvider({ model: replyingModel(), requestTimeoutMs: 1_234 }).requestTimeoutMs).toBe(1_234);
+        expect(createAiSdkProvider({ model: replyingModel() }).requestTimeoutMs).toBeUndefined();
+    });
+});
+
+describe("output ceiling", () => {
+    it("sends the default ceiling when the deps name none", async () => {
+        const model = replyingModel();
+
+        await drive(createAiSdkProvider({ model }));
+
+        expect(presentAt(model.doStreamCalls, 0).maxOutputTokens).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+    });
+
+    it("sends the ceiling that the deps name", async () => {
+        const model = replyingModel();
+
+        await drive(createAiSdkProvider({ model, maxOutputTokens: 8_192 }));
+
+        expect(presentAt(model.doStreamCalls, 0).maxOutputTokens).toBe(8_192);
+    });
+
+    it("sends no ceiling for the provider-maximum sentinel, thus the server holds the cap of the model", async () => {
+        const model = replyingModel();
+        const provider = createAiSdkProvider({ model, maxOutputTokens: "provider-maximum" });
+
+        await drive(provider);
+
+        expect(provider.bind({ session: makeSession(), live: false }).settings).not.toHaveProperty("maxOutputTokens");
+        expect(presentAt(model.doStreamCalls, 0).maxOutputTokens).toBeUndefined();
     });
 });
 
 describe("empty text block sanitization", () => {
     // The Anthropic API 400s on any request containing an empty text block, and
-    // the SDK's response assembly produces one whenever a turn goes straight to
-    // tool calls — the loop then echoes that assistant message back as history.
+    // a stored thread can hold one: the response of a turn that goes straight to
+    // tool calls has one, and the loop sends that history back.
     it("strips empty text parts from echoed history before the wire call", async () => {
-        const calls: LanguageModelV4CallOptions[] = [];
-        const provider = createAiSdkProvider({
-            model: fakeModel((options) => {
-                calls.push(options);
-                return Promise.resolve(okResult("done"));
-            }),
-        });
-
-        const result = await provider.chat(
+        const { provider, calls } = scriptedModel([{ content: [text("done")], finishReason: "stop" }]);
+        const history: LoopMessage[] = [
+            { role: "user", content: "profile the files" },
             {
-                system: "You are a test model.",
-                messages: [
-                    { role: "user", content: "profile the files" },
-                    {
-                        role: "assistant",
-                        content: [
-                            { type: "text", text: "" },
-                            { type: "tool-call", toolCallId: "tc-1", toolName: "execute_command", input: { command: "ls" } },
-                        ],
-                    },
-                    {
-                        role: "tool",
-                        content: [{ type: "tool-result", toolCallId: "tc-1", toolName: "execute_command", output: { type: "text", value: "ok" } }],
-                    },
-                    { role: "assistant", content: "" },
+                role: "assistant",
+                content: [
+                    { type: "text", text: "" },
+                    { type: "tool-call", toolCallId: "tc-1", toolName: "execute_command", input: { command: "ls" } },
                 ],
-                tools: {},
             },
-            makeSession(),
-        );
+            {
+                role: "tool",
+                content: [{ type: "tool-result", toolCallId: "tc-1", toolName: "execute_command", output: { type: "text", value: "ok" } }],
+            },
+            { role: "assistant", content: "" },
+        ];
 
-        expect(result.isOk()).toBe(true);
-        const textParts = presentAt(calls, 0).prompt.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === "text") : []));
+        await runLoop(agentWith(), history, makeSession(), loopOptions(provider));
+
+        const prompt = presentAt(calls, 0).prompt;
+        const textParts = prompt.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === "text") : []));
         for (const part of textParts) {
             expect(part.text).not.toBe("");
         }
         // The tool call survives the strip; the all-empty assistant message is dropped whole.
-        const json = JSON.stringify(presentAt(calls, 0).prompt);
+        const json = JSON.stringify(prompt);
         expect(json).toContain("tc-1");
         expect(json).not.toContain('"text":""');
     });
@@ -443,60 +434,16 @@ describe("usage reporting", () => {
     // (`@ai-sdk/anthropic` normalizes `cache_read_input_tokens` /
     // `cache_creation_input_tokens` into it) — not on `providerMetadata`, which
     // carries only the raw snake_case vendor payload.
-    const cachedUsage: LanguageModelV4Usage = {
-        inputTokens: { total: 2000, noCache: 100, cacheRead: 1700, cacheWrite: 200 },
-        outputTokens: { total: 42, text: 42, reasoning: 0 },
-    };
+    const usageOf = async (usage: LanguageModelV4Usage) =>
+        toChatUsage((await drive(createAiSdkProvider({ model: replyingModel(["done"], finishPart({ usage })) }))).usage);
 
-    it("surfaces input/output and cache tokens on the generate path", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() =>
-                Promise.resolve({
-                    content: [{ type: "text", text: "done" }],
-                    finishReason: { unified: "stop", raw: "stop" },
-                    usage: cachedUsage,
-                    warnings: [],
-                }),
-            ),
+    it("maps the input, output, and cache tokens of a reply onto the neutral fields", async () => {
+        const usage = await usageOf({
+            inputTokens: { total: 2000, noCache: 100, cacheRead: 1700, cacheWrite: 200 },
+            outputTokens: { total: 42, text: 42, reasoning: 0 },
         });
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(reply.usage).toEqual({
-            inputTokens: 2000,
-            outputTokens: 42,
-            cacheCreationInputTokens: 200,
-            cacheReadInputTokens: 1700,
-            reasoningTokens: 0,
-        });
-    });
-
-    it("surfaces the same usage on the stream path's terminal event", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () =>
-                    Promise.resolve({
-                        stream: new ReadableStream({
-                            start(controller) {
-                                controller.enqueue({ type: "stream-start", warnings: [] });
-                                controller.enqueue({ type: "text-start", id: "txt-1" });
-                                controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
-                                controller.enqueue({ type: "text-end", id: "txt-1" });
-                                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: cachedUsage });
-                                controller.close();
-                            },
-                        }),
-                    }),
-            ),
-        });
-
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
-
-        const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-        expect(done.response.usage).toEqual({
+        expect(usage).toEqual({
             inputTokens: 2000,
             outputTokens: 42,
             cacheCreationInputTokens: 200,
@@ -506,152 +453,64 @@ describe("usage reporting", () => {
     });
 
     it("leaves cache fields undefined when a provider reports no cache breakdown", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() =>
-                Promise.resolve({
-                    content: [{ type: "text", text: "done" }],
-                    finishReason: { unified: "stop", raw: "stop" },
-                    usage: {
-                        inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
-                        outputTokens: { total: 5, text: 5, reasoning: undefined },
-                    },
-                    warnings: [],
-                }),
-            ),
+        const usage = await usageOf({
+            inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
         });
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(reply.usage?.inputTokens).toBe(50);
-        expect(reply.usage?.cacheReadInputTokens).toBeUndefined();
-        expect(reply.usage?.cacheCreationInputTokens).toBeUndefined();
+        expect(usage?.inputTokens).toBe(50);
+        expect(usage?.cacheReadInputTokens).toBeUndefined();
+        expect(usage?.cacheCreationInputTokens).toBeUndefined();
     });
 
     it("carries a reported reasoning count verbatim, without reconciling it against the output total", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() =>
-                Promise.resolve({
-                    content: [{ type: "text", text: "done" }],
-                    finishReason: { unified: "stop", raw: "stop" },
-                    usage: {
-                        inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
-                        // A provider counting reasoning OUTSIDE its output total: 90 + 40
-                        // does not equal `total`. Neither figure may be adjusted to fit the
-                        // other — whether reasoning is a subset of output is the provider's
-                        // convention, not the harness's arithmetic.
-                        outputTokens: { total: 90, text: 90, reasoning: 40 },
-                    },
-                    warnings: [],
-                }),
-            ),
+        const usage = await usageOf({
+            inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
+            // A provider counting reasoning OUTSIDE its output total: 90 + 40
+            // does not equal `total`. Neither figure may be adjusted to fit the
+            // other — whether reasoning is a subset of output is the provider's
+            // convention, not the harness's arithmetic.
+            outputTokens: { total: 90, text: 90, reasoning: 40 },
         });
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(reply.usage?.reasoningTokens).toBe(40);
-        expect(reply.usage?.outputTokens).toBe(90);
+        expect(usage?.reasoningTokens).toBe(40);
+        expect(usage?.outputTokens).toBe(90);
     });
 
     it("leaves reasoningTokens undefined — never zero — when a provider reports no reasoning count", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() =>
-                Promise.resolve({
-                    content: [{ type: "text", text: "done" }],
-                    finishReason: { unified: "stop", raw: "stop" },
-                    usage: {
-                        inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
-                        outputTokens: { total: 5, text: 5, reasoning: undefined },
-                    },
-                    warnings: [],
-                }),
-            ),
+        const usage = await usageOf({
+            inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
         });
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(reply.usage?.reasoningTokens).toBeUndefined();
-        expect(reply.usage?.outputTokens).toBe(5);
+        expect(usage?.reasoningTokens).toBeUndefined();
+        expect(usage?.outputTokens).toBe(5);
     });
 
-    it("surfaces reasoning tokens on the stream path's terminal event", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () =>
-                    Promise.resolve({
-                        stream: new ReadableStream({
-                            start(controller) {
-                                controller.enqueue({ type: "stream-start", warnings: [] });
-                                controller.enqueue({ type: "text-start", id: "txt-1" });
-                                controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
-                                controller.enqueue({ type: "text-end", id: "txt-1" });
-                                controller.enqueue({
-                                    type: "finish",
-                                    finishReason: { unified: "stop", raw: "stop" },
-                                    usage: {
-                                        inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
-                                        outputTokens: { total: 90, text: 50, reasoning: 40 },
-                                    },
-                                });
-                                controller.close();
-                            },
-                        }),
-                    }),
-            ),
-        });
-
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
-
-        const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-        expect(done.response.usage?.reasoningTokens).toBe(40);
+    it("gives no usage for a call that reported none", () => {
+        expect(toChatUsage(undefined)).toBeUndefined();
     });
 });
 
 describe("the order of the reasoning effort", () => {
-    /** Records `reasoning` from `doStream`, reached by both `chat` and `chatStream`. */
-    function recordingProvider(configured?: ReasoningPolicy): { provider: ChatProvider; sent: (ReasoningPolicy | undefined)[] } {
-        const sent: (ReasoningPolicy | undefined)[] = [];
-        const provider = createAiSdkProvider({
-            model: fakeModel((options) => {
-                sent.push(options.reasoning);
-                return Promise.resolve(okResult());
-            }),
-            reasoning: configured,
-        });
-        return { provider, sent };
+    async function sentReasoning(configured: ReasoningPolicy | undefined, bound: ReasoningPolicy | undefined): Promise<(ReasoningPolicy | undefined)[]> {
+        const model = replyingModel();
+        const provider = createAiSdkProvider({ model, reasoning: configured });
+        await drive(provider, { reasoning: bound });
+        await drive(provider, { reasoning: bound, live: true });
+        return model.doStreamCalls.map((call) => call.reasoning);
     }
 
-    async function callBothPaths(provider: ChatProvider, req: ChatRequest): Promise<void> {
-        (await provider.chat(req, makeSession()))._unsafeUnwrap();
-        for await (const _event of provider.chatStream(req, makeSession())) {
-            // Drain the stream, thus the model call completes.
-        }
-    }
-
-    it("sends the value of the request over the configured value", async () => {
-        const { provider, sent } = recordingProvider("high");
-
-        await callBothPaths(provider, { ...request, reasoning: "low" });
-
-        expect(sent).toEqual(["low", "low"]);
+    it("sends the value of the run over the configured value", async () => {
+        expect(await sentReasoning("high", "low")).toEqual(["low", "low"]);
     });
 
-    it("applies the configured value to a request that sets none", async () => {
-        const { provider, sent } = recordingProvider("high");
-
-        await callBothPaths(provider, request);
-
-        expect(sent).toEqual(["high", "high"]);
+    it("applies the configured value to a run that sets none", async () => {
+        expect(await sentReasoning("high", undefined)).toEqual(["high", "high"]);
     });
 
-    it("applies xhigh when neither the request nor the configuration sets a value", async () => {
-        const { provider, sent } = recordingProvider();
-
-        await callBothPaths(provider, request);
-
-        expect(sent).toEqual(["xhigh", "xhigh"]);
+    it("applies xhigh when neither the run nor the configuration sets a value", async () => {
+        expect(await sentReasoning(undefined, undefined)).toEqual(["xhigh", "xhigh"]);
     });
 });
 
@@ -771,34 +630,6 @@ describe("createConfiguredAiSdkProvider", () => {
         expect(declared.capabilities.imageToolResults).toBe(true);
         expect(refused.capabilities.imageToolResults).toBe(false);
     });
-
-    // The user-message placement has no endpoint default at all. The embedder
-    // states the fact about its own wire, because a proxy can front anything.
-    it("copies a stated user-message picture flag, and leaves an absent one absent", () => {
-        const declared = createConfiguredAiSdkProvider({
-            config: {
-                kind: "openai-compatible",
-                name: "self-hosted",
-                baseURL: "http://models.local/v1",
-                apiKey: "test-key",
-                model: "local-tool-model",
-                capabilities: { toolCalling: true, imageUserMessages: true },
-            },
-        });
-        const silent = createConfiguredAiSdkProvider({
-            config: {
-                kind: "openai-compatible",
-                name: "self-hosted",
-                baseURL: "http://models.local/v1",
-                apiKey: "test-key",
-                model: "local-tool-model",
-                capabilities: { toolCalling: true },
-            },
-        });
-
-        expect(declared.capabilities.imageUserMessages).toBe(true);
-        expect(silent.capabilities.imageUserMessages).toBeUndefined();
-    });
 });
 
 describe("computeRetryDelayMs", () => {
@@ -853,7 +684,7 @@ describe("computeRetryDelayMs", () => {
     });
 });
 
-describe("createAiSdkProvider chat retry", () => {
+describe("the retry envelope", () => {
     it("retries a connection failure and succeeds on the next attempt", async () => {
         let attempts = 0;
         const provider = createAiSdkProvider({
@@ -866,14 +697,14 @@ describe("createAiSdkProvider chat retry", () => {
                         }),
                     );
                 }
-                return Promise.resolve(okResult("recovered"));
+                return Promise.resolve(replyOf(["recovered"]));
             }),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
-        expect(result._unsafeUnwrap().message).toEqual({ role: "assistant", content: [{ type: "text", text: "recovered" }] });
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.text).toBe("recovered");
         expect(attempts).toBe(2);
         // A single connection retry has no server-named delay, so it sleeps a
         // real jittered backoff of up to the 2s initial window.
@@ -888,345 +719,190 @@ describe("createAiSdkProvider chat retry", () => {
         ] as const;
 
         for (const { status, type } of cases) {
-            let attempts = 0;
-            const provider = createAiSdkProvider({
-                model: fakeModel(() => {
-                    attempts += 1;
-                    return Promise.reject(Object.assign(new Error(`HTTP ${status}`), { status }));
-                }),
-            });
+            const model = fakeModel(() => Promise.reject(Object.assign(new Error(`HTTP ${status}`), { status })));
 
-            const result = await provider.chat(request, makeSession());
+            const failure = providerErrorOf(await drive(createAiSdkProvider({ model })));
 
-            expect(result.isErr()).toBe(true);
-            if (result.isErr()) {
-                expect(result.error.type).toBe(type);
-                expect(result.error.retryable).toBe(false);
-            }
-            expect(attempts).toBe(1);
+            expect(failure.type).toBe(type);
+            expect(failure.retryable).toBe(false);
+            expect(model.doStreamCalls).toHaveLength(1);
         }
     });
 
     it("exhausts retries on a persistent retryable failure and preserves the transient classification", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                attempts += 1;
-                // The 503 reaches classification down the retry wrapper's cause
-                // chain; asserting type/retryable proves it stayed reachable.
-                return Promise.reject(apiError503());
-            }),
-        });
+        // The 503 reaches classification down the retry wrapper's cause chain;
+        // asserting type/retryable proves it stayed reachable.
+        const model = fakeModel(() => Promise.reject(apiError503()));
 
-        const result = await provider.chat(request, makeSession());
+        const failure = providerErrorOf(await drive(createAiSdkProvider({ model })));
 
-        expect(attempts).toBe(1 + RETRY_MAX_RETRIES);
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("provider");
-            expect(result.error.retryable).toBe(true);
-        }
+        expect(model.doStreamCalls).toHaveLength(1 + RETRY_MAX_RETRIES);
+        expect(failure.type).toBe("provider");
+        expect(failure.retryable).toBe(true);
     });
 
     it("bounds the envelope by a configured maxRetries in place of the default", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                attempts += 1;
-                return Promise.reject(apiError503());
-            }),
-            maxRetries: 2,
-        });
+        const model = fakeModel(() => Promise.reject(apiError503()));
 
-        const result = await provider.chat(request, makeSession());
+        const failure = providerErrorOf(await drive(createAiSdkProvider({ model, maxRetries: 2 })));
 
-        expect(attempts).toBe(3);
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("provider");
-            expect(result.error.retryable).toBe(true);
-        }
+        expect(model.doStreamCalls).toHaveLength(3);
+        expect(failure.type).toBe("provider");
+        expect(failure.retryable).toBe(true);
     });
 
     it("calls the request headers hook before each attempt", async () => {
         let hookCalls = 0;
-        let attempts = 0;
-        const calls: LanguageModelV4CallOptions[] = [];
+        const model = fakeModel(() => (hookCalls === 1 ? Promise.reject(apiError503()) : Promise.resolve(replyOf(["ok"]))));
         const provider = createAiSdkProvider({
-            model: fakeModel((options) => {
-                calls.push(options);
-                attempts += 1;
-                if (attempts === 1) return Promise.reject(apiError503());
-                return Promise.resolve(okResult());
-            }),
+            model,
             resolveRequestHeaders: () => {
                 hookCalls += 1;
                 return okAsync({ "x-attempt": `attempt-${hookCalls}` });
             },
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(provider);
 
-        expect(result.isOk()).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(hookCalls).toBe(2);
-        expect(calls).toHaveLength(2);
-        expect(presentAt(calls, 1).headers).toMatchObject({ "x-attempt": "attempt-2" });
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(headersOf(presentAt(model.doStreamCalls, 1))).toMatchObject({ "x-attempt": "attempt-2" });
     });
 
     it("never retries a status that the map of the host holds", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                attempts += 1;
-                return Promise.reject(Object.assign(new Error("HTTP 429"), { status: 429 }));
-            }),
-            suspendOn: { 429: "quota_exhausted" },
-        });
+        const model = fakeModel(() => Promise.reject(Object.assign(new Error("HTTP 429"), { status: 429 })));
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        const failure = providerErrorOf(await drive(createAiSdkProvider({ model, suspendOn: { 429: "quota_exhausted" } })));
 
         expect(failure).toMatchObject({ type: "suspend", status: 429, reason: "quota_exhausted", retryable: false });
-        expect(attempts).toBe(1);
+        expect(model.doStreamCalls).toHaveLength(1);
     });
 });
 
-describe("createAiSdkProvider abort during backoff", () => {
+describe("an abort during the backoff", () => {
     it("abandons a pending retry backoff when the signal fires", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                attempts += 1;
-                // A 4s server-named delay makes the backoff long enough that only
-                // the abort — not the delay elapsing — can end the call quickly.
-                return Promise.reject(apiError503({ "retry-after-ms": "4000" }));
-            }),
-        });
-
+        // A 4s server-named delay makes the backoff long enough that only
+        // the abort — not the delay elapsing — can end the call quickly.
+        const model = fakeModel(() => Promise.reject(apiError503({ "retry-after-ms": "4000" })));
         const controller = new AbortController();
         const startedAt = Date.now();
 
-        try {
-            // The abort lands while the call waits out the server-named backoff, so only the abort can end it quickly.
-            const pending = provider.chat(request, makeSession(), controller.signal);
-            await sleep(50);
-            controller.abort();
-            const outcome = await pending;
-            throw new Error(`expected the abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
-        } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
-            expect(err.name).toBe("AbortError");
-        }
+        // The abort lands while the call waits out the server-named backoff, so only the abort can end it quickly.
+        const pending = drive(createAiSdkProvider({ model }), { signal: controller.signal });
+        await sleep(50);
+        controller.abort();
+        const outcome = await pending;
 
+        expect(outcome.aborted).toBe(true);
+        expect(outcome.failure).toBeUndefined();
         expect(Date.now() - startedAt).toBeLessThan(2_000);
-        expect(attempts).toBe(1);
+        expect(model.doStreamCalls).toHaveLength(1);
     }, 10_000);
 
     it("does not loop when a wall-clock guard of the caller expires", async () => {
         // A wall-clock guard of a caller aborts with a `TimeoutError` reason, which
         // the taxonomy marks as a retryable timeout. The aborted caller signal
-        // stops the envelope, thus one attempt runs and the throwable rides out
-        // unchanged.
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                attempts += 1;
-                return Promise.reject(new DOMException("The operation timed out.", "TimeoutError"));
-            }),
+        // stops the envelope, thus one attempt runs and the call ends as an abort.
+        const controller = new AbortController();
+        const model = fakeModel(() => {
+            const expiry = new DOMException("The operation timed out.", "TimeoutError");
+            controller.abort(expiry);
+            return Promise.reject(expiry);
         });
 
-        const controller = new AbortController();
-        controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+        const outcome = await drive(createAiSdkProvider({ model }), { signal: controller.signal });
 
-        try {
-            const outcome = await provider.chat(request, makeSession(), controller.signal);
-            throw new Error(`expected the expiry to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
-        } catch (err) {
-            if (!(err instanceof DOMException)) throw new Error(`expected a DOMException, got ${textOf(err)}`, { cause: err });
-            expect(err.name).toBe("TimeoutError");
-        }
-
-        expect(attempts).toBe(1);
+        expect(outcome.aborted).toBe(true);
+        expect(outcome.failure).toBeUndefined();
+        expect(model.doStreamCalls).toHaveLength(1);
     });
 });
 
-describe("createAiSdkProvider chatStream retry", () => {
-    it("retries stream establishment and then streams the recovered deltas", async () => {
+describe("a live call and a buffered call", () => {
+    it("retries a live call whose stream fails before the first output part, and then streams the recovered deltas", async () => {
         let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    attempts += 1;
-                    if (attempts === 1) return Promise.resolve(streamErrorsBeforeDelta(apiError503()));
-                    return Promise.resolve(streamResult(["a", "b"]));
-                },
-            ),
+        const model = fakeModel(() => {
+            attempts += 1;
+            return Promise.resolve(attempts === 1 ? streamErrorsBeforeDelta(apiError503()) : replyOf(["a", "b"]));
         });
 
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+        const outcome = await drive(createAiSdkProvider({ model }), { live: true });
 
-        expect(attempts).toBe(2);
-        expect(events).toEqual([
-            { type: "text-delta", text: "a" },
-            { type: "text-delta", text: "b" },
-            {
-                type: "done",
-                response: {
-                    message: { role: "assistant", content: [{ type: "text", text: "ab" }] },
-                    finishReason: "stop",
-                    rawFinishReason: "stop",
-                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
-                    requestedModelId: "fake-model",
-                    provider: "fake-provider",
-                },
-            },
-        ]);
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.deltas).toEqual(["a", "b"]);
+        expect(outcome.finishReason).toBe("stop");
     });
 
-    it("does not retry or re-emit once the first delta has reached the consumer", async () => {
+    it("retries a live call whose doStream rejects, and then streams the recovered deltas", async () => {
         let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    attempts += 1;
-                    return Promise.resolve(streamDeltaThenError("a", apiError503()));
-                },
-            ),
+        const model = fakeModel(() => {
+            attempts += 1;
+            return attempts === 1 ? Promise.reject(apiError503()) : Promise.resolve(replyOf(["a", "b"]));
         });
 
-        const deltas: string[] = [];
-        let threw = false;
-        try {
-            for await (const event of provider.chatStream(request, makeSession())) {
-                if (event.type === "text-delta") deltas.push(event.text);
-            }
-        } catch {
-            threw = true;
-        }
+        const outcome = await drive(createAiSdkProvider({ model }), { live: true });
 
-        expect(deltas).toEqual(["a"]);
-        expect(threw).toBe(true);
-        expect(attempts).toBe(1);
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.deltas).toEqual(["a", "b"]);
     });
 
-    it("exhausts establishment retries and throws the classified provider error", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    attempts += 1;
-                    return Promise.resolve(streamErrorsBeforeDelta(apiError503()));
-                },
-            ),
-        });
+    it("does not retry a live call or show its start again once the first output part reached the reader", async () => {
+        const model = fakeModel(() => Promise.resolve(streamDeltaThenError("a", apiError503())));
 
-        let caught: unknown;
-        try {
-            for await (const _part of provider.chatStream(request, makeSession())) {
-                // Each establishment attempt errors before any delta, so the body
-                // is never reached; draining runs the retries to exhaustion.
-            }
-        } catch (e) {
-            caught = e;
-        }
+        const outcome = await drive(createAiSdkProvider({ model }), { live: true });
 
-        expect(attempts).toBe(1 + RETRY_MAX_RETRIES);
-        expect(isProviderError(caught)).toBe(true);
-        if (isProviderError(caught)) {
-            expect(caught.type).toBe("provider");
-            expect(caught.retryable).toBe(true);
-        }
+        expect(outcome.deltas).toEqual(["a"]);
+        expect(providerErrorOf(outcome)).toMatchObject({ type: "provider", retryable: true });
+        expect(model.doStreamCalls).toHaveLength(1);
     });
 
-    it("retries a doStream promise rejection and then streams the recovered deltas", async () => {
+    it("retries a buffered call that fails mid-stream, and shows the reader only the reply of the attempt that completed", async () => {
         let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    attempts += 1;
-                    // A rejected doStream promise is the shape a real connection
-                    // failure at establishment takes; streamText defers it past a
-                    // clean first pull, so the envelope surfaces it via the result
-                    // promises rather than the first `textStream` pull.
-                    if (attempts === 1) return Promise.reject(apiError503());
-                    return Promise.resolve(streamResult(["a", "b"]));
-                },
-            ),
+        const model = fakeModel(() => {
+            attempts += 1;
+            return Promise.resolve(attempts === 1 ? streamDeltaThenError("a", apiError503()) : replyOf(["a", "b"]));
         });
 
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+        const outcome = await drive(createAiSdkProvider({ model }), { live: false });
 
-        expect(attempts).toBe(2);
-        expect(events).toEqual([
-            { type: "text-delta", text: "a" },
-            { type: "text-delta", text: "b" },
-            {
-                type: "done",
-                response: {
-                    message: { role: "assistant", content: [{ type: "text", text: "ab" }] },
-                    finishReason: "stop",
-                    rawFinishReason: "stop",
-                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
-                    requestedModelId: "fake-model",
-                    provider: "fake-provider",
-                },
-            },
-        ]);
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.deltas).toEqual(["a", "b"]);
     });
 
-    it("exhausts retries on a persistently rejecting doStream and throws the classified provider error", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    attempts += 1;
-                    return Promise.reject(apiError503());
-                },
-            ),
-        });
+    it("exhausts the retries of a stream that fails before any output, and fails with the classified provider error", async () => {
+        const model = fakeModel(() => Promise.resolve(streamErrorsBeforeDelta(apiError503())));
 
-        let caught: unknown;
-        try {
-            for await (const _part of provider.chatStream(request, makeSession())) {
-                // Every attempt rejects, so the body is never reached; draining
-                // runs the retries to exhaustion.
-            }
-        } catch (e) {
-            caught = e;
-        }
+        const outcome = await drive(createAiSdkProvider({ model }), { live: true });
 
-        expect(attempts).toBe(1 + RETRY_MAX_RETRIES);
-        expect(isProviderError(caught)).toBe(true);
-        if (isProviderError(caught)) {
-            expect(caught.type).toBe("provider");
-            expect(caught.retryable).toBe(true);
-        }
+        expect(model.doStreamCalls).toHaveLength(1 + RETRY_MAX_RETRIES);
+        expect(outcome.deltas).toEqual([]);
+        expect(providerErrorOf(outcome)).toMatchObject({ type: "provider", retryable: true });
     });
 
-    it("does not retry a clean text-less turn and yields only the terminal event", async () => {
-        let attempts = 0;
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    attempts += 1;
-                    return Promise.resolve(streamWithNoText());
-                },
-            ),
-        });
+    it("exhausts retries on a persistently rejecting doStream and fails with the classified provider error", async () => {
+        const model = fakeModel(() => Promise.reject(apiError503()));
 
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+        const outcome = await drive(createAiSdkProvider({ model }), { live: true });
 
-        expect(attempts).toBe(1);
-        expect(events).toHaveLength(1);
-        expect(presentAt(events, 0).type).toBe("done");
+        expect(model.doStreamCalls).toHaveLength(1 + RETRY_MAX_RETRIES);
+        expect(providerErrorOf(outcome)).toMatchObject({ type: "provider", retryable: true });
+    });
+
+    it("does not retry a clean text-less turn", async () => {
+        for (const live of [true, false]) {
+            const model = replyingModel([]);
+
+            const outcome = await drive(createAiSdkProvider({ model }), { live });
+
+            expect(model.doStreamCalls).toHaveLength(1);
+            expect(outcome.failure).toBeUndefined();
+            expect(outcome.deltas).toEqual([]);
+            expect(outcome.finishReason).toBe("stop");
+        }
     });
 });
 
@@ -1242,72 +918,63 @@ describe("retry policy constants", () => {
     });
 });
 
-describe("createAiSdkProvider request headers hook", () => {
+describe("the request headers hook", () => {
     it("stops the call at once on a hook err, sends no request, and never retries", async () => {
-        let generateCalls = 0;
         let hookCalls = 0;
+        const model = replyingModel();
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                generateCalls += 1;
-                return Promise.resolve(okResult());
-            }),
+            model,
             resolveRequestHeaders: () => {
                 hookCalls += 1;
                 return errAsync({ reason: "attribution refused", suspend: false });
             },
         });
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        const failure = providerErrorOf(await drive(provider));
 
         expect(failure).toMatchObject({ type: "provider", retryable: false });
         expect(failure.message).toContain("attribution refused");
         expect(failure.message).toContain("analysis:");
-        expect(generateCalls).toBe(0);
+        expect(model.doStreamCalls).toHaveLength(0);
         expect(hookCalls).toBe(1);
     });
 
     it("gives a suspend error with the reason and no status on a hook err with the suspend flag", async () => {
         const provider = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult())),
+            model: replyingModel(),
             resolveRequestHeaders: () => errAsync({ reason: "account_frozen", suspend: true }),
         });
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        const failure = providerErrorOf(await drive(provider));
 
         expect(failure).toMatchObject({ type: "suspend", reason: "account_frozen", retryable: false });
         expect(failure.type === "suspend" ? failure.status : "not a suspend error").toBeUndefined();
     });
 
     it("stops the retries when the hook refuses a later attempt", async () => {
-        let wireCalls = 0;
         let hookCalls = 0;
+        const model = fakeModel(() => Promise.reject(apiError503()));
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                wireCalls += 1;
-                return Promise.reject(apiError503());
-            }),
+            model,
             resolveRequestHeaders: () => {
                 hookCalls += 1;
                 return hookCalls === 1 ? okAsync({}) : errAsync({ reason: "second refused", suspend: false });
             },
         });
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        const failure = providerErrorOf(await drive(provider));
 
-        expect(wireCalls).toBe(1);
+        expect(model.doStreamCalls).toHaveLength(1);
         expect(hookCalls).toBe(2);
         expect(failure).toMatchObject({ type: "provider", retryable: false });
         expect(failure.message).toContain("second refused");
     }, 10_000);
 
     it("keeps the suspend flag and the reason when the hook refuses a later attempt", async () => {
-        let wireCalls = 0;
         let hookCalls = 0;
+        const model = fakeModel(() => Promise.reject(apiError503()));
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                wireCalls += 1;
-                return Promise.reject(apiError503());
-            }),
+            model,
             resolveRequestHeaders: () => {
                 hookCalls += 1;
                 // The reason holds a word that the wire taxonomy matches in a message. The
@@ -1316,233 +983,131 @@ describe("createAiSdkProvider request headers hook", () => {
             },
         });
 
-        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        const failure = providerErrorOf(await drive(provider));
 
-        expect(wireCalls).toBe(1);
+        expect(model.doStreamCalls).toHaveLength(1);
         expect(hookCalls).toBe(2);
         expect(failure).toMatchObject({ type: "suspend", reason: "terminated_by_host", retryable: false });
     }, 10_000);
 
     it("passes a rejected hook promise through with no change, and never retries it", async () => {
-        let wireCalls = 0;
         let hookCalls = 0;
         // The text of a connection failure, which the wire taxonomy would retry.
         const rejection = new TypeError("fetch failed");
+        const model = replyingModel();
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                wireCalls += 1;
-                return Promise.resolve(okResult());
-            }),
+            model,
             resolveRequestHeaders: () => {
                 hookCalls += 1;
                 return new ResultAsync<Record<string, string>, GateFailure>(Promise.reject(rejection));
             },
         });
 
-        const outcome = await provider
-            .chat(request, makeSession())
-            .match(
-                () => "ok",
-                () => "err",
-            )
-            .then(
-                (settled) => settled,
-                (thrown: unknown) => thrown,
-            );
+        const outcome = await drive(provider);
 
-        expect(outcome).toBe(rejection);
+        expect(outcome.failure).toBe(rejection);
         expect(hookCalls).toBe(1);
-        expect(wireCalls).toBe(0);
+        expect(model.doStreamCalls).toHaveLength(0);
     });
 
-    it("fails a stream at once on a hook err without opening the stream", async () => {
-        let streamCalls = 0;
+    it("fails a live call at once on a hook err without opening the stream", async () => {
+        const model = replyingModel(["a"]);
         const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => {
-                    streamCalls += 1;
-                    return Promise.resolve(streamResult(["a"]));
-                },
-            ),
+            model,
             resolveRequestHeaders: () => errAsync({ reason: "attribution refused", suspend: false }),
         });
 
-        let caught: unknown;
-        try {
-            for await (const _event of provider.chatStream(request, makeSession())) {
-                // Establishment fails at the hook before any event is produced.
-            }
-        } catch (e) {
-            caught = e;
-        }
+        const outcome = await drive(provider, { live: true });
 
-        expect(isProviderError(caught)).toBe(true);
-        if (isProviderError(caught)) expect(caught).toMatchObject({ type: "provider", retryable: false });
-        expect(streamCalls).toBe(0);
+        expect(providerErrorOf(outcome)).toMatchObject({ type: "provider", retryable: false });
+        expect(outcome.deltas).toEqual([]);
+        expect(model.doStreamCalls).toHaveLength(0);
     });
 });
 
 /**
- * The served id is captured at the raw model boundary, not read off the SDK's
- * assembled result: `generateText` and `streamText` both fall back to the bound
- * model's own id when the endpoint reports none, so `result.response.modelId`
- * would republish the requested id as an endpoint's claim. These tests pin that
- * the fallback never reaches `servedModelId` — a fake model reporting no
- * response metadata leaves it absent even though the SDK would have filled it
- * with `"fake-model"`.
+ * The served id is read at the raw model boundary, not off the SDK's assembled
+ * result: `streamText` falls back to the bound model's own id when the endpoint
+ * reports none, so `response.modelId` would republish the requested id as an
+ * endpoint's claim. A model double that reports no response metadata leaves the
+ * served id absent even though the SDK would have filled it with `"fake-model"`.
  */
-describe("model identity", () => {
+describe("model identity on the usage record", () => {
+    async function recordOf(parts: LanguageModelV4StreamPart[]): Promise<LlmUsageRecord> {
+        const { usageRecorder, records } = recordingUsage();
+        const provider = createAiSdkProvider({ model: fakeModel(() => Promise.resolve({ stream: convertArrayToReadableStream(parts) })) });
+
+        await runLoop(agentWith(), [{ role: "user", content: "hello" }], makeSession(), loopOptions(provider, { usageRecorder }));
+
+        return presentAt(records, 0);
+    }
+
+    const answer: LanguageModelV4StreamPart[] = [
+        { type: "text-start", id: "txt-1" },
+        { type: "text-delta", id: "txt-1", delta: "done" },
+        { type: "text-end", id: "txt-1" },
+    ];
+
     it("reports the served model beside the requested one when the endpoint names it", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() =>
-                Promise.resolve({
-                    content: [{ type: "text", text: "done" }],
-                    finishReason: { unified: "stop", raw: "stop" },
-                    usage,
-                    response: { id: "resp-1", timestamp: new Date(0), modelId: "fake-model-20260101" },
-                    warnings: [],
-                }),
-            ),
-        });
+        const record = await recordOf([
+            { type: "stream-start", warnings: [] },
+            { type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" },
+            ...answer,
+            finishPart(),
+        ]);
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(reply.requestedModelId).toBe("fake-model");
-        expect(reply.servedModelId).toBe("fake-model-20260101");
+        expect(record.requestedModelId).toBe("fake-model");
+        expect(record.servedModelId).toBe("fake-model-20260101");
     });
 
-    it("leaves servedModelId absent when the endpoint reports no model id", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult())),
-        });
+    it("leaves the served model absent when the endpoint reports no model id", async () => {
+        const record = await recordOf([{ type: "stream-start", warnings: [] }, ...answer, finishPart()]);
 
-        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(reply.requestedModelId).toBe("fake-model");
-        expect(reply.servedModelId).toBeUndefined();
+        expect(record.requestedModelId).toBe("fake-model");
+        expect(record).not.toHaveProperty("servedModelId");
     });
 
-    it("captures the served model from the stream's response metadata", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () =>
-                    Promise.resolve({
-                        stream: new ReadableStream({
-                            start(controller) {
-                                controller.enqueue({ type: "stream-start", warnings: [] });
-                                controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
-                                controller.enqueue({ type: "text-start", id: "txt-1" });
-                                controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
-                                controller.enqueue({ type: "text-end", id: "txt-1" });
-                                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-                                controller.close();
-                            },
-                        }),
-                    }),
-            ),
-        });
+    it("keeps the model identity of a text-less turn", async () => {
+        const record = await recordOf([
+            { type: "stream-start", warnings: [] },
+            { type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" },
+            finishPart(),
+        ]);
 
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
-
-        const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-        expect(done.response.requestedModelId).toBe("fake-model");
-        expect(done.response.servedModelId).toBe("fake-model-20260101");
-    });
-
-    it("leaves servedModelId absent on a stream that carries no response metadata", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () => Promise.resolve(streamResult(["do", "ne"])),
-            ),
-        });
-
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
-
-        const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-        expect(done.response.requestedModelId).toBe("fake-model");
-        expect(done.response.servedModelId).toBeUndefined();
-    });
-
-    it("keeps a text-less turn's model identity on the terminal event", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(
-                () => Promise.resolve(okResult()),
-                () =>
-                    Promise.resolve({
-                        stream: new ReadableStream({
-                            start(controller) {
-                                controller.enqueue({ type: "stream-start", warnings: [] });
-                                controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
-                                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-                                controller.close();
-                            },
-                        }),
-                    }),
-            ),
-        });
-
-        const events = [];
-        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
-
-        const done = events.at(-1);
-        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${String(done?.type)}`);
-        expect(done.response.requestedModelId).toBe("fake-model");
-        expect(done.response.servedModelId).toBe("fake-model-20260101");
+        expect(record.requestedModelId).toBe("fake-model");
+        expect(record.servedModelId).toBe("fake-model-20260101");
     });
 });
 
 describe("stream error parts", () => {
     /** A stream that opens, then reports `error` the way a mid-turn failure does. */
-    function erroringStream(error: unknown): () => Promise<LanguageModelV4StreamResult> {
-        return () =>
+    function erroringModel(error: unknown): MockLanguageModelV4 {
+        return fakeModel(() =>
             Promise.resolve({
-                stream: new ReadableStream({
-                    start(controller) {
-                        controller.enqueue({ type: "stream-start", warnings: [] });
-                        controller.enqueue({ type: "error", error });
-                        controller.close();
-                    },
-                }),
-            });
+                stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([
+                    { type: "stream-start", warnings: [] },
+                    { type: "error", error },
+                ]),
+            }),
+        );
     }
 
     it("fails the call rather than returning the empty turn the parts describe", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult("unused")), erroringStream(new Error("upstream exploded"))),
-            maxRetries: 0,
-        });
+        const outcome = await drive(createAiSdkProvider({ model: erroringModel(new Error("upstream exploded")), maxRetries: 0 }));
 
-        const result = await provider.chat(request, makeSession());
-
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("provider");
-            expect(result.error.message).toContain("upstream exploded");
-        }
+        const failure = providerErrorOf(outcome);
+        expect(failure.type).toBe("provider");
+        expect(failure.message).toContain("upstream exploded");
     });
 
     it("fails the call with the message of an overload in the stream, and the failure stays retryable", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult("unused")), erroringStream({ type: "overloaded_error", message: "Overloaded" })),
-            maxRetries: 0,
-        });
+        const outcome = await drive(createAiSdkProvider({ model: erroringModel({ type: "overloaded_error", message: "Overloaded" }), maxRetries: 0 }));
 
-        const result = await provider.chat(request, makeSession());
-
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.retryable).toBe(true);
-            // The bare payload reaches the message as its own text, never as
-            // `[object Object]`.
-            expect(result.error.message).toContain("Overloaded");
-        }
+        const failure = providerErrorOf(outcome);
+        expect(failure.retryable).toBe(true);
+        // The bare payload reaches the message as its own text, never as
+        // `[object Object]`.
+        expect(failure.message).toContain("Overloaded");
     });
 
     it("reads a null-prototype stream error part the same way", async () => {
@@ -1550,58 +1115,64 @@ describe("stream error parts", () => {
         // gate must still read its fields.
         const part: Record<string, unknown> = { type: "overloaded_error", message: "Overloaded" };
         Object.setPrototypeOf(part, null);
-        const provider = createAiSdkProvider({
-            model: fakeModel(() => Promise.resolve(okResult("unused")), erroringStream(part)),
-            maxRetries: 0,
+
+        const failure = providerErrorOf(await drive(createAiSdkProvider({ model: erroringModel(part), maxRetries: 0 })));
+
+        expect(failure.retryable).toBe(true);
+        expect(failure.message).toContain("Overloaded");
+    });
+
+    it("retries an error part before the first output part", async () => {
+        let attempts = 0;
+        const model = fakeModel(() => {
+            attempts += 1;
+            if (attempts > 1) return Promise.resolve(replyOf(["recovered"]));
+            return Promise.resolve({
+                stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([
+                    { type: "stream-start", warnings: [] },
+                    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+                ]),
+            });
         });
 
-        const result = await provider.chat(request, makeSession());
+        const outcome = await drive(createAiSdkProvider({ model }), { live: true });
 
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.retryable).toBe(true);
-            expect(result.error.message).toContain("Overloaded");
-        }
-    });
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.text).toBe("recovered");
+    }, 10_000);
 });
 
 describe("failure logging", () => {
-    /** A logger that keeps the records emitted at `error`. */
-    function recordingLogger(): { logger: Logger; errors: { msg: string; fields?: LogFields }[] } {
-        const errors: { msg: string; fields?: LogFields }[] = [];
-        const base = createNoopLogger();
-        const logger: Logger = {
-            ...base,
-            error: (msg, fields) => {
-                errors.push(fields === undefined ? { msg } : { msg, fields });
-            },
-            with: () => logger,
-            named: () => logger,
-            errorFields: (err) => ({ error: errorMessageOf(err) ?? textOf(err) }),
-        };
-        return { logger, errors };
-    }
+    const failures = (records: readonly LogRecord[]) => records.filter((record) => record.level === "error");
 
     it("records a call the envelope gave up on, thus the operator sees what the reply says", async () => {
-        const { logger, errors } = recordingLogger();
+        const { logger, records } = recordingLogger();
         const provider = createAiSdkProvider({
-            model: fakeModel(() => {
-                return Promise.reject(Object.assign(new Error("payment required"), { status: 402 }));
-            }),
+            model: fakeModel(() => Promise.reject(Object.assign(new Error("payment required"), { status: 402 }))),
             maxRetries: 0,
             logger,
         });
 
-        const result = await provider.chat(request, makeSession());
+        expect((await drive(provider)).failure).toBeDefined();
 
-        expect(result.isErr()).toBe(true);
-        expect(errors).toHaveLength(1);
-        expect(presentAt(errors, 0).msg).toBe("provider call failed");
-        expect(presentAt(errors, 0).fields).toMatchObject({ kind: "suspend", retryable: false, error: "payment required" });
+        expect(failures(records)).toHaveLength(1);
+        expect(presentAt(failures(records), 0).msg).toBe("provider call failed");
+        expect(presentAt(failures(records), 0).fields).toMatchObject({ kind: "suspend", retryable: false, error: "payment required" });
+    });
+
+    it("records a live call that fails after its first output part", async () => {
+        const { logger, records } = recordingLogger();
+        const provider = createAiSdkProvider({ model: fakeModel(() => Promise.resolve(streamDeltaThenError("a", apiError503()))), logger });
+
+        expect((await drive(provider, { live: true })).failure).toBeDefined();
+
+        expect(failures(records).map((record) => record.msg)).toEqual(["provider call failed"]);
+        expect(presentAt(failures(records), 0).fields).toMatchObject({ kind: "provider", retryable: true });
     });
 
     it("leaves a caller abort unrecorded, because a cancellation is not a failure", async () => {
-        const { logger, errors } = recordingLogger();
+        const { logger, records } = recordingLogger();
         const controller = new AbortController();
         const provider = createAiSdkProvider({
             model: fakeModel(() => {
@@ -1613,39 +1184,15 @@ describe("failure logging", () => {
             logger,
         });
 
-        // Reading `isOk` is what consumes the `Result`; which arm it holds does not
-        // matter here, only that the call resolved at all instead of rejecting.
-        // Recording the three outcomes apart tells a later reader whether a
-        // regression captured the abort as an `err` or swallowed it as an `ok`.
-        let outcome: "threw" | "ok" | "err";
-        try {
-            const result = await provider.chat(request, makeSession(), controller.signal);
-            outcome = result.isOk() ? "ok" : "err";
-        } catch {
-            outcome = "threw";
-        }
+        const outcome = await drive(provider, { signal: controller.signal });
 
-        expect(outcome).toBe("threw");
-        expect(errors).toHaveLength(0);
+        expect(outcome.aborted).toBe(true);
+        expect(failures(records)).toHaveLength(0);
     });
 });
 
 describe("dropped thinking blocks", () => {
-    function recordingLogger(): { logger: Logger; warnings: { msg: string; fields?: LogFields }[] } {
-        const warnings: { msg: string; fields?: LogFields }[] = [];
-        const base = createNoopLogger();
-        const logger: Logger = {
-            ...base,
-            warn: (msg, fields) => {
-                warnings.push(fields === undefined ? { msg } : { msg, fields });
-            },
-            with: () => logger,
-            named: () => logger,
-        };
-        return { logger, warnings };
-    }
-
-    const dropRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) => warnings.filter((w) => w.msg === "thinking block dropped");
+    const dropRecords = (records: readonly LogRecord[]) => records.filter((record) => record.msg === "thinking block dropped");
 
     // The harness passes each field of an entry through as it is, thus the
     // values here are only data to read back.
@@ -1654,56 +1201,39 @@ describe("dropped thinking blocks", () => {
         { type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
     ];
 
-    function droppingModel(text?: string): LanguageModelV4 {
-        return fakeModel(() =>
-            Promise.resolve({
-                ...okResult(),
-                content: text === undefined ? [] : [{ type: "text", text }],
-                providerMetadata: { anthropic: { inputTransformations: DROPS } },
-            }),
-        );
-    }
+    it("writes one warn record for each drop on a live call and on a buffered call, before the reader sees the finish", async () => {
+        for (const live of [true, false]) {
+            const { logger, records } = recordingLogger();
+            const provider = createAiSdkProvider({
+                model: replyingModel(["done"], finishPart({ providerMetadata: { anthropic: { inputTransformations: DROPS } } })),
+                logger,
+            });
 
-    it("writes one warn record for each drop on chat, and chat returns ok", async () => {
-        const { logger, warnings } = recordingLogger();
-        const provider = createAiSdkProvider({ model: droppingModel("done"), logger });
+            let recordsAtFinish: number | undefined;
+            const outcome = await drive(provider, {
+                live,
+                onPart: (type) => {
+                    if (type === "finish-step") recordsAtFinish = dropRecords(records).length;
+                },
+            });
 
-        const result = await provider.chat(request, makeSession());
-
-        expect(result.isOk()).toBe(true);
-        expect(dropRecords(warnings).map((w) => w.fields)).toEqual([
-            { workload: "analysis:analysis-001", type: "thinking", path: "messages.3.content.0", reason: "prefix_binding_mismatch" },
-            { workload: "analysis:analysis-001", type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
-        ]);
-    });
-
-    it("writes the same records on each terminal path of chatStream, before the done event", async () => {
-        // A reply with text drains the live stream. A reply with no text ends
-        // inside the envelope. The two paths build the done event apart.
-        for (const text of ["done", undefined]) {
-            const { logger, warnings } = recordingLogger();
-            const provider = createAiSdkProvider({ model: droppingModel(text), logger });
-
-            let recordsAtDone: number | undefined;
-            for await (const event of provider.chatStream(request, makeSession())) {
-                if (event.type === "done") recordsAtDone = dropRecords(warnings).length;
-            }
-
-            expect(recordsAtDone).toBe(2);
-            expect(dropRecords(warnings).map((w) => w.fields?.["path"])).toEqual(["messages.3.content.0", "messages.5.content.0"]);
+            expect(outcome.failure).toBeUndefined();
+            expect(recordsAtFinish).toBe(2);
+            expect(dropRecords(records).map((record) => record.fields)).toEqual([
+                { workload: "analysis:analysis-001", type: "thinking", path: "messages.3.content.0", reason: "prefix_binding_mismatch" },
+                { workload: "analysis:analysis-001", type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
+            ]);
         }
     });
 
     it("writes no drop record for a response without drops", async () => {
-        const { logger, warnings } = recordingLogger();
-        const provider = createAiSdkProvider({ model: fakeModel(() => Promise.resolve(okResult())), logger });
+        const { logger, records } = recordingLogger();
+        const provider = createAiSdkProvider({ model: replyingModel(), logger });
 
-        (await provider.chat(request, makeSession()))._unsafeUnwrap();
-        for await (const _event of provider.chatStream(request, makeSession())) {
-            // Drain the stream, thus the call completes.
-        }
+        await drive(provider);
+        await drive(provider, { live: true });
 
-        expect(dropRecords(warnings)).toEqual([]);
+        expect(dropRecords(records)).toEqual([]);
     });
 });
 
@@ -1724,106 +1254,141 @@ describe("a reply that a fallback model served", () => {
         },
     };
     const NO_HOP = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }] } };
-    const thinking = { type: "reasoning" as const, text: "weigh the two sets", providerMetadata: { anthropic: { signature: "signed-by-the-api" } } };
+    const THINKING = reasoning("weigh the two sets", "signed-by-the-api");
 
-    function recordingLogger(): { logger: Logger; warnings: { msg: string; fields?: LogFields }[] } {
-        const warnings: { msg: string; fields?: LogFields }[] = [];
-        const base = createNoopLogger();
-        const logger: Logger = {
-            ...base,
-            warn: (msg, fields) => {
-                warnings.push(fields === undefined ? { msg } : { msg, fields });
-            },
-            with: () => logger,
-            named: () => logger,
-        };
-        return { logger, warnings };
-    }
-
-    const hopRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) =>
-        warnings.filter((w) => w.msg === "reply served by a fallback model, thus the harness drops the thinking of that turn");
+    const hopRecords = (records: readonly LogRecord[]) =>
+        records.filter((record) => record.msg === "reply served by a fallback model, thus the harness drops the thinking of that turn");
 
     /**
-     * The double reports `claude-opus-5-5` as its own served id, because that is what the
+     * The reply reports `claude-opus-5-5` as its own served id, because that is what the
      * API does across a hop: `message_start.message.model` keeps the requested model, and
      * only the iteration names the model that answered.
      */
-    function servedModel(
-        content: LanguageModelV4GenerateResult["content"],
-        providerMetadata: NonNullable<LanguageModelV4GenerateResult["providerMetadata"]>,
-    ): LanguageModelV4 {
-        return fakeModel(() =>
-            Promise.resolve({
-                ...okResult(),
-                content,
-                providerMetadata,
-                response: { id: "resp-1", timestamp: new Date(0), modelId: "claude-opus-5-5" },
-            }),
-        );
+    function servedReply(content: ScriptedReply["content"], providerMetadata: SharedV4ProviderMetadata): ScriptedReply {
+        return { content, finishReason: "stop", providerMetadata, modelId: "claude-opus-5-5", usage: { inputTokens: 10, outputTokens: 2 } };
     }
 
-    const partTypesOf = (content: unknown): string[] => {
-        if (!isUnknownArray(content)) return [];
-        return content.map((part) => textOf(parseUnknownRecord(part)?.type));
+    async function runOne(entry: ScriptedReply): Promise<{ messages: LoopMessage[]; record: LlmUsageRecord }> {
+        const { provider } = scriptedModel([entry]);
+        const { usageRecorder, records } = recordingUsage();
+        const result = await runLoop(agentWith(), [{ role: "user", content: "hello" }], makeSession(), loopOptions(provider, { usageRecorder }));
+        return { messages: result.messages, record: presentAt(records, 0) };
+    }
+
+    const partTypesOf = (message: LoopMessage | undefined): string[] => {
+        if (message?.role !== "assistant") return [];
+        return typeof message.content === "string" ? ["text"] : message.content.map((part) => part.type);
     };
 
-    it("drops the thinking of the turn, keeps every other part, and names the model that answered", async () => {
-        const { logger, warnings } = recordingLogger();
-        const provider = createAiSdkProvider({ model: servedModel([thinking, { type: "text", text: "done" }], HOP), logger });
+    it("records the turn with no thinking, keeps every other part, and names the model that answered", async () => {
+        const { messages, record } = await runOne(servedReply([THINKING, text("done")], HOP));
 
-        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(partTypesOf(response.message.content)).toEqual(["text"]);
+        expect(partTypesOf(messages.at(-1))).toEqual(["text"]);
         // The ledger of an embedder reads this field, thus the hop must reach it.
-        expect(response.servedModelId).toBe("claude-opus-4-8");
-        expect(response.requestedModelId).toBe("fake-model");
-        expect(hopRecords(warnings).map((w) => w.fields)).toEqual([{ workload: "analysis:analysis-001", servedBy: "claude-opus-4-8" }]);
+        expect(record.servedModelId).toBe("claude-opus-4-8");
+        expect(record.requestedModelId).toBe("scripted-model");
     });
 
     it("keeps the served model of the response when the hop names no model", async () => {
-        const { logger } = recordingLogger();
         const unnamedHop = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }, { type: "fallback_message" }] } };
-        const provider = createAiSdkProvider({ model: servedModel([thinking, { type: "text", text: "done" }], unnamedHop), logger });
 
-        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+        const { messages, record } = await runOne(servedReply([THINKING, text("done")], unnamedHop));
 
-        expect(partTypesOf(response.message.content)).toEqual(["text"]);
-        expect(response.servedModelId).toBe("claude-opus-5-5");
+        expect(partTypesOf(messages.at(-1))).toEqual(["text"]);
+        expect(record.servedModelId).toBe("claude-opus-5-5");
     });
 
     it("keeps the thinking when no iteration reports a hop", async () => {
-        const { logger, warnings } = recordingLogger();
-        const provider = createAiSdkProvider({ model: servedModel([thinking, { type: "text", text: "done" }], NO_HOP), logger });
+        const { messages, record } = await runOne(servedReply([THINKING, text("done")], NO_HOP));
 
-        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(partTypesOf(response.message.content)).toEqual(["reasoning", "text"]);
-        expect(response.servedModelId).toBe("claude-opus-5-5");
-        expect(hopRecords(warnings)).toEqual([]);
+        expect(partTypesOf(messages.at(-1))).toEqual(["reasoning", "text"]);
+        expect(record.servedModelId).toBe("claude-opus-5-5");
     });
 
-    it("leaves no part at all on a reply of nothing but thinking, because no part of it can be echoed", async () => {
-        const provider = createAiSdkProvider({ model: servedModel([thinking], HOP) });
+    it("records no assistant message for a reply of nothing but thinking, because no part of it can be echoed", async () => {
+        const { messages } = await runOne(servedReply([THINKING], HOP));
 
-        const response = (await provider.chat(request, makeSession()))._unsafeUnwrap();
-
-        expect(response.message.content).toBe("");
+        expect(messages.map((message) => message.role)).toEqual(["user"]);
     });
 
-    it("drops the thinking and names the model that answered on each terminal path of chatStream", async () => {
-        // A reply with text drains the live stream. A reply with no text ends inside the
-        // envelope, and the two paths build the done event apart.
-        for (const text of ["done", undefined]) {
-            const content = text === undefined ? [thinking] : [thinking, { type: "text" as const, text }];
-            const provider = createAiSdkProvider({ model: servedModel(content, HOP) });
+    it("logs the hop on a live call and on a buffered call, and names the model that answered", async () => {
+        for (const live of [true, false]) {
+            const { logger, records } = recordingLogger();
+            const provider = createAiSdkProvider({ model: replyingModel(["done"], finishPart({ providerMetadata: HOP })), logger });
 
-            let done: { message: { content: unknown }; servedModelId?: string } | undefined;
-            for await (const event of provider.chatStream(request, makeSession())) {
-                if (event.type === "done") done = event.response;
-            }
+            expect((await drive(provider, { live })).failure).toBeUndefined();
 
-            expect(partTypesOf(done?.message.content)).toEqual(text === undefined ? [] : ["text"]);
-            expect(done?.servedModelId).toBe("claude-opus-4-8");
+            expect(hopRecords(records).map((record) => record.fields)).toEqual([{ workload: "analysis:analysis-001", servedBy: "claude-opus-4-8" }]);
+        }
+    });
+
+    it("logs no hop when no iteration reports one", async () => {
+        const { logger, records } = recordingLogger();
+        const provider = createAiSdkProvider({ model: replyingModel(["done"], finishPart({ providerMetadata: NO_HOP })), logger });
+
+        await drive(provider);
+
+        expect(hopRecords(records)).toEqual([]);
+    });
+});
+
+describe("fallbackModelOf", () => {
+    it("names the model of the fallback iteration", () => {
+        expect(
+            fallbackModelOf({
+                anthropic: {
+                    iterations: [
+                        { type: "message", model: "a" },
+                        { type: "fallback_message", model: "b" },
+                    ],
+                },
+            }),
+        ).toBe("b");
+    });
+
+    it("gives an empty name for a hop that names no model", () => {
+        expect(fallbackModelOf({ anthropic: { iterations: [{ type: "fallback_message" }] } })).toBe("");
+    });
+
+    it("gives nothing when no iteration reports a hop, or when the metadata is of another vendor", () => {
+        expect(fallbackModelOf({ anthropic: { iterations: [{ type: "message", model: "a" }] } })).toBeUndefined();
+        expect(fallbackModelOf({ openai: { iterations: [{ type: "fallback_message", model: "b" }] } })).toBeUndefined();
+        expect(fallbackModelOf(undefined)).toBeUndefined();
+    });
+});
+
+describe("the warnings of the AI SDK", () => {
+    it("reach the logger of the provider, and not the console", async () => {
+        // The hook of the SDK is one process-global key, and the first provider of the
+        // process installs it. The test installs its own provider in a clean slot, and
+        // it gives the slot back.
+        const previous: unknown = Reflect.get(globalThis, "AI_SDK_LOG_WARNINGS");
+        Reflect.deleteProperty(globalThis, "AI_SDK_LOG_WARNINGS");
+        try {
+            const { logger, records } = recordingLogger();
+            const warning = { type: "other", message: "the model ignored a setting" } as const;
+            const provider = createAiSdkProvider({
+                model: fakeModel(() =>
+                    Promise.resolve({
+                        stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([
+                            { type: "stream-start", warnings: [warning] },
+                            { type: "text-start", id: "txt-1" },
+                            { type: "text-delta", id: "txt-1", delta: "ok" },
+                            { type: "text-end", id: "txt-1" },
+                            finishPart(),
+                        ]),
+                    }),
+                ),
+                logger,
+            });
+
+            await drive(provider);
+
+            expect(records.filter((record) => record.msg === "ai sdk warning").map((record) => record.fields)).toEqual([
+                { provider: "fake-provider", model: "fake-model", warning },
+            ]);
+        } finally {
+            Reflect.set(globalThis, "AI_SDK_LOG_WARNINGS", previous);
         }
     });
 });

@@ -8,13 +8,11 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { presentAt, presentFirst } from "../../lib/present.js";
 import type { AgentSession } from "../../auth/types.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { ChatResponse } from "../../providers/types.js";
 import { defineTool, withToolResultImage, type Tool } from "../../tools/define-tool.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../__fixtures__/scripted-provider.js";
-import { continueAgent } from "../continue-agent.js";
-import { runAgent, type RunAgentOptions } from "../run-agent.js";
-import { passthroughStep } from "../run-step.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { continueLoop, runLoop, type LoopOptions } from "../run-loop.js";
 import {
     EXCERPT_HEAD_CHARS,
     EXCERPT_TAIL_CHARS,
@@ -24,7 +22,7 @@ import {
     type KeptToolOutput,
     type ToolOutputStore,
 } from "../tool-output.js";
-import type { AgentDefinition, EmitEvent, RunStep } from "../types.js";
+import type { AgentDefinition, EmitEvent } from "../types.js";
 
 const GO: ReadonlyArray<{ role: "user"; content: string }> = [{ role: "user", content: "go" }];
 
@@ -32,8 +30,8 @@ function agentDef(tools: Tool[]): AgentDefinition {
     return { id: "test-agent", systemPrompt: "You are a test agent.", model: "claude-test", tools, maxIterations: 8 };
 }
 
-function opts(provider: ScriptedProvider, overrides: Partial<RunAgentOptions> = {}): RunAgentOptions {
-    return { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, ...overrides };
+function opts(script: readonly ScriptStep[], overrides: Partial<LoopOptions> = {}): LoopOptions {
+    return { provider: scriptedModel(script).provider, signal: new AbortController().signal, emit: () => {}, ...overrides };
 }
 
 type MemoryStore = ToolOutputStore & {
@@ -69,11 +67,10 @@ function fill(length: number): string {
 }
 
 /** A tool whose ok value is a string with a JSON text of exactly `length` characters. */
-function sizedTool(executionMode: "step" | "inline" = "step"): Tool {
+function sizedTool(): Tool {
     return defineTool({
         id: "big",
         description: "Give a text of a length.",
-        executionMode,
         inputSchema: z.object({ length: z.number().int() }),
         describeCall: "none",
         execute: ({ length }) => Promise.resolve(ok(fill(length - 2))),
@@ -85,8 +82,20 @@ function sizedText(length: number): string {
     return JSON.stringify(fill(length - 2));
 }
 
-function callBig(length: number, id = "tu-1"): ChatResponse[] {
-    return [makeMessage([toolUseBlock(id, "big", { length })], "tool_use"), makeMessage([textBlock("done")], "end_turn")];
+function callBig(length: number, id = "tu-1"): ScriptStep[] {
+    return [callTools(toolCall(id, "big", { length })), reply([text("done")])];
+}
+
+/** The text of the first tool result that a request sent. */
+function promptResultText(call: LanguageModelV4CallOptions): string {
+    for (const message of call.prompt) {
+        if (message.role !== "tool") continue;
+        for (const part of message.content) {
+            if (part.type !== "tool-result") continue;
+            if (part.output.type === "text" || part.output.type === "error-text") return part.output.value;
+        }
+    }
+    throw new Error("the request carries no text tool result");
 }
 
 function onlyResult(messages: readonly ModelMessage[]): ToolResultPart {
@@ -110,15 +119,15 @@ const runSession = (scope: AgentSession["scope"] = { kind: "analysis", analysisI
     runFrame: { runId: "run-1", stepId: "T1S1" },
 });
 
-describe("runAgent — long tool results", () => {
+describe("runLoop — long tool results", () => {
     it("gives a result of exactly the cap back as the json result with no change", async () => {
         const store = memoryStore();
 
-        const { messages } = await runAgent(
+        const { messages } = await runLoop(
             agentDef([sizedTool(), readToolStub]),
             GO,
             makeSession(),
-            opts(scriptedProvider(callBig(TOOL_RESULT_CAP)), { toolOutputStore: store }),
+            opts(callBig(TOOL_RESULT_CAP), { toolOutputStore: store }),
         );
 
         expect(onlyResult(messages).output).toEqual({ type: "json", value: fill(TOOL_RESULT_CAP - 2) });
@@ -130,12 +139,7 @@ describe("runAgent — long tool results", () => {
         const text = sizedText(length);
         const store = memoryStore();
 
-        const { messages } = await runAgent(
-            agentDef([sizedTool(), readToolStub]),
-            GO,
-            makeSession(),
-            opts(scriptedProvider(callBig(length)), { toolOutputStore: store }),
-        );
+        const { messages } = await runLoop(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(callBig(length), { toolOutputStore: store }));
 
         const result = onlyResult(messages);
         expect(result.output.type).toBe("text");
@@ -160,13 +164,11 @@ describe("runAgent — long tool results", () => {
                 return Promise.reject(new Error("E".repeat(50_000)));
             },
         });
-        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "thrower", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
-
-        const { messages } = await runAgent(
+        const { messages } = await runLoop(
             agentDef([thrower]),
             GO,
             makeSession(),
-            opts(provider, {
+            opts([callTools(toolCall("tu-1", "thrower", {})), reply([text("done")])], {
                 emit: (event) => {
                     if (event.type === "tool-finished") finished.push(event);
                 },
@@ -188,12 +190,9 @@ describe("runAgent — long tool results", () => {
             describeCall: "none",
             execute: () => Promise.resolve(ok(withToolResultImage({ text: fill(40_000) }, { base64: "PNGBYTES", mediaType: "image/png" }))),
         });
-        const provider: ScriptedProvider = {
-            ...scriptedProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]),
-            capabilities: { toolCalling: true, imageToolResults: true },
-        };
+        const { provider } = scriptedModel([callTools(toolCall("tu-1", "eyes", {})), reply([text("done")])], { capabilities: { imageToolResults: true } });
 
-        const { messages } = await runAgent(agentDef([eyes]), GO, makeSession(), opts(provider));
+        const { messages } = await runLoop(agentDef([eyes]), GO, makeSession(), opts([], { provider }));
 
         const output = onlyResult(messages).output;
         if (output.type !== "content") throw new Error("the result carries no content output");
@@ -210,12 +209,7 @@ describe("runAgent — long tool results", () => {
         const length = 100_000;
         const store = memoryStore();
 
-        const { messages } = await runAgent(
-            agentDef([sizedTool(), readToolStub]),
-            GO,
-            makeSession(),
-            opts(scriptedProvider(callBig(length)), { toolOutputStore: store }),
-        );
+        const { messages } = await runLoop(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(callBig(length), { toolOutputStore: store }));
 
         expect(store.puts).toHaveLength(1);
         const kept = presentFirst(store.puts);
@@ -231,23 +225,25 @@ describe("runAgent — long tool results", () => {
         const runStore = memoryStore();
         const agent = agentDef([sizedTool(), readToolStub]);
 
-        await runAgent(agent, GO, makeSession({ scope }), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: chatStore }));
-        await runAgent(agent, GO, runSession(scope), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: runStore }));
+        await runLoop(agent, GO, makeSession({ scope }), opts(callBig(40_000), { toolOutputStore: chatStore }));
+        await runLoop(agent, GO, runSession(scope), opts(callBig(40_000), { toolOutputStore: runStore }));
 
         expect(presentFirst(chatStore.puts).threadId).toBe("t-1");
-        expect(presentFirst(runStore.puts)).not.toHaveProperty("threadId");
+        expect(presentFirst(runStore.puts).threadId).toBeUndefined();
     });
 
     it("puts the record before the next model request", async () => {
         const store = memoryStore();
         let keptAtSecondRequest: number | undefined;
-        const provider = scriptedProvider((i) => {
-            if (i === 0) return makeMessage([toolUseBlock("tu-1", "big", { length: 40_000 })], "tool_use");
-            keptAtSecondRequest = store.puts.length;
-            return makeMessage([textBlock("done")], "end_turn");
-        });
+        const script: ScriptStep[] = [
+            callTools(toolCall("tu-1", "big", { length: 40_000 })),
+            () => {
+                keptAtSecondRequest = store.puts.length;
+                return reply([text("done")]);
+            },
+        ];
 
-        await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(provider, { toolOutputStore: store }));
+        await runLoop(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(script, { toolOutputStore: store }));
 
         expect(keptAtSecondRequest).toBe(1);
     });
@@ -256,7 +252,7 @@ describe("runAgent — long tool results", () => {
         const length = 262_200;
         const text = sizedText(length);
 
-        const { messages } = await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(scriptedProvider(callBig(length))));
+        const { messages } = await runLoop(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(callBig(length)));
 
         expect(textOf(onlyResult(messages)).split("\n")).toEqual([
             `[Tool result cut: ${length} characters, over the limit of ${TOOL_RESULT_CAP}. Shown: the first ${EXCERPT_HEAD_CHARS} and the last ${EXCERPT_TAIL_CHARS} characters. The rest is not kept.]`,
@@ -268,8 +264,8 @@ describe("runAgent — long tool results", () => {
 
     it("keeps nothing for an agent that does not declare read_tool_output, and gives the excerpt of a run with no store", async () => {
         const store = memoryStore();
-        const withStore = await runAgent(agentDef([sizedTool()]), GO, makeSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: store }));
-        const noStore = await runAgent(agentDef([sizedTool()]), GO, makeSession(), opts(scriptedProvider(callBig(40_000))));
+        const withStore = await runLoop(agentDef([sizedTool()]), GO, makeSession(), opts(callBig(40_000), { toolOutputStore: store }));
+        const noStore = await runLoop(agentDef([sizedTool()]), GO, makeSession(), opts(callBig(40_000)));
 
         expect(store.puts).toHaveLength(0);
         expect(textOf(onlyResult(withStore.messages))).toBe(textOf(onlyResult(noStore.messages)));
@@ -279,8 +275,8 @@ describe("runAgent — long tool results", () => {
         const logger = createCapturingLogger();
         const agent = agentDef([sizedTool(), readToolStub]);
 
-        const working = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: memoryStore() }));
-        const failing = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: memoryStore("err"), logger }));
+        const working = await runLoop(agent, GO, runSession(), opts(callBig(40_000), { toolOutputStore: memoryStore() }));
+        const failing = await runLoop(agent, GO, runSession(), opts(callBig(40_000), { toolOutputStore: memoryStore("err"), logger }));
 
         expect(textOf(onlyResult(failing.messages))).toBe(textOf(onlyResult(working.messages)));
         const warns = logger.records.filter((r) => r.level === "warn" && r.msg.includes("tool output not kept"));
@@ -294,77 +290,35 @@ describe("runAgent — long tool results", () => {
         const second = memoryStore();
         const agent = agentDef([sizedTool(), readToolStub]);
 
-        await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: first }));
-        await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: second }));
+        await runLoop(agent, GO, runSession(), opts(callBig(40_000), { toolOutputStore: first }));
+        await runLoop(agent, GO, runSession(), opts(callBig(40_000), { toolOutputStore: second }));
 
         expect(presentFirst(second.puts).ref).toBe(presentFirst(first.puts).ref);
     });
 
-    it("puts the same record again when an inline-mode tool runs again under one run frame", async () => {
+    it("puts the same record again when a call runs again under one run frame", async () => {
         const store = memoryStore();
-        const agent = agentDef([sizedTool("inline"), readToolStub]);
+        const agent = agentDef([sizedTool(), readToolStub]);
 
-        const first = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: store }));
-        const replay = await runAgent(agent, GO, runSession(), opts(scriptedProvider(callBig(40_000)), { toolOutputStore: store }));
+        const first = await runLoop(agent, GO, runSession(), opts(callBig(40_000), { toolOutputStore: store }));
+        const replay = await runLoop(agent, GO, runSession(), opts(callBig(40_000), { toolOutputStore: store }));
 
         expect(store.puts).toHaveLength(2);
         expect(store.puts[1]).toEqual(presentFirst(store.puts));
         expect(textOf(onlyResult(replay.messages))).toBe(textOf(onlyResult(first.messages)));
     });
 
-    it("gives the excerpt as the output of the durable step of a step-mode tool", async () => {
-        const outputs = new Map<string, unknown>();
-        const runStep: RunStep = async (name, fn) => {
-            const output = await fn();
-            outputs.set(name, output);
-            return output;
-        };
-
-        await runAgent(
-            agentDef([sizedTool(), readToolStub]),
-            GO,
-            runSession(),
-            opts(scriptedProvider(callBig(40_000)), { runStep, toolOutputStore: memoryStore() }),
-        );
-
-        const stepOutput = z
-            .looseObject({ result: z.looseObject({ output: z.looseObject({ type: z.string(), value: z.string() }) }) })
-            .parse(outputs.get("tool-big-tu-1"));
-        expect(stepOutput.result.output.type).toBe("text");
-        expect(stepOutput.result.output.value.startsWith("[Tool result cut: ")).toBe(true);
-    });
-
-    it("cuts a long result of an earlier call in the round of a truncation", async () => {
-        const store = memoryStore();
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("tu-A", "big", { length: 40_000 }), toolUseBlock("tu-B", "big", { length: 10 })], "max_tokens"),
-            makeMessage([textBlock("done")], "end_turn"),
-        ]);
-
-        const { messages } = await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(provider, { toolOutputStore: store }));
-
-        const toolMessage = messages.find((m) => m.role === "tool");
-        expect(toolMessage).toBeDefined();
-        if (toolMessage === undefined) throw new Error("the tool message is absent");
-        const messageContent = toolMessage.content;
-        if (typeof messageContent === "string") throw new Error("the tool message carries string content");
-        const results = messageContent.flatMap((part) => (part.type === "tool-result" ? [part] : []));
-        expect(results.map((r) => r.toolCallId)).toEqual(["tu-A", "tu-B"]);
-        expect(textOf(presentFirst(results)).startsWith("[Tool result cut: 40000 characters")).toBe(true);
-        expect(store.puts.map((kept) => kept.toolCallId)).toEqual(["tu-A"]);
-    });
-
     it("cuts a long result of a continuation with the store of its options", async () => {
         const agent = agentDef([sizedTool(), readToolStub]);
-        const first = await runAgent(agent, GO, makeSession(), opts(scriptedProvider([makeMessage([textBlock("done")], "end_turn")])));
+        const first = await runLoop(agent, GO, makeSession(), opts([reply([text("done")])]));
         const store = memoryStore();
 
-        const continued = await continueAgent(
+        const continued = await continueLoop(
             agent,
             first.messages,
-            { text: "Read the long file.", mask: { allow: ["big"] }, maxRequests: 4, stepNamespace: "step-summary" },
+            { text: "Read the long file.", mask: { allow: ["big"] }, maxRequests: 4 },
             makeSession(),
-            opts(scriptedProvider(callBig(40_000, "tu-c")), { toolOutputStore: store }),
+            opts(callBig(40_000, "tu-c"), { toolOutputStore: store }),
         );
 
         expect(textOf(onlyResult(continued.messages)).startsWith("[Tool result cut: ")).toBe(true);
@@ -376,7 +330,7 @@ describe("runAgent — long tool results", () => {
         const text = sizedText(length);
         const store = memoryStore();
 
-        await runAgent(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(scriptedProvider(callBig(length)), { toolOutputStore: store }));
+        await runLoop(agentDef([sizedTool(), readToolStub]), GO, makeSession(), opts(callBig(length), { toolOutputStore: store }));
 
         const kept = presentFirst(store.puts);
         const half = TOOL_OUTPUT_KEEP_MAX / 2;
@@ -403,7 +357,7 @@ describe("runAgent — long tool results", () => {
             execute: () => Promise.resolve(ok(value)),
         });
 
-        const { messages } = await runAgent(agentDef([emojiTool]), GO, makeSession(), opts(scriptedProvider(callBig(length))));
+        const { messages } = await runLoop(agentDef([emojiTool]), GO, makeSession(), opts(callBig(length)));
 
         const excerpt = textOf(onlyResult(messages));
         expect(excerpt.split("\n")[0]).toContain(`Shown: the first ${EXCERPT_HEAD_CHARS - 1} and the last ${EXCERPT_TAIL_CHARS - 1} characters.`);
@@ -412,22 +366,21 @@ describe("runAgent — long tool results", () => {
 
     it("gives the result of read_tool_output uncut when the model reads the reference of its own excerpt", async () => {
         const store = memoryStore();
-        const provider = scriptedProvider((i, request) => {
-            if (i === 0) return makeMessage([toolUseBlock("tu-1", "big", { length: 100_000 })], "tool_use");
-            if (i === 1) {
-                const excerpt = textOf(onlyResult(request.messages));
-                const ref = referencedToolOutput(excerpt);
+        const script: ScriptStep[] = [
+            callTools(toolCall("tu-1", "big", { length: 100_000 })),
+            (call) => {
+                const ref = referencedToolOutput(promptResultText(call));
                 if (ref === undefined) throw new Error("the excerpt names no stored tool output");
-                return makeMessage([toolUseBlock("tu-2", "read_tool_output", { ref, limit: 16_384 })], "tool_use");
-            }
-            return makeMessage([textBlock("done")], "end_turn");
-        });
+                return callTools(toolCall("tu-2", "read_tool_output", { ref, limit: 16_384 }));
+            },
+            reply([text("done")]),
+        ];
 
-        const { messages } = await runAgent(
+        const { messages } = await runLoop(
             agentDef([sizedTool(), createReadToolOutputTool(store)]),
             GO,
             makeSession(),
-            opts(provider, { toolOutputStore: store }),
+            opts(script, { toolOutputStore: store }),
         );
 
         const toolMessages = messages.filter((m) => m.role === "tool");

@@ -509,7 +509,6 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             "The render marks the page that examine_page looks at next. " +
             "Use it to see the report, and to confirm that each reference resolves.",
         inputSchema: previewReportInput,
-        executionMode: "inline",
         describeCall: "none",
         // The page path is the one fact of a preview that a watcher wants, and it exists only in the
         // result. Each other arm is a degraded condition whose kind already names it, thus the kind

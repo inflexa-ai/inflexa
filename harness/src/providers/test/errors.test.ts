@@ -204,7 +204,7 @@ describe("the SDK timeout", () => {
 
 describe("toProviderError idempotency", () => {
     it("returns an already-constructed ProviderError unchanged", () => {
-        // chatStream throws this; streaming-chat's catch re-wraps it. The second
+        // The retry envelope throws this, and a caller can wrap it again. The second
         // wrap must not String() the object into a "[object Object]" message.
         const inner = toProviderError(new Error("Tool result is missing for tool call toolu_1"), "analysis:abc");
         const rewrapped = toProviderError(inner, "analysis:abc");

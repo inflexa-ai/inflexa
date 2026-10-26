@@ -2,7 +2,7 @@
  * `bootHarness` — the harness-owned boot sequence.
  *
  * `assembleCoreRuntime` stays sync and pure (it is the register-before-launch
- * cohort SOT, driven by tests on `passthroughStep`). `bootHarness` wraps it with
+ * cohort SOT, driven by tests outside a workflow). `bootHarness` wraps it with
  * the ordered, effectful boot steps every host must run in the same order, and
  * returns a `shutdown` handle the embedder wires to its process signals. The
  * ordering is load-bearing and runs cheapest-failure-first:

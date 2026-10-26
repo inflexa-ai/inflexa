@@ -54,7 +54,7 @@ export function flattenDataPart(part: Pick<ChatDataPart, "type" | "data">): { ty
 }
 
 /**
- * The frame of one emitted event, or `null` for `done` and for an `iteration` of the root agent. A frame of a sub-agent
+ * The frame of one emitted event, or `null` for an `iteration` of the root agent. A frame of a sub-agent
  * keeps its source, thus a consumer can filter it. A `text-delta` has no source, thus its frame gets `fallbackSource`,
  * the source of the root agent. A part frame is not checked here: {@link checkChatPart} checks it where it arrives.
  */
@@ -64,9 +64,6 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
             // The root loop gives none: a consumer of the root frames, for example the first-frame time of a
             // browser, must not read the start of a model request as output.
             return event.source.callPath.length > 1 ? { type: "iteration", source: toSource(event.source) } : null;
-
-        case "done":
-            return null;
 
         case "tool-started":
             return {

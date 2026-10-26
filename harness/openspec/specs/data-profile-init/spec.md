@@ -29,8 +29,8 @@ and never triggers the workflow, so nothing is authorized and nothing must be
 revoked.
 
 The agent delivers its result exclusively through a terminal `submit_profile`
-tool, run via `runToTerminal` (see the harness-agent-loop spec); the tool input
-is validated against `ProfilerOutputSchema`, so there is no message-text JSON
+tool, run via `runWithSalvage` (see the harness-agent-loop spec); the tool input
+is validated against `ProfileSubmissionSchema`, so there is no message-text JSON
 parsing. Sandbox resources are estimated per-run from the staged manifest rather
 than fixed, and the dataset's `domain`/`subtype` are free-form strings, not a
 fixed enum.

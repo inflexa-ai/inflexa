@@ -47,7 +47,7 @@ describe("createSandboxAgents", () => {
             expect(toolIds.has("write_file"), `${id} write_file`).toBe(true);
             expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
 
-            // The fixture deps wire no blockerHolder / embedding / skillsDir, so the
+            // The fixture deps wire no blocker / embedding / skillsDir, so the
             // resolved surface is exactly the always-on tools + meta.tools. The
             // knowledge template is the one allowlist member that resolves to
             // nothing without a knowledge client, thus it does not count here.

@@ -6,7 +6,8 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { defineTool } from "../define-tool.js";
+import { makeToolContext } from "../__fixtures__/tool-context.js";
+import { defineTool, readToolCallRecord, withToolCallRecord } from "../define-tool.js";
 import { createRegistry } from "../registry.js";
 
 describe("defineTool", () => {
@@ -31,31 +32,6 @@ describe("defineTool", () => {
         // z.toJSONSchema's draft marker is stripped before handing the schema
         // to AI SDK tool construction.
         expect(tool.jsonSchema.$schema).toBeUndefined();
-    });
-
-    it("defaults tools to step execution mode", () => {
-        const tool = defineTool({
-            id: "default-step",
-            description: "Defaults to a durable step.",
-            inputSchema: z.object({}),
-            describeCall: "none",
-            execute: () => Promise.resolve(ok({ done: true })),
-        });
-
-        expect(tool.executionMode).toBe("step");
-    });
-
-    it("preserves the explicit inline execution mode", () => {
-        const inline = defineTool({
-            id: "inline-tool",
-            description: "Pure deterministic helper.",
-            executionMode: "inline",
-            inputSchema: z.object({}),
-            describeCall: "none",
-            execute: () => Promise.resolve(ok({ done: true })),
-        });
-
-        expect(inline.executionMode).toBe("inline");
     });
 
     it("throws at construction for a discriminated-union schema", () => {
@@ -259,6 +235,48 @@ describe("defineTool", () => {
             });
 
             expect(tool.id).toBe("typed-result-hook");
+        });
+    });
+
+    describe("foldCallRecord", () => {
+        it("carries a declared hook onto the packaged tool, and the hook gets the record that execute attached", async () => {
+            const folded: unknown[] = [];
+            const tool = defineTool({
+                id: "recording-tool",
+                description: "Records one id.",
+                inputSchema: z.object({ id: z.string() }),
+                describeCall: (input) => input.id,
+                execute: (input) => Promise.resolve(ok(withToolCallRecord({ recorded: true }, { id: input.id }))),
+                foldCallRecord: (record) => {
+                    folded.push(record.id);
+                },
+            });
+
+            const value = (await tool.execute({ id: "a1" }, makeToolContext().ctx))._unsafeUnwrap();
+            tool.foldCallRecord?.(readToolCallRecord(value));
+
+            expect(folded).toEqual(["a1"]);
+        });
+
+        it("packages no hook for a definition that declares none", () => {
+            const tool = defineTool({
+                id: "plain-tool",
+                description: "Records nothing.",
+                inputSchema: z.object({}),
+                describeCall: "none",
+                execute: () => Promise.resolve(ok({ done: true })),
+            });
+
+            expect("foldCallRecord" in tool).toBe(false);
+        });
+
+        it("keeps the record off the JSON text of the value, and reads no record from a value with none", () => {
+            const value = withToolCallRecord({ recorded: true }, { id: "a1" });
+
+            expect(JSON.stringify(value)).toBe(JSON.stringify({ recorded: true }));
+            expect(readToolCallRecord(value)).toEqual({ id: "a1" });
+            expect(readToolCallRecord({ recorded: true })).toBeUndefined();
+            expect(readToolCallRecord("text")).toBeUndefined();
         });
     });
 });

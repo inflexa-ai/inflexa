@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { readToolCallRecord } from "../../define-tool.js";
+import { runLoop } from "../../../loop/run-loop.js";
+import { makeSession } from "../../../providers/__fixtures__/session.js";
+import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
 import { createWorkspaceMutator } from "../../workspace/mutator.js";
 import { GroundingSchema } from "../../../schemas/workflow-state.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
@@ -16,7 +20,7 @@ import { fakeKnowledgeClient, limitAnswer, notAssessedCheckAnswer, recommendAnsw
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
 import { joinEnvironment } from "../environment.js";
 import { createKnowledgeTools, knowledgeToolDefinitionHash } from "../index.js";
-import { createKnowledgeRecommendTool } from "../recommend.js";
+import { createKnowledgeRecommendTool, type KnowledgeRecommendAnswer } from "../recommend.js";
 import { buildPlanSkeleton } from "../skeleton.js";
 import { decisionRecordPath } from "../../workspace/decision-record.js";
 import { createKnowledgeTemplateTool } from "../template.js";
@@ -429,6 +433,60 @@ describe("the release pin of one plan", () => {
         expect(fake.calls.check[0]?.expected_snapshot).toBeUndefined();
         expect(out).toEqual(mismatch);
         expect(check.describeResult?.({ ...SITUATION, steps: [] }, out)).toBe("snapshot_mismatch");
+    });
+
+    it("attaches the answer as the call record, and only the fold of the record hands it to onRecommend", async () => {
+        const answers: KnowledgeRecommendAnswer[] = [];
+        const fake = fakeKnowledgeClient();
+        const recommend = presentAt(createKnowledgeTools({ client: fake.client, onRecommend: (answer) => answers.push(answer) }), 0, "the recommend tool");
+        const { ctx } = makeToolContext();
+
+        const out = await awaitOk(recommend.execute(SITUATION, ctx));
+
+        const record = readToolCallRecord(out);
+        expect(record).toMatchObject({ match: "applicable", snapshot: SNAPSHOT });
+        expect(answers).toEqual([]);
+        recommend.foldCallRecord?.(record);
+        expect(answers).toHaveLength(1);
+        expect(presentAt(answers, 0).snapshot).toEqual(SNAPSHOT);
+    });
+
+    it("a replay that folds the recorded answer pins the release with no call to the service", async () => {
+        const first = fakeKnowledgeClient();
+        const recorded = readToolCallRecord(
+            await awaitOk(presentAt(createKnowledgeTools({ client: first.client }), 0).execute(SITUATION, makeToolContext().ctx)),
+        );
+
+        // The replay gives the recorded result: the recommend body does not run again.
+        const replay = fakeKnowledgeClient();
+        const tools = createKnowledgeTools({ client: replay.client });
+        presentAt(tools, 0, "the recommend tool").foldCallRecord?.(recorded);
+        await awaitOk(
+            presentAt(tools, 1, "the check tool").execute(
+                { ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] },
+                makeToolContext().ctx,
+            ),
+        );
+
+        expect(replay.calls.recommend).toEqual([]);
+        expect(replay.calls.check[0]?.expected_snapshot).toBe(SNAPSHOT.digest);
+    });
+
+    it("the loop folds the answer after the round of its call", async () => {
+        const answers: KnowledgeRecommendAnswer[] = [];
+        const fake = fakeKnowledgeClient();
+        const tools = createKnowledgeTools({ client: fake.client, onRecommend: (answer) => answers.push(answer) });
+        const { provider } = scriptedModel([callTools(toolCall("r1", "knowledge_recommend", SITUATION)), reply([text("Planned.")])]);
+        const agent = { id: "planner", systemPrompt: "Plan.", model: "scripted-model", tools, maxIterations: 3 };
+
+        await runLoop(agent, [{ role: "user", content: "Plan the analysis." }], makeSession(), {
+            provider,
+            emit: () => undefined,
+            signal: new AbortController().signal,
+        });
+
+        expect(answers).toHaveLength(1);
+        expect(presentAt(answers, 0).snapshot).toEqual(SNAPSHOT);
     });
 
     it("the tool definition hash is stable and names the three tools", () => {

@@ -1,14 +1,12 @@
 /**
- * Run synthesizer — a single-shot agent loop driven through `runAgent`:
+ * Run synthesizer — a single-shot agent loop driven through `runWithSalvage`:
  *
- *   - `validate_synthesis` — non-terminal: dry-run schema + semantic validation
- *                            of a candidate in any shape. Never records.
- *   - `submit_synthesis`  — terminal: schema + semantic validation, captures
- *                            the outcome. Re-callable; a later valid submission
- *                            supersedes an earlier outcome (last-valid-wins).
- *   - `report_blocker`    — terminal: the run produced nothing synthesizable.
- *                            Only records when no outcome exists yet, so a
- *                            blocker can never clobber a real synthesis.
+ *   - `submit_synthesis`  — checks one synthesis against the schema and the
+ *                            semantic checks, and gives back the issues. It
+ *                            does not end the run. The last accepted
+ *                            submission is the synthesis.
+ *   - `report_blocker`    — the run produced nothing synthesizable. An
+ *                            accepted synthesis wins over a blocker.
  *   - `literature_reviewer` — research sub-agent exposed as a tool. The tool
  *                            re-uses `createLiteratureReviewerTool`; the
  *                            sub-agent loop's brief is the only context handed
@@ -33,17 +31,14 @@ import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { isAllDigits } from "../lib/text.js";
 import { tryFs } from "../lib/fs-result.js";
 import { safeParseJsonAs } from "../lib/parse-json.js";
-import { parseUnknownRecord } from "../lib/unknown-containers.js";
-import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import {
-    BiologicalThemeSchema,
-    KeyReferenceSchema,
     RunSynthesisSchema,
-    SynthesizedFindingSchema,
+    SynthesisDraftSchema,
     type BiologicalTheme,
     type KeyReference,
     type RunSynthesis,
+    type SynthesisDraft,
     type SynthesizedFinding,
 } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
@@ -51,10 +46,9 @@ import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { isSafeId, runDir } from "../workspace/paths.js";
-import { decodeObjectString } from "../lib/zod-issues.js";
 
-import { runToTerminal } from "../loop/run-to-terminal.js";
-import { passthroughStep } from "../loop/run-step.js";
+import { runWithSalvage, type LoopStep } from "../loop/run-loop.js";
+import { recordedInputOf } from "../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
@@ -62,7 +56,7 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
-import { createReportBlockerToolFor } from "../tools/sandbox/report-blocker.js";
+import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from "../tools/sandbox/report-blocker.js";
 import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { CitationResolver } from "../citations/types.js";
@@ -100,52 +94,24 @@ export type ValidationIssue = {
 
 export type SubmitSynthesisOutput = { accepted: true } | { accepted: false; issues: ValidationIssue[] };
 
-export type ValidateSynthesisOutput = { valid: true; issues: ValidationIssue[] } | { valid: false; issues: ValidationIssue[] };
+const SubmitSynthesisOutputSchema = z.object({ accepted: z.boolean() });
 
-type SynthesizerOutcome = { kind: "submitted"; synthesis: RunSynthesis } | { kind: "blocker"; reason: string };
+const SUBMIT_SYNTHESIS_TOOL_ID = "submit_synthesis";
 
-/** Internal state passed to the inner tools through closure capture. */
+/** The facts that the semantic checks read. */
 type InnerToolContext = {
     /** stepIds present in the input summaries — used for reference checks. */
     readonly knownStepIds: ReadonlySet<string>;
-    /** runId from the workflow — enforced on the submitted payload. */
-    readonly runId: string;
-};
-
-type OutcomeHolder = {
-    outcome: SynthesizerOutcome | null;
 };
 
 // ── Validation ──────────────────────────────────────────────────────
 
-function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath = "synthesis"): ValidationIssue[] {
-    return error.issues.map((i) => ({
-        path: [rootPath, ...i.path.map((p) => String(p))].join("."),
-        code: "schema" as const,
-        message: i.message,
-        hint: hintForZodIssue(i, input),
-    }));
-}
-
 // ── Semantic checks ─────────────────────────────────────────────────
 //
-// Each check takes only the fields it reads, never the whole synthesis. That is
-// what lets a candidate which failed whole-payload schema validation still be
-// checked: whichever fields parsed on their own get their checks run, and only
-// the checks whose inputs are genuinely missing are deferred. `semanticCheck`
-// composes them for the schema-valid path — it is the one definition of "all
-// semantic checks, in report order".
-
-function checkRunId(runId: string, ctx: InnerToolContext): ValidationIssue[] {
-    if (runId === ctx.runId) return [];
-    return [
-        {
-            path: "synthesis.runId",
-            code: "semantic",
-            message: `runId must be "${ctx.runId}"`,
-        },
-    ];
-}
+// Each check takes only the fields it reads, never the whole synthesis.
+// `semanticCheck` composes them — it is the one definition of "all semantic
+// checks, in report order". The input schema of the tool checks the shape
+// before them.
 
 function checkFindingStepIds(findings: readonly SynthesizedFinding[], ctx: InnerToolContext): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
@@ -225,9 +191,8 @@ function checkKeyReferencePmidFormat(keyReferences: readonly KeyReference[]): Va
     return issues;
 }
 
-function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): ValidationIssue[] {
+function semanticCheck(synthesis: SynthesisDraft, ctx: InnerToolContext): ValidationIssue[] {
     return [
-        ...checkRunId(synthesis.runId, ctx),
         ...checkFindingStepIds(synthesis.findings, ctx),
         ...checkThemeReferences(synthesis.themes, synthesis.findings),
         ...checkKeyReferencesCited(synthesis.keyReferences, synthesis.findings),
@@ -236,177 +201,44 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
     ];
 }
 
-// ── Salvage ─────────────────────────────────────────────────────────
-
-/**
- * The semantic-check inputs that survived on their own when the whole payload
- * did not. A field is `undefined` when it is absent or does not satisfy its own
- * sub-schema — never a guess or a stand-in.
- */
-type SalvagedInputs = {
-    readonly runId?: string;
-    readonly findings?: readonly SynthesizedFinding[];
-    readonly themes?: readonly BiologicalTheme[];
-    readonly keyReferences?: readonly KeyReference[];
-};
-
-function salvageInputs(candidate: unknown): SalvagedInputs {
-    const record = parseUnknownRecord(candidate) ?? {};
-
-    const runId = z.string().safeParse(record.runId);
-    const findings = z.array(SynthesizedFindingSchema).safeParse(record.findings);
-    const themes = z.array(BiologicalThemeSchema).safeParse(record.themes);
-    const keyReferences = z.array(KeyReferenceSchema).safeParse(record.keyReferences);
-
-    return {
-        runId: runId.success ? runId.data : undefined,
-        findings: findings.success ? findings.data : undefined,
-        themes: themes.success ? themes.data : undefined,
-        keyReferences: keyReferences.success ? keyReferences.data : undefined,
-    };
-}
-
-/**
- * A short issue list must never read as "everything else is fine". When the
- * payload failed schema validation and some checks could not run, the deferred
- * ones are named back to the model as an issue of their own.
- */
-function deferredChecksNotice(deferred: readonly string[]): ValidationIssue {
-    return {
-        path: "synthesis",
-        code: "semantic",
-        message:
-            `This issue list is INCOMPLETE: ${deferred.length} semantic check(s) could not run because the fields ` +
-            `they read did not survive schema validation — ${deferred.join("; ")}.`,
-        hint: "Fix the schema issues above and call validate_synthesis again; the deferred checks will run then and may report further problems.",
-    };
-}
-
-/**
- * Semantic checks over a candidate that failed `RunSynthesisSchema`. Every check
- * whose own inputs parsed is run; the rest are reported as deferred.
- */
-function salvagedSemanticCheck(candidate: unknown, ctx: InnerToolContext): ValidationIssue[] {
-    const { runId, findings, themes, keyReferences } = salvageInputs(candidate);
-    const issues: ValidationIssue[] = [];
-    const deferred: string[] = [];
-
-    if (runId !== undefined) issues.push(...checkRunId(runId, ctx));
-    else deferred.push("runId matches the run");
-
-    if (findings !== undefined) issues.push(...checkFindingStepIds(findings, ctx));
-    else deferred.push("finding stepIds are present in the input summaries");
-
-    if (themes !== undefined && findings !== undefined) issues.push(...checkThemeReferences(themes, findings));
-    else deferred.push("theme references resolve to entries in findings[]");
-
-    if (keyReferences !== undefined && findings !== undefined) issues.push(...checkKeyReferencesCited(keyReferences, findings));
-    else deferred.push("keyReferences PMIDs are cited by some finding");
-
-    if (findings !== undefined) issues.push(...checkFindingPmidFormat(findings));
-    else deferred.push("finding reference PMIDs are numeric");
-
-    if (keyReferences !== undefined) issues.push(...checkKeyReferencePmidFormat(keyReferences));
-    else deferred.push("keyReferences PMIDs are numeric");
-
-    if (deferred.length > 0) issues.push(deferredChecksNotice(deferred));
-    return issues;
-}
-
-/**
- * Validate a candidate in one pass. A schema failure no longer hides the
- * semantic problems behind it: structure issues come first, then every semantic
- * check whose inputs survived, then an explicit note of what was deferred.
- */
-function fullyValidate(candidate: unknown, ctx: InnerToolContext): { valid: true; synthesis: RunSynthesis } | { valid: false; issues: ValidationIssue[] } {
-    const parsed = RunSynthesisSchema.safeParse(candidate);
-    if (!parsed.success) {
-        return {
-            valid: false,
-            issues: [...zodIssuesToValidationIssues(parsed.error, candidate), ...salvagedSemanticCheck(candidate, ctx)],
-        };
-    }
-    const semanticIssues = semanticCheck(parsed.data, ctx);
-    if (semanticIssues.length > 0) {
-        return { valid: false, issues: semanticIssues };
-    }
-    return { valid: true, synthesis: parsed.data };
-}
-
 // ── Inner tools ─────────────────────────────────────────────────────
 
-function buildValidateTool(ctx: InnerToolContext): Tool<{ synthesis: unknown }, ValidateSynthesisOutput> {
+function buildSubmitTool(ctx: InnerToolContext): Tool<{ synthesis: SynthesisDraft }, SubmitSynthesisOutput> {
     return defineTool({
-        id: "validate_synthesis",
+        id: SUBMIT_SYNTHESIS_TOOL_ID,
         description:
-            "Dry-run a candidate synthesis and get back everything that is wrong " +
-            "with it. Takes the synthesis in ANY shape: a malformed, partial, or " +
-            "wrong-typed candidate is REPORTED, not rejected. Returns " +
-            "{valid, issues[]} covering both schema problems (missing / " +
-            "wrong-typed fields) and the semantic checks a schema cannot express " +
-            "(unknown stepId refs, theme→finding refs, keyReferences PMIDs not " +
-            "cited by any finding, non-numeric PMIDs) in a SINGLE pass — a " +
-            "schema problem does not hide the semantic problems behind it. If a " +
-            "field is too malformed for a semantic check to read, that check is " +
-            "reported as deferred rather than silently skipped. The authoritative " +
-            "field-by-field synthesis schema is the arg schema of " +
-            "submit_synthesis — this tool deliberately does not restate it. " +
-            "Non-terminal: call as often as needed to iterate toward a clean " +
-            "synthesis, then submit_synthesis. A candidate that arrives as a " +
-            "JSON-encoded string is decoded before the checks run, so the " +
-            "result describes the synthesis inside the string.",
-        // Deliberately permissive: a structurally-invalid candidate must reach
-        // `execute` so the model gets a structured {valid:false, issues} result —
-        // including semantic issues — instead of a bare Zod rejection at the loop's
-        // input boundary. `execute` re-parses against RunSynthesisSchema itself.
-        // The permissive schema also means the loop's string repair never runs
-        // here, so `execute` decodes a JSON-encoded string itself.
-        inputSchema: z.object({
-            synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
-        }),
-        describeCall: "none",
-        execute: (input) => {
-            const result = fullyValidate(decodeObjectString(input.synthesis), ctx);
-            const noIssues: ValidationIssue[] = [];
-            return Promise.resolve(ok(result.valid ? { valid: true as const, issues: noIssues } : { valid: false as const, issues: result.issues }));
-        },
-    });
-}
-
-function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool<{ synthesis: RunSynthesis }, SubmitSynthesisOutput> {
-    return defineTool({
-        id: "submit_synthesis",
-        description:
-            "Submit the final synthesis. Re-validates the payload against the " +
-            "semantic checks the arg schema cannot express (stepId refs, " +
-            "theme→finding refs, keyReferences PMIDs cited, numeric PMIDs). On " +
-            "success returns {accepted: true} — STOP after this. On rejection " +
-            "returns {accepted: false, issues} — fix the specific fields at each " +
-            "issue path and call again, or switch to report_blocker if the " +
-            "synthesis cannot be made valid. A rejected submission leaves any " +
-            "already-accepted synthesis untouched; a later accepted submission " +
-            "supersedes an earlier one.",
-        inputSchema: z.object({ synthesis: RunSynthesisSchema }),
+            "Submit the synthesis. Checks the payload against the semantic checks " +
+            "the arg schema cannot express (stepId refs, theme→finding refs, " +
+            "keyReferences PMIDs cited, numeric PMIDs). On success returns " +
+            "{accepted: true} — STOP after this. On rejection returns " +
+            "{accepted: false, issues} — fix the specific fields at each issue " +
+            "path and call again, or switch to report_blocker if the synthesis " +
+            "cannot be made valid. The last accepted submission is the synthesis.",
+        inputSchema: z.object({ synthesis: SynthesisDraftSchema }),
         describeCall: "none",
         execute: (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
-            const result = fullyValidate(input.synthesis, ctx);
-            if (!result.valid) {
-                // A rejection is not terminal — submission is last-valid-wins, so this
-                // leaves any already-recorded outcome intact and the model may fix the
-                // cited paths and submit again.
-                return Promise.resolve(ok({ accepted: false as const, issues: result.issues }));
-            }
-            holder.outcome = { kind: "submitted", synthesis: result.synthesis };
-            return Promise.resolve(ok({ accepted: true as const }));
+            const issues = semanticCheck(input.synthesis, ctx);
+            return Promise.resolve(ok(issues.length > 0 ? { accepted: false as const, issues } : { accepted: true as const }));
         },
     });
 }
 
-function buildBlockerTool(holder: OutcomeHolder): Tool<{ reason: string }, { recorded: true; message: string }> {
+/** The last accepted synthesis of a run, from the inputs of the calls of `submit_synthesis` that it accepted. */
+export function acceptedSynthesisOf(steps: readonly LoopStep[]): SynthesisDraft | undefined {
+    let accepted: SynthesisDraft | undefined;
+    for (const step of steps) {
+        for (const call of step.calls) {
+            if (call.toolName !== SUBMIT_SYNTHESIS_TOOL_ID || call.output?.outcome !== "ok") continue;
+            const outcome = SubmitSynthesisOutputSchema.safeParse(call.output.value);
+            const input = recordedInputOf(z.object({ synthesis: SynthesisDraftSchema }), call.input);
+            if (outcome.success && outcome.data.accepted && input !== undefined) accepted = input.synthesis;
+        }
+    }
+    return accepted;
+}
+
+function buildBlockerTool(): Tool<{ reason: string }> {
     return createReportBlockerToolFor({
-        record: (outcome) => {
-            if (holder.outcome === null) holder.outcome = outcome;
-        },
         blockedWhen:
             "Ends run synthesis with no synthesis written. Use it ONLY when the " +
             "run produced no synthesizable content — every step summary is empty, " +
@@ -419,25 +251,14 @@ function buildBlockerTool(holder: OutcomeHolder): Tool<{ reason: string }, { rec
 
 /**
  * Test-only — expose the inner-tool factory so unit tests can assert on
- * validation + outcome capture without driving the whole agent loop.
+ * the checks without driving the whole agent loop.
  */
-export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string>; runId: string }): {
-    validate: Tool<{ synthesis: unknown }, ValidateSynthesisOutput>;
-    submit: Tool<{ synthesis: RunSynthesis }, SubmitSynthesisOutput>;
-    blocker: Tool<{ reason: string }, { recorded: true; message: string }>;
-    holder: OutcomeHolder;
+export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string> }): {
+    submit: Tool<{ synthesis: SynthesisDraft }, SubmitSynthesisOutput>;
+    blocker: Tool<{ reason: string }>;
 } {
-    const holder: OutcomeHolder = { outcome: null };
-    const ctx: InnerToolContext = {
-        knownStepIds: args.knownStepIds,
-        runId: args.runId,
-    };
-    return {
-        validate: buildValidateTool(ctx),
-        submit: buildSubmitTool(holder, ctx),
-        blocker: buildBlockerTool(holder),
-        holder,
-    };
+    const ctx: InnerToolContext = { knownStepIds: args.knownStepIds };
+    return { submit: buildSubmitTool(ctx), blocker: buildBlockerTool() };
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -458,7 +279,7 @@ export type GenerateRunSynthesisInput = {
     readonly summaries: readonly StepSummary[];
     /** Plan analytical narrative for context. */
     readonly planNarrative: string;
-    /** Run id — submitted synthesis must match. */
+    /** Run id — the host stamps it on the accepted synthesis. */
     readonly runId: string;
     /** Optional cancellation. */
     readonly signal?: AbortSignal;
@@ -469,9 +290,9 @@ export type GenerateRunSynthesisInput = {
 export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
 
 /**
- * Drive the synthesizer agent loop to a terminal outcome — either a
- * validated synthesis (`submit_synthesis`) or a blocker (`report_blocker`).
- * Throws when neither terminal is reached (loop cap or external abort).
+ * Drive the synthesizer agent loop to an outcome — the last accepted
+ * synthesis (`submit_synthesis`), else a blocker (`report_blocker`).
+ * Throws when the run and its salvage end with neither (loop cap or external abort).
  */
 export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Promise<GenerateRunSynthesisResult> {
     if (input.summaries.length === 0) {
@@ -479,8 +300,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
     }
 
     const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
-    const holder: OutcomeHolder = { outcome: null };
-    const innerCtx: InnerToolContext = { knownStepIds, runId: input.runId };
+    const innerCtx: InnerToolContext = { knownStepIds };
     const reviewer = createLiteratureReviewerTool({
         provider: input.provider,
         model: input.model,
@@ -490,11 +310,10 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         toolOutputStore: input.toolOutputStore,
     });
 
-    const validateTool = buildValidateTool(innerCtx);
-    const submitTool = buildSubmitTool(holder, innerCtx);
-    const blockerTool = buildBlockerTool(holder);
+    const submitTool = buildSubmitTool(innerCtx);
+    const blockerTool = buildBlockerTool();
     const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
-    const tools: readonly Tool[] = [validateTool, submitTool, blockerTool, reviewer, ...readTools];
+    const tools: readonly Tool[] = [submitTool, blockerTool, reviewer, ...readTools];
 
     const agent: AgentDefinition = {
         id: SYNTHESIS_AGENT_ID,
@@ -504,36 +323,41 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         maxIterations: SYNTHESIZER_MAX_ITERATIONS,
     };
 
-    const prompt = buildSynthesizerPrompt(input.planNarrative, input.summaries, input.runId);
+    const prompt = buildSynthesizerPrompt(input.planNarrative, input.summaries);
 
     const signal = input.signal ?? new AbortController().signal;
     const emit: EmitFn = input.emit ?? (() => {});
 
-    const loopDeps = {
-        provider: input.provider,
-        signal,
-        emit,
-        runStep: passthroughStep,
-        resolved: () => holder.outcome !== null,
-        usageRecorder: input.usageRecorder,
-        toolOutputStore: input.toolOutputStore,
-        toolBudget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET },
-    } as const;
+    const run = await runWithSalvage(
+        agent,
+        [{ role: "user", content: prompt }],
+        input.session,
+        {
+            provider: input.provider,
+            signal,
+            emit,
+            usageRecorder: input.usageRecorder,
+            toolOutputStore: input.toolOutputStore,
+            policy: { budget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET } },
+        },
+        {
+            tools: [SUBMIT_SYNTHESIS_TOOL_ID, REPORT_BLOCKER_TOOL_ID],
+            nudge:
+                "You ended without an accepted synthesis. You MUST call " +
+                "submit_synthesis with the final synthesis now, or report_blocker " +
+                "if the run produced nothing synthesizable. Do not reply with prose.",
+            hasOutcome: (steps) => acceptedSynthesisOf(steps) !== undefined || blockerOf(steps) !== null,
+        },
+    );
 
-    await runToTerminal(agent, [{ role: "user", content: prompt }], input.session, loopDeps, {
-        tools: [submitTool, blockerTool],
-        nudge:
-            "You ended without calling a terminal tool. You MUST call " +
-            "submit_synthesis with the final synthesis now, or report_blocker " +
-            "if the run produced nothing synthesizable. Do not reply with prose.",
-    });
-
-    const outcome = holder.outcome;
-    if (outcome?.kind === "submitted") {
-        return { kind: "synthesis", synthesis: outcome.synthesis };
+    const accepted = acceptedSynthesisOf(run.steps);
+    if (accepted !== undefined) {
+        // The model never types the run id: the host stamps the id of its own run.
+        return { kind: "synthesis", synthesis: { runId: input.runId, ...accepted } };
     }
-    if (outcome?.kind === "blocker") {
-        return { kind: "skipped", reason: outcome.reason };
+    const blocker = blockerOf(run.steps);
+    if (blocker !== null) {
+        return { kind: "skipped", reason: blocker.reason };
     }
     if (signal.aborted) {
         throw new Error("Run synthesis was cancelled.");
@@ -704,10 +528,10 @@ export function formatSynthesisEmbeddingText(synthesis: RunSynthesis): string {
 
 // ── Prompt builder ──────────────────────────────────────────────────
 
-function buildSynthesizerPrompt(planNarrative: string, summaries: readonly StepSummary[], runId: string): string {
+function buildSynthesizerPrompt(planNarrative: string, summaries: readonly StepSummary[]): string {
     const summaryBlock = summaries.map((s) => `### ${s.stepId} (${s.agentId})\n\n${s.markdown}`).join("\n\n---\n\n");
 
-    return [`runId: "${runId}"`, "", "## Analytical Narrative", planNarrative, "", "## Step Summaries", summaryBlock].join("\n");
+    return ["## Analytical Narrative", planNarrative, "", "## Step Summaries", summaryBlock].join("\n");
 }
 
 // ── Chat data part builders ─────────────────────────────────────────

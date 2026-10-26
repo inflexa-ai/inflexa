@@ -22,7 +22,7 @@
 
 import type { StepPhase } from "../contracts/chat-parts.js";
 import type { Logger } from "../lib/logger.js";
-import { activityEmission, activityForTool } from "../sandbox/sandbox-step-translate.js";
+import { activityEmission, activityForTool, toolActivityKey } from "../sandbox/sandbox-step-translate.js";
 import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
 /**
@@ -77,7 +77,7 @@ export type ProfileActivityEmitter = {
      * phrases are this capability's observable contract, and a call site that
      * composed its own is a call site that can drift from it.
      */
-    forTool(name: string, input: unknown, resolveDetail?: ToolDetailResolver): Promise<void>;
+    forTool(toolUseId: string, name: string, input: unknown, resolveDetail?: ToolDetailResolver): Promise<void>;
     /** Reported for the vector-store pass that indexes per-file descriptions. */
     indexing(): Promise<void>;
     /** The success terminal. Emitted only after the terminal ledger write has landed. */
@@ -133,10 +133,10 @@ export function createProfileActivityEmitter(
         }
     };
 
-    const emit = async (phase: StepPhase, activity: string): Promise<void> => {
-        const position = seq++;
+    const emit = async (phase: StepPhase, activity: string, toolUseId?: string): Promise<void> => {
+        const key = toolUseId === undefined ? seq++ : toolActivityKey(toolUseId);
         const at = new Date(await now()).toISOString();
-        const parts = activityEmission(frame, position, phase, activity, at);
+        const parts = activityEmission(frame, key, phase, activity, at);
         await writeAlone(parts.activity, phase);
         await writeAlone(parts.entry, phase);
     };
@@ -145,7 +145,7 @@ export function createProfileActivityEmitter(
         sandboxInit: () => emit("sandbox-init", "Starting sandbox"),
         scanning: () => emit("executing", "Scanning input files"),
         agentStarting: () => emit("executing", "Running data-profiler"),
-        forTool: (name, input, resolveDetail) => emit("executing", activityForTool(name, input, resolveDetail)),
+        forTool: (toolUseId, name, input, resolveDetail) => emit("executing", activityForTool(name, input, resolveDetail), toolUseId),
         indexing: () => emit("indexing", "Indexing input descriptions for search"),
         complete: () => emit("complete", "Profile complete"),
         failed: (reason) => emit("failed", reason),

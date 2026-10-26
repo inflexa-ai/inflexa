@@ -231,7 +231,6 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
             "Read the listing to orient before you bind a block. Read the columns of one artifact to choose the column that a locator names. " +
             "A reference names the path alone: the session stamps the hash from this evidence, thus the tool gives no hash.",
         inputSchema: listPinnedArtifactsInput,
-        executionMode: "inline",
         describeCall: (input) => input.path ?? "the pinned set",
         // The size of the listing is what a watcher reads, and the cap makes that size differ from the
         // pinned set. Thus a truncated listing names the total beside the count, and a whole listing names

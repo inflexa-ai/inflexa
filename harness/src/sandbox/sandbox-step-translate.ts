@@ -31,12 +31,13 @@ export function stepPartId(kind: string, runId: string, stepId: string): string 
 /**
  * The two parts of one activity emission: the reconciling `data-step-activity` that holds the current activity,
  * and the `data-activity-entry` that keeps the emission in the run stream. Both carry the same phase, activity,
- * and time. `seq` is the position of the emission in the body of its workflow, so each entry has its own id, and a
- * recovered body counts the same emissions again and gives the same ids. Every producer mints the two parts here.
+ * and time. `key` names the entry: the position of a body emission in the body of its workflow, or `tool-` and the
+ * id of the call for the emission of a tool call. A recovered body counts the same body emissions again, and a
+ * replayed tool step emits nothing, thus each entry keeps its id. Every producer mints the two parts here.
  */
 export function activityEmission(
     frame: { readonly runId: string; readonly stepId: string },
-    seq: number,
+    key: number | string,
     phase: StepPhase,
     activity: string,
     at: string,
@@ -44,8 +45,13 @@ export function activityEmission(
     const { runId, stepId } = frame;
     return {
         activity: { type: "data-step-activity", id: stepPartId("step-activity", runId, stepId), runId, stepId, phase, activity, at },
-        entry: { type: "data-activity-entry", id: `${stepPartId("activity-entry", runId, stepId)}-${seq}`, runId, stepId, phase, activity, at },
+        entry: { type: "data-activity-entry", id: `${stepPartId("activity-entry", runId, stepId)}-${key}`, runId, stepId, phase, activity, at },
     };
+}
+
+/** The key of the activity entry of one tool call. */
+export function toolActivityKey(toolUseId: string): string {
+    return `tool-${toolUseId}`;
 }
 
 /**

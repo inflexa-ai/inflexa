@@ -255,7 +255,6 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             "A failed script gives back exec-failed with the tail of its standard error. " +
             "The outcome unavailable means that this host cannot run a derivation, and a repeat gives the same outcome.",
         inputSchema: deriveTableInput,
-        executionMode: "inline",
         describeCall: (input): string => `derive ${input.output}`,
         // The derived path is the one durable product of the call, thus the derived arm names it. Each other
         // arm is a condition that refused, and the kind of the arm is what a watcher must read.

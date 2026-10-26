@@ -61,7 +61,7 @@ import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "
 import type { RunProvenanceEvent } from "../../provenance/seam.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "../sandbox-step.js";
 import { __resetWorkflowMetricsForTest } from "../metrics.js";
-import type { ChatProvider } from "../../providers/types.js";
+import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
@@ -69,7 +69,7 @@ import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { RUN_END_EVENT_KEY } from "../../execution/run-end-record.js";
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
 import { presentAt, presentFind, presentGet } from "../../lib/present.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
@@ -342,20 +342,6 @@ beforeEach(async () => {
 });
 
 // ── Fake pool ────────────────────────────────────────────────────────
-
-/**
- * A chat provider that no test drives: the workflow reads it into the step
- * arguments, and the tests replace the step callable that would consume it.
- */
-function unusedChatProvider(): ChatProvider {
-    return {
-        capabilities: { toolCalling: true },
-        chat: () => okAsync({ message: { role: "assistant", content: "" }, finishReason: "stop", requestedModelId: "" }),
-        chatStream: () => {
-            throw new Error("chatStream: not driven by the execute-analysis tests");
-        },
-    };
-}
 
 type FakePool = {
     readonly queries: Array<{ text: string; values?: readonly unknown[] }>;
@@ -2558,7 +2544,6 @@ describe("synthesizeFindings run stream", () => {
             await mkdir(outDir, { recursive: true });
             await writeFile(join(outDir, "summary.md"), "## results\n\nFOXP3 up.");
             const synthesis = {
-                runId: "run-test",
                 overview: "A test run analyzed gene expression.",
                 conclusions: "The analysis establishes a signature.",
                 findings: [
@@ -2576,9 +2561,7 @@ describe("synthesizeFindings run stream", () => {
                 limitations: ["Single cohort."],
                 keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
             };
-            const provider = scriptedProvider((i) =>
-                i === 0 ? makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
-            );
+            const { provider } = scriptedModel([callTools(toolCall("tu-1", "submit_synthesis", { synthesis })), reply([text("done")])]);
             const { deps } = makeDeps({ pool: makeFakePool(), childResults: new Map() });
 
             const result = await synthesizeFindings({

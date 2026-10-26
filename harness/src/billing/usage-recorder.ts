@@ -23,11 +23,11 @@ export type LlmUsageRecord = {
      * Idempotency key. Stable across every replay of the same call: under a
      * `RunFrame` it composes the `runId`, the frame's `stepId` when it carries
      * one, the session's provenance call path, the dispatching tool call's id
-     * when the loop runs nested inside one, and the loop's deterministic step
-     * name; outside a `RunFrame` (the chat path, where no replay exists) it is
-     * freshly minted. Every component past the frame is load-bearing, because
-     * a step name is unique only within one loop invocation and loops routinely
-     * share a frame: the `stepId` keeps sibling step workflows of one run
+     * when the loop runs nested inside one, and the response id of the call,
+     * which the checkpoint of the call keeps; outside a `RunFrame` (the chat
+     * path, where no replay exists) it is freshly minted. Every component past
+     * the frame is load-bearing, because loops routinely share a frame: the
+     * `stepId` keeps sibling step workflows of one run
      * apart, the call path keeps distinct agent chains under one frame apart,
      * and the invocation id keeps parallel dispatches of one sub-agent apart.
      * The harness guarantees key stability, not at-most-once delivery —

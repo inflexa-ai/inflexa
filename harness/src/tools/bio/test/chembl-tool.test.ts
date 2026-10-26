@@ -447,7 +447,7 @@ describe("chembl — action: bioactivity", () => {
 });
 
 describe("chembl — input guards", () => {
-    /** The loop validates a tool call against `inputSchema` before `execute` runs (run-agent dispatchTool). */
+    /** The loop validates a tool call against `inputSchema` before `execute` runs (loop/tool-adapter.ts). */
     function issues(input: unknown): string[] {
         const parsed = chemblTool.inputSchema.safeParse(input);
         if (parsed.success) return [];

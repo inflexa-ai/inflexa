@@ -3,10 +3,9 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { cancelRunningStepExecutions, insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "../step-executions.js";
-import { createBlockerHolder, createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
+import type { LoopStep, LoopToolCall } from "../../loop/run-loop.js";
+import { blockerOf, createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
-import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { awaitOk } from "../../lib/test/result-assert.js";
 
 async function seedRunning(pool: Pool, runId: string, stepId: string): Promise<void> {
     (
@@ -236,24 +235,43 @@ describe("step-executions: running settle", () => {
 describe("report_blocker tool", () => {
     const { ctx } = makeToolContext();
 
-    it("records the blocker outcome into the holder", async () => {
-        const holder = createBlockerHolder();
-        const tool = createReportBlockerTool(holder);
+    function blockerCall(toolCallId: string, reason: string, output: LoopToolCall["output"]): LoopToolCall {
+        return { toolCallId, toolName: "report_blocker", input: { reason }, output, refused: false, answered: true };
+    }
 
-        expect(holder.outcome).toBeNull();
-        const result = (await tool.execute({ reason: "no usable data" }, ctx))._unsafeUnwrap();
+    function okBlocker(toolCallId: string, reason: string): LoopToolCall {
+        return blockerCall(toolCallId, reason, { outcome: "ok", value: { kind: "blocker", reason, message: "Blocker recorded." } });
+    }
 
-        expect(holder.outcome).toEqual({ kind: "blocker", reason: "no usable data" });
-        expect(parseUnknownRecord(result)?.recorded).toBe(true);
+    function stepOf(...calls: LoopToolCall[]): LoopStep {
+        return { finishReason: "tool-calls", calls };
+    }
+
+    it("gives the reason back in its result", async () => {
+        const result = (await createReportBlockerTool().execute({ reason: "no usable data" }, ctx))._unsafeUnwrap();
+
+        expect(result).toMatchObject({ kind: "blocker", reason: "no usable data" });
     });
 
-    it("keeps the first reason when called twice", async () => {
-        const holder = createBlockerHolder();
-        const tool = createReportBlockerTool(holder);
+    it("refuses a placeholder reason with its input schema", () => {
+        const parsed = createReportBlockerTool().inputSchema.safeParse({ reason: "TODO: fill in the reason" });
 
-        await awaitOk(tool.execute({ reason: "first" }, ctx));
-        await awaitOk(tool.execute({ reason: "second" }, ctx));
+        expect(parsed.success).toBe(false);
+        expect(parsed.error?.issues.map((issue) => issue.message).join(" ")).toContain("placeholder");
+    });
 
-        expect(holder.outcome).toEqual({ kind: "blocker", reason: "first" });
+    it("selects the reason of the first call whose result is ok", () => {
+        const steps = [
+            stepOf(blockerCall("b0", "", { outcome: "error", text: "input validation failed" }), okBlocker("b1", "first")),
+            stepOf(okBlocker("b2", "second")),
+        ];
+
+        expect(blockerOf(steps)).toEqual({ kind: "blocker", reason: "first" });
+    });
+
+    it("selects no blocker from a run whose blocker calls all failed", () => {
+        const steps = [stepOf(blockerCall("b0", "TBD", { outcome: "error", text: "input validation failed" }), blockerCall("b1", "x", undefined))];
+
+        expect(blockerOf(steps)).toBeNull();
     });
 });

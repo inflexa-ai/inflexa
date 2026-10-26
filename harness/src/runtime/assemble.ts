@@ -20,6 +20,7 @@ import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { approvePlan, type ApprovePlanInput, type ApprovePlanRefusal, type PlanApproval } from "../app/approve-plan.js";
+import type { RunChatTurnDeps } from "../app/chat-turn.js";
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -53,6 +54,7 @@ import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
+import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
@@ -286,6 +288,17 @@ export type CoreRuntime = {
     readonly workflows: RegisteredWorkflows;
     readonly citationResolver: CitationResolver;
     /**
+     * The tool-approval gateway over the pool of the runtime: the one realization of `ctx.ask`. A host answers,
+     * lists, and sweeps the asks through it.
+     */
+    readonly askGateway: AskGateway;
+    /**
+     * The runtime values of a chat turn: give them to `openChatTurn` or `runChatTurn`. The turn makes its model,
+     * its text stream, its usage recorder, and its approval binding from them, thus a host gives only its
+     * transport values for each turn.
+     */
+    readonly chatTurns: RunChatTurnDeps;
+    /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
      * a plan the same way.
@@ -445,9 +458,21 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         conversation: conversationAgent,
         report: reportAgent,
     };
+    const agentResolver = createThreadAgentResolver(agents);
+    const askGateway = createAskGateway({ pool: conversation.pool });
 
     return {
-        agents: createThreadAgentResolver(agents),
+        agents: agentResolver,
+        askGateway,
+        chatTurns: {
+            pool: conversation.pool,
+            logger: conversation.logger,
+            provenance: deps.provenance,
+            agents: agentResolver,
+            provider: conversation.provider,
+            usageRecorder,
+            askGateway,
+        },
         reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
             executeAnalysis,

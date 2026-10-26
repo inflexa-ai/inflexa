@@ -34,7 +34,7 @@ import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import type { DeriveTableRunner } from "../tools/report-session/derive-table.js";
 import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
-import type { EmbeddingProvider } from "../providers/types.js";
+import type { EmbeddingProvider, ProviderOptions } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ChromeConfig } from "../lib/chrome.js";
@@ -73,6 +73,15 @@ const REPORT_SESSION_MAX_ITERATIONS = 200;
 
 /** A session is one long turn that holds page captures, thus it compacts only during the turn, at a higher budget. */
 const REPORT_SESSION_COMPACTION: CompactionRules = { budget: 250_000 };
+
+/**
+ * One tool call for each reply. Each authoring tool edits the one draft of the thread, and the calls of
+ * one reply run at the same time, thus two edits in one round can land in either order.
+ */
+export const REPORT_SESSION_PROVIDER_OPTIONS: ProviderOptions = {
+    anthropic: { disableParallelToolUse: true },
+    openai: { parallelToolCalls: false },
+};
 
 /**
  * The shared dependencies of the report agent. The gateway binds the per-session
@@ -247,5 +256,6 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         tools,
         maxIterations: REPORT_SESSION_MAX_ITERATIONS,
         compaction: REPORT_SESSION_COMPACTION,
+        providerOptions: REPORT_SESSION_PROVIDER_OPTIONS,
     };
 }

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { z } from "zod";
 
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
-import { makeMessage, scriptedProvider, textBlock } from "../../../loop/__fixtures__/scripted-provider.js";
+import { reply, scriptedModel, text } from "../../../testing.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import { createLiteratureReviewerTool } from "../literature-reviewer.js";
@@ -12,9 +14,16 @@ import { unusedCitationResolver } from "../../../citations/__fixtures__/resolver
 import { literatureReviewerPrompt } from "../../../prompts/literature-reviewer.js";
 import { presentAt } from "../../../lib/present.js";
 
+const IterationEventSchema = z.object({
+    type: z.literal("iteration"),
+    source: z.object({ agentId: z.string(), callPath: z.array(z.string()), invocationId: z.string().optional() }),
+});
+
+const toolNamesOf = (call: LanguageModelV4CallOptions): string[] => (call.tools ?? []).map((tool) => tool.name);
+
 describe("literatureReviewer sub-agent tool", () => {
-    it("runs runAgent on a derived child Session and surfaces the report", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock("Evidence report: BRCA1 is a tumour suppressor.")], "end_turn")]);
+    it("runs the child loop on a derived child Session and surfaces the report", async () => {
+        const { provider, calls } = scriptedModel([reply([text("Evidence report: BRCA1 is a tumour suppressor.")])]);
         const tool = createLiteratureReviewerTool({
             provider,
             model: "claude-test",
@@ -45,11 +54,18 @@ describe("literatureReviewer sub-agent tool", () => {
         // The child's final report is surfaced as the tool result.
         expect(result.report).toBe("Evidence report: BRCA1 is a tumour suppressor.");
 
-        // The child loop ran on a Session derived via forSubAgent:
-        // agentId flipped, callPath extended.
-        const childSession = presentAt(provider.sessions, 0);
-        expect(childSession.provenance.agentId).toBe("literature-reviewer");
-        expect(childSession.provenance.callPath).toEqual(["conversation-agent", "literature-reviewer"]);
+        // The child loop ran on a Session derived via forSubAgent: its events
+        // carry the flipped agentId and the extended callPath.
+        const iterations = emitted.flatMap((event) => {
+            const parsed = IterationEventSchema.safeParse(event);
+            return parsed.success ? [parsed.data] : [];
+        });
+        expect(iterations).toHaveLength(1);
+        expect(presentAt(iterations, 0).source).toMatchObject({
+            agentId: "literature-reviewer",
+            callPath: ["conversation-agent", "literature-reviewer"],
+            invocationId: "tool-call-test",
+        });
 
         // The parent Session is untouched.
         expect(parentSession.provenance.agentId).toBe("conversation-agent");
@@ -57,7 +73,7 @@ describe("literatureReviewer sub-agent tool", () => {
 
         // The child ran the literature-reviewer agent: its own research tool set,
         // and nothing of the parent's (no planning, no workspace mutate surface).
-        expect(Object.keys(presentAt(provider.calls, 0).tools).sort()).toEqual([
+        expect(toolNamesOf(presentAt(calls, 0)).sort()).toEqual([
             "drug_gene_interactions",
             "gene_preclinical_profile",
             "lookup_annotation",
@@ -73,7 +89,7 @@ describe("literatureReviewer sub-agent tool", () => {
     });
 
     it("declares read_tool_output after the lookup tools when it has a tool output store", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock("Evidence report.")], "end_turn")]);
+        const { provider, calls } = scriptedModel([reply([text("Evidence report.")])]);
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
         const tool = createLiteratureReviewerTool({
             provider,
@@ -85,7 +101,7 @@ describe("literatureReviewer sub-agent tool", () => {
 
         (await tool.execute({ brief: "Investigate BRCA1." }, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(Object.keys(presentAt(provider.calls, 0).tools)).toEqual([
+        expect(toolNamesOf(presentAt(calls, 0))).toEqual([
             "search_gene",
             "search_protein",
             "lookup_annotation",
@@ -102,7 +118,7 @@ describe("literatureReviewer sub-agent tool", () => {
         // A terminal reply with no text block ends the child loop, and the
         // transcript then holds no report. The tool must surface that as an
         // error that names the finish reason, not as `ok({ report: "" })`.
-        const provider = scriptedProvider([makeMessage([], "end_turn")]);
+        const { provider } = scriptedModel([reply([])]);
         const tool = createLiteratureReviewerTool({
             provider,
             model: "claude-test",

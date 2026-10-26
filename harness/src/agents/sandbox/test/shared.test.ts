@@ -17,7 +17,6 @@ import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecRequest } from "../../../sandbox/types.js";
 import { makeToolContext } from "../../../tools/__fixtures__/tool-context.js";
-import { createBlockerHolder } from "../../../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell } from "../../../tools/sandbox/submit-file-metadata.js";
 
 import { makeFakeSandboxAgentDeps, makeFakeSandboxClient } from "../__fixtures__/deps.js";
@@ -373,7 +372,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
 
 describe("createSandboxAgent — the file-metadata output tool", () => {
     it("a file-metadata cell adds submit_file_metadata as the last tool, after report_blocker", () => {
-        const deps = { ...makeFakeSandboxAgentDeps(), blockerHolder: createBlockerHolder() };
+        const deps = { ...makeFakeSandboxAgentDeps(), reportsBlocker: true };
 
         const withCell = createSandboxAgent({ ...deps, fileMetadata: createFileMetadataCell() }, meta, body);
         const withoutCell = createSandboxAgent(deps, meta, body);

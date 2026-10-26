@@ -22,15 +22,15 @@ Inside a DBOS workflow, each model call and each tool call of the loop MUST be o
 - **WHEN** the loop runs outside a workflow
 - **THEN** each model call and each tool call runs with no checkpoint
 
-### Requirement: A recovered run replays with the model of its own input
+### Requirement: The identity of a model step holds no model id
 
-The identity of a recorded model step MUST NOT depend on the model id. A workflow MUST take its model from its own input. Thus a change of the configured model between two runs does not break the replay of a run that started before the change.
+The identity of a recorded model step MUST NOT depend on the model id. Thus a change of the configured model between two runs does not break the replay of a run that started before the change.
 
 #### Scenario: The configured model changes during a run
 
 - **GIVEN** a run that started with model A, and a configuration that now names model B
 - **WHEN** the run recovers
-- **THEN** the replay finds each recorded model step, and the run continues with model A
+- **THEN** the replay finds each recorded model step
 
 ### Requirement: The conversation is append-only
 
@@ -287,14 +287,14 @@ The loop MUST cache the prompt prefix with a policy of 5 minutes unless the call
 - **WHEN** a run sends its second request
 - **THEN** the second request carries the same system marker, and its message marker moves to its last message
 
-### Requirement: The reasoning effort is sent only when the caller gives it
+### Requirement: Each request of a run carries one reasoning effort
 
-When the caller gives a reasoning effort, each request of the run MUST carry it. When the caller gives none, no request carries one, and the provider applies its configured effort.
+The effort of a run MUST resolve in this order: the effort that the caller gives, the effort of the provider configuration, and then the default of the harness. The model can refuse that effort, and then the effort MUST go down to an effort that the model accepts. Each request of the run MUST carry the same effort.
 
 #### Scenario: No effort from the caller
 
 - **WHEN** a run starts with no reasoning effort
-- **THEN** no request of the run carries an effort
+- **THEN** each request of the run carries the effort of the provider configuration
 
 ### Requirement: Each tool call is reported with its own outcome and duration
 

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { textOf } from "../../lib/unknown-text.js";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
+import { APICallError, type LanguageModelV4CallOptions, type LanguageModelV4Message, type LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
 import type { ModelMessage, ToolResultPart } from "ai";
-import { err, errAsync, ok, okAsync } from "neverthrow";
+import { err, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { type Connectable } from "../../lib/db-result.js";
@@ -13,12 +14,16 @@ import { withSchema } from "../../__tests__/setup/postgres.js";
 import { forSubAgent } from "../../auth/types.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
 import type { CompactionRules } from "../../loop/compaction.js";
-import { runAgent } from "../../loop/run-agent.js";
-import { passthroughStep } from "../../loop/run-step.js";
+import { runLoop } from "../../loop/run-loop.js";
 import type { AgentDefinition, EmitFn } from "../../loop/types.js";
-import { compactionExchangeOf, compactionMarkerOf, contextRecordOf, withRequestInputTokens } from "../../memory/ai-sdk-message-storage.js";
+import {
+    compactionExchangeOf,
+    compactionMarkerOf,
+    contextRecordOf,
+    isInterruptedMessage,
+    withRequestInputTokens,
+} from "../../memory/ai-sdk-message-storage.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
 import { createThreadStore } from "../../memory/thread-store.js";
 import { conversationRecordTurn, createThreadHistory, type StoredMessage } from "../../memory/thread-history.js";
@@ -26,22 +31,23 @@ import { NOT_RUN_TOOL_RESULT } from "../../memory/tool-call-integrity.js";
 import { deriveThreadTitle } from "../../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../../memory/working-memory.js";
 import { presentAt, presentFind, presentFirst, presentLast } from "../../lib/present.js";
+import { ResultError } from "../../lib/result.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { ProviderError } from "../../providers/errors.js";
 import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../../prompts/compaction.js";
-import { createStreamingChat } from "../../providers/streaming-chat.js";
-import type { AgentChat, ChatProvider, ChatRequest, ChatResponse, ChatUsage } from "../../providers/types.js";
+import type { ChatUsage } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
 import { insertRun, updateRunStatus } from "../../state/index.js";
 import { createToolOutputStore } from "../../state/tool-outputs.js";
 import type { SessionProvenanceEvent } from "../../provenance/seam.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptedReply, type ScriptEntry, type ScriptStep } from "../../testing.js";
+import { createAskGateway } from "../../tools/approval/gateway.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createUpdateWorkingMemoryTool } from "../../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../../workflows/suspension.js";
-import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "../chat-turn.js";
+import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnDeps, type RunChatTurnParams } from "../chat-turn.js";
 
 /** The tool-result parts of a stored tool message, or a failed test on any other message. */
 function toolResultParts(message: ModelMessage): ToolResultPart[] {
@@ -380,6 +386,50 @@ describe("prepareChatTurn", () => {
 
 // --- runChatTurn ------------------------------------------------------------
 
+/** A failure of the model endpoint with an HTTP status, as the AI SDK throws it. */
+function apiFailure(statusCode: number, message: string): APICallError {
+    return new APICallError({ message, url: "https://models.example/v1/messages", requestBodyValues: {}, statusCode });
+}
+
+function abortError(): DOMException {
+    return new DOMException("The operation was aborted.", "AbortError");
+}
+
+/** The system message of a request. */
+function systemOf(call: LanguageModelV4CallOptions): Extract<LanguageModelV4Message, { role: "system" }> {
+    const system = presentFirst(call.prompt);
+    if (system.role !== "system") throw new Error("the request starts with no system message");
+    return system;
+}
+
+/** The cache directive on the system prompt of a request. */
+function systemDirective(call: LanguageModelV4CallOptions): unknown {
+    return systemOf(call).providerOptions?.["anthropic"]?.["cacheControl"];
+}
+
+/** The messages of a request after its system prompt, with the role, the text, and the options that the marker readers take. */
+function sentMessages(call: LanguageModelV4CallOptions): ModelMessage[] {
+    return call.prompt.flatMap((message): ModelMessage[] => {
+        const { providerOptions } = message;
+        switch (message.role) {
+            case "system":
+                return [];
+            case "user":
+                return [{ role: "user", content: contentText(message.content), providerOptions }];
+            case "assistant":
+                return [{ role: "assistant", content: contentText(message.content), providerOptions }];
+            case "tool":
+                return [{ role: "tool", content: [], providerOptions }];
+        }
+    });
+}
+
+/** The outputs of the tool results of a sent tool message, or a failed test on any other message. */
+function sentToolOutputs(message: LanguageModelV4Message): LanguageModelV4ToolResultPart["output"][] {
+    if (message.role !== "tool") throw new Error("expected a tool message");
+    return message.content.flatMap((part) => (part.type === "tool-result" ? [part.output] : []));
+}
+
 describe("runChatTurn", () => {
     const THREAD = "t-turn";
 
@@ -401,39 +451,43 @@ describe("runChatTurn", () => {
         return { forThread: (type) => (type === "conversation" ? ok(agent) : err({ type: "unregistered_thread_type", threadType: type })) };
     }
 
-    function params(provider: AgentChat, overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
+    /** The runtime values of a turn over `model`: the values that `CoreRuntime.chatTurns` gives a host. */
+    function depsFor(agents: ThreadAgentResolver, model: ScriptedModel, overrides: Partial<RunChatTurnDeps> = {}): RunChatTurnDeps {
+        return { pool, agents, provider: model.provider, usageRecorder: createNoopUsageRecorder(), ...overrides };
+    }
+
+    function params(overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
         return {
             analysisId: ANALYSIS_A,
             threadId: THREAD,
             userInput: "compare the two groups",
             session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } }),
-            chat: () => provider,
             emit: () => {},
             signal: new AbortController().signal,
-            usageRecorder: createNoopUsageRecorder(),
             ...overrides,
         };
     }
 
-    const toolCall = (id: string, usage?: ChatUsage): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: id })], "tool_use", usage);
+    const echoCall = (id: string, usage?: ChatUsage): ScriptedReply => reply([toolCall(id, "echo", { label: id })], "tool-calls", usage);
 
-    /** A provider that answers with `replies`, and then fails each later request with `failure`. */
-    function failingAfter(replies: readonly ChatResponse[], failure: ProviderError): AgentChat {
-        let calls = 0;
+    function recordingUsage(): { readonly usageRecorder: UsageRecorder; readonly records: LlmUsageRecord[] } {
+        const records: LlmUsageRecord[] = [];
         return {
-            capabilities: { toolCalling: true },
-            chat: () => {
-                const reply = replies[calls];
-                if (reply === undefined) return errAsync(failure);
-                calls += 1;
-                return okAsync(reply);
+            records,
+            usageRecorder: {
+                record: (record) => {
+                    records.push(record);
+                    return okAsync(undefined);
+                },
             },
         };
     }
 
-    /** The cache directive on the system prompt of a request. */
-    function systemDirective(request: ChatRequest): unknown {
-        return typeof request.system === "string" ? undefined : request.system.providerOptions?.["anthropic"]?.["cacheControl"];
+    /** A host emit that aborts the turn at the first text delta of the reply. */
+    function abortingAtText(controller: AbortController): EmitFn {
+        return (event) => {
+            if (event.type === "text-delta") controller.abort();
+        };
     }
 
     async function storedRows(threadId = THREAD): Promise<StoredMessage[]> {
@@ -449,12 +503,12 @@ describe("runChatTurn", () => {
     }
 
     it("stores the opening, each round, and a done record with the rollup and the duration", async () => {
-        const provider = scriptedProvider([
-            toolCall("tu-1", { inputTokens: 100, outputTokens: 10 }),
-            makeMessage([textBlock("the groups differ")], "end_turn", { inputTokens: 120, outputTokens: 20 }),
+        const model = scriptedModel([
+            echoCall("tu-1", { inputTokens: 100, outputTokens: 10 }),
+            reply([text("the groups differ")], "stop", { inputTokens: 120, outputTokens: 20 }),
         ]);
 
-        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { startedAtMs: Date.now() - 1_000 }));
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ startedAtMs: Date.now() - 1_000 }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true, turnUsage: { inputTokens: 220, outputTokens: 30 } });
         expect("storeError" in result).toBe(false);
@@ -467,12 +521,11 @@ describe("runChatTurn", () => {
     });
 
     it("reads a stored turn back as one user message and one assistant message", async () => {
-        const provider = scriptedProvider([toolCall("tu-1"), makeMessage([textBlock("the groups differ")], "end_turn")]);
-        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+        const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
+        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         const replay = storedMessagesToChat(await storedRows());
 
-        expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
         expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
         expect(presentAt(replay, 1).parts).toHaveLength(2);
         const [toolCallPart, textPart] = presentAt(replay, 1).parts;
@@ -485,9 +538,9 @@ describe("runChatTurn", () => {
 
     it("announces the id of the user message and of the assistant message, and stores the turn under those ids", async () => {
         const forwarded: TurnEvent[] = [];
-        const provider = scriptedProvider([toolCall("tu-1"), makeMessage([textBlock("the groups differ")], "end_turn")]);
+        const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { emit: (event) => void forwarded.push(event) }));
+        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ emit: (event) => void forwarded.push(event) }));
 
         const announced = announcedIds(forwarded);
         expect(forwarded.slice(0, 2).map((event) => event.type)).toEqual(["message-start", "message-start"]);
@@ -498,14 +551,30 @@ describe("runChatTurn", () => {
         ]);
     });
 
-    it("keeps two rounds, adds the note, and closes failed when the third request fails on the credential", async () => {
-        const provider = failingAfter([toolCall("tu-1"), toolCall("tu-2")], {
-            type: "auth",
-            retryable: false,
-            message: "401 Unauthorized at https://models.example/v1 with key sk-secret-123",
-        });
+    it("streams the text of the root reply to the emit of the host as text deltas", async () => {
+        const deltas: string[] = [];
+        const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
 
-        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+        await runChatTurn(
+            depsFor(resolverFor(agentWith([echoTool()])), model),
+            params({
+                emit: (event) => {
+                    if (event.type === "text-delta") deltas.push(event.text);
+                },
+            }),
+        );
+
+        expect(deltas.join("")).toBe("the groups differ");
+    });
+
+    it("keeps two rounds, adds the note, and closes failed when the third request fails on the credential", async () => {
+        const model = scriptedModel([
+            echoCall("tu-1"),
+            echoCall("tu-2"),
+            { fail: apiFailure(401, "401 Unauthorized at https://models.example/v1 with key sk-secret-123") },
+        ]);
+
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model endpoint refused the credential." } });
         const rows = await storedRows();
@@ -517,22 +586,24 @@ describe("runChatTurn", () => {
         expect(await turnRecords()).toEqual([{ status: "failed", reason: "The model endpoint refused the credential." }]);
     });
 
-    it("starts the next turn with each stored row of the failed turn, byte-identical", async () => {
-        const failing = failingAfter([toolCall("tu-1"), toolCall("tu-2")], { type: "auth", retryable: false, message: "401" });
+    it("starts the next turn with the failed request of the failed turn as its prefix, byte-identical, then the note", async () => {
+        const failing = scriptedModel([echoCall("tu-1"), echoCall("tu-2"), { fail: apiFailure(401, "401 Unauthorized") }]);
         const agents = resolverFor(agentWith([echoTool()]));
-        await runChatTurn({ pool, agents }, params(failing));
-        const stored = (await storedRows()).map((row) => row.message);
-        const next = scriptedProvider([makeMessage([textBlock("continuing")], "end_turn")]);
+        await runChatTurn(depsFor(agents, failing), params({ promptCache: "off" }));
+        const next = scriptedModel([reply([text("continuing")])]);
 
-        await runChatTurn({ pool, agents }, params(next, { userInput: "try again", promptCache: "off" }));
+        await runChatTurn(depsFor(agents, next), params({ userInput: "try again", promptCache: "off" }));
 
-        expect(JSON.stringify(presentFirst(next.calls).messages.slice(0, stored.length))).toBe(JSON.stringify(stored));
+        const failedRequest = presentLast(failing.calls).prompt;
+        const sent = presentFirst(next.calls).prompt;
+        expect(JSON.stringify(sent.slice(0, failedRequest.length))).toBe(JSON.stringify(failedRequest));
+        expect(contentText(sent[failedRequest.length]?.content)).toStartWith("[Turn Failed]");
     });
 
     it("closes failed with the reason of the host on a suspend error", async () => {
-        const provider = failingAfter([], { type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Payment Required" });
+        const model = scriptedModel([{ fail: apiFailure(402, "Payment Required") }]);
 
-        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "payment_required" } });
         if (result.kind !== "ran" || result.outcome.status !== "failed") throw new Error("unreachable");
@@ -540,37 +611,65 @@ describe("runChatTurn", () => {
         expect(await turnRecords()).toEqual([{ status: "failed", reason: "payment_required" }]);
     });
 
+    it("closes failed with a reason that holds no text of the provider error on another refused request", async () => {
+        const model = scriptedModel([{ fail: apiFailure(400, "prompt is too long for the key sk-secret-123") }]);
+
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model request failed." } });
+        expect(JSON.stringify((await storedRows()).map((row) => row.message))).not.toContain("sk-secret-123");
+        expect(await turnRecords()).toEqual([{ status: "failed", reason: "The model request failed." }]);
+    });
+
     it("stores the opening and closes aborted on an abort before any output", async () => {
         const controller = new AbortController();
-        const provider = scriptedProvider((): ChatResponse => {
-            controller.abort();
-            return { message: { role: "assistant", content: "" }, finishReason: "aborted" };
-        });
+        const model = scriptedModel([
+            () => {
+                controller.abort();
+                return { fail: abortError() };
+            },
+        ]);
 
-        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { signal: controller.signal }));
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: true });
         expect((await storedRows()).map((row) => row.message.role)).toEqual(["user", "user", "user", "user"]);
         expect(await turnRecords()).toEqual([{ status: "aborted", reason: null }]);
     });
 
+    it("stores the partial text of a reply that an abort cut, marked interrupted, and closes aborted with the note", async () => {
+        const controller = new AbortController();
+        const model = scriptedModel([{ breakAfter: [text("The two groups")], error: abortError() }]);
+
+        const result = await runChatTurn(
+            depsFor(resolverFor(agentWith([echoTool()])), model),
+            params({ emit: abortingAtText(controller), signal: controller.signal }),
+        );
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: true, fallbackText: "The two groups" });
+        const rows = await storedRows();
+        expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user"]);
+        const partial = presentAt(rows, 3).message;
+        expect(contentText(partial.content)).toBe("The two groups");
+        expect(isInterruptedMessage(partial)).toBe(true);
+        expect(presentLast(rows).message.content).toBe("[The user interrupted the request above. Do not continue it unless the user asks you to.]");
+        expect(await turnRecords()).toEqual([{ status: "aborted", reason: null }]);
+    });
+
     it("sends the next turn a note that the user interrupted the request, and the replay does not show the note", async () => {
         const controller = new AbortController();
         const agents = resolverFor(agentWith([echoTool()]));
-        const aborting = scriptedProvider((): ChatResponse => {
-            controller.abort();
-            return { message: { role: "assistant", content: [{ type: "text", text: "The two groups" }] }, finishReason: "aborted" };
-        });
-        await runChatTurn({ pool, agents }, params(aborting, { signal: controller.signal }));
-        const next = scriptedProvider([makeMessage([textBlock("hello")], "end_turn")]);
+        const aborting = scriptedModel([{ breakAfter: [text("The two groups")], error: abortError() }]);
+        await runChatTurn(depsFor(agents, aborting), params({ emit: abortingAtText(controller), signal: controller.signal }));
+        const next = scriptedModel([reply([text("hello")])]);
 
-        await runChatTurn({ pool, agents }, params(next, { userInput: "say hello", promptCache: "off" }));
+        await runChatTurn(depsFor(agents, next), params({ userInput: "say hello", promptCache: "off" }));
 
-        const sent = presentFirst(next.calls).messages;
+        const sent = presentFirst(next.calls).prompt;
         const opening = sent.findIndex((message) => contentText(message.content) === "say hello");
         expect(sent[opening - 1]).toMatchObject({
             role: "user",
-            content: "[The user interrupted the request above. Do not continue it unless the user asks you to.]",
+            content: [{ type: "text", text: "[The user interrupted the request above. Do not continue it unless the user asks you to.]" }],
         });
         expect(JSON.stringify(storedMessagesToChat(await storedRows()))).not.toContain("The user interrupted");
     });
@@ -585,9 +684,9 @@ describe("runChatTurn", () => {
                 return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
             },
         });
-        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "stall", {})], "tool_use")]);
+        const model = scriptedModel([callTools(toolCall("tu-1", "stall", {}))]);
 
-        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([stall])) }, params(provider));
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([stall])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The turn stopped on an internal error." } });
         const rows = await storedRows();
@@ -598,21 +697,38 @@ describe("runChatTurn", () => {
 
     it("writes no row and no record when the resolver refuses the thread type", async () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
-        const provider = scriptedProvider([]);
+        const model = scriptedModel([]);
 
-        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toEqual({ kind: "agent_unresolved", threadType: "report" });
         expect(await storedRows()).toEqual([]);
         expect(await turnRecords()).toEqual([]);
-        expect(provider.calls).toEqual([]);
+        expect(model.calls).toEqual([]);
+    });
+
+    it("gives prepare_failed with the cause, and writes no row, when the preparation throws", async () => {
+        const unreachable: Querier & Connectable = {
+            query: () => Promise.reject(new Error("the database is unreachable")),
+            connect: () => Promise.reject(new Error("the database is unreachable")),
+        };
+        const model = scriptedModel([]);
+
+        const result = await runChatTurn({ ...depsFor(resolverFor(agentWith([echoTool()])), model), pool: unreachable }, params());
+
+        if (result.kind !== "prepare_failed") throw new Error(`expected prepare_failed, got ${result.kind}`);
+        if (!(result.cause instanceof ResultError)) throw new Error("the cause is not the failure of the thread read");
+        expect(result.cause.value).toMatchObject({ type: "query_failed", op: "thread-store.getThread" });
+        expect(await storedRows()).toEqual([]);
+        expect(await turnRecords()).toEqual([]);
+        expect(model.calls).toEqual([]);
     });
 
     it("adds no context record on a second turn with no change", async () => {
         const agents = resolverFor(agentWith([echoTool()]));
-        await runChatTurn({ pool, agents }, params(scriptedProvider([makeMessage([textBlock("first answer")], "end_turn")])));
+        await runChatTurn(depsFor(agents, scriptedModel([reply([text("first answer")])])), params());
 
-        await runChatTurn({ pool, agents }, params(scriptedProvider([makeMessage([textBlock("second answer")], "end_turn")]), { userInput: "and now?" }));
+        await runChatTurn(depsFor(agents, scriptedModel([reply([text("second answer")])])), params({ userInput: "and now?" }));
 
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user", "assistant"]);
@@ -621,22 +737,14 @@ describe("runChatTurn", () => {
 
     it("opens a report thread with the report agent, and runs it under the provenance of that agent", async () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
-        const records: LlmUsageRecord[] = [];
-        const usageRecorder: UsageRecorder = {
-            record: (record) => {
-                records.push(record);
-                return okAsync(undefined);
-            },
-        };
+        const { usageRecorder, records } = recordingUsage();
         const report: AgentDefinition = { ...agentWith([echoTool()]), id: "report-session-agent" };
         const agents: ThreadAgentResolver = { forThread: (type) => ok(type === "report" ? report : agentWith([echoTool()])) };
         const { provenance: _hostProvenance, ...session } = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } });
-        const { analysisId, threadId, userInput, ...run } = params(
-            scriptedProvider([makeMessage([textBlock("drafted")], "end_turn", { inputTokens: 5, outputTokens: 1 })]),
-            { session, usageRecorder },
-        );
+        const model = scriptedModel([reply([text("drafted")], "stop", { inputTokens: 5, outputTokens: 1 })]);
+        const { analysisId, threadId, userInput, ...run } = params({ session });
 
-        const opened = await openChatTurn({ pool, agents }, { analysisId, threadId, userInput });
+        const opened = await openChatTurn(depsFor(agents, model, { usageRecorder }), { analysisId, threadId, userInput });
         if (opened.kind !== "ready") throw new Error(`expected an open turn, got ${opened.kind}`);
         const result = await opened.run(run);
 
@@ -648,115 +756,126 @@ describe("runChatTurn", () => {
     it("refuses a thread of a different analysis at the open, before any row of the turn", async () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
 
-        const opened = await openChatTurn(
-            { pool, agents: resolverFor(agentWith([echoTool()])) },
-            { analysisId: ANALYSIS_A, threadId: THREAD, userInput: "hi" },
-        );
+        const opened = await openChatTurn(depsFor(resolverFor(agentWith([echoTool()])), scriptedModel([])), {
+            analysisId: ANALYSIS_A,
+            threadId: THREAD,
+            userInput: "hi",
+        });
 
         expect(opened).toEqual({ kind: "not_found" });
         expect(await storedRows()).toEqual([]);
         expect(await turnRecords()).toEqual([]);
     });
 
+    it("gives not_found for a turn on a thread of a different analysis, and the thread does not change", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
+        const before = (await store.getThread(THREAD))._unsafeUnwrap();
+        const model = scriptedModel([]);
+
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+
+        expect(result).toEqual({ kind: "not_found" });
+        expect((await store.getThread(THREAD))._unsafeUnwrap()).toEqual(before);
+        expect(await storedRows()).toEqual([]);
+        expect(model.calls).toEqual([]);
+    });
+
     it("stores the display of the user message with the secrets redacted", async () => {
         const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123";
-        const provider = scriptedProvider([makeMessage([textBlock("noted")], "end_turn")]);
+        const model = scriptedModel([reply([text("noted")])]);
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { userInput: `use the key ${secret}` }));
+        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ userInput: `use the key ${secret}` }));
 
         const replay = storedMessagesToChat(await storedRows());
         expect(presentFirst(replay).parts).toEqual([{ type: "text", text: "use the key [REDACTED: OpenAI API Key]" }]);
         expect(JSON.stringify(replay)).not.toContain(secret);
     });
 
-    it("gives the usage recorder of the host to the root loop", async () => {
-        const records: LlmUsageRecord[] = [];
-        const usageRecorder: UsageRecorder = {
-            record: (record) => {
-                records.push(record);
-                return okAsync(undefined);
-            },
-        };
-        const provider = scriptedProvider([makeMessage([textBlock("hi")], "end_turn", { inputTokens: 10, outputTokens: 2 })]);
+    it("records each model call of the turn with the usage recorder of the runtime values, with no usage wiring of the host", async () => {
+        const { usageRecorder, records } = recordingUsage();
+        const model = scriptedModel([
+            echoCall("tu-1", { inputTokens: 10, outputTokens: 2 }),
+            reply([text("hi")], "stop", { inputTokens: 12, outputTokens: 3 }),
+        ]);
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { usageRecorder }));
+        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model, { usageRecorder }), params());
 
-        expect(records.map((record) => [record.agentId, record.usage])).toEqual([["conversation-agent", { inputTokens: 10, outputTokens: 2 }]]);
+        expect(records.map((record) => [record.agentId, record.callPath, record.usage])).toEqual([
+            ["conversation-agent", ["conversation-agent"], { inputTokens: 10, outputTokens: 2 }],
+            ["conversation-agent", ["conversation-agent"], { inputTokens: 12, outputTokens: 3 }],
+        ]);
     });
 
     it("stores the excerpt of a long tool result in its round, and keeps the whole text under the reference of the excerpt", async () => {
         // Words, not one long run of a character: the write-time token count is slow on a long unbroken word.
-        const text = "TP53 7 ".repeat(7_143).slice(0, 50_000);
+        const value = "TP53 7 ".repeat(7_143).slice(0, 50_000);
         const long = defineTool({
             id: "long",
             description: "Give a long text.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: () => Promise.resolve(ok(text)),
+            execute: () => Promise.resolve(ok(value)),
         });
-        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "long", {})], "tool_use"), makeMessage([textBlock("read it")], "end_turn")]);
+        const model = scriptedModel([callTools(toolCall("tu-1", "long", {})), reply([text("read it")])]);
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])) }, params(provider));
+        await runChatTurn(depsFor(resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])), model), params());
 
         const round = presentFind(await storedRows(), (row) => row.message.role === "tool");
         const output = presentFirst(toolResultParts(round.message)).output;
         if (output.type !== "text") throw new Error("expected the cut text output");
         const excerpt = output.value;
         expect(excerpt.startsWith("[Tool result cut: 50002 characters")).toBe(true);
-        expect(excerpt.length).toBeLessThan(text.length);
+        expect(excerpt.length).toBeLessThan(value.length);
         const ref = referencedToolOutput(excerpt);
         if (ref === undefined) throw new Error("the excerpt names no stored tool output");
         const { rows } = await pool.query<{ thread_id: string | null; content: string; total_length: number }>(
             "SELECT thread_id, content, total_length FROM cortex_tool_outputs WHERE analysis_id = $1 AND ref = $2",
             [ANALYSIS_A, ref],
         );
-        expect(rows).toEqual([{ thread_id: THREAD, content: JSON.stringify(text), total_length: 50_002 }]);
+        expect(rows).toEqual([{ thread_id: THREAD, content: JSON.stringify(value), total_length: 50_002 }]);
     });
 
     it("sends the 1-hour cache directive from the root loop", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock("hi")], "end_turn")]);
+        const model = scriptedModel([reply([text("hi")])]);
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
-        const request = presentFirst(provider.calls);
+        const request = presentFirst(model.calls);
         expect(systemDirective(request)).toEqual({ type: "ephemeral", ttl: "1h" });
-        expect(presentLast(request.messages).providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+        expect(presentLast(request.prompt).providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
     });
 
     it("sends the cache directive of a host policy", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock("hi")], "end_turn")]);
+        const model = scriptedModel([reply([text("hi")])]);
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { promptCache: { ttl: "5m" } }));
+        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ promptCache: { ttl: "5m" } }));
 
-        expect(systemDirective(presentFirst(provider.calls))).toEqual({ type: "ephemeral", ttl: "5m" });
+        expect(systemDirective(presentFirst(model.calls))).toEqual({ type: "ephemeral", ttl: "5m" });
     });
 
     it("sends the 5-minute cache directive from a sub-agent loop of the turn", async () => {
         const SUB_PROMPT = "You are the test sub-agent.";
-        const provider = scriptedProvider((callIndex, request) => {
-            if (JSON.stringify(request.system).includes(SUB_PROMPT)) return makeMessage([textBlock("sub answer")], "end_turn");
-            return callIndex === 0 ? makeMessage([toolUseBlock("tu-1", "delegate", {})], "tool_use") : makeMessage([textBlock("done")], "end_turn");
-        });
+        const model = scriptedModel([callTools(toolCall("tu-1", "delegate", {})), reply([text("sub answer")]), reply([text("done")])]);
         const delegate = defineTool({
             id: "delegate",
             description: "Run a sub-agent.",
             inputSchema: z.object({}),
             describeCall: "none",
             execute: async (_input, ctx) => {
-                const sub = await runAgent(agentWith([], SUB_PROMPT), [{ role: "user", content: "brief" }], forSubAgent(ctx.session, "sub-agent"), {
-                    provider,
+                const sub = await runLoop(agentWith([], SUB_PROMPT), [{ role: "user", content: "brief" }], forSubAgent(ctx.session, "sub-agent"), {
+                    provider: model.provider,
                     signal: ctx.signal,
                     emit: ctx.emit,
-                    runStep: passthroughStep,
                     turnUsage: ctx.turnUsage,
                 });
                 return ok({ answer: sub.finish.reason });
             },
         });
 
-        await runChatTurn({ pool, agents: resolverFor(agentWith([delegate])) }, params(provider));
+        await runChatTurn(depsFor(resolverFor(agentWith([delegate])), model), params());
 
-        expect(provider.calls.map((call) => [JSON.stringify(call.system).includes(SUB_PROMPT), systemDirective(call)])).toEqual([
+        expect(model.calls.map((call) => [systemOf(call).content === SUB_PROMPT, systemDirective(call)])).toEqual([
             [false, { type: "ephemeral", ttl: "1h" }],
             [true, { type: "ephemeral", ttl: "5m" }],
             [false, { type: "ephemeral", ttl: "1h" }],
@@ -780,13 +899,13 @@ describe("runChatTurn", () => {
                     return new Proxy(client, {
                         get(inner, key, innerReceiver) {
                             if (key === "query") {
-                                return (text: string, values?: unknown[]) => {
+                                return (sql: string, values?: unknown[]) => {
                                     // The first row of the first round takes seq 3, after the three rows of the opening.
-                                    if (!failed && text.includes("INSERT INTO messages") && values?.[1] === 3) {
+                                    if (!failed && sql.includes("INSERT INTO messages") && values?.[1] === 3) {
                                         failed = true;
                                         return Promise.reject(new Error("simulated insert failure"));
                                     }
-                                    return inner.query(text, values);
+                                    return inner.query(sql, values);
                                 };
                             }
                             const value: unknown = Reflect.get(inner, key, innerReceiver);
@@ -800,9 +919,9 @@ describe("runChatTurn", () => {
                 };
             },
         });
-        const provider = scriptedProvider([toolCall("tu-1"), toolCall("tu-2"), makeMessage([textBlock("done")], "end_turn")]);
+        const model = scriptedModel([echoCall("tu-1"), echoCall("tu-2"), reply([text("done")])]);
 
-        const result = await runChatTurn({ pool: failingOnce, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+        const result = await runChatTurn({ ...depsFor(resolverFor(agentWith([echoTool()])), model), pool: failingOnce }, params());
 
         expect(failed).toBe(true);
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
@@ -810,6 +929,52 @@ describe("runChatTurn", () => {
         const rows = await storedRows();
         expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
         expect(rows.filter((row) => row.message.role === "tool").map((row) => presentFirst(toolResultParts(row.message)).toolCallId)).toEqual(["tu-1", "tu-2"]);
+    });
+
+    function approvalTool(): Tool {
+        return defineTool({
+            id: "run_script",
+            description: "Run a script after the user approves it.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async (_input, ctx) => ok(await ctx.ask({ title: "Run a script", command: "Rscript de.R" })),
+        });
+    }
+
+    const AskFrameSchema = z.object({ id: z.string(), status: z.string() });
+
+    it("binds the approval of a tool to the ask gateway of the runtime values, under the analysis, the user, and the thread of the turn", async () => {
+        const askGateway = createAskGateway({ pool });
+        const host: EmitFn = async (event) => {
+            if (event.type !== "data-ask") return;
+            const frame = AskFrameSchema.parse(event.data);
+            if (frame.status === "pending") await askGateway.answer(frame.id, { kind: "once" });
+        };
+        const model = scriptedModel([callTools(toolCall("tu-1", "run_script", {})), reply([text("ran it")])]);
+
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([approvalTool()])), model, { askGateway }), params({ emit: host }));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done", finish: { reason: "stop" } } });
+        const { rows: asks } = await pool.query<{ analysis_id: string; user_id: string; thread_id: string | null; status: string }>(
+            "SELECT analysis_id, user_id, thread_id, status FROM cortex_asks",
+        );
+        expect(asks).toEqual([{ analysis_id: ANALYSIS_A, user_id: "user-001", thread_id: THREAD, status: "resolved" }]);
+        const rows = await storedRows();
+        const answer = toolResultParts(presentFind(rows, (row) => row.message.role === "tool").message);
+        expect(presentFirst(answer).output).toEqual({ type: "json", value: { kind: "once" } });
+        const replayed = presentAt(storedMessagesToChat(rows), 1).parts.find((part) => part.type === "data-ask");
+        expect(replayed).toMatchObject({ type: "data-ask", title: "Run a script", command: "Rscript de.R", status: "resolved" });
+    });
+
+    it("denies the approval of a tool when the runtime values carry no ask gateway, and the turn ends on the denial", async () => {
+        const model = scriptedModel([callTools(toolCall("tu-1", "run_script", {}))]);
+
+        const result = await runChatTurn(depsFor(resolverFor(agentWith([approvalTool()])), model), params());
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done", finish: { reason: "denied" } } });
+        const answer = toolResultParts(presentFind(await storedRows(), (row) => row.message.role === "tool").message);
+        expect(presentFirst(answer).output).toMatchObject({ type: "execution-denied" });
+        expect(model.calls).toHaveLength(1);
     });
 });
 
@@ -861,35 +1026,61 @@ describe("runChatTurn — compaction", () => {
         forThread: (type) => ok(type === "report" ? reportAgent() : conversationAgent()),
     });
 
-    function isExchangeRequest(request: ChatRequest): boolean {
-        return request.messages.some((message) => message.content === MEMORY_COMPACTION_REQUEST || message.content === SUMMARY_COMPACTION_REQUEST);
-    }
-
-    /** A provider that answers the task requests from `task` and the requests of an exchange from `exchange`. */
-    function compactingProvider(task: readonly ChatResponse[], exchange: readonly ChatResponse[]): ScriptedProvider {
-        let taskCalls = 0;
-        let exchangeCalls = 0;
-        return scriptedProvider((_callIndex, request) => {
-            const reply = isExchangeRequest(request) ? exchange[exchangeCalls++] : task[taskCalls++];
-            if (reply === undefined) throw new Error("no scripted reply");
-            return reply;
+    function isExchangeRequest(call: LanguageModelV4CallOptions): boolean {
+        return call.prompt.some((message) => {
+            const content = contentText(message.content);
+            return content === MEMORY_COMPACTION_REQUEST || content === SUMMARY_COMPACTION_REQUEST;
         });
     }
 
-    /** A tool call whose request reported input tokens past each budget. */
-    const overCall = (id: string): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: id })], "tool_use", { inputTokens: OVER });
-    const text = (reply: string): ChatResponse => makeMessage([textBlock(reply)], "end_turn");
+    /**
+     * A model that answers the task requests from `task` and the requests of an exchange from `exchange`.
+     * `beforeReply` runs at each request, before the model answers it.
+     */
+    function compactingModel(
+        task: readonly ScriptStep[],
+        exchange: readonly ScriptStep[],
+        options: { readonly contextWindow?: number; readonly beforeReply?: () => Promise<void> } = {},
+    ): ScriptedModel {
+        let taskCalls = 0;
+        let exchangeCalls = 0;
+        const next = async (call: LanguageModelV4CallOptions): Promise<ScriptEntry> => {
+            await options.beforeReply?.();
+            const step = isExchangeRequest(call) ? exchange[exchangeCalls++] : task[taskCalls++];
+            if (step === undefined) throw new Error("no scripted reply");
+            return typeof step === "function" ? step(call) : step;
+        };
+        const capabilities = options.contextWindow === undefined ? {} : { capabilities: { contextWindow: options.contextWindow } };
+        return scriptedModel(
+            Array.from({ length: task.length + exchange.length }, () => next),
+            capabilities,
+        );
+    }
 
-    function params(provider: ChatProvider, overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
+    /** A tool call whose request reported input tokens past each budget. */
+    const overCall = (id: string): ScriptedReply => reply([toolCall(id, "echo", { label: id })], "tool-calls", { inputTokens: OVER });
+    const answer = (value: string): ScriptedReply => reply([text(value)]);
+
+    /** A request that the user aborts before the model answers. */
+    function abortedBy(controller: AbortController): ScriptStep {
+        return () => {
+            controller.abort();
+            return { fail: abortError() };
+        };
+    }
+
+    function depsFor(model: ScriptedModel, resolver: ThreadAgentResolver = agents()): RunChatTurnDeps {
+        return { pool, agents: resolver, provider: model.provider, usageRecorder: createNoopUsageRecorder() };
+    }
+
+    function params(overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
         return {
             analysisId: ANALYSIS_A,
             threadId: THREAD,
             userInput: "compare the two groups",
             session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } }),
-            chat: (emit) => createStreamingChat(provider, (delta) => void emit({ type: "text-delta", text: delta })),
             emit: () => {},
             signal: new AbortController().signal,
-            usageRecorder: createNoopUsageRecorder(),
             ...overrides,
         };
     }
@@ -930,19 +1121,19 @@ describe("runChatTurn — compaction", () => {
 
     /** Store an earlier turn whose reply reported `inputTokens` for its request. */
     async function storeMeasuredTurn(inputTokens: number): Promise<void> {
-        const reply = withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "an earlier answer" }] }, inputTokens);
+        const earlier = withRequestInputTokens({ role: "assistant", content: [{ type: "text", text: "an earlier answer" }] }, inputTokens);
         (
             await createThreadHistory(pool).appendTurn(THREAD, {
-                modelMessages: [{ role: "user", content: "an earlier question" }, reply],
+                modelMessages: [{ role: "user", content: "an earlier question" }, earlier],
                 displayMessages: [],
             })
         )._unsafeUnwrap();
     }
 
     it("stores the opening, a round, the marked exchange, the marker, the records, and the later rounds", async () => {
-        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
 
-        const result = await runChatTurn({ pool, agents: agents() }, params(provider));
+        const result = await runChatTurn(depsFor(model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
         expect((await storedRows()).map((row) => kindOf(row.message))).toEqual([
@@ -961,8 +1152,8 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("replays the divider between the two assistant messages of the turn, with two ids", async () => {
-        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
-        await runChatTurn({ pool, agents: agents() }, params(provider));
+        const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
+        await runChatTurn(depsFor(model), params());
 
         const replay = storedMessagesToChat(await storedRows());
 
@@ -979,24 +1170,24 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("starts the next turn with the summary marker and its records, then the later rounds, then the new opening", async () => {
-        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)])));
-        const next = scriptedProvider([text("next answer")]);
+        await runChatTurn(depsFor(compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)])), params());
+        const next = scriptedModel([answer("next answer")]);
 
-        await runChatTurn({ pool, agents: agents() }, params(next, { userInput: "and now?", promptCache: "off" }));
+        await runChatTurn(depsFor(next), params({ userInput: "and now?", promptCache: "off" }));
 
-        const sent = presentFirst(next.calls).messages;
+        const sent = sentMessages(presentFirst(next.calls));
         expect(sent.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "assistant", "user"]);
-        expect(presentFirst(sent).content).toBe(`[Conversation Summary]\n${SUMMARY}`);
-        expect(presentLast(sent).content).toBe("and now?");
+        expect(contentText(presentFirst(sent).content)).toBe(`[Conversation Summary]\n${SUMMARY}`);
+        expect(contentText(presentLast(sent).content)).toBe("and now?");
     });
 
     it("sends no text delta of the exchange to the emit of the host", async () => {
         const deltas: string[] = [];
-        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
 
         await runChatTurn(
-            { pool, agents: agents() },
-            params(provider, {
+            depsFor(model),
+            params({
                 emit: (event) => {
                     if (event.type === "text-delta") deltas.push(event.text);
                 },
@@ -1007,48 +1198,39 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("puts a constraint that the exchange added into the working-memory record after the marker", async () => {
-        const memoryEdit = makeMessage(
-            [toolUseBlock("tu-m", "update_working_memory", { section: "constraint", text: "Use an FDR of 0.01.", origin: "user" })],
-            "tool_use",
-        );
-        const provider = compactingProvider([overCall("tu-1"), text("done")], [memoryEdit, text(SUMMARY)]);
+        const memoryEdit = callTools(toolCall("tu-m", "update_working_memory", { section: "constraint", text: "Use an FDR of 0.01.", origin: "user" }));
+        const model = compactingModel([overCall("tu-1"), answer("done")], [memoryEdit, answer(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider));
+        await runChatTurn(depsFor(model), params());
 
         const rows = (await storedRows()).map((row) => row.message);
         const afterMarker = rows.slice(rows.findIndex((message) => compactionMarkerOf(message) !== undefined) + 1);
         const memory = afterMarker.find((message) => contextRecordOf(message)?.kind === "working-memory");
         expect(contentText(memory?.content)).toContain("Use an FDR of 0.01.");
-        expect(presentLast(provider.calls).messages.some((message) => contentText(message.content).includes("Use an FDR of 0.01."))).toBe(true);
+        expect(presentLast(model.calls).prompt.some((message) => contentText(message.content).includes("Use an FDR of 0.01."))).toBe(true);
     });
 
     it("keeps the seed and the summary marker first on a report turn, runs no tool in the exchange, and adds no working-memory record", async () => {
         const store = createThreadStore(pool);
         (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
         (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
-        const provider = compactingProvider(
-            [overCall("tu-1"), text("done")],
-            [makeMessage([toolUseBlock("tu-x", "echo", { label: "x" })], "tool_use"), text(SUMMARY)],
-        );
+        const model = compactingModel([overCall("tu-1"), answer("done")], [callTools(toolCall("tu-x", "echo", { label: "x" })), answer(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider));
+        await runChatTurn(depsFor(model), params());
 
-        const exchange = provider.calls.filter(isExchangeRequest);
-        expect(presentLast(presentFirst(exchange).messages).content).toBe(SUMMARY_COMPACTION_REQUEST);
-        const refused = toolResultParts(presentLast(presentAt(exchange, 1).messages));
-        expect(presentFirst(refused).output).toMatchObject({ type: "error-text" });
-        expect(JSON.stringify(presentFirst(refused).output)).toContain("No tool can run for this request");
-        const after = presentLast(provider.calls).messages;
+        const exchange = model.calls.filter(isExchangeRequest);
+        expect(contentText(presentLast(presentFirst(exchange).prompt).content)).toBe(SUMMARY_COMPACTION_REQUEST);
+        const refused = presentFirst(sentToolOutputs(presentLast(presentAt(exchange, 1).prompt)));
+        expect(refused).toMatchObject({ type: "error-text" });
+        expect(JSON.stringify(refused)).toContain("No tool can run for this request");
+        const after = sentMessages(presentLast(model.calls));
         expect(after.map(kindOf)).toEqual(["user", "summary-marker", "run-activity"]);
-        expect(presentFirst(after).content).toBe("[Report Brief]\nDraft the methods section.");
+        expect(contentText(presentFirst(after).content)).toBe("[Report Brief]\nDraft the methods section.");
     });
 
     it("removes the exchange and the marker of the last turn at a retract, and the next turn starts from the earlier marker", async () => {
-        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([overCall("tu-1"), text("done")], [text("first summary")])));
-        await runChatTurn(
-            { pool, agents: agents() },
-            params(compactingProvider([overCall("tu-2"), text("done again")], [text("second summary")]), { userInput: "once more" }),
-        );
+        await runChatTurn(depsFor(compactingModel([overCall("tu-1"), answer("done")], [answer("first summary")])), params());
+        await runChatTurn(depsFor(compactingModel([overCall("tu-2"), answer("done again")], [answer("second summary")])), params({ userInput: "once more" }));
         expect((await storedRows()).map((row) => compactionMarkerOf(row.message)?.kind).filter((kind) => kind !== undefined)).toEqual(["summary", "summary"]);
 
         (await createThreadHistory(pool).retractLastTurn(THREAD))._unsafeUnwrap();
@@ -1066,40 +1248,34 @@ describe("runChatTurn — compaction", () => {
     it("compacts before the user message when the last request passed the turn-start budget, and sends the user message after the summary", async () => {
         await storeMeasuredTurn(OVER);
         const storedAtRequest: string[][] = [];
-        const replies = compactingProvider([text("done")], [text(SUMMARY)]);
-        const provider: ScriptedProvider = {
-            ...replies,
-            chatStream: (request, session, signal) => {
-                const inner = replies.chatStream(request, session, signal);
-                return (async function* () {
-                    storedAtRequest.push((await storedRows()).map((row) => kindOf(row.message)));
-                    yield* inner;
-                })();
+        const model = compactingModel([answer("done")], [answer(SUMMARY)], {
+            beforeReply: async () => {
+                storedAtRequest.push((await storedRows()).map((row) => kindOf(row.message)));
             },
-        };
+        });
 
-        await runChatTurn({ pool, agents: agents() }, params(provider));
+        await runChatTurn(depsFor(model), params());
 
-        const first = presentAt(replies.calls, 0);
-        const task = presentAt(replies.calls, 1);
+        const first = presentAt(model.calls, 0);
+        const task = presentAt(model.calls, 1);
         expect(isExchangeRequest(first)).toBe(true);
-        expect(first.messages.map(kindOf)).toEqual(["user", "assistant", "user"]);
-        expect(presentLast(first.messages).content).toBe(MEMORY_COMPACTION_REQUEST);
+        expect(sentMessages(first).map(kindOf)).toEqual(["user", "assistant", "user"]);
+        expect(contentText(presentLast(first.prompt).content)).toBe(MEMORY_COMPACTION_REQUEST);
         expect(storedAtRequest).toEqual([
             ["user", "assistant"],
             ["user", "assistant", "exchange-user", "exchange-assistant", "summary-marker", "run-activity", "working-memory", "user"],
         ]);
-        expect(task.messages.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "user"]);
-        expect(presentLast(task.messages).content).toBe("compare the two groups");
+        expect(sentMessages(task).map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "user"]);
+        expect(contentText(presentLast(task.prompt).content)).toBe("compare the two groups");
         const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
         expect(marker).toMatchObject({ kind: "summary", tokensBefore: OVER, trigger: "turn-start" });
     });
 
     it("opens the turn record on the user message after a turn-start compaction, and stores the author on that row", async () => {
         await storeMeasuredTurn(OVER);
-        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+        const model = compactingModel([answer("done")], [answer(SUMMARY)]);
 
-        const result = await runChatTurn({ pool, agents: agents() }, params(provider, { author: "dr.chen@lab.example" }));
+        const result = await runChatTurn(depsFor(model), params({ author: "dr.chen@lab.example" }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
         const rows = await storedRows();
@@ -1145,9 +1321,9 @@ describe("runChatTurn — compaction", () => {
 
     it("announces the user id and each assistant id of a mid-turn compaction, and the stored messages carry exactly those ids", async () => {
         const forwarded: TurnEvent[] = [];
-        const provider = compactingProvider([overCall("tu-1"), text("done")], [text(SUMMARY)]);
+        const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { emit: (event) => void forwarded.push(event) }));
+        await runChatTurn(depsFor(model), params({ emit: (event) => void forwarded.push(event) }));
 
         const replay = storedMessagesToChat(await storedRows());
         const announced = announcedIds(forwarded);
@@ -1165,9 +1341,9 @@ describe("runChatTurn — compaction", () => {
     it("announces each id that a turn-start compaction turn stores, and the stream names one assistant id with no stored message", async () => {
         await storeMeasuredTurn(OVER);
         const forwarded: TurnEvent[] = [];
-        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+        const model = compactingModel([answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider, { emit: (event) => void forwarded.push(event) }));
+        await runChatTurn(depsFor(model), params({ emit: (event) => void forwarded.push(event) }));
 
         const announced = announcedIds(forwarded);
         // The stream announces the user id and a first assistant id before the `running` part of the compaction, thus before
@@ -1200,38 +1376,38 @@ describe("runChatTurn — compaction", () => {
         expect(await storedDisplay()).toEqual(TURN_START_DISPLAY);
     });
 
-    it("stores the exchange, and no user message and no turn record, when an abort ends the turn-start compaction", async () => {
+    it("stores the exchange request, and no user message and no turn record, when an abort ends the turn-start compaction", async () => {
         await storeMeasuredTurn(OVER);
-        const partial: ChatResponse = { message: { role: "assistant", content: "The user compares" }, finishReason: "aborted" };
-        const provider = compactingProvider([], [partial]);
+        const controller = new AbortController();
+        const model = compactingModel([], [abortedBy(controller)]);
 
-        const result = await runChatTurn({ pool, agents: agents() }, params(provider));
+        const result = await runChatTurn(depsFor(model), params({ signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: false });
         if (result.kind !== "ran") throw new Error("unreachable");
         expect(result.fallbackText ?? "").toBe("");
         const rows = await storedRows();
-        expect(rows.map((row) => kindOf(row.message))).toEqual(["user", "assistant", "exchange-user", "exchange-assistant"]);
+        expect(rows.map((row) => kindOf(row.message))).toEqual(["user", "assistant", "exchange-user"]);
         expect(rows.some((row) => row.turn !== undefined)).toBe(false);
         expect(rows.map((row) => row.message.content)).not.toContain("compare the two groups");
     });
 
     it("runs no turn-start compaction at the turn-start budget of the agent", async () => {
         await storeMeasuredTurn(TURN_START_BUDGET);
-        const provider = compactingProvider([text("done")], []);
+        const model = compactingModel([answer("done")], []);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider));
+        await runChatTurn(depsFor(model), params());
 
-        expect(provider.calls.map(isExchangeRequest)).toEqual([false]);
+        expect(model.calls.map(isExchangeRequest)).toEqual([false]);
     });
 
     it("compacts at 80% of a context window that the provider reports below the budget", async () => {
         await storeMeasuredTurn(TURN_START_BUDGET);
-        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+        const model = compactingModel([answer("done")], [answer(SUMMARY)], { contextWindow: 1_000 });
 
-        await runChatTurn({ pool, agents: agents() }, params({ ...provider, capabilities: { toolCalling: true, contextWindow: 1_000 } }));
+        await runChatTurn(depsFor(model), params());
 
-        expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
+        expect(model.calls.map(isExchangeRequest)).toEqual([true, false]);
     });
 
     it("runs no turn-start compaction on a report thread, and compacts before the first request with the user message in the view", async () => {
@@ -1239,63 +1415,51 @@ describe("runChatTurn — compaction", () => {
         (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
         (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
         await storeMeasuredTurn(OVER);
-        const provider = compactingProvider([text("done")], [text(SUMMARY)]);
+        const model = compactingModel([answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn({ pool, agents: agents() }, params(provider));
+        await runChatTurn(depsFor(model), params());
 
-        expect(provider.calls.map(isExchangeRequest)).toEqual([true, false]);
-        expect(presentFirst(provider.calls).messages.map((message) => message.content)).toContain("compare the two groups");
+        expect(model.calls.map(isExchangeRequest)).toEqual([true, false]);
+        expect(presentFirst(model.calls).prompt.map((message) => contentText(message.content))).toContain("compare the two groups");
         const marker = (await storedRows()).map((row) => compactionMarkerOf(row.message)).find((found) => found !== undefined);
         expect(marker).toMatchObject({ kind: "summary", trigger: "mid-turn" });
     });
 
-    it("closes the turn aborted with the stored exchange and no marker when an abort ends the exchange", async () => {
-        const partial: ChatResponse = { message: { role: "assistant", content: "The user compares" }, finishReason: "aborted" };
-        const provider = compactingProvider([overCall("tu-1")], [partial]);
+    it("closes the turn aborted with the stored exchange request and no marker when an abort ends the exchange", async () => {
+        const controller = new AbortController();
+        const model = compactingModel([overCall("tu-1")], [abortedBy(controller)]);
 
-        const result = await runChatTurn({ pool, agents: agents() }, params(provider));
+        const result = await runChatTurn(depsFor(model), params({ signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" } });
         if (result.kind !== "ran") throw new Error("unreachable");
-        expect(result.fallbackText ?? "").not.toContain("The user compares");
+        expect(result.fallbackText ?? "").toBe("");
         const rows = await storedRows();
-        expect(rows.map((row) => kindOf(row.message))).toEqual([
-            "user",
-            "run-activity",
-            "working-memory",
-            "assistant",
-            "tool",
-            "exchange-user",
-            "exchange-assistant",
-            "user",
-        ]);
+        expect(rows.map((row) => kindOf(row.message))).toEqual(["user", "run-activity", "working-memory", "assistant", "tool", "exchange-user", "user"]);
         expect(presentFirst(rows).turn?.status).toBe("aborted");
     });
 
     it("runs no exchange on a thread whose agent declares no compaction rules", async () => {
         await storeMeasuredTurn(OVER);
-        const provider = compactingProvider([overCall("tu-1"), text("done")], []);
+        const model = compactingModel([overCall("tu-1"), answer("done")], []);
         const { compaction: _compaction, ...noRules } = conversationAgent();
 
-        await runChatTurn({ pool, agents: { forThread: () => ok(noRules) } }, params(provider));
+        await runChatTurn(depsFor(model, { forThread: () => ok(noRules) }), params());
 
-        expect(provider.calls.some(isExchangeRequest)).toBe(false);
+        expect(model.calls.some(isExchangeRequest)).toBe(false);
         expect((await storedRows()).some((row) => compactionMarkerOf(row.message) !== undefined)).toBe(false);
     });
 
     it("gives no policy to a sub-agent loop of the turn", async () => {
         const SUB_PROMPT = "You are the test sub-agent.";
-        const provider = scriptedProvider((callIndex, request) => {
-            if (JSON.stringify(request.system).includes(SUB_PROMPT)) return text("sub answer");
-            return callIndex === 0 ? makeMessage([toolUseBlock("tu-1", "delegate", {})], "tool_use") : text("done");
-        });
+        const model = scriptedModel([callTools(toolCall("tu-1", "delegate", {})), answer("sub answer"), answer("done")]);
         const delegate = defineTool({
             id: "delegate",
             description: "Run a sub-agent over a brief whose last request passed the budget.",
             inputSchema: z.object({}),
             describeCall: "none",
             execute: async (_input, ctx) => {
-                const sub = await runAgent(
+                const sub = await runLoop(
                     { id: "sub-agent", systemPrompt: SUB_PROMPT, model: "claude-test", tools: [], maxIterations: 2 },
                     [
                         { role: "user", content: "brief" },
@@ -1303,15 +1467,16 @@ describe("runChatTurn — compaction", () => {
                         { role: "user", content: "go on" },
                     ],
                     forSubAgent(ctx.session, "sub-agent"),
-                    { provider, signal: ctx.signal, emit: ctx.emit, runStep: passthroughStep },
+                    { provider: model.provider, signal: ctx.signal, emit: ctx.emit },
                 );
                 return ok({ answer: sub.finish.reason });
             },
         });
         const resolver: ThreadAgentResolver = { forThread: () => ok({ ...conversationAgent(), tools: [delegate] }) };
 
-        await runChatTurn({ pool, agents: resolver }, params(provider));
+        await runChatTurn(depsFor(model, resolver), params());
 
-        expect(provider.calls.some(isExchangeRequest)).toBe(false);
+        expect(model.calls.map((call) => systemOf(call).content === SUB_PROMPT)).toEqual([false, true, false]);
+        expect(model.calls.some(isExchangeRequest)).toBe(false);
     });
 });

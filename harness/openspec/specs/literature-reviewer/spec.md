@@ -3,14 +3,14 @@
 ## Purpose
 
 Defines the `literature-reviewer` sub-agent — packaged as a regular tool whose
-`execute` runs a child `runAgent` loop over a focused bio-lookup tool surface and
+`execute` runs a child `runLoop` loop over a focused bio-lookup tool surface and
 a derived child `Session`. It is delegation-as-a-tool: the conversation agent
 calls it for batch literature/biology research, and the run-synthesizer agent
 embeds it as its only research path during literature-grounded run synthesis.
 
 Run synthesis is itself an agentic loop, not a fixed pipeline. The
 `run-synthesizer` agent (`harness/src/execution/run-synthesis.ts`,
-`generateRunSynthesis`) is driven through `runToTerminal` and reaches the user
+`generateRunSynthesis`) is driven through `runWithSalvage` and reaches the user
 only by calling a terminal tool: `submit_synthesis` (schema + semantic
 validation, re-callable on rejection), `report_blocker` (nothing synthesizable),
 or by delegating to `literature_reviewer`. The host-agnostic `synthesizeRun`
@@ -26,12 +26,12 @@ discipline in `harness/src/prompts/synthesis-agent.ts`.
 ### Requirement: Sub-agent packaged as a tool
 
 The `literature-reviewer` SHALL be a sub-agent exposed as a tool whose `execute`
-calls `runAgent` with a focused agent definition and a child `Session` derived
+calls `runLoop` with a focused agent definition and a child `Session` derived
 via `forSubAgent(parentSession, "literature-reviewer")`. The factory
 `createLiteratureReviewerTool(deps)` lives at
 `harness/src/tools/research/literature-reviewer.ts` and captures its
-`ChatProvider`, model id, and `bioKeys` dependencies. The child loop uses
-`passthroughStep` because the parent's tool call is the durable step. The tool
+`ChatProvider`, model id, and `bioKeys` dependencies. Each call of the child loop
+runs directly, because the parent's tool call is the durable step. The tool
 SHALL return `ok({ report })` where `report` is the child transcript's final
 text.
 
@@ -39,7 +39,7 @@ text.
 
 - **WHEN** `createLiteratureReviewerTool(deps)` is invoked
 - **THEN** the returned `Tool` has on-wire id `literature_reviewer`
-- **AND** invoking `execute(input, ctx)` runs `runAgent` against the sub-agent definition with a session derived via `forSubAgent`
+- **AND** invoking `execute(input, ctx)` runs `runLoop` against the sub-agent definition with a session derived via `forSubAgent`
 
 #### Scenario: Child transcript is ephemeral
 
@@ -115,9 +115,9 @@ include a "Do NOT" section listing prohibited behaviors.
 
 ### Requirement: Run synthesis is the agentic run-synthesizer loop
 
-Run synthesis MUST run as the agentic `run-synthesizer` loop (`generateRunSynthesis` in `harness/src/execution/run-synthesis.ts`). `runToTerminal` drives the loop over `passthroughStep`, with the system prompt `synthesis-agent.ts`, the agent id `run-synthesizer`, and `maxIterations` 25.
+Run synthesis MUST run as the agentic `run-synthesizer` loop (`generateRunSynthesis` in `harness/src/execution/run-synthesis.ts`). `runWithSalvage` drives the loop, with the system prompt `synthesis-agent.ts`, the agent id `run-synthesizer`, and `maxIterations` 25.
 
-Its tool surface MUST be exactly `validate_synthesis`, `submit_synthesis`, `report_blocker`, the embedded `literature_reviewer` sub-agent tool, and `read_tool_output`. The synthesizer and the embedded reviewer MUST use the tool output store of the run.
+Its tool surface MUST be exactly `submit_synthesis`, `report_blocker`, the embedded `literature_reviewer` sub-agent tool, and `read_tool_output`. The synthesizer and the embedded reviewer MUST use the tool output store of the run.
 
 The host-agnostic `synthesizeRun` service (`harness/src/app/synthesize-run.ts`) MUST load the step summaries of the run. It MUST build the prompt from the step summaries and the analytical narrative of the plan. It MUST drive the loop under a `forSubAgent(session, "run-synthesizer")` session. On success it MUST index the synthesis vector, persist `synthesis.json`, and emit a `data-run-synthesis` chat part.
 

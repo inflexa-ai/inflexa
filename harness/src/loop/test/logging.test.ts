@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -20,10 +21,8 @@ import { presentFind, presentFirst } from "../../lib/present.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { AskRejectedError } from "../../tools/approval/contract.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../__fixtures__/scripted-provider.js";
-import { runAgent, type RunAgentOptions } from "../run-agent.js";
-import { passthroughStep } from "../run-step.js";
-import { runToTerminal } from "../run-to-terminal.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
+import { runLoop, runWithSalvage, type LoopOptions, type LoopStep } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
 
 const GO = [{ role: "user" as const, content: "go" }];
@@ -43,21 +42,35 @@ function echoTool(): Tool {
     });
 }
 
-function submitTool(cell: { value: string | null }): Tool {
+function submitTool(): Tool {
     return defineTool({
         id: "submit",
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
         describeCall: "none",
-        execute: ({ answer }) => {
-            cell.value = answer;
-            return Promise.resolve(ok({ accepted: true }));
-        },
+        execute: () => Promise.resolve(ok({ accepted: true })),
     });
 }
 
-function baseOpts(provider: RunAgentOptions["provider"], overrides: Partial<RunAgentOptions> = {}): RunAgentOptions {
-    return { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, ...overrides };
+/** The inputs of the submit calls that ran, in order. */
+function submittedInputs(steps: readonly LoopStep[]): unknown[] {
+    return steps.flatMap((step) => step.calls.filter((call) => call.toolName === "submit" && call.output?.outcome === "ok").map((call) => call.input));
+}
+
+function baseOpts(script: readonly ScriptStep[], overrides: Partial<LoopOptions> = {}): LoopOptions {
+    return { provider: scriptedModel(script).provider, signal: new AbortController().signal, emit: () => {}, ...overrides };
+}
+
+/** The text of the last message of a request, when that message is a user message. */
+function lastUserText(call: LanguageModelV4CallOptions): string | undefined {
+    const last = call.prompt.at(-1);
+    if (last?.role !== "user") return undefined;
+    return last.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+}
+
+/** Nine tool-calling iterations, then a reply that ends the run. */
+function nineRoundsThenDone(): ScriptStep[] {
+    return [...Array.from({ length: 9 }, (_, i) => callTools(toolCall(`t${i}`, "echo", { label: `${i}` }))), reply([text("done")])];
 }
 
 /** The terminal records only — the per-iteration `debug` ones are a separate concern. */
@@ -65,15 +78,15 @@ function finishRecords(records: readonly CapturedLog[]): CapturedLog[] {
     return records.filter((r) => r.msg.endsWith("run finished"));
 }
 
-describe("runAgent — the terminal record", () => {
+describe("runLoop — the terminal record", () => {
     it("writes exactly one, carrying the iteration count, reason, cap flag, and usage", async () => {
         const logger = createCapturingLogger();
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("t1", "echo", { label: "a" })], "tool_use", { inputTokens: 100, outputTokens: 10 }),
-            makeMessage([textBlock("done")], "end_turn", { inputTokens: 120, outputTokens: 5 }),
-        ]);
+        const script = [
+            reply([toolCall("t1", "echo", { label: "a" })], "tool-calls", { inputTokens: 100, outputTokens: 10 }),
+            reply([text("done")], "stop", { inputTokens: 120, outputTokens: 5 }),
+        ];
 
-        await runAgent(agentDef([echoTool()]), GO, makeSession(), baseOpts(provider, { logger }));
+        await runLoop(agentDef([echoTool()]), GO, makeSession(), baseOpts(script, { logger }));
 
         const finished = finishRecords(logger.records);
         expect(finished).toHaveLength(1);
@@ -90,44 +103,39 @@ describe("runAgent — the terminal record", () => {
 
     it("stays at one record however long the run gets", async () => {
         const logger = createCapturingLogger();
-        // Nine tool-calling iterations, then a reply that ends the run.
-        const provider = scriptedProvider((i) =>
-            i < 9 ? makeMessage([toolUseBlock(`t${i}`, "echo", { label: `${i}` })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
-        );
 
-        await runAgent(agentDef([echoTool()], 20), GO, makeSession(), baseOpts(provider, { logger }));
+        await runLoop(agentDef([echoTool()], 20), GO, makeSession(), baseOpts(nineRoundsThenDone(), { logger }));
 
         expect(finishRecords(logger.records)).toHaveLength(1);
-        // The per-iteration detail exists, but only below the default level.
+    });
+
+    it("writes the per-iteration detail below the default level, one record for each iteration", async () => {
+        const logger = createCapturingLogger();
+
+        await runLoop(agentDef([echoTool()], 20), GO, makeSession(), baseOpts(nineRoundsThenDone(), { logger }));
+
         const iterationRecords = logger.records.filter((r) => r.level === "debug");
         expect(iterationRecords).toHaveLength(9);
-        expect(iterationRecords.every((r) => r.level === "debug")).toBe(true);
     });
 
     it("names the tools dispatched in each iteration record", async () => {
         const logger = createCapturingLogger();
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("t1", "echo", { label: "a" }), toolUseBlock("t2", "echo", { label: "b" })], "tool_use"),
-            makeMessage([textBlock("done")], "end_turn"),
-        ]);
+        const script = [callTools(toolCall("t1", "echo", { label: "a" }), toolCall("t2", "echo", { label: "b" })), reply([text("done")])];
 
-        await runAgent(agentDef([echoTool()]), GO, makeSession(), baseOpts(provider, { logger }));
+        await runLoop(agentDef([echoTool()]), GO, makeSession(), baseOpts(script, { logger }));
 
         const iteration = presentFind(logger.records, (r) => r.level === "debug");
         expect(iteration.fields).toMatchObject({ iteration: 0, tools: ["echo", "echo"] });
     });
 });
 
-describe("runAgent — provenance on every record", () => {
+describe("runLoop — provenance on every record", () => {
     it("carries agentId and callPath as fields, extended for a sub-agent", async () => {
         const logger = createCapturingLogger();
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("t1", "echo", { label: "a" })], "tool_use"),
-            makeMessage([textBlock("done")], "end_turn"),
-        ]);
+        const script = [callTools(toolCall("t1", "echo", { label: "a" })), reply([text("done")])];
         const session = makeSession({ agentId: "planner", callPath: ["conversation-agent", "planner"] });
 
-        await runAgent(agentDef([echoTool()]), GO, session, baseOpts(provider, { logger }));
+        await runLoop(agentDef([echoTool()]), GO, session, baseOpts(script, { logger }));
 
         expect(logger.records.length).toBeGreaterThan(0);
         for (const record of logger.records) {
@@ -138,24 +146,21 @@ describe("runAgent — provenance on every record", () => {
     });
 });
 
-describe("runAgent — level follows the outcome class", () => {
+describe("runLoop — level follows the outcome class", () => {
     it("records a clean return at info", async () => {
         const logger = createCapturingLogger();
-        const provider = scriptedProvider([makeMessage([textBlock("done")], "end_turn")]);
 
-        await runAgent(agentDef([]), GO, makeSession(), baseOpts(provider, { logger }));
+        await runLoop(agentDef([]), GO, makeSession(), baseOpts([reply([text("done")])], { logger }));
 
         expect(presentFirst(finishRecords(logger.records)).level).toBe("info");
     });
 
     it("records a capped-out run at warn", async () => {
         const logger = createCapturingLogger();
-        // Every reply asks for a tool, so the loop exhausts its budget and takes the wrap-up.
-        const provider = scriptedProvider((i) =>
-            i < 2 ? makeMessage([toolUseBlock(`t${i}`, "echo", { label: "x" })], "tool_use") : makeMessage([textBlock("wrapped up")], "end_turn"),
-        );
+        // Every reply asks for a tool, so the loop exhausts its budget.
+        const script = [callTools(toolCall("t0", "echo", { label: "x" })), callTools(toolCall("t1", "echo", { label: "x" }))];
 
-        const { finish } = await runAgent(agentDef([echoTool()], 2), GO, makeSession(), baseOpts(provider, { logger }));
+        const { finish } = await runLoop(agentDef([echoTool()], 2), GO, makeSession(), baseOpts(script, { logger }));
 
         expect(finish.cappedOut).toBe(true);
         const record = presentFirst(finishRecords(logger.records));
@@ -174,24 +179,39 @@ describe("runAgent — level follows the outcome class", () => {
                 return Promise.reject(new AskRejectedError("nope"));
             },
         });
-        const provider = scriptedProvider([makeMessage([toolUseBlock("t1", "risky", {})], "tool_use")]);
 
-        const { finish } = await runAgent(agentDef([denyingTool]), GO, makeSession(), baseOpts(provider, { logger }));
+        const { finish } = await runLoop(agentDef([denyingTool]), GO, makeSession(), baseOpts([callTools(toolCall("t1", "risky", {}))], { logger }));
 
         expect(finish.reason).toBe("denied");
         const record = presentFirst(finishRecords(logger.records));
         expect(record.level).toBe("warn");
         expect(record.fields).toMatchObject({ reason: "denied", cappedOut: false });
     });
+
+    it("records a run that throws at error, with the iteration count and the error, and no finish record", async () => {
+        const logger = createCapturingLogger();
+        const script: ScriptStep[] = [callTools(toolCall("t1", "echo", { label: "a" })), { fail: new Error("upstream exploded") }];
+
+        await expect(runLoop(agentDef([echoTool()]), GO, makeSession(), baseOpts(script, { logger }))).rejects.toThrow("upstream exploded");
+
+        const failed = logger.records.filter((r) => r.msg.endsWith("run failed"));
+        expect(failed).toHaveLength(1);
+        const record = presentFirst(failed);
+        expect(record.level).toBe("error");
+        expect(record.fields).toMatchObject({ agentId: "conversation-agent", iterations: 1 });
+        const errText = record.fields["err"];
+        expect(typeof errText === "string" ? errText : "").toContain("upstream exploded");
+        expect(finishRecords(logger.records)).toHaveLength(0);
+    });
 });
 
-describe("runAgent — an unwired logger changes nothing", () => {
+describe("runLoop — an unwired logger changes nothing", () => {
     it("writes no record and returns an identical result", async () => {
-        const script = [makeMessage([toolUseBlock("t1", "echo", { label: "a" })], "tool_use"), makeMessage([textBlock("done")], "end_turn")];
+        const script = [callTools(toolCall("t1", "echo", { label: "a" })), reply([text("done")])];
         const logger = createCapturingLogger();
 
-        const silent = await runAgent(agentDef([echoTool()]), GO, makeSession(), baseOpts(scriptedProvider([...script])));
-        const logged = await runAgent(agentDef([echoTool()]), GO, makeSession(), baseOpts(scriptedProvider([...script]), { logger }));
+        const silent = await runLoop(agentDef([echoTool()]), GO, makeSession(), baseOpts(script));
+        const logged = await runLoop(agentDef([echoTool()]), GO, makeSession(), baseOpts(script, { logger }));
 
         expect(silent.finish).toEqual(logged.finish);
         expect(silent.messages).toEqual(logged.messages);
@@ -201,44 +221,30 @@ describe("runAgent — an unwired logger changes nothing", () => {
     });
 });
 
-describe("runToTerminal — the salvage record", () => {
+describe("runWithSalvage — the salvage record", () => {
+    const salvage = { tools: ["submit"], nudge: NUDGE, hasOutcome: (steps: readonly LoopStep[]) => submittedInputs(steps).length > 0 };
+
     it("warns when a run ends without recording its terminal outcome", async () => {
         const logger = createCapturingLogger();
-        const cell: { value: string | null } = { value: null };
-        const tool = submitTool(cell);
-        const provider = scriptedProvider((_i, request) => {
-            const last = request.messages.at(-1);
-            const isSalvage = last?.role === "user" && last.content === NUDGE;
-            return isSalvage ? makeMessage([toolUseBlock("t1", "submit", { answer: "rescued" })], "tool_use") : makeMessage([textBlock("prose")], "end_turn");
-        });
+        const step: ScriptStep = (call) => (lastUserText(call) === NUDGE ? callTools(toolCall("t1", "submit", { answer: "rescued" })) : reply([text("prose")]));
 
-        await runToTerminal(agentDef([tool]), GO, makeSession(), baseOpts(provider, { logger, resolved: () => cell.value !== null }), {
-            tools: [tool],
-            nudge: NUDGE,
-        });
+        const result = await runWithSalvage(agentDef([submitTool()]), GO, makeSession(), baseOpts([step, step, step], { logger }), salvage);
 
-        const salvage = logger.records.filter((r) => r.msg.includes("salvaging"));
-        expect(salvage).toHaveLength(1);
-        const salvageRecord = presentFirst(salvage);
+        expect(submittedInputs(result.steps)).toEqual([{ answer: "rescued" }]);
+        const salvageRecords = logger.records.filter((r) => r.msg.includes("salvaging"));
+        expect(salvageRecords).toHaveLength(1);
+        const salvageRecord = presentFirst(salvageRecords);
         expect(salvageRecord.level).toBe("warn");
         expect(salvageRecord.fields).toMatchObject({ agentId: "test-agent" });
     });
 
     it("writes no salvage record when the first run resolves", async () => {
         const logger = createCapturingLogger();
-        const cell: { value: string | null } = { value: null };
-        const tool = submitTool(cell);
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("t1", "submit", { answer: "done" })], "tool_use"),
-            makeMessage([textBlock("ok")], "end_turn"),
-        ]);
+        const script = [callTools(toolCall("t1", "submit", { answer: "done" })), reply([text("ok")])];
 
-        await runToTerminal(agentDef([tool]), GO, makeSession(), baseOpts(provider, { logger, resolved: () => cell.value !== null }), {
-            tools: [tool],
-            nudge: NUDGE,
-        });
+        const result = await runWithSalvage(agentDef([submitTool()]), GO, makeSession(), baseOpts(script, { logger }), salvage);
 
-        expect(cell.value).toBe("done");
+        expect(submittedInputs(result.steps)).toEqual([{ answer: "done" }]);
         expect(logger.records.filter((r) => r.msg.includes("salvaging"))).toHaveLength(0);
     });
 });

@@ -2,17 +2,7 @@ import { errorOf, errorNameOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import { createHash } from "node:crypto";
 
-import {
-    streamText,
-    wrapLanguageModel,
-    type FinishReason,
-    type LanguageModel,
-    type LanguageModelUsage,
-    type ModelMessage,
-    type ProviderMetadata,
-    type TextStreamPart,
-    type ToolSet,
-} from "ai";
+import { wrapLanguageModel, type LanguageModelMiddleware, type LanguageModelUsage, type ProviderMetadata } from "ai";
 import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
 // Any `providerOptions.anthropic.thinking` bypasses this table's thinking
 // selection (see `thinkingWithBinding`).
@@ -23,20 +13,19 @@ import { OpenTelemetry } from "@ai-sdk/otel";
 import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { retryWithExponentialBackoff, type RetryFunction } from "@ai-sdk/provider-utils";
 import { trace } from "@opentelemetry/api";
-import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
-import { passThroughTracer } from "../lib/otel-spans.js";
+import { ResultError } from "../lib/result.js";
 
 import { isUnknownArray } from "../lib/unknown-array.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
 import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
-import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, ProviderCapabilities, ProviderOptions, ReasoningPolicy } from "./types.js";
+import type { BoundModel, ChatProvider, ChatUsage, ModelBinding, ProviderCapabilities, ProviderOptions, ReasoningPolicy } from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -101,7 +90,7 @@ export type ProviderCall = {
 };
 
 export type AiSdkProviderDeps = ProviderHostPolicy & {
-    readonly model: LanguageModel;
+    readonly model: LanguageModelV4;
     readonly capabilities?: Partial<ProviderCapabilities>;
     readonly logger?: Logger;
     /**
@@ -115,17 +104,16 @@ export type AiSdkProviderDeps = ProviderHostPolicy & {
     /** The retry limit of the harness envelope. Defaults to {@link RETRY_MAX_RETRIES}. */
     readonly maxRetries?: number;
     /**
-     * The bound for each silent interval of a request attempt, in milliseconds.
-     * The provider hands the value to the SDK as the bound for each gap between
-     * two content chunks of a stream. The value also names itself in the error of
-     * a stream that the bound stopped. When the field is absent, the provider
-     * hands the SDK no bound.
+     * The bound for each silent interval of a request attempt, in milliseconds:
+     * the wait for the first content part, and each gap between two content
+     * parts. The value also names itself in the error of an attempt that the
+     * bound stopped. When the field is absent, the provider bounds nothing.
      */
     readonly requestTimeoutMs?: number;
-    /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+    /** Fallback effort when a run sets none. Defaults to {@link DEFAULT_REASONING}. */
     readonly reasoning?: ReasoningPolicy;
     /**
-     * Builds provider options once per call, before the retry envelope, so
+     * Builds provider options once per run, before the retry envelope, so
      * every attempt reuses the same options.
      */
     readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined;
@@ -134,12 +122,10 @@ export type AiSdkProviderDeps = ProviderHostPolicy & {
 /**
  * Connection + model configuration for one `ChatProvider`, discriminated by
  * wire protocol (`anthropic` | `openai` | `openai-compatible`). The `model` is the wire
- * model bound into the provider at construction: `ChatRequest` carries no model
- * field (see `./types.ts`), so a config value describes exactly one model over
- * one connection. An embedder running distinct models builds one provider per
- * model from configs that share the connection (same `baseURL`/`apiKey`) and
- * differ only in `model` — a single provider cannot be retargeted to another
- * model per request.
+ * model bound into the provider at construction, so a config value describes
+ * exactly one model over one connection. An embedder running distinct models
+ * builds one provider per model from configs that share the connection (same
+ * `baseURL`/`apiKey`) and differ only in `model`.
  */
 export type AiSdkProviderConfig =
     | {
@@ -153,11 +139,12 @@ export type AiSdkProviderConfig =
           readonly maxOutputTokens?: number;
           /**
            * The bound for each silent interval of a request attempt, in
-           * milliseconds. The value bounds the wait until the response starts, and
-           * each gap between two content chunks of a stream, per attempt. A chunk
-           * that carries no content, for example a keep-alive comment, does not
-           * reset the gap bound. When the field is absent, the provider installs no
-           * guard, and its behavior does not change.
+           * milliseconds. The value bounds the wait until the response starts, the
+           * wait for the first content part, and each gap between two content
+           * parts, per attempt. A chunk that carries no content, for example a
+           * keep-alive comment, does not reset the gap bound. When the field is
+           * absent, the provider installs no guard, and its behavior does not
+           * change.
            *
            * The harness lifts the transport floor of Bun: the guard adds
            * `timeout: false` to the fetch init, thus the idle cut of 300 seconds
@@ -172,7 +159,7 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
-          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+          /** Fallback effort when a run sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
           /**
            * How the API handles a signed thinking block whose prefix changed.
@@ -196,11 +183,12 @@ export type AiSdkProviderConfig =
           readonly maxOutputTokens?: number;
           /**
            * The bound for each silent interval of a request attempt, in
-           * milliseconds. The value bounds the wait until the response starts, and
-           * each gap between two content chunks of a stream, per attempt. A chunk
-           * that carries no content, for example a keep-alive comment, does not
-           * reset the gap bound. When the field is absent, the provider installs no
-           * guard, and its behavior does not change.
+           * milliseconds. The value bounds the wait until the response starts, the
+           * wait for the first content part, and each gap between two content
+           * parts, per attempt. A chunk that carries no content, for example a
+           * keep-alive comment, does not reset the gap bound. When the field is
+           * absent, the provider installs no guard, and its behavior does not
+           * change.
            *
            * The harness lifts the transport floor of Bun: the guard adds
            * `timeout: false` to the fetch init, thus the idle cut of 300 seconds
@@ -215,7 +203,7 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
-          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+          /** Fallback effort when a run sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
           /**
            * NOTICE: this value is the retention directive of the Responses wire.
@@ -262,11 +250,12 @@ export type AiSdkProviderConfig =
           readonly maxOutputTokens?: number;
           /**
            * The bound for each silent interval of a request attempt, in
-           * milliseconds. The value bounds the wait until the response starts, and
-           * each gap between two content chunks of a stream, per attempt. A chunk
-           * that carries no content, for example a keep-alive comment, does not
-           * reset the gap bound. When the field is absent, the provider installs no
-           * guard, and its behavior does not change.
+           * milliseconds. The value bounds the wait until the response starts, the
+           * wait for the first content part, and each gap between two content
+           * parts, per attempt. A chunk that carries no content, for example a
+           * keep-alive comment, does not reset the gap bound. When the field is
+           * absent, the provider installs no guard, and its behavior does not
+           * change.
            *
            * The harness lifts the transport floor of Bun: the guard adds
            * `timeout: false` to the fetch init, thus the idle cut of 300 seconds
@@ -281,7 +270,7 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
-          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+          /** Fallback effort when a run sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
       };
 
@@ -344,10 +333,20 @@ type InputTransformation = {
  * because the AI SDK has no part for a model hop, and it drops the block from the
  * content it returns (`anthropic-messages-language-model`, the `content_block_start`
  * case). Thus the turn the harness holds is not the turn the API produced, and every
- * signed thinking block of that turn is rejected from the next request on. This reader
- * is what lets {@link settleFallbackReply} see the hop the content no longer shows.
+ * signed thinking block of that turn is rejected from the next request on.
+ *
+ * The API holds the whole turn against the signature of each of its thinking blocks, so
+ * echoing that turn earns `thinking ... blocks in the latest assistant message cannot be
+ * modified`, which is a 400 that no retry can pass. A thinking block is optional on the
+ * way back, thus the loop records the reply of a hop with no thinking block, and the next
+ * request continues. The cost is the reasoning of this one turn and the cache write that
+ * its new prefix pays for.
+ *
+ * The response metadata of the package carries `message_start.message.model`, and that
+ * field keeps the REQUESTED model across a hop. The iteration names the model that
+ * answered, thus it wins for the usage record.
  */
-function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undefined {
+export function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undefined {
     const entries = metadata?.["anthropic"]?.["iterations"];
     if (!isUnknownArray(entries)) return undefined;
     for (const entry of entries) {
@@ -357,17 +356,6 @@ function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undef
         return "model" in record && typeof record["model"] === "string" ? record["model"] : "";
     }
     return undefined;
-}
-
-/**
- * The assistant message with no thinking block, and with `""` for content when it held
- * nothing else. An empty message reaches no wire: `sanitizeMessages` drops it.
- */
-function withoutThinking(message: ChatResponse["message"]): ChatResponse["message"] {
-    if (typeof message.content === "string") return message;
-    const content = message.content.filter((part) => part.type !== "reasoning" && part.type !== "reasoning-file");
-    if (content.length === message.content.length) return message;
-    return content.length === 0 ? { ...message, content: "" } : { ...message, content };
 }
 
 /** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
@@ -552,9 +540,7 @@ export function createRetry(signal: AbortSignal | undefined, logger: Logger, max
  * `@ai-sdk/openai-compatible` maps `prompt_tokens_details.cached_tokens` →
  * `cacheReadTokens` (it never reports a write — that family caches
  * server-side, with no billed write step). Reading the neutral field is
- * therefore both correct and vendor-agnostic; the raw vendor payload remains
- * available under `providerMetadata.anthropic.usage` for debugging, in the
- * vendor's own snake_case.
+ * therefore both correct and vendor-agnostic.
  *
  * `inputTokens` is the total billed prefix, cache reads included.
  *
@@ -562,7 +548,7 @@ export function createRetry(signal: AbortSignal | undefined, logger: Logger, max
  * count and is copied verbatim: providers disagree on whether reasoning tokens
  * are already inside the output total, so the harness reconciles nothing.
  */
-function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefined {
+export function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefined {
     if (usage === undefined) return undefined;
     return {
         inputTokens: usage.inputTokens,
@@ -573,177 +559,13 @@ function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefin
     };
 }
 
-/** The id of the model bound into this provider — a bare id string is its own id. */
-function requestedModelIdOf(model: LanguageModel): string | undefined {
-    return typeof model === "string" ? model : model.modelId;
-}
-
-/** The provider id of the model bound into this provider, as the AI SDK names it — a bare id string names no provider. */
-function providerIdOf(model: LanguageModel): string | undefined {
-    return typeof model === "string" ? undefined : model.provider;
-}
-
-/**
- * A per-call view of the model that also records the model id the endpoint
- * itself reported, if any.
- */
-type ServedModelCapture = {
-    /** The model to hand to the SDK for this one call. */
-    readonly model: LanguageModel;
-    /** The id the endpoint reported, or `undefined` when it reported none. */
-    servedModelId(): string | undefined;
-};
-
-/**
- * Capture the served model id at the raw model boundary, because that is the
- * only place it is still distinguishable from the requested one: `streamText`
- * coalesces an unreported response model id to the bound model's own id, so
- * reading `result.response.modelId` would silently republish the requested id
- * as an endpoint's claim. A middleware sees the provider's
- * result before that fallback applies, so "reported nothing" stays absent.
- *
- * Built per call, never per provider: one provider instance serves concurrent
- * calls, and a shared mutable slot would hand one call another's answer. A bare
- * model-id string has no wire result to observe, so it captures nothing.
- */
-function captureServedModelId(model: LanguageModel): ServedModelCapture {
-    if (typeof model === "string") return { model, servedModelId: () => undefined };
-
-    let served: string | undefined;
-    const wrapped = wrapLanguageModel({
-        model,
-        middleware: {
-            wrapGenerate: async ({ doGenerate }) => {
-                const result = await doGenerate();
-                served = result.response?.modelId;
-                return result;
-            },
-            wrapStream: async ({ doStream }) => {
-                const result = await doStream();
-                return {
-                    ...result,
-                    stream: result.stream.pipeThrough(
-                        new TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart>({
-                            transform(chunk, controller) {
-                                if (chunk.type === "response-metadata" && chunk.modelId !== undefined) served = chunk.modelId;
-                                controller.enqueue(chunk);
-                            },
-                        }),
-                    ),
-                };
-            },
-        },
-    });
-    return { model: wrapped, servedModelId: () => served };
-}
-
-function responseFromMessages(input: {
-    readonly messages: readonly ModelMessage[];
-    readonly fallbackText: string;
-    readonly finishReason: FinishReason;
-    readonly rawFinishReason?: string;
-    readonly usage?: LanguageModelUsage;
-    readonly requestedModelId?: string;
-    readonly servedModelId?: string;
-    readonly provider?: string;
-}): ChatResponse {
-    const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId, provider } = input;
-    const usage = toChatUsage(input.usage);
-    const message = [...messages].reverse().find((m) => m.role === "assistant");
-    if (message === undefined) {
-        return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
-    }
-    return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
-}
-
-/**
- * Drop empty text parts — and messages left with no content at all — before
- * the wire call. The Anthropic Messages API rejects any request containing an
- * empty text block, and the SDK's own response assembly legitimately produces
- * them: a turn that goes straight to tool calls yields an assistant message
- * carrying a ""-text part, which the agent loop then echoes back as history
- * on its next request. Filtering once at the outbound boundary covers every
- * source at once — loop echo, stored thread history, legacy backfill, and the
- * empty-string fallback in `responseFromMessages`.
- */
-function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
-    const out: ModelMessage[] = [];
-    for (const m of messages) {
-        if (typeof m.content === "string") {
-            if (m.content !== "") out.push(m);
-            continue;
-        }
-        // The filtered parts are a subset of this message's own content, so the
-        // switch recovers the role-to-content correlation that `filter` loses.
-        switch (m.role) {
-            case "assistant": {
-                const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
-                if (parts.length > 0) out.push({ ...m, content: parts });
-                break;
-            }
-            case "user": {
-                const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
-                if (parts.length > 0) out.push({ ...m, content: parts });
-                break;
-            }
-            case "tool": {
-                // A tool message carries no text part, thus the filter keeps every part.
-                if (m.content.length > 0) out.push(m);
-                break;
-            }
-            case "system":
-                // A system message carries string content only, thus the string arm above took it.
-                break;
-        }
-    }
-    return out;
-}
-
-/**
- * The result of one advance of the SDK stream up to the next text delta.
- *
- * `delta` carries the text of one content part. `aborted` marks the `abort`
- * part, which the SDK emits when the chunk bound or the caller signal stops the
- * stream. `failed` marks the `error` part, which the SDK emits for a wire
- * failure that reaches it mid-stream. `end` marks a stream that closed with no
- * further text.
- */
-type StreamPull =
-    | { readonly kind: "delta"; readonly text: string }
-    | { readonly kind: "aborted"; readonly reason?: string }
-    | { readonly kind: "failed"; readonly error: unknown }
-    | { readonly kind: "end" };
-
-/**
- * Advance the SDK stream to the next text delta.
- *
- * The full stream carries one part for each event of a turn, and only a text
- * part reaches the consumer of the harness. Thus the pull skips each other part.
- * The `abort` part stops the pull, because the SDK closes the stream directly
- * after it. Thus a timeout can never end the stream in silence with the text
- * that arrived before it.
- */
-async function pullNextDelta(iterator: AsyncIterator<TextStreamPart<ToolSet>>): Promise<StreamPull> {
-    for (let next = await iterator.next(); next.done !== true; next = await iterator.next()) {
-        const part = next.value;
-        if (part.type === "text-delta") return { kind: "delta", text: part.text };
-        if (part.type === "abort") return { kind: "aborted", reason: part.reason };
-        // The SDK reports a wire failure as a part, not as a rejection, and it
-        // then closes the stream. Skipping it would turn a failed call into an
-        // empty assistant turn that the loop reads as a real answer.
-        if (part.type === "error") return { kind: "failed", error: part.error };
-    }
-    return { kind: "end" };
-}
-
 /**
  * The HTTP status that each Anthropic stream error type stands for.
  *
  * A provider names a mid-stream failure in the payload, not in the status line:
  * a stream that carries `overloaded_error` reports the condition that a 529
  * names on the non-streaming wire. The classifier reads the status alone, thus
- * the part has to reach it as an error that names one, or the same condition
- * would classify one way on `chat` and another way on `chatStream`.
+ * the part has to reach it as an error that names one.
  */
 const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
     invalid_request_error: 400,
@@ -758,7 +580,7 @@ const STREAM_ERROR_STATUS: Readonly<Record<string, number>> = {
 };
 
 /**
- * The failure that an `error` part of the SDK stream stands for.
+ * The failure that an `error` part of the model stream stands for.
  *
  * The part carries whatever the provider put on the wire, and that is often a
  * bare object rather than an `Error`. Left as it is, it reaches the message as
@@ -779,353 +601,235 @@ function streamPartFailure(error: unknown): unknown {
 }
 
 /**
- * The failure that an `abort` part of the SDK stream stands for.
- *
- * The part carries a message only, thus the caller signal is the one thing that
- * separates a cancellation from a timeout. When the caller signal is aborted,
- * the reason of that signal rides out, and the cancellation path applies
- * unchanged. Otherwise the SDK chunk bound stopped the stream, and the sentinel
- * names the configured value for the classifier.
+ * A part that the reader of a reply can see. A retry after one would show the
+ * reader the start of the reply again, thus a live call retries only before the
+ * first one. The same parts reset the silent-interval bound: a part that carries
+ * no content does not prove that the model writes.
  */
-function abortedStreamFailure(signal: AbortSignal | undefined, reason: string | undefined, requestTimeoutMs: number | undefined): unknown {
-    if (signal?.aborted === true) return signal.reason;
-    if (requestTimeoutMs !== undefined) return new RequestTimeoutError(requestTimeoutMs);
-    return new Error(reason ?? "The provider aborted the stream.");
+function isOutputPart(part: LanguageModelV4StreamPart): boolean {
+    return part.type !== "stream-start" && part.type !== "response-metadata" && part.type !== "raw";
 }
 
-/** The `gen_ai.operation.name` of the operation span and of the step span that the AI SDK opens around each `chat` span. */
-function isSdkWrapperSpan(operation: unknown): boolean {
-    return operation === "invoke_agent" || operation === "agent_step";
+/** One read of a model stream. */
+type PartRead = { readonly done: true } | { readonly done: false; readonly value: LanguageModelV4StreamPart };
+
+type BoundedReader = {
+    read(): Promise<PartRead>;
+    cancel(reason?: unknown): void;
+};
+
+/**
+ * A reader of one model stream under the silent-interval bound. The bound runs
+ * from the start of the read, and each output part resets it. A part with no
+ * content leaves the bound as it was.
+ */
+function boundedReader(stream: ReadableStream<LanguageModelV4StreamPart>, timeoutMs: number | undefined): BoundedReader {
+    const reader = stream.getReader();
+    let deadline = timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
+    return {
+        async read(): Promise<PartRead> {
+            if (deadline === undefined || timeoutMs === undefined) {
+                const next = await reader.read();
+                return next.done ? { done: true } : { done: false, value: next.value };
+            }
+            const remaining = Math.max(deadline - performance.now(), 0);
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const expiry = new Promise<never>((_resolve, reject) => {
+                // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a guard, not a wait: it rejects the read of a silent stream at the bound, unrefs so an armed guard never holds a short-lived process, and the finally clears it.
+                timer = setTimeout(() => reject(new RequestTimeoutError(timeoutMs)), remaining);
+                timer.unref();
+            });
+            try {
+                const next = await Promise.race([reader.read(), expiry]);
+                if (next.done) return { done: true };
+                if (isOutputPart(next.value)) deadline = performance.now() + timeoutMs;
+                return { done: false, value: next.value };
+            } catch (e) {
+                void reader.cancel(e).catch(() => undefined);
+                throw e;
+            } finally {
+                clearTimeout(timer);
+            }
+        },
+        cancel(reason?: unknown): void {
+            void reader.cancel(reason).catch(() => undefined);
+        },
+    };
+}
+
+/** The retry envelope of one run, and the facts that its log lines carry. */
+type EnvelopeOptions = {
+    readonly session: AgentSession;
+    readonly live: boolean;
+    readonly logger: Logger;
+    readonly maxRetries: number;
+    readonly suspendOn: SuspendOn;
+    readonly requestTimeoutMs?: number;
+    readonly resolveRequestHeaders?: ResolveRequestHeaders;
+};
+
+/**
+ * The retry envelope of a model call, as a model middleware.
+ *
+ * Each attempt resolves the request headers of the host first: a host header can
+ * be time-limited, and the retry window can last minutes. A live call retries
+ * until its first output part, because a reader already saw each part after it.
+ * A call with no live reader takes the whole reply inside the attempt, thus a
+ * failure at any point of the stream runs the whole attempt again.
+ *
+ * After the last attempt, the failure leaves as a `ResultError` that carries the
+ * classified `ProviderError`. An abort and a rejection of the headers hook leave
+ * unchanged.
+ */
+function retryEnvelope(options: EnvelopeOptions): LanguageModelMiddleware {
+    const { session, live, logger, maxRetries, suspendOn, requestTimeoutMs } = options;
+    const workload = workloadOf(session);
+
+    /** The one record of a call that the envelope gave up on: the reply carries the failure, and the operator sees this. */
+    const failed = (thrown: unknown): ResultError => {
+        const failure = failureOf(thrown, workload, suspendOn);
+        logger.error("provider call failed", { workload, kind: failure.type, retryable: failure.retryable, ...logger.errorFields(thrown) });
+        return new ResultError(failure);
+    };
+
+    const observeFinish = (part: LanguageModelV4StreamPart): void => {
+        if (part.type !== "finish") return;
+        for (const drop of inputTransformationsOf(part.providerMetadata)) {
+            logger.warn("thinking block dropped", { workload, type: drop.type, path: drop.path, reason: drop.reason });
+        }
+        const servedBy = fallbackModelOf(part.providerMetadata);
+        if (servedBy !== undefined) {
+            logger.warn("reply served by a fallback model, thus the harness drops the thinking of that turn", {
+                workload,
+                servedBy: servedBy === "" ? undefined : servedBy,
+            });
+        }
+    };
+
+    return {
+        specificationVersion: "v4",
+        wrapStream: async ({ params, model }) => {
+            const signal = params.abortSignal;
+            const hookCall: HookCall = { unsettled: false };
+            const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
+            let opened: {
+                readonly rest: Omit<Awaited<ReturnType<LanguageModelV4["doStream"]>>, "stream">;
+                readonly head: LanguageModelV4StreamPart[];
+                readonly tail?: BoundedReader;
+            };
+            try {
+                opened = await retry(async () => {
+                    const headers = await headersForAttempt(options.resolveRequestHeaders, session, hookCall);
+                    const { stream, ...rest } = await model.doStream({ ...params, headers: { ...params.headers, ...headers } });
+                    const reader = boundedReader(stream, requestTimeoutMs);
+                    const head: LanguageModelV4StreamPart[] = [];
+                    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+                        const part = next.value;
+                        // The provider reports a wire failure as a part, and then it closes the stream.
+                        if (part.type === "error") {
+                            reader.cancel();
+                            throw streamPartFailure(part.error);
+                        }
+                        head.push(part);
+                        if (live && isOutputPart(part)) return { rest, head, tail: reader };
+                    }
+                    return { rest, head };
+                });
+            } catch (e) {
+                if (isAbortError(e) || signal?.aborted === true || hookCall.unsettled) throw e;
+                throw failed(e);
+            }
+
+            const { rest, head, tail } = opened;
+            const stream = new ReadableStream<LanguageModelV4StreamPart>({
+                start(controller) {
+                    for (const part of head) {
+                        observeFinish(part);
+                        controller.enqueue(part);
+                    }
+                    if (tail === undefined) controller.close();
+                },
+                async pull(controller) {
+                    if (tail === undefined) return;
+                    try {
+                        const next = await tail.read();
+                        if (next.done) {
+                            controller.close();
+                            return;
+                        }
+                        const part = next.value;
+                        if (part.type === "error") {
+                            tail.cancel();
+                            controller.enqueue({ type: "error", error: failed(streamPartFailure(part.error)) });
+                            controller.close();
+                            return;
+                        }
+                        observeFinish(part);
+                        controller.enqueue(part);
+                    } catch (e) {
+                        // Past the first output part, a failure ends the reply with no retry: the reader saw its start.
+                        if (isAbortError(e) || signal?.aborted === true) {
+                            controller.error(e);
+                            return;
+                        }
+                        controller.enqueue({ type: "error", error: failed(e) });
+                        controller.close();
+                    }
+                },
+                cancel(reason) {
+                    tail?.cancel(reason);
+                },
+            });
+            return { ...rest, stream };
+        },
+    };
 }
 
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = {
         toolCalling: deps.capabilities?.toolCalling ?? true,
         // Propagate a picture flag only when the caller states it. An absent
-        // flag stays absent, thus the loop degrades to the next placement for a
-        // wire that carries no picture there.
+        // flag stays absent, thus the loop drops a picture for a wire that
+        // carries none in a tool result.
         imageToolResults: deps.capabilities?.imageToolResults,
-        imageUserMessages: deps.capabilities?.imageUserMessages,
         contextWindow: deps.capabilities?.contextWindow,
     };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     // The sentinel hands the SDK no ceiling, thus the request carries none and the
-    // server enforces the cap of the model. One binding feeds the call and the
-    // stream, thus the two cannot disagree about the ceiling of a request.
+    // server enforces the cap of the model.
     const outputCeiling: { maxOutputTokens?: number } = maxOutputTokens === "provider-maximum" ? {} : { maxOutputTokens };
     const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
     const suspendOn = deps.suspendOn ?? DEFAULT_SUSPEND_ON;
     const requestTimeoutMs = deps.requestTimeoutMs;
-    const requestedModelId = requestedModelIdOf(deps.model);
-    const providerId = providerIdOf(deps.model);
-    const effortOf = (req: ChatRequest): ReasoningPolicy => req.reasoning ?? deps.reasoning ?? DEFAULT_REASONING;
-    // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
-    // prompt or completion text on them. The integration rides on each call
-    // instead of the global registry, so the harness never traces the embedder's
-    // own AI SDK calls. Of the SDK spans only `chat` is written. The operation
-    // span and the step span around it repeat what `chat` and the span of the
-    // caller (the loop's `invoke_agent`) say already. Thus they pass through, and
-    // `chat` attaches to the span of the caller.
-    const tracer = passThroughTracer(trace.getTracer("gen_ai"), (_name, options) => isSdkWrapperSpan(options.attributes?.["gen_ai.operation.name"]));
-    const telemetry = { integrations: new OpenTelemetry({ tracer }), recordInputs: false, recordOutputs: false };
+    // Each model call and each tool call emits OpenTelemetry GenAI spans through the
+    // AI SDK, with no prompt or completion text on them. The integration rides on each
+    // call instead of the global registry, so the harness never traces the embedder's
+    // own AI SDK calls.
+    const telemetry = { integrations: new OpenTelemetry({ tracer: trace.getTracer("gen_ai") }), recordInputs: false, recordOutputs: false };
     routeSdkWarningsTo(logger);
 
-    /**
-     * Record a call that the envelope gave up on.
-     *
-     * The envelope reports one attempt at `debug`, thus a deployment that runs
-     * at `info` keeps no trace of a call that exhausted its retries: the reply
-     * carries the failure to the user and the operator sees nothing. This is the
-     * one record that names the outcome.
-     */
-    function logFailure(session: AgentSession, failure: ProviderError, thrown: unknown): void {
-        logger.error("provider call failed", {
-            workload: workloadOf(session),
-            kind: failure.type,
-            retryable: failure.retryable,
-            ...logger.errorFields(thrown),
+    function bind(call: ModelBinding): BoundModel {
+        const reasoning = call.reasoning ?? deps.reasoning ?? DEFAULT_REASONING;
+        const model = wrapLanguageModel({
+            model: deps.model,
+            middleware: retryEnvelope({
+                session: call.session,
+                live: call.live,
+                logger,
+                maxRetries,
+                suspendOn,
+                requestTimeoutMs,
+                resolveRequestHeaders: deps.resolveRequestHeaders,
+            }),
         });
-    }
-
-    /**
-     * Logs each dropped thinking block; the drop does not fail the call.
-     * `reason` is `prefix_binding_mismatch` or `model_binding_mismatch`.
-     */
-    function logDroppedThinkingBlocks(session: AgentSession, metadata: ProviderMetadata | undefined): void {
-        for (const drop of inputTransformationsOf(metadata)) {
-            logger.warn("thinking block dropped", { workload: workloadOf(session), type: drop.type, path: drop.path, reason: drop.reason });
-        }
-    }
-
-    /**
-     * The reply as the harness must hold it when a fallback model served it: with no
-     * thinking block, and with the model that answered named.
-     *
-     * A reply that carries a fallback hop ({@link fallbackModelOf}) reaches the harness
-     * already short of the `fallback` content block the API put in the turn. The API holds
-     * the whole turn against the signature of each of its thinking blocks, so echoing that
-     * turn earns `thinking ... blocks in the latest assistant message cannot be modified`,
-     * which is a 400 that no retry can pass. The conversation is then dead: the loop sends
-     * its history on every request, and nothing downstream can repair a turn.
-     *
-     * A thinking block is optional on the way back, thus the reply without them is a valid
-     * turn, and the next request continues. The cost is the reasoning of this one turn and
-     * the cache write that its new prefix pays for. A reply of nothing but thinking carries
-     * no part at all, and `sanitizeMessages` drops such a message from the next request.
-     *
-     * `servedModelId` needs the same correction. {@link captureServedModelId} reads the id
-     * the response metadata of the package carries, which is `message_start.message.model`,
-     * and that field keeps the REQUESTED model across a hop. Published as it stands, it
-     * makes the usage ledger of an embedder attribute the tokens to the model that refused
-     * the work. The iteration names the model that answered, thus it wins. An iteration that
-     * names no model changes nothing: there is no better id to publish, and the record above
-     * is then the only account of the hop.
-     */
-    function settleFallbackReply(session: AgentSession, response: ChatResponse, metadata: ProviderMetadata | undefined): ChatResponse {
-        const servedBy = fallbackModelOf(metadata);
-        if (servedBy === undefined) return response;
-        logger.warn("reply served by a fallback model, thus the harness drops the thinking of that turn", {
-            workload: workloadOf(session),
-            servedBy: servedBy === "" ? undefined : servedBy,
-        });
-        const settled = { ...response, message: withoutThinking(response.message) };
-        return servedBy === "" ? settled : { ...settled, servedModelId: servedBy };
-    }
-
-    function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
-        const reasoning = effortOf(req);
-        const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
-        const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
-            const hookCall: HookCall = { unsettled: false };
-            const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
-            const capture = captureServedModelId(deps.model);
-            try {
-                const collected = await retry(async () => {
-                    // The hook runs before each attempt: a host header can be
-                    // time-limited, and the retry window can last minutes.
-                    const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
-                    // The call streams on the wire and collapses below.
-                    //
-                    // A non-streaming turn sends no header until the model completes,
-                    // thus the `headersTimeout` of the host HTTP client bounds the whole
-                    // generation. No option of the SDK lifts that bound, because it sits
-                    // under the fetch. Node defaults the field to 300s, and a turn near
-                    // 18k output tokens reaches it, while `DEFAULT_MAX_OUTPUT_TOKENS`
-                    // asks for up to 64k. A cut turn then costs twice: the envelope
-                    // starts the same generation again from zero.
-                    //
-                    // Anthropic states the rule for its own SDKs: a large `max_tokens`
-                    // makes streaming necessary, to prevent an HTTP timeout. Thus a
-                    // ceiling this size streams whether or not a consumer wants the
-                    // deltas, and `chatStream` stays the seam that forwards them.
-                    const result = streamText({
-                        model: capture.model,
-                        instructions: req.system,
-                        messages: sanitizeMessages(req.messages),
-                        tools: req.tools,
-                        toolChoice: req.toolChoice ?? "auto",
-                        ...outputCeiling,
-                        stopWhen: [],
-                        // The harness envelope owns retries; leaving the SDK default in
-                        // place would multiply attempts (10 outer × 3 inner).
-                        maxRetries: 0,
-                        headers,
-                        abortSignal: signal,
-                        telemetry,
-                        // `firstChunkMs` bounds the wait for the first content chunk,
-                        // and `chunkMs` bounds each later gap. Thus each silent interval
-                        // carries the one configured bound, and a turn that writes
-                        // steadily runs as long as it needs.
-                        timeout: requestTimeoutMs === undefined ? undefined : { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs },
-                        providerOptions,
-                        reasoning,
-                    });
-                    // The drain sits inside the retried closure, thus a failure at any
-                    // point of the stream re-runs the whole attempt and the envelope
-                    // keeps its whole-call scope. No delta reaches a consumer here —
-                    // `chatStream` is the seam that forwards them.
-                    const iterator = result.stream[Symbol.asyncIterator]();
-                    let text = "";
-                    for (let pull = await pullNextDelta(iterator); pull.kind !== "end"; pull = await pullNextDelta(iterator)) {
-                        // A caller abort rides out as the reason of its own signal, thus
-                        // it stays a cancellation and reaches the caller as a throw.
-                        if (pull.kind === "aborted") throw abortedStreamFailure(signal, pull.reason, requestTimeoutMs);
-                        if (pull.kind === "failed") throw streamPartFailure(pull.error);
-                        text += pull.text;
-                    }
-                    // These promises settle only once the stream is fully drained, thus
-                    // the loop above must reach its end before this point.
-                    return {
-                        messages: await result.responseMessages,
-                        fallbackText: text,
-                        finishReason: await result.finishReason,
-                        rawFinishReason: await result.rawFinishReason,
-                        usage: await result.usage,
-                        providerMetadata: (await result.finalStep).providerMetadata,
-                    };
-                });
-                // Logged past the envelope, thus only the attempt that succeeded
-                // reports its drops.
-                const { providerMetadata: metadata, ...reply } = collected;
-                logDroppedThinkingBlocks(session, metadata);
-                return ok(
-                    settleFallbackReply(
-                        session,
-                        responseFromMessages({
-                            ...reply,
-                            requestedModelId,
-                            // Read after the drain: the metadata chunk that carries the
-                            // served id reaches the capture only as the stream is consumed.
-                            servedModelId: capture.servedModelId(),
-                            provider: providerId,
-                        }),
-                        metadata,
-                    ),
-                );
-            } catch (e) {
-                if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
-                const failure = failureOf(e, workloadOf(session), suspendOn);
-                logFailure(session, failure, e);
-                return err(failure);
-            }
-        };
-        return new ResultAsync(run());
-    }
-
-    async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const reasoning = effortOf(req);
-        const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
-        const hookCall: HookCall = { unsettled: false };
-        const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
-        const capture = captureServedModelId(deps.model);
-        try {
-            // Retry covers only stream establishment: streamText defers wire errors
-            // to consumption, so a failure is not visible until the stream is read.
-            // The retried closure resolves to one of two outcomes — the stream is
-            // live with a first delta in hand, or it finished without yielding any
-            // text — and a delta is only ever yielded OUTSIDE the closure, so a
-            // retried attempt can never re-emit a delta the consumer already saw.
-            const opened = await retry(async () => {
-                const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
-                const result = streamText({
-                    model: capture.model,
-                    instructions: req.system,
-                    messages: sanitizeMessages(req.messages),
-                    tools: req.tools,
-                    toolChoice: req.toolChoice ?? "auto",
-                    ...outputCeiling,
-                    stopWhen: [],
-                    maxRetries: 0,
-                    headers,
-                    abortSignal: signal,
-                    telemetry,
-                    // The fetch guard bounds the wait until the headers. Past the
-                    // headers the SDK owns two bounds: `firstChunkMs` covers the wait
-                    // for the first content chunk, and `chunkMs` covers each later
-                    // gap. The two take the same value, thus each silent interval of
-                    // the stream has the one configured bound. A chunk that carries
-                    // no content, for example a keep-alive comment, produces no part,
-                    // thus it feeds neither bound.
-                    timeout: requestTimeoutMs === undefined ? undefined : { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs },
-                    providerOptions,
-                    reasoning,
-                });
-                const iterator = result.stream[Symbol.asyncIterator]();
-                const first = await pullNextDelta(iterator);
-                // The chunk bound can stop the stream before any content arrives. The
-                // throw carries the sentinel, thus the envelope gives the attempt a
-                // fresh window under the retry policy of a connection error.
-                if (first.kind === "aborted") throw abortedStreamFailure(signal, first.reason, requestTimeoutMs);
-                if (first.kind === "failed") throw streamPartFailure(first.error);
-                if (first.kind === "end") {
-                    // A doStream promise rejection — the shape a real connection
-                    // failure takes — does NOT surface at this first pull: streamText
-                    // resolves it `{ done: true }` and defers the rejection to the
-                    // deferred result promises. Awaiting them here brings that failure
-                    // inside the retry envelope so a text-less establishment error is
-                    // retried; a genuine text-less turn resolves them, and the terminal
-                    // event is built from these already-resolved values without a
-                    // second await. (These promises only settle once the stream is
-                    // fully drained, so they can be awaited here only because the pull
-                    // already reported the stream done.)
-                    return {
-                        kind: "completed" as const,
-                        messages: await result.responseMessages,
-                        finishReason: await result.finishReason,
-                        rawFinishReason: await result.rawFinishReason,
-                        usage: await result.usage,
-                        providerMetadata: (await result.finalStep).providerMetadata,
-                    };
-                }
-                return { kind: "streaming" as const, result, iterator, firstDelta: first.text };
-            });
-
-            if (opened.kind === "completed") {
-                logDroppedThinkingBlocks(session, opened.providerMetadata);
-                const response = settleFallbackReply(
-                    session,
-                    responseFromMessages({
-                        messages: opened.messages,
-                        fallbackText: "",
-                        finishReason: opened.finishReason,
-                        rawFinishReason: opened.rawFinishReason,
-                        usage: opened.usage,
-                        requestedModelId,
-                        servedModelId: capture.servedModelId(),
-                        provider: providerId,
-                    }),
-                    opened.providerMetadata,
-                );
-                yield { type: "done", response };
-                return;
-            }
-
-            const { result, iterator, firstDelta } = opened;
-            let text = firstDelta;
-            yield { type: "text-delta", text: firstDelta };
-            // Drain the same iterator: past the first delta, errors propagate
-            // unchanged (no retry, no re-emit).
-            for (let pull = await pullNextDelta(iterator); pull.kind !== "end"; pull = await pullNextDelta(iterator)) {
-                // A mid-stream abort ends the turn with an error, never with the
-                // partial text that arrived before it. The catch below builds the
-                // terminal `ProviderError` from the throwable.
-                if (pull.kind === "aborted") throw abortedStreamFailure(signal, pull.reason, requestTimeoutMs);
-                if (pull.kind === "failed") throw streamPartFailure(pull.error);
-                text += pull.text;
-                yield { type: "text-delta", text: pull.text };
-            }
-            const metadata = (await result.finalStep).providerMetadata;
-            const response = settleFallbackReply(
-                session,
-                responseFromMessages({
-                    messages: await result.responseMessages,
-                    fallbackText: text,
-                    finishReason: await result.finishReason,
-                    rawFinishReason: await result.rawFinishReason,
-                    usage: await result.usage,
-                    requestedModelId,
-                    // Read after the drain: the metadata chunk carrying the served id
-                    // reaches the capture only as the stream is consumed.
-                    servedModelId: capture.servedModelId(),
-                    provider: providerId,
-                }),
-                metadata,
-            );
-            logDroppedThinkingBlocks(session, metadata);
-            yield { type: "done", response };
-        } catch (e) {
-            if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
-            const failure = failureOf(e, workloadOf(session), suspendOn);
-            logFailure(session, failure, e);
-            // oxlint-disable-next-line typescript/only-throw-error -- the structured `ProviderError` payload rides as-is; the boundary classifier reads it structurally, and an `Error` wrapper would erase its identity.
-            throw failure;
-        }
+        const providerOptions = deps.providerOptionsFor?.({ session: call.session, reasoning });
+        return { model, settings: { ...outputCeiling, reasoning, providerOptions }, telemetry };
     }
 
     // The provider advertises the guard limit on its own instance, thus a
     // consumer that scales a deadline reads it from the provider in its deps.
-    return { capabilities, chat, chatStream, requestTimeoutMs };
+    return { capabilities, bind, requestTimeoutMs };
 }
 
 /**
@@ -1137,11 +841,10 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
  * signal through `AbortSignal.any`. Thus the caller signal keeps its normal
  * effect, and a caller abort stays a cancellation.
  *
- * The guard bounds the response start only. The SDK bounds each later gap of a
- * streamed body with its own `chunkMs` setting, thus no timer of the wrapper
- * survives the headers. Thus a stream with steady content does not trip the
- * guard, whatever its total length. One fetch call is one attempt, because the
- * SDK retries are off, thus the window is per attempt.
+ * The guard bounds the response start only. The retry envelope bounds each later
+ * gap of a streamed body, thus no timer of the wrapper survives the headers. One
+ * fetch call is one attempt, because the SDK retries are off, thus the window is
+ * per attempt.
  *
  * When the field is absent, `createConfiguredAiSdkProvider` installs no wrapper,
  * and the behavior stays byte-identical.
@@ -1223,16 +926,15 @@ export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
 
 /**
  * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
- * connection and model. The model is closed into the returned provider here (it
- * is never passed per `ChatRequest`), so N models require N provider
- * instances over one shared connection configuration — one instance serves the
- * single model it was built with.
+ * connection and model. The model is closed into the returned provider here, so
+ * N models require N provider instances over one shared connection
+ * configuration — one instance serves the single model it was built with.
  *
  * When the config sets `requestTimeoutMs`, the provider wraps the effective fetch
- * (`config.fetch ?? globalThis.fetch`) with the response-start guard, it hands
- * the value to the stream call as the SDK chunk bound, and it advertises the
- * value on the returned instance. When the field is absent, it installs no
- * wrapper, it hands the SDK no bound, and it advertises no value.
+ * (`config.fetch ?? globalThis.fetch`) with the response-start guard, the retry
+ * envelope bounds each later silent interval with the same value, and the
+ * provider advertises the value on the returned instance. When the field is
+ * absent, it installs no wrapper, it bounds nothing, and it advertises no value.
  */
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
@@ -1318,8 +1020,8 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         baseURL: config.baseURL,
         apiKey: config.apiKey,
         fetch: effectiveFetch,
-        // Each call of the provider streams, `chat` included. Without this flag
-        // the package asks for no usage on a stream, and the call reports none.
+        // Each call of the provider streams. Without this flag the package asks for
+        // no usage on a stream, and the call reports none.
         includeUsage: true,
     });
     // The compatible wire has no standard field for a session key, thus this arm

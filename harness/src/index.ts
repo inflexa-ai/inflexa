@@ -263,17 +263,12 @@ export type { AskGateway, AskGatewayDeps, AskContext, AnswerOutcome, PendingAsk 
 export { UnavailableAsk, AskRejectedError } from "./tools/approval/contract.js";
 export type { Ask, AskRequest, AskReply, AskApproval } from "./tools/approval/contract.js";
 
-// Agent loop.
-export { runAgent, finalText } from "./loop/run-agent.js";
-export type { RunAgentOptions, RunAgentResult, AgentFinish, AgentRound } from "./loop/run-agent.js";
-export type { CompactionPolicy, CompactionRules } from "./loop/compaction.js";
-export type { ToolMask } from "./loop/tool-mask.js";
-export type { AgentDefinition, RunStep, EmitFn, EmitEvent, EventSource } from "./loop/types.js";
+// Agent loop. No embedder drives the loop: a host runs a chat turn, and the
+// harness runs each loop. These are the types that the turn and an agent carry.
+export type { AgentFinish, AgentRound } from "./loop/run-loop.js";
+export type { CompactionRules } from "./loop/compaction.js";
+export type { AgentDefinition, EmitFn, EmitEvent, EventSource } from "./loop/types.js";
 export type { KeptToolOutput, ToolOutputStore } from "./loop/tool-output.js";
-// `passthroughStep` is the in-process `RunStep`: the host request/chat path runs
-// the loop with no durability wrapper (workflow contexts use the durable step).
-// An embedder driving `runAgent` outside a workflow passes it as `runStep`.
-export { passthroughStep } from "./loop/run-step.js";
 
 // Session value objects + helpers.
 export { forStep, forSubAgent, scopeResource, scopeWorkloadId } from "./auth/types.js";
@@ -301,13 +296,12 @@ export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps, ProviderHostPoli
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";
 export type {
-    AgentChat,
+    BoundModel,
     ChatProvider,
     EmbeddingProvider,
-    ChatRequest,
-    ChatResponse,
     ChatStreamEvent,
     ChatUsage,
+    ModelBinding,
     ModelMessage,
     PromptCachePolicy,
     ReasoningPolicy,
@@ -317,17 +311,15 @@ export type {
 // to the request itself, or a proxy miscounts. The root chat loop gets
 // `CONVERSATION_PROMPT_CACHE` (1h), because a person can reply minutes later.
 export { CONVERSATION_PROMPT_CACHE, DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "./providers/prompt-cache.js";
-// Effort resolves in order: `ChatRequest.reasoning`, the provider config's
+// Effort resolves in order: the effort of the run, the provider config's
 // `reasoning`, then `DEFAULT_REASONING`, downgraded to what the model accepts.
 // A model with no reasoning support takes `"provider-default"`.
 export { DEFAULT_REASONING } from "./providers/reasoning.js";
-// Provider error channel. `ProviderError` is the value `chat`/`embed` fail
-// with; `toProviderError` is its sole constructor. Exposed so an embedder
-// realizing its own `ChatProvider`/`EmbeddingProvider` fails with the exact
-// same shape the harness's own realizations do, rather than re-deriving it.
-// `isProviderError` is the structural guard an embedder driving `chatStream`
-// directly needs: `chatStream` throws a `ProviderError` value (a plain object,
-// not an `Error`), so a `catch` recognizes it by shape, not `instanceof`.
+// Provider error channel. `ProviderError` is the value a model call and `embed`
+// fail with; `toProviderError` is its sole constructor. Exposed so an embedder
+// realizing its own `EmbeddingProvider` fails with the exact same shape the
+// harness's own realizations do, rather than re-deriving it. `isProviderError`
+// is the structural guard of that plain-object value.
 export { toProviderError, isProviderError } from "./providers/errors.js";
 export type { ProviderError } from "./providers/errors.js";
 // The suspend map of a provider: an HTTP status to the suspend reason of the
@@ -338,15 +330,10 @@ export type { SuspendOn } from "./providers/errors.js";
 // with `suspensionOfFailure`, by the kind of the error, never by its text.
 export { suspensionOfFailure } from "./workflows/suspension.js";
 export type { Suspension } from "./workflows/suspension.js";
-// `createStreamingChat` wraps a `ChatProvider` as a streaming `AgentChat` (the
-// type `runAgent`'s `provider` option takes): its `chat` drives the provider's
-// `chatStream` and forwards each text delta to `onText`, so a same-process host
-// gets live token streaming out of the otherwise non-streaming loop.
-export { createStreamingChat } from "./providers/streaming-chat.js";
-
 // Conversation turn + thread memory. A host runs a chat turn with `runChatTurn`
-// and gives only its transport values: the harness stores the opening, each round,
-// and the outcome. `appendTurn` stays for a record of a host. `createThreadStore`
+// over `CoreRuntime.chatTurns`, and gives only its transport values: the harness
+// streams the text of the reply, and it stores the opening, each round, and the
+// outcome. `appendTurn` stays for a record of a host. `createThreadStore`
 // owns thread metadata (create/list/title).
 export { openChatTurn, prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
 export type {

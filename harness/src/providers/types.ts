@@ -6,8 +6,8 @@
  * attribution is resolved lazily at the provider wire boundary.
  */
 
-import type { FinishReason, ModelMessage, SystemModelMessage, ToolSet } from "ai";
-import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import type { TelemetryOptions } from "ai";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ResultAsync } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
@@ -15,6 +15,8 @@ import type { TokenUsageField } from "../contracts/usage.js";
 import type { ProviderError } from "./errors.js";
 
 export type { FinishReason, LanguageModel, ModelMessage, ToolSet } from "ai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
+
 export type { ProviderOptions } from "@ai-sdk/provider-utils";
 
 export type ProviderCapabilities = {
@@ -29,47 +31,11 @@ export type ProviderCapabilities = {
      */
     readonly imageToolResults?: boolean;
     /**
-     * Whether the wire can carry a picture inside a user message. The loop uses
-     * this placement only when the tool result cannot carry the picture. The tool
-     * result then keeps its JSON text, and one user message after the tool message
-     * of the round carries the bytes. Absent means "cannot carry", never
-     * "unknown".
-     */
-    readonly imageUserMessages?: boolean;
-    /**
      * The context window of the model in tokens, when the host knows it. A chat
      * thread then compacts at 80% of the window at the latest. Absent means "at
      * least the compaction budget of the agent", thus the budget stays as declared.
      */
     readonly contextWindow?: number;
-};
-
-/**
- * The request carries no free-form provider options. That would let a caller
- * set a vendor key that bypasses the provider's per-model table.
- */
-export type ChatRequest = {
-    /**
-     * The system prompt: a plain string, or a system message that carries the
-     * cache marker at its end (`withSystemPromptBreakpoint`).
-     */
-    readonly system: string | SystemModelMessage;
-    readonly messages: readonly ModelMessage[];
-    readonly tools: ToolSet;
-    /**
-     * A forced choice (`required`, or one named tool) is absent on purpose: some
-     * Claude models reject it with a 400, and the model is chosen at run time.
-     *
-     * CAUTION: `@ai-sdk/anthropic` strips the tools when this is `"none"`, and
-     * Anthropic drops its cache on any `tool_choice` change — taking a signed
-     * thinking block with it. Use a tool mask instead of sending `"none"`.
-     */
-    readonly toolChoice?: "auto" | "none";
-    /**
-     * How deep the model reasons. Absent, the effort falls back to the provider
-     * configuration's `reasoning`, then `DEFAULT_REASONING`.
-     */
-    readonly reasoning?: ReasoningPolicy;
 };
 
 /**
@@ -140,64 +106,47 @@ export type ChatUsage = {
 type _AssertChatUsageFields = [Exclude<keyof ChatUsage, TokenUsageField>, Exclude<TokenUsageField, keyof ChatUsage>] extends [never, never] ? true : never;
 const _assertChatUsageFields: _AssertChatUsageFields = true;
 
-export type ChatResponse = {
-    readonly message: Extract<ModelMessage, { role: "assistant" }>;
+/** A text delta of the reply that streams to a reader. */
+export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string };
+
+/** The facts of one run that bind a model: the session of its calls, its effort, and whether a reader sees its reply live. */
+export type ModelBinding = {
+    readonly session: AgentSession;
+    /** Absent: the effort of the provider configuration, then `DEFAULT_REASONING`. */
+    readonly reasoning?: ReasoningPolicy;
     /**
-     * The terminal reason for this reply. `"aborted"` is produced ONLY by the
-     * streaming wrapper (`createStreamingChat`), which resolves a client abort
-     * with the partial assistant text assembled from the deltas it already
-     * forwarded. The non-streaming `ChatProvider.chat` never yields `"aborted"`:
-     * it propagates a client abort as a throw, because durable workflow loops —
-     * the non-streaming provider's callers — record cancellation only when it
-     * surfaces as a thrown exception.
-     *
-     * The `string & {}` member admits a finish word an endpoint reports outside
-     * the modeled union; the loop consumers settle whatever arrives.
+     * A reader sees the reply as it streams. A live call retries only before its first output part, and a
+     * call with no live reader takes its whole reply inside each attempt.
      */
-    readonly finishReason: FinishReason | "aborted" | (string & {});
-    readonly rawFinishReason?: string;
-    readonly usage?: ChatUsage;
-    /**
-     * The id of the model this provider instance is bound to — what the caller
-     * asked for. Absent when the binding names no id.
-     */
-    readonly requestedModelId?: string;
-    /**
-     * The model id the provider itself reported as having answered. Absent
-     * whenever the provider reported none — it is NEVER filled in from
-     * `requestedModelId`, because a claim about which model answered is only
-     * worth anything when the endpoint actually made it.
-     *
-     * A value differing from `requestedModelId` is not an error: the pair exists
-     * so a consumer can observe an endpoint or proxy serving a different model
-     * version than the one configured. Treat the comparison as best-effort
-     * diagnostics, never as an invariant.
-     */
-    readonly servedModelId?: string;
-    /**
-     * The AI SDK's `LanguageModel.provider` id, for example `anthropic.messages`.
-     * Absent for a bare model-id string, which names no provider.
-     */
-    readonly provider?: string;
+    readonly live: boolean;
 };
 
-export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };
+/** The model of one run, under the retry envelope of its provider, and the call settings of each request. */
+export type BoundModel = {
+    readonly model: LanguageModelV4;
+    readonly settings: {
+        readonly maxOutputTokens?: number;
+        readonly reasoning: ReasoningPolicy;
+        readonly providerOptions?: ProviderOptions;
+    };
+    readonly telemetry: TelemetryOptions;
+};
 
-export type AgentChat = {
+/**
+ * The model configuration of the harness: one model over one connection. The loop binds it for each run, and
+ * the AI SDK drives each request.
+ */
+export type ChatProvider = {
     readonly capabilities: ProviderCapabilities;
-    chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError>;
-};
-
-export type ChatProvider = AgentChat & {
-    chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent>;
     /**
      * The request-timeout limit that this provider enforces, in milliseconds, or
      * absent when it enforces none. The value bounds each silent interval of a
      * request attempt: the wait until the response starts, and each gap between
-     * two content chunks of a stream. A consumer that scales a deadline reads this
+     * two content parts of a stream. A consumer that scales a deadline reads this
      * value from the provider instance, not from a harness constant.
      */
     readonly requestTimeoutMs?: number;
+    bind(binding: ModelBinding): BoundModel;
 };
 
 /**

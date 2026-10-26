@@ -15,7 +15,7 @@ import type { DraftDocument } from "../../../report-model/draft.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
-import type { ToolContext, ToolExecutionMode } from "../../define-tool.js";
+import type { ToolContext } from "../../define-tool.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import {
     createReportAuthoringTools,
@@ -648,24 +648,6 @@ describe("read_block", () => {
 
         expect(failure.retryable).toBe(false);
         expect(failure.error).toContain("m9");
-    });
-});
-
-describe("the tool surface", () => {
-    it("runs every tool inline, because a step-mode replay could report a stale outline", () => {
-        const tools = createReportAuthoringTools(makeFakeGateway());
-        const packaged = [
-            tools.add_block,
-            tools.change_block,
-            tools.remove_block,
-            tools.move_block,
-            tools.set_title,
-            tools.read_outline,
-            tools.read_block,
-            tools.finish_draft,
-        ];
-
-        expect(packaged.map((tool) => tool.executionMode)).toEqual(Array<ToolExecutionMode>(8).fill("inline"));
     });
 });
 

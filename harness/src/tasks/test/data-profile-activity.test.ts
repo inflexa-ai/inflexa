@@ -126,7 +126,7 @@ describe("profile activity emitter — the phases and their phrases", () => {
         await emitter.sandboxInit();
         await emitter.scanning();
         await emitter.agentStarting();
-        await emitter.forTool("execute_command", { command: ["Rscript", "profile.R"] }, resolveDetail);
+        await emitter.forTool("tu-1", "execute_command", { command: ["Rscript", "profile.R"] }, resolveDetail);
         await emitter.indexing();
         await emitter.complete();
 
@@ -175,7 +175,7 @@ describe("profile activity emitter — tool phrases come from the called tool's 
     it("names the script an execute_command is running", async () => {
         const { parts, emitter } = recorder();
 
-        await emitter.forTool("execute_command", { command: ["python3", "/analysis/runs/data-profile/profile/scripts/profile.py"] }, resolveDetail);
+        await emitter.forTool("tu-2", "execute_command", { command: ["python3", "/analysis/runs/data-profile/profile/scripts/profile.py"] }, resolveDetail);
 
         expect(presentAt(activityParts(parts), 0).activity).toBe("execute_command /analysis/runs/data-profile/profile/scripts/profile.py");
     });
@@ -183,8 +183,8 @@ describe("profile activity emitter — tool phrases come from the called tool's 
     it("names the file a path-bearing tool is touching", async () => {
         const { parts, emitter } = recorder();
 
-        await emitter.forTool("read_file", { path: "/analysis/data/inputs/f1/counts.csv" }, resolveDetail);
-        await emitter.forTool("write_file", { path: "scripts/profile.py", content: "" }, resolveDetail);
+        await emitter.forTool("tu-3", "read_file", { path: "/analysis/data/inputs/f1/counts.csv" }, resolveDetail);
+        await emitter.forTool("tu-4", "write_file", { path: "scripts/profile.py", content: "" }, resolveDetail);
 
         expect(activityParts(parts).map((p) => p.activity)).toEqual(["read_file /analysis/data/inputs/f1/counts.csv", "write_file scripts/profile.py"]);
     });
@@ -193,10 +193,10 @@ describe("profile activity emitter — tool phrases come from the called tool's 
         const { parts, emitter } = recorder();
 
         // A hookless tool, and a tool absent from the supplied list.
-        await emitter.forTool("submit_profile", {}, resolveDetail);
-        await emitter.forTool("list_available_packages", {}, resolveDetail);
+        await emitter.forTool("tu-5", "submit_profile", {}, resolveDetail);
+        await emitter.forTool("tu-6", "list_available_packages", {}, resolveDetail);
         // No resolver at all — the shape a caller that wires none gets.
-        await emitter.forTool("read_file", { path: "a.csv" });
+        await emitter.forTool("tu-7", "read_file", { path: "a.csv" });
 
         expect(activityParts(parts).map((p) => p.activity)).toEqual(["submit_profile", "list_available_packages", "read_file"]);
     });
@@ -348,13 +348,24 @@ describe("profile activity emitter — the time and the history", () => {
         expect(entryParts(parts).map((p) => p.id)).toEqual([`${ENTRY_ID}-0`, `${ENTRY_ID}-1`, `${ENTRY_ID}-2`]);
     });
 
+    it("keys the entry of a tool call by the call, and the body entries keep their sequence", async () => {
+        const { parts, emitter } = recorder();
+
+        await emitter.sandboxInit();
+        await emitter.forTool("tu-a", "read_file", { path: "a.csv" });
+        await emitter.indexing();
+
+        // A replay serves a completed tool step from its checkpoint and emits nothing, thus a body entry must not count the tool entries.
+        expect(entryParts(parts).map((p) => p.id)).toEqual([`${ENTRY_ID}-0`, `${ENTRY_ID}-tool-tu-a`, `${ENTRY_ID}-1`]);
+    });
+
     it("gives equal parts and ids to two emitters on the same clock sequence", async () => {
         const first = recorder();
         const second = recorder();
 
         for (const { emitter } of [first, second]) {
             await emitter.sandboxInit();
-            await emitter.forTool("read_file", { path: "a.csv" });
+            await emitter.forTool("tu-8", "read_file", { path: "a.csv" });
             await emitter.complete();
         }
 

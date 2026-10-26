@@ -1,17 +1,12 @@
 /**
- * Agent-loop seam — shared types.
- *
- * `runAgent` (run-agent.ts) is a pure-async function: it owns the message
- * loop and nothing else. Durability and streaming are *injected* — a
- * `RunStep` wraps each LLM/tool call (`passthroughStep` for chat, a
- * `durableStep` in a workflow) and an `EmitFn` is the flat event sink.
- * The loop body itself knows nothing about DBOS, HTTP, or memory.
+ * The shared types of the agent loop: the definition of an agent, its
+ * messages, and the flat event sink.
  */
 
 import type { ModelMessage } from "ai";
 
 import type { ToolCallDetail, ToolOutcome } from "../contracts/chat-events.js";
-import type { ChatStreamEvent } from "../providers/types.js";
+import type { ChatStreamEvent, ProviderOptions } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { CompactionRules } from "./compaction.js";
 
@@ -22,7 +17,7 @@ import type { CompactionRules } from "./compaction.js";
 export type LoopMessage = ModelMessage;
 
 /**
- * Everything `runAgent` needs to drive one agent: identity, the system
+ * Everything the loop needs to drive one agent: identity, the system
  * prompt, the model id (provenance / metric label — the `ChatProvider`
  * owns the wire model), the tool surface, and the runaway-guard cap.
  */
@@ -31,18 +26,17 @@ export type AgentDefinition = {
     readonly systemPrompt: string;
     readonly model: string;
     readonly tools: readonly Tool[];
-    /** Runaway guard: at the cap the loop runs up to two masked wrap-up requests, until it gets a text answer. */
+    /** Runaway guard: the cap of model requests of one run. The run ends at the cap. */
     readonly maxIterations: number;
     /** The compaction rules of an agent that a chat thread runs. Absent: the conversation never compacts. */
     readonly compaction?: CompactionRules;
+    /**
+     * Provider options that each request of the agent sends, beside the options of
+     * the provider. They are part of the agent, thus each request of a
+     * conversation sends the same options.
+     */
+    readonly providerOptions?: ProviderOptions;
 };
-
-/**
- * The durability seam. `passthroughStep` (`(_, fn) => fn()`) in the chat
- * route; `durableStep` in a workflow. The loop is agnostic — it only
- * promises a deterministic `name` per call (the step-naming contract).
- */
-export type RunStep = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 
 /**
  * Provenance stamped onto every orchestration event — the agent call
@@ -65,12 +59,9 @@ export type EmitEvent =
     | {
           readonly type: "iteration";
           readonly source: EventSource;
-          /** Zero-based. Wrap-up request `k` has index `maxIterations + k`; a continuation counts from 0. */
+          /** Zero-based. A follow-up request counts from 0. */
           readonly index: number;
-          /**
-           * True when this iteration produced the loop's terminal reply, including
-           * the last wrap-up even when its reply called a tool.
-           */
+          /** True when this request produced the terminal reply of the loop. */
           readonly final: boolean;
       }
     | {
@@ -100,16 +91,9 @@ export type EmitEvent =
           /** The same detail the matching `tool-started` carried. */
           readonly detail?: ToolCallDetail;
           /**
-           * The time around this call's own dispatch, in milliseconds.
-           *
-           * A host cannot measure this itself. The loop emits every
-           * `tool-started` of a round before it dispatches anything, and every
-           * `tool-finished` after the round settles. Thus a host that brackets
-           * the two events measures the round, and each call of a multi-call
-           * round reports the same figure.
-           *
-           * The field is optional, and it is absent when no measurement was
-           * taken. As a result a host can fall back to its own observation.
+           * The time of this call itself, in milliseconds, measured inside its
+           * step. A refused call did not run, thus it has no figure, and a host
+           * can fall back to its own observation.
            */
           readonly durationMs?: number;
       }

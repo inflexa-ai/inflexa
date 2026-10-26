@@ -23,7 +23,7 @@ The harness MUST give one app function that runs one chat turn from the user inp
 
 ### Requirement: A host gives only its transport values
 
-A host MUST give only these values for a turn: the emit sink of its surface, the abort signal, the author of the user message, and the start time. It can also give a cache policy for the root loop. The harness MUST make the model, the text stream, the usage recorder, and the approval binding of the turn from its own runtime.
+A host MUST give only these values for a turn: the session, the emit sink of its surface, the abort signal, the author of the user message, and the start time. It can also give a cache policy for the root loop. The harness MUST make the model, the text stream, the usage recorder, and the approval binding of the turn from its own runtime.
 
 #### Scenario: The conversation agent is recorded with no host wiring
 

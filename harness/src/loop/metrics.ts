@@ -12,11 +12,11 @@
  * agree on whether `outputTokens` includes the reasoning tokens, so the
  * reasoning counter keeps a `provider` label.
  *
- * Each `runAgent` completion also records, with the `agent_id` label only:
- *   - cortex.harness.agent.iterations — histogram of LLM iterations per run.
+ * Each run of the loop also records, with the `agent_id` label only:
+ *   - cortex.harness.agent.iterations — histogram of model requests per run.
  *     A creeping distribution is a leading indicator of prompt drift.
  *   - cortex.harness.agent.cap_hits — counter, incremented once per run that
- *     exhausted `maxIterations` and took the forced wrap-up path.
+ *     reached its step cap.
  *
  * The two cache counters are what make prompt caching *observable*: the hit
  * rate for an agent type is `cache_read_tokens / input_tokens` (the harness's
@@ -36,7 +36,7 @@
 import { type Attributes, type Counter, type Histogram, metrics } from "@opentelemetry/api";
 
 import { TOKEN_USAGE_FIELDS, type TokenUsageField, type TokenUsageRollup } from "../contracts/usage.js";
-import type { ChatResponse, ChatUsage } from "../providers/types.js";
+import type { ChatUsage } from "../providers/types.js";
 
 type Instruments = {
     readonly iterations: Histogram;
@@ -55,11 +55,11 @@ function getInstruments(): Instruments {
         const meter = metrics.getMeter("cortex.harness.loop");
         instruments = {
             iterations: meter.createHistogram("cortex.harness.agent.iterations", {
-                description: "LLM iterations executed per runAgent completion",
+                description: "Model requests of each run of the agent loop",
                 unit: "{iteration}",
             }),
             capHits: meter.createCounter("cortex.harness.agent.cap_hits", {
-                description: "runAgent completions that exhausted maxIterations and took the " + "forced wrap-up path",
+                description: "Runs of the agent loop that reached their step cap",
             }),
             inputTokens: meter.createCounter("cortex.harness.agent.input_tokens", {
                 description: "Input tokens billed for each completed LLM call, cache reads included",
@@ -87,7 +87,7 @@ function getInstruments(): Instruments {
 }
 
 /**
- * Token usage summed over LLM calls, either one `runAgent` run or a whole
+ * Token usage summed over LLM calls, either one run of the loop or a whole
  * turn. A field stays `undefined` until a call reports it, so an unreported
  * field never masquerades as a measured zero.
  */
@@ -136,25 +136,18 @@ export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | TokenUsageRo
     return TOKEN_USAGE_FIELDS.some((field) => usage[field] !== undefined);
 }
 
-/**
- * Maps a step's response to grow its token counters. Use inside the step
- * body, `provider.chat(...).map(countChatTokens(agentId))`. A call that gives
- * `err` counts nothing.
- */
-export function countChatTokens(agentId: string): (response: ChatResponse) => ChatResponse {
-    return (response) => {
-        recordChatCall({ agentId, response });
-        return response;
-    };
-}
-
-export function recordChatCall(call: { readonly agentId: string; readonly response: ChatResponse }): void {
-    const { usage, servedModelId, provider } = call.response;
-    if (usage === undefined) return;
+/** Grow the token counters by one completed call. A figure that the provider did not report counts nothing. */
+export function recordChatCall(call: {
+    readonly agentId: string;
+    readonly usage: ChatUsage;
+    readonly servedModelId?: string;
+    readonly provider?: string;
+}): void {
+    const { usage } = call;
     const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens } = getInstruments();
     const attributes: Attributes = { agent_id: call.agentId };
-    if (servedModelId !== undefined) attributes.model = servedModelId;
-    if (provider !== undefined) attributes.provider = provider;
+    if (call.servedModelId !== undefined) attributes.model = call.servedModelId;
+    if (call.provider !== undefined) attributes.provider = call.provider;
     if (usage.inputTokens !== undefined) inputTokens.add(usage.inputTokens, attributes);
     if (usage.outputTokens !== undefined) outputTokens.add(usage.outputTokens, attributes);
     if (usage.cacheReadInputTokens !== undefined) cacheReadTokens.add(usage.cacheReadInputTokens, attributes);
@@ -162,7 +155,7 @@ export function recordChatCall(call: { readonly agentId: string; readonly respon
     if (usage.reasoningTokens !== undefined) reasoningTokens.add(usage.reasoningTokens, attributes);
 }
 
-/** Record one completed `runAgent` invocation. */
+/** Record one completed run of the loop. */
 export function recordAgentRun(run: { readonly agentId: string; readonly iterations: number; readonly cappedOut: boolean }): void {
     const { iterations, capHits } = getInstruments();
     const attributes = { agent_id: run.agentId };

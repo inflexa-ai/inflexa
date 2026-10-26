@@ -20,8 +20,8 @@ import { okAsync } from "neverthrow";
 import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
 import { presentFirst } from "../../lib/present.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import type { RunSynthesis } from "../../schemas/run-synthesis.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import type { SynthesisDraft } from "../../schemas/run-synthesis.js";
+import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import type { EmitFn } from "../../loop/types.js";
@@ -52,9 +52,8 @@ function emptyPool(): Querier {
 }
 
 /** A valid synthesis payload (schema + semantic checks); mirrors run-synthesis.test. */
-function validSynthesisPayload(): RunSynthesis {
+function validSynthesisPayload(): SynthesisDraft {
     return {
-        runId: RUN_ID,
         overview: "A test run analyzed gene expression in T-cells.",
         conclusions: "The analysis establishes a novel signature.",
         findings: [
@@ -178,8 +177,8 @@ function captureProgress(): {
 
 describe("synthesizeRun", () => {
     it("returns no findings and reports skipped_no_summaries with a warn when there are no step summaries", async () => {
-        const provider = scriptedProvider([]);
-        const h = await makeHarness(provider, { withSummary: false });
+        const model = scriptedModel([]);
+        const h = await makeHarness(model.provider, { withSummary: false });
         const { phases, onProgress } = captureProgress();
         try {
             const result = await synthesizeRun(h.deps, {
@@ -198,7 +197,7 @@ describe("synthesizeRun", () => {
             const warn = h.logs.find((r) => r.level === "warn");
             expect(warn?.fields).toMatchObject({ runId: RUN_ID, reason: "no-summaries" });
             // The synthesizer loop never ran.
-            expect(provider.calls.length).toBe(0);
+            expect(model.calls.length).toBe(0);
             expect(h.embedderCalls).toBe(0);
         } finally {
             await h.cleanup();
@@ -206,19 +205,8 @@ describe("synthesizeRun", () => {
     });
 
     it("drives the synthesizer, persists synthesis.json, and returns findings", async () => {
-        const provider = scriptedProvider((i) =>
-            i === 0
-                ? makeMessage(
-                      [
-                          toolUseBlock("tu-1", "submit_synthesis", {
-                              synthesis: validSynthesisPayload(),
-                          }),
-                      ],
-                      "tool_use",
-                  )
-                : makeMessage([textBlock("done")], "end_turn"),
-        );
-        const h = await makeHarness(provider, { withSummary: true });
+        const model = scriptedModel([callTools(toolCall("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })), reply([text("done")])]);
+        const h = await makeHarness(model.provider, { withSummary: true });
         const { phases, onProgress } = captureProgress();
         const emitted: unknown[] = [];
         const emit: EmitFn = (e) => {
@@ -253,12 +241,8 @@ describe("synthesizeRun", () => {
 
     it("returns skipped_blocker with the reason and a warn, writing no synthesis.json, when the synthesizer reports a blocker", async () => {
         const BLOCKER_REASON = "all step summaries were empty";
-        const provider = scriptedProvider((i) =>
-            i === 0
-                ? makeMessage([toolUseBlock("tu-1", "report_blocker", { reason: BLOCKER_REASON })], "tool_use")
-                : makeMessage([textBlock("done")], "end_turn"),
-        );
-        const h = await makeHarness(provider, { withSummary: true });
+        const model = scriptedModel([callTools(toolCall("tu-1", "report_blocker", { reason: BLOCKER_REASON })), reply([text("done")])]);
+        const h = await makeHarness(model.provider, { withSummary: true });
         const { phases, onProgress } = captureProgress();
         try {
             const result = await synthesizeRun(h.deps, {
@@ -288,12 +272,12 @@ describe("synthesizeRun", () => {
     it("skips on a blocker that follows a rejected submission, writing nothing", async () => {
         const bad = validSynthesisPayload();
         presentFirst(bad.findings).stepId = "UNKNOWN";
-        const provider = scriptedProvider((i) => {
-            if (i === 0) return makeMessage([toolUseBlock("tu-0", "submit_synthesis", { synthesis: bad })], "tool_use");
-            if (i === 1) return makeMessage([toolUseBlock("tu-b", "report_blocker", { reason: "cannot reconcile references" })], "tool_use");
-            return makeMessage([textBlock("done")], "end_turn");
-        });
-        const h = await makeHarness(provider, { withSummary: true });
+        const model = scriptedModel([
+            callTools(toolCall("tu-0", "submit_synthesis", { synthesis: bad })),
+            callTools(toolCall("tu-b", "report_blocker", { reason: "cannot reconcile references" })),
+            reply([text("done")]),
+        ]);
+        const h = await makeHarness(model.provider, { withSummary: true });
         const records: { phase: string; extra: SynthesisProgressExtra | Record<string, unknown> }[] = [];
         try {
             const result = await synthesizeRun(h.deps, {
@@ -320,9 +304,9 @@ describe("synthesizeRun", () => {
 
     it("reports failed and re-throws when synthesis cannot reach a terminal tool (D10)", async () => {
         // Plain prose only — the synthesizer never calls a terminal tool, so
-        // generateRunSynthesis throws after the corrective re-prompt.
-        const provider = scriptedProvider(() => makeMessage([textBlock("just thinking")], "end_turn"));
-        const h = await makeHarness(provider, { withSummary: true });
+        // generateRunSynthesis throws after the salvage request.
+        const model = scriptedModel([reply([text("just thinking")]), reply([text("just thinking")])]);
+        const h = await makeHarness(model.provider, { withSummary: true });
         const { phases, onProgress } = captureProgress();
         try {
             await expect(

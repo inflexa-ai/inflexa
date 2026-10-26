@@ -42,7 +42,7 @@ afterEach(() => {
 async function search(raw: Record<string, unknown>, engine: WebSearchEngine): Promise<WebSearchOutput> {
     const tool = createWebSearchTool({ engine });
     // The loop parses the model input through the schema before it runs the body
-    // (run-agent.ts), thus the defaults and the input refine are part of the path.
+    // (loop/tool-adapter.ts), thus the defaults and the input refine are part of the path.
     const input = tool.inputSchema.parse(raw);
     const { ctx } = makeToolContext();
     const result = await tool.execute(input, ctx);

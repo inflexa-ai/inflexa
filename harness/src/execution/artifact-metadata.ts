@@ -1,7 +1,8 @@
 /**
  * Per-step artifact metadata generation — describes a step's output files
- * through a continuation of the step agent's conversation (`continueAgent`)
- * on the harness `ChatProvider`.
+ * through a follow-up request of the step agent's conversation (`continueLoop`)
+ * on the harness `ChatProvider`. The description of each file comes from the
+ * recorded calls of `submit_file_metadata`: the last description of a path wins.
  *
  * The continuation extends the prefix that the task cached, so each signed
  * thinking block of the task must stay valid across the extension.
@@ -18,13 +19,13 @@
  */
 
 import type { AgentSession } from "../auth/types.js";
-import { continueAgent } from "../loop/continue-agent.js";
-import { passthroughStep } from "../loop/run-step.js";
+import { continueLoop, type LoopStep } from "../loop/run-loop.js";
+import { recordedInputOf } from "../loop/tool-adapter.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
-import type { AgentChat } from "../providers/types.js";
+import type { ChatProvider } from "../providers/types.js";
 import { inferArtifactType } from "../schemas/artifact-manifest.js";
-import type { SubmittedFileDescription } from "../schemas/file-metadata.js";
+import { SubmitFileMetadataInputSchema, type SubmittedFileDescription } from "../schemas/file-metadata.js";
 import { SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -47,7 +48,7 @@ export type GenerateFileMetadataOptions = {
     /** The store of the task, thus the loop of the continuation keeps its texts where the read tool of the agent reads them. */
     readonly toolOutputStore?: ToolOutputStore;
     /** The provider of the task, thus each request extends the prefix that the task cached. */
-    readonly provider: AgentChat;
+    readonly provider: ChatProvider;
     readonly session: AgentSession;
     readonly artifacts: readonly ArtifactForMetadata[];
     readonly resourceId: string;
@@ -55,10 +56,10 @@ export type GenerateFileMetadataOptions = {
     readonly extraMetadata?: Record<string, unknown>;
     /** The step agent: the continuation sends its system prompt and its declared tools. */
     readonly agent: AgentDefinition;
-    /** The cell that the `submit_file_metadata` tool of `agent` records into. */
+    /** The cell of the `submit_file_metadata` tool of `agent`: it holds the known paths of the request. */
     readonly cell: FileMetadataCell;
     /**
-     * The transcript from `runAgent` that the continuation extends, to
+     * The transcript of the task that the follow-up request extends, to
      * ground each file's description in why the step produced it.
      */
     readonly transcript: readonly LoopMessage[];
@@ -150,7 +151,26 @@ function fallbackEntry(artifact: ArtifactForMetadata, extra: Record<string, unkn
     };
 }
 
-/** Describes a step's known artifacts; a continuation failure degrades to per-file fallbacks rather than throwing. */
+/**
+ * The description of each known path, from the calls of `submit_file_metadata` that ran, in order. A later
+ * description of a path replaces an earlier one, and a path outside the list is no file of the step.
+ */
+export function submittedDescriptions(steps: readonly LoopStep[], knownPaths: ReadonlySet<string>): Map<string, SubmittedFileDescription> {
+    const descriptions = new Map<string, SubmittedFileDescription>();
+    for (const step of steps) {
+        for (const call of step.calls) {
+            if (call.toolName !== SUBMIT_FILE_METADATA_TOOL_ID || call.output?.outcome !== "ok") continue;
+            const input = recordedInputOf(SubmitFileMetadataInputSchema, call.input);
+            if (input === undefined) continue;
+            for (const entry of input.files) {
+                if (knownPaths.has(entry.path)) descriptions.set(entry.path, entry);
+            }
+        }
+    }
+    return descriptions;
+}
+
+/** Describes a step's known artifacts; a follow-up failure degrades to per-file fallbacks rather than throwing. */
 export async function generateFileMetadata(opts: GenerateFileMetadataOptions): Promise<FileMetadataResult> {
     const logger = (opts.logger ?? createNoopLogger()).named("artifact-metadata").with({ resourceId: opts.resourceId });
     if (opts.artifacts.length === 0) {
@@ -170,15 +190,15 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
     opts.cell.expect(opts.artifacts.map((a) => a.displayPath));
 
     let messages: readonly LoopMessage[] = [];
+    let descriptions = new Map<string, SubmittedFileDescription>();
     try {
-        const continued = await continueAgent(
+        const continued = await continueLoop(
             opts.agent,
             opts.transcript,
             {
                 text: describerRequest(opts.artifacts),
                 mask: { allow: DESCRIBER_TOOLS },
                 maxRequests: DESCRIBER_MAX_REQUESTS,
-                stepNamespace: "file-metadata",
                 accountingAgentId: DESCRIBER_AGENT_ID,
             },
             opts.session,
@@ -186,20 +206,20 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
                 provider: opts.provider,
                 signal: opts.signal ?? new AbortController().signal,
                 emit: () => {},
-                runStep: passthroughStep,
                 usageRecorder: opts.usageRecorder,
                 toolOutputStore: opts.toolOutputStore,
             },
         );
         messages = continued.messages;
+        descriptions = submittedDescriptions(continued.steps, new Set(opts.artifacts.map((a) => a.displayPath)));
     } catch (err) {
-        logger.warn("describer continuation failed; using fallbacks", logger.errorFields(err));
+        logger.warn("describer follow-up request failed; using fallbacks", logger.errorFields(err));
     }
 
     const entries: FileMetadataEntry[] = [];
     const fallbackPaths: string[] = [];
     for (const artifact of opts.artifacts) {
-        const desc = opts.cell.descriptions.get(artifact.displayPath);
+        const desc = descriptions.get(artifact.displayPath);
         if (desc) {
             entries.push(buildEntry(artifact, desc, opts.extraMetadata));
         } else {

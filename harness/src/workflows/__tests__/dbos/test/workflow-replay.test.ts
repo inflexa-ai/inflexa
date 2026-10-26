@@ -2,9 +2,9 @@
  * Integration tests 10.6 + 10.13 — DBOS replay invariants.
  *
  * Test 10.6 — chaos recovery (tasks.md:102):
- *   "Kill mid-step after `runAgent` LLM call has cached its result but
+ *   "Kill mid-step after the LLM call of the loop has cached its result but
  *    before `generateFileMetadata` runs. Verify: cached LLM result returns
- *    on replay (no re-issued API call), next `durableStep` runs forward."
+ *    on replay (no re-issued API call), the next step runs forward."
  *
  * Test 10.13 — per-step sync, sequenced after registration + idempotent:
  *   "Runs inline in the child; a registration rejection still attempts it and

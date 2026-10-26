@@ -3,23 +3,22 @@
  *
  * The conversation agent delegates batch literature/biology research by
  * calling this tool. `execute` derives a child `Session` (`forSubAgent`)
- * and runs `runAgent` over a focused literature-reviewer agent: a research
+ * and runs `runLoop` over a focused literature-reviewer agent: a research
  * brief in, a structured evidence report out. The child's transcript is
  * ephemeral — it lives only for this call and is never persisted (see the harness-thread-store spec).
  *
  * This is the whole of sub-agent delegation in the harness. There is no
  * `agents: {}` config, no `messageFilter`, no `stripParentToolParts`: the
  * child cannot see the parent's tool history because it is simply handed
- * none — only the brief. The child loop uses `passthroughStep` because the
- * entire tool call is one step in the parent loop (`durableStep` caches it whole,
- * so the child never replays).
+ * none — only the brief. Inside a workflow the whole tool call is one step
+ * of the parent loop, thus the calls of the child run directly inside that
+ * step, and a replay returns the report of the step.
  */
 
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
-import { finalText, runAgent } from "../../loop/run-agent.js";
-import { passthroughStep } from "../../loop/run-step.js";
+import { finalText, runLoop } from "../../loop/run-loop.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import { literatureReviewerPrompt } from "../../prompts/literature-reviewer.js";
@@ -112,24 +111,23 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
         }),
         describeCall: "none",
         execute: async ({ brief }, ctx) => {
-            const { messages: transcript, finish } = await runAgent(agent, [{ role: "user", content: brief }], forSubAgent(ctx.session, AGENT_ID), {
+            const { messages: transcript, finish } = await runLoop(agent, [{ role: "user", content: brief }], forSubAgent(ctx.session, AGENT_ID), {
                 provider: deps.provider,
                 signal: ctx.signal,
                 emit: ctx.emit,
-                runStep: passthroughStep,
                 usageRecorder: deps.usageRecorder,
                 toolOutputStore: deps.toolOutputStore,
                 // Fold the child's calls into the turn total the root loop reports.
                 turnUsage: ctx.turnUsage,
                 // Keeps the usage record keys of two parallel reviews disjoint —
-                // same frame, same call path, same loop-local step names.
+                // same frame, same call path.
                 invocationId: ctx.invocationId,
             });
             const report = finalText(transcript);
             // A child run can end with no final text. Examples are a terminal
-            // reply with no text block, and a capped-out run whose wrap-up is
-            // empty. An ok result with an empty report hides that failure, so
-            // the tool returns an error that names the finish reason.
+            // reply with no text block, and a run that reached its step cap. An
+            // ok result with an empty report hides that failure, so the tool
+            // returns an error that names the finish reason.
             if (report.trim() === "") {
                 return err({ error: `The literature reviewer gave no report (finish reason: ${finish.reason}). Retry, or narrow the brief.`, retryable: true });
             }

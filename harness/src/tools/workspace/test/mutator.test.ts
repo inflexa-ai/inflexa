@@ -9,15 +9,16 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { isSha256Hash } from "../../../lib/test/text-shapes.js";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { okAsync } from "neverthrow";
 
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readToolCallRecord } from "../../define-tool.js";
-import { createSessionWorkspaceMutator, createWorkspaceMutator, type WorkspaceMutator } from "../mutator.js";
+import { createSessionWorkspaceMutator, createWorkspaceMutator, type LandedWrite, type WorkspaceMutator } from "../mutator.js";
 import { createEditFileTool } from "../edit-file.js";
 import { createWriteFileTool } from "../write-file.js";
 import { ProvenanceCollector } from "../../../provenance/collector.js";
@@ -163,6 +164,72 @@ describe("WorkspaceMutator provenance recording", () => {
         expect(records).toHaveLength(1);
         expect(records.every((r) => r.producer.type !== "command")).toBe(true);
         expect(presentAt(records, 0).producer.type).toBe("file_tool");
+    });
+});
+
+describe("the atomic landing of a confined write", () => {
+    let basePath: string;
+    let outputDir: string;
+    let mutator: WorkspaceMutator;
+
+    beforeEach(() => {
+        basePath = mkdtempSync(join(tmpdir(), "mutator-landing-test-"));
+        const workspaceRoot = join(basePath, ANALYSIS);
+        const workingDir = stepWritePrefix({ workspaceRoot, runId: RUN, stepId: STEP });
+        outputDir = join(workingDir, "output");
+        mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
+    });
+    afterEach(() => {
+        rmSync(basePath, { recursive: true, force: true });
+    });
+
+    const write = (content: string, beforeLand?: (write: LandedWrite) => Promise<void>) =>
+        mutator.writeFile({ path: "output/x.csv", content, toolName: "write_file", invocationId: "inv-1", session, beforeLand });
+
+    test("stages the whole new file beside the target, and the target keeps the old file until the rename", async () => {
+        await write("old\n");
+        let seen: { readonly target: string; readonly staged: string[] } | undefined;
+
+        const result = await write("new\n", () => {
+            const staged = readdirSync(outputDir).filter((name) => name !== "x.csv");
+            seen = { target: readFileSync(join(outputDir, "x.csv"), "utf8"), staged: staged.map((name) => readFileSync(join(outputDir, name), "utf8")) };
+            return Promise.resolve();
+        });
+
+        expect(result.status).toBe("ok");
+        expect(seen).toEqual({ target: "old\n", staged: ["new\n"] });
+        expect(readFileSync(join(outputDir, "x.csv"), "utf8")).toBe("new\n");
+        expect(readdirSync(outputDir)).toEqual(["x.csv"]);
+    });
+
+    test("gives beforeLand the outcome that the write gives back", async () => {
+        let staged: LandedWrite | undefined;
+
+        const result = await write("id\n", (landed) => {
+            staged = landed;
+            return Promise.resolve();
+        });
+
+        if (result.status !== "ok") throw new Error(`the write did not land: ${result.status}`);
+        expect(staged).toEqual(result);
+    });
+
+    test("lands nothing and leaves no temporary file when beforeLand rejects", async () => {
+        await write("old\n");
+
+        await expect(write("new\n", () => Promise.reject(new Error("the intent was refused")))).rejects.toThrow("the intent was refused");
+
+        expect(readFileSync(join(outputDir, "x.csv"), "utf8")).toBe("old\n");
+        expect(readdirSync(outputDir)).toEqual(["x.csv"]);
+    });
+
+    test("leaves no temporary file when the rename fails", async () => {
+        await mkdir(join(outputDir, "x.csv"), { recursive: true });
+
+        await expect(write("new\n")).rejects.toThrow("write_failed");
+
+        expect(readdirSync(outputDir)).toEqual(["x.csv"]);
+        expect(lstatSync(join(outputDir, "x.csv")).isDirectory()).toBe(true);
     });
 });
 
@@ -346,7 +413,7 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         // No workingDir: the read seam defaults to the analysis root, matching
         // the session-scoped mutator's write prefix.
-        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs });
+        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs, intents: { put: () => okAsync(undefined), get: () => okAsync(null) } });
         const { ctx } = makeToolContext();
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();

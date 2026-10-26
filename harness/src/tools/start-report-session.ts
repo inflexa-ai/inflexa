@@ -209,7 +209,6 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             "`no_browser` means that this deployment has no browser for the report agent, thus no report session can start; tell the user. " +
             "`refused`, `parent_not_found`, `parent_not_a_conversation`, and `failed` mean that nothing started, and `detail` gives the reason where there is one.",
         inputSchema: startReportSessionInput,
-        executionMode: "inline",
         describeCall: "none",
         execute: async (input, ctx): Promise<Result<StartReportSessionResult, ToolError>> => {
             const brief: ReportBrief = {

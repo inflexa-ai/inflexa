@@ -117,14 +117,40 @@ export function findProviderError(err: unknown): ProviderError | undefined {
 }
 
 /**
+ * The class of a model call that failed after its retries. Each failure that
+ * time or a person can repair is named here, and nowhere else:
+ *
+ * - `outage`: a transient provider failure that outlived each retry.
+ * - `billing`: a status that the `suspendOn` map of the host names, with its reason.
+ * - `credential`: the endpoint refused the credential.
+ * - `other`: each other failure.
+ */
+export type ModelFailure =
+    { readonly kind: "outage" } | { readonly kind: "billing"; readonly reason: string } | { readonly kind: "credential" } | { readonly kind: "other" };
+
+export function modelFailureOf(err: unknown): ModelFailure {
+    const error = findProviderError(err);
+    switch (error?.type) {
+        case "suspend":
+            return { kind: "billing", reason: error.reason };
+        case "auth":
+            return { kind: "credential" };
+        case "provider":
+            return error.retryable ? { kind: "outage" } : { kind: "other" };
+        case undefined:
+            return { kind: "other" };
+    }
+}
+
+/**
  * Turn a caught SDK throwable into a `ProviderError` value. Routes through
  * `classifyProviderError` with the `suspendOn` map of the provider, so the
  * `provider` variant's `retryable` keeps the transient (429 / 5xx / connection)
  * classification and a mapped status becomes a `suspend` error. `cause` is the
  * original throwable verbatim.
  *
- * Idempotent: `chatStream` throws a `ProviderError` value, which
- * `streaming-chat`'s `catch` re-wraps by calling this again. Returning an
+ * Idempotent: the retry envelope of the provider throws a `ProviderError`
+ * value, and a caller can wrap it again. Returning an
  * already-constructed `ProviderError` unchanged stops that second pass from
  * `String()`-ing the object (a `ProviderError` is not an `Error`) into a
  * `"[object Object]"` message that would bury the real inner one.

@@ -3,9 +3,11 @@
  *
  * A terminal call whose text is a placeholder ends a run with nothing. A small
  * model emits such a call when it drafts several calls at once and fills the
- * text later, or never. The guard names the fault, the tool refuses the call,
- * and the loop continues with the real work.
+ * text later, or never. The input schema of the tool names the fault, the call
+ * gets an error result, and the loop continues with the real work.
  */
+
+import { z } from "zod";
 
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the anchored placeholder words and their n/a spellings, at the start of the text; the alternation is the guard's own word list.
 const PLACEHOLDER_TEXT = /^\s*(?:placeholder|todo|tbd|skip|n\/?a|none|null|test|x+|\.+|-+)\b/i;
@@ -18,6 +20,20 @@ export function degenerateTerminalText(text: string): string | undefined {
         return `The text has ${trimmed.length} characters, and a real question or reason has at least ${MIN_TERMINAL_TEXT}.`;
     if (PLACEHOLDER_TEXT.test(trimmed) || holdsStandaloneWord(trimmed, "placeholder")) return "The text is a placeholder.";
     return undefined;
+}
+
+/** The text of a terminal call. The schema refuses a placeholder, and the issue says what to do instead. */
+export function terminalTextSchema(description: string): z.ZodString {
+    return z
+        .string()
+        .min(1)
+        .check(
+            z.superRefine((text, ctx) => {
+                const degenerate = degenerateTerminalText(text);
+                if (degenerate !== undefined) ctx.addIssue({ code: "custom", message: `${degenerate} Give the real text, or continue the work.` });
+            }),
+        )
+        .describe(description);
 }
 
 /** Whether `word` occurs in `text` as a standalone word, case-insensitively. */

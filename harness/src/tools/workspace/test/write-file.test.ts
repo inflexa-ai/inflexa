@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -163,6 +163,44 @@ describe("write_file tool", () => {
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/u.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
         if (read.status === "ok") expect(read.content).toBe(content);
+    });
+
+    it("a reader of the target sees the old file or the new file whole, never a part of one", async () => {
+        const { tool, workingDir } = buildTool();
+        const { ctx } = makeToolContext();
+        const target = join(workingDir, "output", "big.txt");
+        const oldContent = "a".repeat(4 * 1024 * 1024);
+        const newContent = "b".repeat(4 * 1024 * 1024);
+        await awaitOk(tool.execute({ path: "output/big.txt", content: oldContent }, ctx));
+
+        const landed = new AbortController();
+        const seen = new Set<string>();
+        const reader = (async () => {
+            while (!landed.signal.aborted) {
+                const text = await readFile(target, "utf8");
+                seen.add(text === oldContent ? "old" : text === newContent ? "new" : `part of ${text.length} characters`);
+            }
+        })();
+        await awaitOk(tool.execute({ path: "output/big.txt", content: newContent }, ctx));
+        landed.abort();
+        await reader;
+
+        expect([...seen].filter((view) => view !== "old" && view !== "new")).toEqual([]);
+        expect(await readFile(target, "utf8")).toBe(newContent);
+        expect(await readdir(join(workingDir, "output"))).toEqual(["big.txt"]);
+    });
+
+    it("an overwrite keeps the permission bits of the file that it replaces", async () => {
+        const { tool, workingDir } = buildTool();
+        const { ctx } = makeToolContext();
+        const target = join(workingDir, "scripts", "run.sh");
+        await awaitOk(tool.execute({ path: "scripts/run.sh", content: "echo 1\n" }, ctx));
+        await chmod(target, 0o750);
+
+        await awaitOk(tool.execute({ path: "scripts/run.sh", content: "echo 2\n" }, ctx));
+
+        expect((await stat(target)).mode & 0o777).toBe(0o750);
+        expect(await readFile(target, "utf8")).toBe("echo 2\n");
     });
 
     it("records the write only when the loop folds the call record, from the bytes that landed", async () => {

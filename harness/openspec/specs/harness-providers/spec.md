@@ -17,21 +17,21 @@ required for continuation (e.g. Anthropic signed thinking/cache metadata) rides
 provider-scoped in AI SDK provider metadata fields and is preserved through
 storage and replay.
 
-**The provider owns the output-token cap.** `ChatRequest` does not expose
-`max_tokens` — the provider sets the upstream cap from the model's true ceiling
-(`maxOutputTokens(model)`). The loop never picks a cap; it recovers from any
-residual truncation (see the harness-agent-loop spec).
+**The provider owns the output-token cap.** A run does not expose
+`max_tokens` — the provider sets the upstream cap through the `maxOutputTokens`
+setting of the model that it binds. The loop never picks a cap. A reply cut at
+the output limit ends the run (see the harness-agent-loop spec).
 
 **Prompt caching is a harness concept the seam translates.** `PromptCachePolicy` is
 vendor-neutral; `providers/prompt-cache.ts` is the single site that turns it into
 vendor wire options, so nothing upstream of the seam learns which vendor it is
 talking to. What a call cost — cache reads and cache writes included — comes back
-on `ChatResponse.usage`.
+as the `ChatUsage` of the call.
 
-Both `chat` and `embed` return a `ResultAsync` over the `ProviderError` union —
-a provider failure is a value in the error channel, never a thrown exception.
-The sole thrown control-flow exception is a client abort, re-raised verbatim
-outside the Result channel.
+`embed` returns a `ResultAsync` over the `ProviderError` union. The AI SDK drives
+each model call, thus a model call that fails after its last attempt throws a
+`ResultError` that carries the classified `ProviderError`. A client abort is
+re-raised verbatim, outside the `ProviderError` channel.
 ## Requirements
 ### Requirement: Prompt caching is a vendor-neutral policy translated at one site
 
@@ -64,7 +64,7 @@ The system prompt of an agent depends only on its type. Thus the breakpoint at i
 prompt as one entry. Each call of that agent reads or writes the same entry. A new thread reads that entry back. The
 first request after a shift of the message prefix also reads it back.
 
-The harness MUST NOT attach a directive to the request itself, and `ChatRequest` carries no provider options. A
+The harness MUST NOT attach a cache directive to the request itself. A
 request-level directive reaches the wire as a top-level `cache_control` field. An intermediary counts blocks, thus it
 cannot see that field.
 
@@ -167,7 +167,7 @@ server-side prefix caching without a directive.
 
 ### Requirement: Chat usage reports the cache breakdown
 
-`ChatResponse` SHALL carry an optional `usage: ChatUsage` with `inputTokens`,
+The usage of each model call SHALL map to a `ChatUsage` with `inputTokens`,
 `outputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, and
 `reasoningTokens`, in harness-neutral names. `inputTokens` SHALL be the *total*
 billed prefix — cached and uncached alike — so a cache hit rate is
@@ -200,41 +200,13 @@ is legitimate and SHALL NOT be normalized into zeros.
 
 ### Requirement: The provider owns the per-model output-token cap
 
-The provider SHALL set the upstream `max_tokens` from the model's ceiling (`maxOutputTokens`), not the caller; `ChatRequest` SHALL NOT expose `max_tokens`.
+The provider SHALL set the upstream `max_tokens` through the `maxOutputTokens` setting of its bound model, not the caller. `LoopOptions` and `AgentDefinition` SHALL NOT expose `max_tokens`.
 
 #### Scenario: max_tokens is not a caller-supplied field
 
-- **GIVEN** the `ChatRequest` type
-- **WHEN** a caller assembles a request
-- **THEN** `max_tokens` is absent from the type, and the provider supplies it from `maxOutputTokens(model)`
-
-### Requirement: A client abort resolves the streaming chat with the accumulated partial
-
-The streaming `AgentChat` wrapper SHALL, when the client abort signal ends the underlying stream, resolve successfully with a `ChatResponse` whose finish reason is `"aborted"` and whose assistant message carries exactly the text deltas already forwarded — it SHALL NOT re-throw the abort and SHALL NOT route it through the provider-error channel. An abort that fires before any delta arrived SHALL resolve the same way with an empty assistant message. The wrapper's abort recognition SHALL be at least as wide as the underlying provider's abort re-throw gate (an abort-named error OR an already-aborted client signal): a transport failure that lands while the client signal is aborted SHALL resolve as the abort — the user's interrupt outranks a raced failure, and surfacing it as an error would drop the partial and blame the user's own action. `ChatResponse.finishReason` SHALL admit `"aborted"` alongside the AI SDK finish reasons, and the non-streaming `ChatProvider.chat` SHALL continue to propagate a client abort as a throw — `"aborted"` is producible only by the streaming wrapper, so durable workflow loops (which run on the non-streaming provider) keep their cancellation-by-throw semantics.
-
-#### Scenario: An abort mid-stream yields the partial text
-
-- **GIVEN** a streaming chat whose model has emitted several text deltas
-- **WHEN** the client abort signal fires and the stream throws its abort
-- **THEN** `chat` resolves with finish reason `"aborted"` and an assistant message containing exactly the concatenated deltas already forwarded
-
-#### Scenario: An abort before the first delta yields an empty partial
-
-- **GIVEN** a streaming chat call whose abort signal is already aborted (or fires before any delta)
-- **WHEN** the stream throws its abort
-- **THEN** `chat` resolves with finish reason `"aborted"` and an assistant message with no content
-
-#### Scenario: A transport failure racing the abort resolves as the abort
-
-- **GIVEN** a streaming chat whose underlying stream throws a non-abort failure while the client signal is already aborted
-- **WHEN** `chat` consumes the throw
-- **THEN** it resolves with finish reason `"aborted"` and the deltas already forwarded — no `ProviderError` for the user's own interrupt
-
-#### Scenario: A non-abort stream failure still reaches the error channel
-
-- **GIVEN** a streaming chat whose underlying stream throws a non-abort SDK failure with the client signal not aborted
-- **WHEN** `chat` consumes the throw
-- **THEN** it returns `err(ProviderError)` exactly as before — the abort resolution narrows only the abort case
+- **GIVEN** the `LoopOptions` type
+- **WHEN** a caller runs a loop
+- **THEN** no field of the type sets `max_tokens`, and the bound model of the provider supplies `maxOutputTokens`
 
 ### Requirement: Every provider call requires a Session
 
@@ -266,8 +238,8 @@ AI SDK chat/model calls and `EmbeddingProvider.embed` SHALL each require an `Age
 
 ### Requirement: Provider failures are returned as a classified ProviderError value
 
-The provider MUST return a failure of the AI SDK runtime as a `ProviderError` value in the harness error channel. It
-MUST NOT give an unclassified SDK exception. `ProviderError` MUST be the discriminated union
+The provider MUST give a failure of the AI SDK runtime as a classified `ProviderError` value. A model call that fails
+after its last attempt MUST throw a `ResultError` that carries the value. It MUST NOT give an unclassified SDK exception. `ProviderError` MUST be the discriminated union
 `{ type: "auth" } | { type: "suspend"; reason: string; status?: number } | { type: "provider" }`. The `auth` and
 `suspend` kinds MUST NOT be retryable. A rate limit, a 5xx, and a connection failure MUST be retryable `provider`
 failures. Another concrete 4xx failure MUST be a non-retryable `provider` failure.
@@ -307,7 +279,7 @@ Message composition SHALL happen strictly after classification and SHALL NOT fee
 
 - **GIVEN** a provider with no `suspendOn` map
 - **WHEN** the model call fails with a `402`
-- **THEN** it resolves to an `err` whose `ProviderError` has `type: "suspend"`, `status: 402`, `reason: "payment_required"`, and `retryable: false`
+- **THEN** it throws a `ResultError` whose `ProviderError` has `type: "suspend"`, `status: 402`, `reason: "payment_required"`, and `retryable: false`
 
 #### Scenario: A map from the host replaces the default map
 
@@ -364,11 +336,11 @@ Message composition SHALL happen strictly after classification and SHALL NOT fee
 
 - **GIVEN** an aborted `AbortSignal` during a model call
 - **WHEN** the SDK raises the abort
-- **THEN** the call re-throws it verbatim rather than returning an `err(ProviderError)`
+- **THEN** the call re-throws it verbatim rather than a `ResultError` that carries a `ProviderError`
 
 ### Requirement: Chat responses carry requested and served model identity
 
-`ChatResponse` MUST carry three optional identity fields:
+The accounting of each model call MUST read three optional identity fields:
 
 - `requestedModelId`: the id of the model that the provider instance is bound to.
 - `servedModelId`: the model id that the provider response reported as the model that answered.
@@ -383,46 +355,40 @@ The loop labels its token counters with `servedModelId` and `provider`, as the h
 #### Scenario: The served model is observable beside the requested one
 
 - **GIVEN** a provider response that reports the id of the model that answered
-- **WHEN** the `ChatResponse` is consumed
+- **WHEN** the call is accounted
 - **THEN** `servedModelId` MUST carry the reported id and `requestedModelId` MUST carry the id of the bound model, independently
 
 #### Scenario: An endpoint that reports no model id yields no claim
 
 - **GIVEN** a provider response without a model id
-- **WHEN** the `ChatResponse` is consumed
+- **WHEN** the call is accounted
 - **THEN** `servedModelId` MUST be absent, and the harness MUST NOT fill it from the requested id
 
 #### Scenario: The response names its provider
 
 - **GIVEN** a provider made from an `anthropic` configuration
-- **WHEN** `chat` returns
-- **THEN** `ChatResponse.provider` MUST be `anthropic.messages`
-
-#### Scenario: A bare model id names no provider
-
-- **GIVEN** a provider made over a bare model-id string
-- **WHEN** `chat` returns
-- **THEN** `ChatResponse.provider` MUST be absent
+- **WHEN** a model call completes
+- **THEN** the token counters of the call MUST carry the provider `anthropic.messages`
 
 ### Requirement: The provider capability set names the picture placement
 
-The `ProviderCapabilities` set MUST carry two optional picture flags: `imageToolResults` and `imageUserMessages`. `imageToolResults` says that the wire renders an image block inside a tool result. `imageUserMessages` says that the wire renders an image inside a user message. An absent flag means "cannot carry", never "unknown". The provider factory MUST copy a stated flag onto the built provider, and it MUST NOT invent a value for an absent one.
+The `ProviderCapabilities` set MUST carry one optional picture flag: `imageToolResults`. It says that the wire renders an image block inside a tool result. An absent flag means "cannot carry", never "unknown". The provider factory MUST copy a stated flag onto the built provider, and it MUST NOT invent a value for an absent one.
 
-#### Scenario: The embedder states the fallback flag
+#### Scenario: The embedder states the flag
 
-- **WHEN** a provider is constructed with `capabilities: { imageUserMessages: true }`
-- **THEN** the built provider advertises `imageUserMessages: true`
+- **WHEN** a provider is constructed with `capabilities: { imageToolResults: true }`
+- **THEN** the built provider advertises `imageToolResults: true`
 
 #### Scenario: An absent flag stays absent
 
 - **WHEN** a provider is constructed with no picture flag in its capability config
-- **THEN** the built provider advertises neither picture flag
+- **THEN** the built provider advertises no picture flag
 
 ### Requirement: The provider selects the effort in a fixed order
 
 The provider MUST select the reasoning effort of each call from the first source that gives a value:
 
-1. `ChatRequest.reasoning`, if the request sets it.
+1. The `reasoning` of the run (`LoopOptions.reasoning`), if the run sets it.
 2. The `reasoning` of the provider configuration.
 3. `DEFAULT_REASONING`, which is `xhigh`.
 
@@ -431,25 +397,25 @@ then maps the name to its own wire shape for the bound model. The harness MUST N
 for example `providerOptions.anthropic.effort`. A value on such a key turns the table of the package off, and a model
 that does not accept the raw name answers 400.
 
-A direct `provider.chat` call without a value runs at the configured effort, not at the default of the model. The value
+A run without a value runs at the configured effort, not at the default of the model. The value
 `"provider-default"` sends no directive, thus the model applies its own default.
 
-#### Scenario: A request value wins
+#### Scenario: A run value wins
 
 - **GIVEN** a provider configured with `reasoning: "high"`
-- **WHEN** a request sets `reasoning: "low"`
+- **WHEN** a run sets `reasoning: "low"`
 - **THEN** the model call carries the reasoning `low`
 
-#### Scenario: The configured value applies to a request without a value
+#### Scenario: The configured value applies to a run without a value
 
 - **GIVEN** a provider configured with `reasoning: "high"`
-- **WHEN** a request sets no `reasoning`
+- **WHEN** a run sets no `reasoning`
 - **THEN** the model call carries the reasoning `high`
 
 #### Scenario: The default applies last
 
 - **GIVEN** a provider configured without `reasoning`
-- **WHEN** a request sets no `reasoning`
+- **WHEN** a run sets no `reasoning`
 - **THEN** the model call carries the reasoning `xhigh`
 
 #### Scenario: No vendor key carries the effort
@@ -462,7 +428,8 @@ A direct `provider.chat` call without a value runs at the configured effort, not
 The provider MUST log one warning for each thinking block that the response reports as dropped. The Anthropic package
 gives the drops in `providerMetadata.anthropic.inputTransformations`. Each record MUST carry the `type`, the `path`, and
 the `reason` of the drop as structured fields, with the workload of the call. The drop MUST NOT fail the call, and the
-provider MUST NOT retry the call because of it. The `chat` path and the `chatStream` path MUST log the same records.
+provider MUST NOT retry the call because of it. A call with a live reader and a call with no live reader MUST log the
+same records.
 
 The reason shows the cause. `prefix_binding_mismatch` shows a change of the prefix in the harness.
 `model_binding_mismatch` shows a change of the model, for example a model switch of the CLI.
@@ -470,18 +437,18 @@ The reason shows the cause. `prefix_binding_mismatch` shows a change of the pref
 #### Scenario: A drop is logged
 
 - **GIVEN** a response whose `inputTransformations` holds one entry with the path `messages.3.content.0` and the reason `prefix_binding_mismatch`
-- **WHEN** `chat` returns
+- **WHEN** the model call completes
 - **THEN** the provider writes one warn record with that path and that reason
-- **AND** `chat` returns an `ok` value
+- **AND** the call completes with no error
 
 #### Scenario: A response without drops logs nothing
 
 - **GIVEN** a response with no `inputTransformations`
-- **WHEN** `chat` returns
+- **WHEN** the model call completes
 - **THEN** the provider writes no drop record
 
-#### Scenario: The stream path logs the same drops
+#### Scenario: The live path logs the same drops
 
-- **GIVEN** a streamed response whose metadata reports one drop
-- **WHEN** `chatStream` yields its `done` event
-- **THEN** the provider writes one warn record for that drop before the event
+- **GIVEN** a call with a live reader whose finish metadata reports one drop
+- **WHEN** the finish part reaches the reader
+- **THEN** the provider writes one warn record for that drop before the part

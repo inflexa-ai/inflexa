@@ -19,7 +19,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { GateRefusal } from "../lib/hooks.js";
-import { findSuspendError } from "../providers/errors.js";
+import { modelFailureOf } from "../providers/errors.js";
 import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 
 /** Plain data, thus it crosses a DBOS checkpoint as it is. */
@@ -29,8 +29,8 @@ export type Suspension = {
 };
 
 export function suspensionOfFailure(err: unknown): Suspension | undefined {
-    const found = findSuspendError(err);
-    return found === undefined ? undefined : { kind: "suspended", reason: found.reason };
+    const failure = modelFailureOf(err);
+    return failure.kind === "billing" ? { kind: "suspended", reason: failure.reason } : undefined;
 }
 
 export function suspensionOfRefusal(refusal: GateRefusal): Suspension | undefined {

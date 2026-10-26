@@ -1,24 +1,30 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { describe, expect, it } from "bun:test";
-import { errAsync } from "neverthrow";
+import { APICallError } from "@ai-sdk/provider";
 
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { AgentChat } from "../../providers/types.js";
-import { runAgent } from "../../loop/run-agent.js";
-import { passthroughStep } from "../../loop/run-step.js";
+import { runLoop } from "../../loop/run-loop.js";
+import { scriptedModel } from "../../testing.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal } from "../suspension.js";
 
 describe("a chat turn with a suspend error", () => {
     it("fails the turn, and the host reads the reason of the host by the kind of the error", async () => {
-        // A chat turn is not a workflow: nothing marks the analysis.
-        const provider: AgentChat = {
-            capabilities: { toolCalling: true },
-            chat: () => errAsync({ type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Provider call failed (HTTP 402)" }),
-        };
+        // A chat turn is not a workflow: nothing marks the analysis. The default map of the provider reads a 402 as a suspension.
+        const { provider } = scriptedModel([
+            {
+                fail: new APICallError({
+                    message: "Payment Required",
+                    url: "https://model.test/v1/messages",
+                    requestBodyValues: {},
+                    statusCode: 402,
+                    isRetryable: false,
+                }),
+            },
+        ]);
 
         let failure: unknown;
         try {
-            await runAgent(
+            await runLoop(
                 { id: "conversation-agent", systemPrompt: "s", model: "m", tools: [], maxIterations: 2 },
                 [{ role: "user", content: "hi" }],
                 makeSession(),
@@ -26,7 +32,6 @@ describe("a chat turn with a suspend error", () => {
                     provider,
                     signal: new AbortController().signal,
                     emit: () => {},
-                    runStep: passthroughStep,
                 },
             );
         } catch (e) {

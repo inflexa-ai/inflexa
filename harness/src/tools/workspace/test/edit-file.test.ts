@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { isSha256Hash } from "../../../lib/test/text-shapes.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { mkdir, readFile as readHostFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { errAsync, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { readToolCallRecord } from "../../define-tool.js";
+import { computeSha256 } from "../../../lib/fs-helpers.js";
 import { isUnknownArray } from "../../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
-import { createEditFileTool } from "../edit-file.js";
+import { createEditFileTool, type EditIntent, type EditIntentStore } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
@@ -27,6 +30,19 @@ function asRecord(json: unknown): Record<string, unknown> {
     return record;
 }
 
+/** An in-memory intent store. `failPut` keeps the intent and then fails the put, as a process that dies after the insert. */
+function createFakeIntentStore(opts: { readonly failPut?: boolean; readonly intents?: Map<string, EditIntent> } = {}) {
+    const intents = opts.intents ?? new Map<string, EditIntent>();
+    const store: EditIntentStore = {
+        put: (intent) => {
+            intents.set(intent.key, structuredClone(intent));
+            return opts.failPut === true ? errAsync({ type: "mutation_failed", op: "fake.put", cause: undefined }) : okAsync(undefined);
+        },
+        get: (key) => okAsync(intents.get(key) ?? null),
+    };
+    return { store, intents };
+}
+
 describe("edit_file tool", () => {
     let sessionsBasePath: string;
 
@@ -39,7 +55,7 @@ describe("edit_file tool", () => {
         rmSync(sessionsBasePath, { recursive: true, force: true });
     });
 
-    function buildTool() {
+    function buildTool(opts: { readonly intents?: EditIntentStore; readonly stepKey?: () => string | undefined } = {}) {
         const workspaceRoot = join(sessionsBasePath, ANALYSIS);
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         const workingDir = stepWritePrefix({
@@ -56,6 +72,8 @@ describe("edit_file tool", () => {
             mutator,
             workspaceFilesystem: fs,
             workingDir,
+            intents: opts.intents ?? createFakeIntentStore().store,
+            stepKey: opts.stepKey,
         });
         return { tool, fs };
     }
@@ -411,5 +429,136 @@ describe("edit_file tool", () => {
         )._unsafeUnwrap();
         expect(out.status).toBe("invalid_arguments");
         expect(await readHostFile(hostPath(), "utf8")).toBe("abc\n");
+    });
+
+    describe("inside a durable step", () => {
+        const KEY = "wf-1:7";
+        const EDIT = { path: "output/notes.md", old_string: "world", new_string: "harness", replace_all: false, regex: false };
+
+        function outputEntries(): string[] {
+            return readdirSync(join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output")).sort();
+        }
+
+        it("records the hashes and the result while the file still holds the old text", async () => {
+            await seed("hello world");
+            const fake = createFakeIntentStore();
+            const seenAtPut: string[] = [];
+            const store: EditIntentStore = {
+                put: (intent) => {
+                    seenAtPut.push(readFileSync(hostPath(), "utf8"));
+                    return fake.store.put(intent);
+                },
+                get: (key) => fake.store.get(key),
+            };
+            const { tool } = buildTool({ intents: store, stepKey: () => KEY });
+            const { ctx } = makeToolContext();
+
+            const out = (await tool.execute(EDIT, ctx))._unsafeUnwrap();
+
+            expect(out.status).toBe("ok");
+            expect(seenAtPut).toEqual(["hello world"]);
+            const stored = fake.intents.get(KEY);
+            expect(stored).toMatchObject({
+                key: KEY,
+                analysisId: ctx.session.scope.analysisId,
+                path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                hashBefore: computeSha256(Buffer.from("hello world", "utf8")),
+                hashAfter: computeSha256(Buffer.from("hello harness", "utf8")),
+            });
+            expect(stored?.result).toEqual({ status: "ok", path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, replacements: 1, bytesWritten: 13 });
+            expect(readToolCallRecord(out)).toEqual(stored?.callRecord);
+            expect(outputEntries()).toEqual(["notes.md"]);
+        });
+
+        it("gives back the stored result at the hash after, and writes nothing", async () => {
+            await seed("hello world");
+            const { store, intents } = createFakeIntentStore();
+            const { tool } = buildTool({ intents: store, stepKey: () => KEY });
+            const { ctx } = makeToolContext();
+            const first = (await tool.execute(EDIT, ctx))._unsafeUnwrap();
+            const inode = statSync(hostPath()).ino;
+
+            const rerun = (await tool.execute(EDIT, ctx))._unsafeUnwrap();
+
+            expect(rerun).toEqual(first);
+            expect(readToolCallRecord(rerun)).toEqual(readToolCallRecord(first));
+            expect(statSync(hostPath()).ino).toBe(inode);
+            expect(await readHostFile(hostPath(), "utf8")).toBe("hello harness");
+            expect([...intents.keys()]).toEqual([KEY]);
+        });
+
+        it("gives back the note of the decision record and both write records at the hash after, and notes nothing again", async () => {
+            const stepDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP);
+            await mkdir(join(stepDir, "scripts"), { recursive: true });
+            await writeFile(join(stepDir, "scripts", "de.R"), "ALPHA <- 0.05\n");
+            await writeFile(join(stepDir, "output", "decision_record_de.json"), JSON.stringify({ written_sha256: "sha256:old", unvetted_edits: [] }));
+            const { store } = createFakeIntentStore();
+            const { tool } = buildTool({ intents: store, stepKey: () => KEY });
+            const { ctx } = makeToolContext();
+            const edit = { path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false, regex: false };
+            const first = (await tool.execute(edit, ctx))._unsafeUnwrap();
+            const record = await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8");
+
+            const rerun = (await tool.execute(edit, ctx))._unsafeUnwrap();
+
+            expect(rerun).toEqual(first);
+            expect(rerun).toMatchObject({ status: "ok", decision_record_noted: true });
+            const records = readToolCallRecord(rerun);
+            expect(records).toEqual(readToolCallRecord(first));
+            expect(isUnknownArray(records) ? records.length : 0).toBe(2);
+            expect(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8")).toBe(record);
+        });
+
+        it("applies the edit again at the hash before, after a run that died before the write landed", async () => {
+            await seed("hello world");
+            const { ctx } = makeToolContext();
+            const crashed = createFakeIntentStore({ failPut: true });
+
+            await expect(buildTool({ intents: crashed.store, stepKey: () => KEY }).tool.execute(EDIT, ctx)).rejects.toThrow("mutation_failed");
+            expect(await readHostFile(hostPath(), "utf8")).toBe("hello world");
+            expect(outputEntries()).toEqual(["notes.md"]);
+            expect(crashed.intents.get(KEY)?.hashBefore).toBe(computeSha256(Buffer.from("hello world", "utf8")));
+
+            const rerunStore = createFakeIntentStore({ intents: crashed.intents });
+            const rerun = (await buildTool({ intents: rerunStore.store, stepKey: () => KEY }).tool.execute(EDIT, ctx))._unsafeUnwrap();
+
+            expect(rerun).toMatchObject({ status: "ok", replacements: 1 });
+            expect(await readHostFile(hostPath(), "utf8")).toBe("hello harness");
+            expect(crashed.intents.get(KEY)?.result).toEqual({
+                status: "ok",
+                path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                replacements: 1,
+                bytesWritten: 13,
+            });
+        });
+
+        it("gives a conflict at another hash, and writes nothing", async () => {
+            await seed("hello world");
+            const { store } = createFakeIntentStore();
+            const { tool } = buildTool({ intents: store, stepKey: () => KEY });
+            const { ctx } = makeToolContext();
+            (await tool.execute(EDIT, ctx))._unsafeUnwrap();
+            await seed("hello there, world");
+
+            const rerun = await tool.execute(EDIT, ctx);
+
+            const conflict = rerun._unsafeUnwrapErr();
+            expect(conflict.retryable).toBe(false);
+            expect(conflict.error).toContain("changed after an earlier run of this edit");
+            expect(await readHostFile(hostPath(), "utf8")).toBe("hello there, world");
+        });
+
+        it("writes no intent outside a workflow, where nothing reruns", async () => {
+            await seed("hello world");
+            const { store, intents } = createFakeIntentStore();
+            const { tool } = buildTool({ intents: store });
+            const { ctx } = makeToolContext();
+
+            const out = (await tool.execute(EDIT, ctx))._unsafeUnwrap();
+
+            expect(out.status).toBe("ok");
+            expect(await readHostFile(hostPath(), "utf8")).toBe("hello harness");
+            expect(intents.size).toBe(0);
+        });
     });
 });

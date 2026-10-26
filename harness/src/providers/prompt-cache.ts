@@ -2,7 +2,7 @@
  * Prompt-cache policy → provider wire options.
  *
  * This is the **only** place in the harness that names a vendor for caching.
- * Everything upstream — `PromptCachePolicy`, `ChatUsage`, `RunAgentOptions` —
+ * Everything upstream — `PromptCachePolicy`, `ChatUsage`, `LoopOptions` —
  * speaks the neutral harness concept; this module translates it once, at the
  * provider seam, so the loop never learns which vendor it is talking to.
  *
@@ -54,11 +54,11 @@
  * ## Cache defeaters — what silently kills the hit rate
  *
  * The cache keys on an *exact prefix*, so anything that perturbs the head of the
- * request invalidates everything after it. The wrap-up of `runAgent`, the
- * salvage of `runToTerminal`, and a step's summary and file-metadata
- * continuations extend one conversation under a tool mask, thus they keep its
- * prefix (`loop/run-agent.ts`, `loop/continue-agent.ts`). A tool choice that
- * forbids a call would defeat the cache — see the CAUTION on `ChatRequest.toolChoice`.
+ * request invalidates everything after it. The salvage of `runWithSalvage`, and
+ * a step's summary and file-metadata follow-up requests, extend one
+ * conversation under a tool mask, thus they keep its prefix
+ * (`loop/run-loop.ts`). A tool choice that forbids a call would defeat the
+ * cache, because `@ai-sdk/anthropic` removes the tools from such a request.
  *
  * `loadRecent` gives the view of the latest compaction marker
  * (`memory/conversation-view.ts`). A compaction moves the start of the view one
@@ -155,8 +155,8 @@ type BedrockCacheOptions = {
  * `cacheControl` has already been renamed once, and the provider still accepts
  * `cache_control` as its alias.
  *
- * CAUTION: this is the marker's VALUE, not its placement. Attaching it to a
- * `ChatRequest` emits the invisible top-level field the module header warns
+ * CAUTION: this is the marker's VALUE, not its placement. Attaching it to the
+ * options of a request emits the invisible top-level field the module header warns
  * about. Place it with {@link withSystemPromptBreakpoint} and
  * {@link withPromptCacheBreakpoint}.
  */
