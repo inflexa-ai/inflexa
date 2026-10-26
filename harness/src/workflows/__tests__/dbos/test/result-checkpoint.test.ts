@@ -7,7 +7,7 @@
  * replay gives the same `Err`, with the methods of a `Result`.
  *
  * The replay uses the pattern of `workflow-replay.test.ts`: an unconditional
- * self-cancel after the step under test, then `resumeWorkflow`. The cached
+ * crash point after the step under test, then a cancel and a resume. The cached
  * step returns its checkpoint without a new call of its closure.
  */
 
@@ -15,7 +15,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, type Result } from "neverthrow";
 
-import { setupDbosForTests, waitForStopped, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { crashPoint, recoverAtCrashPoint, stepRecorded } from "../../../../__tests__/setup/dbos-crash.js";
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine (see "Registration window" in workflow-replay.test.ts).
@@ -39,9 +40,7 @@ const errStepMirror = DBOS.registerWorkflow(
             },
             { name: "result-checkpoint.step" },
         );
-        const workflowId = DBOS.workflowID;
-        if (workflowId === undefined) throw new Error("the workflow id is absent outside a DBOS execution");
-        await DBOS.cancelWorkflow(workflowId);
+        await crashPoint();
         await DBOS.runStep(() => Promise.resolve(undefined), { name: "result-checkpoint.tail" });
         return {
             isErr: result.isErr(),
@@ -74,10 +73,11 @@ describe("a Result across a DBOS checkpoint", () => {
         const wfId = rig.nextWorkflowId("result-step-");
 
         const first = await DBOS.startWorkflow(errStepMirror, { workflowID: wfId })();
-        expect((await waitForStopped(first, wfId))?.status).toBe("CANCELLED");
-        expect(stepCalls).toBe(1);
+        first.getResult().catch(() => {});
 
-        const resumed = await DBOS.resumeWorkflow<{ isErr: boolean; hasMatch: boolean; error: Refusal | null }>(wfId);
+        const resumed = await recoverAtCrashPoint<{ isErr: boolean; hasMatch: boolean; error: Refusal | null }>(wfId, () =>
+            stepRecorded(wfId, "result-checkpoint.step"),
+        );
         const out = await resumed.getResult();
 
         expect(stepCalls).toBe(1);

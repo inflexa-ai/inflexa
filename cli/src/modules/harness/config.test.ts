@@ -38,26 +38,6 @@ function writeConfigWithModels(models: unknown): void {
     writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(models === undefined ? {} : { models }) }));
 }
 
-// The DBOS admin port default is channel-aware: resolveHarnessConfig falls back to env.adminPort (from
-// stackPorts) so a dev harness runtime and an installed prod harness runtime never contend for the admin
-// HTTP bind. An explicit `harness.adminPort` still wins per the per-field override contract.
-describe("resolveHarnessConfig — adminPort default", () => {
-    function writeConfigWithHarness(harness: unknown): void {
-        mkdirSync(dirname(env.configPath), { recursive: true });
-        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(harness === undefined ? {} : { harness }) }));
-    }
-
-    test("an absent harness block defaults adminPort to the channel-aware env.adminPort", () => {
-        writeConfigWithHarness(undefined);
-        expect(resolveHarnessConfig().adminPort).toBe(env.adminPort);
-    });
-
-    test("an explicit harness.adminPort still wins over the channel-aware default", () => {
-        writeConfigWithHarness({ adminPort: 9999 });
-        expect(resolveHarnessConfig().adminPort).toBe(9999);
-    });
-});
-
 describe("resolveHarnessConfig — retired ephemeral resources", () => {
     test("a stale resourceLimits.ephemeral field has no runtime effect", () => {
         expect(

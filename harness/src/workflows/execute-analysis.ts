@@ -76,7 +76,8 @@
 
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
-import { DBOS, Error as DBOSErrors, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { isWorkflowCancellation } from "../runtime/dbos.js";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -1150,7 +1151,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             // this path either, so the run row is equally non-terminal and the pair
             // stays consistent — the pre-existing cancelled-mid-flight wedge shape
             // `inflexa run` already detects via its DBOS-status cross-check.
-            if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+            if (isWorkflowCancellation(err)) throw err;
             const suspended = suspensionOfFailure(err);
             if (suspended !== undefined) {
                 synthesisSuspension = suspended;
@@ -1891,7 +1892,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         try {
             await DBOS.setEvent(RUN_END_EVENT_KEY, recorded);
         } catch (error) {
-            if (error instanceof DBOSErrors.DBOSWorkflowCancelledError) throw error;
+            if (isWorkflowCancellation(error)) throw error;
             logger.error("run end record failed, the run canceler acts as for a run with no record", { status, ...logger.errorFields(error) });
         }
     }

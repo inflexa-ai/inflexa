@@ -108,7 +108,7 @@ describe("writeConfig — canonical key order", () => {
         keybinds: { "app.command-palette": "ctrl+p", "app.abort": "ctrl+c" },
         leaderTimeout: 500,
         postgres: { host: "localhost", port: 6000, database: "inflexa", user: "inflexa", password: "s3cret" },
-        harness: { sandboxImage: "ghcr.io/x/sandbox:1", adminPort: 9000, resourceLimits: { budget: 40 } },
+        harness: { sandboxImage: "ghcr.io/x/sandbox:1", skillsDir: "/skills", resourceLimits: { budget: 40 } },
         models: { connection: { mode: "cliproxy", provider: "anthropic" }, agents: { conversation: "m-1", sandbox: "m-1" } },
         embedding: { mode: "api-key", apiKey: "sk-test", baseURL: "https://embeds.internal/v1", model: "text-embedding-3-small", dimensions: 1536 },
     } as const satisfies Config;
@@ -130,7 +130,7 @@ describe("writeConfig — canonical key order", () => {
                 mode: values.embedding.mode,
             },
             models: { agents: { sandbox: "m-1", conversation: "m-1" }, connection: { provider: "anthropic", mode: "cliproxy" } },
-            harness: { resourceLimits: { budget: 40 }, adminPort: 9000, sandboxImage: "ghcr.io/x/sandbox:1" },
+            harness: { resourceLimits: { budget: 40 }, skillsDir: "/skills", sandboxImage: "ghcr.io/x/sandbox:1" },
             postgres: { password: "s3cret", user: "inflexa", database: "inflexa", port: 6000, host: "localhost" },
             leaderTimeout: values.leaderTimeout,
             keybinds: { "app.abort": "ctrl+c", "app.command-palette": "ctrl+p" },
@@ -154,14 +154,14 @@ describe("writeConfig — canonical key order", () => {
         // `keybinds` is a record and `harness`/`models` cross the schema as `unknown`: no declaration to
         // follow, so their keys are sorted — the only order derivable from the value itself.
         expect(Object.keys(document.keybinds!)).toEqual(["app.abort", "app.command-palette"]);
-        expect(Object.keys(document.harness!)).toEqual(["adminPort", "resourceLimits", "sandboxImage"]);
+        expect(Object.keys(document.harness!)).toEqual(["resourceLimits", "sandboxImage", "skillsDir"]);
         expect(Object.keys(document.models!)).toEqual(["agents", "connection"]);
     });
 
     test("a key appended by a spread lands in schema position, not at the end", () => {
         // The concrete defect shape: setup's resource step writes `harness` onto a config parsed without it.
         writeConfig({ telemetry: true, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } })._unsafeUnwrap();
-        const appended = writeAndRead({ ...readConfig(), harness: { adminPort: 9000 } });
+        const appended = writeAndRead({ ...readConfig(), harness: { skillsDir: "/skills" } });
 
         expect(Object.keys(JSON.parse(appended) as Record<string, unknown>)).toEqual(["telemetry", "theme", "leaderTimeout", "harness", "embedding"]);
     });

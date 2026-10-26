@@ -20,6 +20,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { untracedWorkflow } from "../lib/otel-spans.js";
+import { scheduleWorkflow } from "../runtime/dbos.js";
 
 const SWEEP_CRON = "0 */5 * * * *";
 const SWEEP_WORKFLOW = "dbos-notifications-sweep";
@@ -85,9 +86,8 @@ export type RegisterNotificationSweepDeps = {
 
 export function registerNotificationSweep(deps: RegisterNotificationSweepDeps): void {
     const deleteStale = deps.deleteStale ?? makeDefaultDeleteStale(deps.pool);
-    // The scheduled target must itself be a registered workflow — DBOS's
-    // scheduler loop skips (and errors on) any `@scheduled` function that lacks
-    // a workflow registration. Register, then schedule the same callable.
+    // The scheduled target must itself be a registered workflow. Register, then
+    // schedule the same callable.
     const sweep = DBOS.registerWorkflow(
         async () => {
             await sweepStaleNotifications({ deleteStale, logger: deps.logger });
@@ -95,8 +95,5 @@ export function registerNotificationSweep(deps: RegisterNotificationSweepDeps): 
         { name: SWEEP_WORKFLOW },
     );
     untracedWorkflow(SWEEP_WORKFLOW);
-    DBOS.registerScheduled(sweep, {
-        name: SWEEP_WORKFLOW,
-        crontab: SWEEP_CRON,
-    });
+    scheduleWorkflow({ scheduleName: SWEEP_WORKFLOW, workflowFn: sweep, schedule: SWEEP_CRON });
 }

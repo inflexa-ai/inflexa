@@ -25,6 +25,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { untracedWorkflow } from "../lib/otel-spans.js";
+import { scheduleWorkflow } from "../runtime/dbos.js";
 import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { reconcileReapedSandbox } from "../state/active-sandboxes.js";
@@ -187,7 +188,7 @@ export type RegisterReaperDeps = {
     logger?: Logger;
 };
 
-/** Production registration: a single (unsharded) `@DBOS.scheduled` workflow. */
+/** Production registration: a single (unsharded) scheduled workflow. */
 export function registerSandboxReaper(deps: RegisterReaperDeps): void {
     const reaper = DBOS.registerWorkflow(
         async () => {
@@ -213,8 +214,5 @@ export function registerSandboxReaper(deps: RegisterReaperDeps): void {
     );
     untracedWorkflow(REAPER_WORKFLOW);
 
-    DBOS.registerScheduled(reaper, {
-        name: REAPER_WORKFLOW,
-        crontab: REAPER_CRON,
-    });
+    scheduleWorkflow({ scheduleName: REAPER_WORKFLOW, workflowFn: reaper, schedule: REAPER_CRON });
 }

@@ -248,10 +248,10 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
  * The host ports the stack binds and the host-side mount/compose paths it binds — split into pure
  * helpers so the whole stack identity derives from ONE channel signal ({@link isDevelopmentBuild} over the
  * baked build channel, never NODE_ENV), the same signal `compose.ts` names its containers/networks from.
- * The container-published ports (proxy, Postgres, SearXNG) sit beside the DBOS `admin` port, which is
- * bound by the harness runtime's in-process admin HTTP server (modules/harness/runtime.ts), not a
- * container, yet lives in this same table because this helper is the SINGLE place a channel's owned
- * host-port allocation is decided, so cross-channel collision avoidance is provable in one spot. Exported
+ * The container-published ports (proxy, Postgres, SearXNG) sit beside the port of the local server, which
+ * is bound by `inflexa serve`, not a container, yet lives in this same table because this helper is the
+ * SINGLE place a channel's owned host-port allocation is decided, so cross-channel collision avoidance is
+ * provable in one spot. Exported
  * (rather than folded into `env`) because the frozen `env` reads the channel once at import and cannot be
  * re-driven inside a test process — the file's established testability pattern (see {@link isDevelopmentBuild}).
  *
@@ -269,14 +269,12 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
  *     reads or writes the production one.
  *
  * Production values are byte-identical to their historical form, so an installed binary is untouched; dev
- * gets fixed sibling ports (proxy 8318, postgres 8434, admin 8435, server 8436) and sibling paths (`cliproxy-dev/`,
- * `postgres-dev/`, `docker-compose.dev.yml`). Dev Postgres deliberately avoids 8433 — the PRODUCTION DBOS
- * admin server binds it, so a dev Postgres there would EADDRINUSE the first harness boot on a dual-build
- * machine — plus 5432 (system PG) and 5433 (the harness testcontainer). The production server takes 8431, so
- * the production 84xx ports stay one block (8431-8433) below the dev block (8434-8436). The SearXNG ports
- * are new, with no historical value to preserve: the pair takes a fresh block (28437/28438) clear of the
- * 831x/84xx families and below the ephemeral ranges. Run together, the full bound-port set is ten distinct
- * listeners: prod {28437, 8317, 8431, 8432, 8433} ∪ dev {28438, 8318, 8434, 8435, 8436}.
+ * gets fixed sibling ports (proxy 8318, postgres 8434, server 8436) and sibling paths (`cliproxy-dev/`,
+ * `postgres-dev/`, `docker-compose.dev.yml`). Dev Postgres deliberately avoids 5432 (system PG) and 5433
+ * (the harness testcontainer). The production server takes 8431, so the production 84xx ports stay one
+ * block (8431-8433) below the dev block (8434-8436). The SearXNG ports are new, with no historical value to
+ * preserve: the pair takes a fresh block (28437/28438) clear of the 831x/84xx families and below the
+ * ephemeral ranges. No two listeners of the two channels share a port.
  */
 export type StackPorts = {
     /** Host port the CLIProxyAPI container publishes (also the URL the chat backend connects to). */
@@ -290,26 +288,17 @@ export type StackPorts = {
      */
     readonly searxng: number;
     /**
-     * Default host port the harness's DBOS admin HTTP server binds — modules/harness/runtime.ts hands it to
-     * `DBOS.setConfig({ adminPort })` before `DBOS.launch()`, which opens a live host listener there. It is
-     * the channel-aware default for `harness.adminPort`; a config.json override still wins. It lives in this
-     * table beside the two container ports — even though the runtime, not a container, binds it — because
-     * this helper is the single place a channel's owned host-port allocation is decided, so a dev and an
-     * installed prod runtime are provably never contending for a bind.
-     */
-    readonly admin: number;
-    /**
      * Host port the local Inflexa server (`inflexa serve`, src/server/) binds on `127.0.0.1`. The server also
      * writes it to its discovery file, which is where each client reads it.
      */
     readonly server: number;
 };
 
-/** Channel-aware host ports for the stack — dev siblings (8318/8434/8435/8436/28438) off the production set (8317/8432/8433/8431/28437). See {@link StackPorts}. */
+/** Channel-aware host ports for the stack — dev siblings (8318/8434/8436/28438) off the production set (8317/8432/8431/28437). See {@link StackPorts}. */
 export function stackPorts(channel: string | undefined): StackPorts {
     return isDevelopmentBuild(channel)
-        ? { cliproxy: 8318, postgres: 8434, searxng: 28438, admin: 8435, server: 8436 }
-        : { cliproxy: 8317, postgres: 8432, searxng: 28437, admin: 8433, server: 8431 };
+        ? { cliproxy: 8318, postgres: 8434, searxng: 28438, server: 8436 }
+        : { cliproxy: 8317, postgres: 8432, searxng: 28437, server: 8431 };
 }
 
 /**
@@ -517,13 +506,6 @@ export const env = Object.freeze({
      */
     searxngPort: stack.searxng,
     searxngBaseUrl: `http://127.0.0.1:${stack.searxng}`,
-    /**
-     * Default host port the harness runtime's DBOS admin HTTP server binds — the channel-aware default for
-     * `harness.adminPort` (modules/harness/config.ts). Excluded from envDoc/--help below like the other
-     * derived ports: we own the bind and a config.json override supersedes it, so it is not a user-facing
-     * env path. See {@link stackPorts} for the port-family and cross-channel collision-avoidance rationale.
-     */
-    adminPort: stack.admin,
     /** Host port that the local Inflexa server binds: the channel default of {@link StackPorts.server}. */
     serverPort: stack.server,
     /**
@@ -677,7 +659,6 @@ export const envDoc: Readonly<
             | "postgresPort"
             | "searxngPort"
             | "searxngBaseUrl"
-            | "adminPort"
             | "serverPort"
             | "serverFilePath"
             | "serverAutoStart"

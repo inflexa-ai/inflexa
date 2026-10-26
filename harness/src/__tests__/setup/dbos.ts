@@ -149,11 +149,6 @@ async function ensureDbosLaunched(basePool: Pool): Promise<void> {
         // The harness picks executorID off HOSTNAME if set; pin it explicitly so
         // tests don't pick up the developer's hostname.
         process.env.HOSTNAME = DBOS_TEST_EXECUTOR_ID;
-        // Picking a deterministic but uncommon admin port avoids colliding with
-        // other locally-running tools and with parallel test files.
-        if (!process.env.DBOS_ADMIN_PORT) {
-            process.env.DBOS_ADMIN_PORT = "39001";
-        }
         await launchDbos({
             config: {
                 dbHost: process.env.DB_PG_HOST,
@@ -164,7 +159,6 @@ async function ensureDbosLaunched(basePool: Pool): Promise<void> {
                 dbSslMode: "disable",
                 appName: process.env.DBOS_APP_NAME,
                 applicationVersion: process.env.DBOS_APPLICATION_VERSION,
-                adminPort: process.env.DBOS_ADMIN_PORT,
                 executorId: process.env.HOSTNAME,
             },
             logger: silentLogger,

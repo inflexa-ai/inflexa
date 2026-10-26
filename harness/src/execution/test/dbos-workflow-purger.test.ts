@@ -35,12 +35,12 @@ import type { WorkflowPurger } from "../workflow-purger.js";
 const SEEDED_EXECUTOR_ID = "purger-test";
 
 /**
- * The cascading tables seeded beside each status row. A dependent row is here to
+ * The dependent tables seeded beside each status row. A dependent row is here to
  * show a delete reaching past `workflow_status`, and these are the ones the
  * assertions below read back — seeding the tables nothing counts would only make
  * the fixture wider, not the claim stronger.
  */
-const SEEDED_CASCADE_TABLES = ["operation_outputs", "streams"] as const;
+const SEEDED_DEPENDENT_TABLES = ["operation_outputs", "streams"] as const;
 
 describe("createDbosWorkflowPurger", () => {
     let rig: DbosTestRig;
@@ -50,16 +50,12 @@ describe("createDbosWorkflowPurger", () => {
     beforeAll(async () => {
         rig = await setupDbosForTests("dbos_workflow_purger");
         purger = createDbosWorkflowPurger({ pool: rig.pool });
-        ledger = createDbosLedgerSeeder({ pool: rig.pool, executorId: SEEDED_EXECUTOR_ID, cascadeTables: SEEDED_CASCADE_TABLES });
+        ledger = createDbosLedgerSeeder({ pool: rig.pool, executorId: SEEDED_EXECUTOR_ID, dependentTables: SEEDED_DEPENDENT_TABLES });
     });
 
     afterAll(async () => {
-        // Before the pool goes: every status row this file seeded, and — through the
-        // same cascade the purger relies on — every dependent row seeded beside it.
-        await rig.pool.query({
-            text: `DELETE FROM dbos.workflow_status WHERE executor_id = $1`,
-            values: [SEEDED_EXECUTOR_ID],
-        });
+        // Before the pool goes: every status row this file seeded, and every dependent row seeded beside it.
+        await ledger.reclaim();
         await rig.drop();
     });
 
