@@ -2,26 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { ok, okAsync } from "neverthrow";
 import {
     syntheticUserMessage,
-    type AgentChat,
     type AgentDefinition,
     type AgentFinish,
-    type AskApproval,
-    type AskRequest,
     type ChatTurnOutcome,
     type ChatTurnResult,
     type DbError,
     type EmitFn,
-    type LlmUsageRecord,
     type ModelMessage,
     type Pool,
     type RunChatTurnDeps,
     type RunChatTurnParams,
     type ThreadAgentResolver,
     type ThreadHistory,
-    type UsageRecorder,
 } from "@inflexa-ai/harness";
+import { scriptedModel } from "@inflexa-ai/harness/testing";
 
-import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type RunChatTurnArgs, type TurnOutcome } from "./turn.ts";
+import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
 
 // The engine is exercised offline: the whole harness turn is one injected fake, thus no Postgres, no
 // model, and no credits. The harness suite pins what the turn itself stores.
@@ -37,13 +33,18 @@ const session = buildChatSession(ANALYSIS_ID, THREAD_ID);
 const noopEmit: EmitFn = () => {};
 const DB_ERROR: DbError = { type: "mutation_failed", op: "thread-history.writeTurn", cause: new Error("db down") };
 
-// The fake turn never reads the provider or the pool, thus bare stubs stand in for them.
-const chat = (_emit: EmitFn): AgentChat => ({}) as AgentChat;
+// The fake turn never reads the pool or calls the model, thus a bare pool and an empty script stand in for them.
 const pool = {} as unknown as Pool;
+const chatTurns: RunChatTurnDeps = {
+    pool,
+    agents: resolver,
+    provider: scriptedModel([]).provider,
+    usageRecorder: { record: () => okAsync(undefined) },
+};
 
-const STOP: AgentFinish = { reason: "stop", cappedOut: false, truncationRecoveries: 0 };
-const FILTERED: AgentFinish = { reason: "content-filter", rawFinishReason: "refusal", cappedOut: false, truncationRecoveries: 0 };
-const ABORTED: AgentFinish = { reason: "aborted", cappedOut: false, truncationRecoveries: 0 };
+const STOP: AgentFinish = { reason: "stop", cappedOut: false };
+const FILTERED: AgentFinish = { reason: "content-filter", rawFinishReason: "refusal", cappedOut: false };
+const ABORTED: AgentFinish = { reason: "aborted", cappedOut: false };
 
 /**
  * A whole-turn rollup as a provider reports one. It carries the cache and reasoning breakdowns beside
@@ -75,36 +76,17 @@ function fakeTurn(
     };
 }
 
-/** A recorder that keeps what it was handed. */
-function recordingRecorder(): UsageRecorder & { records: LlmUsageRecord[] } {
-    const records: LlmUsageRecord[] = [];
-    return {
-        records,
-        record: (r: LlmUsageRecord) => {
-            records.push(r);
-            return okAsync(undefined);
-        },
-    };
-}
-
 /** Drive one turn over `turn`, filling the fixed primitives. */
-function runWith(
-    turn: ChatTurnSeams["turn"],
-    opts: { readonly readAuthor?: ChatTurnSeams["readAuthor"]; readonly usageRecorder?: UsageRecorder; readonly ask?: RunChatTurnArgs["ask"] } = {},
-): Promise<TurnOutcome> {
+function runWith(turn: ChatTurnSeams["turn"], opts: { readonly readAuthor?: ChatTurnSeams["readAuthor"] } = {}): Promise<TurnOutcome> {
     return runChatTurn(
         {
-            pool,
-            agents: resolver,
-            chat,
+            chatTurns,
             session,
             emit: noopEmit,
             signal: new AbortController().signal,
-            usageRecorder: opts.usageRecorder ?? recordingRecorder(),
             analysisId: ANALYSIS_ID,
             threadId: THREAD_ID,
             userInput: USER_INPUT,
-            ...(opts.ask ? { ask: opts.ask } : {}),
         },
         { turn, readAuthor: opts.readAuthor ?? (() => null) },
     );
@@ -219,44 +201,27 @@ describe("runChatTurn carries the turn's usage rollup", () => {
 });
 
 describe("runChatTurn gives the harness the values of the surface", () => {
-    test("the deps carry the pool, the resolver, a logger, and the provenance seam", async () => {
+    test("the deps are the chat-turn deps of the caller, unchanged", async () => {
         const fake = fakeTurn(ran({ status: "done", finish: STOP }));
 
         await runWith(fake.turn);
 
-        const deps = fake.calls[0]!.deps;
-        expect(deps.pool).toBe(pool);
-        expect(deps.agents).toBe(resolver);
-        expect(deps.logger?.named).toBeInstanceOf(Function);
-        expect("provenance" in deps).toBe(true);
+        // Identity, not shape: a bag built here would carry a recorder and a gateway other than the runtime's,
+        // and the calls and the asks of the turn would miss the ledger and the surface.
+        expect(fake.calls[0]!.deps).toBe(chatTurns);
     });
 
-    test("the params carry the caller's recorder, the session, and the start time, and no cache policy", async () => {
-        const recorder = recordingRecorder();
+    test("the params carry the session and the start time, and no cache policy", async () => {
         const fake = fakeTurn(ran({ status: "done", finish: STOP }));
         const before = Date.now();
 
-        await runWith(fake.turn, { usageRecorder: recorder });
+        await runWith(fake.turn);
 
         const params = fake.calls[0]!.params;
-        // Identity, not presence: a no-op recorder here would typecheck and drop every call of the turn.
-        expect(params.usageRecorder).toBe(recorder);
         expect(params).toMatchObject({ analysisId: ANALYSIS_ID, threadId: THREAD_ID, userInput: USER_INPUT, session });
         expect(params.startedAtMs).toBeGreaterThanOrEqual(before);
         // With no policy, the root loop uses the 1-hour default of the harness.
         expect("promptCache" in params).toBe(false);
-    });
-
-    test("the approval binding reaches the harness, and an absent one stays absent", async () => {
-        const ask = (_request: AskRequest, _emit: EmitFn): Promise<AskApproval> => Promise.resolve({ kind: "once" });
-        const bound = fakeTurn(ran({ status: "done", finish: STOP }));
-        const unbound = fakeTurn(ran({ status: "done", finish: STOP }));
-
-        await runWith(bound.turn, { ask });
-        await runWith(unbound.turn);
-
-        expect(bound.calls[0]!.params.ask).toBe(ask);
-        expect("ask" in unbound.calls[0]!.params).toBe(false);
     });
 });
 

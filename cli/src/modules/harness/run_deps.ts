@@ -33,7 +33,7 @@ import { emitRunObservation } from "./run_bridge.ts";
  * roles with different models carry different instances differing only in the bound wire model.
  */
 export type AgentBackend = {
-    /** Chat provider bound to `model` (`ChatProvider extends AgentChat`, so it satisfies both seams). */
+    /** Chat provider bound to `model`. */
     readonly provider: ChatProvider;
     /**
      * This agent's RESOLVED model id (config agent override → `harness.model` → connection default),
@@ -163,7 +163,7 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
         ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
-        blockerHolder: ctx.blockerHolder,
+        reportsBlocker: ctx.reportsBlocker,
         fileMetadata: ctx.fileMetadata,
         ...(ctx.toolOutputStore ? { toolOutputStore: ctx.toolOutputStore } : {}),
         step: {

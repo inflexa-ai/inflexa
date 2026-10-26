@@ -39,9 +39,9 @@ import {
     type RegisterReaperDeps,
     type ResolvePageAsset,
     type RunAuthorizer,
+    type RunChatTurnDeps,
     type RunLauncher,
     type ThreadAgentResolver,
-    type UsageRecorder,
 } from "@inflexa-ai/harness";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
@@ -133,9 +133,9 @@ export type RunTriggerDeps = {
 /** The booted runtime — everything the launch command needs to trigger and observe runs. */
 export type HarnessRuntime = {
     /**
-     * The conversation agent's backend — the model id + chat-provider instance the `chat`/TUI path
-     * drives. `chat` passes {@link AgentBackend.provider} to `runAgent`
-     * without re-resolving the model or key; the boot store surfaces {@link AgentBackend.model}.
+     * The conversation agent's backend — the model id + chat-provider instance the chat turn drives.
+     * {@link AgentBackend.provider} is the provider of {@link HarnessRuntime.chatTurns}, thus a turn
+     * never re-resolves the model or key; the boot store surfaces {@link AgentBackend.model}.
      */
     readonly conversation: AgentBackend;
     /**
@@ -148,10 +148,10 @@ export type HarnessRuntime = {
     /** App pool over the provisioned Postgres — shared with the harness ledger queries. */
     readonly pool: Pool;
     /**
-     * The process-singleton tool-approval gateway over {@link HarnessRuntime.pool}.
-     * On the handle so a TUI surface answers and enumerates pending asks through the
-     * one realization boot constructed — never a second gateway built ad hoc from
-     * the pool.
+     * The tool-approval gateway of the core runtime, the same one that the chat turn asks
+     * through ({@link HarnessRuntime.chatTurns}). On the handle so a TUI surface answers and
+     * enumerates pending asks through that realization — never a second gateway built ad
+     * hoc from the pool.
      */
     readonly askGateway: AskGateway;
     /** Ready-to-use deps for `triggerDataProfile`. */
@@ -177,16 +177,12 @@ export type HarnessRuntime = {
      */
     readonly approvePlan: CoreRuntime["approvePlan"];
     /**
-     * The ONE {@link UsageRecorder} realization this runtime booted with — the same instance
-     * `assembleCoreRuntime` stamps onto every workflow deps bag.
-     *
-     * On the handle because a loop the CLI invokes directly cannot get it any other way: `runAgent`
-     * takes its recorder from the options bag it is called with and silently falls back to the no-op
-     * when the field is absent, so an agent assembled WITH a recorder still records nothing when its
-     * loop is driven without one. The chat turn is that loop, and this is how it reaches it — see the
-     * construction site's comment for why the composition root alone was never sufficient.
+     * The runtime values of a chat turn, as `assembleCoreRuntime` built them: the pool, the agent
+     * resolver, the conversation provider handle, the usage recorder that this boot supplied on `core`,
+     * and the ask gateway. The turn engine passes them whole, thus a turn records to the same ledger as
+     * each workflow.
      */
-    readonly usageRecorder: UsageRecorder;
+    readonly chatTurns: RunChatTurnDeps;
     /**
      * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
      * status surface renders beside the per-agent models. Stamped once
@@ -850,7 +846,7 @@ async function bootHarnessRuntimeOnce(
         //
         // One provider instance per DISTINCT resolved agent model over the SHARED
         // connection: the wire model is baked into each `ChatProvider`
-        // at construction (`ChatRequest` carries no model), so roles on different
+        // at construction (`bind` takes no model), so roles on different
         // models mean distinct instances — while coincident roles share one inner
         // referentially, which is the common no-`agents` config (one provider). One
         // construction path for both connection modes: the
@@ -939,7 +935,7 @@ async function bootHarnessRuntimeOnce(
         // Each agent gets its OWN swappable handle even when the inners coincide, so a later switch of one
         // agent re-points only that agent. The handle is the stable reference every
         // consumer captures — the run-engine deps bundles, the conversation agent's sub-agents, and the
-        // streaming chat wrapper — so swapping its inner at the idle transition reaches them all at once.
+        // chat-turn deps — so swapping its inner at the idle transition reaches them all at once.
         const conversationProvider = createSwappableProvider(conversationInner);
         const sandboxProvider = createSwappableProvider(sandboxInner);
         const utilityProvider = createSwappableProvider(utilityInner);
@@ -1011,25 +1007,22 @@ async function bootHarnessRuntimeOnce(
         // trigger (`runTriggerDeps`) — same reasoning as the shared authorizer: a
         // single seam realization drives every durable-run launch on this analysis.
         const runLauncher = createDbosRunLauncher();
-        // One ask gateway over the app pool — the process-singleton tool-approval
-        // realization a TUI surface answers and enumerates asks through; its expiry
-        // sweep runs in `beforeLaunch` below, once state init has created the ledger.
-        const askGateway = createAskGateway({ pool });
+        // The ask-expiry sweep runs in `beforeLaunch` below, once state init has created the ledger.
+        // The core runtime and its gateway do not exist before the boot returns, thus the sweep takes a
+        // gateway of its own. The gateway keeps no state outside the ledger, thus the rows that this
+        // sweep expires are the rows that the gateway of the runtime reads.
+        const sweepGateway = createAskGateway({ pool });
         // ONE usage recorder for the whole runtime, handed to `assembleCoreRuntime` below, which stamps
-        // it onto the conversation agent AND every workflow deps bag it registers. There is no per-turn
-        // or per-call construction: a second instance would be a second writer of the same table with
-        // nothing to gain from the split.
+        // it onto the conversation agent, every workflow deps bag it registers, and the chat-turn deps
+        // (`CoreRuntime.chatTurns`). There is no per-turn or per-call construction: a second instance
+        // would be a second writer of the same table with nothing to gain from the split.
         //
-        // What that supply point actually guarantees is narrower than it looks, and the gap is where
-        // the conversation agent went unrecorded for the whole of its first release. `runAgent` reads
-        // its recorder from the OPTIONS BAG it is invoked with — never off the agent definition — and
-        // falls back to the harness's no-op when the field is absent. So the stamping covers exactly
-        // the loops whose options the harness itself builds: the workflow bodies (every run step, the
-        // data profile) and the sub-agent tools, which construct their options from deps that carry it.
-        // A loop the CLI invokes DIRECTLY is covered only by that call site passing this recorder, and
-        // there is one such loop — the chat turn (`runChatTurn` in `turn.ts`), which reaches it through
-        // {@link HarnessRuntime.usageRecorder} below. An omission there is silent by construction: the
-        // turn succeeds, the live figure still renders from the finish rollup, and nothing is written.
+        // A loop reads its recorder from the options that it runs with, and falls back to the no-op of
+        // the harness when the field is absent. The chat turn reads its options from `chatTurns`, thus
+        // the turn engine (`runChatTurn` in `turn.ts`) takes that bag whole from
+        // {@link HarnessRuntime.chatTurns} and never builds its own. A bag built anywhere else would be
+        // silent by construction: the turn succeeds, the live figure still renders from the finish
+        // rollup, and nothing is written.
         const usageRecorder = createUsageRecorder();
 
         // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
@@ -1151,7 +1144,7 @@ async function bootHarnessRuntimeOnce(
         // browser instead of a failed connection.
         const conversation: ConversationAssemblyDeps = {
             // Reaches every conversation tool that takes a logger — `generate_plan` above all,
-            // which drives a whole sub-agent loop on `passthroughStep`: no ledger row, no
+            // which drives a whole sub-agent loop outside any workflow: no ledger row, no
             // durable stream, so its records are the only account of an invocation that
             // outlives the turn. Omitted, it resolves to `createNoopLogger()` and a planner
             // that failed reports nothing at all.
@@ -1249,7 +1242,7 @@ async function bootHarnessRuntimeOnce(
         // `Pool | null` local whose narrowing this deferred closure does not preserve.
         const beforeLaunch = async (): Promise<void> => {
             await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
-            await seams.sweepAsks(askGateway);
+            await seams.sweepAsks(sweepGateway);
             installAgentSwitch({
                 swappable: { conversation: conversationProvider, sandbox: sandboxProvider, utility: utilityProvider },
                 rebuildProvider: buildProvider,
@@ -1326,12 +1319,12 @@ async function bootHarnessRuntimeOnce(
             sandbox: sandboxBackend,
             utility: utilityBackend,
             pool,
-            askGateway,
+            askGateway: core.askGateway,
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             agents: core.agents,
             approvePlan: core.approvePlan,
-            usageRecorder,
+            chatTurns: core.chatTurns,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a
             // model), so `provider`/`mode` are read straight off the connection.

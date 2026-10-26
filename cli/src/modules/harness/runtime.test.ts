@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 import { ok, okAsync, err, errAsync } from "neverthrow";
 import {
+    createAskGateway,
     createCitationResolver,
+    createNoopUsageRecorder,
     createSandboxClient,
     PAGE_ASSETS,
     type MakeSessionPagePublisher,
@@ -13,6 +15,7 @@ import {
     type CreateSandboxClientConfig,
     type EmbeddingProvider,
     type LlmUsageRecord,
+    type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
@@ -167,9 +170,24 @@ function recordingSeams(calls: string[]): BootSeams {
             // crons execute in order, exactly as the real `bootHarness` runs it after
             // registration and before launch.
             await deps.beforeLaunch?.();
+            const agents: ThreadAgentResolver = {
+                forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }),
+            };
+            // The gateway and the chat-turn deps stand in the way `assembleCoreRuntime` builds them: one gateway,
+            // shared by the turn, and the recorder and the conversation provider of `core`. The real
+            // constructor connects lazily, and the offline boot runs no turn.
+            const askGateway = createAskGateway({ pool: conversation.pool });
             return {
                 runtime: {
-                    agents: { forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }) },
+                    agents,
+                    askGateway,
+                    chatTurns: {
+                        pool: conversation.pool,
+                        agents,
+                        provider: conversation.provider,
+                        usageRecorder: deps.core.usageRecorder ?? createNoopUsageRecorder(),
+                        askGateway,
+                    },
                     // The offline boot never drives a report turn, thus this anchor never runs. A
                     // failed arm is the minimal stand-in — a ready arm would build a full durable
                     // session-state row that no assertion here reads.
@@ -280,8 +298,8 @@ describe("bootHarnessRuntime", () => {
         expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.sandbox.provider));
         expect(agentProviderInner(runtime.conversation.provider)).not.toBe(agentProviderInner(runtime.sandbox.provider));
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
-        // The assembled conversation agent + its agent provider are on the handle (the `chat` command
-        // drives `runAgent(conversationAgent, …, conversation.provider)`). The agent is reached by thread
+        // The assembled conversation agent + its agent provider are on the handle (the chat turn drives
+        // the conversation agent on `conversation.provider`). The agent is reached by thread
         // type through the resolver — `conversation` resolves to the assembled conversation agent.
         expect(runtime.agents.forThread("conversation")._unsafeUnwrap().id).toBe("conversation-agent");
         expect(runtime.conversation.provider).toBeDefined();
@@ -862,12 +880,11 @@ describe("bootHarnessRuntime — the session-page publisher", () => {
 // field. A bag carrying its own would be the half-wired ledger the harness's `Omit` exists to make
 // unrepresentable.
 //
-// Supplying it there is NECESSARY BUT NOT SUFFICIENT, and that gap is why the handle carries it too.
-// `runAgent` reads the recorder from the OPTIONS it is invoked with and falls back to the harness's
-// no-op when the field is absent — it never reads one off the agent definition — so the stamping
-// covers exactly the loops whose options the harness itself builds. A loop the CLI invokes directly
-// (the chat turn) is covered only by that call site passing this instance, which is what
-// `HarnessRuntime.usageRecorder` exists for and what the last test here pins.
+// A loop reads the recorder from the OPTIONS it runs with and falls back to the harness's no-op when
+// the field is absent — it never reads one off the agent definition. The chat turn reads its options
+// from `CoreRuntime.chatTurns`, which `assembleCoreRuntime` stamps with the same recorder, thus the
+// handle must carry that bag through unchanged. That is what `HarnessRuntime.chatTurns` exists for
+// and what the last tests here pin.
 describe("bootHarnessRuntime — the usage-recorder seam", () => {
     /** A record shaped like a chat-path call, used to prove the supplied recorder is inert-but-live rather than merely present. */
     function chatRecord(): LlmUsageRecord {
@@ -906,19 +923,26 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
         expect(() => lastCore?.usageRecorder?.record(chatRecord())).not.toThrow();
     });
 
-    test("the handle exposes the SAME instance the composition root supplied, for the loops the cli drives itself", async () => {
+    test("the chat-turn deps on the handle carry the SAME recorder the composition root supplied", async () => {
         const calls: string[] = [];
         const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
 
-        // Identity, not merely a recorder: the chat turn passes this into its own `runAgent` options,
-        // and a second realization here would be a second writer of one table — while anything OTHER
-        // than the stamped instance would leave the turn's rows in a different accounting than every
-        // workflow's. `turn.ts` is where it is consumed; `usage_ledger.test.ts` proves a row lands.
-        // `defined` rides along so the identity claim cannot pass vacuously on two `undefined`s.
-        expect({ defined: lastCore?.usageRecorder !== undefined, same: runtime.usageRecorder === lastCore?.usageRecorder }).toEqual({
+        // Identity, not merely a recorder: the stand-in boot stamps the bag the way `assembleCoreRuntime`
+        // does, thus anything OTHER than the stamped instance means that the handle built its own bag, and
+        // the turn's rows would land in a different accounting than every workflow's. `turn.ts` is where
+        // it is consumed; `usage_ledger.test.ts` proves a row lands. `defined` rides along so the identity
+        // claim cannot pass vacuously on two `undefined`s.
+        expect({ defined: lastCore?.usageRecorder !== undefined, same: runtime.chatTurns.usageRecorder === lastCore?.usageRecorder }).toEqual({
             defined: true,
             same: true,
         });
+    });
+
+    test("the handle answers asks through the gateway that the chat turn asks through", async () => {
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() }))._unsafeUnwrap();
+
+        expect(runtime.askGateway).toBeDefined();
+        expect(runtime.chatTurns.askGateway).toBe(runtime.askGateway);
     });
 
     test("the recorder is built once per runtime, not per boot call", async () => {

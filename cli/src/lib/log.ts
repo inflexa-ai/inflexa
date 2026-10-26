@@ -260,10 +260,10 @@ export function getLogger(module: string): pino.Logger {
  * richer than the harness's string mapping and is exactly why the seam puts this
  * on the interface.
  *
- * It lives beside `getLogger` rather than at a composition root because it has two
- * callers that reach the harness independently: the embedder root wiring
- * `bootHarness`, and the chat turn engine wiring `runAgent`. A private copy in
- * either is how one of them ends up silent.
+ * It lives beside `getLogger` rather than at a composition root because its
+ * callers reach the harness independently: the embedder root wiring
+ * `bootHarness`, and the eyes of a report session. A private copy in any of them
+ * is how one of them ends up silent.
  */
 function pinoAsHarnessLogger(pino: pino.Logger, names: readonly string[] = []): Logger {
     function prefixed(msg: string): string {

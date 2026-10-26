@@ -81,8 +81,8 @@ function installSeamFor(comp: RunEngineComposition): void {
     installProvenanceSeam(createProvenanceSeam({ emitters: comp.sandboxEmitters, sessionModel: () => "anthropic/claude-test" }));
 }
 
-// buildAgent never dereferences the sandbox / lineage-collector / blocker-holder /
-// file-metadata fields, so empty placeholders are safe; the cast avoids deep-importing
+// buildAgent never dereferences the sandbox / lineage-collector / file-metadata
+// fields, so empty placeholders are safe; the cast avoids deep-importing
 // harness internals to build the real placeholder types.
 function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgentBuildContext {
     return {
@@ -90,7 +90,7 @@ function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgen
         stepWritePrefix,
         deadlineMs: () => Date.now() + 60_000,
         lineageCollector: {},
-        blockerHolder: {},
+        reportsBlocker: true,
         fileMetadata: {},
         toolOutputStore: {},
         sandbox: {},
@@ -312,6 +312,14 @@ describe("buildSandboxStepDeps", () => {
         const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
 
         expect(agent.tools.map((tool) => tool.id)).toContain("read_tool_output");
+    });
+
+    test("buildAgent passes the blocker flag of the step to the agent, thus it declares report_blocker", async () => {
+        const deps = buildSandboxStepDeps(testComposition());
+
+        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
+
+        expect(agent.tools.map((tool) => tool.id)).toContain("report_blocker");
     });
 
     test("buildAgent rejects for an unknown agent id, naming the id and the known catalog ids", async () => {
