@@ -284,7 +284,7 @@ or re-moded.
 ### Requirement: Dynamic port mapping for host connectivity
 
 The Docker backend SHALL use dynamic port mapping for `8765/tcp` bound to the
-loopback host address (`HostIp: "127.0.0.1"`, `HostPort: ""` so Docker assigns a
+loopback host address (`HostIp: "127.0.0.1"`, `HostPort: "0"` so Docker assigns a
 free port), so the sandbox exec port is reachable from the host but not published on
 any other host interface. The mapped port SHALL be retrieved after container start
 via the Docker API. All HTTP communication with sandbox-server (health, submit, and

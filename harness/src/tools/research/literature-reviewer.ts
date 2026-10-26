@@ -11,7 +11,7 @@
  * `agents: {}` config, no `messageFilter`, no `stripParentToolParts`: the
  * child cannot see the parent's tool history because it is simply handed
  * none — only the brief. The child loop uses `passthroughStep` because the
- * entire tool call is one step in the parent loop (PR #3 caches it whole,
+ * entire tool call is one step in the parent loop (`durableStep` caches it whole,
  * so the child never replays).
  */
 

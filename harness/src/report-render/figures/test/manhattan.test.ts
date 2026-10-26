@@ -288,6 +288,14 @@ describe("the Manhattan figure", () => {
         expect(shownLabels(option)).toEqual(["rsZero", "rs657452"]);
     });
 
+    it("colors a stored zero with no chromosome cell in the first chromosome color", () => {
+        const rows = [...ROWS, { snp: "rsNoChrom", pvalue: "0", cum_pos: "300000001" }];
+        const triangles = seriesOf(derive(block(), rows)).filter((entry) => entry.symbol === BELOW_RESOLUTION_SYMBOL);
+        expect(firstOf(triangles, "triangle").data).toEqual([
+            { name: "rsNoChrom", value: [300000001, -Math.log10(4.4e-15)], itemStyle: { color: MANHATTAN_COLORS[0] } },
+        ]);
+    });
+
     it("leads a chromosome of two stored zeros by the smaller position, whatever the row order", () => {
         const zeros: ChartRow[] = [
             { chrom: "3", snp: "rsFar", pvalue: "0", cum_pos: "600000000" },

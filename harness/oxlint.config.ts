@@ -262,7 +262,8 @@ export default typescript({
             //   design — the walk narrows each field and each entry on read — and the
             //   record schema's shallow rebuild (a `__proto__` own key drops) is the
             //   behavior the callers pin.
-            // - src/contracts/chat-frame.ts — the browser-safe generic record schema:
+            // - src/contracts/chat-frame.ts and src/contracts/report-reference.ts — the
+            //   browser-safe generic record schema:
             //   `contracts/` imports no value from outside its own directory, so the
             //   lib walk-container helper cannot be reached, and the part schemas
             //   narrow the fields downstream.
@@ -298,6 +299,7 @@ export default typescript({
                 "src/execution/run-synthesis.ts",
                 "src/lib/unknown-containers.ts",
                 "src/contracts/chat-frame.ts",
+                "src/contracts/report-reference.ts",
                 "src/sandbox/sandbox-error.ts",
                 "src/tools/report-authoring/authoring-tools.ts",
                 "src/tools/research/generate-plan.ts",

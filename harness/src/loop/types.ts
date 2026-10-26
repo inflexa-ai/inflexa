@@ -4,7 +4,7 @@
  * `runAgent` (run-agent.ts) is a pure-async function: it owns the message
  * loop and nothing else. Durability and streaming are *injected* — a
  * `RunStep` wraps each LLM/tool call (`passthroughStep` for chat, a
- * `DBOS.runStep` wrapper in PR #3) and an `EmitFn` is the flat event sink.
+ * `durableStep` in a workflow) and an `EmitFn` is the flat event sink.
  * The loop body itself knows nothing about DBOS, HTTP, or memory.
  */
 
@@ -39,7 +39,7 @@ export type AgentDefinition = {
 
 /**
  * The durability seam. `passthroughStep` (`(_, fn) => fn()`) in the chat
- * route; a `DBOS.runStep` wrapper in PR #3. The loop is agnostic — it only
+ * route; `durableStep` in a workflow. The loop is agnostic — it only
  * promises a deterministic `name` per call (the step-naming contract).
  */
 export type RunStep = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
