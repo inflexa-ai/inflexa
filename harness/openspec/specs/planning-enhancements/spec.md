@@ -46,39 +46,6 @@ only through terminal tool calls; its text reply SHALL be discarded.
 - **WHEN** the planner finishes its loop
 - **THEN** the tool reads the recorded outcome from the shared closure cell, not from the planner's text reply
 
-### Requirement: The planner separates non-terminal tools from a terminal outcome set
-
-The planner MUST be given the terminal tools `submit_plan`,
-`request_clarification`, and `report_blocker`, and non-terminal tools that
-include `list_available_refs` (reference-store discovery). `submit_plan`
-MUST re-validate and persist the plan, and a rejected candidate MUST return
-the structured issues, thus the planner corrects the plan and submits again.
-Exactly one terminal outcome MUST be recorded per invocation, and a later
-terminal call MUST be rejected. A non-terminal tool records no outcome, and
-the planner can call it any number of times.
-
-#### Scenario: A rejected submit returns the issues and records no outcome
-
-- **WHEN** the planner submits a candidate plan that fails validation
-- **THEN** the call returns `{ accepted: false, issues }` and records no terminal outcome
-- **AND** the planner can submit again
-
-#### Scenario: The planner can see what reference data is staged
-
-- **WHEN** the planner calls `list_available_refs`
-- **THEN** it receives the current reference inventory and records no outcome
-- **AND** the planner can ground the reference needs of a step in that result, or take a terminal `request_clarification` exit when data the analysis cannot continue without is absent
-
-#### Scenario: submit_plan re-validates and persists
-
-- **WHEN** the planner calls `submit_plan` with a plan that passes validation
-- **THEN** the plan is persisted and the outcome is recorded as a submitted plan with its `planId`
-
-#### Scenario: A second terminal call is rejected
-
-- **WHEN** a terminal outcome has already been recorded and `submit_plan` is called again
-- **THEN** the call is rejected and the recorded outcome is left unchanged
-
 ### Requirement: A single wall-clock guard bounds the whole invocation
 
 The tool MUST bound the entire invocation with a single wall-clock guard,
@@ -102,21 +69,6 @@ per-attempt timeout and no internal retry counter.
 
 - **WHEN** the caller's abort signal fires
 - **THEN** the planner is cancelled and the tool returns an `error` event indicating cancellation
-
-### Requirement: The planner loop is iteration-capped with one salvage continuation
-
-The planner loop MUST have an iteration cap, `PLANNER_MAX_ITERATIONS` in `src/tools/research/generate-plan.ts`. The constant owns the number. When the planner ends without a terminal outcome, `runToTerminal` MUST run exactly one salvage continuation, opened by a corrective nudge. The salvage continuation MUST keep the declared tools of the planner, and its mask MUST let only the terminal tools run (refer to the harness-agent-loop capability).
-
-#### Scenario: Salvage continuation on a missing terminal outcome
-
-- **WHEN** the planner reaches its iteration cap without a terminal outcome
-- **THEN** `runToTerminal` runs one salvage continuation whose mask lets only `submit_plan`, `request_clarification`, and `report_blocker` run
-- **AND** each request of the salvage declares the search tools and the terminal tools of the planner
-
-#### Scenario: Still no outcome after salvage
-
-- **WHEN** the salvage continuation also ends without a terminal outcome
-- **THEN** the tool returns an `error` event that states that the planner produced no terminal outcome
 
 ### Requirement: The tool returns a typed outcome and never throws
 
@@ -459,3 +411,13 @@ demand that the step reports the estimate as optimistic.
   later biomarker-panel step over the same samples
 - **THEN** the plan instructs the modeling step to select features again
   inside cross-validation, or to report the estimate as optimistic
+
+### Requirement: Each plan step can carry a grounding
+
+The planner output schema MUST accept an optional `grounding` object on each step. The description of the field MUST tell the planner to fill it from the answer of `knowledge_recommend` when that tool is attached, and to omit it otherwise. Phase 0 MUST validate the shape only.
+
+#### Scenario: A grounded plan persists the field
+
+- **GIVEN** a submitted plan whose steps carry a grounding
+- **WHEN** the plan is persisted and loaded
+- **THEN** each step carries its grounding unchanged

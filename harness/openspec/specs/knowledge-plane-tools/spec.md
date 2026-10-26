@@ -1,4 +1,9 @@
-## ADDED Requirements
+# knowledge-plane-tools Specification
+
+## Purpose
+TBD - created by archiving change add-knowledge-plane-tools. Update Purpose after archive.
+
+## Requirements
 
 ### Requirement: The knowledge client is an optional interface
 

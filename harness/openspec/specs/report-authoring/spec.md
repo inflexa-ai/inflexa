@@ -266,8 +266,6 @@ The surface MUST give an operation that sets the title of the document. A draft 
 
 The published input schema of a block payload MUST carry the block grammar. A tool is self-describing at attach time. Thus a payload with no schema leaves the agent to discover each field through one refusal at a time. The runtime parse of the payload stays permissive, thus a malformed block still comes back as a typed refusal.
 
-Each tool MUST declare the inline execution mode. The state loads fresh on each call, thus a replay-cached tool result reports a document that later operations changed.
-
 #### Scenario: The factory packages the tools
 - **WHEN** a caller gives the factory a session-state gateway
 - **THEN** the caller gets the authoring tools, and each tool operates on the state of its own thread only

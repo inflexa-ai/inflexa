@@ -5,55 +5,6 @@ The harness runs the whole chat turn for each host. A turn stores its opening an
 
 ## Requirements
 
-### Requirement: The harness runs the whole chat turn
-
-The harness MUST give one app function, `runChatTurn(deps, params)`, that runs one chat turn from the user input to the outcome. The function MUST do these steps in this order:
-
-1. Prepare the turn with `prepareChatTurn`.
-2. Resolve the agent with `agents.forThread` over the thread type that the preparation gives.
-3. Store the opening of the turn.
-4. Run `runAgent` with a round sink that stores each round.
-5. Close the turn with its outcome.
-
-The deps give the pool, the agent resolver, the logger, and the provenance seam. The host gives only these transport values:
-
-- the emit sink of its surface
-- the abort signal of the turn
-- a factory that makes the provider of the turn over an emit sink
-- the usage recorder
-- the approval binding, when the surface can ask the user
-- the author of the user message, and the start time of the turn
-
-A host can also pass a cache policy for the root loop (see "The root loop of a chat turn caches its prefix for 1 hour").
-
-A host MUST NOT run the steps itself. Thus each host stores the same rows, and a change of the turn reaches each host with no change of the host.
-
-The function MUST give one of these results:
-
-- `prepare_failed`, with the cause, when the preparation throws
-- `not_found`, when a different analysis owns the thread
-- `agent_unresolved`, with the thread type, when the resolver refuses the type
-- `ran`, with the outcome, `opened`, the store error when there is one, the duration, the turn usage, and the final text
-
-A turn that ends before the run writes no row and no turn record.
-
-#### Scenario: A host runs a turn with one call
-
-- **WHEN** a host calls `runChatTurn` with its emit sink, its signal, its provider factory, and its usage recorder
-- **THEN** the thread holds the opening, each round, and a closed turn record, and the host wrote no row itself
-
-#### Scenario: A refused thread type writes nothing
-
-- **GIVEN** a thread whose type has no registered agent
-- **WHEN** `runChatTurn` runs a turn on it
-- **THEN** the result is `agent_unresolved` with the thread type, and the turn wrote no row and no turn record
-
-#### Scenario: A thread of a different analysis is not found
-
-- **GIVEN** a thread that a different analysis owns
-- **WHEN** `runChatTurn` runs a turn on it
-- **THEN** the result is `not_found`, and the thread did not change
-
 ### Requirement: A turn stores its opening before the first model request
 
 Before the first model request of a turn, the turn MUST write its opening in one transaction. The opening holds the user message and each context record that the loop sent with it. The same transaction MUST add the turn record with the status `open`. When that write fails, the next write of the turn stores the opening first.
@@ -314,7 +265,7 @@ The budgets apply to the input tokens that the provider reports for a request.
 
 The chat turn MUST add the mechanism of the policy to the rules:
 
-- The provider of the exchange comes from the provider factory of the host, over an emit sink that drops each text delta.
+- The exchange uses the model of the turn, and it streams no text delta to the surface.
 - The turn selects the variant of the exchange from the declared tools of the agent.
 - On a `conversation` thread, the agent declares `update_working_memory`. The mask lets only that tool run, and the request asks for the memory edits first.
 - A `report` thread reads a frozen copy of working memory, and its agent declares no `update_working_memory`. Its mask is `"none"`, and its request has only the summary step.
