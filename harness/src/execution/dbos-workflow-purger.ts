@@ -13,10 +13,9 @@
  * injected pool already reaches the ledger.
  *
  * The engine owns the deletion itself, including the breadth-first walk over
- * `parent_workflow_id` that reaches child step workflows. Its single
- * `DELETE FROM dbos.workflow_status WHERE workflow_uuid = ANY(...)` is all the
- * dependent tables need: step outputs, streams, inputs, events, notifications,
- * and queue rows each hold an `ON DELETE CASCADE` foreign key to
+ * `parent_workflow_id` that reaches child step workflows. It deletes the step
+ * outputs, the inputs, and the output of each workflow by name. The streams, the
+ * events, and the notifications each hold an `ON DELETE CASCADE` foreign key to
  * `workflow_status`, so they go with the status row.
  */
 

@@ -23,7 +23,6 @@ const stubConfig: DbosConfig = {
     dbPassword: "",
     dbSslMode: "disable",
     appName: "dbos-test",
-    adminPort: "",
     executorId: "dbos-test",
 };
 
@@ -35,7 +34,6 @@ const fullConfig: DbosConfig = {
     dbPassword: "secret",
     dbSslMode: "disable",
     appName: "cortex",
-    adminPort: "3001",
     executorId: "pod-1",
 };
 

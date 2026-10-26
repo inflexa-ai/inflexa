@@ -43,7 +43,7 @@ const configSchema = z.object({
     // validated downstream in modules/harness/config.ts (`resolveHarnessConfig`), NOT shaped inline:
     //
     //   - There is no harness-package schema to import. The `harness.*` shape (model/bioKeys/
-    //     sandboxImage/adminPort/skillsDir) is THIS cli's user-facing config contract — the knobs the
+    //     sandboxImage/skillsDir) is THIS cli's user-facing config contract — the knobs the
     //     cli chooses to expose and map onto the harness's runtime deps — not something the harness
     //     package defines. `@inflexa-ai/harness` exports only `ResourceLimitsSchema`, for one sub-field.
     //   - The schema lives in the harness feature slice (modules/harness/config.ts), which owns this
@@ -52,7 +52,7 @@ const configSchema = z.object({
     //   - Inline validation here can't satisfy all three needs at once: a strict `z.object({...})` fails
     //     the WHOLE config parse on one bad harness field, dropping siblings (telemetry/theme/postgres)
     //     with it; a block-level `.catch({})` instead SILENTLY discards the harness key, surfacing e.g.
-    //     a mistyped `adminPort` as a misleading "embedding not configured". Deferring validation to the
+    //     a mistyped `skillsDir` as a misleading "embedding not configured". Deferring validation to the
     //     owner reports the exact offending field AND leaves siblings intact.
     //
     // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because

@@ -641,7 +641,7 @@ async function bootHarnessRuntimeOnce(
 
     // A `harness` config block that was present but failed validation: report the
     // offending fields, not a misleading downstream error. Checked first so a bad
-    // `adminPort` type never surfaces as "embedding not configured".
+    // `skillsDir` type never surfaces as "embedding not configured".
     if (cfg.configError) return err({ type: "harness_config_invalid", issues: cfg.configError.issues });
     // Likewise a malformed `models.connection` block: report it rather than booting
     // against the silently-substituted default connection.
@@ -1300,7 +1300,6 @@ async function bootHarnessRuntimeOnce(
                 dbPassword: conn.password,
                 dbSslMode: "disable",
                 appName: "inflexa",
-                adminPort: String(cfg.adminPort),
                 executorId: "local",
                 // The SDK's info-level launch banner would interleave with the
                 // profile command's clack output; warnings still surface.

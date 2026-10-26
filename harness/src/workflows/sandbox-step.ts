@@ -28,7 +28,8 @@
  * `CHILD_SUSPENDED_TOPIC`, and self-cancels to CANCELLED (resumable, not ERROR).
  */
 
-import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import { DBOS } from "@dbos-inc/dbos-sdk";
+import { isWorkflowCancellation } from "../runtime/dbos.js";
 import type { StepPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
 import type { Querier } from "../state/db.js";
@@ -604,7 +605,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // stay free of internal paths/hashes/managed-root jargon. A DBOS cancellation is
     // control-flow, not a failure — re-raise it verbatim.
     const failStep = async (errorClass: "agent_loop" | "lineage_attestation", err: unknown): Promise<never> => {
-        if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+        if (isWorkflowCancellation(err)) throw err;
         await tryTeardown(logger, deps, sandbox);
         const durationMs = (await DBOS.now()) - startedAt;
         // The scrub below is deliberate and load-bearing, which makes this record
@@ -715,7 +716,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             // The agent declares the output tool of the file-metadata
             // continuation from its first request, and the task must not use it.
             toolMask: maskExcept(agent.tools, [SUBMIT_FILE_METADATA_TOOL_ID]),
-            isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
+            isFatalLoopError: (err) => isWorkflowCancellation(err),
         });
         transcript = agentResult.messages;
         finishReason = agentResult.finish.reason;
@@ -904,7 +905,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     try {
         registered = await reconcileAndRegisterStepArtifacts(deps, postCtx, manifest);
     } catch (attestationErr) {
-        if (attestationErr instanceof DBOSErrors.DBOSWorkflowCancelledError) throw attestationErr;
+        if (isWorkflowCancellation(attestationErr)) throw attestationErr;
         await syncStepArtifacts();
         // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
         throw await failStep("lineage_attestation", attestationErr);
@@ -1020,7 +1021,7 @@ async function safeRun(logger: Logger, fn: () => Promise<void>, label: string): 
     try {
         await fn();
     } catch (err) {
-        if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+        if (isWorkflowCancellation(err)) throw err;
         // The stage rides as a namespace, not interpolated prose: `label` is what
         // says WHICH post-step stage degraded, and a reader must be able to filter
         // on it without parsing the message.
@@ -1037,7 +1038,7 @@ async function safeRunValue<T>(logger: Logger, fn: () => Promise<T>, label: stri
     try {
         return await fn();
     } catch (err) {
-        if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+        if (isWorkflowCancellation(err)) throw err;
         // The stage rides as a namespace, not interpolated prose: `label` is what
         // says WHICH post-step stage degraded, and a reader must be able to filter
         // on it without parsing the message.

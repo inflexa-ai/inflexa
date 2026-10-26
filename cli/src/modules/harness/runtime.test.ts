@@ -63,7 +63,6 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         sandboxImage: "ghcr.io/inflexa-ai/sandbox-base:latest",
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
-        adminPort: 8433,
         skillsDir,
         ...overrides,
     };
@@ -463,10 +462,10 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
-            config: testConfig({ configError: { issues: "harness.adminPort: expected number" } }),
+            config: testConfig({ configError: { issues: "harness.skillsDir: expected string" } }),
         });
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "harness_config_invalid", issues: "harness.adminPort: expected number" });
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "harness_config_invalid", issues: "harness.skillsDir: expected string" });
         expect(calls).toEqual([]);
     });
 

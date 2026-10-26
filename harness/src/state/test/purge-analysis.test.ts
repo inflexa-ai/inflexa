@@ -121,18 +121,14 @@ describe("createAnalysisPurge", () => {
         rig = await setupDbosForTests("purge_analysis");
         purger = createDbosWorkflowPurger({ pool: rig.pool });
         purge = createAnalysisPurge({ pool: rig.pool, workflows: purger });
-        // Every cascading table is seeded, so the post-purge zero asserted for each
+        // Every dependent table is seeded, so the post-purge zero asserted for each
         // stands for a row that was actually there rather than an empty table.
         ledger = createDbosLedgerSeeder({ pool: rig.pool, executorId: SEEDED_EXECUTOR_ID });
     });
 
     afterAll(async () => {
-        // Before the pool goes: every status row this file seeded, and — through the
-        // same cascade the purge relies on — every dependent row seeded beside it.
-        await rig.pool.query({
-            text: `DELETE FROM dbos.workflow_status WHERE executor_id = $1`,
-            values: [SEEDED_EXECUTOR_ID],
-        });
+        // Before the pool goes: every status row this file seeded, and every dependent row seeded beside it.
+        await ledger.reclaim();
         await rig.drop();
     });
 
@@ -300,7 +296,7 @@ describe("createAnalysisPurge", () => {
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(doomed.analysisId)).toBe(true);
         expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
-        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(4));
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(4));
 
         const outcome = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
         expect(outcome).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: true });
@@ -311,7 +307,7 @@ describe("createAnalysisPurge", () => {
         // The status rows go, and every dependent row that cascades off them goes with
         // them — that is where the analysis's bulk actually lived.
         expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(0);
-        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(0));
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(0));
     });
 
     it("covers exactly the analysis-keyed tables the live schema declares", async () => {
@@ -377,7 +373,7 @@ describe("createAnalysisPurge", () => {
         expect(await countMessages(bystander.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(bystander.analysisId)).toBe(true);
         expect(await ledger.countStatusRows(bystander.workflowIds)).toBe(4);
-        expect(await ledger.countCascadeRows(bystander.workflowIds)).toEqual(ledger.cascadeRows(4));
+        expect(await ledger.countDependentRows(bystander.workflowIds)).toEqual(ledger.dependentRows(4));
 
         const { rows: survivors } = await rig.pool.query<{ chunks: number; orphans: number }>({
             text: `SELECT (SELECT COUNT(*)::int FROM cortex_regulatory_chunks WHERE doc_id = $1) AS chunks,
@@ -387,7 +383,7 @@ describe("createAnalysisPurge", () => {
         expect(survivors[0]).toEqual({ chunks: 1, orphans: 1 });
 
         expect(await ledger.countStatusRows([scheduled])).toBe(1);
-        expect(await ledger.countCascadeRows([scheduled])).toEqual(ledger.cascadeRows(1));
+        expect(await ledger.countDependentRows([scheduled])).toEqual(ledger.dependentRows(1));
     });
 
     it("removes each kept tool output of the analysis, and keeps the one of a second analysis under the same reference", async () => {
@@ -423,7 +419,7 @@ describe("createAnalysisPurge", () => {
         expect(outcome.workflows).toBe(1);
 
         expect(await ledger.countStatusRows([profileWorkflowId])).toBe(0);
-        expect(await ledger.countCascadeRows([profileWorkflowId])).toEqual(ledger.cascadeRows(0));
+        expect(await ledger.countDependentRows([profileWorkflowId])).toEqual(ledger.dependentRows(0));
     });
 
     it("leaves no thread row and no message for an analysis whose threads form a hierarchy", async () => {
@@ -662,7 +658,7 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
-        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(4));
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(4));
         // Untouched by the cancel stage too, which never ran.
         expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING"]);
     });
@@ -685,7 +681,7 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
-        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(4));
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(4));
         expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING"]);
     });
 
@@ -772,6 +768,6 @@ describe("createAnalysisPurge", () => {
         const retried = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
         expect(retried).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: true });
         expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(0);
-        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(0));
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(0));
     });
 });

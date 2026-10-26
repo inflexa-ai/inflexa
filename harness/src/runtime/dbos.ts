@@ -1,22 +1,12 @@
 /**
- * DBOS Transact bootstrap.
- *
- * This is the only module that imports `@dbos-inc/dbos-sdk` directly. The
- * agent loop and routes depend on the `RunStep` shape (`harness/loop/types.ts`),
- * so DBOS stays swappable and the chat path never reaches into the workflow
- * runtime. `harness/loop/run-step.ts` wraps `DBOS.runStep` for the durable
- * variant; nothing else here.
- *
- * Launch is dormant — this change registers no workflows. The durability seam
- * exists; the engine is running; nothing is durable yet.
- *
- * See `openspec/changes/harness-dbos-runtime`.
+ * DBOS Transact bootstrap: the config of the engine, its launch, the
+ * schedules of the scheduled workflows, and its shutdown.
  */
 
 import { z } from "zod";
 
 import { textOf } from "../lib/unknown-text.js";
-import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
 import type { Querier } from "../state/db.js";
 
 import type { LogFields, Logger } from "../lib/logger.js";
@@ -37,7 +27,6 @@ export type DbosConfig = {
     readonly dbSslMode: "disable" | "require" | "verify-ca" | "verify-full";
     readonly appName: string;
     readonly applicationVersion?: string;
-    readonly adminPort: string;
     /** Stable per-pod executor id (e.g. `process.env.HOSTNAME ?? "local-dev"`). */
     readonly executorId: string;
     /**
@@ -177,12 +166,41 @@ export function dbosSdkConfig(config: DbosConfig, logger: Logger): DBOSConfig {
         systemDatabasePoolSize: DBOS_SYSTEM_POOL_SIZE,
         executorID: config.executorId,
         applicationVersion: config.applicationVersion,
-        adminPort: parseInt(config.adminPort, 10),
         logLevel: config.logLevel,
         logger: dbosSdkLogger(logger, config.logLevel),
         tracingEnabled: config.tracingEnabled ?? false,
         otelAttributeFormat: "semconv",
     };
+}
+
+/**
+ * Whether a failure ends the execution because it no longer owns its workflow. A
+ * cancel raises `DBOSWorkflowCancelledError` at the next operation. A cancel that
+ * lands while a step runs clears the owner of the workflow, and the record of the
+ * step then raises `DBOSWorkflowConflictError`. Neither execution may write a
+ * terminal state, thus each one leaves with the error.
+ */
+export function isWorkflowCancellation(err: unknown): boolean {
+    return err instanceof DBOSErrors.DBOSWorkflowCancelledError || err instanceof DBOSErrors.DBOSWorkflowConflictError;
+}
+
+/** One scheduled workflow: a registered workflow, and the crontab that starts it. */
+export type WorkflowSchedule = {
+    readonly scheduleName: string;
+    readonly workflowFn: () => Promise<void>;
+    /** A crontab with an optional leading field for the seconds. */
+    readonly schedule: string;
+};
+
+const pendingSchedules = new Map<string, WorkflowSchedule>();
+
+/**
+ * Schedule a registered workflow. DBOS stores a schedule in its system database,
+ * and it accepts one only after the launch, thus `launchDbos` applies each
+ * schedule of this list. A second call with the same name replaces the first.
+ */
+export function scheduleWorkflow(schedule: WorkflowSchedule): void {
+    pendingSchedules.set(schedule.scheduleName, schedule);
 }
 
 let resultRecipesRegistered = false;
@@ -218,12 +236,12 @@ export async function launchDbos({ config, logger: injected }: { config: DbosCon
 
     const start = performance.now();
     await DBOS.launch();
+    if (pendingSchedules.size > 0) await DBOS.applySchedules([...pendingSchedules.values()]);
     state.launched = true;
     state.recoveryStarted = true;
     logger.info("launched", {
         executorID: sdkConfig.executorID,
         applicationVersion: config.applicationVersion,
-        adminPort: sdkConfig.adminPort,
         tracingEnabled: sdkConfig.tracingEnabled,
         durationMs: Math.round(performance.now() - start),
     });

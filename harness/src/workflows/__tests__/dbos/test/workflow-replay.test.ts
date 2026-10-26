@@ -20,11 +20,11 @@
  *   module-level flag between runs" approach (which would skip a step on
  *   replay and change the sequence).
  *
- *   We use `cancelSelf()` mid-body, UNCONDITIONALLY.
- *   The cancel call is recorded as a step on the first attempt; on
- *   `resumeWorkflow` the body re-runs, cached step results return without
- *   re-invoking their closures, the cached cancel-step returns its cached
- *   no-op outcome, and any steps PAST the cancel point run fresh.
+ *   The body parks at `crashPoint()` mid-body, UNCONDITIONALLY. The test
+ *   cancels the parked workflow from outside and resumes it
+ *   (`recoverAtCrashPoint`): the body re-runs, cached step results return
+ *   without re-invoking their closures, and any steps PAST the crash point
+ *   run fresh.
  *
  *   Module-level counters incremented inside step closures stay at 1 for
  *   the steps that ran on the original attempt — proving the closure did
@@ -50,7 +50,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { setupDbosForTests, waitForStopped, waitForTerminal, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { setupDbosForTests, waitForTerminal, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { crashPoint, recoverAtCrashPoint, stepRecorded } from "../../../../__tests__/setup/dbos-crash.js";
 import { silentLogger } from "../../../../__tests__/setup/logger.js";
 import { captureMetrics } from "../../../../__tests__/setup/metrics.js";
 import { recordRunCompleted, recordStepCompleted } from "../../../../lib/metrics.js";
@@ -71,31 +72,13 @@ let metaCallCounter = 0;
  * DBOS step caching, exercised in isolation. DBOS replays a workflow with
  * its ORIGINAL durable input and requires the step SEQUENCE (function
  * name at each step-id) to be deterministic between attempts — diverging
- * sequences surface as `DBOSUnexpectedStepError` ("function X was recorded
- * when Y was expected — check that your workflow is deterministic").
+ * sequences surface as `DBOSUnexpectedStepError`.
  *
  * That rules out the obvious "flip a module-level flag between runs"
  * pattern: a conditional crash that's present on attempt 1 and absent on
- * attempt 2 changes the step sequence.
- *
- * Instead, the mid-body `cancelWorkflow(self)` is UNCONDITIONAL. It runs
- * on every attempt. On the first attempt it transitions the workflow to
- * CANCELLED before the post-cancel step runs. `DBOS.resumeWorkflow` clears
- * the cancelled state and re-runs the body: the cached step results
- * (including the cached cancel outcome) replay deterministically, and the
- * post-cancel step runs fresh because it was never recorded.
- *
- * The load-bearing assertion is that step CLOSURES re-invoke zero times
- * for steps that completed on the original attempt — the cached result
- * returns instead. Module-level counters incremented inside closures
- * remain unchanged across replay.
+ * attempt 2 changes the step sequence. The crash point is therefore
+ * UNCONDITIONAL: the replay parks at the same point until the test releases it.
  */
-async function cancelSelf(): Promise<void> {
-    const workflowId = DBOS.workflowID;
-    if (workflowId === undefined) throw new Error("the workflow id is absent outside a DBOS execution");
-    await DBOS.cancelWorkflow(workflowId);
-}
-
 const chaosMirror = DBOS.registerWorkflow(
     async (): Promise<{ llm: string; meta: string }> => {
         const llmResult = await DBOS.runStep(
@@ -106,14 +89,10 @@ const chaosMirror = DBOS.registerWorkflow(
             { name: "llm:0:0" },
         );
 
-        // Self-cancel — mirrors `sandbox-step.ts`'s 402 self-cancel path.
-        // CANCELLED is resumable via `DBOS.resumeWorkflow`; the step cache
-        // survives the transition and the cached `llm:0:0` result returns
-        // without re-invoking the closure on replay. The cancel call is
-        // ALWAYS in the body so the step sequence on replay matches the
-        // original — DBOS's determinism check rejects step sequences that
-        // diverge between attempts.
-        await cancelSelf();
+        // The crash point is ALWAYS in the body so the step sequence on replay
+        // matches the original — DBOS's determinism check rejects step sequences
+        // that diverge between attempts.
+        await crashPoint();
 
         const metaResult = await DBOS.runStep(
             () => {
@@ -135,17 +114,10 @@ let stepBCalls = 0;
 let stepCCalls = 0;
 
 /**
- * The cancel call is unconditional — DBOS's determinism check requires
- * the step sequence to be identical between original execution and replay.
- * A conditional that skips the cancel on replay would surface as
- * `DBOSUnexpectedStepError` ("function X was recorded when Y was expected
- * — check that your workflow is deterministic").
- *
- * Cancel-as-a-step is cached like any other step. The first execution
- * records the cancel and transitions the workflow to CANCELLED. On
- * `resumeWorkflow`, the body re-runs from the top: A and B return cached
- * results, the cancel call returns its cached "already invoked" outcome
- * (a no-op on the now-resumed workflow), and C runs fresh.
+ * The crash point is unconditional — DBOS's determinism check requires the step
+ * sequence to be identical between original execution and replay. On the
+ * resume, the body re-runs from the top: A and B return cached results, and C
+ * runs fresh.
  */
 const threeStepMirror = DBOS.registerWorkflow(
     async (): Promise<{ a: number; b: number; c: number }> => {
@@ -163,7 +135,7 @@ const threeStepMirror = DBOS.registerWorkflow(
             },
             { name: "three-step.b" },
         );
-        await cancelSelf();
+        await crashPoint();
         const c = await DBOS.runStep(
             () => {
                 stepCCalls += 1;
@@ -183,7 +155,7 @@ let terminalStepCalls = 0;
 /**
  * Mirror of the placement rule of `lib/metrics.ts`: an outcome metric is
  * recorded INSIDE the DBOS step that persists the terminal status. The
- * unconditional self-cancel after it forces a replay through `resumeWorkflow`;
+ * unconditional crash point after it forces a replay through `resumeWorkflow`;
  * the cached step returns without running its closure, so each counter reads one.
  */
 const terminalMetricMirror = DBOS.registerWorkflow(
@@ -198,7 +170,7 @@ const terminalMetricMirror = DBOS.registerWorkflow(
             },
             { name: "persist-final-status" },
         );
-        await cancelSelf();
+        await crashPoint();
         await DBOS.runStep(() => Promise.resolve(undefined), { name: "post-terminal.tail" });
         return { terminalCalls: terminalStepCalls };
     },
@@ -301,9 +273,9 @@ const idempotentSyncMirror = DBOS.registerWorkflow(
         // carrying one is no longer unsynced.
         await syncStepArtifacts();
 
-        // Unconditional cancel — see threeStepMirror's note on DBOS's
+        // Unconditional crash point — see threeStepMirror's note on DBOS's
         // determinism requirement for step sequences across replay.
-        await cancelSelf();
+        await crashPoint();
 
         const tail = await DBOS.runStep(() => Promise.resolve("tail-ok"), { name: "post-step.tail" });
 
@@ -338,24 +310,15 @@ describe("Integration test 10.6 — chaos recovery", () => {
 
         const wfId = rig.nextWorkflowId("chaos-");
 
-        // Run #1: workflow self-cancels after step 1. DBOS stores the workflow
-        // promise internally and may reject it AFTER the handle's promise
-        // chain. We poll the durable status instead of awaiting `getResult()`
-        // (with the handle's chain explicitly silenced).
+        // Run #1 parks at the crash point after step 1, and the test cancels it there.
         const handle1 = await DBOS.startWorkflow(chaosMirror, {
             workflowID: wfId,
         })();
-        const status1 = await waitForStopped(handle1, wfId);
-        expect(status1?.status).toBe("CANCELLED");
-
-        expect(llmCallCounter).toBe(1);
-        expect(metaCallCounter).toBe(0);
+        handle1.getResult().catch(() => {});
 
         // Resume the same workflow ID. DBOS replays the body — `llm:0:0`
-        // returns its cached value, the self-cancel step returns its cached
-        // outcome (no-op on a non-cancelled workflow), then `post-step.metadata`
-        // runs fresh.
-        const handle2 = await DBOS.resumeWorkflow<{ llm: string; meta: string }>(wfId);
+        // returns its cached value, then `post-step.metadata` runs fresh.
+        const handle2 = await recoverAtCrashPoint<{ llm: string; meta: string }>(wfId, () => stepRecorded(wfId, "llm:0:0"));
         const result = await handle2.getResult();
 
         // Load-bearing assertion: the step's CLOSURE did not run a second
@@ -381,14 +344,9 @@ describe("Integration test 10.6 — chaos recovery", () => {
         const handle1 = await DBOS.startWorkflow(threeStepMirror, {
             workflowID: wfId,
         })();
-        const status1 = await waitForStopped(handle1, wfId);
-        expect(status1?.status).toBe("CANCELLED");
+        handle1.getResult().catch(() => {});
 
-        expect(stepACalls).toBe(1);
-        expect(stepBCalls).toBe(1);
-        expect(stepCCalls).toBe(0);
-
-        const handle2 = await DBOS.resumeWorkflow<{ a: number; b: number; c: number }>(wfId);
+        const handle2 = await recoverAtCrashPoint<{ a: number; b: number; c: number }>(wfId, () => stepRecorded(wfId, "three-step.b"));
         const result = await handle2.getResult();
 
         // A and B returned cached values; C ran fresh.
@@ -449,13 +407,10 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
         const handle1 = await DBOS.startWorkflow(idempotentSyncMirror, {
             workflowID: wfId,
         })();
-        const status1 = await waitForStopped(handle1, wfId);
-        expect(status1?.status).toBe("CANCELLED");
+        handle1.getResult().catch(() => {});
 
-        expect(syncCalls).toBe(1);
-        expect(syncUploads).toEqual([2]);
-
-        const handle2 = await DBOS.resumeWorkflow<{ uploads: number[]; tail: string }>(wfId);
+        // The sync takes no step, thus its own count marks the crash point.
+        const handle2 = await recoverAtCrashPoint<{ uploads: number[]; tail: string }>(wfId, () => syncCalls === 1);
         const result = await handle2.getResult();
 
         // The bare await DOES re-run on replay — it holds no cached result to
@@ -487,9 +442,9 @@ describe("run and step outcome metrics across a DBOS replay", () => {
             terminalStepCalls = 0;
             const wfId = rig.nextWorkflowId("metric-replay-");
             const handle1 = await DBOS.startWorkflow(terminalMetricMirror, { workflowID: wfId })();
-            expect((await waitForStopped(handle1, wfId))?.status).toBe("CANCELLED");
+            handle1.getResult().catch(() => {});
 
-            const result = await (await DBOS.resumeWorkflow<{ terminalCalls: number }>(wfId)).getResult();
+            const result = await (await recoverAtCrashPoint<{ terminalCalls: number }>(wfId, () => stepRecorded(wfId, "persist-final-status"))).getResult();
 
             // The body ran twice; the terminal step's closure ran once, and so did each record in it.
             expect(result.terminalCalls).toBe(1);

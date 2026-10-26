@@ -227,7 +227,7 @@ than resuming against a dead machine.
 
 ### Requirement: A scheduled reaper is the sole orphan cleanup
 
-The harness SHALL register a separate `@DBOS.scheduled` `registerSandboxReaper`
+The harness SHALL register a separate scheduled `registerSandboxReaper`
 workflow (~5-minute cadence, unsharded) as the only garbage collector for
 orphaned sandbox machines and stale registry rows. One sweep SHALL run as a
 single DBOS step: `listManagedSandboxes`, then for each machine read its

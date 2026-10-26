@@ -53,7 +53,6 @@ function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
             dbPassword: "",
             dbSslMode: "disable",
             appName: "boot-test",
-            adminPort: "",
             executorId: "boot-test",
         },
         connectionBudget: {},

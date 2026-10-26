@@ -40,7 +40,6 @@ const harnessConfigSchema = z.object({
                 .optional(),
         })
         .optional(),
-    adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
 });
 
@@ -72,8 +71,6 @@ export type ResolvedHarnessConfig = {
      * (see `resolvePolicy` for the derivation and its defaults).
      */
     readonly resourcePolicy: ResourcePolicy;
-    /** DBOS admin port. */
-    readonly adminPort: number;
     readonly skillsDir: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
@@ -163,11 +160,6 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         },
         sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
-        // The default is channel-aware (env.adminPort, from stackPorts) so a dev harness runtime and an
-        // installed prod harness runtime resolve to different admin ports and never contend for the admin
-        // HTTP bind on a dual-build machine. The port-family choice and the cross-channel collision-avoidance
-        // rationale live at stackPorts in lib/env.ts; a config.json `harness.adminPort` still wins here.
-        adminPort: cfg?.adminPort ?? env.adminPort,
         skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         configError,
     };

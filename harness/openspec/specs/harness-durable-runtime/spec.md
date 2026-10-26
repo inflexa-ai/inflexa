@@ -189,8 +189,10 @@ checkpointed in `DBOS.runStep`.
 ### Requirement: DBOS launches with a stable executor identity and recovers under it
 
 The host SHALL call `launchDbos` after configuring and registering workflows.
-Configuration SHALL set `executorID` from the host's stable process identity, an
-optional `applicationVersion`, and an `adminPort`. When the same process slot
+`launchDbos` SHALL apply the schedule of each scheduled workflow after the launch,
+because DBOS stores a schedule only after its launch.
+Configuration SHALL set `executorID` from the host's stable process identity,
+and an optional `applicationVersion`. When the same process slot
 relaunches under the same `executorID`, DBOS SHALL be able to reclaim the pending
 workflows its predecessor left behind. Core SHALL NOT ship an HTTP recovery route
 or a standing recovery component; operator controls for retired executor ids are

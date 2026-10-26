@@ -9,11 +9,12 @@
  * destroy another file's rows.
  *
  * The set of tables holding an `ON DELETE CASCADE` key to `workflow_status` is
- * hand-written here because the engine owns that schema and adds to it across
+ * hand-written here because the engine owns that schema and changes it across
  * versions. `WORKFLOW_CASCADE_TABLES` is what a test pins against the live
- * constraints, and `CASCADE_INSERTS` is keyed by the same union, so a table
- * added to the list without an insert beside it is a type error rather than a
- * table nothing ever seeds.
+ * constraints. The engine deletes the rows of `WORKFLOW_OWNED_TABLES` by name,
+ * because those tables hold no key. `DEPENDENT_INSERTS` is keyed by the union of
+ * the two lists, so a table added to a list without an insert beside it is a
+ * type error rather than a table nothing ever seeds.
  */
 
 import type { Pool, QueryConfig } from "pg";
@@ -23,19 +24,20 @@ import type { Pool, QueryConfig } from "pg";
  * `workflow_status`, which is how deleting a status row reaches the bytes
  * hanging off it.
  */
-export const WORKFLOW_CASCADE_TABLES = [
-    "notifications",
-    "operation_outputs",
-    "streams",
-    "workflow_events",
-    "workflow_events_history",
-    "workflow_inputs",
-    "workflow_queue",
-] as const;
+export const WORKFLOW_CASCADE_TABLES = ["notifications", "streams", "workflow_events", "workflow_events_history"] as const;
 
-export type WorkflowCascadeTable = (typeof WORKFLOW_CASCADE_TABLES)[number];
+/**
+ * The `dbos` tables that hold the bytes of a workflow with no key to
+ * `workflow_status`. The delete of the engine removes their rows by name, and a
+ * raw delete of a status row leaves them behind.
+ */
+export const WORKFLOW_OWNED_TABLES = ["operation_outputs", "workflow_input", "workflow_output"] as const;
 
-export type WorkflowTable = "workflow_status" | WorkflowCascadeTable;
+export const WORKFLOW_DEPENDENT_TABLES = [...WORKFLOW_CASCADE_TABLES, ...WORKFLOW_OWNED_TABLES] as const;
+
+export type WorkflowDependentTable = (typeof WORKFLOW_DEPENDENT_TABLES)[number];
+
+export type WorkflowTable = "workflow_status" | WorkflowDependentTable;
 
 /** `notifications` names its workflow reference `destination_uuid`; every other table uses `workflow_uuid`. */
 function workflowIdColumn(table: WorkflowTable): string {
@@ -43,10 +45,10 @@ function workflowIdColumn(table: WorkflowTable): string {
 }
 
 /**
- * One dependent row per cascading table. `label` only makes a seeded row
- * greppable back to the file that wrote it; nothing reads these values back.
+ * One row per dependent table. `label` only makes a seeded row greppable back
+ * to the file that wrote it; nothing reads these values back.
  */
-const CASCADE_INSERTS: Record<WorkflowCascadeTable, (workflowId: string, label: string) => QueryConfig> = {
+const DEPENDENT_INSERTS: Record<WorkflowDependentTable, (workflowId: string, label: string) => QueryConfig> = {
     notifications: (workflowId, label) => ({
         // A topic is supplied rather than left NULL: the engine's insert trigger
         // builds its notify payload by concatenating the destination and the topic,
@@ -74,16 +76,13 @@ const CASCADE_INSERTS: Record<WorkflowCascadeTable, (workflowId: string, label: 
                VALUES ($1, 0, $2, 'v')`,
         values: [workflowId, `${label}-key`],
     }),
-    workflow_inputs: (workflowId) => ({
-        text: `INSERT INTO dbos.workflow_inputs (workflow_uuid, inputs) VALUES ($1, '[]')`,
+    workflow_input: (workflowId) => ({
+        text: `INSERT INTO dbos.workflow_input (workflow_uuid, inputs) VALUES ($1, '[]')`,
         values: [workflowId],
     }),
-    workflow_queue: (workflowId, label) => ({
-        // `deduplication_id` is left NULL: the unique key it shares with `queue_name`
-        // treats NULLs as distinct, so every seeded workflow can sit on the same queue
-        // name without colliding.
-        text: `INSERT INTO dbos.workflow_queue (queue_name, workflow_uuid) VALUES ($1, $2)`,
-        values: [`${label}-queue`, workflowId],
+    workflow_output: (workflowId) => ({
+        text: `INSERT INTO dbos.workflow_output (workflow_uuid, output) VALUES ($1, '"done"')`,
+        values: [workflowId],
     }),
 };
 
@@ -98,25 +97,27 @@ export type DbosLedgerSeederDeps = {
      */
     readonly executorId: string;
     /**
-     * The cascading tables to write a dependent row into. Defaults to all of them:
-     * a caller asserting a post-purge zero per table needs every one of them
-     * seeded, or the zero stands for an empty table rather than a reclamation.
-     * Narrow it when the assertions read back only some.
+     * The dependent tables to write a row into. Defaults to all of them: a caller
+     * asserting a post-purge zero per table needs every one of them seeded, or
+     * the zero stands for an empty table rather than a reclamation. Narrow it
+     * when the assertions read back only some.
      */
-    readonly cascadeTables?: readonly WorkflowCascadeTable[];
+    readonly dependentTables?: readonly WorkflowDependentTable[];
 };
 
 export type DbosLedgerSeeder = {
-    /** One `workflow_status` row, optionally parented, plus a row in each cascading table this seeder covers. */
+    /** One `workflow_status` row, optionally parented, plus a row in each dependent table this seeder covers. */
     seedWorkflow(workflowId: string, parentId?: string): Promise<void>;
     /** Rows in one system table keyed to any of the given workflows. */
     countRows(table: WorkflowTable, workflowIds: readonly string[]): Promise<number>;
     /** Status rows for the given workflows. */
     countStatusRows(workflowIds: readonly string[]): Promise<number>;
     /** Every dependent row count for the given workflows, keyed by table. */
-    countCascadeRows(workflowIds: readonly string[]): Promise<Record<string, number>>;
-    /** Every seeded table set to the same count, for comparing a whole cascade at once. */
-    cascadeRows(each: number): Record<string, number>;
+    countDependentRows(workflowIds: readonly string[]): Promise<Record<string, number>>;
+    /** Every seeded table set to the same count, for comparing all dependent rows at once. */
+    dependentRows(each: number): Record<string, number>;
+    /** Delete each status row that this seeder stamped, and each dependent row of those workflows. */
+    reclaim(): Promise<void>;
 };
 
 /**
@@ -127,7 +128,7 @@ export type DbosLedgerSeeder = {
  */
 export function createDbosLedgerSeeder(deps: DbosLedgerSeederDeps): DbosLedgerSeeder {
     const { pool, executorId } = deps;
-    const cascadeTables = deps.cascadeTables ?? WORKFLOW_CASCADE_TABLES;
+    const dependentTables = deps.dependentTables ?? WORKFLOW_DEPENDENT_TABLES;
 
     const countRows = async (table: WorkflowTable, workflowIds: readonly string[]): Promise<number> => {
         const { rows } = await pool.query<{ n: number }>({
@@ -146,8 +147,8 @@ export function createDbosLedgerSeeder(deps: DbosLedgerSeederDeps): DbosLedgerSe
                        VALUES ($1, 'PENDING', $2, $3, $4)`,
                 values: [workflowId, `${executorId}-workflow`, executorId, parentId ?? null],
             });
-            for (const table of cascadeTables) {
-                await pool.query(CASCADE_INSERTS[table](workflowId, executorId));
+            for (const table of dependentTables) {
+                await pool.query(DEPENDENT_INSERTS[table](workflowId, executorId));
             }
         },
 
@@ -155,20 +156,31 @@ export function createDbosLedgerSeeder(deps: DbosLedgerSeederDeps): DbosLedgerSe
 
         countStatusRows: (workflowIds) => countRows("workflow_status", workflowIds),
 
-        async countCascadeRows(workflowIds: readonly string[]): Promise<Record<string, number>> {
+        async countDependentRows(workflowIds: readonly string[]): Promise<Record<string, number>> {
             const counts: Record<string, number> = {};
-            for (const table of cascadeTables) {
+            for (const table of dependentTables) {
                 counts[table] = await countRows(table, workflowIds);
             }
             return counts;
         },
 
-        cascadeRows(each: number): Record<string, number> {
+        dependentRows(each: number): Record<string, number> {
             const counts: Record<string, number> = {};
-            for (const table of cascadeTables) {
+            for (const table of dependentTables) {
                 counts[table] = each;
             }
             return counts;
+        },
+
+        async reclaim(): Promise<void> {
+            for (const table of WORKFLOW_OWNED_TABLES) {
+                await pool.query({
+                    // The table name comes from the literal list above, so nothing caller-shaped reaches the SQL.
+                    text: `DELETE FROM dbos.${table} WHERE workflow_uuid IN (SELECT workflow_uuid FROM dbos.workflow_status WHERE executor_id = $1)`,
+                    values: [executorId],
+                });
+            }
+            await pool.query({ text: `DELETE FROM dbos.workflow_status WHERE executor_id = $1`, values: [executorId] });
         },
     };
 }

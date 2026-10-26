@@ -20,7 +20,8 @@
 
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
-import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import { DBOS } from "@dbos-inc/dbos-sdk";
+import { isWorkflowCancellation } from "../runtime/dbos.js";
 import { randomUUID } from "node:crypto";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -281,7 +282,7 @@ async function readSetHeaders(args: {
             emit: async () => {},
         });
     } catch (err) {
-        if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+        if (isWorkflowCancellation(err)) throw err;
         logger.warn("input-scan header readout failed (non-fatal)", logger.errorFields(err));
         return new Map();
     }
@@ -800,7 +801,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     invocationId: workflowId,
                     usageRecorder: deps.usageRecorder,
                     toolOutputStore: deps.toolOutputStore,
-                    isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
+                    isFatalLoopError: (err) => isWorkflowCancellation(err),
                 },
                 {
                     tools: [submitProfileTool],
@@ -859,7 +860,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
-        if (selfCancelled || err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+        if (selfCancelled || isWorkflowCancellation(err)) throw err;
         const suspension = suspensionOfFailure(err);
         if (suspension !== undefined) {
             await suspendProfile(suspension);

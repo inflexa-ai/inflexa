@@ -61,14 +61,14 @@ describe("migrateRetiredSandboxImageOverride", () => {
         mkdirSync(dirname(env.configPath), { recursive: true });
         writeFileSync(
             env.configPath,
-            JSON.stringify({ telemetry: false, harness: { sandboxImage: "ghcr.io/inflexa-ai/sandbox-python-r:latest", adminPort: 4141 } }),
+            JSON.stringify({ telemetry: false, harness: { sandboxImage: "ghcr.io/inflexa-ai/sandbox-python-r:latest", skillsDir: "/skills" } }),
         );
 
         expect(migrateRetiredSandboxImageOverride()).toBe("ghcr.io/inflexa-ai/sandbox-python-r:latest");
 
         const harness = readConfig().harness as Record<string, unknown>;
         expect(harness.sandboxImage).toBeUndefined();
-        expect(harness.adminPort).toBe(4141);
+        expect(harness.skillsDir).toBe("/skills");
         expect(configuredSandboxImage()).toBe(SANDBOX_IMAGE);
         // A second run finds nothing: the migration is one-shot by content.
         expect(migrateRetiredSandboxImageOverride()).toBeNull();
