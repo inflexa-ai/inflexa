@@ -25,10 +25,10 @@ import { AGENT_NAMES, type AgentEffort, type AgentName } from "./config.ts";
 
 /**
  * A {@link ChatProvider} whose delegated inner target can be swapped at runtime. The agent's provider on
- * the composition, the run-engine deps bundles, the conversation agent's sub-agents, and the streaming
- * chat wrapper all capture THIS stable reference, so a single {@link SwappableChatProvider.swap} at the
- * idle transition re-points every one of them at once. Both `chat` and `chatStream` read the current
- * inner at CALL time, so a wrapper built once (e.g. `createStreamingChat`) follows the swap.
+ * the composition, the run-engine deps bundles, the conversation agent's sub-agents, and the chat-turn
+ * deps all capture THIS stable reference, so a single {@link SwappableChatProvider.swap} at the
+ * idle transition re-points every one of them at once. `bind` reads the current inner at CALL time, so
+ * the next run that binds a model follows the swap.
  */
 export type SwappableChatProvider = ChatProvider & {
     /**
@@ -48,7 +48,7 @@ export type SwappableChatProvider = ChatProvider & {
 /**
  * Wrap a provider so its inner target can be swapped later. `capabilities` reads through to the current
  * inner; both agent providers advertise `{ toolCalling: true }`, so the value is stable across swaps and
- * a consumer that snapshots it (`createStreamingChat`) stays correct.
+ * a consumer that snapshots it stays correct.
  */
 export function createSwappableProvider(initial: ChatProvider): SwappableChatProvider {
     let inner = initial;
@@ -65,11 +65,8 @@ export function createSwappableProvider(initial: ChatProvider): SwappableChatPro
         get current() {
             return inner;
         },
-        chat(req, session, signal) {
-            return inner.chat(req, session, signal);
-        },
-        chatStream(req, session, signal) {
-            return inner.chatStream(req, session, signal);
+        bind(binding) {
+            return inner.bind(binding);
         },
         swap(next) {
             inner = next;

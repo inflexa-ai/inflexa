@@ -16,15 +16,11 @@ import type { Pool } from "@inflexa-ai/harness";
  * verbatim so new step kinds surface instead of hiding behind a generic label.
  */
 export function friendlyStepLabel(functionName: string): string {
-    const llm = functionName.match(/^llm-(\d+)$/);
-    if (llm) return `model round ${Number(llm[1]) + 1}`;
-    if (functionName.startsWith("tool-")) {
-        const rest = functionName.slice("tool-".length);
-        // Step names are `tool-{toolName}-{toolCallId}` with toolCallId minted
-        // as `toolu_…`; tool names themselves may contain hyphens/underscores.
-        const cut = rest.lastIndexOf("-toolu");
-        return `tool ${cut === -1 ? rest : rest.slice(0, cut)}`;
-    }
+    if (functionName.endsWith(".model")) return "model call";
+    // A tool step is `{toolName}.{toolCallId}`, and the provider mints the call id as `toolu_…` or `call_…`.
+    // The prefix tells a tool step from a harness step such as `sandbox.create`.
+    const tool = functionName.match(/^([^.]+)\.(?:toolu_|call_)/);
+    if (tool) return `tool ${tool[1]}`;
     if (functionName.includes("submit-exec")) return "dispatching sandbox command";
     if (functionName === "DBOS.recv" || functionName === "DBOS.sleep" || functionName === "DBOS.now") return "sandbox executing";
     return functionName;

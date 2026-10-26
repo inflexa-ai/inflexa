@@ -3,10 +3,7 @@ import {
     createThreadHistory,
     makeLocalAuth,
     openChatTurn,
-    type AgentChat,
     type AgentFinish,
-    type AskApproval,
-    type AskRequest,
     type ChatTurnResult,
     type ChatTurnSession,
     type DbError,
@@ -15,16 +12,13 @@ import {
     type RetractOutcome,
     type RunChatTurnDeps,
     type RunChatTurnParams,
-    type ThreadAgentResolver,
     type ThreadHistory,
     type ThreadType,
-    type UsageRecorder,
 } from "@inflexa-ai/harness";
 
-import { getLogger, harnessLogger } from "../../lib/log.ts";
+import { getLogger } from "../../lib/log.ts";
 import { currentUserEmail } from "../auth/whoami.ts";
 import { enterChatTurn } from "./agent_switch.ts";
-import { provenanceSeam } from "./prov_bridge.ts";
 
 // The headless chat turn engine that the chat route of the local server runs. It gives the `runChatTurn`
 // of the harness the values of the surface and maps the result. It does no terminal output.
@@ -70,12 +64,11 @@ export type TurnOutcome =
 
 /** The transport values of one chat turn, which the harness turn stores and runs. */
 export type RunChatTurnArgs = {
-    /** App pool over the harness ledger. */
-    readonly pool: Pool;
-    /** The thread→agent resolver (`runtime.agents`). The harness resolves the agent from the type of the thread. */
-    readonly agents: ThreadAgentResolver;
-    /** Builds the streaming provider over the recorder's emit sink. */
-    readonly chat: (emit: EmitFn) => AgentChat;
+    /**
+     * The runtime values of the turn (`runtime.chatTurns`): the pool, the agent resolver, the model, the
+     * usage recorder, and the approval gateway, as the harness assembled them.
+     */
+    readonly chatTurns: RunChatTurnDeps;
     /**
      * Carries `threadId` in scope, so a plan launched here stamps `cortex_runs.thread_id`. The harness
      * sets the provenance from the agent of the thread.
@@ -83,18 +76,8 @@ export type RunChatTurnArgs = {
     readonly session: ChatTurnSession;
     /** The surface's live event sink; the display recorder forwards every event here. */
     readonly emit: EmitFn;
-    /**
-     * The booted runtime's ONE {@link UsageRecorder} (`runtime.usageRecorder`). Required, because the
-     * harness falls back to its no-op when the value is absent, and the turn then records nothing.
-     */
-    readonly usageRecorder: UsageRecorder;
     /** Turn-scoped cancellation, which the caller owns. */
     readonly signal: AbortSignal;
-    /**
-     * The per-turn user-approval binding a `ctx.ask` tool pauses on. Omitted → the harness resolves
-     * approval to its deny-by-default realization, which is how the REPL stays a write-only sink.
-     */
-    readonly ask?: (request: AskRequest, emit: EmitFn) => Promise<AskApproval>;
     /** The resolved analysis this turn is scoped to (ownership check + context load). */
     readonly analysisId: string;
     /** The conversation thread this turn appends to. */
@@ -154,7 +137,7 @@ export function buildChatSession(analysisId: string, threadId: string): ChatTurn
  * keeps the stored rounds. The caller renders the outcome.
  */
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
-    const { pool, agents, chat, session, emit, signal, analysisId, threadId, userInput, ask, usageRecorder, onOpened } = args;
+    const { chatTurns, session, emit, signal, analysisId, threadId, userInput, onOpened } = args;
 
     // An agent switch requested during the turn waits for this token, and the `finally` lands it.
     const leaveChatTurn = enterChatTurn();
@@ -164,24 +147,18 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // Read at the top, because the author is who sent the message: a sign-out during the turn
         // must not erase that person. Inside the `try`, thus a throw cannot strand the turn token.
         const author = seams.readAuthor();
-        const result = await seams.turn(
-            { pool, agents, logger: harnessLogger("harness"), provenance: provenanceSeam() },
-            {
-                analysisId,
-                threadId,
-                userInput,
-                session,
-                chat,
-                emit,
-                signal,
-                usageRecorder,
-                startedAtMs: turnStartedAt,
-                ...(ask ? { ask } : {}),
-                ...(onOpened ? { onOpened } : {}),
-                // An empty email is no sender, thus it never reaches the store as a name.
-                ...(author ? { author } : {}),
-            },
-        );
+        const result = await seams.turn(chatTurns, {
+            analysisId,
+            threadId,
+            userInput,
+            session,
+            emit,
+            signal,
+            startedAtMs: turnStartedAt,
+            ...(onOpened ? { onOpened } : {}),
+            // An empty email is no sender, thus it never reaches the store as a name.
+            ...(author ? { author } : {}),
+        });
         switch (result.kind) {
             case "prepare_failed":
                 // The surface shows one line, thus the log keeps the whole cause.

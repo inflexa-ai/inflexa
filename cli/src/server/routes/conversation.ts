@@ -5,7 +5,6 @@ import { Hono, type Context } from "hono";
 import { Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
-    createStreamingChat,
     createThreadHistory,
     createThreadStore,
     reportSessionDir,
@@ -114,11 +113,8 @@ export const DEFAULT_CONVERSATION_ROUTE_OPTS: ConversationRouteOpts = {
     sse: DEFAULT_SSE_OPTS,
 };
 
-/** The ask user id of each turn: one person owns a local install, and the cli holds no account model. */
-const LOCAL_ASK_USER_ID = "local";
-
 /**
- * The source of the frames that the route makes itself: the `text-delta` of the root provider, which carries
+ * The source of the frames that the route makes itself: the `text-delta` of the root reply, which carries
  * none, and the terminal frame. A path of one entry is a root frame, which is all that a client reads.
  */
 const ROOT_SOURCE: EventSource = { agentId: "chat", callPath: ["chat"] };
@@ -432,9 +428,7 @@ async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId
 
     const settled = opts
         .runTurn({
-            pool: runtime.pool,
-            agents: runtime.agents,
-            chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
+            chatTurns: runtime.chatTurns,
             session: buildChatSession(analysisId, threadId),
             emit: (event) => {
                 const frame = toChatFrame(event, ROOT_SOURCE);
@@ -447,8 +441,6 @@ async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId
                 );
             },
             signal,
-            usageRecorder: runtime.usageRecorder,
-            ask: (request, emit) => runtime.askGateway.ask(request, { analysisId, userId: LOCAL_ASK_USER_ID, threadId, signal, emit }),
             analysisId,
             threadId,
             userInput: message,

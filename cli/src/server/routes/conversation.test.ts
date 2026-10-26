@@ -108,14 +108,12 @@ function fakeGateway(pending: PendingAsk[], outcome: AnswerOutcome = "applied"):
     };
 }
 
-/** A boot whose runtime is ready. The routes read the pool, the agents, the provider, the recorder, and the gateway of the runtime, and each fake below ignores the pool. */
+/** A boot whose runtime is ready. The routes read the pool, the chat-turn deps, and the gateway of the runtime, and each fake below ignores the pool and the deps. */
 function readyBoot(gateway: AskGateway = fakeGateway([])): ServerBoot {
     // The cast is sound for the reason above: no route under test reads another field of the runtime.
     const runtime = {
         pool: {},
-        agents: {},
-        conversation: { provider: {}, model: "m" },
-        usageRecorder: { record: () => okAsync(undefined) },
+        chatTurns: {},
         askGateway: gateway,
     } as unknown as HarnessRuntime;
     const state: ServerBootState = {
@@ -588,7 +586,7 @@ describe("POST {A}/chat", () => {
         expect(hasRunningTurn(A)).toBe(false);
     });
 
-    test("gives the turn the recorder of the runtime, the session of the thread, and an ask binding", async () => {
+    test("gives the turn the chat-turn deps of the runtime and the session of the thread", async () => {
         let seen: RunChatTurnArgs | null = null;
         const boot = readyBoot();
         const routes = routesWith({
@@ -600,12 +598,12 @@ describe("POST {A}/chat", () => {
             },
         });
         await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hello" })));
-        // Without the recorder of the runtime, the calls of the conversation agent never reach the ledger.
+        // The deps of the runtime carry its recorder and its gateway. Without them, the calls of the
+        // conversation agent never reach the ledger, and its asks never reach the surface.
         const args = seen as RunChatTurnArgs | null;
-        expect(args?.usageRecorder).toBe(boot.runtime()!.usageRecorder);
+        expect(args?.chatTurns).toBe(boot.runtime()!.chatTurns);
         expect(args?.session.scope).toEqual({ kind: "analysis", analysisId: A, threadId: T });
         expect(args).toMatchObject({ analysisId: A, threadId: T, userInput: "hello" });
-        expect(typeof args?.ask).toBe("function");
     });
 
     test("keeps the frames of a sub-agent, with their source", async () => {

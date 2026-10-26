@@ -575,8 +575,8 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
     }
 
     function finishTurn(fallbackText?: string): void {
-        // Non-streaming `runAgent` path: nothing arrived as deltas, so print the
-        // final assistant text now (a streaming loop that emitted deltas skips this).
+        // Nothing arrived as deltas, so print the final assistant text now
+        // (a turn that emitted deltas skips this).
         if (!streamedText && fallbackText && fallbackText.trim().length > 0) {
             sink.out(fallbackText);
         }

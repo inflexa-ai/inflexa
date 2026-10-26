@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ok, okAsync } from "neverthrow";
-import type { AgentChat, AgentDefinition, ChatProvider, EmitFn, Pool, RunProvenanceEvent } from "@inflexa-ai/harness";
+import type { AgentDefinition, AgentSession, ChatProvider, EmitFn, Pool, RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -25,23 +25,19 @@ import {
 } from "./agent_switch.ts";
 import type { AgentEffort } from "./config.ts";
 
-// A provider stub tagged with its bound model and effort so a swap is observable by identity — its `chat`/
-// `chatStream` are never reached (the switch only rebuilds and swaps handles, never calls the wire).
+// A provider stub tagged with its bound model and effort so a swap is observable by identity. The switch
+// only rebuilds and swaps handles, and never binds a model, thus `bind` refuses and names the inner that
+// it reached — the one test that binds reads which inner the handle delegated to from that refusal.
 type TaggedProvider = ChatProvider & { readonly __model: string; readonly __effort: AgentEffort };
 function fakeProvider({ model, effort }: AgentSelection): TaggedProvider {
     return {
         __model: model,
         __effort: effort,
         capabilities: { toolCalling: true },
-        chat: () => {
-            throw new Error("chat must not be called in switch tests");
+        bind: () => {
+            throw new Error(`bind reached ${model}`);
         },
-        chatStream: () => {
-            throw new Error("chatStream must not be called in switch tests");
-        },
-        // The `chat`/`chatStream` stubs are structurally incompatible with the real Result/AsyncIterable
-        // return types, but no test path invokes them, so the double cast is honest here.
-    } as unknown as TaggedProvider;
+    };
 }
 
 /** Read the bound model of the inner provider an agent's swappable handle currently delegates to. */
@@ -177,6 +173,17 @@ describe("agent-work gauge", () => {
         expect(isAgentWorkIdle()).toBe(false);
         noteDataProfileState("an-1", false);
         expect(isAgentWorkIdle()).toBe(true);
+    });
+});
+
+describe("the swappable provider", () => {
+    test("binds through the inner that it holds at the time of the call, thus a held handle follows a swap", () => {
+        const handle = createSwappableProvider(fakeProvider(sel("claude-before")));
+        const session: AgentSession = { ...buildChatSession("an-1", "t-1"), provenance: { agentId: "conv", callPath: ["conv"] } };
+
+        handle.swap(fakeProvider(sel("claude-after")));
+
+        expect(() => handle.bind({ session, live: true })).toThrow("bind reached claude-after");
     });
 });
 
@@ -330,7 +337,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
             }
             return {
                 kind: "ran",
-                outcome: { status: "done", finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 } },
+                outcome: { status: "done", finish: { reason: "stop", cappedOut: false } },
                 opened: true,
                 durationMs: 0,
                 fallbackText: chunks.join(""),
@@ -339,15 +346,17 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
 
         const outcome = await runChatTurn(
             {
-                pool: {} as unknown as Pool,
-                agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
-                chat: () => ({}) as AgentChat,
+                // The `turn` seam never completes a model call, thus nothing here records, and the turn
+                // reads the conversation handle that the switch re-points.
+                chatTurns: {
+                    pool: {} as unknown as Pool,
+                    agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
+                    provider: h.swappable.conversation,
+                    usageRecorder: { record: () => okAsync(undefined) },
+                },
                 session: buildChatSession("an-1", "t-1"),
                 emit: (() => {}) as EmitFn,
                 signal: new AbortController().signal,
-                // The turn's accounting seam. Nothing here records — the `turn` seam never completes a
-                // model call — but the engine requires it, which is what stops a call site forgetting it.
-                usageRecorder: { record: () => okAsync(undefined) },
                 analysisId: "an-1",
                 threadId: "t-1",
                 userInput: "?",
