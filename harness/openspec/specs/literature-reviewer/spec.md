@@ -138,36 +138,6 @@ The host-agnostic `synthesizeRun` service (`harness/src/app/synthesize-run.ts`) 
 - **WHEN** the synthesizer calls `read_tool_output` with the reference of the excerpt
 - **THEN** the call gives a page of the report
 
-### Requirement: submit_synthesis validates and is re-callable; no-terminal throws
-
-`submit_synthesis` MUST validate the submitted payload again against `RunSynthesisSchema` plus the semantic checks. The checks are the `runId` match, the `stepId` references, the theme-to-finding references, the `keyReferences` that a finding cites, and numeric PMIDs. It MUST return `{ accepted: true }` on success, or `{ accepted: false, issues }` on a rejection. Thus the agent can correct the cited issue paths and call again.
-
-When the loop ends without a terminal tool call, `runToTerminal` MUST run one salvage continuation. The salvage continuation MUST keep the declared tools of the synthesizer, and its mask MUST let only the terminal tools run. If the salvage also ends without a terminal tool call, `generateRunSynthesis` MUST throw.
-
-A synthesis failure MUST throw again out of `synthesizeRun`, after a `failed` progress phase, thus the run fails loudly. Only two non-fatal outcomes return empty findings after a `skipped` phase: no step summaries, and a `report_blocker`.
-
-#### Scenario: Rejected submission is fixed and resubmitted
-
-- **WHEN** `submit_synthesis` returns `{ accepted: false, issues }`
-- **THEN** the agent corrects the fields at the cited issue paths and calls `submit_synthesis` again
-
-#### Scenario: Blocker is a non-fatal skip
-
-- **WHEN** the synthesizer calls `report_blocker`
-- **THEN** `synthesizeRun` reports a `skipped` phase with the blocker reason and returns empty findings
-
-#### Scenario: No terminal call fails the run
-
-- **WHEN** the loop and its salvage continuation both end without a terminal tool call
-- **THEN** `generateRunSynthesis` throws, and `synthesizeRun` throws again, thus the run fails loudly
-
-#### Scenario: The salvage keeps the tools of the synthesizer
-
-- **GIVEN** a synthesizer run that ends without a terminal tool call
-- **WHEN** the salvage continuation sends its request
-- **THEN** the request declares `literature_reviewer` and the other tools of the synthesizer
-- **AND** a call to `literature_reviewer` in the salvage gets the error result of the mask
-
 ### Requirement: The reviewer prompt teaches correct tool-argument usage
 
 The literature-reviewer prompt SHALL explicitly teach correct argument usage for

@@ -208,22 +208,6 @@ The provider SHALL set the upstream `max_tokens` from the model's ceiling (`maxO
 - **WHEN** a caller assembles a request
 - **THEN** `max_tokens` is absent from the type, and the provider supplies it from `maxOutputTokens(model)`
 
-### Requirement: Chat provider exposes streaming and non-streaming entry points
-
-The harness chat provider seam SHALL expose AI SDK-backed non-streaming and streaming entry points suitable for both request-path chat and durable workflow loops. Non-streaming execution SHALL return a complete AI SDK model response/transcript value usable by the loop, and streaming execution SHALL emit text deltas plus a terminal response value. Both entry points SHALL use the same AI SDK-compatible language model and SHALL preserve provider metadata needed for continuation.
-
-#### Scenario: Non-streaming chat returns a complete AI SDK response
-
-- **GIVEN** a fake AI SDK language model emitting text and a final response
-- **WHEN** the non-streaming provider entry point is called
-- **THEN** it resolves to a complete response whose AI SDK model message content can be appended to the loop transcript
-
-#### Scenario: Streaming chat yields deltas then one terminal response
-
-- **GIVEN** the same fake AI SDK language model
-- **WHEN** the streaming provider entry point is consumed to completion
-- **THEN** it yields text deltas followed by exactly one terminal event carrying the complete response
-
 ### Requirement: A client abort resolves the streaming chat with the accumulated partial
 
 The streaming `AgentChat` wrapper SHALL, when the client abort signal ends the underlying stream, resolve successfully with a `ChatResponse` whose finish reason is `"aborted"` and whose assistant message carries exactly the text deltas already forwarded — it SHALL NOT re-throw the abort and SHALL NOT route it through the provider-error channel. An abort that fires before any delta arrived SHALL resolve the same way with an empty assistant message. The wrapper's abort recognition SHALL be at least as wide as the underlying provider's abort re-throw gate (an abort-named error OR an already-aborted client signal): a transport failure that lands while the client signal is aborted SHALL resolve as the abort — the user's interrupt outranks a raced failure, and surfacing it as an error would drop the partial and blame the user's own action. `ChatResponse.finishReason` SHALL admit `"aborted"` alongside the AI SDK finish reasons, and the non-streaming `ChatProvider.chat` SHALL continue to propagate a client abort as a throw — `"aborted"` is producible only by the streaming wrapper, so durable workflow loops (which run on the non-streaming provider) keep their cancellation-by-throw semantics.
@@ -382,54 +366,6 @@ Message composition SHALL happen strictly after classification and SHALL NOT fee
 - **WHEN** the SDK raises the abort
 - **THEN** the call re-throws it verbatim rather than returning an `err(ProviderError)`
 
-### Requirement: Transient provider failures are retried under a bounded backoff policy
-
-The AI SDK chat provider SHALL retry a failed model call before surfacing a `ProviderError`, under a harness-owned policy: up to 10 retries with exponential backoff (2s initial delay, ×2 factor) where every individual delay is capped at 30 seconds, jittered, and a `Retry-After`/`retry-after-ms` response header SHALL be honored when it parses to a value between zero and the cap. The retry predicate MUST be the retryability that `classifyProviderError` gives with the `suspendOn` map of the provider. The provider MUST retry a transient failure (429, 5xx, or connection-level). The provider MUST NOT retry an `auth` failure, a `suspend` failure, or another concrete 4xx failure. A status in the `suspendOn` map gives a `suspend` failure, also when the status is a `429` or a 5xx.
-
-The AI SDK's internal retry SHALL be disabled (`maxRetries: 0`) so attempts do not multiply. A client abort SHALL propagate immediately, including when it fires during a backoff sleep. When retries are exhausted, the error surfaced to classification SHALL carry the last underlying provider failure on its `cause` chain so the resulting `ProviderError` keys on the real HTTP status.
-
-The provider MUST call the `resolveRequestHeaders` hook before each attempt, not one time for each call. An `err` from
-the hook MUST stop the call at once, with no retry.
-
-#### Scenario: A provider that fails to respond is retried until it recovers
-
-- **WHEN** the wire call fails with a connection-level error (e.g. `ECONNREFUSED`) on the first attempts and then succeeds
-- **THEN** `chat` resolves `ok` with the successful response, and the number of wire calls equals the failed attempts plus one
-
-#### Scenario: A non-retryable failure short-circuits
-
-- **WHEN** the wire call fails with a `401`, `402`, `403`, or another concrete non-transient `4xx`
-- **THEN** `chat` returns the classified `err(ProviderError)` after exactly one wire call
-
-#### Scenario: A mapped status is not retried
-
-- **GIVEN** a provider whose `suspendOn` map holds `429`
-- **WHEN** the wire call fails with a `429`
-- **THEN** `chat` returns an `err` of the kind `suspend` after exactly one wire call
-
-#### Scenario: A hook err stops the retries
-
-- **GIVEN** a wire call that fails with a `503`, and a `resolveRequestHeaders` hook that gives `ok` first and `err` second
-- **WHEN** `chat` runs
-- **THEN** `chat` returns the `err` of the hook after exactly one wire call, with no further retry
-
-#### Scenario: Exhausted retries classify by the last real failure
-
-- **WHEN** every attempt fails with a `503`
-- **THEN** after 11 wire calls (1 initial + 10 retries) `chat` returns `err` with `type: "provider"` and `retryable: true`, classified from the `503` on the cause chain
-
-#### Scenario: An abort during backoff propagates immediately
-
-- **WHEN** the caller's `AbortSignal` fires while the provider is sleeping between attempts
-- **THEN** the abort error is re-thrown without further attempts and without waiting out the backoff delay
-
-#### Scenario: A streaming call retries only until the first delta
-
-- **WHEN** `chatStream` fails before any text delta has been yielded to the consumer
-- **THEN** the stream establishment is retried under the same policy
-- **WHEN** a failure occurs after at least one text delta has been yielded
-- **THEN** the error propagates without retry and no text is ever yielded twice
-
 ### Requirement: Chat responses carry requested and served model identity
 
 `ChatResponse` MUST carry three optional identity fields:
@@ -467,38 +403,6 @@ The loop labels its token counters with `servedModelId` and `provider`, as the h
 - **GIVEN** a provider made over a bare model-id string
 - **WHEN** `chat` returns
 - **THEN** `ChatResponse.provider` MUST be absent
-
-### Requirement: ChatProvider advertises an optional request-timeout limit
-
-The `ChatProvider` type MUST carry an optional readonly `requestTimeoutMs` field. A provider that enforces a request timeout MUST advertise the enforced value there. A consumer that scales a deadline from the provider MUST read this field from the provider instance in its deps, not from a harness constant. An absent field means that the provider enforces no request timeout of its own.
-
-#### Scenario: A configured provider advertises its limit
-
-- **WHEN** a provider is constructed from a configuration that sets `requestTimeoutMs`
-- **THEN** the provider instance exposes the same value on its `requestTimeoutMs` field
-
-#### Scenario: A provider without a limit stays unchanged
-
-- **WHEN** a provider is constructed from a configuration without `requestTimeoutMs`
-- **THEN** the `requestTimeoutMs` field of the instance is absent
-- **AND** each consumer applies its own default deadline
-
-### Requirement: chatStream surfaces a mid-stream timeout as an error event
-
-`chatStream` MUST map the SDK `abort` stream part to a terminal provider error that names the timeout. A quiet stream end with partial text after a timeout MUST be unrepresentable on the harness surface. When the abort signal of the caller is aborted, the cancellation path MUST apply unchanged.
-
-#### Scenario: A mid-stream timeout becomes an error event
-
-- **GIVEN** a stream whose content stalls past the configured window
-- **WHEN** the SDK aborts the stream and emits its `abort` part
-- **THEN** `chatStream` terminates with a provider error that names the timeout
-- **AND** the partial text does not end the stream quietly
-
-#### Scenario: A caller abort stays a cancellation
-
-- **GIVEN** a caller that aborts its signal mid-stream
-- **WHEN** the stream ends with the SDK `abort` part
-- **THEN** the cancellation path applies, not the timeout error
 
 ### Requirement: The provider capability set names the picture placement
 
@@ -581,25 +485,3 @@ The reason shows the cause. `prefix_binding_mismatch` shows a change of the pref
 - **GIVEN** a streamed response whose metadata reports one drop
 - **WHEN** `chatStream` yields its `done` event
 - **THEN** the provider writes one warn record for that drop before the event
-
-### Requirement: ChatRequest carries no provider options
-
-`ChatRequest` MUST NOT carry a `providerOptions` field. The provider MUST make the provider options of each call itself.
-These options are the session key, the thinking binding, and the `store` value of the `openai` arm. No production caller
-sets a request-level bag. A free bag lets a caller write a vendor key that turns a table of the package off.
-
-A cache marker rides a message or the system prompt, never the request. `ChatRequest.system` MUST accept a string or an
-AI SDK `SystemModelMessage`, thus the system prompt can carry its own marker. The effort rides `ChatRequest.reasoning`.
-
-#### Scenario: A request with provider options does not compile
-
-- **GIVEN** the `ChatRequest` type
-- **WHEN** a caller sets `providerOptions` on a request
-- **THEN** the code fails to compile
-
-#### Scenario: A marked system prompt reaches the model
-
-- **GIVEN** a request whose `system` is the system message that `withSystemPromptBreakpoint` returns
-- **WHEN** a provider runs the call
-- **THEN** the model receives the system prompt with its cache directive
-

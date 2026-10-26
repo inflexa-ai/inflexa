@@ -62,20 +62,6 @@ The same `runAgent` body SHALL serve both modes through an injected `RunStep` â€
 - **WHEN** the host process dies mid-turn
 - **THEN** the user re-sends the message and the already-running workflow is unaffected
 
-### Requirement: The durable RunStep adapter wraps calls as named DBOS steps
-
-The harness SHALL provide a `durableStep` satisfying the `RunStep` seam
-(`<T>(name, fn) => Promise<T>`) that executes `fn` as a `DBOS.runStep` named
-`name`. The loop body SHALL remain unaware of DBOS, depending only on the
-`RunStep` shape. The step name is the replay cache key (see the harness-agent-loop spec)
-and SHALL NOT be reformatted at the adapter.
-
-#### Scenario: durableStep runs the function as a named step
-
-- **GIVEN** a launched runtime inside a workflow context
-- **WHEN** `durableStep("llm-0", fn)` is invoked
-- **THEN** `fn` runs as a DBOS step recorded under the name `llm-0`
-
 ### Requirement: assembleCoreRuntime is the single host-neutral composition root
 
 `assembleCoreRuntime` SHALL be the one assembly point that registers the durable

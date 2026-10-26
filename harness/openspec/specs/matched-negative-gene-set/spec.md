@@ -1,4 +1,9 @@
-## ADDED Requirements
+# matched-negative-gene-set Specification
+
+## Purpose
+TBD - created by archiving change add-matched-negative-gene-set. Update Purpose after archive.
+
+## Requirements
 
 ### Requirement: The catalog holds the phenotype sources, the homology map, and the STRING aliases
 
