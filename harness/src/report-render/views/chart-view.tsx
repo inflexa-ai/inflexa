@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * The chart card markup.
  *

@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * The lineage keys of a grounded block, and the control that opens the chain of one key.
  *

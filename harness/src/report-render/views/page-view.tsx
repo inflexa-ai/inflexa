@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * The page assembly: the hero, the bands, the appendix band, and the footer.
  *
