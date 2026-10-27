@@ -2,7 +2,7 @@
 
 ### Requirement: A chat turn runs as a workflow
 
-After its opening, a chat turn MUST run as a DBOS workflow. The workflow id MUST be the turn id. The workflow input MUST hold the ids and the settings of the turn: the turn, the analysis, the thread, the user, the thread type, the author, the start time, the cache policy, and the model reference. It MUST NOT hold the user input, the history, or a credential of a request. The first step of the workflow MUST load the view of the conversation.
+After its opening, a chat turn MUST run as a DBOS workflow. The workflow id MUST be the turn id. The workflow input MUST hold the ids and the settings of the turn: the turn, the analysis, the thread, the user, the thread type, the author, the start time, the cache policy, and the model reference. It MUST hold the user text after the sanitization of the opening. It MUST NOT hold the history or a credential of a request. The first step of the workflow MUST load the view of the conversation.
 
 #### Scenario: A crash during a tool round
 
@@ -59,6 +59,20 @@ The round writes, the close, and the rows of a compaction MUST be keyed by the t
 - **GIVEN** a round write that committed, and then the host stopped before its checkpoint
 - **WHEN** the turn recovers and the write runs again
 - **THEN** the thread holds each row of the round one time
+
+### Requirement: A host reads the outcome of a turn
+
+The harness MUST give the outcome of a turn by its id when the workflow of the turn ends: the status, the duration, the stop reason, the usage, and whether the opening landed. A failed turn MUST give a scrubbed text and a machine code, and its `error` frame MUST carry the same code. The turn MUST log the whole cause of a failure at error level.
+
+#### Scenario: A failed credential gives its code
+
+- **WHEN** the endpoint refuses the credential of a turn
+- **THEN** the outcome is `failed` with the code `credential`, the last frame is `error` with the same code, and the log holds the cause
+
+#### Scenario: A turn that ran gives its stop reason
+
+- **WHEN** a turn ends with a reply
+- **THEN** the outcome is `done` with the stop reason of the root loop, the usage of the turn, and the final text
 
 ## MODIFIED Requirements
 
@@ -144,7 +158,7 @@ A turn whose workflow is canceled closes as `aborted` through the stop of the ho
 
 ### Requirement: A chat turn opens before it runs
 
-The harness MUST give an open call that takes the session and `{ analysisId, threadId, userInput }`. It MUST prepare the turn, resolve the agent of the thread type, store the opening, and start the turn workflow. It MUST give one of these results:
+The harness MUST give an open call that takes the session and `{ analysisId, threadId, userInput }`. It MUST open the thread, resolve the agent of the thread type, claim the thread, and start the turn workflow. The workflow stores the opening. The open MUST give one of these results:
 
 - `prepare_failed`, `not_found`, `agent_unresolved`, or `turn_in_progress`
 - `started`, with the turn id and the resolved agent

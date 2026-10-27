@@ -2,15 +2,13 @@
 
 ## Purpose
 
-Define the harness's in-chat tool-approval primitive: the `ctx.ask` a
-conversation tool calls to pause for an explicit user decision, the three-variant
-reply that decision carries, the poll-based ledger that makes the database the
-single source of truth for ask state, the analysis-scoped standing grants behind
-`always`, and the `data-ask` chat part a surface renders and answers. The
-primitive is generic — the harness never learns what a given tool is approving.
-It is realized behind a deny-by-default seam so an unwired or non-interactive
-host is safe, and it exposes an outward `answer`/`pending` API an embedder
-drives over whatever transport it runs.
+Define the tool-approval primitive of the harness: the approval hook that a
+conversation tool declares, the three-variant reply of the user, the ledger of the
+asks, the analysis-scoped standing grants behind `always`, and the `data-ask` chat
+part that a surface renders and answers. The primitive is generic — the harness
+never learns what a tool asks for. A loop with no approver denies each request,
+thus an unwired or non-interactive host is safe. An embedder answers through the
+outward `answer` and `pending` calls, over the transport that it runs.
 
 ## Requirements
 

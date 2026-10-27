@@ -146,6 +146,9 @@ The input of a turn, of a run, and of the data profile holds a model reference. 
 - `read(turnId)`: the frames of the turn, live, from the start.
 - `stop(turnId)`
 - `answer(askId, reply)`
+- `outcome(turnId)`: how the turn ended, when its workflow ends. A failure gives a scrubbed text and a machine code, for example `credential`. The host maps the code to its remedy, because the cause stays in the workflow.
+
+The in-process turn leaves the public surface. The test kit gives `inProcessChatTurns`, the same surface over the turn in the process of a test, thus the test of a host needs no workflow engine.
 
 The CLI route opens the turn, starts to read, and serves the frames as SSE. A new route reads a turn again by its id.
 

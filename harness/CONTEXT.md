@@ -346,14 +346,15 @@ its process bootstrap, and any adapter that is not local.
 
 ### Workflow scope
 
-- **Chat is in-process**, one host for each turn. The agent loop runs
-  synchronously in the request path of the embedder. If the process dies in the
-  middle of a turn, the caller sends the message again. There are no DBOS workflow
-  rows for chat. Refer to
-  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
-- **A DBOS workflow** is reserved for a *durable operation*: `executeAnalysis`
-  and the background `runDataProfile`. **Each run that
-  a sandbox backs is a DBOS workflow.** A report session is the exception: it
+- **A chat turn is a DBOS workflow** (`app/chat-turn-workflow.ts`). The turn id
+  is the workflow id. The input holds ids, settings, and the sanitized user text,
+  and no credential. Each model call and each tool call is a step. A sub-agent
+  call starts a child workflow with the id `${workflowId}-${toolCallId}`. If the
+  process stops in the middle of a turn, a recovery continues the turn from its
+  checkpoints. Refer to [chat-turn](openspec/specs/chat-turn/spec.md).
+- **A DBOS workflow** is reserved for a *durable operation*: a chat turn,
+  `executeAnalysis`, and the background `runDataProfile`. **Each run that a
+  sandbox backs is a DBOS workflow.** A report session is the exception: it
   renders in-process, and it is not a DBOS workflow. There is no in-process sandbox consumer.
   Each sandbox exec is a DBOS step of a workflow.
 - **Legacy ephemeral rows** — No workflow of this runtime makes an
@@ -380,7 +381,7 @@ its process bootstrap, and any adapter that is not local.
   - no choice of the sink that `emit` writes to
   - no choice of the billing that the injected `embedder` carries.
 
-  Its members include `runChatTurn`, `prepareChatTurn`,
+  Its members include `runOpenTurn`, `prepareChatTurn`,
   `assembleMessages`, `synthesizeRun`, and `data-profile-policy`.
 
 ### Decomposition
@@ -521,8 +522,13 @@ Other facts:
 
 - One DBOS-backed stream for each workflow. A live consumer and a historical
   replay read the same source.
-- No AI SDK format mapping. A consumer reads the typed events of the harness
-  contract directly.
+- A run reads with no AI SDK format mapping. A consumer reads the typed events of
+  the harness contract directly.
+- A chat turn writes the UI message chunks of the AI SDK with the writer of
+  `@dbos-inc/vercel-ai`, and each fact of the harness is one `data-harness-frame`
+  chunk. The reader of the harness (`loop/chat-stream.ts`) converts each chunk to
+  a `ChatFrame` at its edge. It merges the stream of each sub-agent child that the
+  turn names, thus a host gets the frames of the sub-agents too.
 - Typed UI parts (RunStarted, DagState, StepActivity, StepOutput, RunCompleted,
   and others). **Each event is persisted, and the fold happens on read**: each
   part is written to the one DBOS stream, and a reconciling event is folded
@@ -745,8 +751,8 @@ Other facts:
 
 - **Thread history** — the `messages` table. A row stores an AI SDK model message
   in a versioned envelope (`{kind: "ai-sdk-model-message", aiSdkMajor, message}`).
-  A legacy Anthropic row is backfilled at startup. A host runs a chat turn with
-  `runChatTurn` (`app/chat-turn.ts`). The turn stores its opening, and then each
+  A legacy Anthropic row is backfilled at startup. A host opens a chat turn with
+  the `open` of `CoreRuntime.chatTurns`. The turn stores its opening, and then each
   round when the round completes. The store appends each round in one transaction.
 
   The table `cortex_thread_turns` holds one turn record for each chat turn: the

@@ -94,14 +94,14 @@ client, a logger, or any other injected dependency.
 
 - **GIVEN** the `ToolContext` type for a regular tool
 - **WHEN** a tool's `execute` is typed against it
-- **THEN** only `session`, `signal`, `emit`, `ask`, `invocationId`, and `turnUsage` are reachable
+- **THEN** only `session`, `signal`, `emit`, `invocationId`, and `turnUsage` are reachable
 - **AND** `runStep` is not reachable
 
-#### Scenario: ask resolves to deny-by-default when unwired
+#### Scenario: An approval is denied by default when unwired
 
-- **GIVEN** a `ToolContext` built with no approval realization wired
-- **WHEN** a tool calls `ctx.ask`
-- **THEN** the call is denied by the default realization and the tool does not suspend indefinitely
+- **GIVEN** a loop with no approver, and a tool whose `approval` hook gives a request
+- **WHEN** the model calls the tool
+- **THEN** the loop denies the call, and the tool does not wait indefinitely
 
 #### Scenario: Invocation id comes from the dispatched tool call
 

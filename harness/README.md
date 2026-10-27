@@ -42,12 +42,11 @@ import {
     createNoopLogger,               // Logger — discards (the fallback when none is wired)
     defaultErrorFields,             // the shipped `Logger.errorFields` mapping
     defineTool,
-    runChatTurn,                    // one chat turn over `CoreRuntime.chatTurns`
     makeLocalAuth,
 } from "@inflexa-ai/harness";
 ```
 
-No embedder drives the agent loop. A host runs a chat turn with `runChatTurn`, and it gives only its transport values: the emit sink, the abort signal, the author, and the start time. The harness makes the model, the text stream, the usage recorder, and the approval binding of the turn from its runtime. A test of an embedder gets a scripted model (`scriptedModel`) from the test kit `@inflexa-ai/harness/testing`.
+No embedder drives the agent loop. A host opens a chat turn with the `open` of `CoreRuntime.chatTurns`, and it reads the frames of the turn with `read`. The harness runs the turn as a durable workflow, and it makes the model, the usage recorder, and the approval binding of the turn from its runtime. A test of an embedder gets a scripted model (`scriptedModel`) and the chat turns of a runtime with no workflow engine (`inProcessChatTurns`) from the test kit `@inflexa-ai/harness/testing`.
 
 `assembleCoreRuntime` is the single composition point: it registers the durable workflows and builds the conversation agent over them. The harness declares **four capability seams** an embedder wires — `RunAuthorizer`, `ArtifactRegistry`, `RunCharge`, `UsageRecorder` — plus the **shared `RunLauncher`** (one host-neutral realization, `createDbosRunLauncher`). Local, dependency-free realizations of all four ship from the barrel; an embedder constructs them (or its own) and passes them in. The harness only ever sees the interface. Two optional hooks go into the component that uses their values: `resolveRequestHeaders` into each provider, and `resolveSandboxLabels` into the sandbox client config.
 
@@ -98,7 +97,7 @@ function pinoAsHarnessLogger(p: pino.Logger, names: readonly string[] = []): Log
 
 ## How it executes
 
-Chat is a plain in-process turn. A turn is `runChatTurn`, and the harness stores the opening, each round, and the outcome of the turn. The harness ships no HTTP layer, thus the host owns the route. Compute-heavy work runs as **durable workflows** — `executeAnalysis` starts a child workflow per plan step once its dependencies have completed, and each step drives a sandbox agent inside a container. The same `runLoop` primitive runs in both modes, and only inside a workflow is each model call and each tool call a durable step.
+A chat turn is a **durable workflow**. The harness stores the opening, each round, and the outcome of the turn, and a recovery continues a turn from its checkpoints. The harness ships no HTTP layer, thus the host owns the route. Compute-heavy work runs as durable workflows too — `executeAnalysis` starts a child workflow per plan step once its dependencies have completed, and each step drives a sandbox agent inside a container. The same `runLoop` primitive runs in each workflow, and each model call and each tool call is a durable step.
 
 The sandbox protocol is submit-then-poll, which lets a long run survive a host restart. Each exec runs inside one durable step: the host submits the command with `POST /exec`, and then it polls `GET /exec/{execId}?since={cursor}` until the result. A recovered step submits the same exec id again, and the sandbox gives the existing record, thus the command does not run again. The sandbox initiates nothing and has no egress, and confinement keeps each other peer away from its exec port. Refer to the [`harness-sandbox-exec`](./openspec/specs/harness-sandbox-exec/) spec.
 
