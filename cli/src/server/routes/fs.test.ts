@@ -1,14 +1,34 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import type { ArtifactOrigin, Pool } from "@inflexa-ai/harness";
+import { homedir, tmpdir, userInfo } from "node:os";
+import { basename, dirname, join } from "node:path";
+import type { ArtifactOrigin, CortexRunRow, Pool } from "@inflexa-ai/harness";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import type { ApiError } from "../../api/common.ts";
-import type { FilePreview, FolderList, FsSearch, HomeFolder } from "../../api/fs.ts";
-import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../db/primary_mutation.ts";
+import type {
+    FilePreview,
+    FolderList,
+    FsSearch,
+    HomeFolder,
+    InputsPlace,
+    PinList,
+    PinView,
+    PlaceItem,
+    PlaceSectionId,
+    Places,
+    RecentFiles,
+} from "../../api/fs.ts";
+import {
+    addPin,
+    deleteAnalysis,
+    insertAnalysis,
+    insertAnalysisInput,
+    insertAnchor,
+    recordAnalysisActivity,
+    recordRecentFile,
+} from "../../db/primary_mutation.ts";
 import { db } from "../../db/primary.ts";
 import { entryDetails } from "../../lib/folder_listing.ts";
 import { subsequenceScore } from "../../lib/fuzzy.ts";
@@ -1457,5 +1477,891 @@ describe("GET /api/v1/fs/search errors", () => {
         } finally {
             chmodSync(locked, 0o755);
         }
+    });
+});
+
+describe("the pins of the picker", () => {
+    let locked: LockOutcome = { acquired: true };
+    let picker = fsRoutes(idleBoot());
+
+    beforeEach(() => {
+        freshDb();
+        locked = { acquired: true };
+        picker = fsRoutes(idleBoot(), { ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => locked });
+    });
+
+    function postPin(body: unknown, query = ""): Promise<Response> {
+        return Promise.resolve(
+            picker.request(`/pins${query}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+        );
+    }
+
+    async function pins(query = ""): Promise<PinList> {
+        const response = await picker.request(`/pins${query}`);
+        expect(response.status).toBe(200);
+        return (await response.json()) as PinList;
+    }
+
+    async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
+        expect(response.status).toBe(status);
+        const body = (await response.json()) as ApiError;
+        expect(body.error).toBe(code);
+        return body;
+    }
+
+    test("pins a folder with 201 and a label, and lists it", async () => {
+        mkdirSync(join(root, "study"));
+
+        const response = await postPin({ path: join(root, "study"), label: "  Study  " });
+
+        expect(response.status).toBe(201);
+        const pin = (await response.json()) as PinView;
+        expect(pin).toMatchObject({ path: join(root, "study"), label: "Study", isDir: true, absolutePath: join(root, "study") });
+        expect(await pins()).toMatchObject({ pins: [pin], total: 1, page: 0, hasMore: false });
+    });
+
+    test("a pin of a file stores isDir false, and a blank label is no label", async () => {
+        writeFileSync(join(root, "ref.csv"), "x");
+
+        const pin = (await (await postPin({ path: join(root, "ref.csv"), label: "   " })).json()) as PinView;
+
+        expect(pin).toMatchObject({ isDir: false, label: null });
+    });
+
+    test("a second pin of the same folder gives 200 with the first pin and keeps one row", async () => {
+        mkdirSync(join(root, "study", "raw"), { recursive: true });
+        const first = (await (await postPin({ path: join(root, "study"), label: "Study" })).json()) as PinView;
+
+        const second = await postPin({ path: join(root, "study", "raw", ".."), label: "Other" });
+
+        expect(second.status).toBe(200);
+        expect((await second.json()) as PinView).toEqual(first);
+        expect((await pins()).pins).toHaveLength(1);
+    });
+
+    test("a pin through a link stores the real path", async () => {
+        mkdirSync(join(root, "study"));
+        symlinkSync(join(root, "study"), join(root, "latest"));
+
+        const pin = (await (await postPin({ path: join(root, "latest") })).json()) as PinView;
+
+        expect(pin.path).toBe(join(root, "study"));
+    });
+
+    test("the pins come oldest first", async () => {
+        mkdirSync(join(root, "b"));
+        mkdirSync(join(root, "a"));
+        await postPin({ path: join(root, "b") });
+        await Bun.sleep(2);
+        await postPin({ path: join(root, "a") });
+
+        expect((await pins()).pins.map((p) => p.path)).toEqual([join(root, "b"), join(root, "a")]);
+    });
+
+    test("a pin shows in each analysis", async () => {
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: root, markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        for (const id of ["a1", "a2"]) {
+            insertAnalysis({ id, createdAt: 1, updatedAt: 1, name: asStr256(id), slug: id, anchorId: "A1", projectId: null })._unsafeUnwrap();
+        }
+        mkdirSync(join(root, "refs"));
+        expect((await postPin({ path: join(root, "refs") }, "?analysisId=a1")).status).toBe(201);
+
+        expect((await pins("?analysisId=a2")).pins.map((p) => p.path)).toEqual([join(root, "refs")]);
+    });
+
+    test("a pin of a deleted folder stays in the list with a null absolutePath", async () => {
+        mkdirSync(join(root, "old"));
+        await postPin({ path: join(root, "old") });
+        rmSync(join(root, "old"), { recursive: true });
+
+        const body = await pins();
+
+        expect(body.pins).toHaveLength(1);
+        expect(body.pins[0]).toMatchObject({ path: join(root, "old"), absolutePath: null });
+    });
+
+    test("pages the pins", async () => {
+        for (const name of ["a", "b", "c"]) {
+            mkdirSync(join(root, name));
+            await postPin({ path: join(root, name) });
+            await Bun.sleep(2);
+        }
+
+        const body = await pins("?perPage=2&page=1");
+
+        expect(body.pins.map((p) => p.path)).toEqual([join(root, "c")]);
+        expect(body).toMatchObject({ total: 3, page: 1, perPage: 2, hasMore: false });
+    });
+
+    test("404 `not_found` for a path with no entry, and nothing is stored", async () => {
+        await expectError(await postPin({ path: join(root, "missing") }), 404, "not_found");
+        expect((await pins()).pins).toEqual([]);
+    });
+
+    test("400 `validation_error` for a relative path, a NUL byte, and an absent path", async () => {
+        const relative = await expectError(await postPin({ path: "data" }), 400, "validation_error");
+        expect(relative.details).toEqual({ formErrors: [], fieldErrors: { path: ["The path must be absolute."] } });
+        await expectError(await postPin({ path: `${root}/a\0b` }), 400, "validation_error");
+        await expectError(await postPin({}), 400, "validation_error");
+    });
+
+    test("400 `validation_error` for a label of 257 characters, and 201 for 256", async () => {
+        mkdirSync(join(root, "study"));
+
+        const body = await expectError(await postPin({ path: join(root, "study"), label: "x".repeat(257) }), 400, "validation_error");
+        expect(body.details).toEqual({ formErrors: [], fieldErrors: { label: ["must be at most 256 characters"] } });
+        expect((await postPin({ path: join(root, "study"), label: "x".repeat(256) })).status).toBe(201);
+    });
+
+    test.skipIf(process.getuid?.() === 0)("403 `forbidden` with the code of the operating system for a path that the server cannot read", async () => {
+        const closed = join(root, "closed");
+        mkdirSync(closed);
+        writeFileSync(join(closed, "f.txt"), "x");
+        chmodSync(closed, 0o000);
+        try {
+            const body = await expectError(await postPin({ path: join(closed, "f.txt") }), 403, "forbidden");
+            expect(body.details).toEqual({ code: "EACCES" });
+        } finally {
+            chmodSync(closed, 0o755);
+        }
+    });
+
+    test("a pin writes a row and no file", async () => {
+        mkdirSync(join(root, "study"));
+        const before = readdirSync(root, { recursive: true });
+
+        await postPin({ path: join(root, "study") });
+
+        expect(readdirSync(root, { recursive: true })).toEqual(before);
+        expect(db()._unsafeUnwrap().query("SELECT COUNT(*) AS n FROM picker_pins").get()).toEqual({ n: 1 });
+    });
+
+    test("removes a pin with 200, then 404 `not_found` for the same id", async () => {
+        mkdirSync(join(root, "study"));
+        const pin = (await (await postPin({ path: join(root, "study") })).json()) as PinView;
+
+        const first = await picker.request(`/pins/${pin.id}`, { method: "DELETE" });
+        expect(first.status).toBe(200);
+        expect(await first.json()).toEqual({ deleted: true });
+        await expectError(await picker.request(`/pins/${pin.id}`, { method: "DELETE" }), 404, "not_found");
+        expect((await pins()).pins).toEqual([]);
+    });
+
+    test("the guard of a query analysisId applies to the pin routes", async () => {
+        await expectError(await picker.request("/pins?analysisId=nope"), 404, "not_found");
+    });
+});
+
+describe("the recent files of the picker", () => {
+    let acquire: FsRouteOpts["acquireLock"] = () => ({ acquired: true });
+    let picker = fsRoutes(idleBoot());
+
+    beforeEach(() => {
+        freshDb();
+        acquire = () => ({ acquired: true });
+        picker = fsRoutes(idleBoot(), { ...DEFAULT_FS_ROUTE_OPTS, acquireLock: (analysisId) => acquire(analysisId) });
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: root, markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        for (const id of ["a1", "a2"]) {
+            insertAnalysis({ id, createdAt: 1, updatedAt: 1, name: asStr256(id), slug: id, anchorId: "A1", projectId: null })._unsafeUnwrap();
+        }
+    });
+
+    function postRecent(body: unknown): Promise<Response> {
+        return Promise.resolve(picker.request("/recents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+    }
+
+    async function recents(query = ""): Promise<RecentFiles> {
+        const response = await picker.request(`/recents${query}`);
+        expect(response.status).toBe(200);
+        return (await response.json()) as RecentFiles;
+    }
+
+    async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
+        expect(response.status).toBe(status);
+        const body = (await response.json()) as ApiError;
+        expect(body.error).toBe(code);
+        return body;
+    }
+
+    function rowCount(where = "1 = 1"): number {
+        return (db()._unsafeUnwrap().query(`SELECT COUNT(*) AS n FROM recent_files WHERE ${where}`).get() as { n: number }).n;
+    }
+
+    test("records a file with 200, and the read gives it with its kind", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+
+        const response = await postRecent({ path: join(root, "a.csv") });
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ recorded: true });
+        const body = await recents();
+        expect(body.entries.map((e) => [e.path, e.kind, e.type, e.isInput, e.origin])).toEqual([[join(root, "a.csv"), "table", "file", false, null]]);
+    });
+
+    test("the row holds no kind and no origin", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        await postRecent({ path: join(root, "a.csv") });
+
+        const columns = db()
+            ._unsafeUnwrap()
+            .query<{ name: string }, []>("PRAGMA table_info(recent_files)")
+            .all()
+            .map((c) => c.name);
+
+        expect(columns).toEqual(["id", "created_at", "updated_at", "path", "is_dir", "analysis_id"]);
+    });
+
+    test("the newest file comes first, and a second post moves a file to the top with one entry for each file", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        writeFileSync(join(root, "b.csv"), "x");
+        await postRecent({ path: join(root, "a.csv") });
+        await Bun.sleep(2);
+        await postRecent({ path: join(root, "b.csv") });
+        expect((await recents()).entries.map((e) => e.name)).toEqual(["b.csv", "a.csv"]);
+
+        await Bun.sleep(2);
+        await postRecent({ path: join(root, "a.csv") });
+
+        expect((await recents()).entries.map((e) => e.name)).toEqual(["a.csv", "b.csv"]);
+        expect(rowCount()).toBe(2);
+    });
+
+    test("a file and a folder are recorded with their kind from the disk", async () => {
+        mkdirSync(join(root, "sub"));
+        await postRecent({ path: join(root, "sub") });
+
+        const [entry] = (await recents()).entries;
+
+        expect(entry).toMatchObject({ type: "folder", kind: null, itemCount: 0 });
+    });
+
+    test("the scopes stay apart", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        writeFileSync(join(root, "b.csv"), "x");
+        await postRecent({ path: join(root, "a.csv"), analysisId: "a1" });
+        await postRecent({ path: join(root, "b.csv") });
+
+        expect((await recents("?analysisId=a1")).entries.map((e) => e.name)).toEqual(["a.csv"]);
+        expect((await recents()).entries.map((e) => e.name)).toEqual(["b.csv"]);
+    });
+
+    test("an empty analysis id in the body is the machine scope and takes no lock", async () => {
+        const locks: string[] = [];
+        acquire = (id) => {
+            locks.push(id);
+            return { acquired: true };
+        };
+        writeFileSync(join(root, "a.csv"), "x");
+
+        expect((await postRecent({ path: join(root, "a.csv"), analysisId: "" })).status).toBe(200);
+
+        expect(locks).toEqual([]);
+        expect(rowCount("analysis_id IS NULL")).toBe(1);
+    });
+
+    test("404 `not_found` for an unknown analysis in the body, and nothing is recorded", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+
+        const body = await expectError(await postRecent({ path: join(root, "a.csv"), analysisId: "nope" }), 404, "not_found");
+
+        expect(body.message).toContain("nope");
+        expect(rowCount()).toBe(0);
+    });
+
+    test("409 `locked` for an analysis that a different process locks, and nothing is recorded", async () => {
+        acquire = () => ({ acquired: false, holderPid: 4242 });
+        writeFileSync(join(root, "a.csv"), "x");
+
+        const body = await expectError(await postRecent({ path: join(root, "a.csv"), analysisId: "a1" }), 409, "locked");
+
+        expect(body.details).toEqual({ holderPid: 4242 });
+        expect(rowCount()).toBe(0);
+    });
+
+    test("404 `not_found` when the analysis row goes between the guard and the write", async () => {
+        acquire = (id) => {
+            deleteAnalysis(id)._unsafeUnwrap();
+            return { acquired: true };
+        };
+        writeFileSync(join(root, "a.csv"), "x");
+
+        await expectError(await postRecent({ path: join(root, "a.csv"), analysisId: "a1" }), 404, "not_found");
+
+        expect(rowCount()).toBe(0);
+    });
+
+    test("the recent files go with their analysis", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        await postRecent({ path: join(root, "a.csv"), analysisId: "a1" });
+        await postRecent({ path: join(root, "a.csv") });
+
+        deleteAnalysis("a1")._unsafeUnwrap();
+
+        expect(rowCount("analysis_id = 'a1'")).toBe(0);
+        expect(rowCount("analysis_id IS NULL")).toBe(1);
+    });
+
+    test("the path errors are those of the pins", async () => {
+        await expectError(await postRecent({ path: join(root, "missing") }), 404, "not_found");
+        await expectError(await postRecent({ path: "data" }), 400, "validation_error");
+        await expectError(await postRecent({ path: `${root}/a\0b` }), 400, "validation_error");
+    });
+
+    test.skipIf(process.getuid?.() === 0)("403 `forbidden` with the code of the operating system for a path that the server cannot read", async () => {
+        const closed = join(root, "closed");
+        mkdirSync(closed);
+        writeFileSync(join(closed, "f.txt"), "x");
+        chmodSync(closed, 0o000);
+        try {
+            const body = await expectError(await postRecent({ path: join(closed, "f.txt") }), 403, "forbidden");
+            expect(body.details).toEqual({ code: "EACCES" });
+        } finally {
+            chmodSync(closed, 0o755);
+        }
+    });
+
+    test("a post removes the oldest file of its scope past 100 and keeps the other scope", async () => {
+        for (let i = 0; i < 100; i += 1)
+            recordRecentFile({ path: `/seed/${String(i).padStart(3, "0")}`, isDir: false, analysisId: "a1", cap: 100 })._unsafeUnwrap();
+        recordRecentFile({ path: "/seed/machine", isDir: false, analysisId: null, cap: 100 })._unsafeUnwrap();
+        writeFileSync(join(root, "new.csv"), "x");
+
+        await postRecent({ path: join(root, "new.csv"), analysisId: "a1" });
+
+        expect(rowCount("analysis_id = 'a1'")).toBe(100);
+        expect(rowCount("analysis_id = 'a1' AND path = '/seed/000'")).toBe(0);
+        expect(rowCount(`analysis_id = 'a1' AND path = '${join(root, "new.csv")}'`)).toBe(1);
+        expect(rowCount("analysis_id IS NULL")).toBe(1);
+    });
+
+    test("a deleted file leaves the list, keeps its row, and comes back with its file", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        writeFileSync(join(root, "b.csv"), "x");
+        await postRecent({ path: join(root, "a.csv") });
+        await Bun.sleep(2);
+        await postRecent({ path: join(root, "b.csv") });
+        rmSync(join(root, "b.csv"));
+
+        expect((await recents()).entries.map((e) => e.name)).toEqual(["a.csv"]);
+        expect(rowCount()).toBe(2);
+
+        writeFileSync(join(root, "b.csv"), "x");
+        expect((await recents()).entries.map((e) => e.name)).toEqual(["b.csv", "a.csv"]);
+    });
+
+    test("a file whose parent path holds a loop of links leaves the list and keeps its row", async () => {
+        symlinkSync(join(root, "l2"), join(root, "l1"));
+        symlinkSync(join(root, "l1"), join(root, "l2"));
+        recordRecentFile({ path: join(root, "l1", "x.csv"), isDir: false, analysisId: null, cap: 100 })._unsafeUnwrap();
+        expect(rowCount()).toBe(1);
+
+        expect((await recents()).entries).toEqual([]);
+
+        expect(rowCount()).toBe(1);
+    });
+
+    test("a file that is gone fills the limit from the older files", async () => {
+        for (const name of ["a", "b", "c"]) {
+            writeFileSync(join(root, `${name}.csv`), "x");
+            await postRecent({ path: join(root, `${name}.csv`) });
+            await Bun.sleep(2);
+        }
+        rmSync(join(root, "c.csv"));
+
+        expect((await recents("?limit=2")).entries.map((e) => e.name)).toEqual(["b.csv", "a.csv"]);
+    });
+
+    test("the limit defaults to 20 for a bad value, and a valid value cuts the list", async () => {
+        for (let i = 0; i < 30; i += 1) {
+            writeFileSync(join(root, `f${String(i).padStart(2, "0")}.csv`), "x");
+            recordRecentFile({ path: join(root, `f${String(i).padStart(2, "0")}.csv`), isDir: false, analysisId: null, cap: 100 })._unsafeUnwrap();
+        }
+
+        expect((await recents("?limit=5")).entries).toHaveLength(5);
+        expect((await recents("?limit=abc")).entries).toHaveLength(20);
+        expect((await recents()).entries).toHaveLength(20);
+    });
+
+    test("the read has no page", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        await postRecent({ path: join(root, "a.csv") });
+
+        const body = await recents("?page=2&perPage=1");
+
+        expect(Object.keys(body)).toEqual(["entries"]);
+        expect(body.entries).toHaveLength(1);
+    });
+
+    test("404 `not_found` for an unknown query analysisId", async () => {
+        await expectError(await picker.request("/recents?analysisId=nope"), 404, "not_found");
+    });
+
+    test.skipIf(process.getuid?.() === 0)("an entry whose lstat fails with a code that is not an absence code stays with null facts", async () => {
+        const closed = join(root, "closed");
+        mkdirSync(closed);
+        writeFileSync(join(closed, "f.csv"), "x");
+        await postRecent({ path: join(closed, "f.csv") });
+        chmodSync(closed, 0o000);
+        try {
+            const body = await recents();
+
+            expect(body.entries).toHaveLength(1);
+            expect(body.entries[0]).toMatchObject({ name: "f.csv", type: "file", size: null, modifiedAt: null, readable: null });
+            expect(rowCount()).toBe(1);
+        } finally {
+            chmodSync(closed, 0o755);
+        }
+    });
+});
+
+describe("GET /api/v1/fs/recents isInput and origin", () => {
+    const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
+    // The route only passes the pool to the injected read, thus a stand-in object is enough.
+    const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
+    const readyBoot: ServerBoot = {
+        state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
+        runtime: () => runtime,
+        start: async () => undefined,
+    };
+
+    let home = "";
+    let workspace = "";
+    let originCalls = 0;
+
+    beforeEach(async () => {
+        freshDb();
+        invalidateWorkspaceRoot();
+        originCalls = 0;
+        home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-fs-recents-")));
+        (await writeMarker(home, "A1"))._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: "a1", createdAt: 1, updatedAt: 1, name: asStr256("Study"), slug: "study", anchorId: "A1", projectId: null })._unsafeUnwrap();
+        workspace = (await workspaceRootForAnalysisId("a1"))._unsafeUnwrap();
+    });
+
+    afterEach(() => {
+        invalidateWorkspaceRoot();
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    test("marks an input and gives the origin of a file of the workspace, with one ledger read", async () => {
+        const output = join(workspace, "runs", "r1", "s1", "output");
+        mkdirSync(output, { recursive: true });
+        writeFileSync(join(output, "de.csv"), "x");
+        writeFileSync(join(output, "other.csv"), "x");
+        insertAnalysisInput({ path: output, isDir: true, analysisId: "a1", anchorId: null })._unsafeUnwrap();
+        for (const name of ["de.csv", "other.csv"]) {
+            recordRecentFile({ path: join(output, name), isDir: false, analysisId: "a1", cap: 100 })._unsafeUnwrap();
+        }
+        const picker = fsRoutes(readyBoot, {
+            ...DEFAULT_FS_ROUTE_OPTS,
+            acquireLock: () => ({ acquired: true }),
+            artifactOrigins: (_pool, _analysisId, paths): ReturnType<FsRouteOpts["artifactOrigins"]> => {
+                originCalls += 1;
+                expect([...paths].sort()).toEqual(["runs/r1/s1/output/de.csv", "runs/r1/s1/output/other.csv"]);
+                return okAsync([{ path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1" }]);
+            },
+        });
+
+        const response = await picker.request("/recents?analysisId=a1");
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as RecentFiles;
+        expect(body.entries.map((e) => [e.name, e.isInput, e.origin]).sort()).toEqual([
+            ["de.csv", true, { runId: "r1", stepId: "s1" }],
+            ["other.csv", true, null],
+        ]);
+        expect(originCalls).toBe(1);
+    });
+});
+
+describe("GET /api/v1/fs/places", () => {
+    const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
+    // The route only passes the pool to the injected reads, thus a stand-in object is enough.
+    const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
+    const readyBoot: ServerBoot = {
+        state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
+        runtime: () => runtime,
+        start: async () => undefined,
+    };
+
+    let home = "";
+    let machine = "";
+    let volumes = "";
+    let workspace = "";
+    let runIds: string[] = [];
+    let runCalls = 0;
+    let originCalls = 0;
+    let originRows: ArtifactOrigin[] = [];
+    let runsFail = false;
+    let roots: FsRouteOpts["volumeRoots"] = () => [];
+
+    function picker(boot: ServerBoot = readyBoot): ReturnType<typeof fsRoutes> {
+        return fsRoutes(boot, {
+            ...DEFAULT_FS_ROUTE_OPTS,
+            acquireLock: () => ({ acquired: true }),
+            homedir: () => machine,
+            volumeRoots: () => roots(),
+            listRuns: (_pool, _analysisId, page): ReturnType<FsRouteOpts["listRuns"]> => {
+                runCalls += 1;
+                expect(page).toEqual({ limit: 10 });
+                // A test row names the run id only, which is the one field that the places read uses.
+                return runsFail ? errAsync({ type: "query_failed", op: "test", cause: "down" }) : okAsync(runIds.map((runId) => ({ runId }) as CortexRunRow));
+            },
+            artifactOrigins: (): ReturnType<FsRouteOpts["artifactOrigins"]> => {
+                originCalls += 1;
+                return okAsync(originRows);
+            },
+        });
+    }
+
+    async function places(query = "", boot?: ServerBoot): Promise<Places> {
+        const response = await picker(boot).request(`/places${query}`);
+        expect(response.status).toBe(200);
+        return (await response.json()) as Places;
+    }
+
+    function itemsOf(body: Places, id: PlaceSectionId): PlaceItem[] {
+        const found = body.sections.find((section) => section.id === id);
+        expect(found).toBeDefined();
+        return found?.items ?? [];
+    }
+
+    function addAnalysis(id: string, slug: string, withFolder: boolean): void {
+        insertAnalysis({ id, createdAt: 1, updatedAt: 1, name: asStr256(`Name ${slug}`), slug, anchorId: "A1", projectId: null })._unsafeUnwrap();
+        if (withFolder) mkdirSync(join(home, ".inflexa", "analyses", slug), { recursive: true });
+    }
+
+    beforeEach(async () => {
+        freshDb();
+        invalidateWorkspaceRoot();
+        runIds = [];
+        runCalls = 0;
+        originCalls = 0;
+        originRows = [];
+        runsFail = false;
+        roots = () => [];
+        home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-fs-places-")));
+        machine = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-fs-places-home-")));
+        volumes = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-fs-places-volumes-")));
+        (await writeMarker(home, "A1"))._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: "a1", createdAt: 1, updatedAt: 1, name: asStr256("Study"), slug: "study", anchorId: "A1", projectId: null })._unsafeUnwrap();
+        workspace = (await workspaceRootForAnalysisId("a1"))._unsafeUnwrap();
+        mkdirSync(workspace, { recursive: true });
+    });
+
+    afterEach(() => {
+        invalidateWorkspaceRoot();
+        for (const folder of [home, machine, volumes]) rmSync(folder, { recursive: true, force: true });
+    });
+
+    describe("the sections", () => {
+        test("gives the sections without an analysis in order, each present", async () => {
+            const body = await places();
+            expect(body.sections.map((section) => section.id)).toEqual(["favorites", "locations", "otherAnalyses", "drives"]);
+        });
+
+        test("gives the analysis section first with an analysis", async () => {
+            const body = await places("?analysisId=a1");
+            expect(body.sections.map((section) => section.id)).toEqual(["analysis", "favorites", "locations", "otherAnalyses", "drives"]);
+        });
+
+        test("404 `not_found` for an unknown analysis", async () => {
+            const response = await picker().request("/places?analysisId=nope");
+            expect(response.status).toBe(404);
+            expect(((await response.json()) as ApiError).error).toBe("not_found");
+        });
+    });
+
+    describe("the places of the machine", () => {
+        test("gives the home folder and the standard folders that exist, and no item for a missing Downloads", async () => {
+            mkdirSync(join(machine, "Desktop"));
+            mkdirSync(join(machine, "Documents"));
+            const body = await places();
+            expect(itemsOf(body, "locations")).toEqual([
+                { kind: "home", label: basename(machine), path: machine },
+                { kind: "desktop", label: "Desktop", path: join(machine, "Desktop") },
+                { kind: "documents", label: "Documents", path: join(machine, "Documents") },
+            ]);
+        });
+
+        test("gives no item for a standard name that is a file", async () => {
+            writeFileSync(join(machine, "Downloads"), "x");
+            expect(itemsOf(await places(), "locations").map((item) => item.kind)).toEqual(["home"]);
+        });
+
+        test("gives a pin with its id, and a lost pin with the stored path", async () => {
+            mkdirSync(join(root, "kept"));
+            mkdirSync(join(root, "old"));
+            const kept = addPin({ path: join(root, "kept"), label: "Kept", isDir: true })._unsafeUnwrap().pin;
+            const old = addPin({ path: join(root, "old"), label: null, isDir: true })._unsafeUnwrap().pin;
+            rmSync(join(root, "old"), { recursive: true });
+
+            expect(itemsOf(await places(), "favorites")).toEqual([
+                { kind: "pin", label: "Kept", path: join(root, "kept"), pinId: kept.id, lost: false },
+                { kind: "pin", label: "old", path: join(root, "old"), pinId: old.id, lost: true },
+            ]);
+        });
+
+        test("gives the first 50 pins", async () => {
+            for (let i = 0; i < 55; i += 1) addPin({ path: join(root, `pin-${String(i).padStart(2, "0")}`), label: null, isDir: true })._unsafeUnwrap();
+            const items = itemsOf(await places(), "favorites");
+            expect(items).toHaveLength(50);
+            expect(items[0]).toMatchObject({ path: join(root, "pin-00"), lost: true });
+        });
+
+        test("gives the other analyses with a folder, and not the analysis of the request", async () => {
+            addAnalysis("a2", "second", true);
+            addAnalysis("a3", "no-folder", false);
+
+            const other = itemsOf(await places("?analysisId=a1"), "otherAnalyses");
+            expect(other).toEqual([{ kind: "analysis", label: "Name second", path: join(home, ".inflexa", "analyses", "second") }]);
+
+            const all = itemsOf(await places(), "otherAnalyses").map((item) => item.kind === "analysis" && item.label);
+            expect(all.sort()).toEqual(["Name second", "Study"]);
+        });
+
+        test("gives the other analyses newest first by activity", async () => {
+            addAnalysis("a2", "second", true);
+            addAnalysis("a3", "third", true);
+            addAnalysis("a4", "fourth", true);
+            recordAnalysisActivity("a3", 5_000)._unsafeUnwrap();
+            recordAnalysisActivity("a2", 4_000)._unsafeUnwrap();
+            recordAnalysisActivity("a4", 3_000)._unsafeUnwrap();
+
+            const labels = itemsOf(await places("?analysisId=a1"), "otherAnalyses").map((item) => item.kind === "analysis" && item.label);
+
+            expect(labels).toEqual(["Name third", "Name second", "Name fourth"]);
+        });
+
+        test("gives at most 20 other analyses from a fixture past the cap", async () => {
+            for (let i = 0; i < 25; i += 1) addAnalysis(`b${i}`, `extra-${i}`, true);
+            expect(itemsOf(await places("?analysisId=a1"), "otherAnalyses")).toHaveLength(20);
+            expect(itemsOf(await places(), "otherAnalyses")).toHaveLength(20);
+        });
+
+        test("gives the volumes in name order and drops a link to the system root", async () => {
+            mkdirSync(join(volumes, "lab-share"));
+            mkdirSync(join(volumes, "archive"));
+            writeFileSync(join(volumes, "notes.txt"), "x");
+            symlinkSync("/", join(volumes, "Macintosh HD"));
+            roots = () => [{ path: volumes, kind: "parent" }];
+
+            expect(itemsOf(await places(), "drives")).toEqual([
+                { kind: "drive", label: "archive", path: join(volumes, "archive") },
+                { kind: "drive", label: "lab-share", path: join(volumes, "lab-share") },
+            ]);
+        });
+
+        test("gives a volume root as one drive with its real path", async () => {
+            mkdirSync(join(volumes, "d"));
+            roots = () => [{ path: join(volumes, "d"), kind: "volume" }];
+            expect(itemsOf(await places(), "drives")).toEqual([{ kind: "drive", label: "d", path: join(volumes, "d") }]);
+        });
+
+        test("gives two roots that lead to one volume as the drive of the first candidate by name", async () => {
+            mkdirSync(join(volumes, "real-vol"));
+            symlinkSync(join(volumes, "real-vol"), join(volumes, "alias"));
+            roots = () => [
+                { path: join(volumes, "real-vol"), kind: "volume" },
+                { path: join(volumes, "alias"), kind: "volume" },
+            ];
+
+            expect(itemsOf(await places(), "drives")).toEqual([{ kind: "drive", label: "alias", path: join(volumes, "real-vol") }]);
+        });
+
+        test("gives at most 20 drives from a fixture past the cap, in name order", async () => {
+            for (let i = 0; i < 25; i += 1) mkdirSync(join(volumes, `vol-${String(i).padStart(2, "0")}`));
+            roots = () => [{ path: volumes, kind: "parent" }];
+            const items = itemsOf(await places(), "drives");
+            expect(items).toHaveLength(20);
+            expect(items.map((item) => item.kind === "drive" && item.label)).toEqual(Array.from({ length: 20 }, (_, i) => `vol-${String(i).padStart(2, "0")}`));
+        });
+
+        test("gives an empty section and answers 200 when no volume folder exists", async () => {
+            roots = () => [
+                { path: join(volumes, "no-media"), kind: "parent" },
+                { path: join(volumes, "no-drive"), kind: "volume" },
+            ];
+            expect(itemsOf(await places(), "drives")).toEqual([]);
+        });
+    });
+
+    describe("the volume roots of each platform", () => {
+        const platform = process.platform;
+
+        function onPlatform(name: NodeJS.Platform): readonly { path: string; kind: string }[] {
+            Object.defineProperty(process, "platform", { value: name });
+            return DEFAULT_FS_ROUTE_OPTS.volumeRoots();
+        }
+
+        afterEach(() => {
+            Object.defineProperty(process, "platform", { value: platform });
+        });
+
+        test("macOS reads the entries of /Volumes", () => {
+            expect(onPlatform("darwin")).toEqual([{ path: "/Volumes", kind: "parent" }]);
+        });
+
+        test("Linux reads the user folders of /media and /run/media, and /mnt", () => {
+            const user = userInfo().username;
+            expect(onPlatform("linux")).toEqual([
+                { path: join("/media", user), kind: "parent" },
+                { path: join("/run/media", user), kind: "parent" },
+                { path: "/mnt", kind: "parent" },
+            ]);
+        });
+
+        test("Windows tests the root of each drive letter", () => {
+            const found = onPlatform("win32");
+            expect(found).toHaveLength(26);
+            expect(found[0]).toEqual({ path: "A:\\", kind: "volume" });
+            expect(found[25]).toEqual({ path: "Z:\\", kind: "volume" });
+        });
+    });
+
+    describe("the places of an analysis", () => {
+        function declare(path: string, isDir = false): void {
+            insertAnalysisInput({ path, isDir, analysisId: "a1", anchorId: null })._unsafeUnwrap();
+        }
+
+        function inputsOf(body: Places): InputsPlace {
+            const item = itemsOf(body, "analysis").find((found) => found.kind === "inputs");
+            if (item?.kind !== "inputs") throw new Error("the analysis section has no inputs item");
+            return item;
+        }
+
+        test("gives the workspace, the inputs, the run, and the step in order", async () => {
+            mkdirSync(join(workspace, "runs", "r1", "s1"), { recursive: true });
+            runIds = ["r1"];
+
+            const body = await places("?analysisId=a1");
+
+            expect(itemsOf(body, "analysis")).toEqual([
+                { kind: "workspace", label: "Study", path: workspace },
+                { kind: "inputs", label: "Inputs", count: 0, entries: [] },
+                { kind: "run", label: "r1", path: join(workspace, "runs", "r1") },
+                { kind: "step", label: "s1", path: join(workspace, "runs", "r1", "s1") },
+            ]);
+            expect(runCalls).toBe(1);
+        });
+
+        test("gives the runs newest first with their steps in name order, and skips hidden folders and files", async () => {
+            for (const run of ["r2", "r1"]) {
+                mkdirSync(join(workspace, "runs", run, "b"), { recursive: true });
+                mkdirSync(join(workspace, "runs", run, "a"));
+                mkdirSync(join(workspace, "runs", run, ".hidden"));
+                writeFileSync(join(workspace, "runs", run, "synthesis.json"), "{}");
+            }
+            runIds = ["r2", "r1"];
+
+            const items = itemsOf(await places("?analysisId=a1"), "analysis");
+
+            expect(items.filter((item) => item.kind === "run" || item.kind === "step").map((item) => [item.kind, item.label])).toEqual([
+                ["run", "r2"],
+                ["step", "a"],
+                ["step", "b"],
+                ["run", "r1"],
+                ["step", "a"],
+                ["step", "b"],
+            ]);
+        });
+
+        test("drops a run whose folder is absent", async () => {
+            mkdirSync(join(workspace, "runs", "r1", "s1"), { recursive: true });
+            runIds = ["gone", "r1"];
+            const items = itemsOf(await places("?analysisId=a1"), "analysis");
+            expect(items.filter((item) => item.kind === "run").map((item) => item.label)).toEqual(["r1"]);
+        });
+
+        test("gives at most 50 steps for a run", async () => {
+            for (let i = 0; i < 55; i += 1) mkdirSync(join(workspace, "runs", "r1", `s-${String(i).padStart(2, "0")}`), { recursive: true });
+            runIds = ["r1"];
+            const steps = itemsOf(await places("?analysisId=a1"), "analysis").filter((item) => item.kind === "step");
+            expect(steps).toHaveLength(50);
+            expect(steps[49]?.label).toBe("s-49");
+        });
+
+        test("gives no run before the runtime boot is ready, and reads no ledger", async () => {
+            mkdirSync(join(workspace, "runs", "r1", "s1"), { recursive: true });
+            runIds = ["r1"];
+
+            const items = itemsOf(await places("?analysisId=a1", idleBoot()), "analysis");
+
+            expect(items.map((item) => item.kind)).toEqual(["workspace", "inputs"]);
+            expect(runCalls).toBe(0);
+            expect(originCalls).toBe(0);
+        });
+
+        test("gives no run and still answers when the ledger read fails", async () => {
+            mkdirSync(join(workspace, "runs", "r1", "s1"), { recursive: true });
+            runIds = ["r1"];
+            runsFail = true;
+
+            const items = itemsOf(await places("?analysisId=a1"), "analysis");
+
+            expect(items.map((item) => item.kind)).toEqual(["workspace", "inputs"]);
+            expect(runCalls).toBe(1);
+        });
+
+        test("gives no workspace item when the workspace folder does not exist", async () => {
+            rmSync(workspace, { recursive: true });
+            expect(itemsOf(await places("?analysisId=a1"), "analysis").map((item) => item.kind)).toEqual(["inputs"]);
+        });
+
+        test("gives the count of all declared inputs and the entry of each one that exists", async () => {
+            writeFileSync(join(root, "a.csv"), "x");
+            declare(join(root, "a.csv"));
+            declare(join(root, "gone.csv"));
+
+            const inputs = inputsOf(await places("?analysisId=a1"));
+
+            expect(inputs.count).toBe(2);
+            expect(inputs.entries).toHaveLength(1);
+            expect(inputs.entries[0]).toMatchObject({ name: "a.csv", path: join(root, "a.csv"), isInput: true, kind: "table", type: "file" });
+        });
+
+        test("gives the entries of the first 200 declared inputs and the count of all of them", async () => {
+            for (let i = 0; i < 205; i += 1) {
+                const path = join(root, `in-${String(i).padStart(3, "0")}.csv`);
+                writeFileSync(path, "x");
+                declare(path);
+            }
+
+            const inputs = inputsOf(await places("?analysisId=a1"));
+
+            expect(inputs.count).toBe(205);
+            expect(inputs.entries).toHaveLength(200);
+            expect(inputs.entries.some((entry) => entry.name === "in-204.csv")).toBe(false);
+        });
+
+        test("reads the runs one time and the origins one time for a request", async () => {
+            const output = join(workspace, "runs", "r1", "s1", "output");
+            mkdirSync(output, { recursive: true });
+            writeFileSync(join(output, "de.csv"), "x");
+            declare(join(output, "de.csv"));
+            originRows = [{ path: "runs/r1/s1/output/de.csv", runId: "r1", stepId: "s1" }];
+            runIds = ["r1", "r2"];
+
+            const inputs = inputsOf(await places("?analysisId=a1"));
+
+            expect(inputs.entries[0]).toMatchObject({ name: "de.csv", isInput: true, origin: { runId: "r1", stepId: "s1" } });
+            expect(runCalls).toBe(1);
+            expect(originCalls).toBe(1);
+        });
+
+        test("500 `internal_error` when the inputs cannot be read", async () => {
+            const read = spyOn(await import("../../db/primary_query.ts"), "listAnalysisInputPage").mockImplementation(() =>
+                err({ type: "query_failed", op: "test", cause: "down" }),
+            );
+            try {
+                const response = await picker().request("/places?analysisId=a1");
+                expect(response.status).toBe(500);
+                expect(((await response.json()) as ApiError).error).toBe("internal_error");
+            } finally {
+                read.mockRestore();
+            }
+        });
     });
 });

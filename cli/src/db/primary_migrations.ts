@@ -500,6 +500,47 @@ export const migrations: Migration[] = [
                 VALUES (CAST(ROUND((julianday('now') - 2440587.5) * 86400000) AS INTEGER));
         `,
     },
+    {
+        // The pins and the recent files of the file picker (epoch milliseconds, as the other timestamps).
+        // A pin is a fact of the machine, thus it has no analysis. A path is stored as its real path, so
+        // two spellings of one folder share one row.
+        //
+        // A recent file belongs to one analysis, or to the machine scope (`analysis_id IS NULL`). SQLite
+        // treats each NULL as distinct in a UNIQUE key, thus a partial index pair keeps one row for each
+        // path of a scope (the pattern of `analysis_inputs`). The cascade removes the recent files of a
+        // deleted analysis. `idx_recent_files_scope` serves the newest-first read of one scope, and it is
+        // the lookup index of the foreign key.
+        //
+        // The table `picker_pins` is not bounded in the schema, and `recent_files` is bounded by the
+        // write (100 rows for each scope). An older binary ignores both tables.
+        version: 13,
+        up: `
+            CREATE TABLE picker_pins (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                label TEXT,
+                is_dir INTEGER NOT NULL
+            );
+            CREATE UNIQUE INDEX uq_picker_pins_path ON picker_pins(path);
+            CREATE TABLE recent_files (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                is_dir INTEGER NOT NULL,
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_recent_files_scope ON recent_files(analysis_id, updated_at);
+            CREATE UNIQUE INDEX uq_recent_files_analysis
+                ON recent_files(path, analysis_id)
+                WHERE analysis_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_recent_files_machine
+                ON recent_files(path)
+                WHERE analysis_id IS NULL;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

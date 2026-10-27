@@ -6,6 +6,7 @@ import type { TransferKind, TransferPhase } from "../types/store.ts";
 import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
+import type { PickerPin } from "../types/picker.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Str256 } from "../lib/types.ts";
 
@@ -712,4 +713,82 @@ export function recordRunSeen(runId: string, analysisId: string, atMs: number): 
             .query("INSERT INTO run_seen_marks (run_id, seen_at, analysis_id) VALUES (?, ?, ?) ON CONFLICT(run_id) DO NOTHING")
             .run(runId, atMs, analysisId).changes;
     });
+}
+
+// --- Data model: the pins and the recent files of the picker ---
+
+/**
+ * Pins a path for the machine. It mints the id and the times, and runs one `INSERT … ON CONFLICT(path)` that
+ * changes no value, so `RETURNING` gives the stored row. When a pin of the path exists, that pin stays, with its
+ * first label, and `created` is `false`. A blank `label` is stored by the caller as `null`.
+ */
+export function addPin(input: { path: string; label: string | null; isDir: boolean }): Result<{ pin: PickerPin; created: boolean }, DbError> {
+    const id = randomUUIDv7();
+    const now = Date.now();
+    return tryMutation("addPin", (conn) => {
+        // The statement returns the columns that the cast names, in this order, and the conflict branch always returns a row.
+        const row = conn
+            .query(
+                `INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(path) DO UPDATE SET path = excluded.path
+                 RETURNING id, created_at, updated_at, path, label, is_dir`,
+            )
+            .get(id, now, now, input.path, input.label, input.isDir ? 1 : 0) as {
+            id: string;
+            created_at: number;
+            updated_at: number;
+            path: string;
+            label: string | null;
+            is_dir: number;
+        };
+        const pin: PickerPin = {
+            id: row.id,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            path: row.path,
+            label: row.label,
+            isDir: row.is_dir === 1,
+        };
+        return { pin, created: row.id === id };
+    });
+}
+
+/** Removes a pin by its id. Returns rows changed: `0` when no pin has the id. */
+export function removePin(id: string): Result<number, DbError> {
+    return tryMutation("removePin", (conn) => {
+        return conn.query("DELETE FROM picker_pins WHERE id = ?").run(id).changes;
+    });
+}
+
+/**
+ * Records a recent file of one scope in one transaction. It moves `updated_at` of the row of the path when the
+ * row exists, else it inserts a row. Then it deletes the oldest rows of the same scope past `cap`, and no row of
+ * another scope. A `null` `analysisId` is the machine scope. An `analysisId` with no row trips the foreign key
+ * (`constraint_violation`). The update comes first because the target of `ON CONFLICT` must name one partial
+ * index, and the two scopes have two indexes.
+ */
+export function recordRecentFile(input: { path: string; isDir: boolean; analysisId: string | null; cap: number }): Result<void, DbError> {
+    return withTransaction("recordRecentFile", () =>
+        tryMutation("recordRecentFile", (conn) => {
+            const now = Date.now();
+            const moved = conn
+                .query("UPDATE recent_files SET updated_at = ?, is_dir = ? WHERE path = ? AND analysis_id IS ?")
+                .run(now, input.isDir ? 1 : 0, input.path, input.analysisId).changes;
+            if (moved === 0) {
+                conn.query("INSERT INTO recent_files (id, created_at, updated_at, path, is_dir, analysis_id) VALUES (?, ?, ?, ?, ?, ?)").run(
+                    randomUUIDv7(),
+                    now,
+                    now,
+                    input.path,
+                    input.isDir ? 1 : 0,
+                    input.analysisId,
+                );
+            }
+            conn.query(
+                `DELETE FROM recent_files WHERE analysis_id IS ? AND id NOT IN (
+                     SELECT id FROM recent_files WHERE analysis_id IS ? ORDER BY updated_at DESC, id DESC LIMIT ?
+                 )`,
+            ).run(input.analysisId, input.analysisId, input.cap);
+        }),
+    );
 }

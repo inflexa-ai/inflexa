@@ -85,7 +85,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -122,11 +122,15 @@ describe("runMigrations", () => {
             "idx_analysis_inputs_analysis",
             "idx_llm_usage_scope",
             "idx_ps_flight_subs_flight",
+            "idx_recent_files_scope",
             "idx_run_seen_marks_analysis",
             "uq_analysis_inputs_anchored",
             "uq_analysis_inputs_unanchored",
+            "uq_picker_pins_path",
             "uq_ps_flight_subs_analysis",
             "uq_ps_flight_subs_host",
+            "uq_recent_files_analysis",
+            "uq_recent_files_machine",
         ]);
         // Redundant against the set equality above, but names the chat indexes so a regression that
         // re-created one reads as exactly that rather than as an anonymous set mismatch.
@@ -202,7 +206,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {
@@ -424,5 +428,61 @@ describe("migration 12 — the seen marks of the runs", () => {
         ]);
         const fks = db.query<{ table: string; to: string; on_delete: string }, []>("PRAGMA foreign_key_list(run_seen_marks)").all();
         expect(fks).toEqual([expect.objectContaining({ table: "analyses", to: "id", on_delete: "CASCADE" })]);
+    });
+});
+
+describe("migration 13 — the pins and the recent files of the picker", () => {
+    function columnsOf(db: Database, table: string): string[] {
+        return db
+            .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+            .all()
+            .map((c) => c.name);
+    }
+
+    function dbWithAnalysis(): Database {
+        // The production connection enforces foreign keys while it migrates, and migration 10 renames a
+        // table that another table references, thus the pragma comes before the migrations here too.
+        const db = new Database(":memory:");
+        db.run("PRAGMA foreign_keys = ON");
+        runMigrations(db, migrations)._unsafeUnwrap();
+        db.run("INSERT INTO anchors (id, created_at, updated_at, cached_path, marker_written, last_seen) VALUES ('anc', 1, 1, '/x', 1, 1)");
+        db.run("INSERT INTO analyses (id, created_at, updated_at, name, slug, anchor_id) VALUES ('a1', 1, 1, 'A1', 'a1', 'anc')");
+        return db;
+    }
+
+    function insertRecent(db: Database, id: string, path: string, analysisId: string | null): void {
+        db.query("INSERT INTO recent_files (id, created_at, updated_at, path, is_dir, analysis_id) VALUES (?, 1, 1, ?, 0, ?)").run(id, path, analysisId);
+    }
+
+    test("the columns follow the house order", () => {
+        const db = migratedMemoryDb();
+        expect(columnsOf(db, "picker_pins")).toEqual(["id", "created_at", "updated_at", "path", "label", "is_dir"]);
+        expect(columnsOf(db, "recent_files")).toEqual(["id", "created_at", "updated_at", "path", "is_dir", "analysis_id"]);
+    });
+
+    test("a second pin of a path trips the unique index", () => {
+        const db = migratedMemoryDb();
+        db.run("INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES ('p1', 1, 1, '/d', NULL, 1)");
+        expect(() => db.run("INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES ('p2', 1, 1, '/d', NULL, 1)")).toThrow(/UNIQUE/);
+    });
+
+    test("a path is unique in the machine scope and in each analysis scope, and the scopes are apart", () => {
+        const db = dbWithAnalysis();
+        insertRecent(db, "r1", "/data/a.csv", null);
+        expect(() => insertRecent(db, "r2", "/data/a.csv", null)).toThrow(/UNIQUE/);
+
+        insertRecent(db, "r3", "/data/a.csv", "a1");
+        expect(() => insertRecent(db, "r4", "/data/a.csv", "a1")).toThrow(/UNIQUE/);
+    });
+
+    test("the recent files go with their analysis", () => {
+        const db = dbWithAnalysis();
+        insertRecent(db, "r1", "/data/a.csv", "a1");
+        insertRecent(db, "r2", "/data/b.csv", "a1");
+        insertRecent(db, "r3", "/data/a.csv", null);
+
+        db.run("DELETE FROM analyses WHERE id = 'a1'");
+
+        expect(db.query<{ id: string }, []>("SELECT id FROM recent_files").all()).toEqual([{ id: "r3" }]);
     });
 });
