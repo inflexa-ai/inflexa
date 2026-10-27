@@ -355,7 +355,7 @@ async function summarizePage(
         const profile = profileOf.get(id);
         const run = runOf.get(id);
         const facts: BusyFacts = {
-            turn: opts.hasRunningTurn(id),
+            turn: opts.hasRunningTurn(id) || (live?.get(id)?.turns ?? 0) > 0,
             profileDrive: opts.profileWorkInFlight(id),
             profile: runtime === null ? "unknown" : profiles === null ? "unreadable" : profile?.status === "running" ? "running" : "idle",
             liveRuns: runtime === null ? "unknown" : live === null ? "unreadable" : (live.get(id)?.runs ?? 0),

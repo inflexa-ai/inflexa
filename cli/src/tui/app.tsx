@@ -1,11 +1,13 @@
 import { createEffect, createSignal, on, Show } from "solid-js";
-import type { JSX } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 import type { BoxRenderable, CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { AskReply } from "../api/conversation.ts";
 import { describeClientError } from "../client/api.ts";
 import { answerAsk as answerAskOnServer } from "../client/conversation.ts";
+import { resumePausedWork } from "../client/paused_work.ts";
 import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
+import { describePauseCause, nextRetryOf } from "../lib/pause_words.ts";
 import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
@@ -14,6 +16,7 @@ import { chatStatus, type ChatStatus } from "./hooks/status.ts";
 import { bootRecoveryOpts, bootState, recoverServerBoot, watchAgentModels, type BootRecovery, type BootState } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
+import { clearTurnPause, dockedPause, pausedProfileOf, refreshPausedWork, remedyOf, type TurnScope, type TurnWait } from "./hooks/pauses.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
@@ -57,6 +60,7 @@ import { StatusBar, type StatusTone } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
 import { AskPrompt } from "./components/ask_prompt.tsx";
+import { PausePrompt } from "./components/pause_prompt.tsx";
 import { seedTextareaText } from "./components/text_area.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
 import { ActivityPanel } from "./layout/activity_panel.tsx";
@@ -573,6 +577,8 @@ export function App(props: AppProps) {
     // The docked approval prompt's focusable box, handed back via its onFocusReady. Null while no ask
     // is pending (the prompt is unmounted).
     let promptRef: BoxRenderable | null = null;
+    // The docked pause prompt's focusable box, the same handle for a paused turn.
+    let pausePromptRef: BoxRenderable | null = null;
 
     // Quit cleanly: destroy() restores the terminal (mouse tracking, alternate screen, cooked mode)
     // before exit — process.exit() alone skips OpenTUI's cleanup and leaves the shell broken.
@@ -681,7 +687,7 @@ export function App(props: AppProps) {
         dialogPush(() => (
             <ResultsDialog
                 title={title}
-                lines={profileDetailLines(snap)}
+                lines={profileDetailLines(snap, pausedProfileOf(analysis?.id))}
                 emptyText="no profile data"
                 // Present the action only when an analysis exists to close over; `enabled` gates whether
                 // it is actually offered (footer hint + key binding).
@@ -918,6 +924,69 @@ export function App(props: AppProps) {
             queueMicrotask(() => refocus?.focus());
         }
     });
+
+    // The pause that docks: none while an ask is docked, because the two prompts share the slot and the ask needs
+    // an answer before its turn can go on.
+    const shownPause = (): ReturnType<typeof dockedPause> => (activeAsk() === null ? dockedPause() : null);
+
+    // The remedy of the server for the wait that the prompt shows: only the cause `credential` has one.
+    function remedyFor(pause: TurnScope & { readonly wait: TurnWait }): string | undefined {
+        return pause.wait.cause.kind === "credential" ? remedyOf(pause.analysisId, pause.turnId) : undefined;
+    }
+
+    // True while a resume of the docked pause is in flight: its action keys go inert.
+    const [pauseBusy, setPauseBusy] = createSignal(false);
+
+    // Resume the paused turn through `POST {A}/paused-work/:workId/resume`. The prompt goes when the frame `running`
+    // of each wait arrives, not at the answer of the route. A 404 means that no wait of the turn is left: it resumed
+    // or stopped already, thus the prompt goes now.
+    function resumePause(scope: TurnScope): void {
+        setPauseBusy(true);
+        void resumePausedWork(scope.analysisId, scope.turnId).match(
+            () => setPauseBusy(false),
+            (e) => {
+                setPauseBusy(false);
+                if (e.type === "http" && e.body.error === "not_found") {
+                    clearTurnPause(scope.turnId);
+                    notify({ kind: "info", text: "The turn is no longer paused." });
+                    return;
+                }
+                notify({ kind: "error", text: `Could not resume the turn: ${describeClientError(e)}` });
+            },
+        );
+    }
+
+    // The same focus choreography as the docked ask, gated on the identity of the paused turn.
+    let focusedPauseTurn: string | null = null;
+    createEffect(() => {
+        const pause = shownPause();
+        if (pause) {
+            if (pause.turnId !== focusedPauseTurn) {
+                focusedPauseTurn = pause.turnId;
+                queueMicrotask(() => pausePromptRef?.focus());
+            }
+        } else if (focusedPauseTurn !== null) {
+            focusedPauseTurn = null;
+            const refocus = askDrainRefocusTarget(chatStatus() === "busy", scrollPaneRef, textareaRef);
+            queueMicrotask(() => refocus?.focus());
+        }
+    });
+
+    // A frame of a pause carries no remedy, and the list of the paused work does. The row of a pause lands before its
+    // frame, thus one read at the dock of a credential pause finds the remedy that the poll has not read yet.
+    createEffect(
+        on(
+            () => {
+                const pause = dockedPause();
+                return pause !== null && pause.wait.cause.kind === "credential" ? `${pause.analysisId}\u0000${pause.turnId}` : null;
+            },
+            (key) => {
+                const pause = dockedPause();
+                if (key === null || pause === null || remedyOf(pause.analysisId, pause.turnId) !== undefined) return;
+                void refreshPausedWork(pause.analysisId);
+            },
+        ),
+    );
 
     // Per-palette selection highlight. Dark themes keep OpenTUI's native highlight (each cell's fg becomes
     // its selection bg) — vivid against their bright syntax; light themes invert into mush, so there we
@@ -1316,6 +1385,25 @@ export function App(props: AppProps) {
                                     onApprove={(kind: "once" | "always") => answerAsk(ask.askId, { kind })}
                                     onReject={(feedback?: string) => answerAsk(ask.askId, { kind: "reject", ...(feedback ? { feedback } : {}) })}
                                     onFocusReady={(r: BoxRenderable) => (promptRef = r)}
+                                />
+                            )}
+                        </Show>
+
+                        {/* Docked pause prompt — mounted while a workflow of the turn of the open thread waits in a
+                        pause, in the slot of the ask prompt and in its form. NON-keyed: each frame of the pause mints a
+                        fresh value, and a keyed mount would tear the prompt down and drop its focus at each one. */}
+                        <Show when={shownPause()}>
+                            {(pause: Accessor<NonNullable<ReturnType<typeof dockedPause>>>) => (
+                                <PausePrompt
+                                    state={pause().wait.state}
+                                    cause={describePauseCause(pause().wait.cause)}
+                                    remedy={remedyFor(pause())}
+                                    nextRetry={nextRetryOf(pause().wait) ?? undefined}
+                                    othersWaiting={pause().others}
+                                    busy={pauseBusy()}
+                                    onResume={() => resumePause(pause())}
+                                    onStop={() => conversation.stopPausedTurn(pause())}
+                                    onFocusReady={(r: BoxRenderable) => (pausePromptRef = r)}
                                 />
                             )}
                         </Show>

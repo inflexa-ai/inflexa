@@ -40,7 +40,7 @@ describe("workspaceBusyReasons", () => {
             ...DEFAULT_BUSY_GATE_OPTS,
             hasRunningTurn: () => false,
             profileWorkInFlight: () => false,
-            liveDurableWork: () => okAsync({ runs: 0, profiles: 0 }),
+            liveDurableWork: () => okAsync({ runs: 0, profiles: 0, turns: 0 }),
         };
 
         expect(await workspaceBusyReasons(analysisId, runtime, opts)).toContain("data_profile");
@@ -55,11 +55,40 @@ describe("workspaceBusyReasons", () => {
             profileStatus: () => okAsync(null),
         };
 
-        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => okAsync({ runs: 1, profiles: 0 }) })).toEqual(["run"]);
-        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => okAsync({ runs: 0, profiles: 0 }) })).toEqual([]);
+        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => okAsync({ runs: 1, profiles: 0, turns: 0 }) })).toEqual([
+            "run",
+        ]);
+        expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => okAsync({ runs: 0, profiles: 0, turns: 0 }) })).toEqual([]);
         expect(await workspaceBusyReasons("analysis-1", runtime, { ...idle, liveDurableWork: () => errAsync(new Error("down")) })).toEqual([
             "run_state_unreadable",
         ]);
+    });
+
+    test("a live turn workflow that the registry does not hold, for example a paused turn after a restart, holds the folder", async () => {
+        const runtime = { pool: poolWithRunningProfile("analysis-1") } as unknown as HarnessRuntime;
+        const opts: BusyGateOpts = {
+            ...DEFAULT_BUSY_GATE_OPTS,
+            hasRunningTurn: () => false,
+            profileWorkInFlight: () => false,
+            profileStatus: () => okAsync(null),
+            liveDurableWork: () => okAsync({ runs: 0, profiles: 0, turns: 1 }),
+        };
+
+        expect(await workspaceBusyReasons("analysis-1", runtime, opts)).toEqual(["chat_turn"]);
+    });
+
+    test("a run whose step waits in a pause holds the folder: its workflow is live", async () => {
+        const runtime = { pool: poolWithRunningProfile("analysis-1") } as unknown as HarnessRuntime;
+        const opts: BusyGateOpts = {
+            ...DEFAULT_BUSY_GATE_OPTS,
+            hasRunningTurn: () => false,
+            profileWorkInFlight: () => false,
+            profileStatus: () => okAsync(null),
+            // The paused step workflow is `PENDING`, thus the live count of the run holds it.
+            liveDurableWork: () => okAsync({ runs: 1, profiles: 0, turns: 0 }),
+        };
+
+        expect(await workspaceBusyReasons("analysis-1", runtime, opts)).toEqual(["run"]);
     });
 });
 

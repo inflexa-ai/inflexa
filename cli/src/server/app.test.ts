@@ -557,7 +557,7 @@ describe("GET /api/v1/server/activity", () => {
     test("counts the turns, the profile drives, and the durable work of the ledger", async () => {
         const body = await activity(
             readyBoot,
-            counts(() => okAsync({ runs: 3, profiles: 1 })),
+            counts(() => okAsync({ runs: 3, profiles: 1, turns: 0 })),
         );
         expect(body).toEqual({ stopping: null, turns: 1, profileDrives: 2, durable: { state: "counted", runs: 3, profiles: 1 } });
     });
@@ -565,7 +565,7 @@ describe("GET /api/v1/server/activity", () => {
     test("with no runtime, no workflow runs in the server", async () => {
         const body = await activity(
             fakeBoot(STARTING).boot,
-            counts(() => okAsync({ runs: 9, profiles: 9 })),
+            counts(() => okAsync({ runs: 9, profiles: 9, turns: 9 })),
         );
         expect(body.durable).toEqual({ state: "no_runtime" });
     });

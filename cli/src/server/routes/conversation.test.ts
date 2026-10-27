@@ -190,6 +190,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
         loadPage: () => okAsync({ turns: [], before: null }),
         retract: () => okAsync({ kind: "retracted", messages: 2 }),
         threadAnalysisId: (_pool, id) => okAsync(id === T ? A : null),
+        activeTurnId: () => okAsync(null),
         runTurn: () => Promise.resolve({ kind: "ok", opened: true, fallbackText: "" }),
         connection: () => ({ provider: "anthropic", mode: "direct" }),
         readCredentialVerdict: () => Promise.resolve(err({ type: "no_key" })),
@@ -804,6 +805,60 @@ describe("the turn registry routes", () => {
         expect(again.status).toBe(200);
         expect(await framesOf(again)).toEqual(stored);
         expect((await routes.request(`/${A}/threads/other/turns/turn-1/stream`)).status).toBe(404);
+    });
+
+    test("GET {T}/turns/:turnId/stream reads a paused turn that holds the thread and that the registry does not hold", async () => {
+        const source = { agentId: "chat", callPath: ["chat"] };
+        // The turn that a recovery runs after a restart: its frames up to the last pause. Its stream stays open while
+        // the turn waits, and this fake ends it after the frames.
+        const stored: ChatFrame[] = [
+            { type: "text-delta", text: "Looking", source },
+            {
+                type: "data-pause",
+                id: "turn-recovered",
+                workId: "turn-recovered",
+                workKind: "turn",
+                state: "paused",
+                cause: { kind: "credential" },
+                attempt: 0,
+                source,
+            },
+        ];
+        const routes = routesWith({
+            boot: readyBoot(fakeGateway([]), stored),
+            activeTurnId: (_pool, analysisId, threadId) => okAsync(analysisId === A && threadId === T ? "turn-recovered" : null),
+        });
+
+        const again = await routes.request(`/${A}/threads/${T}/turns/turn-recovered/stream`);
+        expect(again.status).toBe(200);
+        expect(await framesOf(again)).toEqual(stored);
+        // A turn id that does not hold the thread, and the holder under a different thread, give 404.
+        expect((await routes.request(`/${A}/threads/${T}/turns/turn-other/stream`)).status).toBe(404);
+        expect((await routes.request(`/${A}/threads/other/turns/turn-recovered/stream`)).status).toBe(404);
+    });
+
+    test("a failed read of the turn that holds the thread gives 500 `internal_error`", async () => {
+        const routes = routesWith({ activeTurnId: () => errAsync({ type: "query_failed", op: "test", cause: "down" }) });
+        const response = await routes.request(`/${A}/threads/${T}/turns/turn-recovered/stream`);
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+
+    test("POST {T}/turns/:turnId/abort stops a turn that holds the thread and that the registry does not hold, through the harness", async () => {
+        const stopped: string[] = [];
+        const ready = readyBoot();
+        // The cast is sound: the abort route reads the pool and `chatTurns.stop` of the runtime, and nothing else.
+        const runtime = { ...ready.runtime(), chatTurns: { stop: async (turnId: string) => void stopped.push(turnId) } } as unknown as HarnessRuntime;
+        const routes = routesWith({
+            boot: { ...ready, runtime: () => runtime },
+            activeTurnId: () => okAsync("turn-recovered"),
+        });
+
+        const response = await routes.request(`/${A}/threads/${T}/turns/turn-recovered/abort`, { method: "POST" });
+        expect(await response.json()).toEqual({ turnId: "turn-recovered", outcome: "aborting" });
+        expect(stopped).toEqual(["turn-recovered"]);
+        expect((await routes.request(`/${A}/threads/${T}/turns/turn-other/abort`, { method: "POST" })).status).toBe(404);
+        expect(stopped).toEqual(["turn-recovered"]);
     });
 
     test("the turn routes need no runtime: they read the registry of the process", async () => {

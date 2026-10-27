@@ -18,7 +18,7 @@
 
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner } from "@clack/prompts";
-import { ok, err, type Result } from "neverthrow";
+import { ok, err, ResultAsync, type Result } from "neverthrow";
 import {
     insertRun,
     loadDataProfileStatus,
@@ -41,6 +41,8 @@ import {
     type MachineBudget,
     type PackageQuery,
     type ParseQueryError,
+    type PausedWorkflow,
+    type PausedWorkSurface,
     type Pool,
     type Provenance,
     type RunAuthorization,
@@ -50,6 +52,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { describeCause } from "../../../lib/cause.ts";
+import { describePausedWait } from "../../../lib/pause_words.ts";
 import { fail, dieOn, failViaShutdown, type Spinner } from "../../../lib/cli.ts";
 import { env } from "../../../lib/env.ts";
 import { shutdown } from "../../../lib/shutdown.ts";
@@ -562,19 +565,41 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     // safe (DBOS marks the run recoverable and the next boot resumes it).
     log.info("Ctrl+C detaches; the run resumes on the next `inflexa run`/`inflexa profile` boot — check it with `inflexa run --status`");
     s.start("Running");
-    const final = await waitForRunTerminal(runtime.pool, outcome.runId, s);
+    const runId = outcome.runId;
+    const final = await waitForRunTerminal(runtime.pool, runId, s, () => readRunWaits(runtime.pausedWork, analysis.id, runId));
     await reportTerminal(runtime.pool, final, s);
 }
 
-/** One-line progress narration from the per-step ledger + the newest child workflow's DBOS step. */
-function renderRunProgress(steps: StepExecutionRow[], detail: { step: number; label: string } | null, startedAt: number): string {
+/**
+ * One-line progress narration from the per-step ledger, the newest child workflow's DBOS step, and the waits of the
+ * run. A paused run is not terminal: its row stays `running`, thus the line names each wait with its state and cause.
+ */
+export function renderRunProgress(
+    steps: StepExecutionRow[],
+    detail: { step: number; label: string } | null,
+    startedAt: number,
+    waiting: readonly PausedWorkflow[] = [],
+): string {
     const total = steps.length;
     const done = steps.filter((st) => st.status === "completed").length;
     const active = steps.filter((st) => st.status === "running").map((st) => st.stepId);
     const head = total > 0 ? `Running — ${done}/${total} step(s) complete` : "Running";
     const activeTail = active.length > 0 ? ` · active: ${active.join(", ")}` : "";
     const detailTail = detail ? ` · ${detail.label}` : "";
-    return `${head}${activeTail}${detailTail} · ${formatElapsed(startedAt)}`;
+    const pauseTail = waiting.map((wait) => ` · ${describePausedWait(wait)}`).join("");
+    return `${head}${activeTail}${detailTail}${pauseTail} · ${formatElapsed(startedAt)}`;
+}
+
+/**
+ * The waits of the run: each of its workflows that waits in a pause. A best-effort progress read, thus a failed read
+ * gives no wait and never aborts the wait for the terminal status.
+ */
+async function readRunWaits(pausedWork: PausedWorkSurface, analysisId: string, runId: string): Promise<readonly PausedWorkflow[]> {
+    const listed = await ResultAsync.fromPromise(pausedWork.list(analysisId), (cause) => cause);
+    return listed.match(
+        (works) => works.find((work) => work.kind === "run" && work.workId === runId)?.waiting ?? [],
+        () => [],
+    );
 }
 
 /**
@@ -624,14 +649,16 @@ async function readParentWorkflowDbosStatus(pool: Pool, runId: string): Promise<
 
 /**
  * Poll `cortex_runs` until the run leaves `running`, narrating step-level progress
- * on the spinner. Progress reads (steps + newest DBOS step) are best-effort and
+ * on the spinner. A run with a paused step stays `running` and its workflows stay
+ * live, thus the wait continues through a pause, and the progress names each wait.
+ * Progress reads (steps + newest DBOS step + waits) are best-effort and
  * NEVER abort the wait. Two conditions do end it as a fault: losing the run row
  * itself (the row was reserved before launch, so its disappearance is a genuine
  * fault, not routine desync), and a WEDGE — the durable workflow reaching a terminal
  * DBOS status while the ledger row is still `running` (see {@link DBOS_TERMINAL_STATUSES}),
  * which would otherwise poll forever with no timeout.
  */
-async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner): Promise<CortexRunRow> {
+async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner, readWaits: () => Promise<readonly PausedWorkflow[]>): Promise<CortexRunRow> {
     const startedAt = Date.now();
     for (;;) {
         const run = (await queryRun(pool, runId)).match(
@@ -667,7 +694,7 @@ async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner): Promis
 
         const steps = (await queryStepsByRun(pool, runId)).unwrapOr([]);
         const detail = await readNewestWorkflowStep(pool, runWorkflowFamily(runId));
-        s.message(renderRunProgress(steps, detail, startedAt));
+        s.message(renderRunProgress(steps, detail, startedAt, await readWaits()));
         await Promise.sleep(2000);
     }
 }
@@ -709,9 +736,6 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
         case "canceled":
             s.error("Run canceled");
             return failViaShutdown(`Run canceled — canceled step(s): ${fmtSteps(canceled)}.${errTail}`);
-        case "suspended_insufficient_funds":
-            s.error("Run suspended");
-            return failViaShutdown(`The host suspended the run — a new run of the plan can start (track it with \`inflexa run --status\`).${errTail}`);
         case "running":
             // Unreachable: `waitForRunTerminal` returns only on a non-running
             // status. `running` is a member of `RunStatus`, so the switch must

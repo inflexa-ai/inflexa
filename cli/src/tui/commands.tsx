@@ -30,7 +30,21 @@ import { createProvenanceExport, fetchProvenanceVerification } from "../client/p
 import { gatedForceReprofile } from "./hooks/profile_parity.ts";
 import { fetchRun, fetchRuns } from "../client/runs.ts";
 import type { RunSummary } from "../api/runs.ts";
-import { absTime, absTimeShort, idTail, refreshSidebarData, shortRunName, shortSessionId } from "./hooks/sidebar_live.ts";
+import {
+    absTime,
+    absTimeShort,
+    idTail,
+    refreshSidebarData,
+    runLabelOf,
+    runsSnapshot,
+    shortRunName,
+    shortSessionId,
+    type RunsSnapshot,
+} from "./hooks/sidebar_live.ts";
+import { pausedRunOf, pauseWordOf, refreshPausedWork } from "./hooks/pauses.ts";
+import type { PausedWork, ResumedWork } from "../api/paused_work.ts";
+import { resumePausedWork } from "../client/paused_work.ts";
+import { describePausedWait } from "../lib/pause_words.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { KEYS, chordLabel, keybindLabel, type Chord } from "./keymap.ts";
@@ -2473,10 +2487,112 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
                 // The steps and their figures are read at SELECT, not with the rows above: this is one
                 // request per run the user actually opens, where hoisting it would read every drawn
                 // row's steps to serve the one row that gets picked.
-                ctx.openDialog(() => <RunDetailDialog run={run} loadDetail={(runId) => fetchRun(analysis.id, runId)} onClose={() => ctx.closeDialog()} />);
+                ctx.openDialog(() => (
+                    <RunDetailDialog
+                        run={run}
+                        loadDetail={(runId) => fetchRun(analysis.id, runId)}
+                        paused={pausedRunOf(analysis.id, run.runId)}
+                        onClose={() => ctx.closeDialog()}
+                    />
+                ));
             }}
         />
     ));
+}
+
+/** What waits, in the words of the rail: a run by its plan title from the runs snapshot, else by its id tail. */
+export function pausedWorkLabel(work: PausedWork, runs: RunsSnapshot): string {
+    switch (work.kind) {
+        case "turn":
+            return "Chat turn";
+        case "run": {
+            const run = runs.kind === "loaded" ? runs.runs.find((candidate) => candidate.runId === work.workId) : undefined;
+            return `Run ${run === undefined ? idTail(work.workId) : runLabelOf(run)}`;
+        }
+        case "profile":
+            return "Data profile";
+        default: {
+            const exhaustive: never = work.kind;
+            throw new Error(`unhandled paused work kind: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
+/** How {@link openPausedWorkPicker} and {@link commitResumePausedWork} reach the server. Tests replace each call. */
+export type PausedWorkPickerOpts = {
+    /** Read the paused work into the pause store. Real: `refreshPausedWork`. */
+    readonly refresh: (analysisId: string) => Promise<readonly PausedWork[] | null>;
+    /** Real: `POST {A}/paused-work/:workId/resume`. */
+    readonly resume: (analysisId: string, workId: string) => ResultAsync<ResumedWork, ClientError>;
+    readonly notify: (n: Notice) => void;
+};
+
+/** The production {@link PausedWorkPickerOpts}. */
+export const DEFAULT_PAUSED_WORK_PICKER_OPTS: PausedWorkPickerOpts = {
+    refresh: (analysisId) => refreshPausedWork(analysisId),
+    resume: (analysisId, workId) => resumePausedWork(analysisId, workId),
+    notify,
+};
+
+/**
+ * Open the paused work of the analysis in a picker, and resume the item that the user selects. The list is read
+ * fresh at open, because the pause store is as old as the last poll tick. A wait in `retrying` ends at once, thus
+ * the same pick is "retry now". The stop of paused work stays with its own surface: the pause prompt of a turn, and
+ * the cancel of a run.
+ */
+async function openPausedWorkPicker(ctx: Workspace, opts: PausedWorkPickerOpts = DEFAULT_PAUSED_WORK_PICKER_OPTS): Promise<void> {
+    const analysis = ctx.analysis;
+    if (!analysis) return;
+    const items = await opts.refresh(analysis.id);
+    if (items === null) {
+        opts.notify({ kind: "error", text: "Could not read the paused work of this analysis." });
+        return;
+    }
+    // The read was an await, and the analysis-switch keys stay live: a picker for the previous analysis would resume
+    // its work under the name of the current one.
+    if (ctx.analysis?.id !== analysis.id) return;
+    const runs = runsSnapshot();
+    ctx.openDialog(() => (
+        <SelectDialog
+            title={`Paused work ${GLYPHS.emDash} ${analysis.name}`}
+            placeholder={`Search paused work${GLYPHS.ellipsis}`}
+            items={items.map((work) => {
+                const head = work.waiting.find((wait) => wait.state === "paused") ?? work.waiting[0];
+                return {
+                    value: work,
+                    title: pausedWorkLabel(work, runs),
+                    meta: head === undefined ? pauseWordOf(work) : describePausedWait(head),
+                    // A durable record of when the work stopped: an absolute local time.
+                    description: `${work.waiting.length} waiting ${GLYPHS.middot} since ${absTime(head?.pausedAt ?? null)}`,
+                };
+            })}
+            emptyText="No paused work — a turn, a run, or a data profile pauses when its model request cannot run"
+            onCancel={() => ctx.closeDialog()}
+            onSelect={(work: PausedWork) => {
+                ctx.closeDialog();
+                void commitResumePausedWork(analysis.id, work, pausedWorkLabel(work, runs), opts);
+            }}
+        />
+    ));
+}
+
+/** Resume one paused work and report the outcome. A 404 means that the work resumed or stopped already. */
+export async function commitResumePausedWork(
+    analysisId: string,
+    work: PausedWork,
+    label: string,
+    opts: PausedWorkPickerOpts = DEFAULT_PAUSED_WORK_PICKER_OPTS,
+): Promise<void> {
+    await opts.resume(analysisId, work.workId).match(
+        (resumed) => opts.notify({ kind: "info", text: `${label} resumed (${resumed.workflows} waiting workflow${resumed.workflows === 1 ? "" : "s"}).` }),
+        (e) =>
+            opts.notify(
+                e.type === "http" && e.body.error === "not_found"
+                    ? { kind: "info", text: `${label} is no longer paused.` }
+                    : { kind: "error", text: `Could not resume ${label}: ${describeClientError(e)}` },
+            ),
+    );
+    await opts.refresh(analysisId);
 }
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the
@@ -3064,6 +3180,15 @@ export const commands: Command[] = [
         // path itself still degrades pre-ready (the sidebar entry points bypass this predicate).
         enabled: (ws) => bootState().phase === "ready" && ws.analysis !== null,
         run: (ctx) => void openRunsPicker(ctx),
+    },
+    {
+        id: "work.resume-paused",
+        title: "Resume paused work…",
+        description: "Pick a paused turn, run, or data profile of this analysis and resume it",
+        category: "Analysis",
+        // Gated on the booted runtime, because the list and the resume read it. The picker reads the list fresh.
+        enabled: (ws) => bootState().phase === "ready" && ws.analysis !== null,
+        run: (ctx) => void openPausedWorkPicker(ctx),
     },
     // The model-switch commands form their own `Provider` group — declared here, after `View`, so
     // the palette (which orders groups by a category's first appearance in this array) renders it as

@@ -21,28 +21,35 @@ function recordingPool(answer: { row: Record<string, string> } | { failure: Erro
 
 describe("countLiveDurableWork", () => {
     test("counts the live work of one analysis, with each live DBOS status", async () => {
-        const { pool, queries } = recordingPool({ row: { runs: "2", profiles: "1" } });
+        const { pool, queries } = recordingPool({ row: { runs: "2", profiles: "1", turns: "1" } });
 
-        expect((await countLiveDurableWork(pool, "a1"))._unsafeUnwrap()).toEqual({ runs: 2, profiles: 1 });
+        expect((await countLiveDurableWork(pool, "a1"))._unsafeUnwrap()).toEqual({ runs: 2, profiles: 1, turns: 1 });
         expect(queries).toHaveLength(1);
         expect(queries[0]?.text).toContain("dbos.workflow_status");
         expect(queries[0]?.values).toEqual(["a1", ["PENDING", "ENQUEUED", "DELAYED"]]);
     });
 
     test("counts the live work of each analysis when no analysis is named", async () => {
-        const { pool, queries } = recordingPool({ row: { runs: "0", profiles: "3" } });
+        const { pool, queries } = recordingPool({ row: { runs: "0", profiles: "3", turns: "0" } });
 
-        expect((await countLiveDurableWork(pool))._unsafeUnwrap()).toEqual({ runs: 0, profiles: 3 });
+        expect((await countLiveDurableWork(pool))._unsafeUnwrap()).toEqual({ runs: 0, profiles: 3, turns: 0 });
         expect(queries[0]?.values[0]).toBeNull();
     });
 
-    test("a suspended run never counts: the run predicate names the running status only", async () => {
-        const { pool, queries } = recordingPool({ row: { runs: "0", profiles: "0" } });
+    test("the run predicate names the running status only, the status that a run with a paused step keeps", async () => {
+        const { pool, queries } = recordingPool({ row: { runs: "0", profiles: "0", turns: "0" } });
 
         (await countLiveDurableWork(pool, "a1"))._unsafeUnwrap();
 
         expect(queries[0]?.text).toContain("r.status = 'running'");
-        expect(queries[0]?.text).not.toContain("suspended_insufficient_funds");
+    });
+
+    test("a turn counts while a live turn workflow holds a thread of the analysis", async () => {
+        const { pool, queries } = recordingPool({ row: { runs: "0", profiles: "0", turns: "1" } });
+
+        expect((await countLiveDurableWork(pool, "a1"))._unsafeUnwrap().turns).toBe(1);
+        expect(queries[0]?.text).toContain("cortex_analysis_threads t");
+        expect(queries[0]?.text).toContain("ws.workflow_uuid = t.active_turn_id");
     });
 
     test("a failed read is the error, with its cause", async () => {
@@ -68,18 +75,18 @@ describe("countLiveDurableWorkByAnalysis", () => {
     test("sends one query for the whole list, and maps the rows by analysis id", async () => {
         const { pool, queries } = groupedPool({
             rows: [
-                { analysis_id: "a1", runs: "2", profiles: "0" },
-                { analysis_id: "a2", runs: "0", profiles: "1" },
-                { analysis_id: "a3", runs: "0", profiles: "0" },
+                { analysis_id: "a1", runs: "2", profiles: "0", turns: "0" },
+                { analysis_id: "a2", runs: "0", profiles: "1", turns: "0" },
+                { analysis_id: "a3", runs: "0", profiles: "0", turns: "1" },
             ],
         });
 
         const counts = (await countLiveDurableWorkByAnalysis(pool, ["a1", "a2", "a3"]))._unsafeUnwrap();
 
         expect([...counts]).toEqual([
-            ["a1", { runs: 2, profiles: 0 }],
-            ["a2", { runs: 0, profiles: 1 }],
-            ["a3", { runs: 0, profiles: 0 }],
+            ["a1", { runs: 2, profiles: 0, turns: 0 }],
+            ["a2", { runs: 0, profiles: 1, turns: 0 }],
+            ["a3", { runs: 0, profiles: 0, turns: 1 }],
         ]);
         expect(queries).toHaveLength(1);
         expect(queries[0]?.values).toEqual([
@@ -89,7 +96,7 @@ describe("countLiveDurableWorkByAnalysis", () => {
     });
 
     test("applies the liveness rule of the one-analysis count", async () => {
-        const one = recordingPool({ row: { runs: "0", profiles: "0" } });
+        const one = recordingPool({ row: { runs: "0", profiles: "0", turns: "0" } });
         const grouped = groupedPool({ rows: [] });
         (await countLiveDurableWork(one.pool, "a1"))._unsafeUnwrap();
         (await countLiveDurableWorkByAnalysis(grouped.pool, ["a1"]))._unsafeUnwrap();
@@ -100,9 +107,11 @@ describe("countLiveDurableWorkByAnalysis", () => {
                 "ws.workflow_uuid = r.run_id OR ws.workflow_uuid LIKE r.run_id || '-%'",
                 "s.data_profile_status = 'running'",
                 "ws.workflow_uuid = s.data_profile_workflow_id",
+                "t.active_turn_id IS NOT NULL",
+                "ws.workflow_uuid = t.active_turn_id",
             ].filter((predicate) => text?.includes(predicate));
         expect(rule(grouped.queries[0]?.text)).toEqual(rule(one.queries[0]?.text));
-        expect(rule(one.queries[0]?.text)).toHaveLength(4);
+        expect(rule(one.queries[0]?.text)).toHaveLength(6);
     });
 
     test("an empty list sends no query", async () => {
@@ -122,7 +131,7 @@ describe("countLiveDurableWorkByAnalysis", () => {
 
 describe("listLiveRunIds", () => {
     test("sends one query with the liveness rule of the counts, the limit as $1, and the live statuses as $2", async () => {
-        const counted = recordingPool({ row: { runs: "0", profiles: "0" } });
+        const counted = recordingPool({ row: { runs: "0", profiles: "0", turns: "0" } });
         (await countLiveDurableWork(counted.pool, "a1"))._unsafeUnwrap();
         const { pool, queries } = recordingPool({ row: { run_id: "r2" } });
 

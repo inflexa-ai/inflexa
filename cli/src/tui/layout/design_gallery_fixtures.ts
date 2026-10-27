@@ -10,6 +10,7 @@
 
 import type { PlanPart, RunCardPart, TextPart } from "@inflexa-ai/harness/contracts/index.js";
 
+import type { PausedWaitView } from "../../lib/pause_words.ts";
 import { formatTokenFigure } from "../../lib/usage_format.ts";
 import type { LiveAskPart, ThinkingPart, FileEditPart, PlanCardStepView } from "../../types/session.ts";
 import type { ToolBlockProps } from "../components/tool_block.tsx";
@@ -254,6 +255,23 @@ export const mockAskPrompts = {
         queuedCount: 2,
     },
 } satisfies Record<string, AskPromptFixture>;
+
+/**
+ * MOCK: the waits of a paused turn, one for each state and cause that the pause prompt shows. The gallery passes
+ * each one through the same words as the live dock (`lib/pause_words.ts`), thus an exhibit cannot word a cause in a
+ * way that the live prompt does not.
+ */
+export const mockPausedWaits = {
+    hostRefusal: { state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, othersWaiting: 1 },
+    credential: {
+        state: "paused",
+        cause: { kind: "credential" },
+        attempt: 0,
+        othersWaiting: 0,
+        remedy: "Your anthropic login has expired or been revoked — run `inflexa up` in a terminal to sign in again (or `inflexa setup --provider claude`).",
+    },
+    outage: { state: "retrying", cause: { kind: "outage" }, attempt: 1, retryAt: "2026-10-27T10:32:05.000Z", othersWaiting: 0 },
+} satisfies Record<string, PausedWaitView & { othersWaiting: number; remedy?: string }>;
 
 /**
  * MOCK: a reconciled ask card in each of the five statuses the transcript renders — `pending` plus its

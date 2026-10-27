@@ -112,12 +112,12 @@ const realTurnSeams: ChatTurnSeams = { readAuthor: currentUserEmail };
  * agent that the thread resolves to, with a length-1 `callPath`, so its events PASS the printer's
  * sub-agent depth filter. `threadId` rides IN scope: `execute_analysis` reads
  * `session.scope.threadId` to stamp `cortex_runs.thread_id`, giving a chat-launched run its thread
- * lineage.
+ * lineage. The resume of paused work names no thread, because the work can be a run or a profile.
  */
-export function buildChatSession(analysisId: string, threadId: string): ChatTurnSession {
+export function buildChatSession(analysisId: string, threadId?: string): ChatTurnSession {
     return {
         identity: { user: "local" },
-        scope: { kind: "analysis", analysisId, threadId },
+        scope: { kind: "analysis", analysisId, ...(threadId === undefined ? {} : { threadId }) },
         auth: makeLocalAuth(),
     };
 }

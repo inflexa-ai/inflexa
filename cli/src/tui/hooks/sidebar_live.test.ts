@@ -117,8 +117,12 @@ function opts(profile: DataProfileState | null, runs: RunSummary[], ready: () =>
     };
 }
 
-/** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread that the case does not read. */
-const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread"> = { checkServer: async () => true, pollThread: async () => {} };
+/** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread and paused work that the case does not read. */
+const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread" | "pollPaused"> = {
+    checkServer: async () => true,
+    pollThread: async () => {},
+    pollPaused: async () => {},
+};
 
 /** The options of a case about the ledger: {@link LEDGER_ONLY} fills the reads that it omits. */
 type LedgerWatchOpts = Omit<WatchOpts, keyof typeof LEDGER_ONLY> & Partial<typeof LEDGER_ONLY>;
@@ -733,13 +737,7 @@ describe("hasActiveWork — poll arming predicate", () => {
 
     test("a non-terminal run arms; all-terminal runs do not", () => {
         expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", analysisId: "analysis-1", runs: [runRow({ status: "running" })] })).toBe(true);
-        const terminal = [
-            runRow({ status: "completed" }),
-            runRow({ status: "failed" }),
-            runRow({ status: "canceled" }),
-            runRow({ status: "partial" }),
-            runRow({ status: "suspended_insufficient_funds" }),
-        ];
+        const terminal = [runRow({ status: "completed" }), runRow({ status: "failed" }), runRow({ status: "canceled" }), runRow({ status: "partial" })];
         expect(hasActiveWork({ kind: "absent" }, { kind: "loaded", analysisId: "analysis-1", runs: terminal })).toBe(false);
     });
 
@@ -953,13 +951,46 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
     test("a tick whose server does not answer reads neither the scope nor the thread", async () => {
         let scopeReads = 0;
         let threadReads = 0;
+        let pausedReads = 0;
         const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => void (scopeReads += 1) } as unknown as Workspace;
-        const poll = mountPoll(ws, { checkServer: async () => false, pollThread: async () => void (threadReads += 1) });
+        const poll = mountPoll(ws, {
+            checkServer: async () => false,
+            pollThread: async () => void (threadReads += 1),
+            pollPaused: async () => void (pausedReads += 1),
+        });
         try {
             await poll.tick();
-            expect({ scopeReads, threadReads }).toEqual({ scopeReads: 0, threadReads: 0 });
+            expect({ scopeReads, threadReads, pausedReads }).toEqual({ scopeReads: 0, threadReads: 0, pausedReads: 0 });
         } finally {
             poll.dispose();
+        }
+    });
+
+    test("a tick reads the paused work of the analysis with the open thread", async () => {
+        const reads: [string, string | null][] = [];
+        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const poll = mountPoll(ws, { pollPaused: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
+        try {
+            await poll.tick();
+            expect(reads).toEqual([["A", "T"]]);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("the open of an analysis reads its paused work at the ready edge, not one tick later", () => {
+        bootReady();
+        const reads: [string, string | null][] = [];
+        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const dispose = mountWatch(ws, {
+            refresh: async () => {},
+            arm: () => () => {},
+            pollPaused: async (analysisId, threadId) => void reads.push([analysisId, threadId]),
+        });
+        try {
+            expect(reads).toEqual([["A", "T"]]);
+        } finally {
+            dispose();
         }
     });
 
@@ -1259,6 +1290,18 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         expect(lines).toContain("details here");
         // No result + no seed set → zero, pluralized.
         expect(lines[lines.length - 1]).toBe("0 seed inputs");
+    });
+
+    test("a profile that waits in a pause gives the cause of each wait under its status", () => {
+        const lines = profileDetailLines(loaded({ status: "running", completedAt: null, result: null }), {
+            workId: "wf-p",
+            kind: "profile",
+            analysisId: "A",
+            waiting: [
+                { workflowId: "wf-p", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, pausedAt: "2026-10-27T10:00:00.000Z" },
+            ],
+        });
+        expect(lines.slice(0, 2)).toEqual(["status: running", "paused: the host paused the work (payment_required)"]);
     });
 
     test("loaded pending without a result → status, elapsed (not duration), seed count, no files section", () => {

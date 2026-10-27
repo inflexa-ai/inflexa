@@ -3,6 +3,7 @@ import type { ResultAsync } from "neverthrow";
 import type { DataProfileGroup, DataProfilePartition, DataProfileResult } from "@inflexa-ai/harness/contracts/index.js";
 import { profileCaveats, profileDimensions, type ProfileDimensionView } from "@inflexa-ai/harness/app/data-profile-view";
 
+import type { PausedWork } from "../../api/paused_work.ts";
 import type { DataProfileState, DataProfileView, RunDetail, RunList, RunStatus, RunSummary, StepExecutionStatus } from "../../api/runs.ts";
 import type { UsageTotals } from "../../api/usage.ts";
 import type { ClientError } from "../../client/api.ts";
@@ -10,11 +11,13 @@ import { fetchDataProfile, fetchRun, fetchRuns } from "../../client/runs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
+import { describePausedWait } from "../../lib/pause_words.ts";
 import { formatTokenFigure, formatTokenFigureLabelled } from "../../lib/usage_format.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { RunStepView } from "../components/run_block.tsx";
 import { bootState, checkServer } from "./boot.ts";
-import { otherClientTurn, pollOpenThread } from "./conversation.ts";
+import { otherClientTurn, pollOpenThread, watchPausedTurn } from "./conversation.ts";
+import { refreshPausedWork } from "./pauses.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
 // The sidebar's live ledger data — the data-profile status and the analysis's newest runs — held
@@ -310,8 +313,11 @@ function dimensionLineOf(d: ProfileDimensionView): string {
  * the summary prose, a groups section (or the legacy per-file `path — description` list), a dimensions
  * section, bounded caveats, and the seed-input count. Rendered verbatim by `ResultsDialog` (the design
  * gallery drives it over a mock).
+ *
+ * `paused` is the paused-work item of the profile, when the profile waits in a pause. Its row still reads `running`,
+ * thus one line for each wait follows the status line and gives the cause.
  */
-export function profileDetailLines(snap: ProfileSnapshot): string[] {
+export function profileDetailLines(snap: ProfileSnapshot, paused?: PausedWork): string[] {
     switch (snap.kind) {
         case "not_ready":
             return ["runtime not ready"];
@@ -322,6 +328,7 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
         case "loaded": {
             const p = snap.profile;
             const lines: string[] = [`status: ${p.status}`];
+            for (const wait of paused?.waiting ?? []) lines.push(describePausedWait(wait));
             if (p.startedAt) lines.push(`started ${absTime(p.startedAt)}`);
             if (p.completedAt) lines.push(`completed ${absTime(p.completedAt)}`);
             // A finished profile (completed OR failed — the ledger stamps `completedAt` on both) shows
@@ -407,8 +414,7 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
 /**
  * The themed glyph + color role for a run's status. The single exhaustive `runMark`,
  * shared by the sidebar rail and the runs dialog (both need the identical status→glyph/role mapping).
- * running=warn, completed=success, failed/canceled=error, `suspended_insufficient_funds`=warn,
- * `partial`=muted. A `never`-typed default breaks the build if the harness enum grows, forcing a new
+ * running=warn, completed=success, failed/canceled=error, `partial`=muted. A `never`-typed default breaks the build if the harness enum grows, forcing a new
  * status to be classified rather than silently mis-toned.
  *
  * Homed in this hooks module (not `layout/sidebar.tsx`) beside the other pure, non-JSX sidebar helpers
@@ -423,11 +429,6 @@ export function runMark(status: RunStatus): { glyph: string; role: keyof ThemeCo
         case "failed":
         case "canceled":
             return { glyph: GLYPHS.cross, role: "error" };
-        case "suspended_insufficient_funds":
-            // Actionable, not just terminal: the host suspended the run, so it warrants the "needs
-            // attention" warn tone rather than the muted grey of `partial` (which is simply a
-            // finished-with-gaps end state the user cannot act on).
-            return { glyph: GLYPHS.circle, role: "warning" };
         case "partial":
             return { glyph: GLYPHS.circle, role: "fgMuted" };
         default: {
@@ -563,7 +564,6 @@ export const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
     failed: true,
     partial: true,
     canceled: true,
-    suspended_insufficient_funds: true,
 };
 
 /**
@@ -878,14 +878,46 @@ export type WatchSeams = {
     readonly checkServer: () => Promise<boolean>;
     /** Read the open thread: the turn of a different client, and the transcript when it changed. Real: {@link pollOpenThread}. */
     readonly pollThread: (analysisId: string, threadId: string) => Promise<void>;
+    /**
+     * Read the paused work of the analysis, and read again a paused turn of the open thread that the TUI does not
+     * stream, thus its pause prompt docks. `threadId` is `null` before a thread is bound. Real: {@link pollPausedWork}.
+     */
+    readonly pollPaused: (analysisId: string, threadId: string | null) => Promise<void>;
     /** Arm a repeating timer; returns its disarm. Real: wraps `setInterval`/`clearInterval`. */
     readonly arm: (fn: () => void, ms: number) => () => void;
 };
+
+/** The reads of {@link pollPausedWork}. Tests replace each one. */
+export type PausedPollOpts = {
+    /** Real: {@link refreshPausedWork}. */
+    readonly refresh: (analysisId: string) => Promise<readonly PausedWork[] | null>;
+    /** Real: {@link watchPausedTurn}. It reads the turn until the turn ends, thus the poll does not wait for it. */
+    readonly watchTurn: (analysisId: string, threadId: string, turnId: string) => Promise<void>;
+};
+
+const DEFAULT_PAUSED_POLL_OPTS: PausedPollOpts = {
+    refresh: (analysisId) => refreshPausedWork(analysisId),
+    watchTurn: (analysisId, threadId, turnId) => watchPausedTurn(analysisId, threadId, turnId),
+};
+
+/**
+ * Read the paused work of the analysis into the pause store, for the sidebar marks and the palette command. A paused
+ * turn of the open thread makes the TUI read that turn again: the TUI does not stream a turn that a recovery runs
+ * after a restart, and only its frames dock the pause prompt. A turn that the TUI streams or reads already is not
+ * read again (`watchPausedTurn`).
+ */
+export async function pollPausedWork(analysisId: string, threadId: string | null, opts: PausedPollOpts = DEFAULT_PAUSED_POLL_OPTS): Promise<void> {
+    const items = await opts.refresh(analysisId);
+    if (items === null || threadId === null) return;
+    const turn = items.find((work) => work.kind === "turn" && work.threadId === threadId);
+    if (turn !== undefined) void opts.watchTurn(analysisId, threadId, turn.workId);
+}
 
 const realWatchSeams: WatchSeams = {
     refresh: refreshSidebarData,
     checkServer: () => checkServer(),
     pollThread: (analysisId, threadId) => pollOpenThread(analysisId, threadId),
+    pollPaused: (analysisId, threadId) => pollPausedWork(analysisId, threadId),
     arm: (fn, ms) => {
         const handle = setInterval(fn, ms);
         return () => clearInterval(handle);
@@ -921,7 +953,8 @@ export const pollTicks = pollTick;
  *
  * The server sends no event, thus this poll is how the TUI sees what a different client changes: a tick
  * refreshes the ledger, probes the server, and, when the server that the boot store saw ready answers,
- * reads the scope of the analysis, the usage of the session ({@link pollTicks}), and the open thread. A
+ * reads the scope of the analysis, the usage of the session ({@link pollTicks}), the open thread, and the paused work
+ * of the analysis ({@link pollPausedWork}). A
  * change shows at the latest one idle tick later. A caller that learns of a new run, for example from a
  * run card of the turn, calls {@link refreshSidebarData} itself.
  */
@@ -944,6 +977,17 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         if (prevAnalysisId !== null && prevAnalysisId !== analysisId) resetSnapshots();
         prevAnalysisId = analysisId;
         void seams.refresh(analysisId);
+    });
+
+    // Trigger 1b — the paused work at the open of an analysis and of a thread. A paused turn of the thread docks its
+    // prompt at the open, not one poll tick later. The session binds after the ready edge, thus the thread is a
+    // source of this effect.
+    createEffect(() => {
+        const phase = bootState().phase;
+        const analysisId = workspace.analysis?.id ?? null;
+        const threadId = workspace.sessionId;
+        if (phase !== "ready" || analysisId === null) return;
+        void seams.pollPaused(analysisId, threadId);
     });
 
     // Trigger 2 — the busy→idle down-edge. `prev` is closure-local per watcher invocation; seeded to
@@ -992,6 +1036,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         setPollTick((n) => n + 1);
         const threadId = workspace.sessionId;
         if (threadId !== null) await seams.pollThread(analysisId, threadId);
+        await seams.pollPaused(analysisId, threadId);
     }
 
     /**

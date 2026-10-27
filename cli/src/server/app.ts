@@ -19,6 +19,7 @@ import { conversationRoutes } from "./routes/conversation.ts";
 import { fsRoutes } from "./routes/fs.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
+import { pausedWorkRoutes } from "./routes/paused_work.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { provenanceRoutes } from "./routes/provenance.ts";
 import { reportPageRoutes, reportSessionAccessRoutes } from "./routes/report_pages.ts";
@@ -73,6 +74,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/analyses/:analysisId/provenance", provenanceRoutes());
     app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId/report-sessions", reportSessionAccessRoutes(deps.pageGrants));
+    app.route("/api/v1/analyses/:analysisId/paused-work", pausedWorkRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId", farmLinkRoutes());
     // Outside `/api`: no API credential reaches it, and only a page grant gives access.

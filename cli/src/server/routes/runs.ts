@@ -470,7 +470,6 @@ export function isTerminalRunStatus(status: RunStatus): status is TerminalRunSta
         case "partial":
         case "failed":
         case "canceled":
-        case "suspended_insufficient_funds":
             return true;
         case "running":
             return false;

@@ -941,11 +941,11 @@ describe("POST {A}/run/:runId/seen", () => {
 
     test("each terminal status gives 200", async () => {
         const analysisId = seedAnalysis();
-        for (const status of ["completed", "partial", "failed", "canceled", "suspended_insufficient_funds"] as const) {
+        for (const status of ["completed", "partial", "failed", "canceled"] as const) {
             const app = appWith({ getRun: () => okAsync(runRow({ runId: `r-${status}`, analysisId, status })) });
             expect((await app.request(`/api/v1/analyses/${analysisId}/run/r-${status}/seen`, { method: "POST" })).status).toBe(200);
         }
-        const ids = ["r-canceled", "r-completed", "r-failed", "r-partial", "r-suspended_insufficient_funds"];
+        const ids = ["r-canceled", "r-completed", "r-failed", "r-partial"];
         expect(listSeenRunIds(ids)._unsafeUnwrap()).toEqual(new Set(ids));
     });
 
@@ -1374,7 +1374,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         expect(response.status).toBe(409);
         expect(await response.json()).toEqual({
             error: "busy",
-            message: "Cannot approve a plan while a chat turn is running.",
+            message: "Cannot approve a plan while a chat turn is running or paused.",
             details: { reasons: ["chat_turn"] },
         });
         expect(inputs).toEqual([]);

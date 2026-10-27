@@ -13,7 +13,7 @@ export type BusyGateOpts = {
     readonly profileWorkInFlight: (analysisId: string) => boolean;
     /** The data profile ledger row, or `null` when the analysis has no profile. The error channel means the ledger is unreadable. */
     readonly profileStatus: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, unknown>;
-    /** The runs and the data profiles of the analysis with a live durable workflow. The error channel means the ledger is unreadable. */
+    /** The runs, the data profiles, and the chat turns of the analysis with a live durable workflow. The error channel means the ledger is unreadable. */
     readonly liveDurableWork: (pool: Pool, analysisId: string) => ResultAsync<LiveDurableWork, unknown>;
 };
 
@@ -28,7 +28,7 @@ export const DEFAULT_BUSY_GATE_OPTS: BusyGateOpts = {
 /**
  * What the busy rule knows about one analysis:
  *
- * - `turn`: a chat turn of the analysis runs.
+ * - `turn`: a chat turn of the analysis runs or waits in a pause.
  * - `profileDrive`: the profile queue holds a drive of the analysis. The ledger row is then not read, and `profile` is ignored.
  * - `profile`: the ledger row is `running` or not (`idle`). `unreadable` is a failed read, and `unknown` is no read, because there is no runtime.
  * - `liveRuns`: the count of the runs with a live durable workflow, `unreadable` for a failed read, and `unknown` for no read.
@@ -63,7 +63,11 @@ export function busyReasonsOf(facts: BusyFacts): BusyReason[] {
  * A rename moves the folder and a delete archives or removes it. The harness resolves paths beneath that
  * folder for the whole life of a run, and each run of the analysis executes in the server process. Three
  * kinds of work can hold the folder: a chat turn, a data profile, and a durable run that outlived the turn
- * that started it (`execute_analysis` returns before its workflow does).
+ * that started it (`execute_analysis` returns before its workflow does). Each of them can wait in a pause, and
+ * paused work still holds the folder.
+ *
+ * A chat turn counts from the turn registry, or from a live turn workflow that holds a thread of the analysis. The
+ * registry does not hold a paused turn that a recovery runs after a restart, thus the live read covers it.
  *
  * A data profile has two halves. The profile queue holds the drive that stages the inputs, and the drive
  * ends when it starts the profile workflow. The profile ledger row stays `running` until that workflow
@@ -89,5 +93,6 @@ export async function workspaceBusyReasons(
         profile = status.isErr() ? "unreadable" : status.value?.status === "running" ? "running" : "idle";
     }
     const live = await opts.liveDurableWork(runtime.pool, analysisId);
-    return busyReasonsOf({ turn, profileDrive, profile, liveRuns: live.isErr() ? "unreadable" : live.value.runs });
+    if (live.isErr()) return busyReasonsOf({ turn, profileDrive, profile, liveRuns: "unreadable" });
+    return busyReasonsOf({ turn: turn || live.value.turns > 0, profileDrive, profile, liveRuns: live.value.runs });
 }

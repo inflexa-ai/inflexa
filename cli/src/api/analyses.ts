@@ -84,7 +84,7 @@ export type AnchorView = {
 /**
  * Why the workspace folder of an analysis must not move or be retired now:
  *
- * - `chat_turn` — a chat turn of the analysis runs.
+ * - `chat_turn` — a chat turn of the analysis runs or waits in a pause.
  * - `data_profile` — a data profile of the analysis is queued or runs.
  * - `run` — a run of the analysis has a live durable workflow.
  * - `run_state_unreadable` — the run ledger or the workflow status cannot be read, thus the folder cannot be shown idle.
@@ -96,7 +96,7 @@ export type BusyReason = "chat_turn" | "data_profile" | "run" | "run_state_unrea
 export function describeBusyReason(reason: BusyReason): string {
     switch (reason) {
         case "chat_turn":
-            return "a chat turn is running";
+            return "a chat turn is running or paused";
         case "data_profile":
             return "a data profile is running";
         case "run":

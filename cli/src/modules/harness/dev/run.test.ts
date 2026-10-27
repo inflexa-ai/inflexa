@@ -10,7 +10,7 @@ import {
     type RunStatus,
 } from "@inflexa-ai/harness";
 
-import { triggerAnalysisRun, type RunTriggerSeams, type TriggerAnalysisRunParams } from "./run.ts";
+import { renderRunProgress, triggerAnalysisRun, type RunTriggerSeams, type TriggerAnalysisRunParams } from "./run.ts";
 
 // The run session the fake authorizer hands back — asserted by identity in the
 // happy-path input check. Cast because the cli cannot construct a real one
@@ -255,5 +255,27 @@ describe("triggerAnalysisRun — happy path", () => {
         expect(input.timeoutByStepId).toEqual({ T1S1: 120 });
         expect(input.runSession).toBe(RUN_SESSION);
         expect(input.ownsMandate).toBe(true);
+    });
+});
+
+describe("renderRunProgress — a paused run keeps waiting, and its progress names each wait", () => {
+    test("each waiting workflow gives its state and its cause, and a wait in `retrying` its next retry", () => {
+        const line = renderRunProgress([], null, Date.now(), [
+            { workflowId: "run-1-0", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, pausedAt: "2026-10-27T10:00:00.000Z" },
+            {
+                workflowId: "run-1-1",
+                state: "retrying",
+                cause: { kind: "outage" },
+                attempt: 1,
+                retryAt: "2026-10-27T10:05:00.000Z",
+                pausedAt: "2026-10-27T10:00:00.000Z",
+            },
+        ]);
+        expect(line).toContain("paused: the host paused the work (payment_required)");
+        expect(line).toContain(`retrying: the model provider is not available, retry 2 at ${new Date("2026-10-27T10:05:00.000Z").toLocaleTimeString()}`);
+    });
+
+    test("a run with no wait reads as before", () => {
+        expect(renderRunProgress([], null, Date.now())).toStartWith("Running · ");
     });
 });

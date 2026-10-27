@@ -188,7 +188,6 @@ describe("run completion announcement", () => {
             ["failed", "error"],
             ["canceled", "error"],
             ["partial", "warn"],
-            ["suspended_insufficient_funds", "warn"],
         ] as const) {
             __resetSidebarLiveForTest();
             __resetRunCompletionsForTest();
@@ -611,11 +610,6 @@ describe("completion text", () => {
     test("a success names the run, its outcome, its counts, and its duration", () => {
         const run = runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:02:30.000Z" });
         expect(completionNoticeText(run, known)).toBe("Run Differential expression completed in 2m30s (3/4 steps)");
-    });
-
-    test("a suspended run says that it was suspended for insufficient funds", () => {
-        const run = runRow({ runId: "run-a", status: "suspended_insufficient_funds", completedAt: "2026-07-28T10:00:30.000Z" });
-        expect(completionNoticeText(run, known)).toContain("was suspended (insufficient funds)");
     });
 
     test("a non-success carries its reason", () => {

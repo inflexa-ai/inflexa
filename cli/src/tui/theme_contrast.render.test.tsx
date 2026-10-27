@@ -8,6 +8,8 @@ import { readPlanCard } from "../modules/harness/chat_printer.ts";
 import { contrast } from "../test_support/contrast.ts";
 import { setTheme, syntaxStyle, theme } from "./theme.ts";
 import { AskPrompt } from "./components/ask_prompt.tsx";
+import { PausePrompt } from "./components/pause_prompt.tsx";
+import { describePauseCause, nextRetryOf } from "../lib/pause_words.ts";
 import { DiffBlock } from "./components/diff_block.tsx";
 import { ErrorBlock } from "./components/error_block.tsx";
 import { OpenableCardBlock } from "./components/openable_card_block.tsx";
@@ -23,6 +25,7 @@ import {
     galleryProfile,
     galleryRun,
     mockAskPrompts,
+    mockPausedWaits,
     mockFileEdit,
     mockLongRun,
     mockPlanCard,
@@ -455,6 +458,22 @@ const BLOCKS: BlockCase[] = [
             />
         ),
         until: "Approve",
+    },
+    {
+        name: "PausePrompt",
+        node: () => (
+            <PausePrompt
+                state={mockPausedWaits.outage.state}
+                cause={describePauseCause(mockPausedWaits.credential.cause)}
+                remedy={mockPausedWaits.credential.remedy}
+                nextRetry={nextRetryOf(mockPausedWaits.outage) ?? undefined}
+                othersWaiting={1}
+                inert
+                onResume={noop}
+                onStop={noop}
+            />
+        ),
+        until: "retry now",
     },
 ];
 

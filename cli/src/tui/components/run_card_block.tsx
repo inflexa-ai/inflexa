@@ -50,7 +50,7 @@ function settledMark(status: string): { glyph: string; role: keyof ThemeColors }
         case "canceled":
             return { glyph: GLYPHS.cross, role: "error" };
         default:
-            // `partial`, `suspended_insufficient_funds`, and anything the harness adds later: not a
+            // `partial`, and anything the harness adds later: not a
             // success, not an error, and shown in the neutral warn tone rather than guessed at.
             return { glyph: GLYPHS.circle, role: "warning" };
     }
