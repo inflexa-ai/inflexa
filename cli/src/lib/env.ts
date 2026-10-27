@@ -64,6 +64,9 @@ const ciVar = "CI";
 // The discovery file of a local server that a different owner starts, for example a test server on a free
 // port. A client never starts a server for it. Not in --help: no user flow needs it.
 const serverFileVar = "INFLEXA_SERVER_FILE";
+// The pid of the local server that starts a walk child. The child compares its parent pid with this value, because
+// its own first read of the parent pid can already name the new parent of a child whose server died.
+const walkParentPidVar = "INFLEXA_WALK_PARENT_PID";
 
 /**
  * The api-key embedding secret's variable NAME. Unlike this file's other variable names it is EXPORTED,
@@ -85,6 +88,23 @@ export const KNOWLEDGE_API_KEY_VAR = "INFLEXA_KNOWLEDGE_API_KEY";
 /** Read the knowledge service key from the environment at call time (env.ts is the sole `process.env` reader). */
 export function resolveKnowledgeApiKey(): string | undefined {
     return process.env[KNOWLEDGE_API_KEY_VAR];
+}
+
+/**
+ * The pid of the server that started this walk child, read from the environment at call time, or `null` when the
+ * variable is absent or holds no pid.
+ */
+export function walkParentPid(): number | null {
+    const value = process.env[walkParentPidVar];
+    return value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+}
+
+/**
+ * The environment of a walk child: `base`, or the environment of this process when `base` is undefined, plus the pid
+ * of this process as the server pid that {@link walkParentPid} reads in the child.
+ */
+export function walkChildEnv(base: Record<string, string | undefined> | undefined): Record<string, string | undefined> {
+    return { ...(base ?? process.env), [walkParentPidVar]: String(process.pid) };
 }
 
 // The XDG Base Directory specification makes a program ignore a relative value. Each process resolves a

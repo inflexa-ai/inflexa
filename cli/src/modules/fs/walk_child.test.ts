@@ -3,12 +3,14 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { selfInvocation } from "../../lib/cli.ts";
 import { NameIndex } from "./search_index.ts";
 import {
     decodeRecords,
     isWalkChildInvocation,
     parentGone,
     readFolderEntries,
+    WALK_COMMAND,
     walkToRecords,
     type EntryKindCode,
     type ReadEntries,
@@ -243,16 +245,52 @@ describe("isWalkChildInvocation", () => {
 });
 
 describe("parentGone", () => {
-    test("the start parent is not gone", () => {
+    test("the expected parent is not gone", () => {
         expect(parentGone(4242, 4242)).toBe(false);
     });
 
-    test("pid 1 is gone, also when it is the start parent", () => {
-        expect(parentGone(4242, 1)).toBe(true);
-        expect(parentGone(1, 1)).toBe(true);
+    test("a server at pid 1 is not gone", () => {
+        expect(parentGone(1, 1)).toBe(false);
     });
 
     test("a different parent is gone", () => {
         expect(parentGone(4242, 4343)).toBe(true);
+    });
+});
+
+describe("inflexa server walk", () => {
+    /** Runs the real walk child of `root` with `parentPid` as the server pid, and gives its exit code and its records. */
+    async function runChild(parentPid: string): Promise<{ code: number; events: string[] }> {
+        const child = Bun.spawn({
+            cmd: selfInvocation([...WALK_COMMAND, root]),
+            env: { ...Bun.env, INFLEXA_WALK_PARENT_PID: parentPid },
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+        });
+        const bytes = new Uint8Array(await new Response(child.stdout).arrayBuffer());
+        const events: string[] = [];
+        const push = decodeRecords({
+            entry: () => true,
+            scopeError: () => events.push("error"),
+            scopeRead: () => events.push("read"),
+            end: () => events.push("end"),
+        });
+        expect(push(bytes).isOk()).toBe(true);
+        return { code: await child.exited, events };
+    }
+
+    test("walks to the end record under its server", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        const { code, events } = await runChild(String(process.pid));
+        expect(code).toBe(0);
+        expect(events).toEqual(["read", "end"]);
+    });
+
+    test("exits before the walk when its server died before the start", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        const { code, events } = await runChild("999999");
+        expect(code).toBe(1);
+        expect(events).toEqual([]);
     });
 });

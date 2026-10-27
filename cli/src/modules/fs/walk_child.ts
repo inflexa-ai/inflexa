@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { err, ok, ResultAsync, type Result } from "neverthrow";
 
+import { walkParentPid } from "../../lib/env.ts";
 import { errnoCode } from "../../lib/fs.ts";
 
 /**
@@ -396,19 +397,20 @@ export type WalkCommandFlags = { hidden?: boolean; depth?: string; width?: strin
 const PARENT_CHECK_MS = 1000;
 
 /**
- * True when the server that started the walk child is gone. A dead parent reparents the child, thus `current` differs
- * from `startParent`. It is also pid 1 on macOS (launchd) and on Linux without a subreaper (init), which catches a server
- * that died before the child read `startParent`. The accepted limit: a subreaper plus a death before that read go unseen,
- * and only the walk end or a failed write ends the child.
+ * True when the server that started the walk child is gone: a dead parent reparents the child, thus `current` differs
+ * from `expectedParent`. The server gives its pid in the environment of the child, thus a server at pid 1 is a normal
+ * parent.
  */
-export function parentGone(startParent: number, current: number): boolean {
-    return current === 1 || current !== startParent;
+export function parentGone(expectedParent: number, current: number): boolean {
+    return current !== expectedParent;
 }
 
 /**
  * `inflexa server walk <scope>`: walk `scope` and stream its records to stdout, for the search cache of the local server
  * that started this process. The process exits at the end of the walk, at a failed write (`EPIPE` once the server stops
- * its read), and when the server is gone, by {@link parentGone}: before the walk starts and on each check after.
+ * its read), and when the server is gone, by {@link parentGone}: before the walk starts and on each check after. The
+ * pid of the server comes from the environment, thus the first check also catches a server that died before the start.
+ * Without that variable, for example in a manual run, the parent at the start is the expected parent.
  */
 export async function runWalkCommand(scope: string, flags: WalkCommandFlags, defaults: Pick<WalkOpts, "maxDepth" | "width">): Promise<void> {
     const maxDepth = wholeNumber(flags.depth, defaults.maxDepth);
@@ -417,10 +419,8 @@ export async function runWalkCommand(scope: string, flags: WalkCommandFlags, def
         console.error(`--depth takes a whole number from 1 to 254 and --width a whole number of 1 or more.`);
         process.exit(2);
     }
-    // The start value can already be the new parent when the server died before this line, thus `parentGone` also
-    // treats pid 1 as gone, here and on each tick.
-    const parent = process.ppid;
-    if (parentGone(parent, parent)) process.exit(1);
+    const parent = walkParentPid() ?? process.ppid;
+    if (parentGone(parent, process.ppid)) process.exit(1);
     const parentCheck = setInterval(() => {
         if (parentGone(parent, process.ppid)) process.exit(1);
     }, PARENT_CHECK_MS);
