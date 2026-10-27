@@ -10,7 +10,7 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   thread, an input-file tree under `data/inputs/` (refer to **Input staging**),
   and zero or more runs. Its identifier is `analysisId`, which is also the
   `threadId` and the `resourceId`. Its lifecycle is
-  `created → active ↔ suspended → archived`.
+  `created → active → archived`. Its paused work is in `cortex_paused_work`.
 - **Input staging** — The **embedder** fills the `data/inputs/` tree of an
   analysis. This work happens *before* a call to the harness, and it is not the
   work of the harness ([data-profile-init](openspec/specs/data-profile-init/spec.md)).
@@ -280,7 +280,7 @@ at the composition root.
 
 Each method of a seam, and each hook, is a gate or a notice (`lib/hooks.ts`). A
 gate gives a value that the operation must have. Its `err` fails the operation.
-If the host sets `suspend`, the `err` suspends the operation. A notice reports a
+If the host sets `suspend`, the `err` pauses the work inside a workflow. A notice reports a
 fact after the operation. Its `err` goes to the log, and the operation continues.
 
 - **`RunAuthorizer`** (`execution/run-authorizer.ts`) — it changes the opaque
@@ -799,31 +799,32 @@ Other facts:
   (`DATA_PROFILE_RUN_LITERAL` and `DATA_PROFILE_STEP_LITERAL`) as the run tag
   and the step tag. The unique DBOS `workflowID` does the routing.
 
-### Suspension
+### Pause
 
-A suspension stops a run, and the harness keeps the stored state of the run.
+A failure that a person or time can repair pauses the work, and the work does
+not fail ([work-pause](openspec/specs/work-pause/spec.md)).
 
 - **Pod-crash recovery** (the harness-durable-runtime spec) replays the body
   with the same input. Each step name is identical, thus the whole body hits the
   cache. The step names carry no attempt number, for example `<agentId>.model`,
   `<tool>.<toolCallId>`, `open-running-charge`, and `close-running-charge`.
-- A suspension starts from a model request that fails with a `suspend` error, or
-  from a gate refusal with the suspend flag. The suspend map of the provider
-  makes the `suspend` error. Its default maps `402` to `payment_required`.
-- A durable owner records the reason and calls `cancelSelf`
-  (`workflows/suspension.ts`). The next step boundary throws
-  `DBOSWorkflowCancelledError`, and the status becomes **`CANCELLED`**, not
-  `ERROR`. A child sends a typed suspension on the topic `child-suspended` before
-  it cancels itself. Then the parent cancels the in-flight siblings.
-- A suspension of an analysis run or of a data profile marks the analysis as
-  suspended with `suspendAnalysis` (`state/analyses.ts`). A workflow with a live
-  caller does not mark it. The harness carries the reason of the host and never
-  reads it.
-- `suspended_insufficient_funds` is a terminal status of the run row. It does
-  not count as an active run, thus a new run of the same plan can start.
-
-**No resume entry point exists.** The `workflow-failure-lifecycle` spec defers
-the resume of a paused run. Nothing drives a paused run again. A correct resume
-must make step names that the cache does not hold, for the parent and for each
-child. The step names carry no attempt number today, thus a replay of a paused
-run hits the cached failure.
+- The causes are an outage after the retries of the provider, a `suspend` error
+  or a gate refusal with the suspend flag, and a refused or missing credential.
+  The suspend map of the provider makes the `suspend` error. Its default maps
+  `402` to `payment_required`. The harness carries the reason of the host and
+  never reads it.
+- The workflow that meets a cause waits in its own body with `DBOS.recv`, on the
+  topic of its pause (`workflows/pause.ts`). It stays active, thus a recovery
+  replays it to the same wait. The loop waits at the failed request and sends it
+  again. A gate waits at the refusal and runs again.
+- An outage starts in `retrying`: the wait ends at a deadline, and the request
+  runs again. After the last delay, and for each other cause, the wait is
+  `paused`, and only a resume or a stop ends it.
+- Each waiting workflow writes a row in `cortex_paused_work` and a `data-pause`
+  part in the stream of its work. A host lists and resumes the work with
+  `CoreRuntime.pausedWork`. Only a client resumes paused work.
+- A paused step keeps its run `running`, and the other steps go on. Work inside a
+  step cannot wait, thus a derivation gives the refusal of its spawn as a value.
+- DBOS runs with patching enabled, thus a host that gives no version keeps one
+  version across upgrades, and paused work recovers after an upgrade. A change
+  of the operations of a workflow body goes behind `DBOS.patch`.

@@ -40,6 +40,7 @@ export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
     "data-child-session-started": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-report-rendered": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-compaction": { emitter: "conversation", consumer: "conversation", transient: true, reconciling: true },
+    "data-pause": { emitter: "workflow", consumer: "conversation", transient: false, reconciling: true },
 };
 
 export function isTransient(type: ChatPartType): boolean {

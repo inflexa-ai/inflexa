@@ -24,6 +24,7 @@ import type { SynthesisPhase } from "@inflexa-ai/harness/contracts/chat-parts.js
 
 import type { RunSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
+import type { LoopOptions } from "../loop/run-loop.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { EmitFn } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
@@ -87,6 +88,8 @@ export type SynthesizeRunParams = {
      * call starts a child workflow.
      */
     readonly durably: <T>(name: string, run: () => Promise<T>) => Promise<T>;
+    /** The pause of the run, for the loop of the synthesizer. Absent: a failed request fails the synthesis. */
+    readonly pause?: LoopOptions["pause"];
 };
 
 export type SynthesizeRunResult = {
@@ -100,7 +103,7 @@ export type SynthesizeRunResult = {
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
     const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, literatureReviewer, usageRecorder } = deps;
-    const { analysisId, runId, completedSteps, session, emit, onProgress, durably } = params;
+    const { analysisId, runId, completedSteps, session, emit, onProgress, durably, pause } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
 
@@ -132,6 +135,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             planNarrative,
             runId,
             emit,
+            pause,
         });
 
         if (result.kind === "skipped") {

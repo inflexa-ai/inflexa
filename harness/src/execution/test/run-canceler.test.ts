@@ -82,20 +82,34 @@ function pendingRow(stepId: string): Row {
 
 type FakeDb = {
     pool: Pool;
-    /** `ledger` is the step table the two step writes act on; it starts as a copy of the last read batch. */
-    state: { run: Row | null; swept: number; ledger: Row[] };
+    /**
+     * `ledger` is the step table the two step writes act on; it starts as a copy of the last read batch. `pauses` is
+     * the table of the waiting workflows, keyed by `work_id`.
+     */
+    state: { run: Row | null; swept: number; ledger: Row[]; pauses: Row[] };
 };
 
 /** Successive `queryStepsByRun` reads consume `stepBatches`; the last repeats. */
 function fakeDb(
     run: Row | null,
     stepBatches: Row[][] = [[]],
-    opts: { sweepFails?: boolean; settleFails?: boolean; failStepReadsAfter?: number; runWriteFails?: boolean } = {},
+    opts: { sweepFails?: boolean; settleFails?: boolean; failStepReadsAfter?: number; runWriteFails?: boolean; pauses?: Row[] } = {},
 ): FakeDb {
-    const state = { run, swept: 0, ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })) };
+    const state = {
+        run,
+        swept: 0,
+        ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })),
+        pauses: (opts.pauses ?? []).map((row) => ({ ...row })),
+    };
     let stepReads = 0;
     const pool = Object.assign(new Pool(), {
-        query: ({ text, values }: { text: string; values?: unknown[] }) => {
+        query: (config: string | { text: string; values?: unknown[] }, params?: unknown[]) => {
+            const { text, values } = typeof config === "string" ? { text: config, values: params } : config;
+            if (text.startsWith("DELETE FROM cortex_paused_work WHERE work_id = $1")) {
+                const before = state.pauses.length;
+                state.pauses = state.pauses.filter((row) => row.work_id !== values?.[0]);
+                return Promise.resolve({ rowCount: before - state.pauses.length });
+            }
             if (text.includes("UPDATE cortex_step_executions")) {
                 if (text.includes("SET status = 'skipped'")) {
                     if (opts.sweepFails) return Promise.reject(new Error("sweep exploded"));
@@ -215,8 +229,8 @@ describe("createRunCanceler", () => {
         expect(db.state.swept).toBe(0);
     });
 
-    it("short-circuits a suspended run as already terminal", async () => {
-        const db = fakeDb(runRow({ status: "suspended_insufficient_funds", completed_at: "2026-08-12T01:00:00.000Z", error: "budget_exceeded" }));
+    it("short-circuits a failed run with the reason of a host as already terminal", async () => {
+        const db = fakeDb(runRow({ status: "failed", completed_at: "2026-08-12T01:00:00.000Z", error: "budget_exceeded" }));
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows, cancelled } = recordingCancel();
@@ -228,7 +242,7 @@ describe("createRunCanceler", () => {
             runId: "run-1",
             workflowId: "run-1",
             outcome: "already_terminal",
-            finalStatus: "suspended_insufficient_funds",
+            finalStatus: "failed",
             converged: { steps: false, charge: false, mandate: false },
         });
         expect(cancelled).toEqual([]);
@@ -261,6 +275,26 @@ describe("createRunCanceler", () => {
         expect(db.state.swept).toBe(1);
         expect(closes).toEqual([{ analysisId: "analysis-1", runId: "run-1", outcome: { kind: "canceled" } }]);
         expect(revoked).toEqual([{ jti: "jti-1", reason: "external_cancel" }]);
+    });
+
+    it("clears each row of a pause of the run after the engine cancel, and keeps the rows of other work", async () => {
+        const pause = (workflowId: string, workId: string): Row => ({ workflow_id: workflowId, work_id: workId, state: "paused" });
+        const db = fakeDb(runRow(), [[stepRow("s1", "wf-child-1"), stepRow("s2", "wf-child-2")]], {
+            pauses: [pause("wf-child-1", "run-1"), pause("wf-child-2", "run-1"), pause("wf-other", "run-2")],
+        });
+        const { charge, closes } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        // The engine cancel ends each wait, thus the rows of the run still exist when it runs.
+        const pausesAtCancel: unknown[][] = [];
+        const { cancelWorkflows } = recordingCancel(() => pausesAtCancel.push(db.state.pauses.map((row) => row.workflow_id)));
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.finalStatus).toBe("canceled");
+        expect(pausesAtCancel).toEqual([["wf-child-1", "wf-child-2", "wf-other"]]);
+        expect(db.state.pauses.map((row) => row.workflow_id)).toEqual(["wf-other"]);
+        expect(closes).toEqual([{ analysisId: "analysis-1", runId: "run-1", outcome: { kind: "canceled" } }]);
     });
 
     it("cancels a child whose workflow id commits only after the parent cancel", async () => {

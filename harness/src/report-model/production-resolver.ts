@@ -35,7 +35,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import type { Suspension } from "../workflows/suspension.js";
+import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { parseJsonAs } from "../lib/parse-json.js";
@@ -87,14 +87,14 @@ export type ExtractionArtifact = {
 /**
  * The out-of-process read arm. One `extract` call covers every fall-through artifact of one document
  * pass. The result maps each requested path to its rows. A path that the arm could not read is absent
- * from the map, and the reference at that path fails as `unreadable-artifact`. A suspension of the pass is
- * the `err`, and each reference of the batch reports its reason.
+ * from the map, and the reference at that path fails as `unreadable-artifact`. A refusal of the sandbox of the
+ * pass with the suspend flag is the `err`, and each reference of the batch reports its reason.
  *
  * The arm is a seam, thus a test stubs it. While no realization is wired, a fall-through reference fails
  * with `extraction-unavailable`, and the detail names the absent arm.
  */
 export type ExtractionArm = {
-    extract(requests: readonly ExtractionRequest[]): Promise<Result<ReadonlyMap<string, ExtractionArtifact>, Suspension>>;
+    extract(requests: readonly ExtractionRequest[]): Promise<Result<ReadonlyMap<string, ExtractionArtifact>, SuspendingRefusal>>;
 };
 
 /**
@@ -592,7 +592,7 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
         }
         return out;
     }
-    let answered: Result<ReadonlyMap<string, ExtractionArtifact>, Suspension>;
+    let answered: Result<ReadonlyMap<string, ExtractionArtifact>, SuspendingRefusal>;
     try {
         answered = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash, format: request.format })));
     } catch {
@@ -607,7 +607,7 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
         for (const request of requests) {
             out.set(request.path, {
                 kind: "unavailable",
-                detail: `the analysis is suspended (${answered.error.reason}), thus the file at ${request.path} was not read`,
+                detail: `the host refused the sandbox (${answered.error.reason}), thus the file at ${request.path} was not read`,
             });
         }
         return out;

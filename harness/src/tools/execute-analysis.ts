@@ -39,7 +39,6 @@ import {
     queryNewestPlanRun,
     queryRun,
     reserveRunById,
-    suspendAnalysis,
     updateRunStatus,
     upsertPlan,
 } from "../state/index.js";
@@ -579,23 +578,14 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
         }),
     );
     if (authorized.isErr()) {
-        // The refusal ends the run before a workflow exists, thus the
-        // reserved row must not stay `running`.
+        // The refusal ends the run before a workflow exists, thus the reserved row must not stay `running`. No work
+        // exists yet, thus a refusal with the suspend flag does not pause, and it marks no analysis.
         const { kind, reason } = authorized.error;
-        if (kind === "suspended") {
-            await updateRunStatus(deps.pool, runId, "suspended_insufficient_funds", reason).match(
-                () => {},
-                () => {},
-            );
-            const suspension = await suspendAnalysis(deps.pool, analysisId);
-            if (suspension.isErr()) return err({ type: "store_failed", cause: suspension.error });
-            return err({ type: "suspended", reason });
-        }
         await updateRunStatus(deps.pool, runId, "failed", reason).match(
             () => {},
             () => {},
         );
-        return err({ type: "not_authorized", reason });
+        return err(kind === "suspended" ? { type: "suspended", reason } : { type: "not_authorized", reason });
     }
     const authorization = authorized.value;
 
@@ -850,7 +840,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
             const launched = await launch();
             if (launched.isErr()) {
                 const refusal = launched.error;
-                if (refusal.type === "suspended") return err({ error: `The analysis is suspended: ${refusal.reason}`, retryable: false });
+                if (refusal.type === "suspended") return err({ error: `The host refused the run: ${refusal.reason}`, retryable: false });
                 if (refusal.type === "not_authorized") return err({ error: `The run was not authorized: ${refusal.reason}`, retryable: false });
                 return throwLaunchRefusal(refusal, planId);
             }

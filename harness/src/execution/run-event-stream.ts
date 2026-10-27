@@ -52,10 +52,6 @@ function partOfRow(runId: string, row: RunEventRunRead): RunFailedPart | null {
     switch (row.status) {
         case "canceled":
             return canceledPart(runId);
-        case "suspended_insufficient_funds":
-            return row.error === null
-                ? { type: "data-run-failed", runId, error: "Run suspended" }
-                : { type: "data-run-failed", runId, error: row.error, reason: row.error };
         case "failed":
             return { type: "data-run-failed", runId, error: row.error ?? "Run failed" };
         case "completed":

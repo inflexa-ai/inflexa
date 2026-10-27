@@ -142,17 +142,17 @@ describe("runs: conversation and inspection projections", () => {
 
     it("orders running before each other run prior to pagination", async () => {
         const analysisId = "analysis-order";
-        for (const runId of ["run-old-running", "run-new-running", "run-suspended", "run-completed"]) {
+        for (const runId of ["run-old-running", "run-new-running", "run-failed", "run-completed"]) {
             (await insertRun(pool, { runId, analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
         }
-        (await updateRunStatus(pool, "run-suspended", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-failed", "failed"))._unsafeUnwrap();
         (await updateRunStatus(pool, "run-completed", "completed"))._unsafeUnwrap();
         await pool.query({
             text: `UPDATE cortex_runs
                    SET started_at = CASE run_id
                        WHEN 'run-old-running' THEN '2026-01-01T00:00:00.000Z'
                        WHEN 'run-new-running' THEN '2026-01-04T00:00:00.000Z'
-                       WHEN 'run-suspended' THEN '2026-01-03T00:00:00.000Z'
+                       WHEN 'run-failed' THEN '2026-01-03T00:00:00.000Z'
                        WHEN 'run-completed' THEN '2026-01-05T00:00:00.000Z'
                    END
                    WHERE analysis_id = $1`,
@@ -165,7 +165,7 @@ describe("runs: conversation and inspection projections", () => {
 
         const second = (await queryRunsForInspection(pool, analysisId, { limit: 3, offset: 3 }))._unsafeUnwrap();
         expect(second.total).toBe(4);
-        expect(second.runs.map((run) => run.runId)).toEqual(["run-suspended"]);
+        expect(second.runs.map((run) => run.runId)).toEqual(["run-failed"]);
     });
 
     it("bounds non-terminal detail while reporting the true analysis-wide total", async () => {
@@ -174,8 +174,8 @@ describe("runs: conversation and inspection projections", () => {
             const runId = `run-activity-${String(index).padStart(2, "0")}`;
             (await insertRun(pool, { runId, analysisId, threadId: index === 0 ? "other-thread" : null, workflowName: "executeAnalysis" }))._unsafeUnwrap();
         }
-        (await insertRun(pool, { runId: "run-activity-suspended", analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
-        (await updateRunStatus(pool, "run-activity-suspended", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await insertRun(pool, { runId: "run-activity-failed", analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-activity-failed", "failed"))._unsafeUnwrap();
         (await insertRun(pool, { runId: "run-terminal", analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
         (await updateRunStatus(pool, "run-terminal", "completed"))._unsafeUnwrap();
 
@@ -183,7 +183,7 @@ describe("runs: conversation and inspection projections", () => {
         expect(activity.total).toBe(22);
         expect(activity.runs).toHaveLength(20);
         expect(activity.runs.every((run) => run.status === "running")).toBe(true);
-        expect(activity.runs.some((run) => run.runId === "run-terminal" || run.runId === "run-activity-suspended")).toBe(false);
+        expect(activity.runs.some((run) => run.runId === "run-terminal" || run.runId === "run-activity-failed")).toBe(false);
     });
 });
 
@@ -217,13 +217,13 @@ describe("runs: active-run query", () => {
         expect(active.map((r) => r.runId)).toEqual(["run-long"]);
     });
 
-    it("treats a suspended run and a canceled run as not active", async () => {
-        (await insertRun(pool, { runId: "run-susp", analysisId: "a-susp", workflowName: "executeAnalysis" }))._unsafeUnwrap();
-        (await updateRunStatus(pool, "run-susp", "suspended_insufficient_funds"))._unsafeUnwrap();
-        (await insertRun(pool, { runId: "run-cancel", analysisId: "a-susp", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+    it("treats a failed run and a canceled run as not active", async () => {
+        (await insertRun(pool, { runId: "run-failed", analysisId: "a-ended", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-failed", "failed"))._unsafeUnwrap();
+        (await insertRun(pool, { runId: "run-cancel", analysisId: "a-ended", workflowName: "executeAnalysis" }))._unsafeUnwrap();
         (await updateRunStatus(pool, "run-cancel", "canceled"))._unsafeUnwrap();
 
-        expect((await queryActiveRunsByAnalysis(pool, "a-susp"))._unsafeUnwrap()).toEqual([]);
+        expect((await queryActiveRunsByAnalysis(pool, "a-ended"))._unsafeUnwrap()).toEqual([]);
     });
 
     it("scopes to the analysis and returns empty when nothing is live", async () => {
@@ -259,13 +259,13 @@ describe("runs: markRunCanceledIfActive", () => {
         expect(row?.completedAt).not.toBeNull();
     });
 
-    it("refuses a suspended run and reports no transition", async () => {
-        (await insertRun(pool, { runId: "run-susp", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
-        (await updateRunStatus(pool, "run-susp", "suspended_insufficient_funds", "budget_exceeded"))._unsafeUnwrap();
+    it("refuses a failed run and reports no transition", async () => {
+        (await insertRun(pool, { runId: "run-failed", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-failed", "failed", "budget_exceeded"))._unsafeUnwrap();
 
-        expect((await markRunCanceledIfActive(pool, "run-susp", "external_cancel"))._unsafeUnwrap()).toBe(false);
-        const row = (await queryRun(pool, "run-susp"))._unsafeUnwrap();
-        expect(row?.status).toBe("suspended_insufficient_funds");
+        expect((await markRunCanceledIfActive(pool, "run-failed", "external_cancel"))._unsafeUnwrap()).toBe(false);
+        const row = (await queryRun(pool, "run-failed"))._unsafeUnwrap();
+        expect(row?.status).toBe("failed");
         expect(row?.error).toBe("budget_exceeded");
     });
 
@@ -305,11 +305,11 @@ describe("runs: updateRunStatus", () => {
     it("changes a running run, stamps completed_at and the error, and reports the change", async () => {
         (await insertRun(pool, { runId: "run-running", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
 
-        const changed = (await updateRunStatus(pool, "run-running", "suspended_insufficient_funds", "budget_exceeded"))._unsafeUnwrap();
+        const changed = (await updateRunStatus(pool, "run-running", "failed", "budget_exceeded"))._unsafeUnwrap();
         expect(changed).toBe(true);
 
         const row = (await queryRun(pool, "run-running"))._unsafeUnwrap();
-        expect(row?.status).toBe("suspended_insufficient_funds");
+        expect(row?.status).toBe("failed");
         expect(row?.error).toBe("budget_exceeded");
         expect(row?.completedAt).not.toBeNull();
     });
@@ -358,12 +358,12 @@ describe("runs: updateRunStatus", () => {
     });
 });
 
-describe("runs: a suspended run is terminal", () => {
+describe("runs: a run of a plan is active only while it runs", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
 
     beforeAll(async () => {
-        const ctx = await withSchema("runs_suspended_terminal");
+        const ctx = await withSchema("runs_active_plan_run");
         pool = ctx.pool;
         drop = ctx.drop;
         (await upsertAnalysis(pool, "a-plan", null))._unsafeUnwrap();
@@ -377,29 +377,18 @@ describe("runs: a suspended run is terminal", () => {
         return (await insertPlan(pool, { analysisId: "a-plan", plan: { steps: [] } }))._unsafeUnwrap();
     }
 
-    it("stamps completed_at and keeps the error when the status is suspended_insufficient_funds", async () => {
-        (await insertRun(pool, { runId: "run-stamp", analysisId: "a-plan", workflowName: "executeAnalysis" }))._unsafeUnwrap();
-
-        (await updateRunStatus(pool, "run-stamp", "suspended_insufficient_funds", "budget_exceeded"))._unsafeUnwrap();
-
-        const row = (await queryRun(pool, "run-stamp"))._unsafeUnwrap();
-        expect(row?.status).toBe("suspended_insufficient_funds");
-        expect(row?.error).toBe("budget_exceeded");
-        expect(row?.completedAt).not.toBeNull();
-    });
-
-    it("returns no active run for a plan whose only run is suspended", async () => {
+    it("returns no active run for a plan whose only run failed", async () => {
         const plan = await planId();
-        (await insertRun(pool, { runId: "run-only-susp", analysisId: "a-plan", planId: plan, workflowName: "executeAnalysis" }))._unsafeUnwrap();
-        (await updateRunStatus(pool, "run-only-susp", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await insertRun(pool, { runId: "run-only-failed", analysisId: "a-plan", planId: plan, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-only-failed", "failed", "budget_exceeded"))._unsafeUnwrap();
 
         expect((await queryActiveRun(pool, "a-plan", plan))._unsafeUnwrap()).toBeNull();
     });
 
-    it("lets a new run of the plan start beside a suspended run", async () => {
+    it("lets a new run of the plan start beside a failed run", async () => {
         const plan = await planId();
         (await insertRun(pool, { runId: "run-first", analysisId: "a-plan", planId: plan, workflowName: "executeAnalysis" }))._unsafeUnwrap();
-        (await updateRunStatus(pool, "run-first", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-first", "failed", "budget_exceeded"))._unsafeUnwrap();
 
         (await insertRun(pool, { runId: "run-second", analysisId: "a-plan", planId: plan, workflowName: "executeAnalysis" }))._unsafeUnwrap();
 

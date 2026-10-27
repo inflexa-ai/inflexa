@@ -27,19 +27,18 @@ describe("renderRunActivity", () => {
         setSystemTime();
     });
 
-    it("lists the running rows with full identifiers and absolute start times, and no suspended row", () => {
+    it("lists the running rows with full identifiers and absolute start times, and no row that ended", () => {
         const rendered = renderRunActivity({
             runs: [
                 run("run-running-full-id", "running", "2026-07-30T09:58:00.000Z", "pln-1234abcd"),
-                run("run-suspended-full-id", "suspended_insufficient_funds", "2026-07-29T10:00:00.000Z"),
+                run("run-failed-full-id", "failed", "2026-07-29T10:00:00.000Z"),
             ],
             total: 2,
         });
 
         expect(rendered).toContain("[Run Activity]");
         expect(rendered).toContain("Running:");
-        expect(rendered).not.toContain("Suspended:");
-        expect(rendered).not.toContain("run-suspended-full-id");
+        expect(rendered).not.toContain("run-failed-full-id");
         expect(rendered).toContain("runId: run-running-full-id");
         expect(rendered).toContain("planId: pln-1234abcd");
         expect(rendered).toContain("startedAt: 2026-07-30T09:58:00.000Z");

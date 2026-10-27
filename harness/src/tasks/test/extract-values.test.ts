@@ -8,12 +8,15 @@ import { parseJsonAs } from "../../lib/parse-json.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { ExtractionRequest } from "../../report-model/production-resolver.js";
 import type { SandboxClient } from "../../sandbox/client.js";
+import type { SuspendingRefusal } from "../../sandbox/sandbox-error.js";
 import type { ExecRequest, ExecResult, SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT } from "../extract-values-script.js";
 import { buildExtractionExec, createExtractionArm, extractionArtifactsFromResult, parseExtractionOutput, runExtraction } from "../extract-values.js";
 
 // The decidable parts are lifted out: the exec command, the output parse, and the arm mapping. These tests
 // pin each part without a container and without DBOS. The pass runs over a stubbed sandbox client.
+
+const QUOTA_REFUSAL: SuspendingRefusal = { type: "labels_refused", op: "createSandbox", reason: "quota_exhausted", suspend: true };
 
 /** A complete exec result. Each test overrides only the fields that it asserts. */
 function execResult(over: Partial<ExecResult>): ExecResult {
@@ -173,12 +176,9 @@ describe("createExtractionArm", () => {
         expect(map.has("data/b.parquet")).toBe(false);
     });
 
-    it("gives the suspension of the pass as its err", async () => {
-        const arm = createExtractionArm(() => Promise.resolve(err({ kind: "suspended" as const, reason: "quota_exhausted" })));
-        expect((await arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }]))._unsafeUnwrapErr()).toEqual({
-            kind: "suspended",
-            reason: "quota_exhausted",
-        });
+    it("gives the refused spawn of the pass as its err", async () => {
+        const arm = createExtractionArm(() => Promise.resolve(err(QUOTA_REFUSAL)));
+        expect((await arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }]))._unsafeUnwrapErr()).toEqual(QUOTA_REFUSAL);
     });
 
     it("rejects when the runner faults", async () => {
@@ -202,7 +202,7 @@ describe("runExtraction", () => {
         const client = {
             toolchainSource: "store" as const,
             createSandbox(session: SpawnSession, spec: SandboxSpec) {
-                if (args.refuse === true) return errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "quota_exhausted", suspend: true });
+                if (args.refuse === true) return errAsync(QUOTA_REFUSAL);
                 spawns.push({ session, spec });
                 return okAsync(ref);
             },
@@ -245,7 +245,7 @@ describe("runExtraction", () => {
 
         const result = await runExtraction({ sandboxClient: stub.client }, caller, requests);
 
-        expect(result._unsafeUnwrapErr()).toEqual({ kind: "suspended", reason: "quota_exhausted" });
+        expect(result._unsafeUnwrapErr()).toEqual(QUOTA_REFUSAL);
         expect(stub.execs).toEqual([]);
     });
 

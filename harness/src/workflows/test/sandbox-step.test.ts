@@ -22,14 +22,13 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T.*Z$/;
 
 import { textOf } from "../../lib/unknown-text.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
-import { STEP_EXECUTIONS_UPDATE } from "./sql-writes.js";
+import { PAUSE_CLEAR_WRITE, PAUSE_RECORD_WRITE, STEP_EXECUTIONS_UPDATE } from "./sql-writes.js";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APICallError, type LanguageModelV4CallOptions, type LanguageModelV4Prompt, type LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
 import { errAsync, ok, okAsync } from "neverthrow";
-import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { z } from "zod";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { ChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
@@ -56,6 +55,7 @@ import { createExecuteCommandTool } from "../../tools/workspace/execute-command.
 import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "../sandbox-step.js";
+import { RESUME_MESSAGE } from "../pause.js";
 import { presentAt, presentLast } from "../../lib/present.js";
 
 const RUN = "run-9";
@@ -107,6 +107,12 @@ type FakeDbosState = {
     sent: Array<{ destination: string; message: unknown; topic: string | undefined }>;
     /** Workflow ids captured from `DBOS.cancelWorkflow`. */
     cancelled: Array<string | undefined>;
+    /** The topic of each `DBOS.recv`, in call order. Each one is a wait of a pause, and the fake gives the resume message. */
+    recvTopics: string[];
+    /** Runs at each `DBOS.recv`, before the fake gives the resume message: a test reads the state of the wait. */
+    onRecv: (() => void) | undefined;
+    /** The count of `DBOS.randomUUID` calls; the fake gives `uuid-<count>`. */
+    uuidCounter: number;
 };
 
 let dbosState: FakeDbosState;
@@ -129,6 +135,8 @@ async function mockDbos(): Promise<void> {
         send: dbos.DBOS.send.bind(dbos.DBOS),
         cancelWorkflow: dbos.DBOS.cancelWorkflow.bind(dbos.DBOS),
         isInWorkflow: dbos.DBOS.isInWorkflow.bind(dbos.DBOS),
+        recv: dbos.DBOS.recv.bind(dbos.DBOS),
+        randomUUID: dbos.DBOS.randomUUID.bind(dbos.DBOS),
     };
 
     // The body runs outside a workflow, thus the loop calls the model and each tool directly.
@@ -139,18 +147,35 @@ async function mockDbos(): Promise<void> {
     );
 
     // Every `DBOS.runStep` runs its body inline — the body under test only needs
-    // the steps to execute, not to be cached. The self-cancel of a suspension
-    // raises the cancellation at its step, as the real engine does.
+    // the steps to execute, not to be cached.
     Reflect.set(
         dbos.DBOS,
         "runStep",
-        mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
-            if (config?.name === "self-cancel-suspended") throw new DBOSErrors.DBOSWorkflowCancelledError("child");
-            return fn();
+        mock(async (fn: () => Promise<unknown>) => fn()),
+    );
+
+    // A pause test runs the body as the body of a workflow (`runInWorkflow`). The
+    // fake `DBOS.recv` records the topic of the wait and gives the resume message
+    // at once, as a host that resumes the run does.
+    Reflect.set(
+        dbos.DBOS,
+        "recv",
+        mock((topic: string) => {
+            dbosState.recvTopics.push(topic);
+            dbosState.onRecv?.();
+            return Promise.resolve(RESUME_MESSAGE);
+        }),
+    );
+    Reflect.set(
+        dbos.DBOS,
+        "randomUUID",
+        mock(() => {
+            dbosState.uuidCounter += 1;
+            return Promise.resolve(`uuid-${dbosState.uuidCounter}`);
         }),
     );
 
-    // The self-cancel of a suspension needs the id of the workflow that it cancels.
+    // The row of a pause names the workflow that waits.
     originalWorkflowId ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "workflowID");
     Object.defineProperty(dbos.DBOS, "workflowID", { configurable: true, get: () => `${USAGE_RUN_ID}-${USAGE_STEP_ID}` });
 
@@ -203,7 +228,7 @@ async function mockDbos(): Promise<void> {
 let workspaceRoot: string;
 
 beforeEach(async () => {
-    dbosState = { emittedParts: [], nowMs: FAKE_CLOCK_BASE_MS, sent: [], cancelled: [] };
+    dbosState = { emittedParts: [], nowMs: FAKE_CLOCK_BASE_MS, sent: [], cancelled: [], recvTopics: [], onRecv: undefined, uuidCounter: 0 };
     workspaceRoot = await mkdtemp(join(tmpdir(), "cortex-sandbox-step-usage-"));
     await mockDbos();
 });
@@ -291,7 +316,6 @@ function usageStepInput(): SandboxStepInput {
         dependsOn: [],
         level: 0,
         prompt: "run the step",
-        parentWorkflowId: "parent-wf",
         resources: { cpu: 2, memoryGb: 4 },
         runSession: makeRunSession(),
     };
@@ -892,90 +916,142 @@ describe("sandbox-step spawn", () => {
     });
 });
 
-// ── suspension ────────────────────────────────────────────────────────
+// ── pause ─────────────────────────────────────────────────────────────
 
-describe("sandbox-step suspension", () => {
-    function statementPool(): { pool: Querier; statements: Array<{ text: string; values: readonly unknown[] }> } {
-        const statements: Array<{ text: string; values: readonly unknown[] }> = [];
-        const pool: Querier = {
-            query: (arg, params) => {
-                const text = typeof arg === "string" ? arg : arg.text;
-                const values = typeof arg === "string" ? (params ?? []) : "values" in arg ? (arg.values ?? []) : (params ?? []);
-                statements.push({ text, values });
-                return Promise.resolve({ rows: [], rowCount: 0 });
+/**
+ * Run the body as the body of a workflow, thus a cause of a pause waits in place. Each step still runs inline, and
+ * the fake `DBOS.recv` ends each wait with the resume message.
+ */
+async function runInWorkflow(): Promise<void> {
+    const dbos = await import("@dbos-inc/dbos-sdk");
+    Reflect.set(
+        dbos.DBOS,
+        "isInWorkflow",
+        mock(() => true),
+    );
+}
+
+/** A pool that records each statement, with its values in both call forms. */
+function statementPool(): { pool: Querier; statements: Array<{ text: string; values: readonly unknown[] }> } {
+    const statements: Array<{ text: string; values: readonly unknown[] }> = [];
+    const pool: Querier = {
+        query: (arg, params) => {
+            const text = typeof arg === "string" ? arg : arg.text;
+            const values = typeof arg === "string" ? (params ?? []) : "values" in arg ? (arg.values ?? []) : (params ?? []);
+            statements.push({ text, values });
+            return Promise.resolve({ rows: [], rowCount: 0 });
+        },
+    };
+    return { pool, statements };
+}
+
+const CHILD_ID = `${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
+
+/** The rows of a pause that the step wrote, and the deletes of a row of the step. */
+function pauseStatements(statements: ReadonlyArray<{ text: string; values: readonly unknown[] }>): {
+    readonly recorded: ReadonlyArray<{ text: string; values: readonly unknown[] }>;
+    readonly cleared: ReadonlyArray<{ text: string; values: readonly unknown[] }>;
+} {
+    return {
+        recorded: statements.filter((q) => PAUSE_RECORD_WRITE.test(q.text)),
+        cleared: statements.filter((q) => PAUSE_CLEAR_WRITE.test(q.text)),
+    };
+}
+
+/**
+ * The step waited one time in `paused` with the host cause `reason`, under the run id, and the resume ended the wait:
+ * the row is gone, and the latest part of the pause has the state `running`.
+ */
+function expectOnePauseResumed(statements: ReadonlyArray<{ text: string; values: readonly unknown[] }>, reason: string): void {
+    const { recorded, cleared } = pauseStatements(statements);
+    expect(recorded).toHaveLength(1);
+    const [workflowId, workId, workKind, analysisId, , state, cause, attempt, , topic] = presentAt(recorded, 0).values;
+    expect([workflowId, workId, workKind, analysisId, state, attempt]).toEqual([CHILD_ID, USAGE_RUN_ID, "run", ANALYSIS_ID, "paused", 0]);
+    expect(cause).toBe(JSON.stringify({ kind: "host", reason }));
+    expect(dbosState.recvTopics).toHaveLength(1);
+    expect(topic).toBe(dbosState.recvTopics[0]);
+    expect(cleared.map((q) => q.values)).toEqual([[CHILD_ID]]);
+
+    const parts = dbosState.emittedParts.filter((part) => part.type === "data-pause");
+    expect(parts).toMatchObject([
+        { id: CHILD_ID, workId: USAGE_RUN_ID, workKind: "run", state: "paused", cause: { kind: "host", reason } },
+        { id: CHILD_ID, workId: USAGE_RUN_ID, workKind: "run", state: "running" },
+    ]);
+    for (const part of parts) expect(ChatPartSchema.safeParse(part).success).toBe(true);
+    // The step waits in place: it writes no terminal row for the pause, and it does not cancel itself.
+    expect(statements.filter((q) => STEP_EXECUTIONS_UPDATE.test(q.text) && q.values.includes("canceled"))).toEqual([]);
+    expect(dbosState.cancelled).toEqual([]);
+}
+
+describe("sandbox-step pause", () => {
+    it("a failed model request with a cause pauses the step in place, and the step sends the request again after the resume", async () => {
+        const { pool, statements } = statementPool();
+        const script = scriptedModel([
+            {
+                fail: new APICallError({
+                    message: "Payment Required",
+                    url: "https://model.test/v1/messages",
+                    requestBodyValues: {},
+                    statusCode: 402,
+                    isRetryable: false,
+                }),
             },
-        };
-        return { pool, statements };
-    }
-
-    const CHILD_ID = `${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
-
-    function expectSuspended(statements: Array<{ text: string; values: readonly unknown[] }>, reason: string): void {
-        const marked = statements.filter((q) => STEP_EXECUTIONS_UPDATE.test(q.text) && q.values.includes("canceled"));
-        expect(marked).toHaveLength(1);
-        // The error and the last error class of the row both carry the reason of the host.
-        expect(presentAt(marked, 0).values.filter((v) => v === reason)).toHaveLength(2);
-        expect(dbosState.sent).toEqual([
-            { destination: "parent-wf", message: { kind: "suspended", childWorkflowId: CHILD_ID, stepId: USAGE_STEP_ID, reason }, topic: "child-suspended" },
+            ...Array.from({ length: ONE_REPLY_STEP_REQUESTS }, () => reply([text("done")])),
         ]);
-        expect(dbosState.cancelled).toEqual([CHILD_ID]);
-    }
+        // The default map of the provider reads a 402 as the host cause `payment_required`.
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), pool, provider: script.provider };
+        await runInWorkflow();
 
-    it("a suspend error of the model marks the row with the reason, sends the typed suspension, and self-cancels", async () => {
-        const { pool, statements } = statementPool();
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            pool,
-            // The default map of the provider reads a 402 as the suspension `payment_required`.
-            provider: scriptedModel([
-                {
-                    fail: new APICallError({
-                        message: "Payment Required",
-                        url: "https://model.test/v1/messages",
-                        requestBodyValues: {},
-                        statusCode: 402,
-                        isRetryable: false,
-                    }),
-                },
-            ]).provider,
-        };
+        const result = await runSandboxStepBody(usageStepInput(), deps);
 
-        await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
-
-        expectSuspended(statements, "payment_required");
+        expect(result.status).toBe("complete");
+        expectOnePauseResumed(statements, "payment_required");
+        // The failed request had no partial reply, thus the step sent the same messages again.
+        expect(presentAt(script.calls, 1).prompt).toEqual(presentAt(script.calls, 0).prompt);
     });
 
-    it("a refused spawn with the suspend flag suspends the step before any sandbox exists", async () => {
+    it("a refused spawn with the suspend flag pauses the step before any sandbox exists, and the spawn runs again after the resume", async () => {
         const { pool, statements } = statementPool();
-        const teardowns: string[] = [];
-        const refusing = {
-            ...makeSandboxClient(),
-            createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
-            teardown: (ref: SandboxRef) => {
-                teardowns.push(ref.sandboxId);
-
-                return Promise.resolve();
+        const spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = [];
+        const client = makeSandboxClient(spawns);
+        let attempts = 0;
+        const refusingOnce: SandboxClient = {
+            ...client,
+            createSandbox: (session, spec, identity) => {
+                attempts += 1;
+                if (attempts === 1) return errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true });
+                return client.createSandbox(session, spec, identity);
             },
         };
+        let sandboxesAtWait: number | undefined;
+        dbosState.onRecv = () => {
+            sandboxesAtWait = spawns.length;
+        };
+        await runInWorkflow();
 
-        await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusing })).rejects.toBeInstanceOf(
-            DBOSErrors.DBOSWorkflowCancelledError,
-        );
+        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusingOnce });
 
-        expectSuspended(statements, "account_frozen");
-        expect(teardowns).toEqual([]);
+        expect(result.status).toBe("complete");
+        expect(attempts).toBe(2);
+        expect(sandboxesAtWait).toBe(0);
+        expect(spawns).toHaveLength(1);
+        expectOnePauseResumed(statements, "account_frozen");
     });
 
-    it("a refused spawn without the suspend flag fails the step and sends no suspension", async () => {
+    it("a refused spawn without the suspend flag fails the step, and nothing waits", async () => {
+        const { pool, statements } = statementPool();
         const refusing = {
             ...makeSandboxClient(),
             createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
         };
+        await runInWorkflow();
 
-        await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), sandboxClient: refusing })).rejects.toThrow("labels_unavailable");
+        await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusing })).rejects.toThrow(
+            "labels_unavailable",
+        );
 
-        expect(dbosState.sent).toEqual([]);
-        expect(dbosState.cancelled).toEqual([]);
+        expect(pauseStatements(statements).recorded).toEqual([]);
+        expect(dbosState.recvTopics).toEqual([]);
     });
 });
 
@@ -1107,6 +1183,30 @@ describe("sandbox-step lineage attestation", () => {
         const failure = stepFailure(logger);
         expect(failure?.errorClass).toBe("lineage_attestation");
         expect(failure?.err).toContain("ledger refused");
+    });
+
+    it("pauses the step when the register gate refuses with the suspend flag, and registers again after the resume", async () => {
+        await seedStepOutput();
+        const { pool, statements } = statementPool();
+        const order: string[] = [];
+        const artifactRegistry: ArtifactRegistry = {
+            register: () => {
+                order.push("register");
+                if (order.filter((op) => op === "register").length === 1) return errAsync({ reason: "ledger frozen", suspend: true });
+                return okAsync({ registered: [], failed: [], failedCount: 0 });
+            },
+            sync: () => {
+                order.push("sync");
+                return okAsync(undefined);
+            },
+        };
+        await runInWorkflow();
+
+        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, artifactRegistry });
+
+        expect(result.status).toBe("complete");
+        expect(order).toEqual(["register", "sync", "register", "sync"]);
+        expectOnePauseResumed(statements, "ledger frozen");
     });
 
     it("registers then syncs once and completes when both succeed", async () => {

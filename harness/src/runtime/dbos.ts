@@ -166,6 +166,9 @@ export function dbosSdkConfig(config: DbosConfig, logger: Logger): DBOSConfig {
         systemDatabasePoolSize: DBOS_SYSTEM_POOL_SIZE,
         executorID: config.executorId,
         applicationVersion: config.applicationVersion,
+        // With no version from the host, DBOS keeps the one version `PATCHING_ENABLED` across upgrades, thus a paused
+        // workflow recovers after an upgrade. A change of the operations of a workflow body goes behind `DBOS.patch`.
+        enablePatching: true,
         logLevel: config.logLevel,
         logger: dbosSdkLogger(logger, config.logLevel),
         tracingEnabled: config.tracingEnabled ?? false,

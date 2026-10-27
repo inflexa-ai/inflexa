@@ -11,7 +11,7 @@ export { initCortexState } from "./init.js";
 
 export type { Querier } from "./db.js";
 
-export { upsertAnalysis, suspendAnalysis, resumeAnalysis, loadAnalysisStatus } from "./analyses.js";
+export { upsertAnalysis, loadAnalysisStatus } from "./analyses.js";
 
 export {
     upsertArtifact,

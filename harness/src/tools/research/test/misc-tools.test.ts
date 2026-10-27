@@ -207,12 +207,35 @@ describe("inspectRun (dependency-bearing factory)", () => {
         };
     }
 
-    /** A pool that answers the run lookup and the step lookup separately, keyed by the target table. */
-    function poolForRunDetail(run: Record<string, unknown>, steps: Array<Record<string, unknown>>): InspectRunQuerier {
+    /** A raw `cortex_paused_work` row as `pg` hands it back: a step of `run-1` that waits in `paused` by default. */
+    function pauseRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+        return {
+            workflow_id: "run-1-T1S1",
+            work_id: "run-1",
+            work_kind: "run",
+            analysis_id: "analysis-001",
+            thread_id: null,
+            state: "paused",
+            cause: { kind: "host", reason: "payment_required" },
+            attempt: 0,
+            retry_at: null,
+            topic: "pause:p-1",
+            paused_at: new Date("2026-01-01T00:00:03.000Z"),
+            ...overrides,
+        };
+    }
+
+    /** A pool that answers the run lookup, the step lookup, and the pause lookup separately, keyed by the target table. */
+    function poolForRunDetail(
+        run: Record<string, unknown>,
+        steps: Array<Record<string, unknown>>,
+        pauses: Array<Record<string, unknown>> = [],
+    ): InspectRunQuerier {
         return {
             query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
                 if (text.includes("cortex_step_executions")) return Promise.resolve({ rows: steps, rowCount: steps.length });
+                if (text.includes("cortex_paused_work")) return Promise.resolve({ rows: pauses, rowCount: pauses.length });
                 return Promise.resolve({ rows: [run], rowCount: 1 });
             },
         };
@@ -257,20 +280,87 @@ describe("inspectRun (dependency-bearing factory)", () => {
         expect(result.steps[0]).not.toHaveProperty("summaryPath");
     });
 
-    it("reports a suspended run at once, with a message about a new run and the paths of its completed steps", async () => {
+    it("reports a running run with a waiting workflow as paused, with the state and the cause of each pause and no output path", async () => {
         const { ctx } = makeToolContext();
-        const suspended = (
-            await createInspectRunTool(
-                poolForRunDetail(runRow({ status: "suspended_insufficient_funds", synthesis_status: "produced" }), [
-                    stepRow({ step_id: "T1S1", status: "completed" }),
-                ]),
-            ).execute({ runId: "run-1" }, ctx)
-        )._unsafeUnwrap();
-        if (!("steps" in suspended)) throw new Error("expected the suspended inspection variant");
+        const pool = poolForRunDetail(
+            runRow({ status: "running", synthesis_status: "produced", completed_at: null }),
+            [stepRow({ step_id: "T1S1", status: "completed" }), stepRow({ step_id: "T1S2", status: "running", completed_at: null })],
+            [
+                pauseRow({ workflow_id: "run-1-T1S2" }),
+                pauseRow({
+                    workflow_id: "run-1-T1S3",
+                    state: "retrying",
+                    cause: { kind: "outage" },
+                    attempt: 1,
+                    retry_at: new Date("2026-01-01T00:10:00.000Z"),
+                }),
+            ],
+        );
 
-        expect(suspended.inspectionState).toBe("suspended");
-        expect(suspended.message).toBe("The host suspended this run. The run does not progress. A new run of the plan can start.");
-        expect(suspended.steps[0]?.summaryPath).toBe("runs/run-1/T1S1/output/summary.md");
+        const paused = (await createInspectRunTool(pool).execute({ runId: "run-1" }, ctx))._unsafeUnwrap();
+        if (!("pauses" in paused)) throw new Error("expected the paused inspection variant");
+
+        expect(paused.inspectionState).toBe("paused");
+        expect(paused.pauses).toEqual([
+            { state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, retryAt: undefined },
+            { state: "retrying", cause: { kind: "outage" }, attempt: 1, retryAt: "2026-01-01T00:10:00.000Z" },
+        ]);
+        expect(paused.message).toContain("The user can resume the run or stop it.");
+        expect(paused.run).toMatchObject({ status: "running", synthesisPath: null });
+        expect(paused.steps.map((step) => step.summaryPath)).toEqual([undefined, undefined]);
+    });
+
+    it("returns at once from a wait on a run that waits in a pause", async () => {
+        let waits = 0;
+        const pool = poolForRunDetail(runRow({ status: "running", completed_at: null }), [], [pauseRow()]);
+        const { ctx } = makeToolContext();
+
+        const result = (
+            await createInspectRunTool(pool, {
+                now: () => 0,
+                wait: () => {
+                    waits++;
+
+                    return Promise.resolve();
+                },
+            }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
+        )._unsafeUnwrap();
+
+        expect(result).toMatchObject({ inspectionState: "paused", wait: { requestedSeconds: 30, cutoffReached: false } });
+        expect(waits).toBe(0);
+    });
+
+    it("ends a wait when a workflow of the running run pauses", async () => {
+        let pauseReads = 0;
+        let now = 0;
+        const pool: InspectRunQuerier = {
+            query: (queryOrConfig) => {
+                const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
+                if (text.includes("cortex_step_executions")) return Promise.resolve({ rows: [], rowCount: 0 });
+                if (text.includes("cortex_paused_work")) {
+                    pauseReads += 1;
+                    const rows = pauseReads === 1 ? [] : [pauseRow()];
+                    return Promise.resolve({ rows, rowCount: rows.length });
+                }
+                return Promise.resolve({ rows: [runRow({ status: "running", completed_at: null })], rowCount: 1 });
+            },
+        };
+        const { ctx } = makeToolContext();
+
+        const result = (
+            await createInspectRunTool(pool, {
+                now: () => now,
+                wait: (ms) => {
+                    now += ms;
+
+                    return Promise.resolve();
+                },
+            }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
+        )._unsafeUnwrap();
+
+        expect(result).toMatchObject({ inspectionState: "paused", wait: { requestedSeconds: 30, cutoffReached: false } });
+        expect(pauseReads).toBe(2);
+        expect(now).toBeLessThan(30_000);
     });
 
     it("reports a missing run as an explicit success state", async () => {
@@ -287,7 +377,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const pool: InspectRunQuerier = {
             query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (text.includes("cortex_step_executions")) return Promise.resolve({ rows: [], rowCount: 0 });
+                if (text.includes("cortex_step_executions") || text.includes("cortex_paused_work")) return Promise.resolve({ rows: [], rowCount: 0 });
                 const row = presentAt(rows, Math.min(reads++, rows.length - 1));
                 return Promise.resolve({ rows: [row], rowCount: 1 });
             },

@@ -67,6 +67,7 @@ const ANALYSIS_KEYED_TABLES = [
     "cortex_edit_intents",
     "cortex_applied_memory_edits",
     "cortex_authoring_results",
+    "cortex_paused_work",
 ] as const;
 
 const NOTHING_LEFT: Record<string, number> = {
@@ -85,6 +86,7 @@ const NOTHING_LEFT: Record<string, number> = {
     cortex_edit_intents: 0,
     cortex_applied_memory_edits: 0,
     cortex_authoring_results: 0,
+    cortex_paused_work: 0,
 };
 
 /** What `seedAnalysis` writes, so a survival assertion can name the same numbers. */
@@ -104,6 +106,7 @@ const FULLY_SEEDED: Record<string, number> = {
     cortex_edit_intents: 1,
     cortex_applied_memory_edits: 1,
     cortex_authoring_results: 1,
+    cortex_paused_work: 1,
 };
 
 const SEEDED_MESSAGES = 4;
@@ -214,6 +217,12 @@ describe("createAnalysisPurge", () => {
             text: `INSERT INTO cortex_authoring_results (thread_id, call_key, analysis_id, result)
                    VALUES ($1, $2, $3, '{}'::jsonb)`,
             values: [threadIds[0], `wf-${analysisId}:5`, analysisId],
+        });
+
+        await rig.pool.query({
+            text: `INSERT INTO cortex_paused_work (workflow_id, work_id, work_kind, analysis_id, state, cause, attempt, topic, paused_at)
+                   VALUES ($1, $2, 'run', $3, 'paused', '{"kind":"outage"}'::jsonb, 0, $4, NOW())`,
+            values: [`wf-${analysisId}:pause`, `run-${analysisId}`, analysisId, `pause:${analysisId}`],
         });
 
         // One recorded report version sits on each thread. The second reuses the

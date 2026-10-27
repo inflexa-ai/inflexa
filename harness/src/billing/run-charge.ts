@@ -6,8 +6,8 @@
  * external running-charge bracket; OSS wires a no-op. The harness only ever sees this
  * interface — the body brackets the run, the embedder owns the ledger.
  *
- * `open` is a gate: an `err` ends the run before a step starts, or suspends it
- * when the host asks. `close` is a notice: an `err` is logged, and the terminal
+ * `open` is a gate: an `err` ends the run before a step starts, or pauses it
+ * when the host sets the suspend flag. `close` is a notice: an `err` is logged, and the terminal
  * status of the run does not change (see `lib/hooks.ts`).
  */
 
@@ -16,8 +16,8 @@ import type { ResultAsync } from "neverthrow";
 import type { AgentSession } from "../auth/types.js";
 import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
-/** A suspension carries the reason of the host, which the harness does not read. */
-export type RunChargeOutcome = { readonly kind: "ok" | "error" | "canceled" } | { readonly kind: "suspended"; readonly reason: string };
+/** The outcome of a run that ended. A paused run does not end, thus it closes no charge. */
+export type RunChargeOutcome = { readonly kind: "ok" | "error" | "canceled" };
 
 export type RunCharge = {
     /** Open the run's running charge at init. */

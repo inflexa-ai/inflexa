@@ -75,6 +75,13 @@ describe("foldRunEventParts", () => {
         expect(folded).toEqual([activity("step-activity-run-1-T1S1", "complete", "Step complete")]);
     });
 
+    it("keeps the latest state of the pause of each waiting workflow", () => {
+        const pause = (id: string, state: "retrying" | "paused" | "running"): ChatPart => ({ type: "data-pause", id, workId: "run-1", workKind: "run", state });
+        const folded = foldRunEventParts([pause("run-1-0", "retrying"), pause("run-1-1", "paused"), pause("run-1-0", "paused"), pause("run-1-0", "running")]);
+
+        expect(folded).toEqual([pause("run-1-1", "paused"), pause("run-1-0", "running")]);
+    });
+
     it("keeps one current value per reconciling id, not one overall", () => {
         const folded = foldRunEventParts([
             activity("step-activity-run-1-T1S1", "executing", "Running deseq2.R"),

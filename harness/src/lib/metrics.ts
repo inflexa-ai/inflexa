@@ -37,7 +37,7 @@ import { type Counter, type Histogram, metrics } from "@opentelemetry/api";
 import type { StepExecutionStatus } from "../state/schema.js";
 
 /** Terminal status of a run, the same as the run ledger. */
-export type RunOutcome = "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
+export type RunOutcome = "completed" | "partial" | "failed" | "canceled";
 
 /** The workflow family a run belongs to. */
 export type RunWorkflow = "analysis" | "data_profile";

@@ -21,11 +21,13 @@ import { createConversationAgent, type ConversationAgentDeps } from "../agents/c
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { approvePlan, type ApprovePlanInput, type ApprovePlanRefusal, type PlanApproval } from "../app/approve-plan.js";
 import { registerChatTurns, type ChatTurns } from "../app/chat-turn-workflow.js";
+import { createPausedWork, type PausedWorkSurface } from "../app/paused-work.js";
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
-import { registerSubAgent } from "../loop/sub-agent.js";
+import { registerSubAgent, type SubAgentPauses, type SubAgentRegistrar } from "../loop/sub-agent.js";
+import { workPause } from "../workflows/pause.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import { createStaticEyes, type AcquireEyes } from "../lib/eyes.js";
@@ -222,10 +224,12 @@ export type CoreRuntimeDeps = {
     readonly provenance?: ProvenanceSeam;
     /**
      * The credential of a chat turn that this process did not open, for example a turn that a recovery runs after a
-     * restart. The workflow input of a turn holds no credential. Absent, or `undefined` for a turn: the turn ends as
-     * `interrupted` before its next model call.
+     * restart. The workflow input of a turn holds no credential. Absent, or `undefined` for a turn: the turn pauses
+     * with the cause `credential` before its next model call, until a resume gives a credential.
      */
     readonly credentialFor?: (turnId: string) => AuthContext | undefined;
+    /** The delays of the timer of an outage, for each kind of work. Absent: the default of the pause. */
+    readonly pauseRetryDelaysMs?: readonly number[];
 };
 
 /**
@@ -309,6 +313,11 @@ export type CoreRuntime = {
      */
     readonly chatTurns: ChatTurns;
     /**
+     * The paused work of an analysis: `list` gives each turn, run, and data profile that waits in a pause, and
+     * `resume` ends each wait of one work. Only a client resumes paused work.
+     */
+    readonly pausedWork: PausedWorkSurface;
+    /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
      * a plan the same way.
@@ -344,8 +353,13 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     });
 
     const toolOutputStore = createToolOutputStore(conversation.pool);
+    const pauseRetryDelaysMs = deps.pauseRetryDelaysMs;
+    // Each child of a sub-agent pauses with the work of its caller, thus a resume of the turn or of the run ends its wait.
+    const subAgentPauses: SubAgentPauses = (work, emit) =>
+        workPause({ pool: conversation.pool, ...work, emit, retryDelaysMs: pauseRetryDelaysMs, logger: conversation.logger }).afterFailure;
+    const registerPausingSubAgent: SubAgentRegistrar = (name, body) => registerSubAgent(name, body, subAgentPauses);
 
-    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, toolOutputStore });
+    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
     const { bioKeys: synthesisBioKeys, ...executeAnalysisDeps } = wf.buildExecuteAnalysis(sandboxStep);
     const literatureReviewer = createLiteratureReviewerTool(
         {
@@ -357,7 +371,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             toolOutputStore,
             logger: executeAnalysisDeps.logger,
         },
-        registerSubAgent,
+        registerPausingSubAgent,
     );
     const executeAnalysis = registerExecuteAnalysis({
         ...executeAnalysisDeps,
@@ -365,8 +379,9 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         usageRecorder,
         toolOutputStore,
         workingMemory: createWorkingMemory(conversation.pool),
+        pauseRetryDelaysMs,
     });
-    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, toolOutputStore });
+    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
 
     // The session runtime binds the per-session state to the thread behind the
     // tool boundary, thus one instance serves every report thread. It comes before
@@ -396,7 +411,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         // The start tool passes it to the spawn, which emits the creation of a
         // report session. The same seam reaches the report agent below.
         provenance: deps.provenance,
-        registerSubAgent,
+        registerSubAgent: registerPausingSubAgent,
     });
 
     // The report agent is a singleton over the conversation deps, the same way the
@@ -478,12 +493,14 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         usageRecorder,
         askGateway,
         credentialFor: deps.credentialFor,
+        pauseRetryDelaysMs,
     });
 
     return {
         agents: agentResolver,
         askGateway,
         chatTurns,
+        pausedWork: createPausedWork({ pool: conversation.pool, logger: conversation.logger }),
         reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
             executeAnalysis,

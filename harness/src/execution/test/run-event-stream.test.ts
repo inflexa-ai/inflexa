@@ -546,23 +546,15 @@ describe("run-event stream — a run with a run row", () => {
         expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("run row read failed"))).toBe(true);
     });
 
-    it("gives a suspended run the reason of the host, with no workflow read", async () => {
-        const runId = await endedRunWithNoTerminalPart("run-suspended-");
+    it("gives a failed row with the reason of a host its error and no reason, with no workflow read", async () => {
+        const runId = await endedRunWithNoTerminalPart("run-host-reason-");
         const readWorkflowStatus = (): Promise<string | null> => {
             return Promise.reject(new Error("a settled row must not read the workflow"));
         };
 
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("suspended_insufficient_funds", "budget_exceeded")]), readWorkflowStatus });
+        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("failed", "budget_exceeded")]), readWorkflowStatus });
 
-        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "budget_exceeded", reason: "budget_exceeded" });
-    });
-
-    it("gives a suspended row with no error a generic error and no reason", async () => {
-        const runId = await endedRunWithNoTerminalPart("run-suspended-bare-");
-
-        const seen = await subscribeToEndedRun(runId, { readRun: rowReads([row("suspended_insufficient_funds")]) });
-
-        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "Run suspended" });
+        expect(seen.at(-1)).toEqual({ type: "data-run-failed", runId, error: "budget_exceeded" });
     });
 
     it("gives a failed row its error and no reason", async () => {

@@ -15,6 +15,9 @@ import { z } from "zod";
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { queryRun, queryRunsForInspection, queryStepsByRun } from "../../state/index.js";
+import type { PauseRecord } from "../../state/paused-work.js";
+import { queryPausesOfWork } from "../../state/paused-work.js";
+import type { PauseCause } from "../../contracts/chat-parts.js";
 import type { CortexRunRow, StepExecutionRow } from "../../state/schema.js";
 import { SYNTHESIS_STEP_ID } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -58,7 +61,16 @@ type InspectRunOutput =
     | { runs: FormattedRun[]; total: number; page: number; pageSize: number; hasMore: boolean }
     | { inspectionState: "not_found"; message: string; wait?: WaitMetadata }
     | {
-          inspectionState: "in_progress" | "suspended" | "terminal";
+          inspectionState: "paused";
+          message: string;
+          run: FormattedRun;
+          steps: FormattedStep[];
+          /** Each workflow of the run that waits: a step, or the synthesis. */
+          pauses: { state: "retrying" | "paused"; cause: PauseCause; attempt: number; retryAt?: string }[];
+          wait?: WaitMetadata;
+      }
+    | {
+          inspectionState: "in_progress" | "terminal";
           message: string;
           run: FormattedRun;
           steps: FormattedStep[];
@@ -78,7 +90,7 @@ const systemClock: InspectRunClock = {
 };
 
 function isTerminal(status: CortexRunRow["status"]): boolean {
-    return status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
+    return status === "completed" || status === "partial" || status === "failed" || status === "canceled";
 }
 
 function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r.status)): FormattedRun {
@@ -175,9 +187,9 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
         description:
             "Inspect workflow runs for this analysis. A run never posts its completion into the conversation; this tool is how you read it. " +
             "Without a runId, returns a paged list (running runs first, then each other run) with total and hasMore. " +
-            "With a runId, returns the run, its steps, and an inspectionState: not_found; in_progress; suspended (the host suspended the run, it does not progress, and a new run of the plan can start); " +
+            "With a runId, returns the run, its steps, and an inspectionState: not_found; in_progress; paused (a step waits until the user resumes or stops the run, and pauses gives each cause); " +
             "or terminal (run.status completed, partial, failed, or canceled). " +
-            "Output paths appear only on a suspended or terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
+            "Output paths appear only on a terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
             "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn. " +
             "A wait on the run that the caller itself runs inside returns at once with selfWaitPrevented. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
@@ -215,10 +227,14 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
             }
 
             const selfWait = waitSeconds !== undefined && ctx.session.runFrame?.runId === input.runId;
+            const runId = input.runId;
+            const pausesOf = async (status: CortexRunRow["status"]): Promise<PauseRecord[]> =>
+                status === "running" ? unwrapOrThrow(await queryPausesOfWork(pool, resourceId, runId)) : [];
+            let pauses = await pausesOf(run.status);
             let cutoffReached = false;
-            if (waitSeconds !== undefined && run.status === "running" && !selfWait) {
+            if (waitSeconds !== undefined && run.status === "running" && pauses.length === 0 && !selfWait) {
                 const deadline = clock.now() + waitSeconds * 1_000;
-                while (run.status === "running") {
+                while (run.status === "running" && pauses.length === 0) {
                     const remaining = deadline - clock.now();
                     if (remaining <= 0) {
                         cutoffReached = true;
@@ -233,6 +249,7 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
                             wait: { requestedSeconds: waitSeconds, cutoffReached: false },
                         });
                     }
+                    pauses = await pausesOf(run.status);
                 }
             }
 
@@ -240,6 +257,19 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
             const stepRows = unwrapOrThrow(await queryStepsByRun(pool, input.runId));
             const steps = formatSteps(input.runId, stepRows, verbose, terminal);
             const wait = waitSeconds === undefined ? {} : { wait: { requestedSeconds: waitSeconds, cutoffReached } };
+
+            if (run.status === "running" && pauses.length > 0) {
+                return ok({
+                    inspectionState: "paused",
+                    message:
+                        "This run waits in a pause, and results are not ready. Tell the user the cause of each pause. " +
+                        "The user can resume the run or stop it. A pause in the state retrying also sends its request again at retryAt.",
+                    run: formatRun(run, verbose, false),
+                    steps,
+                    pauses: pauses.map((pause) => ({ state: pause.state, cause: pause.cause, attempt: pause.attempt, retryAt: pause.retryAt })),
+                    ...wait,
+                });
+            }
 
             if (run.status === "running") {
                 const message = selfWait
@@ -255,16 +285,6 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
                     elapsedMs: Math.max(0, clock.now() - Date.parse(run.startedAt)),
                     ...wait,
                     selfWaitPrevented: selfWait ? true : undefined,
-                });
-            }
-
-            if (run.status === "suspended_insufficient_funds") {
-                return ok({
-                    inspectionState: "suspended",
-                    message: "The host suspended this run. The run does not progress. A new run of the plan can start.",
-                    run: formatRun(run, verbose, true),
-                    steps,
-                    ...wait,
                 });
             }
 

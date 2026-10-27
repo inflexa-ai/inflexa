@@ -99,8 +99,8 @@ export type SandboxError =
           /**
            * The label hook of the host refused the spawn. The client made no
            * step tree and called no backend. `reason` is the text of the host,
-           * and `suspend` asks the caller to suspend the work in place of a
-           * failure (see `lib/hooks.ts`).
+           * and `suspend` asks a caller inside a workflow to pause the work in
+           * place of a failure (see `workflows/pause.ts`).
            */
           readonly type: "labels_refused";
           readonly op: string;

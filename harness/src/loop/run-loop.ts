@@ -208,7 +208,16 @@ export type LoopOptions = {
      * constant frame.
      */
     readonly invocationId?: string;
+    /**
+     * Waits out a failed request whose cause a person or time can repair, and gives how the wait ended: the deadline
+     * of a retry, a resume, or a stop. `undefined`: the failure does not pause, and the loop throws it. The body of a
+     * workflow gives the pause of its work. A loop with no pause throws each failure.
+     */
+    readonly pause?: (failure: unknown, attempt: number, signal: AbortSignal) => Promise<"retry" | "resume" | "abort" | undefined>;
 };
+
+/** The harness request after a reply that a failed request cut. The model reads its partial reply, and continues it. */
+export const CONTINUE_REQUEST = "[The model request failed during your reply above. Continue the reply from where it stopped.]";
 
 /** A run that receives no turn accumulator is the turn's root. See `LoopOptions.turnUsage`. */
 export const isTurnRoot = (opts: Pick<LoopOptions, "turnUsage">): boolean => opts.turnUsage === undefined;
@@ -383,6 +392,9 @@ type RequestSeries = {
     readonly endsOnRequestRefusal?: boolean;
 };
 
+/** A series whose request failed, with the reply that the failed request streamed before the failure. */
+type SeriesFailure = { readonly kind: "failed"; readonly failure: unknown; readonly partial: LoopMessage[] };
+
 /** How a series ended, short of a throw. */
 type SeriesEnd =
     | { readonly kind: "reply"; readonly finishReason: string; readonly rawFinishReason?: string }
@@ -471,7 +483,35 @@ function openConversation(
     // The first request after a summary shows if the summary brought the conversation under the budget.
     let summarizedLast = false;
 
-    const series = (target: SeriesTarget, spec: RequestSeries): Promise<SeriesEnd> => runSeries(agent, opts, calls, log, target, spec);
+    /**
+     * Run one series, and wait out a failure that pauses. After the wait, the series runs again with the requests
+     * that it did not use. A partial reply of the failed request stays as an interrupted reply, and one harness
+     * request asks the model to continue it. A failure with no partial reply changes no message, thus the next
+     * request sends the same view.
+     */
+    const series = async (target: SeriesTarget, spec: RequestSeries): Promise<SeriesEnd> => {
+        let current = spec;
+        let attempt = 0;
+        for (;;) {
+            const stepsBefore = target.steps.length;
+            const ended = await runSeries(agent, opts, calls, log, target, current);
+            if (ended.kind !== "failed") return ended;
+            const used = target.steps.length - stepsBefore;
+            // A request that completed ends the outage, thus the timer of the next pause starts again.
+            if (used > 0) attempt = 0;
+            const pauseEnd = opts.pause === undefined ? undefined : await opts.pause(ended.failure, attempt, opts.signal);
+            if (pauseEnd === undefined) throw toThrowable(ended.failure);
+            const [reply, ...results] = ended.partial;
+            if (reply !== undefined) {
+                const from = target.messages.length;
+                target.messages.push(markInterruptedMessage(reply), ...results);
+                answerUnansweredToolCalls(target.messages, from);
+            }
+            if (pauseEnd === "abort") return { kind: "aborted" };
+            attempt = pauseEnd === "retry" ? attempt + 1 : 0;
+            current = { ...current, maxRequests: current.maxRequests - used, requestText: reply === undefined ? undefined : CONTINUE_REQUEST };
+        }
+    };
 
     const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => {
         const rollups: { usage?: TokenUsageRollup; turnUsage?: TokenUsageRollup } = {};
@@ -688,7 +728,7 @@ function deniedByUser(step: LoopStep): boolean {
 
 /**
  * Run one series of model requests with `streamText`, and say how it ended.
- * A model failure and a fatal tool error leave as a throw.
+ * A failed request ends the series as `failed`, and a fatal tool error leaves as a throw.
  */
 async function runSeries(
     agent: AgentDefinition,
@@ -697,7 +737,7 @@ async function runSeries(
     log: Logger,
     target: SeriesTarget,
     spec: RequestSeries,
-): Promise<SeriesEnd> {
+): Promise<SeriesEnd | SeriesFailure> {
     const { messages, session } = target;
     const startIndex = messages.length;
     if (spec.requestText !== undefined) messages.push(syntheticUserMessage(spec.requestText));
@@ -869,7 +909,7 @@ async function runSeries(
         const refusal = spec.endsOnRequestRefusal === true ? requestRefusalOf(failure) : undefined;
         answerUnansweredToolCalls(messages, startIndex);
         if (refusal !== undefined) return { kind: "refused", refusal };
-        throw toThrowable(failure);
+        return { kind: "failed", failure, partial: openStepMessages(open) };
     }
 
     const last = seriesSteps.at(-1);

@@ -5,8 +5,17 @@
  * write it finds.
  */
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the suspend write that the body inlines, across wrapped SQL lines
-export const SUSPEND_STATE_WRITE = /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- any write of the analysis row, across wrapped SQL lines
+export const ANALYSIS_STATE_WRITE = /UPDATE\s+cortex_analysis_state/i;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the row that a workflow writes before it waits in a pause, across wrapped SQL lines
+export const PAUSE_RECORD_WRITE = /INSERT INTO cortex_paused_work/i;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delete of the row of one waiting workflow
+export const PAUSE_CLEAR_WRITE = /DELETE FROM cortex_paused_work WHERE workflow_id = \$1/i;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delete of each row of a pause of one work
+export const PAUSES_OF_WORK_CLEAR_WRITE = /DELETE FROM cortex_paused_work WHERE work_id = \$1/i;
 
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the run status write, across wrapped SQL lines
 export const RUNS_STATUS_WRITE = /UPDATE cortex_runs\s+SET status/;

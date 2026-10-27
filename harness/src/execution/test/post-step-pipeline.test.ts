@@ -66,7 +66,6 @@ function makePostCtx(analysisId: string): PostStepContext {
         runSession: { ...makeRunSession(analysisId), runFrame: { runId: RUN_ID, stepId: STEP_ID } },
         level: 0,
         prompt: "",
-        parentWorkflowId: "wf-parent",
         resources: { cpu: 1, memoryGb: 1 },
     };
     return {

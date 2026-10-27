@@ -42,6 +42,9 @@ export type {
     ChildSessionStartedPart,
     ReportRenderedPart,
     CompactionPart,
+    PauseCause,
+    PausedWorkKind,
+    PausePart,
     ChatPart,
     KnownChatPart,
 } from "./chat-parts.js";

@@ -20,15 +20,15 @@
  * 10. `mark-terminal`       — write the final status, emit `data-step-activity`
  *                             onto the parent's DBOS stream.
  *
- * The parent owns sibling lifecycle: the halt cascade of a suspension lives
- * on the parent (`executeAnalysis`). This child owns its own teardown and its
- * own suspension (workflow-suspension spec): a `suspend` error of the agent
- * loop, or a refusal with the suspend flag of the label gate or the register
- * gate. The child records the reason on its row, sends the typed suspension on
- * `CHILD_SUSPENDED_TOPIC`, and self-cancels to CANCELLED (resumable, not ERROR).
+ * The parent owns sibling lifecycle. This child owns its own teardown and its
+ * own pause (work-pause spec): a failed model request of the agent loop with a
+ * cause of a pause, or a refusal with the suspend flag of the label gate or the
+ * register gate. The child waits in place, and the run row stays `running`. The
+ * other steps go on, and each one pauses at its own failure.
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import type { Result } from "neverthrow";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
 import type { StepPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
@@ -79,12 +79,12 @@ import {
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
-import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
+import { keepSuspendingRefusal, type SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import type { TemplateBinding } from "../tools/knowledge/template.js";
-import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "./suspension.js";
+import { pauseAtGate, workPause } from "./pause.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
 
@@ -124,15 +124,6 @@ export type SandboxStepInput = {
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */
     readonly prompt: string;
-    /**
-     * DBOS workflow id of the parent (`executeAnalysis`). The child uses
-     * this to address the parent for its typed suspension
-     * (`DBOS.send(parent, …, CHILD_SUSPENDED_TOPIC)`) — the parent's
-     * scheduler-loop classifier relies on it to disambiguate a suspension
-     * self-cancel from an operator-driven sibling cancel (CANCELLED is the
-     * same terminal state for both).
-     */
-    readonly parentWorkflowId: string;
     /** Sandbox image override; falls back to the child's configured default. */
     readonly image?: string;
     /** Per-step env overrides forwarded to sandbox-server. */
@@ -169,22 +160,6 @@ export const DEFAULT_STEP_TIMEOUT_SECONDS = 3600;
 export const CAPPED_OUT_EMPTY_REASON = "The step hit its iteration cap with no output files persisted.";
 
 export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
-
-/**
- * DBOS message topic the child uses to tell the parent that it suspends. The
- * message goes BEFORE `DBOS.cancelWorkflow(self)`, thus the parent's recv
- * accumulator records the child before the child's terminal state lands.
- * Without it the parent observes only `DBOSWorkflowCancelledError` from
- * `getResult`, and it cannot tell a suspension from a cancel.
- */
-export const CHILD_SUSPENDED_TOPIC = "child-suspended";
-
-export type ChildSuspended = {
-    readonly kind: "suspended";
-    readonly childWorkflowId: string;
-    readonly stepId: string;
-    readonly reason: string;
-};
 
 export type SandboxStepResult = {
     readonly status: SandboxStepStatus;
@@ -311,6 +286,8 @@ export type SandboxStepDeps = {
      * cloud-free build, external provenance ledger in the managed build).
      */
     readonly artifactRegistry: ArtifactRegistry;
+    /** The delays of the timer of an outage. Absent: the default of the pause. */
+    readonly pauseRetryDelaysMs?: readonly number[];
     /**
      * No longer read by the step body; kept because `src/index.ts` exports
      * this type and an embedder builds it as an object literal.
@@ -460,29 +437,29 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         { name: "mark-running" },
     );
 
-    // The sandbox, if one stands, stays up for the resume. The steps run only on
-    // this path, and a replay takes the same path from the same checkpoints.
-    const suspendStep = async (suspension: Suspension): Promise<never> => {
-        const durationMs = (await DBOS.now()) - startedAt;
-        await DBOS.runStep(
-            async () => {
-                unwrapOrThrow(
-                    await updateStepExecution(deps.pool, input.runId, input.stepId, {
-                        status: "canceled",
-                        durationMs,
-                        error: suspension.reason,
-                        attempts: 1,
-                        lastErrorClass: suspension.reason,
-                    }),
-                );
-                recordStepCompleted({ agentId: input.agentId, status: "canceled", durationMs });
-            },
-            { name: "mark-suspended" },
-        );
-        const message: ChildSuspended = { kind: "suspended", childWorkflowId, stepId: input.stepId, reason: suspension.reason };
-        await DBOS.runStep(() => DBOS.send(input.parentWorkflowId, message, CHILD_SUSPENDED_TOPIC), { name: "notify-parent-suspended" });
-        return cancelSelf("self-cancel-suspended");
+    // Each step part goes to the CHILD's own `"events"` stream. `DBOS.writeStream`
+    // writes only to the stream of its own workflow, so the SSE route reads the
+    // parent's stream plus every active child's, addressed by
+    // `cortex_step_executions.child_workflow_id`. A failed write is non-fatal.
+    const emitToParentStream = (part: unknown): Promise<void> => DBOS.writeStream("events", part);
+    const safeEmit = async (part: unknown): Promise<void> => {
+        try {
+            await emitToParentStream(part);
+        } catch (err) {
+            logger.warn("emitToParentStream failed (non-fatal)", logger.errorFields(err));
+        }
     };
+
+    // The step waits in place, and the sandbox, if one stands, stays up for the resume.
+    const pause = workPause({
+        pool: deps.pool,
+        workId: input.runId,
+        workKind: "run",
+        analysisId: input.analysisId,
+        emit: safeEmit,
+        retryDelaysMs: deps.pauseRetryDelaysMs,
+        logger,
+    });
 
     // Stamp the sandbox agent's id into provenance so loop events carry
     // `source.agentId === input.agentId` (the parent's RunSession still reads
@@ -509,10 +486,16 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         extraEnv: input.extraEnv,
         resources: input.resources,
     };
-    const spawned = await DBOS.runStep(async () => keepSuspendingRefusal(await deps.sandboxClient.createSandbox(session, sandboxSpec, identity)), {
-        name: "sandbox.create",
-    });
-    if (spawned.isErr()) return suspendStep(suspensionOfSpawnRefusal(spawned.error));
+    const spawn = (): Promise<Result<SandboxRef, SuspendingRefusal>> =>
+        DBOS.runStep(async () => keepSuspendingRefusal(await deps.sandboxClient.createSandbox(session, sandboxSpec, identity)), {
+            name: "sandbox.create",
+        });
+    let spawned = await spawn();
+    // A refusal of the label gate with the suspend flag waits in a pause, and the spawn runs again after the resume.
+    while (spawned.isErr()) {
+        await pauseAtGate(pause, spawned.error.reason);
+        spawned = await spawn();
+    }
     const sandbox = spawned.value;
 
     // Recovery path: re-check `isAlive` on the persisted ref before continuing.
@@ -573,18 +556,6 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // from a step takes no function-ID, and a recovered step writes its events again.
     // `safeEmit` swallows a stream-write failure: a dropped UI frame is
     // non-fatal and must not fail the step.
-    // Pattern A (fan-in at route): write to the CHILD's own `"events"` stream.
-    // `DBOS.writeStream` writes only to the stream of its own workflow, so the
-    // SSE route reads the parent's stream plus every active child's, addressed
-    // by `cortex_step_executions.child_workflow_id`.
-    const emitToParentStream = (part: unknown): Promise<void> => DBOS.writeStream("events", part);
-    const safeEmit = async (part: unknown): Promise<void> => {
-        try {
-            await emitToParentStream(part);
-        } catch (err) {
-            logger.warn("emitToParentStream failed (non-fatal)", logger.errorFields(err));
-        }
-    };
     // Schema-conformant step-activity emitter. `data-step-activity` has a stable id per (runId, stepId),
     // so the run-stream fold collapses every phase transition latest-wins. Each emission also leaves one
     // `data-activity-entry` that the fold keeps, thus a late subscriber gets each line with its time. The
@@ -721,6 +692,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             },
             // A blocker ends the step: the agent declared that it cannot do the work.
             stopWhen: (done) => blockerOf(done) !== null,
+            pause: pause.afterFailure,
         });
         transcript = agentResult.messages;
         steps = agentResult.steps;
@@ -728,10 +700,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         hitMaxSteps = agentResult.finish.cappedOut;
         stepUsage = agentResult.finish.usage;
     } catch (err) {
-        const suspension = suspensionOfFailure(err);
-        if (suspension !== undefined) return suspendStep(suspension);
-
-        // Non-resumable failure — tear down, mark failed (scrubbed), re-raise so
+        // A failure with a cause of a pause waited in the loop, thus this one fails the step: tear down, mark failed (scrubbed), re-raise so
         // the parent's `getResult` sees ERROR and the fail-fast cascade fires.
         // `failStep` always throws; the outer `throw` is for control-flow analysis.
         // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
@@ -905,19 +874,26 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 session,
             ),
         );
-    let registered: Awaited<ReturnType<typeof reconcileAndRegisterStepArtifacts>>;
-    try {
-        registered = await reconcileAndRegisterStepArtifacts(deps, postCtx, manifest);
-    } catch (attestationErr) {
-        if (isWorkflowCancellation(attestationErr)) throw attestationErr;
+    const register = async (): Promise<Awaited<ReturnType<typeof reconcileAndRegisterStepArtifacts>>> => {
+        let registration: Awaited<ReturnType<typeof reconcileAndRegisterStepArtifacts>>;
+        try {
+            registration = await reconcileAndRegisterStepArtifacts(deps, postCtx, manifest);
+        } catch (attestationErr) {
+            if (isWorkflowCancellation(attestationErr)) throw attestationErr;
+            await syncStepArtifacts();
+            // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
+            throw await failStep("lineage_attestation", attestationErr);
+        }
         await syncStepArtifacts();
-        // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
-        throw await failStep("lineage_attestation", attestationErr);
+        return registration;
+    };
+    let registered = await register();
+    // A refusal of the register gate with the suspend flag waits in a pause, and the registration runs again after the resume.
+    while (registered.isErr() && registered.error.kind === "refused" && registered.error.refusal.kind === "suspended") {
+        await pauseAtGate(pause, registered.error.refusal.reason);
+        registered = await register();
     }
-    await syncStepArtifacts();
     if (registered.isErr()) {
-        const refused = registered.error.kind === "refused" ? suspensionOfRefusal(registered.error.refusal) : undefined;
-        if (refused !== undefined) return suspendStep(refused);
         // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path.
         throw await failStep("lineage_attestation", new Error(describeStepRegistrationFailure(registered.error)));
     }

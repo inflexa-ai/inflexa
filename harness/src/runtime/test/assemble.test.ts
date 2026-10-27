@@ -593,7 +593,7 @@ describe("the chat turns of the composition", () => {
         };
     }
 
-    it("registers the turn workflow and one workflow for each sub-agent kind, and gives the host the turn surface", async () => {
+    it("registers the turn workflow and one workflow for each sub-agent kind, and gives the host the turn and pause surfaces", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         const register = dbos.DBOS.registerWorkflow.bind(dbos.DBOS);
         const registered: string[] = [];
@@ -609,6 +609,7 @@ describe("the chat turns of the composition", () => {
                 expect(registered).toContain(name);
             }
             expect(Object.keys(runtime.chatTurns).sort()).toEqual(["answer", "open", "outcome", "read", "stop"]);
+            expect(Object.keys(runtime.pausedWork).sort()).toEqual(["list", "resume"]);
         } finally {
             Reflect.set(dbos.DBOS, "registerWorkflow", register);
         }

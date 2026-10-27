@@ -425,6 +425,25 @@ export const CompactionPartSchema = z.object({
     trigger: z.enum(["turn-start", "mid-turn"]).optional(),
 });
 
+// ── Pause ───────────────────────────────────────────────────────────
+
+export const PauseCauseSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("outage") }),
+    z.object({ kind: z.literal("credential") }),
+    z.object({ kind: z.literal("host"), reason: z.string() }),
+]);
+
+export const PausePartSchema = z.object({
+    type: z.literal("data-pause"),
+    id: z.string(),
+    workId: z.string(),
+    workKind: z.enum(["turn", "run", "profile"]),
+    state: z.enum(["retrying", "paused", "running"]),
+    cause: PauseCauseSchema.optional(),
+    attempt: z.number().int().nonnegative().optional(),
+    retryAt: z.string().optional(),
+});
+
 // ── Sub-agent activity ──────────────────────────────────────────────
 
 export const SubAgentActivityEntrySchema = z.object({
@@ -471,4 +490,5 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     ChildSessionStartedPartSchema,
     ReportRenderedPartSchema,
     CompactionPartSchema,
+    PausePartSchema,
 ]);
