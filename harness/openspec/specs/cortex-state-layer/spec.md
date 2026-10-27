@@ -33,6 +33,10 @@ nullable), `data_profile_completed_at` (TEXT, nullable), `data_profile_result`
 `seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT,
 NOT NULL), `updated_at` (TEXT, NOT NULL).
 
+The `status` column SHALL NOT take the value `'suspended_insufficient_funds'`. A
+versioned migration SHALL change each such row to `'active'`. The paused work of
+an analysis is in `cortex_paused_work` (see the work-pause spec).
+
 The `data_profile_status` column SHALL accept `'pending'`, `'running'`,
 `'completed'`, and `'failed'`; `'running'` covers both initial profiling and
 re-profiling, the distinction being made at the API layer by the presence of
@@ -161,10 +165,16 @@ resolved by the embedder at charge time, never persisted in the state layer
 
 #### Scenario: Suspend and resume for each reason of the host
 
-- **WHEN** `suspendAnalysis` runs for a suspension, with any reason of the host
-- **THEN** `status` becomes `'suspended_insufficient_funds'`, and a second call has no effect
-- **AND** `resumeAnalysis` changes `status` back to `'active'` only from that suspended state
+- **GIVEN** an analysis whose run pauses for a `suspend` error, with any reason of the host
+- **WHEN** the user resumes the run
+- **THEN** `status` stays `'active'` during the pause and after the resume
 - **AND** the row does not store the reason
+
+#### Scenario: An old suspended analysis reads as active
+
+- **GIVEN** an analysis row with the status `'suspended_insufficient_funds'`
+- **WHEN** the pending migrations run
+- **THEN** the row has the status `'active'`
 
 ### Requirement: cortex_artifacts table schema
 

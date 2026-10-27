@@ -20,7 +20,7 @@ The function MUST do these steps in this order:
 4. Read the active run of the plan. When one exists, give its run id with `started: false`. The function then links nothing, reserves nothing, and authorizes nothing.
 5. Link the packages of the plan through the farm link function of the host, when the host gives one. A pool miss, a collision, or an unavailable store gives `packages_missing`, with the missing entries, the collisions, and the reason of an unavailable store. No run row exists after this refusal.
 6. Reserve a run row with a new run id, the plan id, and the thread id of the scope. The lock of the plan holds the reservation, as the next paragraph tells. A collision with a concurrent launch of the same plan gives the active run with `started: false`. When the collision finds no active run, the function gives `store_failed`.
-7. Authorize the run. A `suspended` refusal marks the run `suspended_insufficient_funds`, suspends the analysis, and gives `suspended` with the reason. Each other refusal marks the run `failed` and gives `not_authorized` with the reason. A failed write of the run status does not change the refusal. A failed suspension of the analysis gives `store_failed`.
+7. Authorize the run. A refusal marks the run `failed`. A refusal with the suspend flag gives `suspended` with the reason, and it does not mark the analysis. Each other refusal gives `not_authorized` with the reason. A failed write of the run status does not change the refusal.
 8. Start the workflow under the run id. A failed start revokes the authorization, marks the run `failed`, and gives `launch_failed`. A failed write of the run status does not change this refusal either.
 9. Give the run id with `started: true`.
 
@@ -108,6 +108,13 @@ A failed store read or write gives `store_failed`. The function emits no chat pa
 - **GIVEN** a run authorizer that refuses the run with a reason that is not a suspension
 - **WHEN** a host launches the plan
 - **THEN** the result is the refusal `not_authorized` with the reason, and the run row is `failed`
+
+#### Scenario: A refused authorization with a suspension ends the reserved run
+
+- **GIVEN** a run authorizer that refuses the run with the reason `payment_required` and the suspend flag
+- **WHEN** a host launches the plan
+- **THEN** the result is the refusal `suspended` with the reason `payment_required`, and the run row is `failed`
+- **AND** the status of the analysis does not change
 
 ### Requirement: The plan mode of execute_analysis keeps its failure protocol
 

@@ -1,4 +1,9 @@
-## ADDED Requirements
+# work-pause Specification
+
+## Purpose
+TBD - created by archiving change pause-and-resume-work. Update Purpose after archive.
+
+## Requirements
 
 ### Requirement: A failure that a person or time can repair pauses the work
 

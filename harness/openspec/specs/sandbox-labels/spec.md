@@ -24,7 +24,7 @@ If the hook gives an `err`, the client MUST refuse the spawn with the `SandboxEr
 `labels_refused`. The variant MUST carry the reason and the suspend flag of the `GateFailure`.
 The client MUST NOT make the step tree, and it MUST NOT call a backend. `createSandbox` MUST
 give the refusal as an `err` value, the same as each other `SandboxError` of the client seam. If
-the suspend flag is true, the caller suspends the work (see the workflow-suspension spec).
+the suspend flag is true, a caller inside a workflow pauses the work (see the work-pause spec).
 
 #### Scenario: A spawn path with no label code gets the host labels
 

@@ -93,7 +93,7 @@ If the authorization or the launch fails, the command MUST mark the reserved row
 
 ### Requirement: The command blocks to a terminal state with live progress
 
-The command MUST block until the run reaches a terminal status. The terminal statuses are `completed`, `partial`, `failed`, `canceled`, and `suspended_insufficient_funds`. The durable workflow runs inside the DBOS runtime of the cli process. Thus an exit after the trigger would orphan the run until a future boot.
+The command MUST block until the run reaches a terminal status. The terminal statuses are `completed`, `partial`, `failed`, and `canceled`. A run with a paused step is not terminal, thus the command keeps waiting, and its progress MUST show each pause with its state and its cause. The durable workflow runs inside the DBOS runtime of the cli process. Thus an exit after the trigger would orphan the run until a future boot.
 
 The command MUST show live progress while it blocks. It reads the per-step dispatch and completion from the harness's step-execution and workflow-progress records. A progress read is best-effort, and it MUST NOT abort the wait.
 

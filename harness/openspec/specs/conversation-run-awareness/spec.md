@@ -62,9 +62,19 @@ Completing a workflow SHALL update the harness run ledger and run-event stream b
 - **THEN** its ledger and stream expose the terminal state
 - **AND** no conversation-agent invocation or thread-history write is created by completion
 
-### Requirement: Conversation turns store the fresh run activity of the running runs after the user message
+### Requirement: The prompt reads an approval record as a started run
 
-The harness MUST derive the Run Activity afresh from `cortex_runs` for the whole analysis on each chat turn. The render MUST list the `running` runs only. A `suspended_insufficient_funds` run is terminal, thus the render MUST NOT list it. It MUST give the full `runId`, the nullable `planId`, and the absolute `startedAt` of each run that it lists.
+The conversation prompt MUST state that an approval record in the thread means that the run of that plan started. The rule MUST be part of the constant prompt of the conversation agent, thus the prompt stays a function of the agent type only. The rule names no plan id, no run id, and no time.
+
+#### Scenario: The prompt carries the approval rule
+
+- **WHEN** the conversation agent is assembled
+- **THEN** its system prompt states that an approval record means that the run of that plan started
+- **AND** the system prompt is the same for each thread
+
+### Requirement: A turn stores the fresh run activity of the running runs after the user message
+
+The harness MUST derive the Run Activity afresh from `cortex_runs` for the whole analysis on each chat turn. The render MUST list the `running` runs only. A run with a paused step is `running`, thus the render lists it. It MUST give the full `runId`, the nullable `planId`, and the absolute `startedAt` of each run that it lists.
 
 The render MUST NOT give the age of a run. An age changes each minute, and the record of the turn would then change on each turn.
 
@@ -75,11 +85,11 @@ The render is a context record of the kind `run-activity` (see the chat-turn cap
 
 The harness MUST NOT write the render to the working memory.
 
-#### Scenario: Running runs are listed and a suspended run is not
+#### Scenario: Running runs are listed and an ended run is not
 
-- **GIVEN** an analysis with two running runs and one suspended run, and one of the running runs started from a different conversation thread
+- **GIVEN** an analysis with two running runs and one failed run, and one of the running runs started from a different conversation thread
 - **WHEN** a chat turn is prepared
-- **THEN** the run-activity record lists the full run id of each running run, and it does not list the suspended run
+- **THEN** the run-activity record lists the full run id of each running run, and it does not list the failed run
 - **AND** each entry carries its plan id when present and its absolute start time, and no entry carries an age
 
 #### Scenario: An unchanged activity adds no record
@@ -99,13 +109,3 @@ The harness MUST NOT write the render to the working memory.
 - **GIVEN** one set of non-terminal runs
 - **WHEN** the harness renders it two times, one hour apart
 - **THEN** the two renders are byte-identical
-
-### Requirement: The prompt reads an approval record as a started run
-
-The conversation prompt MUST state that an approval record in the thread means that the run of that plan started. The rule MUST be part of the constant prompt of the conversation agent, thus the prompt stays a function of the agent type only. The rule names no plan id, no run id, and no time.
-
-#### Scenario: The prompt carries the approval rule
-
-- **WHEN** the conversation agent is assembled
-- **THEN** its system prompt states that an approval record means that the run of that plan started
-- **AND** the system prompt is the same for each thread

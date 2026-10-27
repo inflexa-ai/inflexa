@@ -24,8 +24,8 @@ type NoticeFailure = { readonly reason: string }
 (input) => ResultAsync<void, NoticeFailure>
 ```
 
-If a gate gives an `err`, the operation MUST fail with the reason of the host. If `suspend` is also true, the
-operation MUST suspend in place of the failure, as the `workflow-suspension` capability describes.
+If a gate gives an `err`, the operation MUST fail with the reason of the host. If `suspend` is also true, and the
+gate runs inside a workflow, the work MUST pause in place of the failure, as the `work-pause` capability describes.
 
 If a notice gives an `err`, the harness MUST log the reason at the error level. The outcome of the operation MUST NOT
 change, because the work is complete.
@@ -44,9 +44,9 @@ that is a defect of the host. The harness MUST NOT catch the rejection.
 
 #### Scenario: A gate err with suspend suspends the operation
 
-- **GIVEN** a gate that gives `errAsync({ reason: "r", suspend: true })`
+- **GIVEN** a gate inside a workflow that gives `errAsync({ reason: "r", suspend: true })`
 - **WHEN** the harness calls the gate through the gate helper
-- **THEN** the operation suspends with the reason `r`, and it does not fail
+- **THEN** the work pauses with the cause `host` and the reason `r`, and it does not fail
 
 #### Scenario: A notice err does not change the outcome
 

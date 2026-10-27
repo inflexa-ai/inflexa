@@ -194,7 +194,10 @@ The host SHALL call `launchDbos` after configuring and registering workflows.
 `launchDbos` SHALL apply the schedule of each scheduled workflow after the launch,
 because DBOS stores a schedule only after its launch.
 Configuration SHALL set `executorID` from the host's stable process identity,
-and an optional `applicationVersion`. When the same process slot
+and an optional `applicationVersion`. `launchDbos` SHALL set `enablePatching`. Thus,
+when the host gives no `applicationVersion`, DBOS keeps one version across upgrades,
+and a paused workflow recovers after an upgrade. A change of the operations of a
+workflow body SHALL use `DBOS.patch`, thus a recorded execution replays the old path. When the same process slot
 relaunches under the same `executorID`, DBOS SHALL be able to reclaim the pending
 workflows its predecessor left behind. Core SHALL NOT ship an HTTP recovery route
 or a standing recovery component; operator controls for retired executor ids are
@@ -211,6 +214,12 @@ a host concern.
 - **GIVEN** a host process that crashed with pending workflows under `executorID = "core-worker-0"`
 - **WHEN** a new process launches under the same `executorID`
 - **THEN** DBOS can reclaim those pending workflows without any core-owned recovery route
+
+#### Scenario: A paused workflow recovers after an upgrade
+
+- **GIVEN** a workflow that waits in `paused`, and a host that gives no `applicationVersion`
+- **WHEN** a later build of the host, with a changed system prompt and a later DBOS, launches under the same `executorID`
+- **THEN** DBOS recovers the workflow, and it waits in `paused` again
 
 ### Requirement: Lifecycle flags are process-local
 
@@ -509,7 +518,6 @@ The harness MUST throw an exception only at these places:
 
 - A step or a workflow that must fail.
 - A step that DBOS must retry, because DBOS retries a step only on a throw.
-- The self-cancel of a suspension.
 - A tool `execute` body. The tool adapter of the loop changes the throw into an error tool result.
 - A model call that fails after its retries. The retry envelope of the provider throws the classified `ProviderError`, and the loop throws it out of the run.
 
