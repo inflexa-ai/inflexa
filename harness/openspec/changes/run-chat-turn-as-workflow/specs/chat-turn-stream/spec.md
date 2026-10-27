@@ -8,7 +8,12 @@ The durable stream of a chat turn. The turn writes its frames to the stream of i
 
 ### Requirement: A turn writes each frame to its durable stream
 
-A chat turn MUST write each frame that a host shows to the durable stream of its workflow. The frames MUST have the shape of `toChatFrame`. They carry the source of each event: the agent, the call path, and the id of the tool call that runs a sub-agent. The turn MUST write its terminal frame, `finish` or `error`, itself. A host MUST NOT write a frame of the turn.
+A chat turn MUST write each fact that a host shows to the durable stream of its workflow. The reader of the harness MUST give the host frames with the shape of `toChatFrame`. A frame carries the source of its event: the agent, the call path, and the id of the tool call that runs a sub-agent. The turn MUST write its own end, thus the reader gives `finish` or `error`. A host MUST NOT write to the stream of a turn.
+
+#### Scenario: A client gets no tool payload
+
+- **WHEN** a tool call of a turn returns its output
+- **THEN** the frames that the reader gives hold the name, the detail, the outcome, and the duration of the call, and not its input or its output
 
 #### Scenario: A host reads the whole turn
 
