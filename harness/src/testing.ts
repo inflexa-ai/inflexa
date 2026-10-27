@@ -2,14 +2,17 @@
  * The test kit of the harness: a scripted model for a test of an agent, a chat
  * turn, or a tool that runs a sub-agent. It is a `ChatProvider` over the mock
  * model of the AI SDK. Each request takes the next entry of the script, and the
- * kit records each request that the model got. An embedder imports it from
- * `@inflexa-ai/harness/testing`.
+ * kit records each request that the model got. `inProcessChatTurns` gives the
+ * chat turns of a runtime with no DBOS engine, over the turn in process. An
+ * embedder imports it from `@inflexa-ai/harness/testing`.
  */
 
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart, SharedV4ProviderMetadata } from "@ai-sdk/provider";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 
 import { createAiSdkProvider } from "./providers/ai-sdk.js";
+
+export { inProcessChatTurns } from "./app/in-process-turn.js";
 import type { ChatProvider, ChatUsage, ProviderCapabilities } from "./providers/types.js";
 
 export type ScriptedPart =

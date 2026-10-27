@@ -253,15 +253,14 @@ export type {
     RegistrationAgencyEvidence,
 } from "./citations/types.js";
 
-// Seam: tool approval (`ctx.ask`). `createAskGateway` realizes the `Ask` seam
-// over the injected `Pool` and carries the outward `answer`/`pending` API plus
-// the boot-time `sweepExpired`; `UnavailableAsk` is the shipped deny-by-default
-// realization for an unwired or non-interactive host. The `AskRequest`/`AskReply`
-// contract and the `AskRejectedError` denial throw come from the seam contract.
+// Tool approval. The approval hook of a tool gives an `AskRequest`, and a turn
+// workflow raises it in the ask ledger of `createAskGateway`. A host lists the
+// pending asks with `pending`, answers one with the `answer` of
+// `CoreRuntime.chatTurns`, and expires the orphans of a dead process with the
+// boot-time `sweepExpired`.
 export { createAskGateway } from "./tools/approval/gateway.js";
-export type { AskGateway, AskGatewayDeps, AskContext, AnswerOutcome, PendingAsk } from "./tools/approval/gateway.js";
-export { UnavailableAsk, AskRejectedError } from "./tools/approval/contract.js";
-export type { Ask, AskRequest, AskReply, AskApproval } from "./tools/approval/contract.js";
+export type { AskGateway, AskGatewayDeps, AskScope, AnswerOutcome, PendingAsk } from "./tools/approval/gateway.js";
+export type { AskRequest, AskReply } from "./tools/approval/contract.js";
 
 // Agent loop. No embedder drives the loop: a host runs a chat turn, and the
 // harness runs each loop. These are the types that the turn and an agent carry.
@@ -330,27 +329,14 @@ export type { SuspendOn } from "./providers/errors.js";
 // with `suspensionOfFailure`, by the kind of the error, never by its text.
 export { suspensionOfFailure } from "./workflows/suspension.js";
 export type { Suspension } from "./workflows/suspension.js";
-// Conversation turn + thread memory. A host runs a chat turn with `runChatTurn`
-// over `CoreRuntime.chatTurns`, and gives only its transport values: the harness
-// streams the text of the reply, and it stores the opening, each round, and the
-// outcome. `appendTurn` stays for a record of a host. `createThreadStore`
-// owns thread metadata (create/list/title).
-export { openChatTurn, prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
-export type {
-    ChatTurnOutcome,
-    ChatTurnRan,
-    ChatTurnRefusal,
-    ChatTurnResult,
-    ChatTurnSession,
-    OpenChatTurn,
-    OpenChatTurnParams,
-    PrepareChatTurnDeps,
-    PrepareChatTurnParams,
-    PrepareChatTurnResult,
-    RunChatTurnDeps,
-    RunChatTurnParams,
-    RunOpenChatTurnParams,
-} from "./app/chat-turn.js";
+// Conversation turn + thread memory. A host opens a chat turn with the `open`
+// of `CoreRuntime.chatTurns`, which starts the workflow of the turn, and reads
+// its frames with `read`, live or again after a lost connection. The harness
+// stores the opening, each round, and the outcome. `appendTurn` stays for a
+// record of a host. `createThreadStore` owns thread metadata (create/list/title).
+export { prepareChatTurn } from "./app/chat-turn.js";
+export type { ChatTurnRefusal, ChatTurnSession, PrepareChatTurnDeps, PrepareChatTurnParams, PrepareChatTurnResult } from "./app/chat-turn.js";
+export type { ChatTurnEnd, ChatTurns, ChatTurnStart, OpenChatTurnRequest } from "./app/chat-turn-workflow.js";
 export { createThreadStore } from "./memory/thread-store.js";
 // `ThreadType` and `ThreadInputError` ride out with the shapes that carry them:
 // `Thread.threadType` and `CreateThreadInput.type` are unwritable by an embedder

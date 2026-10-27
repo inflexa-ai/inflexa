@@ -20,7 +20,7 @@ import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { approvePlan, type ApprovePlanInput, type ApprovePlanRefusal, type PlanApproval } from "../app/approve-plan.js";
-import type { RunChatTurnDeps } from "../app/chat-turn.js";
+import { registerChatTurns, type ChatTurns } from "../app/chat-turn-workflow.js";
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -220,6 +220,12 @@ export type CoreRuntimeDeps = {
      * which an embedder calls on its own. Thus that composition binds the seam there as well.
      */
     readonly provenance?: ProvenanceSeam;
+    /**
+     * The credential of a chat turn that this process did not open, for example a turn that a recovery runs after a
+     * restart. The workflow input of a turn holds no credential. Absent, or `undefined` for a turn: the turn ends as
+     * `interrupted` before its next model call.
+     */
+    readonly credentialFor?: (turnId: string) => AuthContext | undefined;
 };
 
 /**
@@ -297,11 +303,11 @@ export type CoreRuntime = {
      */
     readonly askGateway: AskGateway;
     /**
-     * The runtime values of a chat turn: give them to `openChatTurn` or `runChatTurn`. The turn makes its model,
-     * its text stream, its usage recorder, and its approval binding from them, thus a host gives only its
-     * transport values for each turn.
+     * The chat turns of the runtime: `open` starts the workflow of a turn, `read` gives its frames, `stop` ends it,
+     * and `answer` answers one of its asks. The turn makes its model, its usage recorder, and its approval binding
+     * from the runtime, thus a host gives only the session and the user input.
      */
-    readonly chatTurns: RunChatTurnDeps;
+    readonly chatTurns: ChatTurns;
     /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
@@ -463,19 +469,21 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     };
     const agentResolver = createThreadAgentResolver(agents);
     const askGateway = createAskGateway({ pool: conversation.pool });
+    const chatTurns = registerChatTurns({
+        pool: conversation.pool,
+        logger: conversation.logger,
+        provenance: deps.provenance,
+        agents: agentResolver,
+        provider: conversation.provider,
+        usageRecorder,
+        askGateway,
+        credentialFor: deps.credentialFor,
+    });
 
     return {
         agents: agentResolver,
         askGateway,
-        chatTurns: {
-            pool: conversation.pool,
-            logger: conversation.logger,
-            provenance: deps.provenance,
-            agents: agentResolver,
-            provider: conversation.provider,
-            usageRecorder,
-            askGateway,
-        },
+        chatTurns,
         reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
             executeAnalysis,

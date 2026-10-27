@@ -1,28 +1,21 @@
 /**
- * The poll-based tool-approval gateway — the constructed `Ask` seam realization
- * an embedder wires over its Postgres pool, plus the outward `answer` / `pending`
- * API it drives and the boot-time `sweepExpired`.
- *
- * `ask` is the per-turn seam an embedder binds: a conversation tool's `ctx.ask`
- * pauses on it. The database is the single source of truth for ask state — `ask`
- * inserts a `pending` ledger row, emits the `data-ask` part, and polls that row to
- * a terminal status; there is no in-memory resolver map. `answer` is one guarded
- * write. See the poll site below for why.
+ * The tool-approval gateway: the ask ledger over the Postgres pool of an
+ * embedder. A turn workflow raises an ask under a known id and waits for the
+ * answer itself. `answer` is one guarded write, and `pending` and the boot-time
+ * `sweepExpired` read and expire the ledger.
  */
 
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { AskPart } from "../../contracts/chat-parts.js";
-import type { EmitFn } from "../../loop/types.js";
-import { AskRejectedError, type AskApproval, type AskReply, type AskRequest } from "./contract.js";
+import type { AskReply, AskRequest } from "./contract.js";
 import {
     answerAsk,
     insertGrantedAsk,
     insertPendingAsk,
     markAborted,
     markExpired,
-    selectAskResolution,
     selectGrant,
     selectPending,
     sweepExpired as sweepExpiredRows,
@@ -31,7 +24,6 @@ import {
     type AskStatus,
     type PendingAsk,
 } from "./queries.js";
-import { uuidv7 } from "./uuidv7.js";
 
 export type { AnswerOutcome, PendingAsk } from "./queries.js";
 
@@ -40,26 +32,16 @@ export type AskGatewayDeps = {
     readonly pool: Pool;
 };
 
-/**
- * Per-turn context an embedder binds into the `Ask` seam. It scopes the ask to an
- * analysis/thread and to one user, carries the turn's abort `signal`, and supplies
- * the `emit` sink the `data-ask` part flows through.
- */
-export type AskContext = {
+/** Who an ask goes to and where it belongs. */
+export type AskScope = {
     readonly analysisId: string;
     /** The opaque identity of the person the ask goes to. The harness never reads it. */
     readonly userId: string;
     readonly threadId?: string;
-    readonly signal: AbortSignal;
-    readonly emit: EmitFn;
 };
 
-/** Who an ask goes to and where it belongs. */
-export type AskScope = Pick<AskContext, "analysisId" | "userId" | "threadId">;
-
-/** The gateway surface: the per-turn seam plus the outward embedder-driven API. */
+/** The gateway surface: the raise of a turn and the outward embedder-driven API. */
 export type AskGateway = {
-    ask(request: AskRequest, ctx: AskContext): Promise<AskApproval>;
     /**
      * Raise an ask under a known id, for a turn workflow that waits for the answer itself. A standing grant settles
      * it at once as `resolved`. Else the row waits as `pending`. A second raise of the same id changes nothing.
@@ -75,79 +57,15 @@ export type AskGateway = {
     sweepExpired(maxAgeMs?: number): Promise<number>;
 };
 
-/** Fixed poll cadence — imperceptible against human decision speed, low chatter. */
-const POLL_INTERVAL_MS = 200;
-
 /**
  * Pending rows older than this are treated as orphans of a dead process. Far
  * beyond any plausible live turn, so a boot sweep during a rolling deployment
- * cannot expire an ask another pod is still polling.
+ * cannot expire an ask another pod is still waiting on.
  */
 export const DEFAULT_SWEEP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export function createAskGateway(deps: AskGatewayDeps): AskGateway {
     const { pool } = deps;
-
-    async function ask(request: AskRequest, ctx: AskContext): Promise<AskApproval> {
-        const id = uuidv7();
-        const now = new Date().toISOString();
-        const row: AskRow = {
-            id,
-            analysisId: ctx.analysisId,
-            userId: ctx.userId,
-            threadId: ctx.threadId ?? null,
-            title: request.title,
-            command: request.command,
-            detail: request.detail ?? null,
-            grantKey: request.grantKey ?? null,
-            createdAt: now,
-        };
-
-        // A standing grant this user holds for this ask's grant key — the command
-        // unless the tool supplied a broader key — short-circuits the prompt: record
-        // the invocation as `resolved` for the audit trail and return without pausing.
-        // The one part it emits is already settled, so no surface prompts, and the
-        // transcript still shows that a standing grant approved the call.
-        if (unwrapOrThrow(await selectGrant(pool, ctx.analysisId, ctx.userId, request.grantKey ?? request.command))) {
-            unwrapOrThrow(await insertGrantedAsk(pool, row, now));
-            await emitAskPart(ctx.emit, id, request, "resolved", "always");
-            return { kind: "always" };
-        }
-
-        unwrapOrThrow(await insertPendingAsk(pool, row));
-        await emitAskPart(ctx.emit, id, request, "pending");
-
-        // DESIGN(WHY): we poll the ask ledger instead of holding an in-memory
-        // resolver map. The DB is the single source of truth, so answering is a pure
-        // UPDATE, a crash-orphaned pending row just ends the poll, and an answer that
-        // arrives in a different process than the loop (a hosted deployment) still
-        // lands. A resolver map would be a second state to reconcile and cannot be
-        // resolved once its process dies. Latency is invisible at human decision speed
-        // and can be erased later with LISTEN/NOTIFY.
-        // TODO(refine): these ask records might move into provenance later.
-        for (;;) {
-            if (ctx.signal.aborted) {
-                unwrapOrThrow(await markAborted(pool, id, new Date().toISOString()));
-                await emitAskPart(ctx.emit, id, request, "aborted");
-                throwAbort(ctx.signal);
-            }
-
-            const resolution = unwrapOrThrow(await selectAskResolution(pool, id));
-            if (resolution === null) {
-                // The row vanished out from under the poll — nothing can answer it
-                // now, so deny rather than spin forever. Not reachable through the
-                // ordinary status machine (rows are only ever updated, never deleted).
-                await emitAskPart(ctx.emit, id, request, "expired");
-                throw new AskRejectedError("approval request is no longer available");
-            }
-            if (resolution.status !== "pending") {
-                await emitAskPart(ctx.emit, id, request, resolution.status, replyKindOf(resolution.status, resolution.reply));
-                return settle(resolution.status, resolution.reply, ctx.signal);
-            }
-
-            await sleepUntil(POLL_INTERVAL_MS, ctx.signal);
-        }
-    }
 
     async function raise(id: string, request: AskRequest, scope: AskScope): Promise<"granted" | "pending"> {
         const now = new Date().toISOString();
@@ -191,12 +109,7 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         return unwrapOrThrow(await sweepExpiredRows(pool, new Date(now).toISOString(), new Date(now - maxAgeMs).toISOString()));
     }
 
-    return { ask, raise, expire, abort, answer, pending, sweepExpired };
-}
-
-/** Emit (or reconcile, under the same id) the ask's `data-ask` chat part. */
-function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): void | Promise<void> {
-    return emit({ type: "data-ask", data: askPartOf(id, request, status, reply) });
+    return { raise, expire, abort, answer, pending, sweepExpired };
 }
 
 /** The `data-ask` part of an ask in one status. Each status of one ask reconciles under the same id. */
@@ -211,70 +124,4 @@ export function askPartOf(id: string, request: AskRequest, status: AskStatus, re
     if (request.detail !== undefined) part.detail = request.detail;
     if (reply !== undefined) part.reply = reply;
     return part;
-}
-
-/**
- * The kind of reply the terminal part shows: the kind that `settle` acts on for a `resolved` or `rejected` row,
- * and none for any other status. It never reads the feedback of a rejection, which is for the model.
- */
-function replyKindOf(status: Exclude<AskStatus, "pending">, reply: AskReply | null): AskReply["kind"] | undefined {
-    switch (status) {
-        case "resolved":
-            return approvalOf(reply).kind;
-        case "rejected":
-            return "reject";
-        case "expired":
-        case "aborted":
-            return undefined;
-    }
-}
-
-/** The approval that a `resolved` row grants. */
-function approvalOf(reply: AskReply | null): AskApproval {
-    // Only `once` / `always` reach `resolved`; guard the JSONB round-trip and
-    // default to the narrowest approval if a malformed reply ever slipped in.
-    return reply && (reply.kind === "once" || reply.kind === "always") ? reply : { kind: "once" };
-}
-
-/** Resolve an approval or throw the terminal denial the ledger recorded. */
-function settle(status: Exclude<AskStatus, "pending">, reply: AskReply | null, signal: AbortSignal): AskApproval {
-    switch (status) {
-        case "resolved":
-            return approvalOf(reply);
-        case "rejected":
-            throw new AskRejectedError(reply && reply.kind === "reject" ? reply.feedback : undefined);
-        case "expired":
-            throw new AskRejectedError("approval request expired unanswered");
-        case "aborted":
-            throwAbort(signal);
-    }
-}
-
-/**
- * Re-raise the turn's cancellation verbatim — `signal.reason` IS the loop's own
- * cancellation, so its existing turn-abort path recognizes it unchanged. The
- * fallback covers a signal aborted with no explicit reason.
- */
-function throwAbort(signal: AbortSignal): never {
-    throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
-}
-
-/** Delay `ms`, resolving early if `signal` aborts, leaving no dangling timer. */
-function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve) => {
-        if (signal.aborted) {
-            resolve();
-            return;
-        }
-        const onAbort = (): void => {
-            clearTimeout(timer);
-            resolve();
-        };
-        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- this wait resolves on abort by contract — the poll loop emits the aborted event after the resolve — and the node wait rejects instead.
-        const timer = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        signal.addEventListener("abort", onAbort, { once: true });
-    });
 }

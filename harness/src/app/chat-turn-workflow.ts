@@ -22,6 +22,7 @@ import type { LanguageModelMiddleware } from "ai";
 import { z } from "zod";
 
 import type { AuthContext } from "../auth/types.js";
+import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { ChatFrame, EventSource } from "../contracts/chat-events.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -43,6 +44,7 @@ import {
     runOpenTurn,
     TurnCredentialMissingError,
     userTextOf,
+    type ChatTurnRan,
     type ChatTurnRefusal,
     type ChatTurnSession,
     type RunChatTurnDeps,
@@ -72,9 +74,22 @@ export type ChatTurnInput = {
 /** How a turn workflow ended. */
 export type ChatTurnEnd = {
     readonly status: "done" | "aborted" | "failed";
+    /** The text of a failure. */
     readonly reason?: string;
+    /** The machine code of a failure: the suspend reason of the host, `credential`, `outage`, `internal`, or `interrupted`. */
+    readonly code?: string;
     readonly durationMs: number;
+    /** True when the opening of the turn landed. */
     readonly opened: boolean;
+    /** The stop reason of the root loop of a turn that ran to its end, for example `content-filter`. */
+    readonly finishReason?: string;
+    /** The word of the endpoint for the stop, when the provider captured one. */
+    readonly rawFinishReason?: string;
+    readonly turnUsage?: TokenUsageRollup;
+    /** The final text of a run that returned. */
+    readonly fallbackText?: string;
+    /** True when rows of the turn or its close did not land. */
+    readonly storeFailed?: boolean;
 };
 
 /** The values of a turn that a host opens. */
@@ -102,6 +117,8 @@ export type ChatTurns = {
     stop(turnId: string): Promise<void>;
     /** Answer an ask. The turn that waits for it gets the answer, in the process that runs it. */
     answer(askId: string, reply: AskReply): Promise<AnswerOutcome>;
+    /** How a turn ended, when its workflow ends. `null` for a turn whose workflow was canceled or failed. */
+    outcome(turnId: string): Promise<ChatTurnEnd | null>;
 };
 
 export type ChatTurnWorkflowDeps = RunChatTurnDeps & {
@@ -245,6 +262,16 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
             if (turnId !== undefined) await DBOS.send(turnId, reply, askTopic(askId));
             return outcome;
         },
+
+        async outcome(turnId) {
+            try {
+                return await DBOS.retrieveWorkflow<ChatTurnEnd>(turnId).getResult();
+            } catch (err) {
+                // The stop of a turn in a different process cancels its workflow, and the stop closes its records.
+                logger.debug("a chat turn ended with no outcome", { turnId, ...logger.errorFields(err) });
+                return null;
+            }
+        },
     };
 }
 
@@ -377,11 +404,29 @@ async function runTurnWorkflow(
     const { outcome } = ran;
     await writer.write(
         outcome.status === "failed"
-            ? { type: "error", message: outcome.reason, reason: outcome.reason, source: rootSource }
+            ? { type: "error", message: outcome.reason, reason: outcome.code, source: rootSource }
             : { type: "finish", source: rootSource, turnUsage: ran.turnUsage },
     );
     await writer.settle();
     await closeDurableStream(CHAT_STREAM_KEY, outcome.status === "done" ? "stop" : outcome.status === "aborted" ? "aborted" : "error");
     await DBOS.runStep(async () => unwrapOrThrow(await releaseThreadOfTurn(deps.pool, input.threadId, input.turnId)), { name: "chat-turn.release" });
-    return { status: outcome.status, reason: outcome.status === "failed" ? outcome.reason : undefined, durationMs: ran.durationMs, opened: ran.opened };
+    return chatTurnEndOf(ran);
+}
+
+/** How a turn that ran ended, as a host reads it. */
+export function chatTurnEndOf(ran: ChatTurnRan): ChatTurnEnd {
+    const { outcome } = ran;
+    const finish = outcome.status === "failed" ? undefined : outcome.finish;
+    return {
+        status: outcome.status,
+        reason: outcome.status === "failed" ? outcome.reason : undefined,
+        code: outcome.status === "failed" ? outcome.code : undefined,
+        durationMs: ran.durationMs,
+        opened: ran.opened,
+        finishReason: finish?.reason,
+        rawFinishReason: finish?.rawFinishReason,
+        turnUsage: ran.turnUsage,
+        fallbackText: ran.fallbackText,
+        storeFailed: ran.storeError === undefined ? undefined : true,
+    };
 }
