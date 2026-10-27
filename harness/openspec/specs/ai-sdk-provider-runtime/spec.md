@@ -3,7 +3,9 @@
 ## Purpose
 
 Define the AI SDK-backed provider runtime: embedders supply AI SDK-compatible language models (instances or endpoint/key/model configuration) at runtime assembly, the harness enforces tool-call capability before running tool-requiring agents, provider-specific metadata stays provider-scoped through the AI SDK boundary, and provider failures map into the classified harness `ProviderError` union.
+
 ## Requirements
+
 ### Requirement: Embedders provide AI SDK-compatible language models dynamically
 
 The harness SHALL accept AI SDK-compatible language model instances or endpoint/key/model configuration from the embedder at runtime assembly. The harness SHALL NOT hard-code a single provider family as the only model path.
@@ -435,3 +437,16 @@ most calls of this arm report no usage.
 - **THEN** the request body carries `stream_options.include_usage: true`
 - **AND** the usage chunk of the server reaches the `ChatUsage` of the call
 
+### Requirement: The openai-compatible arm sends a tool picture as a part when the endpoint takes parts
+
+The `openai-compatible` config MUST accept `supportsMultiPartToolContent`. The arm MUST pass the value to the package. When the flag is `true` and the config gives no `imageToolResults`, the arm MUST set `imageToolResults: true`. When the flag is absent, the arm MUST leave the capability absent. A config value MUST override the default in both directions.
+
+#### Scenario: An endpoint that takes parts gets the picture as an image part
+
+- **WHEN** an `openai-compatible` arm with `supportsMultiPartToolContent: true` sends a history whose tool result carries a text part and a picture
+- **THEN** the tool message of the request carries a `text` part and an `image_url` part with the data URL of the picture
+
+#### Scenario: An endpoint with no flag carries no picture
+
+- **WHEN** an `openai-compatible` arm has no `supportsMultiPartToolContent`
+- **THEN** the provider leaves `imageToolResults` absent, and the loop drops a tool picture with a warn
