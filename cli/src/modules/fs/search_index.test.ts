@@ -3,17 +3,20 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { err, ok } from "neverthrow";
+
 import { subsequenceScore } from "../../lib/fuzzy.ts";
 import {
     createSearchIndexCache,
     DEFAULT_SEARCH_LIMITS,
     NameIndex,
-    readFolderEntries,
-    type ReadEntries,
     type SearchIndexCache,
     type SearchLimits,
     type SearchResult,
+    type WalkSpawner,
 } from "./search_index.ts";
+import { inProcessSpawner, type FakeChild } from "../../test_support/walk_spawner.ts";
+import { readFolderEntries, walkToRecords, type ReadEntries } from "./walk_child.ts";
 
 let root = "";
 let clock = 0;
@@ -40,10 +43,29 @@ function touch(...paths: string[]): void {
 }
 
 /** A cache on the fake clock, stopped after the test. */
-function cacheWith(limits: Partial<SearchLimits> = {}, read: ReadEntries = readFolderEntries): SearchIndexCache {
-    const cache = createSearchIndexCache({ ...DEFAULT_SEARCH_LIMITS, ...limits }, () => clock, read);
+function cacheWith(limits: Partial<SearchLimits> = {}, spawnWalk: WalkSpawner = inProcessSpawner().spawn): SearchIndexCache {
+    const cache = createSearchIndexCache({ ...DEFAULT_SEARCH_LIMITS, ...limits }, () => clock, spawnWalk);
     caches.push(cache);
     return cache;
+}
+
+/** A spawner whose children stream `bytes` and then end, and never die. Each child and the count of its kills go to `children`. */
+function streamSpawner(bytes: Uint8Array, children: FakeChild[] = []): WalkSpawner {
+    return (scope, opts) => {
+        const child: FakeChild = { scope, opts, kills: 0 };
+        children.push(child);
+        return ok({
+            stdout: new ReadableStream<Uint8Array>({
+                start: (controller) => {
+                    controller.enqueue(bytes);
+                    controller.close();
+                },
+            }),
+            kill: () => {
+                child.kills += 1;
+            },
+        });
+    };
 }
 
 /** A read that records each path, and that holds each path in `held` until the test or the cleanup releases it. */
@@ -240,15 +262,100 @@ describe("the walk", () => {
 
     test("stops at the time budget", async () => {
         touch("a/1.csv", "b/2.csv", "c/3.csv", "d/4.csv");
-        const recorder = recordingRead();
-        // Each read takes 10 ms of the fake clock, thus the budget of 15 ms ends the walk after two reads.
+        // Each read of a subfolder takes 10 ms of the fake clock, thus the records of the subfolders land past the budget
+        // of 15 ms. The child does not know the budget: the server drops each record past it and kills the child.
         const read: ReadEntries = async (path) => {
-            clock += 10;
-            return recorder.read(path);
+            if (path !== root) clock += 10;
+            return readFolderEntries(path);
         };
-        const result = await searchOk(cacheWith({ walkBudgetMs: 15, width: 1 }, read), root, "");
+        const spawner = inProcessSpawner(read);
+        const result = await searchOk(cacheWith({ walkBudgetMs: 15, width: 1 }, spawner.spawn), root, "");
         expect(result.truncated).toBe(true);
-        expect(recorder.reads.length).toBe(2);
+        expect(result.hits.filter((hit) => hit.depth > 1)).toEqual([]);
+        expect(spawner.children.map((child) => child.kills)).toEqual([1]);
+    });
+
+    test("the budget kills a child that never writes", async () => {
+        const kills: string[] = [];
+        const silent: WalkSpawner = (scope) => ok({ stdout: new ReadableStream<Uint8Array>(), kill: () => kills.push(scope) });
+        const cache = cacheWith({ walkBudgetMs: 30, firstWaitMs: 0 }, silent);
+        expect(await searchOk(cache, root, "")).toEqual({ hits: [], truncated: true });
+        expect(kills).toEqual([root]);
+        expect(await searchOk(cache, root, "")).toEqual({ hits: [], truncated: true });
+        expect(kills).toEqual([root]);
+    });
+
+    test("the entry cap kills the child, and the index holds at most the cap", async () => {
+        for (let k = 0; k < 100; k++) touch(`f${k}.csv`);
+        const spawner = inProcessSpawner();
+        const result = await searchOk(cacheWith({ maxEntries: 10 }, spawner.spawn), root, "");
+        expect(result.truncated).toBe(true);
+        expect(result.hits.length).toBe(9);
+        expect(spawner.children.map((child) => child.kills)).toEqual([1]);
+    });
+
+    test("a stream that ends before the end record leaves the index truncated", async () => {
+        touch("a.csv", "b.csv");
+        const chunks: Uint8Array[] = [];
+        (
+            await walkToRecords(root, { hidden: false, maxDepth: 64, width: 4 }, readFolderEntries, async (bytes) => {
+                chunks.push(bytes);
+            })
+        )._unsafeUnwrap();
+        const all = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+        let at = 0;
+        for (const chunk of chunks) {
+            all.set(chunk, at);
+            at += chunk.length;
+        }
+        // The last byte is the end record.
+        expect(all[all.length - 1]).toBe(3);
+        const cache = cacheWith({}, streamSpawner(all.subarray(0, all.length - 1)));
+        const result = await searchOk(cache, root, "");
+        expect(names(result).sort()).toEqual(["a.csv", "b.csv"]);
+        expect(result.truncated).toBe(true);
+        await Bun.sleep(10);
+        expect((await searchOk(cache, root, "")).truncated).toBe(true);
+        expect((await searchOk(cacheWith({}, streamSpawner(all)), root, "")).truncated).toBe(false);
+    });
+
+    test("a record with an unknown tag kills the child and leaves the index truncated", async () => {
+        const children: FakeChild[] = [];
+        const cache = cacheWith({}, streamSpawner(new Uint8Array([2, 9]), children));
+        expect(await searchOk(cache, root, "")).toEqual({ hits: [], truncated: true });
+        expect(children.map((child) => child.kills)).toEqual([1]);
+    });
+
+    test("an entry whose parent is not a folder kills the child and leaves the index truncated", async () => {
+        const children: FakeChild[] = [];
+        // The scope read, the file `a.csv` under the scope, then `x` under entry 1, which is that file.
+        const entry = (parent: number, kind: number, name: string): number[] => [
+            0,
+            parent,
+            0,
+            0,
+            0,
+            kind,
+            name.length,
+            0,
+            ...[...name].map((c) => c.charCodeAt(0)),
+        ];
+        const bytes = new Uint8Array([2, ...entry(0, 0, "a.csv"), ...entry(1, 0, "x")]);
+        const result = await searchOk(cacheWith({}, streamSpawner(bytes, children)), root, "");
+        expect(names(result)).toEqual(["a.csv"]);
+        expect(result.truncated).toBe(true);
+        expect(children.map((child) => child.kills)).toEqual([1]);
+    });
+
+    test("a failed read of the pipe kills the child and leaves the index truncated", async () => {
+        const kills: string[] = [];
+        const broken: WalkSpawner = (scope) =>
+            ok({
+                stdout: new ReadableStream<Uint8Array>({ start: (controller) => controller.error(new Error("broken pipe")) }),
+                kill: () => kills.push(scope),
+            });
+        expect(await searchOk(cacheWith({}, broken), root, "")).toEqual({ hits: [], truncated: true });
+        expect(kills).toEqual([root]);
     });
 
     test("the deadline cuts a walk whose read never settles", async () => {
@@ -256,7 +363,7 @@ describe("the walk", () => {
         const slow = join(root, "slow");
         const recorder = recordingRead(new Set([slow]));
         // The fake clock stays at 0, thus only the timer of the walk can see the budget pass.
-        const cache = cacheWith({ walkBudgetMs: 30, firstWaitMs: 0 }, recorder.read);
+        const cache = cacheWith({ walkBudgetMs: 30, firstWaitMs: 0 }, inProcessSpawner(recorder.read).spawn);
         expect((await searchOk(cache, root, "")).truncated).toBe(true);
         await Bun.sleep(60);
         recorder.release();
@@ -269,7 +376,7 @@ describe("the walk", () => {
 
     test("a search answers a walk that the deadline cut while the read of the scope hangs", async () => {
         const recorder = recordingRead(new Set([root]));
-        const cache = cacheWith({ walkBudgetMs: 30, firstWaitMs: 0 }, recorder.read);
+        const cache = cacheWith({ walkBudgetMs: 30, firstWaitMs: 0 }, inProcessSpawner(recorder.read).spawn);
         const started = performance.now();
         expect(await searchOk(cache, root, "")).toEqual({ hits: [], truncated: true });
         expect(performance.now() - started).toBeGreaterThanOrEqual(25);
@@ -306,7 +413,7 @@ describe("the walk", () => {
             inFlight -= 1;
             return readFolderEntries(path);
         };
-        await searchOk(cacheWith({ width: 1 }, read), root, "");
+        await searchOk(cacheWith({ width: 1 }, inProcessSpawner(read).spawn), root, "");
         expect(peak).toBe(1);
         expect(reads.sort()).toEqual([root, join(root, "a"), join(root, "a", "x"), join(root, "a", "y"), join(root, "b"), join(root, "c")].sort());
     });
@@ -322,7 +429,7 @@ describe("the walk", () => {
             inFlight -= 1;
             return readFolderEntries(path);
         };
-        await searchOk(cacheWith({ width: 4 }, read), root, "");
+        await searchOk(cacheWith({ width: 4 }, inProcessSpawner(read).spawn), root, "");
         expect(peak).toBeGreaterThan(1);
         expect(peak).toBeLessThanOrEqual(4);
     });
@@ -332,7 +439,7 @@ describe("the cache", () => {
     test("a second search reads no folder", async () => {
         touch("a/volcano.png");
         const recorder = recordingRead();
-        const cache = cacheWith({}, recorder.read);
+        const cache = cacheWith({}, inProcessSpawner(recorder.read).spawn);
         await searchOk(cache, root, "volc");
         const before = recorder.reads.length;
         expect(names(await searchOk(cache, root, "a"))).toContain("a");
@@ -342,16 +449,17 @@ describe("the cache", () => {
     test("two concurrent searches read each folder one time", async () => {
         touch("a/1.csv", "b/2.csv");
         const recorder = recordingRead();
-        const cache = cacheWith({}, recorder.read);
+        const cache = cacheWith({}, inProcessSpawner(recorder.read).spawn);
         await Promise.all([searchOk(cache, root, "1"), searchOk(cache, root, "2")]);
         expect(recorder.reads.sort()).toEqual([root, join(root, "a"), join(root, "b")].sort());
     });
 
     test("gives the read error of an absent scope and keeps no index", async () => {
         const recorder = recordingRead();
-        const cache = cacheWith({}, recorder.read);
+        const cache = cacheWith({}, inProcessSpawner(recorder.read).spawn);
         const missing = join(root, "missing");
-        expect((await cache.search(missing, false, "a", 10))._unsafeUnwrapErr()).toMatchObject({ type: "absent", path: missing });
+        const error = (await cache.search(missing, false, "a", 10))._unsafeUnwrapErr();
+        expect(error).toMatchObject({ type: "absent", path: missing, cause: { code: "ENOENT", message: expect.stringContaining("missing") } });
         expect((await cache.search(missing, false, "a", 10))._unsafeUnwrapErr().type).toBe("absent");
         expect(recorder.reads).toEqual([missing, missing]);
     });
@@ -362,7 +470,7 @@ describe("the cache", () => {
             await Bun.sleep(40);
             return readFolderEntries(path);
         };
-        const error = (await cacheWith({ firstWaitMs: 5 }, slow).search(missing, false, "a", 10))._unsafeUnwrapErr();
+        const error = (await cacheWith({ firstWaitMs: 5 }, inProcessSpawner(slow).spawn).search(missing, false, "a", 10))._unsafeUnwrapErr();
         expect(error).toMatchObject({ type: "absent", path: missing });
     });
 
@@ -381,7 +489,7 @@ describe("the cache", () => {
     test("the timer evicts an idle index with no later search", async () => {
         touch("a.csv");
         const recorder = recordingRead();
-        const cache = cacheWith({ ttlMs: 20 }, recorder.read);
+        const cache = cacheWith({ ttlMs: 20 }, inProcessSpawner(recorder.read).spawn);
         await searchOk(cache, root, "a");
         // The timer fires at its real delay and reads the fake clock, thus it finds the index idle.
         clock = 1000;
@@ -395,7 +503,7 @@ describe("the cache", () => {
     test("the sweep of a call evicts an index past its TTL", async () => {
         touch("a.csv");
         const recorder = recordingRead();
-        const cache = cacheWith({ ttlMs: 1000 }, recorder.read);
+        const cache = cacheWith({ ttlMs: 1000 }, inProcessSpawner(recorder.read).spawn);
         await searchOk(cache, root, "a");
         clock = 500;
         await searchOk(cache, root, "a");
@@ -418,7 +526,7 @@ describe("the cache", () => {
         const [first, second, third] = threeScopes() as [string, string, string];
         const recorder = recordingRead();
         // Each scope has 8 entries. One index fits beside a new index of `maxEntries`, and two do not.
-        const cache = cacheWith({ maxEntries: 10, maxTotalEntries: 25 }, recorder.read);
+        const cache = cacheWith({ maxEntries: 10, maxTotalEntries: 25 }, inProcessSpawner(recorder.read).spawn);
         for (const scope of [first, second, third]) await searchOk(cache, scope, "f");
         await searchOk(cache, third, "f");
         await searchOk(cache, second, "f");
@@ -430,7 +538,7 @@ describe("the cache", () => {
     test("the index count cap evicts the least recently used index", async () => {
         const [first, second, third] = threeScopes() as [string, string, string];
         const recorder = recordingRead();
-        const cache = cacheWith({ maxIndexes: 2 }, recorder.read);
+        const cache = cacheWith({ maxIndexes: 2 }, inProcessSpawner(recorder.read).spawn);
         for (const scope of [first, second, third]) await searchOk(cache, scope, "f");
         await searchOk(cache, third, "f");
         await searchOk(cache, second, "f");
@@ -441,7 +549,7 @@ describe("the cache", () => {
         touch("s1/a/deep/1.csv", "s2/b.csv");
         const first = join(root, "s1");
         const recorder = recordingRead(new Set([join(first, "a")]));
-        const cache = cacheWith({ maxIndexes: 1, firstWaitMs: 0 }, recorder.read);
+        const cache = cacheWith({ maxIndexes: 1, firstWaitMs: 0 }, inProcessSpawner(recorder.read).spawn);
         expect((await searchOk(cache, first, "")).truncated).toBe(true);
         await searchOk(cache, join(root, "s2"), "");
         recorder.release();
@@ -449,10 +557,78 @@ describe("the cache", () => {
         expect(recorder.reads).not.toContain(join(first, "a", "deep"));
     });
 
+    test("an eviction kills the child", async () => {
+        touch("s1/a/1.csv", "s2/b.csv");
+        const recorder = recordingRead(new Set([join(root, "s1", "a")]));
+        const spawner = inProcessSpawner(recorder.read);
+        const cache = cacheWith({ maxIndexes: 1, firstWaitMs: 0 }, spawner.spawn);
+        await searchOk(cache, join(root, "s1"), "");
+        expect(spawner.children.map((child) => child.kills)).toEqual([0]);
+        await searchOk(cache, join(root, "s2"), "");
+        expect(spawner.children.map((child) => [child.scope, child.kills])).toEqual([
+            [join(root, "s1"), 1],
+            [join(root, "s2"), 0],
+        ]);
+    });
+
+    test("`stop()` kills each child", async () => {
+        touch("s1/a/1.csv", "s2/b/2.csv");
+        const recorder = recordingRead(new Set([join(root, "s1", "a"), join(root, "s2", "b")]));
+        const spawner = inProcessSpawner(recorder.read);
+        const cache = cacheWith({ firstWaitMs: 0 }, spawner.spawn);
+        await searchOk(cache, join(root, "s1"), "");
+        await searchOk(cache, join(root, "s2"), "");
+        cache.stop();
+        expect(spawner.children.map((child) => child.kills)).toEqual([1, 1]);
+    });
+
+    test("a walk past the bound of children waits in the queue, and its search answers truncated", async () => {
+        touch("s1/a/1.csv", "s2/b.csv");
+        const [first, second] = [join(root, "s1"), join(root, "s2")];
+        const recorder = recordingRead(new Set([join(first, "a")]));
+        const spawner = inProcessSpawner(recorder.read);
+        const cache = cacheWith({ maxWalkChildren: 1, firstWaitMs: 20 }, spawner.spawn);
+        expect((await searchOk(cache, first, "")).truncated).toBe(true);
+        const started = performance.now();
+        expect(await searchOk(cache, second, "")).toEqual({ hits: [], truncated: true });
+        expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+        expect(spawner.children.map((child) => child.scope)).toEqual([first]);
+        recorder.release();
+        await Bun.sleep(30);
+        expect(spawner.children.map((child) => child.scope)).toEqual([first, second]);
+        const later = await searchOk(cache, second, "b");
+        expect(later.truncated).toBe(false);
+        expect(names(later)).toEqual(["b.csv"]);
+    });
+
+    test("`stop()` empties the queue, and the freed slot starts no child", async () => {
+        touch("s1/a/1.csv", "s2/b.csv");
+        const recorder = recordingRead(new Set([join(root, "s1", "a")]));
+        const spawner = inProcessSpawner(recorder.read);
+        const cache = cacheWith({ maxWalkChildren: 1, firstWaitMs: 0 }, spawner.spawn);
+        await searchOk(cache, join(root, "s1"), "");
+        await searchOk(cache, join(root, "s2"), "");
+        cache.stop();
+        await Bun.sleep(10);
+        expect(spawner.children.map((child) => [child.scope, child.kills])).toEqual([[join(root, "s1"), 1]]);
+    });
+
+    test("a failed spawn gives `spawn_failed` and keeps no index", async () => {
+        let spawns = 0;
+        const failing: WalkSpawner = () => {
+            spawns += 1;
+            return err({ type: "spawn_failed", cause: new Error("no process") });
+        };
+        const cache = cacheWith({ maxWalkChildren: 1 }, failing);
+        expect((await cache.search(root, false, "a", 10))._unsafeUnwrapErr()).toMatchObject({ type: "spawn_failed" });
+        expect((await cache.search(root, false, "a", 10))._unsafeUnwrapErr()).toMatchObject({ type: "spawn_failed" });
+        expect(spawns).toBe(2);
+    });
+
     test("a search answers during the walk, and the walk continues to its end", async () => {
         touch("a/deep/volcano.png", "top.csv");
         const recorder = recordingRead(new Set([join(root, "a")]));
-        const cache = cacheWith({ firstWaitMs: 20 }, recorder.read);
+        const cache = cacheWith({ firstWaitMs: 20 }, inProcessSpawner(recorder.read).spawn);
         const early = await searchOk(cache, root, "");
         expect(early.truncated).toBe(true);
         expect(names(early).sort()).toEqual(["a", "top.csv"]);
@@ -466,7 +642,7 @@ describe("the cache", () => {
     test("the first search waits at most `firstWaitMs`, and a later search does not wait", async () => {
         touch("a/1.csv");
         const recorder = recordingRead(new Set([join(root, "a")]));
-        const cache = cacheWith({ firstWaitMs: 60 }, recorder.read);
+        const cache = cacheWith({ firstWaitMs: 60 }, inProcessSpawner(recorder.read).spawn);
         let started = performance.now();
         expect((await searchOk(cache, root, "")).truncated).toBe(true);
         const firstWait = performance.now() - started;

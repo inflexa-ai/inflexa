@@ -1,11 +1,11 @@
-import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ok, Result, ResultAsync } from "neverthrow";
 
+import { selfInvocation } from "../../lib/cli.ts";
 import { readError, type FolderEntry, type FolderEntryType, type FolderReadError } from "../../lib/folder_listing.ts";
 import { subsequenceScore, subsequenceScoreBytes } from "../../lib/fuzzy.ts";
+import { decodeRecords, ENTRY_KIND, WALK_COMMAND, type EntryKindCode, type RecordSink, type WalkOpts } from "./walk_child.ts";
 
 /** The caps of a search cache. A test sets small values to reach each cap on a small tree. */
 export type SearchLimits = {
@@ -18,21 +18,23 @@ export type SearchLimits = {
     /** The most entries across each index of one cache. */
     readonly maxTotalEntries: number;
     /**
-     * The time from the start of a walk after which the walk starts no read and drops each read that lands. A timer cuts the
-     * walk at this time also, thus a read that never settles does not keep the walk open.
+     * The time from the start of the child after which the server kills the child and inserts no more records. A timer cuts
+     * the walk at this time also, thus a child that writes nothing does not keep the walk open.
      */
     readonly walkBudgetMs: number;
     /** The time after the last search of an index at which the cache evicts the index. */
     readonly ttlMs: number;
-    /** The time from the start of a walk until which a search waits for the walk to end. */
+    /** The time from the start of the child until which a search waits for the walk to end. */
     readonly firstWaitMs: number;
     /** The most indexes of one cache. */
     readonly maxIndexes: number;
+    /** The most walk children that the cache reads at one time. A walk past it waits in a queue for a free slot. */
+    readonly maxWalkChildren: number;
 };
 
 /**
- * The production {@link SearchLimits}. Width 512 walks `~/repos` at about 1.05 times the time of `fd -uu` and `~` at about
- * 1.23 times, where 64 is 1.29 times on `~/repos`. At about 30 bytes for each entry, one index of `maxEntries` costs about
+ * The production {@link SearchLimits}. With width 512, the walk child walks `~/repos` at about 1.14 times the time of
+ * `fd -uu` and `~` at about 1.34 times. At about 30 bytes for each entry, one index of `maxEntries` costs about
  * 120 MB, and `~` fits in one index. An index with no entry costs about 76 KB, thus `maxIndexes` empty scopes stay small.
  */
 export const DEFAULT_SEARCH_LIMITS: SearchLimits = {
@@ -44,18 +46,45 @@ export const DEFAULT_SEARCH_LIMITS: SearchLimits = {
     ttlMs: 120_000,
     firstWaitMs: 500,
     maxIndexes: 16,
+    maxWalkChildren: 4,
 };
 
-/** The facts of a folder entry that the walk reads, from one `readdir` with the file types. */
-export type SearchDirent = Pick<Dirent, "name" | "isDirectory" | "isSymbolicLink">;
+/** A running walk child: the stream of its records, and its kill. */
+export type WalkChild = {
+    /** The records of the walk, in the protocol of `walk_child.ts`. */
+    readonly stdout: ReadableStream<Uint8Array>;
+    /** Kill the child with `SIGKILL`. It does not wait for the exit. */
+    readonly kill: () => void;
+};
 
-/** Reads the entries of one folder. A test replaces it to count the reads or to hold one. A failure must reject, never throw. */
-export type ReadEntries = (path: string) => Promise<readonly SearchDirent[]>;
+/** The walk child could not start. */
+export type WalkSpawnError = { type: "spawn_failed"; cause: unknown };
 
-/** The production {@link ReadEntries}: one `readdir` with the file types and no `stat`. */
-export function readFolderEntries(path: string): Promise<readonly SearchDirent[]> {
-    return readdir(path, { withFileTypes: true });
+/** Starts the walk child of `scope`. A test replaces it to run the walk in the test process or to hold a child. */
+export type WalkSpawner = (scope: string, opts: WalkOpts) => Result<WalkChild, WalkSpawnError>;
+
+/**
+ * A {@link WalkSpawner} that starts this CLI again, as `inflexa server walk`, with `env` as the environment of the child,
+ * or the environment of the server at its start when `env` is undefined. A read that hangs in the kernel then holds a
+ * thread of the child, because each async file call of a process runs on one shared pool of threads, and a timer of the
+ * server cannot free such a thread. The child does not keep the server alive, and its stderr goes nowhere.
+ */
+export function spawnWalkChildWith(env: Record<string, string | undefined> | undefined): WalkSpawner {
+    return (scope, opts) => {
+        const flags = [...(opts.hidden ? ["--hidden"] : []), "--depth", String(opts.maxDepth), "--width", String(opts.width)];
+        const spawn = Result.fromThrowable(
+            () => Bun.spawn({ cmd: selfInvocation([...WALK_COMMAND, scope, ...flags]), env, stdin: "ignore", stdout: "pipe", stderr: "ignore" }),
+            (cause): WalkSpawnError => ({ type: "spawn_failed", cause }),
+        );
+        return spawn().map((child): WalkChild => {
+            child.unref();
+            return { stdout: child.stdout, kill: () => child.kill(9) };
+        });
+    };
 }
+
+/** The production {@link WalkSpawner}. The child needs no variable that the server sets after its start. */
+export const spawnWalkChild: WalkSpawner = spawnWalkChildWith(undefined);
 
 /** One hit of a search. */
 export type SearchHit = {
@@ -85,9 +114,9 @@ const FIRST_CHUNK_BYTES = 64 * 1024;
 const INITIAL_CAPACITY = 1024;
 
 const KIND_MASK = 0b11;
-const KIND_FILE = 0;
-const KIND_FOLDER = 1;
-const KIND_SYMLINK = 2;
+const KIND_FILE = ENTRY_KIND.file;
+const KIND_FOLDER = ENTRY_KIND.folder;
+const KIND_SYMLINK = ENTRY_KIND.symlink;
 const FLAG_HIDDEN = 0b100;
 const FLAG_NON_ASCII = 0b1000;
 
@@ -135,24 +164,13 @@ export class NameIndex {
         this.add("", -1, "folder", false);
     }
 
-    /**
-     * Append one entry and give its index. A name never crosses a chunk: when the worst case of its UTF-8 length does not fit,
-     * a new chunk opens and the tail of the old one stays empty. The worst case is 3 bytes for each UTF-16 unit, and a name is
-     * at most 255 units on each supported file system, thus at most 765 bytes, far below a chunk.
-     */
+    /** Append one entry and give its index. The pool reserves the worst case of its UTF-8 length, 3 bytes for each UTF-16 unit. */
     add(name: string, parent: number, kind: FolderEntryType, hidden: boolean): number {
         const i = this.count;
-        if (i === this.starts.length) this.grow();
-        const bound = name.length * 3;
-        if (this.used + bound > this.chunkBytes) {
-            this.chunkBytes = Math.min(this.chunkBytes * 2, this.maxChunkBytes);
-            this.chunks.push(new Uint8Array(this.chunkBytes));
-            this.used = 0;
-        }
+        const at = this.reserve(name.length * 3);
         const chunkIndex = this.chunks.length - 1;
-        // The push above or the constructor made the last chunk.
+        // `reserve` or the constructor made the last chunk.
         const chunk = this.chunks[chunkIndex]!;
-        const at = this.used;
         // A plain loop for an ASCII name, because `encodeInto` needs a subarray view for each name.
         let written = name.length;
         let ascii = true;
@@ -164,16 +182,58 @@ export class NameIndex {
             }
             chunk[at + k] = unit;
         }
-        if (!ascii) written = utf8Encoder.encodeInto(name, chunk.subarray(at, at + bound)).written;
-        this.used = at + written;
+        if (!ascii) written = utf8Encoder.encodeInto(name, chunk.subarray(at, at + name.length * 3)).written;
+        this.commit(i, chunkIndex, at, written, parent, KIND_CODES[kind] | (hidden ? FLAG_HIDDEN : 0) | (ascii ? 0 : FLAG_NON_ASCII));
+        return i;
+    }
+
+    /**
+     * Append one entry whose name is `length` UTF-8 bytes of `bytes` from `start`, and give its index. It copies the bytes
+     * into the pool, thus the caller can reuse `bytes`. The name is hidden when its first byte is `.`, and outside ASCII
+     * when a byte has the high bit, found in the pass of the copy.
+     */
+    addBytes(bytes: Uint8Array, start: number, length: number, parent: number, kind: EntryKindCode): number {
+        const i = this.count;
+        const at = this.reserve(length);
+        const chunkIndex = this.chunks.length - 1;
+        // `reserve` or the constructor made the last chunk.
+        const chunk = this.chunks[chunkIndex]!;
+        let high = 0;
+        for (let k = 0; k < length; k++) {
+            // The caller gives a name of `length` bytes inside `bytes`.
+            const byte = bytes[start + k]!;
+            high |= byte;
+            chunk[at + k] = byte;
+        }
+        const hidden = length > 0 && bytes[start] === 0x2e;
+        this.commit(i, chunkIndex, at, length, parent, kind | (hidden ? FLAG_HIDDEN : 0) | (high >= 0x80 ? FLAG_NON_ASCII : 0));
+        return i;
+    }
+
+    /**
+     * The offset in the last chunk at which a name of at most `bound` bytes starts. A name never crosses a chunk: when it
+     * does not fit, a new chunk opens and the tail of the old one stays empty. A name is at most 255 UTF-16 units on each
+     * supported file system, thus at most 765 bytes, far below a chunk.
+     */
+    private reserve(bound: number): number {
+        if (this.count === this.starts.length) this.grow();
+        if (this.used + bound > this.chunkBytes) {
+            this.chunkBytes = Math.min(this.chunkBytes * 2, this.maxChunkBytes);
+            this.chunks.push(new Uint8Array(this.chunkBytes));
+            this.used = 0;
+        }
+        return this.used;
+    }
+
+    private commit(i: number, chunkIndex: number, at: number, length: number, parent: number, flags: number): void {
+        this.used = at + length;
         this.starts[i] = chunkIndex * this.maxChunkBytes + at;
-        this.lengths[i] = written;
+        this.lengths[i] = length;
         this.parents[i] = parent;
         // The scope has no parent. Each other parent is an earlier entry, thus its depth is set.
         this.depths[i] = parent < 0 ? 0 : this.depths[parent]! + 1;
-        this.flags[i] = KIND_CODES[kind] | (hidden ? FLAG_HIDDEN : 0) | (ascii ? 0 : FLAG_NON_ASCII);
+        this.flags[i] = flags;
         this.count = i + 1;
-        return i;
     }
 
     private grow(): void {
@@ -384,30 +444,38 @@ type EntryTotal = { value: number };
 type CachedIndex = {
     readonly key: string;
     readonly index: NameIndex;
-    readonly startedAt: number;
+    /** The time at which the child started. The time budget and the first wait of a search count from it. */
+    startedAt: number;
     lastUse: number;
-    /** True when no read of the walk is in flight and none will start. */
+    /** True once the walk left the queue of the cache and started its child, or tried to. */
+    hasStarted: boolean;
+    /** True when the walk reads no more records. */
     ended: boolean;
-    /** True when a cap or an eviction cut the walk. It stays true for the life of the index. */
+    /** True when a cap, an eviction, or an early end of the stream cut the walk. It stays true for the life of the index. */
     truncated: boolean;
-    /** True when the walk starts no read and drops each read that lands. */
+    /** True when the walk inserts no more records. */
     stopped: boolean;
-    /** The failure of the read of the scope, which ends the walk. */
-    error: FolderReadError | null;
+    /** The failure of the read of the scope, or of the start of the child, which ends the walk. */
+    error: FolderReadError | WalkSpawnError | null;
     /** Resolves when the walk ends. */
     readonly end: Promise<void>;
-    /** Resolves when the read of the scope settles, or when the walk is cut before it. */
+    /** Resolves when the child starts, or when the walk ends in the queue. */
+    readonly started: Promise<void>;
+    /** Resolves when the read of the scope lands or fails, or when the walk ends before it. */
     readonly scopeRead: Promise<void>;
+    /** Start the child. The cache calls it when a slot is free. */
     readonly begin: () => void;
-    /** Cut the walk: no read starts, each read that lands is dropped, and the index is truncated. */
+    /** Cut the walk: kill the child, insert no more records, and mark the index truncated. */
     readonly stop: () => void;
 };
 
 /**
- * The walk of one index: a stack of the indexes of the folders to read and `width` reads in flight, with no queue object and
- * no promise for each entry. The stack is LIFO, thus the walk goes deep first and the stack stays small. The walk does not
- * enter a link, because the dirent type of a link is not a folder. A folder that it cannot read is skipped and does not
- * truncate the index, as `fd` does. The caller inserts the index in its map before `begin`, thus a concurrent search finds it.
+ * The walk of one index: a child that walks the scope and streams its records, and a reader that inserts each record into
+ * the index. The caps live here and not in the child: the entry counts at each insert, and the time budget at each insert
+ * and in a timer, because a child whose read hangs writes nothing. A cut kills the child at once and never waits for its
+ * exit, thus a child that the kernel holds holds nothing of the server. The caller inserts the index in its map before
+ * `begin`, thus a concurrent search finds it. `onRelease` frees the slot of the child, once, at the end of its stream or
+ * at its kill.
  */
 function createWalk(
     key: string,
@@ -415,16 +483,21 @@ function createWalk(
     hidden: boolean,
     limits: SearchLimits,
     now: () => number,
-    read: ReadEntries,
+    spawnWalk: WalkSpawner,
     total: EntryTotal,
+    onRelease: () => void,
     onEnd: (cached: CachedIndex) => void,
 ): CachedIndex {
     const index = new NameIndex(scope);
     total.value += 1;
     const ended = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
     const scopeRead = Promise.withResolvers<void>();
-    const stack: number[] = [0];
-    let inFlight = 0;
+    let child: WalkChild | null = null;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    let holdsSlot = false;
+    let killed = false;
+    let complete = false;
     let deadline: ReturnType<typeof setTimeout> | null = null;
 
     const cached: CachedIndex = {
@@ -432,23 +505,119 @@ function createWalk(
         index,
         startedAt: now(),
         lastUse: now(),
+        hasStarted: false,
         ended: false,
         truncated: false,
         stopped: false,
         error: null,
         end: ended.promise,
+        started: started.promise,
         scopeRead: scopeRead.promise,
         begin,
         stop: cut,
     };
 
-    // The budget check at each read start and end cannot see a read that never settles, thus a timer also cuts the walk.
-    // A cut walk with such a read never ends, and a search still answers it, truncated, at the end of its own wait.
+    const sink: RecordSink = {
+        entry(bytes, start, length, parent, kind) {
+            if (cached.stopped) return false;
+            if (overBudget() || index.count >= limits.maxEntries || total.value >= limits.maxTotalEntries) {
+                cut();
+                return false;
+            }
+            // The child names an earlier folder above the depth cap as the parent. Any other parent is not the protocol,
+            // and it would break the depth byte or the parent chain of the index.
+            if (parent >= index.count || index.kindOf(parent) !== "folder" || index.depthOf(parent) >= limits.maxDepth) {
+                cut();
+                return false;
+            }
+            const entry = index.addBytes(bytes, start, length, parent, kind);
+            total.value += 1;
+            // The child enters no folder at the depth cap, thus the index misses its entries.
+            if (kind === ENTRY_KIND.folder && index.depthOf(entry) >= limits.maxDepth) cached.truncated = true;
+            return true;
+        },
+        scopeError(code, message) {
+            if (cached.stopped) return;
+            // A cause with the errno code, so that the mapping of a read error sees the same code as an in-process read.
+            cached.error = readError(scope, code === "" ? { message } : { code, message });
+            cached.stopped = true;
+            scopeRead.resolve();
+        },
+        scopeRead() {
+            scopeRead.resolve();
+        },
+        end() {
+            complete = true;
+        },
+    };
+    const decode = decodeRecords(sink);
+
     function begin(): void {
+        holdsSlot = true;
+        cached.hasStarted = true;
+        cached.startedAt = now();
+        started.resolve();
+        const spawned = spawnWalk(scope, { hidden, maxDepth: limits.maxDepth, width: limits.width });
+        if (spawned.isErr()) {
+            cached.error = spawned.error;
+            cached.stopped = true;
+            scopeRead.resolve();
+            release();
+            finish();
+            return;
+        }
+        child = spawned.value;
         deadline = setTimeout(cut, limits.walkBudgetMs);
         // A walk must not keep the process alive.
         deadline.unref();
-        pump();
+        void readRecords(child.stdout);
+    }
+
+    async function readRecords(stdout: ReadableStream<Uint8Array>): Promise<void> {
+        const streamReader = stdout.getReader();
+        reader = streamReader;
+        for (;;) {
+            const next = await ResultAsync.fromPromise(streamReader.read(), (cause) => cause);
+            if (cached.stopped) break;
+            // A broken pipe does not end the child by itself, thus the kill. The stream then ends as an early end does.
+            if (next.isErr()) {
+                kill();
+                break;
+            }
+            if (next.value.done) break;
+            if (decode(next.value.value).isErr()) {
+                cut();
+                break;
+            }
+        }
+        endOfStream();
+    }
+
+    function endOfStream(): void {
+        if (cached.ended) return;
+        if (cached.error === null && !complete) cached.truncated = true;
+        cached.stopped = true;
+        scopeRead.resolve();
+        // After a scope error the child writes nothing more and exits by itself.
+        if (reader !== null) void reader.cancel().catch(() => undefined);
+        release();
+        finish();
+    }
+
+    function release(): void {
+        if (!holdsSlot) return;
+        holdsSlot = false;
+        onRelease();
+    }
+
+    function kill(): void {
+        if (child !== null && !killed) {
+            killed = true;
+            child.kill();
+            // The cancel ends the pending read at once. The exit of the child is never awaited.
+            if (reader !== null) void reader.cancel().catch(() => undefined);
+        }
+        release();
     }
 
     function disarm(): void {
@@ -457,72 +626,25 @@ function createWalk(
     }
 
     function cut(): void {
-        disarm();
+        if (cached.ended) return;
         cached.truncated = true;
         cached.stopped = true;
-        stack.length = 0;
+        kill();
         scopeRead.resolve();
-        settle();
+        finish();
     }
 
-    function settle(): void {
-        if (cached.ended || inFlight > 0 || stack.length > 0) return;
+    function finish(): void {
+        if (cached.ended) return;
         cached.ended = true;
         disarm();
+        started.resolve();
         ended.resolve();
         onEnd(cached);
     }
 
     function overBudget(): boolean {
         return now() - cached.startedAt > limits.walkBudgetMs;
-    }
-
-    function insert(folder: number, dirents: readonly SearchDirent[]): void {
-        if (cached.stopped) return;
-        if (overBudget()) return cut();
-        const childDepth = index.depthOf(folder) + 1;
-        for (let k = 0; k < dirents.length; k++) {
-            // `k` is below the length of the array.
-            const dirent = dirents[k]!;
-            const name = dirent.name;
-            const isHidden = name.charCodeAt(0) === 0x2e;
-            if (isHidden && !hidden) continue;
-            if (index.count >= limits.maxEntries || total.value >= limits.maxTotalEntries) return cut();
-            const isFolder = dirent.isDirectory();
-            const entry = index.add(name, folder, isFolder ? "folder" : dirent.isSymbolicLink() ? "symlink" : "file", isHidden);
-            total.value += 1;
-            if (!isFolder) continue;
-            if (childDepth < limits.maxDepth) stack.push(entry);
-            else cached.truncated = true;
-        }
-    }
-
-    function pump(): void {
-        while (!cached.stopped && inFlight < limits.width && stack.length > 0) {
-            if (overBudget()) return cut();
-            // The loop condition holds a non-empty stack.
-            const folder = stack.pop()!;
-            inFlight += 1;
-            read(folder === 0 ? scope : index.pathOf(folder)).then(
-                (dirents) => {
-                    inFlight -= 1;
-                    insert(folder, dirents);
-                    if (folder === 0) scopeRead.resolve();
-                    pump();
-                },
-                (cause: unknown) => {
-                    inFlight -= 1;
-                    if (folder === 0) {
-                        cached.error = readError(scope, cause);
-                        cached.stopped = true;
-                        stack.length = 0;
-                        scopeRead.resolve();
-                    }
-                    pump();
-                },
-            );
-        }
-        settle();
     }
 
     return cached;
@@ -534,32 +656,55 @@ export type SearchIndexCache = {
      * Search the names under `canonical`, a scope that the caller resolved with `realpath`. The first search of a scope
      * starts its walk, and each later search of it scores the index in memory, during the walk or after it. A search waits
      * for the read of the scope, then for the walk until `firstWaitMs` after the start of the walk, thus a later search
-     * during the walk answers at once. A failed read of the scope gives its {@link FolderReadError} and removes the index.
+     * during the walk answers at once. A failed read of the scope gives its {@link FolderReadError} and removes the index,
+     * and so does a failed start of the child, with its {@link WalkSpawnError}.
      */
-    readonly search: (canonical: string, hidden: boolean, query: string, limit: number) => ResultAsync<SearchResult, FolderReadError>;
-    /** Clear the TTL timer, stop each walk, and drop each index. */
+    readonly search: (canonical: string, hidden: boolean, query: string, limit: number) => ResultAsync<SearchResult, FolderReadError | WalkSpawnError>;
+    /** Clear the TTL timer, empty the queue of walks, kill each child, and drop each index. */
     readonly stop: () => void;
 };
 
 /**
  * Make a {@link SearchIndexCache}. An index leaves the cache at `ttlMs` after its last search, by a timer and by a sweep at
  * each search, and the least recently used index leaves first when a new index would pass `maxTotalEntries` or
- * `maxIndexes`. An eviction stops the walk. Nothing else stops a walk, thus a client that goes away leaves the walk to the
- * next search of the same scope.
+ * `maxIndexes`. A cap, the time budget, an eviction, and `stop` kill the child of a walk. A client that goes away does not,
+ * thus it leaves the walk to the next search of the same scope.
+ *
+ * At most `maxWalkChildren` children run, because each is a process. A walk past the bound waits in a FIFO queue, and its
+ * index is in the map from the first search, thus a later search shares it. A queue and not a refusal, because a picker
+ * would show an error on a keystroke, and a slot frees within the time budget at the latest.
  */
 export function createSearchIndexCache(
     limits: SearchLimits = DEFAULT_SEARCH_LIMITS,
     now: () => number = Date.now,
-    read: ReadEntries = readFolderEntries,
+    spawnWalk: WalkSpawner = spawnWalkChild,
 ): SearchIndexCache {
     // The order of the map is the order of use, least recent first: each search moves its index to the end.
     const indexes = new Map<string, CachedIndex>();
     const total: EntryTotal = { value: 0 };
+    const queue: CachedIndex[] = [];
+    let live = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function startWalks(): void {
+        while (live < limits.maxWalkChildren && queue.length > 0) {
+            // The loop condition holds a non-empty queue.
+            const next = queue.shift()!;
+            live += 1;
+            next.begin();
+        }
+    }
+
+    function release(): void {
+        live -= 1;
+        startWalks();
+    }
 
     function evict(cached: CachedIndex): void {
         indexes.delete(cached.key);
         total.value -= cached.index.count;
+        const queued = queue.indexOf(cached);
+        if (queued >= 0) queue.splice(queued, 1);
         cached.stop();
     }
 
@@ -599,18 +744,20 @@ export function createSearchIndexCache(
     }
 
     /**
-     * The wait of a search: always the read of the scope, so that a failed scope read gives its error and never an empty
-     * answer, then the rest of the walk until `firstWaitMs` after its start.
+     * The wait of a search. A walk in the queue gets at most `firstWaitMs` from this call for the start of its child, and
+     * without a start the search answers the empty index, truncated, thus it never waits for the budget of another walk.
+     * Then always the read of the scope, so that a failed scope read gives its error and never an empty answer, then the
+     * rest of the walk until `firstWaitMs` after its start.
      */
     async function waitForWalk(cached: CachedIndex): Promise<void> {
+        if (!cached.hasStarted) {
+            await raceTimeout(cached.started, limits.firstWaitMs);
+            if (!cached.hasStarted) return;
+        }
         await cached.scopeRead;
         const remaining = cached.startedAt + limits.firstWaitMs - now();
         if (cached.ended || remaining <= 0) return;
-        let wait: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<void>((resolve) => {
-            wait = setTimeout(resolve, remaining);
-        });
-        await Promise.race([cached.end, timeout]).finally(() => clearTimeout(wait));
+        await raceTimeout(cached.end, remaining);
     }
 
     function answer(cached: CachedIndex, query: string, limit: number): SearchResult {
@@ -619,16 +766,17 @@ export function createSearchIndexCache(
         return { hits, truncated: cached.truncated || !cached.ended };
     }
 
-    function search(canonical: string, hidden: boolean, query: string, limit: number): ResultAsync<SearchResult, FolderReadError> {
+    function search(canonical: string, hidden: boolean, query: string, limit: number): ResultAsync<SearchResult, FolderReadError | WalkSpawnError> {
         sweep();
         const key = `${canonical}\0${String(hidden)}`;
         const at = now();
         let cached = indexes.get(key);
         if (cached === undefined) {
             makeRoom();
-            cached = createWalk(key, canonical, hidden, limits, now, read, total, onEnd);
+            cached = createWalk(key, canonical, hidden, limits, now, spawnWalk, total, release, onEnd);
             indexes.set(key, cached);
-            cached.begin();
+            queue.push(cached);
+            startWalks();
         } else {
             indexes.delete(key);
             indexes.set(key, cached);
@@ -642,10 +790,21 @@ export function createSearchIndexCache(
     function stop(): void {
         if (timer !== null) clearTimeout(timer);
         timer = null;
+        // The queue empties first, thus the slot that each kill below frees starts no child.
+        queue.length = 0;
         for (const cached of indexes.values()) cached.stop();
         indexes.clear();
         total.value = 0;
     }
 
     return { search, stop };
+}
+
+/** Resolves when `promise` settles or after `ms`, and clears its timer. */
+async function raceTimeout(promise: Promise<void>, ms: number): Promise<void> {
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+        wait = setTimeout(resolve, ms);
+    });
+    await Promise.race([promise, timeout]).finally(() => clearTimeout(wait));
 }

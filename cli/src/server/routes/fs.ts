@@ -44,10 +44,10 @@ import { extensionOf, fileKindOf } from "../../modules/fs/file_kind.ts";
 import {
     createSearchIndexCache,
     DEFAULT_SEARCH_LIMITS,
-    readFolderEntries,
-    type ReadEntries,
+    spawnWalkChild,
     type SearchIndexCache,
     type SearchLimits,
+    type WalkSpawner,
 } from "../../modules/fs/search_index.ts";
 import { analysisQueryGuard, DEFAULT_ANALYSIS_GUARD_OPTS, type AnalysisGuardOpts } from "../analysis_guard.ts";
 import type { ServerBoot } from "../boot.ts";
@@ -68,8 +68,8 @@ export type FsRouteOpts = FileRouteOpts &
         readonly search: SearchLimits;
         /** The clock of the search cache, for its TTL and its time budget. A test gives a fake clock. */
         readonly now: () => number;
-        /** The folder read of the search walk. A test replaces it to hold a read or to count the reads. */
-        readonly readEntries: ReadEntries;
+        /** Starts the walk child of a search. A test runs the walk in the test process, holds a child, or fails the start. */
+        readonly spawnWalk: WalkSpawner;
         /** Gets the search cache of the routes once at their creation, so that a test can stop its walks and its timer. */
         readonly onSearchCache?: (cache: SearchIndexCache) => void;
     };
@@ -84,7 +84,7 @@ export const DEFAULT_FS_ROUTE_OPTS: FsRouteOpts = {
     homedir,
     search: DEFAULT_SEARCH_LIMITS,
     now: Date.now,
-    readEntries: readFolderEntries,
+    spawnWalk: spawnWalkChild,
 };
 
 /** How many entries of one page read their facts at one time. A slow mount holds one slot and not the page. */
@@ -485,7 +485,7 @@ export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_
     const identity = processIdentity();
 
     // One cache for the routes: each keystroke of a picker reads the index that its first search built.
-    const searchCache = createSearchIndexCache(opts.search, opts.now, opts.readEntries);
+    const searchCache = createSearchIndexCache(opts.search, opts.now, opts.spawnWalk);
     opts.onSearchCache?.(searchCache);
 
     routes.use("*", analysisQueryGuard(opts));
@@ -541,7 +541,10 @@ export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_
         const canonical = await ResultAsync.fromPromise(realpath(path.value), (cause) => readError(path.value, cause));
         if (canonical.isErr()) return readErrorResponse(c, canonical.error);
         const found = await searchCache.search(canonical.value, hidden.value, query, limit);
-        if (found.isErr()) return readErrorResponse(c, found.error);
+        if (found.isErr())
+            return found.error.type === "spawn_failed"
+                ? internalError(c, found.error.cause, "start the walk of the search")
+                : readErrorResponse(c, found.error);
 
         const { hits, truncated } = found.value;
         const views = await enrichEntries(

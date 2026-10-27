@@ -11,6 +11,7 @@ import { readConfig } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
 import { createOtelLogStream, initOtel } from "./lib/otel.ts";
 import { onShutdown, shutdown, stopForSignal } from "./lib/shutdown.ts";
+import { isWalkChildInvocation } from "./modules/fs/walk_child.ts";
 import { pendingUpdate } from "./modules/update/latest.ts";
 import { printUpdateNotice } from "./modules/update/notice.ts";
 
@@ -68,7 +69,9 @@ getLogger("main").info({ argv: process.argv.slice(2) }, "cli start");
 // for every condition that makes it "nothing to report". The printed line shows at each run; only the ask
 // dialog of the TUI holds a once-a-day record (modules/update/notice.ts). The TUI is not covered here: it
 // exits through its own shutdown() and asks its own question (tui/app.launch.tsx).
-const updateRead = pendingUpdate();
+// The walk child of a name search is skipped: the server starts one for each new scope of a search, and nobody reads
+// its stderr, thus a read there only sends a request for each search.
+const updateRead = isWalkChildInvocation(process.argv.slice(2)) ? Promise.resolve(null) : pendingUpdate();
 
 try {
     await cli.parseAsync();

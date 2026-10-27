@@ -107,3 +107,17 @@ test("the registry declares the hidden child flag of `serve` with the spelling t
     const serve = buildProgram().commands.find((command) => command.name() === "serve");
     expect(serve?.options.map((option) => option.long)).toContain(SERVE_DETACHED_CHILD_FLAG);
 });
+
+test("the help of `server` lists its commands and not the hidden walk child", () => {
+    const program = buildProgram();
+    const server = program.commands.find((command) => command.name() === "server");
+    expect(server).toBeDefined();
+    if (server === undefined) return;
+    const visible = program
+        .createHelp()
+        .visibleCommands(server)
+        .map((command) => command.name());
+    expect(visible).toEqual(expect.arrayContaining(["status", "stop", "logs"]));
+    expect(visible).not.toContain("walk");
+    expect(server.commands.map((command) => command.name())).toContain("walk");
+});
