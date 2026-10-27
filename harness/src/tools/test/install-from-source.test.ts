@@ -77,7 +77,7 @@ function stubBuildSession(stub: StubDeps = {}): { calls: StubCall[]; buildSessio
                 sessionId: `sess-${started}`,
                 commit: source.kind === "git" ? SHA : undefined,
                 workingDir: "/work/src",
-                ...(stub.classHosts === undefined ? {} : { classHosts: stub.classHosts }),
+                classHosts: stub.classHosts,
             });
         },
         exec: (handle, command) => {
