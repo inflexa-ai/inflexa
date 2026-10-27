@@ -42,12 +42,12 @@ import { insertRun, updateRunStatus } from "../../state/index.js";
 import { createToolOutputStore } from "../../state/tool-outputs.js";
 import type { SessionProvenanceEvent } from "../../provenance/seam.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptedReply, type ScriptEntry, type ScriptStep } from "../../testing.js";
-import { createAskGateway } from "../../tools/approval/gateway.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createUpdateWorkingMemoryTool } from "../../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../../workflows/suspension.js";
-import { openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnDeps, type RunChatTurnParams } from "../chat-turn.js";
+import { prepareChatTurn, type RunChatTurnDeps } from "../chat-turn.js";
+import { inProcessChatTurns, openInProcessTurn, runInProcessTurn, type InProcessTurnParams } from "../in-process-turn.js";
 
 /** The tool-result parts of a stored tool message, or a failed test on any other message. */
 function toolResultParts(message: ModelMessage): ToolResultPart[] {
@@ -384,7 +384,7 @@ describe("prepareChatTurn", () => {
     });
 });
 
-// --- runChatTurn ------------------------------------------------------------
+// --- the run of a turn -------------------------------------------------------
 
 /** A failure of the model endpoint with an HTTP status, as the AI SDK throws it. */
 function apiFailure(statusCode: number, message: string): APICallError {
@@ -430,7 +430,7 @@ function sentToolOutputs(message: LanguageModelV4Message): LanguageModelV4ToolRe
     return message.content.flatMap((part) => (part.type === "tool-result" ? [part.output] : []));
 }
 
-describe("runChatTurn", () => {
+describe("the run of a chat turn", () => {
     const THREAD = "t-turn";
 
     function echoTool(): Tool {
@@ -456,7 +456,7 @@ describe("runChatTurn", () => {
         return { pool, agents, provider: model.provider, usageRecorder: createNoopUsageRecorder(), ...overrides };
     }
 
-    function params(overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
+    function params(overrides: Partial<InProcessTurnParams> = {}): InProcessTurnParams {
         return {
             analysisId: ANALYSIS_A,
             threadId: THREAD,
@@ -508,7 +508,7 @@ describe("runChatTurn", () => {
             reply([text("the groups differ")], "stop", { inputTokens: 120, outputTokens: 20 }),
         ]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ startedAtMs: Date.now() - 1_000 }));
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ startedAtMs: Date.now() - 1_000 }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true, turnUsage: { inputTokens: 220, outputTokens: 30 } });
         expect("storeError" in result).toBe(false);
@@ -520,9 +520,29 @@ describe("runChatTurn", () => {
         expect(storedTurn?.durationMs).toBeGreaterThanOrEqual(1_000);
     });
 
+    it("gives the chat turns of the test kit: the frames of the turn with its end frame, a second read, and the end", async () => {
+        const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")], "stop", { inputTokens: 120, outputTokens: 20 })]);
+        const chatTurns = inProcessChatTurns(depsFor(resolverFor(agentWith([echoTool()])), model));
+        const { session } = params();
+
+        const started = await chatTurns.open(session, { analysisId: ANALYSIS_A, threadId: THREAD, userInput: "compare the two groups" });
+        if (started.kind !== "started") throw new Error(`expected a started turn, got ${started.kind}`);
+        const read = async (): Promise<string[]> => {
+            const types: string[] = [];
+            for await (const frame of chatTurns.read(started.turnId)) types.push(frame.type);
+            return types;
+        };
+        const first = await read();
+
+        expect(first).toContain("tool-finished");
+        expect(first.at(-1)).toBe("finish");
+        expect(await read()).toEqual(first);
+        expect(await chatTurns.outcome(started.turnId)).toMatchObject({ status: "done", opened: true, fallbackText: "the groups differ" });
+    });
+
     it("reads a stored turn back as one user message and one assistant message", async () => {
         const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
-        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         const replay = storedMessagesToChat(await storedRows());
 
@@ -540,7 +560,7 @@ describe("runChatTurn", () => {
         const forwarded: TurnEvent[] = [];
         const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
 
-        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ emit: (event) => void forwarded.push(event) }));
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ emit: (event) => void forwarded.push(event) }));
 
         const announced = announcedIds(forwarded);
         expect(forwarded.slice(0, 2).map((event) => event.type)).toEqual(["message-start", "message-start"]);
@@ -555,7 +575,7 @@ describe("runChatTurn", () => {
         const deltas: string[] = [];
         const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
 
-        await runChatTurn(
+        await runInProcessTurn(
             depsFor(resolverFor(agentWith([echoTool()])), model),
             params({
                 emit: (event) => {
@@ -574,7 +594,7 @@ describe("runChatTurn", () => {
             { fail: apiFailure(401, "401 Unauthorized at https://models.example/v1 with key sk-secret-123") },
         ]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model endpoint refused the credential." } });
         const rows = await storedRows();
@@ -589,10 +609,10 @@ describe("runChatTurn", () => {
     it("starts the next turn with the failed request of the failed turn as its prefix, byte-identical, then the note", async () => {
         const failing = scriptedModel([echoCall("tu-1"), echoCall("tu-2"), { fail: apiFailure(401, "401 Unauthorized") }]);
         const agents = resolverFor(agentWith([echoTool()]));
-        await runChatTurn(depsFor(agents, failing), params({ promptCache: "off" }));
+        await runInProcessTurn(depsFor(agents, failing), params({ promptCache: "off" }));
         const next = scriptedModel([reply([text("continuing")])]);
 
-        await runChatTurn(depsFor(agents, next), params({ userInput: "try again", promptCache: "off" }));
+        await runInProcessTurn(depsFor(agents, next), params({ userInput: "try again", promptCache: "off" }));
 
         const failedRequest = presentLast(failing.calls).prompt;
         const sent = presentFirst(next.calls).prompt;
@@ -603,7 +623,7 @@ describe("runChatTurn", () => {
     it("closes failed with the reason of the host on a suspend error", async () => {
         const model = scriptedModel([{ fail: apiFailure(402, "Payment Required") }]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "payment_required" } });
         if (result.kind !== "ran" || result.outcome.status !== "failed") throw new Error("unreachable");
@@ -614,7 +634,7 @@ describe("runChatTurn", () => {
     it("closes failed with a reason that holds no text of the provider error on another refused request", async () => {
         const model = scriptedModel([{ fail: apiFailure(400, "prompt is too long for the key sk-secret-123") }]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model request failed." } });
         expect(JSON.stringify((await storedRows()).map((row) => row.message))).not.toContain("sk-secret-123");
@@ -630,7 +650,7 @@ describe("runChatTurn", () => {
             },
         ]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ signal: controller.signal }));
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: true });
         expect((await storedRows()).map((row) => row.message.role)).toEqual(["user", "user", "user", "user"]);
@@ -641,7 +661,7 @@ describe("runChatTurn", () => {
         const controller = new AbortController();
         const model = scriptedModel([{ breakAfter: [text("The two groups")], error: abortError() }]);
 
-        const result = await runChatTurn(
+        const result = await runInProcessTurn(
             depsFor(resolverFor(agentWith([echoTool()])), model),
             params({ emit: abortingAtText(controller), signal: controller.signal }),
         );
@@ -660,10 +680,10 @@ describe("runChatTurn", () => {
         const controller = new AbortController();
         const agents = resolverFor(agentWith([echoTool()]));
         const aborting = scriptedModel([{ breakAfter: [text("The two groups")], error: abortError() }]);
-        await runChatTurn(depsFor(agents, aborting), params({ emit: abortingAtText(controller), signal: controller.signal }));
+        await runInProcessTurn(depsFor(agents, aborting), params({ emit: abortingAtText(controller), signal: controller.signal }));
         const next = scriptedModel([reply([text("hello")])]);
 
-        await runChatTurn(depsFor(agents, next), params({ userInput: "say hello", promptCache: "off" }));
+        await runInProcessTurn(depsFor(agents, next), params({ userInput: "say hello", promptCache: "off" }));
 
         const sent = presentFirst(next.calls).prompt;
         const opening = sent.findIndex((message) => contentText(message.content) === "say hello");
@@ -686,7 +706,7 @@ describe("runChatTurn", () => {
         });
         const model = scriptedModel([callTools(toolCall("tu-1", "stall", {}))]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([stall])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([stall])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The turn stopped on an internal error." } });
         const rows = await storedRows();
@@ -699,7 +719,7 @@ describe("runChatTurn", () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
         const model = scriptedModel([]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toEqual({ kind: "agent_unresolved", threadType: "report" });
         expect(await storedRows()).toEqual([]);
@@ -714,7 +734,7 @@ describe("runChatTurn", () => {
         };
         const model = scriptedModel([]);
 
-        const result = await runChatTurn({ ...depsFor(resolverFor(agentWith([echoTool()])), model), pool: unreachable }, params());
+        const result = await runInProcessTurn({ ...depsFor(resolverFor(agentWith([echoTool()])), model), pool: unreachable }, params());
 
         if (result.kind !== "prepare_failed") throw new Error(`expected prepare_failed, got ${result.kind}`);
         if (!(result.cause instanceof ResultError)) throw new Error("the cause is not the failure of the thread read");
@@ -726,9 +746,9 @@ describe("runChatTurn", () => {
 
     it("adds no context record on a second turn with no change", async () => {
         const agents = resolverFor(agentWith([echoTool()]));
-        await runChatTurn(depsFor(agents, scriptedModel([reply([text("first answer")])])), params());
+        await runInProcessTurn(depsFor(agents, scriptedModel([reply([text("first answer")])])), params());
 
-        await runChatTurn(depsFor(agents, scriptedModel([reply([text("second answer")])])), params({ userInput: "and now?" }));
+        await runInProcessTurn(depsFor(agents, scriptedModel([reply([text("second answer")])])), params({ userInput: "and now?" }));
 
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user", "assistant"]);
@@ -744,7 +764,7 @@ describe("runChatTurn", () => {
         const model = scriptedModel([reply([text("drafted")], "stop", { inputTokens: 5, outputTokens: 1 })]);
         const { analysisId, threadId, userInput, ...run } = params({ session });
 
-        const opened = await openChatTurn(depsFor(agents, model, { usageRecorder }), { analysisId, threadId, userInput });
+        const opened = await openInProcessTurn(depsFor(agents, model, { usageRecorder }), { analysisId, threadId, userInput });
         if (opened.kind !== "ready") throw new Error(`expected an open turn, got ${opened.kind}`);
         const result = await opened.run(run);
 
@@ -756,7 +776,7 @@ describe("runChatTurn", () => {
     it("refuses a thread of a different analysis at the open, before any row of the turn", async () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
 
-        const opened = await openChatTurn(depsFor(resolverFor(agentWith([echoTool()])), scriptedModel([])), {
+        const opened = await openInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), scriptedModel([])), {
             analysisId: ANALYSIS_A,
             threadId: THREAD,
             userInput: "hi",
@@ -773,7 +793,7 @@ describe("runChatTurn", () => {
         const before = (await store.getThread(THREAD))._unsafeUnwrap();
         const model = scriptedModel([]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         expect(result).toEqual({ kind: "not_found" });
         expect((await store.getThread(THREAD))._unsafeUnwrap()).toEqual(before);
@@ -785,7 +805,7 @@ describe("runChatTurn", () => {
         const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123";
         const model = scriptedModel([reply([text("noted")])]);
 
-        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ userInput: `use the key ${secret}` }));
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ userInput: `use the key ${secret}` }));
 
         const replay = storedMessagesToChat(await storedRows());
         expect(presentFirst(replay).parts).toEqual([{ type: "text", text: "use the key [REDACTED: OpenAI API Key]" }]);
@@ -799,7 +819,7 @@ describe("runChatTurn", () => {
             reply([text("hi")], "stop", { inputTokens: 12, outputTokens: 3 }),
         ]);
 
-        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model, { usageRecorder }), params());
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model, { usageRecorder }), params());
 
         expect(records.map((record) => [record.agentId, record.callPath, record.usage])).toEqual([
             ["conversation-agent", ["conversation-agent"], { inputTokens: 10, outputTokens: 2 }],
@@ -819,7 +839,7 @@ describe("runChatTurn", () => {
         });
         const model = scriptedModel([callTools(toolCall("tu-1", "long", {})), reply([text("read it")])]);
 
-        await runChatTurn(depsFor(resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])), model), params());
+        await runInProcessTurn(depsFor(resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])), model), params());
 
         const round = presentFind(await storedRows(), (row) => row.message.role === "tool");
         const output = presentFirst(toolResultParts(round.message)).output;
@@ -839,7 +859,7 @@ describe("runChatTurn", () => {
     it("sends the 1-hour cache directive from the root loop", async () => {
         const model = scriptedModel([reply([text("hi")])]);
 
-        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
         const request = presentFirst(model.calls);
         expect(systemDirective(request)).toEqual({ type: "ephemeral", ttl: "1h" });
@@ -849,7 +869,7 @@ describe("runChatTurn", () => {
     it("sends the cache directive of a host policy", async () => {
         const model = scriptedModel([reply([text("hi")])]);
 
-        await runChatTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ promptCache: { ttl: "5m" } }));
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params({ promptCache: { ttl: "5m" } }));
 
         expect(systemDirective(presentFirst(model.calls))).toEqual({ type: "ephemeral", ttl: "5m" });
     });
@@ -873,7 +893,7 @@ describe("runChatTurn", () => {
             },
         });
 
-        await runChatTurn(depsFor(resolverFor(agentWith([delegate])), model), params());
+        await runInProcessTurn(depsFor(resolverFor(agentWith([delegate])), model), params());
 
         expect(model.calls.map((call) => [systemOf(call).content === SUB_PROMPT, systemDirective(call)])).toEqual([
             [false, { type: "ephemeral", ttl: "1h" }],
@@ -921,7 +941,7 @@ describe("runChatTurn", () => {
         });
         const model = scriptedModel([echoCall("tu-1"), echoCall("tu-2"), reply([text("done")])]);
 
-        const result = await runChatTurn({ ...depsFor(resolverFor(agentWith([echoTool()])), model), pool: failingOnce }, params());
+        const result = await runInProcessTurn({ ...depsFor(resolverFor(agentWith([echoTool()])), model), pool: failingOnce }, params());
 
         expect(failed).toBe(true);
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
@@ -942,35 +962,10 @@ describe("runChatTurn", () => {
         });
     }
 
-    const AskFrameSchema = z.object({ id: z.string(), status: z.string() });
-
-    it("binds the approval of a tool to the ask gateway of the runtime values, under the analysis, the user, and the thread of the turn", async () => {
-        const askGateway = createAskGateway({ pool });
-        const host: EmitFn = async (event) => {
-            if (event.type !== "data-ask") return;
-            const frame = AskFrameSchema.parse(event.data);
-            if (frame.status === "pending") await askGateway.answer(frame.id, { kind: "once" });
-        };
-        const model = scriptedModel([callTools(toolCall("tu-1", "run_script", {})), reply([text("ran it")])]);
-
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([approvalTool()])), model, { askGateway }), params({ emit: host }));
-
-        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done", finish: { reason: "stop" } } });
-        const { rows: asks } = await pool.query<{ analysis_id: string; user_id: string; thread_id: string | null; status: string }>(
-            "SELECT analysis_id, user_id, thread_id, status FROM cortex_asks",
-        );
-        expect(asks).toEqual([{ analysis_id: ANALYSIS_A, user_id: "user-001", thread_id: THREAD, status: "resolved" }]);
-        const rows = await storedRows();
-        const answer = toolResultParts(presentFind(rows, (row) => row.message.role === "tool").message);
-        expect(presentFirst(answer).output).toEqual({ type: "json", value: { ran: "Rscript de.R" } });
-        const replayed = presentAt(storedMessagesToChat(rows), 1).parts.find((part) => part.type === "data-ask");
-        expect(replayed).toMatchObject({ type: "data-ask", title: "Run a script", command: "Rscript de.R", status: "resolved" });
-    });
-
-    it("denies the approval of a tool when the runtime values carry no ask gateway, and the turn ends on the denial", async () => {
+    it("denies a call that asks for an approval when the turn has no approver, and the turn ends on the denial", async () => {
         const model = scriptedModel([callTools(toolCall("tu-1", "run_script", {}))]);
 
-        const result = await runChatTurn(depsFor(resolverFor(agentWith([approvalTool()])), model), params());
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([approvalTool()])), model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done", finish: { reason: "denied" } } });
         const answer = toolResultParts(presentFind(await storedRows(), (row) => row.message.role === "tool").message);
@@ -979,9 +974,9 @@ describe("runChatTurn", () => {
     });
 });
 
-// --- runChatTurn compaction ---------------------------------------------------
+// --- the compaction of a turn -------------------------------------------------
 
-describe("runChatTurn — compaction", () => {
+describe("the compaction of a chat turn", () => {
     const THREAD = "t-compact";
     const SUMMARY = "The user compares two groups of samples.";
     /** The input tokens of a request past each budget of the test agents. */
@@ -1074,7 +1069,7 @@ describe("runChatTurn — compaction", () => {
         return { pool, agents: resolver, provider: model.provider, usageRecorder: createNoopUsageRecorder() };
     }
 
-    function params(overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
+    function params(overrides: Partial<InProcessTurnParams> = {}): InProcessTurnParams {
         return {
             analysisId: ANALYSIS_A,
             threadId: THREAD,
@@ -1134,7 +1129,7 @@ describe("runChatTurn — compaction", () => {
     it("stores the opening, a round, the marked exchange, the marker, the records, and the later rounds", async () => {
         const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
 
-        const result = await runChatTurn(depsFor(model), params());
+        const result = await runInProcessTurn(depsFor(model), params());
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
         expect((await storedRows()).map((row) => kindOf(row.message))).toEqual([
@@ -1154,7 +1149,7 @@ describe("runChatTurn — compaction", () => {
 
     it("replays the divider between the two assistant messages of the turn, with two ids", async () => {
         const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         const replay = storedMessagesToChat(await storedRows());
 
@@ -1171,10 +1166,10 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("starts the next turn with the summary marker and its records, then the later rounds, then the new opening", async () => {
-        await runChatTurn(depsFor(compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)])), params());
+        await runInProcessTurn(depsFor(compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)])), params());
         const next = scriptedModel([answer("next answer")]);
 
-        await runChatTurn(depsFor(next), params({ userInput: "and now?", promptCache: "off" }));
+        await runInProcessTurn(depsFor(next), params({ userInput: "and now?", promptCache: "off" }));
 
         const sent = sentMessages(presentFirst(next.calls));
         expect(sent.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "assistant", "user"]);
@@ -1186,7 +1181,7 @@ describe("runChatTurn — compaction", () => {
         const deltas: string[] = [];
         const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn(
+        await runInProcessTurn(
             depsFor(model),
             params({
                 emit: (event) => {
@@ -1202,7 +1197,7 @@ describe("runChatTurn — compaction", () => {
         const memoryEdit = callTools(toolCall("tu-m", "update_working_memory", { section: "constraint", text: "Use an FDR of 0.01.", origin: "user" }));
         const model = compactingModel([overCall("tu-1"), answer("done")], [memoryEdit, answer(SUMMARY)]);
 
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         const rows = (await storedRows()).map((row) => row.message);
         const afterMarker = rows.slice(rows.findIndex((message) => compactionMarkerOf(message) !== undefined) + 1);
@@ -1217,7 +1212,7 @@ describe("runChatTurn — compaction", () => {
         (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
         const model = compactingModel([overCall("tu-1"), answer("done")], [callTools(toolCall("tu-x", "echo", { label: "x" })), answer(SUMMARY)]);
 
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         const exchange = model.calls.filter(isExchangeRequest);
         expect(contentText(presentLast(presentFirst(exchange).prompt).content)).toBe(SUMMARY_COMPACTION_REQUEST);
@@ -1230,8 +1225,11 @@ describe("runChatTurn — compaction", () => {
     });
 
     it("removes the exchange and the marker of the last turn at a retract, and the next turn starts from the earlier marker", async () => {
-        await runChatTurn(depsFor(compactingModel([overCall("tu-1"), answer("done")], [answer("first summary")])), params());
-        await runChatTurn(depsFor(compactingModel([overCall("tu-2"), answer("done again")], [answer("second summary")])), params({ userInput: "once more" }));
+        await runInProcessTurn(depsFor(compactingModel([overCall("tu-1"), answer("done")], [answer("first summary")])), params());
+        await runInProcessTurn(
+            depsFor(compactingModel([overCall("tu-2"), answer("done again")], [answer("second summary")])),
+            params({ userInput: "once more" }),
+        );
         expect((await storedRows()).map((row) => compactionMarkerOf(row.message)?.kind).filter((kind) => kind !== undefined)).toEqual(["summary", "summary"]);
 
         (await createThreadHistory(pool).retractLastTurn(THREAD))._unsafeUnwrap();
@@ -1255,7 +1253,7 @@ describe("runChatTurn — compaction", () => {
             },
         });
 
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         const first = presentAt(model.calls, 0);
         const task = presentAt(model.calls, 1);
@@ -1276,7 +1274,7 @@ describe("runChatTurn — compaction", () => {
         await storeMeasuredTurn(OVER);
         const model = compactingModel([answer("done")], [answer(SUMMARY)]);
 
-        const result = await runChatTurn(depsFor(model), params({ author: "dr.chen@lab.example" }));
+        const result = await runInProcessTurn(depsFor(model), params({ author: "dr.chen@lab.example" }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
         const rows = await storedRows();
@@ -1324,7 +1322,7 @@ describe("runChatTurn — compaction", () => {
         const forwarded: TurnEvent[] = [];
         const model = compactingModel([overCall("tu-1"), answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn(depsFor(model), params({ emit: (event) => void forwarded.push(event) }));
+        await runInProcessTurn(depsFor(model), params({ emit: (event) => void forwarded.push(event) }));
 
         const replay = storedMessagesToChat(await storedRows());
         const announced = announcedIds(forwarded);
@@ -1344,7 +1342,7 @@ describe("runChatTurn — compaction", () => {
         const forwarded: TurnEvent[] = [];
         const model = compactingModel([answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn(depsFor(model), params({ emit: (event) => void forwarded.push(event) }));
+        await runInProcessTurn(depsFor(model), params({ emit: (event) => void forwarded.push(event) }));
 
         const announced = announcedIds(forwarded);
         // The stream announces the user id and a first assistant id before the `running` part of the compaction, thus before
@@ -1382,7 +1380,7 @@ describe("runChatTurn — compaction", () => {
         const controller = new AbortController();
         const model = compactingModel([], [abortedBy(controller)]);
 
-        const result = await runChatTurn(depsFor(model), params({ signal: controller.signal }));
+        const result = await runInProcessTurn(depsFor(model), params({ signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: false });
         if (result.kind !== "ran") throw new Error("unreachable");
@@ -1397,7 +1395,7 @@ describe("runChatTurn — compaction", () => {
         await storeMeasuredTurn(TURN_START_BUDGET);
         const model = compactingModel([answer("done")], []);
 
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         expect(model.calls.map(isExchangeRequest)).toEqual([false]);
     });
@@ -1406,7 +1404,7 @@ describe("runChatTurn — compaction", () => {
         await storeMeasuredTurn(TURN_START_BUDGET);
         const model = compactingModel([answer("done")], [answer(SUMMARY)], { contextWindow: 1_000 });
 
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         expect(model.calls.map(isExchangeRequest)).toEqual([true, false]);
     });
@@ -1418,7 +1416,7 @@ describe("runChatTurn — compaction", () => {
         await storeMeasuredTurn(OVER);
         const model = compactingModel([answer("done")], [answer(SUMMARY)]);
 
-        await runChatTurn(depsFor(model), params());
+        await runInProcessTurn(depsFor(model), params());
 
         expect(model.calls.map(isExchangeRequest)).toEqual([true, false]);
         expect(presentFirst(model.calls).prompt.map((message) => contentText(message.content))).toContain("compare the two groups");
@@ -1430,7 +1428,7 @@ describe("runChatTurn — compaction", () => {
         const controller = new AbortController();
         const model = compactingModel([overCall("tu-1")], [abortedBy(controller)]);
 
-        const result = await runChatTurn(depsFor(model), params({ signal: controller.signal }));
+        const result = await runInProcessTurn(depsFor(model), params({ signal: controller.signal }));
 
         expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" } });
         if (result.kind !== "ran") throw new Error("unreachable");
@@ -1445,7 +1443,7 @@ describe("runChatTurn — compaction", () => {
         const model = compactingModel([overCall("tu-1"), answer("done")], []);
         const { compaction: _compaction, ...noRules } = conversationAgent();
 
-        await runChatTurn(depsFor(model, { forThread: () => ok(noRules) }), params());
+        await runInProcessTurn(depsFor(model, { forThread: () => ok(noRules) }), params());
 
         expect(model.calls.some(isExchangeRequest)).toBe(false);
         expect((await storedRows()).some((row) => compactionMarkerOf(row.message) !== undefined)).toBe(false);
@@ -1475,7 +1473,7 @@ describe("runChatTurn — compaction", () => {
         });
         const resolver: ThreadAgentResolver = { forThread: () => ok({ ...conversationAgent(), tools: [delegate] }) };
 
-        await runChatTurn(depsFor(model, resolver), params());
+        await runInProcessTurn(depsFor(model, resolver), params());
 
         expect(model.calls.map((call) => systemOf(call).content === SUB_PROMPT)).toEqual([false, true, false]);
         expect(model.calls.some(isExchangeRequest)).toBe(false);

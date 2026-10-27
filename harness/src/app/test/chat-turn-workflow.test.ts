@@ -20,6 +20,7 @@ import { registerSubAgent } from "../../loop/sub-agent.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
+import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptEntry, type ScriptStep } from "../../testing.js";
@@ -245,6 +246,7 @@ describe("a chat turn as a workflow", () => {
         expect(frames.filter((frame) => frame.type === "tool-finished")).toMatchObject([{ outcome: "ok", detail: "echo a" }]);
         expect(frames.at(-1)?.type).toBe("finish");
         expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
+        expect(await turns.outcome(turnId)).toMatchObject({ status: "done", opened: true, finishReason: "stop", fallbackText: "Hi there." });
         expect((await roles(threadId)).filter((role) => role !== "user")).toEqual(["assistant", "tool", "assistant"]);
         const status = await DBOS.getWorkflowStatus(turnId);
         expect(JSON.stringify(status?.input)).not.toContain(SECRET);
@@ -282,14 +284,19 @@ describe("a chat turn as a workflow", () => {
         const threadId = `thread-${rig.nextWorkflowId()}`;
 
         const turnId = await startTurn(threadId);
-        const ended = DBOS.retrieveWorkflow(turnId)
-            .getResult()
-            .catch(() => undefined);
+        // The cancelled execution drops the live credential when it leaves, thus the resume finds none.
+        const ended = Promise.all([
+            DBOS.retrieveWorkflow(turnId)
+                .getResult()
+                .catch(() => undefined),
+            waitUntil(() => turnCredentials.of(turnId) === undefined),
+        ]);
         const handle = await recoverAtCrashPoint(turnId, () => parkedWrite, { ended });
         await handle.getResult();
 
         expect(scripted.calls).toHaveLength(1);
         expect(await turnRecords(threadId)).toEqual([{ status: "failed", reason: "interrupted" }]);
+        expect(await turns.outcome(turnId)).toMatchObject({ status: "failed", code: "interrupted", opened: true });
         expect((await readAll(turnId)).at(-1)).toMatchObject({ type: "error", reason: "interrupted" });
         credentialAfterRestart = makeLocalAuth();
     });
@@ -335,6 +342,11 @@ describe("the approval of a chat turn workflow", () => {
         expect(guardedRuns).toBe(1);
         expect(scripted.calls).toHaveLength(2);
         expect(await askOf(threadId)).toMatchObject({ status: "resolved" });
+        // The stored display replays the ask with its answer.
+        const replayed = storedMessagesToChat((await createThreadHistory(rig.pool).loadAll(threadId))._unsafeUnwrap().flat())
+            .flatMap((message) => message.parts)
+            .find((part) => part.type === "data-ask");
+        expect(replayed).toMatchObject({ type: "data-ask", title: "Run the script", status: "resolved" });
         expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
     }, 20_000);
 

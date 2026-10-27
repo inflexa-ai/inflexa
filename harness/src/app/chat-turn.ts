@@ -1,8 +1,7 @@
 /**
- * The chat turn of a host: a turn is `runChatTurn`, which is `openChatTurn` and then the `run` of the
- * open turn. `prepareChatTurn` is the first step of the open. The host gives only its transport
- * values, and the harness makes the model, the text stream, the usage recorder, and the approval
- * binding of the turn from its runtime. The harness stores the opening, each round, and the outcome.
+ * The run of one chat turn: `runOpenTurn` runs the root loop over a prepared turn, stores the opening and each
+ * round, and closes the turn with its outcome. A transport gives the surface and the store of the turn. The turn
+ * workflow (`chat-turn-workflow.ts`) gives the transport of a workflow, and a host reaches the turn through it.
  */
 
 import type { LanguageModelMiddleware, ModelMessage, UIMessageStreamWriter } from "ai";
@@ -20,7 +19,7 @@ import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction
 import { finalText, runLoop, type AgentFinish, type AgentRound, type LoopOptions } from "../loop/run-loop.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
-import { createConversationDisplayRecorder, type ConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
+import type { ConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { conversationRecordTurn, createThreadHistory, type ConversationTurn, type TurnClose } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
@@ -33,7 +32,6 @@ import type { ChatProvider, PromptCachePolicy } from "../providers/types.js";
 import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
-import { AskRejectedError } from "../tools/approval/contract.js";
 import type { AskGateway } from "../tools/approval/gateway.js";
 import { assembleMessages, contextRecordsFor, type AssembledMessages } from "./message-assembly.js";
 import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
@@ -170,7 +168,7 @@ export async function readTurnContext(
     return { analysisContext: analysisState?.context ?? null, runActivityContext };
 }
 
-/** The runtime values of a turn. `assembleCoreRuntime` gives them as `CoreRuntime.chatTurns`. */
+/** The runtime values of a turn. `assembleCoreRuntime` gives them to the turn workflow. */
 export type RunChatTurnDeps = PrepareChatTurnDeps & {
     /** The agent of a turn comes from the thread type, which only the preparation knows. */
     readonly agents: ThreadAgentResolver;
@@ -178,10 +176,7 @@ export type RunChatTurnDeps = PrepareChatTurnDeps & {
     readonly provider: ChatProvider;
     /** Each model call of the turn reaches it, the calls of a sub-agent included. */
     readonly usageRecorder: UsageRecorder;
-    /**
-     * The approval binding of `ctx.ask`. Absent, approval resolves to the deny-by-default realization, which is
-     * how a surface that cannot answer stays a write-only sink.
-     */
+    /** The ledger of the asks of a turn. Absent, the loop denies each call that asks for an approval. */
     readonly askGateway?: AskGateway;
 };
 
@@ -198,26 +193,10 @@ export type OpenChatTurnParams = {
     readonly userInput: string;
 };
 
-/** The transport values of a turn that is open. */
-export type RunOpenChatTurnParams = {
-    readonly session: ChatTurnSession;
-    readonly emit: EmitFn;
-    readonly signal: AbortSignal;
-    /** Who sent the user message. */
-    readonly author?: string;
-    /** When the host opened the turn. Absent counts from the call to {@link openChatTurn}. */
-    readonly startedAtMs?: number;
-    /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
-    readonly promptCache?: PromptCachePolicy;
-};
-
-/** The values of one whole turn. */
-export type RunChatTurnParams = OpenChatTurnParams & RunOpenChatTurnParams;
-
 export type ChatTurnOutcome =
     | { readonly status: "done"; readonly finish: AgentFinish }
     | { readonly status: "aborted"; readonly finish?: AgentFinish }
-    | { readonly status: "failed"; readonly reason: string; readonly cause: unknown };
+    | { readonly status: "failed"; readonly reason: string; readonly code: string; readonly cause: unknown };
 
 /** A turn that ended before its run. It wrote no row and no turn record. */
 export type ChatTurnRefusal =
@@ -238,54 +217,7 @@ export type ChatTurnRan = {
     readonly fallbackText?: string;
 };
 
-export type ChatTurnResult = ChatTurnRefusal | ChatTurnRan;
-
-/**
- * A turn that is prepared, with its agent resolved. Call `run` one time: each call stores a new
- * opening of the same user message.
- */
-export type OpenChatTurn = {
-    readonly kind: "ready";
-    /** The agent that runs the turn. The harness stamps its provenance on the session of the run. */
-    readonly agent: AgentDefinition;
-    readonly run: (params: RunOpenChatTurnParams) => Promise<ChatTurnRan>;
-};
-
-/**
- * Open one chat turn: prepare it and resolve its agent. A refusal comes back before any row of the
- * turn exists, thus a host can answer it before it starts a stream.
- */
-export async function openChatTurn(deps: RunChatTurnDeps, params: OpenChatTurnParams): Promise<OpenChatTurn | ChatTurnRefusal> {
-    const openedAtMs = Date.now();
-    let prepared: PrepareChatTurnResult;
-    try {
-        prepared = await prepareChatTurn(deps, params);
-    } catch (cause) {
-        return { kind: "prepare_failed", cause };
-    }
-    if (prepared.kind === "not_found") return prepared;
-    const agent = deps.agents.forThread(prepared.threadType);
-    if (agent.isErr()) return { kind: "agent_unresolved", threadType: prepared.threadType };
-    const ready = prepared;
-    return {
-        kind: "ready",
-        agent: agent.value,
-        run: (run) =>
-            runOpenTurn(
-                deps,
-                params,
-                ready,
-                agent.value,
-                { session: run.session, author: run.author, startedAtMs: run.startedAtMs ?? openedAtMs, promptCache: run.promptCache },
-                processTransport(deps, params, run, agent.value, ready),
-            ),
-    };
-}
-
-/**
- * How a turn reaches its surface and its store. A turn in process streams to the emit sink of its host, and a turn
- * workflow streams to its durable stream and runs each write as a step.
- */
+/** How a turn reaches its surface and its store. A turn workflow streams to its durable stream and runs each write as a step. */
 export type TurnTransport = {
     readonly signal: AbortSignal;
     /** The emit sink of the loop. */
@@ -317,56 +249,10 @@ export type TurnRunParams = {
     readonly promptCache?: PromptCachePolicy;
 };
 
-function processTransport(
-    deps: RunChatTurnDeps,
-    turn: OpenChatTurnParams,
-    run: RunOpenChatTurnParams,
-    agent: AgentDefinition,
-    prepared: PreparedChatTurn,
-): TurnTransport {
-    const recorder = createConversationDisplayRecorder({ userText: userTextOf(prepared.userMessage), agentId: agent.id, sink: run.emit });
-    const { askGateway } = deps;
-    return {
-        signal: run.signal,
-        emit: recorder.emit,
-        // The text of the root reply streams to the surface. A delta has no source, thus a host frames it
-        // as text of the root agent.
-        onText: (text) => recorder.emit({ type: "text-delta", text }),
-        recorder,
-        durably: (_name, write) => write(),
-        // The approval gets the emit sink of the display recorder, thus the display records each `data-ask`.
-        approve:
-            askGateway === undefined
-                ? undefined
-                : async (request) => {
-                      try {
-                          await askGateway.ask(request, {
-                              analysisId: turn.analysisId,
-                              userId: run.session.identity.user,
-                              threadId: turn.threadId,
-                              signal: run.signal,
-                              emit: recorder.emit,
-                          });
-                          return { kind: "approved" };
-                      } catch (err) {
-                          if (err instanceof AskRejectedError) return { kind: "denied", feedback: err.feedback };
-                          throw err;
-                      }
-                  },
-    };
-}
-
 /**
- * Run one chat turn: open it, store its opening, run the root loop with a round sink that stores
- * each round, and close the turn with its outcome.
+ * Run a prepared turn: store its opening, run the root loop with a round sink that stores each round, and close the
+ * turn with its outcome.
  */
-export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnParams): Promise<ChatTurnResult> {
-    const { analysisId, threadId, userInput, ...run } = params;
-    const opened = await openChatTurn(deps, { analysisId, threadId, userInput });
-    if (opened.kind !== "ready") return opened;
-    return opened.run(run);
-}
-
 export async function runOpenTurn(
     deps: RunChatTurnDeps,
     turn: OpenChatTurnParams,
@@ -472,7 +358,7 @@ export async function runOpenTurn(
         if (isWorkflowCancellation(cause)) throw cause;
         // A provider failure that races an abort stays a failure, thus both facts must hold.
         const aborted = transport.signal.aborted && errorNameOf(cause) === "AbortError";
-        outcome = aborted ? { status: "aborted" } : { status: "failed", reason: failureReasonOf(cause), cause };
+        outcome = aborted ? { status: "aborted" } : { status: "failed", reason: failureReasonOf(cause), code: failureCodeOf(cause), cause };
     }
 
     const durationMs = Date.now() - params.startedAtMs;
@@ -549,6 +435,25 @@ function carriesErrorName(err: unknown, name: string): boolean {
 }
 
 /** The reason of a failed turn. It never holds the error message, because each later turn sends the note to the vendor. */
+/**
+ * The machine code of a failure, which the end frame of a turn carries for a host: the suspend reason of the host for
+ * a billing refusal, else `credential`, `outage`, `internal`, or `interrupted`.
+ */
+function failureCodeOf(err: unknown): string {
+    if (carriesErrorName(err, "TurnCredentialMissingError")) return TURN_INTERRUPTED_REASON;
+    const failure = modelFailureOf(err);
+    switch (failure.kind) {
+        case "billing":
+            return failure.reason;
+        case "credential":
+            return "credential";
+        case "outage":
+            return "outage";
+        case "other":
+            return findProviderError(err) === undefined ? "internal" : "outage";
+    }
+}
+
 function failureReasonOf(err: unknown): string {
     if (carriesErrorName(err, "TurnCredentialMissingError")) return TURN_INTERRUPTED_REASON;
     const failure = modelFailureOf(err);

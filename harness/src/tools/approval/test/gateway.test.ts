@@ -1,46 +1,16 @@
-import { setTimeout as sleep } from "node:timers/promises";
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 import { z } from "zod";
 
 import { withSchema } from "../../../__tests__/setup/postgres.js";
-import type { EmitFn } from "../../../loop/types.js";
-import { AskRejectedError, type AskRequest } from "../contract.js";
-import { createAskGateway, type AskContext, type AskGateway } from "../gateway.js";
+import type { AskRequest } from "../contract.js";
+import { askPartOf, createAskGateway, type AskGateway, type AskScope } from "../gateway.js";
 import { insertPendingAsk, type AskRow } from "../queries.js";
 import { uuidv7 } from "../uuidv7.js";
-import { presentAt, presentLast } from "../../../lib/present.js";
-
-// The `data-ask` payload the gateway emits inside a `ChatDataPart` — the flat
-// fields without the part-envelope `type`, as a surface would read them.
-type AskPartData = {
-    readonly id: string;
-    readonly title: string;
-    readonly command: string;
-    readonly detail?: string;
-    readonly status: string;
-    readonly reply?: string;
-};
-
-const AskPartDataSchema = z.object({
-    id: z.string(),
-    title: z.string(),
-    command: z.string(),
-    detail: z.string().optional(),
-    status: z.string(),
-    reply: z.string().optional(),
-});
 
 const AskStateRowSchema = z.object({ status: z.string(), reply: z.json() });
 
 const CountRowSchema = z.object({ n: z.number() });
-
-type StartedAsk = {
-    readonly promise: Promise<{ kind: "once" | "always" }>;
-    readonly parts: AskPartData[];
-    readonly controller: AbortController;
-};
 
 // A fresh schema per test isolates the whole-ledger reads (`pending`,
 // `sweepExpired`) so their assertions can be exact.
@@ -48,23 +18,14 @@ let pool: Pool;
 let gateway: AskGateway;
 let drop: () => Promise<void>;
 
-// Every ask started but not explicitly settled is torn down here, so a dropped
-// pool never races an in-flight poll into an unhandled rejection.
-let controllers: AbortController[];
-let settled: Promise<unknown>[];
-
 beforeEach(async () => {
     const ctx = await withSchema("ask_gateway");
     pool = ctx.pool;
     drop = ctx.drop;
     gateway = createAskGateway({ pool });
-    controllers = [];
-    settled = [];
 });
 
 afterEach(async () => {
-    for (const c of controllers) c.abort();
-    await Promise.allSettled(settled);
     await drop();
 });
 
@@ -74,33 +35,18 @@ const REQUEST: AskRequest = { title: "Run a command", command: "rm -rf /tmp/scra
 const USER_A = "user-A";
 const USER_B = "user-B";
 
-/** Start `ask` without awaiting, collecting its emitted `data-ask` parts. */
-function startAsk(request: AskRequest, analysisId = "analysis-A", userId = USER_A): StartedAsk {
-    const controller = new AbortController();
-    const parts: AskPartData[] = [];
-    const emit: EmitFn = (event) => {
-        if (event.type === "data-ask") parts.push(AskPartDataSchema.parse(event.data));
-    };
-    const ctx: AskContext = { analysisId, userId, signal: controller.signal, emit };
-    const promise = gateway.ask(request, ctx);
-    controllers.push(controller);
-    // A swallowing copy so a rejection the test itself awaits is not also seen as
-    // unhandled during teardown.
-    settled.push(promise.catch(() => {}));
-    return { promise, parts, controller };
+function scope(analysisId = "analysis-A", userId = USER_A): AskScope {
+    return { analysisId, userId };
 }
 
-/** Poll the ledger until a pending ask (optionally for one analysis) appears; return its id. */
-async function waitForPendingId(analysisId?: string): Promise<string> {
-    const deadline = Date.now() + 5000;
-    for (;;) {
-        const asks = await gateway.pending();
-        const match = analysisId === undefined ? asks : asks.filter((a) => a.analysisId === analysisId);
-        const latest = match.at(-1);
-        if (latest !== undefined) return latest.id;
-        if (Date.now() > deadline) throw new Error("timed out waiting for a pending ask");
-        await sleep(15);
-    }
+/** Raise an ask under a new id. */
+async function raise(
+    request: AskRequest,
+    analysisId = "analysis-A",
+    userId = USER_A,
+): Promise<{ readonly id: string; readonly raised: "granted" | "pending" }> {
+    const id = uuidv7();
+    return { id, raised: await gateway.raise(id, request, scope(analysisId, userId)) };
 }
 
 async function selectRow(id: string): Promise<{ status: string; reply: unknown } | undefined> {
@@ -114,84 +60,49 @@ async function countAsks(where = ""): Promise<number> {
     return CountRowSchema.parse(res.rows[0]).n;
 }
 
-// ── 5.1 — deferred round-trip, one case per reply variant ────────────
+describe("createAskGateway — the raise of a turn", () => {
+    it("raises a pending ask under its id, and a second raise of the id changes nothing", async () => {
+        const { id, raised } = await raise(REQUEST);
 
-describe("createAskGateway — deferred round-trip", () => {
-    it("resolves a suspended ask with the once reply an out-of-band answer writes", async () => {
-        const started = startAsk(REQUEST);
-        const id = await waitForPendingId();
-
-        expect(await gateway.answer(id, { kind: "once" })).toBe("applied");
-
-        expect(await started.promise).toEqual({ kind: "once" });
-        // The part is emitted pending, then reconciled to its terminal status under
-        // the same id — the out-of-band path a surface renders and folds latest-wins.
-        expect(started.parts.map((p) => p.status)).toEqual(["pending", "resolved"]);
-        expect(started.parts.map((p) => p.id)).toEqual([id, id]);
-        expect(presentAt(started.parts, 0).command).toBe(REQUEST.command);
-        // Only the terminal part names the reply kind.
-        expect(started.parts[0]).not.toHaveProperty("reply");
-        expect(presentAt(started.parts, 1).reply).toBe("once");
+        expect(raised).toBe("pending");
+        expect(await gateway.raise(id, { ...REQUEST, command: "a different command" }, scope())).toBe("pending");
+        expect(await countAsks()).toBe(1);
+        expect((await gateway.pending()).map((ask) => [ask.id, ask.command])).toEqual([[id, REQUEST.command]]);
     });
 
-    it("resolves with the always reply an out-of-band answer writes", async () => {
-        const started = startAsk(REQUEST);
-        const id = await waitForPendingId();
+    it("records the once, the always, and the reject reply of an answer", async () => {
+        for (const reply of [{ kind: "once" }, { kind: "always" }, { kind: "reject", feedback: "not this time" }] as const) {
+            const { id } = await raise({ ...REQUEST, command: `command ${reply.kind}` });
 
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
+            expect(await gateway.answer(id, reply)).toBe("applied");
 
-        expect(await started.promise).toEqual({ kind: "always" });
-        expect(started.parts.at(-1)).toMatchObject({ status: "resolved", reply: "always" });
+            expect(await selectRow(id)).toEqual({ status: reply.kind === "reject" ? "rejected" : "resolved", reply });
+        }
     });
 
-    it("throws AskRejectedError carrying the feedback when the answer rejects", async () => {
-        const started = startAsk(REQUEST);
-        const id = await waitForPendingId();
+    it("expires and aborts a pending ask, and an answer after that is already_terminal", async () => {
+        const expired = await raise(REQUEST);
+        const aborted = await raise({ ...REQUEST, command: "second command" });
 
-        expect(await gateway.answer(id, { kind: "reject", feedback: "not this time" })).toBe("applied");
+        await gateway.expire(expired.id);
+        await gateway.abort(aborted.id);
 
-        const caught = await started.promise.then(
-            () => undefined,
-            (e: unknown) => e,
-        );
-        if (!(caught instanceof AskRejectedError)) throw new Error("the denial rejects with AskRejectedError");
-        expect(caught.feedback).toBe("not this time");
-        // The part shows the kind of the reply, and never the feedback, which is for the model.
-        const terminal = presentLast(started.parts);
-        expect(terminal).toMatchObject({ status: "rejected", reply: "reject" });
-        expect(JSON.stringify(terminal)).not.toContain("not this time");
-    });
-
-    it("emits an aborted part with no reply when the turn aborts", async () => {
-        const started = startAsk(REQUEST);
-        await waitForPendingId();
-
-        started.controller.abort();
-        await started.promise.catch(() => {});
-
-        const terminal = presentLast(started.parts);
-        expect(terminal.status).toBe("aborted");
-        expect(terminal).not.toHaveProperty("reply");
+        expect((await selectRow(expired.id))?.status).toBe("expired");
+        expect((await selectRow(aborted.id))?.status).toBe("aborted");
+        expect(await gateway.answer(expired.id, { kind: "once" })).toBe("already_terminal");
+        expect(await gateway.pending()).toHaveLength(0);
     });
 });
 
-// ── 5.2 — the answer / pending ledger contract ───────────────────────
-
 describe("createAskGateway — answer and pending contract", () => {
     it("applies a pending answer, then reports already_terminal without overriding the row", async () => {
-        const started = startAsk(REQUEST);
-        const id = await waitForPendingId();
+        const { id } = await raise(REQUEST);
 
         expect(await gateway.answer(id, { kind: "once" })).toBe("applied");
-        expect(await started.promise).toEqual({ kind: "once" });
-
-        // A second, differing answer on the same id is a reported no-op — never an
-        // override.
+        // A second, differing answer on the same id is a reported no-op — never an override.
         expect(await gateway.answer(id, { kind: "reject", feedback: "too late" })).toBe("already_terminal");
 
-        const row = await selectRow(id);
-        expect(row?.status).toBe("resolved");
-        expect(row?.reply).toEqual({ kind: "once" });
+        expect(await selectRow(id)).toEqual({ status: "resolved", reply: { kind: "once" } });
     });
 
     it("reports not_found for an unknown id and writes nothing", async () => {
@@ -200,41 +111,23 @@ describe("createAskGateway — answer and pending contract", () => {
     });
 
     it("enumerates only unresolved asks", async () => {
-        const answered = startAsk(REQUEST, "analysis-A");
-        const idAnswered = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(idAnswered, { kind: "once" })).toBe("applied");
-        await answered.promise;
+        const answered = await raise(REQUEST, "analysis-A");
+        expect(await gateway.answer(answered.id, { kind: "once" })).toBe("applied");
+        const stillPending = await raise({ ...REQUEST, command: "second command" }, "analysis-B");
 
-        const stillPending = startAsk({ ...REQUEST, command: "second command" }, "analysis-B");
-        const idPending = await waitForPendingId("analysis-B");
-
-        const enumerated = await gateway.pending();
-        expect(enumerated.map((a) => a.id)).toEqual([idPending]);
-
-        // Settle the survivor so teardown has nothing racing the drop.
-        expect(await gateway.answer(idPending, { kind: "once" })).toBe("applied");
-        expect(await stillPending.promise).toEqual({ kind: "once" });
+        expect((await gateway.pending()).map((a) => a.id)).toEqual([stillPending.id]);
     });
 
     it("reports the user each unresolved ask was raised for", async () => {
-        const forA = startAsk(REQUEST, "analysis-A", USER_A);
-        const idA = await waitForPendingId("analysis-A");
-        const forB = startAsk({ ...REQUEST, command: "second command" }, "analysis-B", USER_B);
-        const idB = await waitForPendingId("analysis-B");
+        const forA = await raise(REQUEST, "analysis-A", USER_A);
+        const forB = await raise({ ...REQUEST, command: "second command" }, "analysis-B", USER_B);
 
         // A host reads this to route each ask to the person who can answer it.
         const userById = new Map((await gateway.pending()).map((ask) => [ask.id, ask.userId]));
-        expect(userById.get(idA)).toBe(USER_A);
-        expect(userById.get(idB)).toBe(USER_B);
-
-        // Settle both so teardown has nothing racing the drop.
-        expect(await gateway.answer(idA, { kind: "once" })).toBe("applied");
-        expect(await gateway.answer(idB, { kind: "once" })).toBe("applied");
-        await Promise.all([forA.promise, forB.promise]);
+        expect(userById.get(forA.id)).toBe(USER_A);
+        expect(userById.get(forB.id)).toBe(USER_B);
     });
 });
-
-// ── 5.3 — standing grants, per user inside one analysis ──────────────
 
 describe("createAskGateway — standing grants", () => {
     const GRANTED: AskRequest = { title: "Deploy", command: "git push --force", detail: undefined };
@@ -247,195 +140,100 @@ describe("createAskGateway — standing grants", () => {
         return CountRowSchema.parse(res.rows[0]).n;
     }
 
-    it("records a grant on always, then auto-approves a matching ask without pausing and logs the audit row", async () => {
-        const first = startAsk(GRANTED, "analysis-A");
-        const id = await waitForPendingId("analysis-A");
+    /** Raise `request`, and answer it `always`. */
+    async function grant(request: AskRequest, analysisId = "analysis-A", userId = USER_A): Promise<void> {
+        const { id } = await raise(request, analysisId, userId);
         expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await first.promise).toEqual({ kind: "always" });
+    }
+
+    it("records a grant on always, then grants a matching raise at once and logs the audit row", async () => {
+        await grant(GRANTED);
 
         expect(await grantCount("analysis-A", GRANTED.command)).toBe(1);
-
-        // The matching ask returns fast and never surfaces a prompt.
         const beforeResolved = await countAsks(`WHERE status = 'resolved'`);
-        const controller = new AbortController();
-        const parts: AskPartData[] = [];
-        const emit: EmitFn = (event) => {
-            if (event.type === "data-ask") parts.push(AskPartDataSchema.parse(event.data));
-        };
-        const reply = await gateway.ask(GRANTED, { analysisId: "analysis-A", userId: USER_A, signal: controller.signal, emit });
+        const { id, raised } = await raise(GRANTED);
 
-        expect(reply).toEqual({ kind: "always" });
-        // No prompt: the one part is already settled, thus the transcript shows the standing grant.
-        const [settled] = parts;
-        expect(settled?.id).toBeTypeOf("string");
-        expect(settled).toMatchObject({ title: GRANTED.title, command: GRANTED.command, status: "resolved", reply: "always" });
+        expect(raised).toBe("granted");
         expect(await gateway.pending()).toHaveLength(0);
         // The short-circuit still records a resolved audit row.
+        expect(await selectRow(id)).toMatchObject({ status: "resolved" });
         expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
     });
 
     it("keeps the grant across a simulated restart (fresh gateway, same pool)", async () => {
-        const first = startAsk(GRANTED, "analysis-A");
-        const id = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await first.promise).toEqual({ kind: "always" });
+        await grant(GRANTED);
 
         const restarted = createAskGateway({ pool });
-        const controller = new AbortController();
-        const reply = await restarted.ask(GRANTED, { analysisId: "analysis-A", userId: USER_A, signal: controller.signal, emit: () => {} });
 
-        expect(reply).toEqual({ kind: "always" });
+        expect(await restarted.raise(uuidv7(), GRANTED, scope())).toBe("granted");
         expect(await restarted.pending()).toHaveLength(0);
     });
 
     it("does not apply a grant across analyses", async () => {
-        const first = startAsk(GRANTED, "analysis-A");
-        const id = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await first.promise).toEqual({ kind: "always" });
+        await grant(GRANTED, "analysis-A");
 
         // The same command in a different analysis pauses as if no grant existed.
-        const other = startAsk(GRANTED, "analysis-Z");
-        const otherId = await waitForPendingId("analysis-Z");
-        expect(otherId).toBeString();
-
-        expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
-        expect(await other.promise).toEqual({ kind: "once" });
+        expect((await raise(GRANTED, "analysis-Z")).raised).toBe("pending");
     });
 
     it("does not apply the grant of one user to another user in the same analysis", async () => {
-        const first = startAsk(GRANTED, "analysis-A", USER_A);
-        const id = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await first.promise).toEqual({ kind: "always" });
+        await grant(GRANTED, "analysis-A", USER_A);
 
         expect(await grantCount("analysis-A", GRANTED.command, USER_A)).toBe(1);
         expect(await grantCount("analysis-A", GRANTED.command, USER_B)).toBe(0);
-
-        // The same command in the same analysis, for a different person: the ask
-        // pauses as if no grant existed. This is the whole point of the user key.
-        const other = startAsk(GRANTED, "analysis-A", USER_B);
-        const otherId = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
-        expect(await other.promise).toEqual({ kind: "once" });
+        // The same command in the same analysis, for a different person, pauses. This is the whole point of the user key.
+        expect((await raise(GRANTED, "analysis-A", USER_B)).raised).toBe("pending");
     });
 
     it("records the grant under the user the ask was raised for", async () => {
         // `answer` takes no identity — the ledger row is what names the person, so a
         // decision recorded by anyone lands on the user of the paused turn.
-        const started = startAsk(GRANTED, "analysis-A", USER_B);
-        const id = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await started.promise).toEqual({ kind: "always" });
+        await grant(GRANTED, "analysis-A", USER_B);
 
         expect(await grantCount("analysis-A", GRANTED.command, USER_B)).toBe(1);
         expect(await grantCount("analysis-A", GRANTED.command, USER_A)).toBe(0);
-
-        // The next ask of that same person short-circuits with no prompt.
-        const reply = await gateway.ask(GRANTED, {
-            analysisId: "analysis-A",
-            userId: USER_B,
-            signal: new AbortController().signal,
-            emit: () => {},
-        });
-        expect(reply).toEqual({ kind: "always" });
+        expect((await raise(GRANTED, "analysis-A", USER_B)).raised).toBe("granted");
     });
 
     // A grant key lets a tool bless a broader class than the one command it displays.
     const WIDE_KEY = "fs:write";
     const SHOWN: AskRequest = { title: "Write a file", command: "write_file report/a.txt", grantKey: WIDE_KEY };
 
-    it("keys the grant on grantKey, auto-approving a different command that shares it", async () => {
-        const first = startAsk(SHOWN, "analysis-A");
-        const id = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await first.promise).toEqual({ kind: "always" });
+    it("keys the grant on grantKey, granting a different command that shares it", async () => {
+        await grant(SHOWN);
 
         // The grant lives under the grant key, not the displayed command.
         expect(await grantCount("analysis-A", WIDE_KEY)).toBe(1);
         expect(await grantCount("analysis-A", SHOWN.command)).toBe(0);
-
-        // A later ask with a DIFFERENT command but the SAME grant key short-circuits:
-        // no prompt surfaces and a resolved audit row is still written.
-        const beforeResolved = await countAsks(`WHERE status = 'resolved'`);
-        const parts: AskPartData[] = [];
-        const emit: EmitFn = (event) => {
-            if (event.type === "data-ask") parts.push(AskPartDataSchema.parse(event.data));
-        };
         const later: AskRequest = { title: "Write a file", command: "write_file report/b.txt", grantKey: WIDE_KEY };
-        const reply = await gateway.ask(later, { analysisId: "analysis-A", userId: USER_A, signal: new AbortController().signal, emit });
-
-        expect(reply).toEqual({ kind: "always" });
-        const [settled] = parts;
-        expect(settled?.id).toBeTypeOf("string");
-        expect(settled).toMatchObject({ title: later.title, command: later.command, status: "resolved", reply: "always" });
-        expect(await gateway.pending()).toHaveLength(0);
-        expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
-
+        expect((await raise(later)).raised).toBe("granted");
         // The same grant key in a different analysis pauses as if no grant existed.
-        const crossed = startAsk(later, "analysis-Z");
-        const crossedId = await waitForPendingId("analysis-Z");
-        expect(await gateway.answer(crossedId, { kind: "once" })).toBe("applied");
-        expect(await crossed.promise).toEqual({ kind: "once" });
+        expect((await raise(later, "analysis-Z")).raised).toBe("pending");
     });
 
     it("keys the grant on command when no grantKey is supplied, and never broader", async () => {
-        // GRANTED carries no grantKey — the pre-grantKey behavior.
-        const first = startAsk(GRANTED, "analysis-A");
-        const id = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
-        expect(await first.promise).toEqual({ kind: "always" });
+        await grant(GRANTED);
 
-        // The grant keys on the command itself.
         expect(await grantCount("analysis-A", GRANTED.command)).toBe(1);
-
-        // A different command in the same analysis is not covered — the grant is
-        // exactly the command, nothing broader — so it pauses for its own decision.
-        const other = startAsk({ ...GRANTED, command: "git push origin main" }, "analysis-A");
-        const otherId = await waitForPendingId("analysis-A");
-        expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
-        expect(await other.promise).toEqual({ kind: "once" });
-    });
-
-    it("emits the command in the data-ask part and never the grant key", async () => {
-        const started = startAsk(SHOWN, "analysis-A");
-        const id = await waitForPendingId("analysis-A");
-        // Settle so teardown never races the drop.
-        expect(await gateway.answer(id, { kind: "once" })).toBe("applied");
-        await started.promise;
-
-        expect(started.parts.length).toBeGreaterThan(0);
-        for (const part of started.parts) {
-            expect(part.command).toBe(SHOWN.command);
-            expect(part).not.toHaveProperty("grantKey");
-            expect(JSON.stringify(part)).not.toContain(WIDE_KEY);
-        }
+        // A different command in the same analysis is not covered — the grant is exactly the command.
+        expect((await raise({ ...GRANTED, command: "git push origin main" })).raised).toBe("pending");
     });
 });
 
-// ── 5.4 — turn abort ─────────────────────────────────────────────────
+describe("askPartOf", () => {
+    it("shows the command and never the grant key, and only a terminal part names the reply", () => {
+        const request: AskRequest = { title: "Write a file", command: "write_file report/a.txt", grantKey: "fs:write" };
 
-describe("createAskGateway — abort", () => {
-    it("marks the row aborted and re-throws the cancellation, not AskRejectedError", async () => {
-        const started = startAsk(REQUEST);
-        const id = await waitForPendingId();
+        const pending = askPartOf("ask-1", request, "pending");
+        const resolved = askPartOf("ask-1", request, "resolved", "once");
 
-        const reason = new Error("turn cancelled");
-        started.controller.abort(reason);
-
-        const caught = await started.promise.then(
-            () => undefined,
-            (e: unknown) => e,
-        );
-        expect(caught).toBe(reason);
-        expect(caught).not.toBeInstanceOf(AskRejectedError);
-
-        const row = await selectRow(id);
-        expect(row?.status).toBe("aborted");
+        expect(pending).toEqual({ type: "data-ask", id: "ask-1", title: request.title, command: request.command, status: "pending" });
+        expect(resolved).toMatchObject({ id: "ask-1", status: "resolved", reply: "once" });
+        expect(JSON.stringify([pending, resolved])).not.toContain("fs:write");
     });
 });
 
-// ── 5.5 — boot sweep ─────────────────────────────────────────────────
+// ── The boot sweep ────────────────────────────────────────────────────
 
 describe("createAskGateway — sweep", () => {
     const STALE = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();

@@ -36,21 +36,6 @@ export type PendingAsk = {
     readonly createdAt: string;
 };
 
-/** The status + recorded reply a poll reads to observe a decision. */
-export type AskResolution = {
-    readonly status: AskStatus;
-    readonly reply: AskReply | null;
-};
-
-/** The reply column of `cortex_asks`: the JSONB the answer write stored. */
-const AskReplySchema: z.ZodType<AskReply> = z.union([
-    z.object({ kind: z.literal("once") }),
-    z.object({ kind: z.literal("always") }),
-    z.object({ kind: z.literal("reject"), feedback: z.string().optional() }),
-]);
-
-const AskResolutionRowSchema = z.object({ status: z.enum(["pending", "resolved", "rejected", "aborted", "expired"]), reply: AskReplySchema.nullable() });
-
 /** The columns of the pending enumeration, as the SELECT spells them. */
 const PendingAskRowSchema = z.object({
     id: z.string(),
@@ -65,12 +50,6 @@ const PendingAskRowSchema = z.object({
 
 /** The columns the guarded UPDATE returns for the standing-grant insert. */
 const GrantedRowSchema = z.object({ analysis_id: z.string(), user_id: z.string(), grant_key: z.string() });
-
-function mapAskResolutionRow(row: unknown): AskResolution | null {
-    if (row === null || row === undefined) return null;
-    const parsed = AskResolutionRowSchema.parse(row);
-    return { status: parsed.status, reply: parsed.reply ?? null };
-}
 
 /** Column payload shared by the pending insert and the grant short-circuit insert. */
 export type AskRow = {
@@ -136,19 +115,6 @@ export function selectGrant(querier: Querier, analysisId: string, userId: string
             values: [analysisId, userId, grantKey],
         });
         return (result.rowCount ?? 0) > 0;
-    });
-}
-
-/** Read a row's current status + recorded reply. `null` when no such row exists. */
-export function selectAskResolution(querier: Querier, id: string): ResultAsync<AskResolution | null, DbError> {
-    return tryQuery("asks.selectResolution", async () => {
-        const result = await querier.query({
-            text: `SELECT status, reply FROM cortex_asks WHERE id = $1`,
-            values: [id],
-        });
-        const row = mapAskResolutionRow(result.rows[0]);
-        if (!row) return null;
-        return row;
     });
 }
 
