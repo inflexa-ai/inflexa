@@ -72,8 +72,8 @@ block first, and then each block under it. A reader of the record then
 places each block by its own event. A refused add emits nothing.
 
 The `create-session` event MUST come from the site that writes the thread
-row, one time for each session. The site emits it after the row lands, and
-before any act of that session. A refused write emits nothing, because no
+row. The site emits it after the row lands, and before any act of that
+session. A refused write emits nothing, because no
 session exists. The store of the threads MUST NOT emit, because the state
 layer knows no seam.
 
@@ -96,6 +96,25 @@ approval, read before the launch. It is the one session event that carries a
 time, because the record must place the approval before the start of its run.
 An approval whose plan has an active run emits nothing, and a refused approval
 emits nothing.
+
+A durable step can stop after its act lands and before its emit. A rerun of
+the step then finds the act. Thus a rerun that finds a landed act MUST emit
+the events of that act again. This applies to the spawn of a report session,
+to an authoring act that lands the document, and to a derivation. A consumer
+gets each of these acts at least one time, and it can get an act two times.
+
+#### Scenario: A rerun of a landed authoring act emits again
+
+- **GIVEN** an `add_block` call whose step landed its block and then stopped
+- **WHEN** the step runs again and finds the stored result of the call
+- **THEN** the member receives the `add-block` event of the block again
+- **AND** the draft holds the block one time
+
+#### Scenario: A rerun of a recorded derivation emits again
+
+- **GIVEN** a `derive_table` call whose record landed
+- **WHEN** the call runs again and finds its record
+- **THEN** the member receives the `run-derivation` event of the record again
 
 #### Scenario: The creation of a conversation emits
 
