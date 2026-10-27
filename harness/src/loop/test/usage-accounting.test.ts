@@ -238,7 +238,9 @@ describe("runLoop usage records — delivered as calls complete", () => {
         expect(records).toHaveLength(2);
     });
 
-    it("records an aborted reply that reported usage", async () => {
+    // The AI SDK cancels the stream of the request when the signal fires, thus the loop reads no part of the
+    // reply. A provider whose stream an abort cuts has sent no usage either.
+    it("records nothing for a reply that an abort cut before the loop read it", async () => {
         const { recorder, records } = recordingRecorder();
         const controller = new AbortController();
         const script: ScriptStep[] = [
@@ -251,8 +253,7 @@ describe("runLoop usage records — delivered as calls complete", () => {
         const { finish } = await runLoop(agentDef([]), GO, makeSession(), opts(scriptedModel(script).provider, recorder, { signal: controller.signal }));
 
         expect(finish.reason).toBe("aborted");
-        expect(records).toHaveLength(1);
-        expect(presentFirst(records).usage).toEqual({ inputTokens: 9, outputTokens: 4 });
+        expect(records).toHaveLength(0);
     });
 
     it("folds the tokens of an aborted reply into the finish rollup, the same as the record", async () => {

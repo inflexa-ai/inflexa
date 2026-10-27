@@ -49,12 +49,12 @@
         "typecheck": "inflexa-typecheck"
     },
     "dependencies": {
-        "@ai-sdk/anthropic": "^4.0.62",
-        "@ai-sdk/openai": "^4.0.74",
-        "@ai-sdk/openai-compatible": "^3.0.55",
-        "@ai-sdk/otel": "^1.0.113",
-        "@ai-sdk/provider": "^4.0.18",
-        "@ai-sdk/provider-utils": "5.0.47",
+        "@ai-sdk/anthropic": "^4.0.89",
+        "@ai-sdk/openai": "^4.0.103",
+        "@ai-sdk/openai-compatible": "^3.0.79",
+        "@ai-sdk/otel": "^1.0.154",
+        "@ai-sdk/provider": "^4.0.34",
+        "@ai-sdk/provider-utils": "5.0.69",
         "@anthropic-ai/sdk": "^0.116.0",
         "@dbos-inc/dbos-sdk": "^5.3.0",
         "@dbos-inc/vercel-ai": "0.5.4",
@@ -76,7 +76,7 @@
         "@types/pg": "^8.20.0",
         "@types/turndown": "^5.0.6",
         "ag-grid-community": "36.1.0",
-        "ai": "^7.0.113",
+        "ai": "^7.0.154",
         "cheerio": "^1.2.0",
         "dockerode": "^4.0.12",
         "echarts": "6.1.0",
@@ -105,7 +105,7 @@
         "uuid": "^11.1.1"
     },
     "devDependencies": {
-        "@ai-sdk/amazon-bedrock": "^5.0.93",
+        "@ai-sdk/amazon-bedrock": "^5.0.125",
         "@inflexa-ai/oxlint-plugin": "0.8.0",
         "@inflexa-ai/typecheck": "0.8.0",
         "@types/bun": "latest",
