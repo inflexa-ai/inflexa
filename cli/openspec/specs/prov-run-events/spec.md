@@ -17,8 +17,7 @@ cancels, because no replay fires them again:
 - `prov.run_started` — carries `run: ProvRunRef { runId, planSummary?, startedAtMs }`.
 - `prov.run_completed` — carries `outcome: ProvRunOutcome { runId, status,
   completedAtMs, durationMs? }` where `status` is the harness's terminal run
-  vocabulary: `"completed" | "partial" | "failed" | "canceled" |
-  "suspended_insufficient_funds"`.
+  vocabulary: `"completed" | "partial" | "failed" | "canceled"`.
 - `prov.step_completed` — carries `outcome: ProvStepOutcome { runId, stepId, status,
   completedAtMs, durationMs? }` where `status` is the step-settlement vocabulary
   `"completed" | "failed" | "canceled"`, and `model: ProvModelId` — the LLM that

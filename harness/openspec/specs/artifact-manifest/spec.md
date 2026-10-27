@@ -64,7 +64,9 @@ The ledger is a thin index: identity (`path`, `hash`, `size`), provenance
 (`source_step`, `source_run`), and optional external registration state
 (`artifact_id`, `file_id`). It stores no file descriptions — the per-analysis
 vector index is the sole source of truth for descriptions and discovery.
+
 ## Requirements
+
 ### Requirement: The step manifest is a disk walk of the writable step directory
 
 The per-step artifact manifest SHALL be produced by `walkStepArtifacts`, which
@@ -249,8 +251,8 @@ no external id, and it MUST return that refusal as an `err` of the variant `refu
 ledger with `artifact_id = NULL`. The step then records the failure with the reason of the host.
 
 If a write of the local ledger fails, `registerStepArtifacts` MUST stop at that write. It MUST return the `DbError` as
-an `err` of the variant `ledger_failed`, and it MUST NOT throw. The step then fails the same as for a refusal that does
-not suspend.
+an `err` of the variant `ledger_failed`, and it MUST NOT throw. The step then fails the same as for a refusal with
+`suspend: false`.
 
 The registry's outcome is partial by contract — it commits per leaf and per
 activity, with no batch-wide rollback — so `registered` and `failed` arriving
@@ -314,8 +316,9 @@ because one implementation chose not to log it.
 sandbox-step body SHALL then `ArtifactRegistry.sync` the step's artifacts. Registration is fail-fast. A gate `err`
 from `register` or a non-zero `externalFailed` MUST fail the registration, with the reason of the host or the per-file
 failure detail. Then the sandbox-step body MUST remove the sandbox, mark the step failed, and throw, so that the
-fail-fast cascade of the parent starts. If the gate `err` has `suspend: true`, the step MUST suspend in place of the
-failure, as the `workflow-suspension` capability describes. The OSS `createNoopArtifactRegistry` returns `externalFailed: 0` and never
+fail-fast cascade of the parent starts. If the gate `err` has `suspend: true`, the step MUST pause in place of the
+failure, and it MUST register again after the resume, as the `work-pause`
+capability describes. The OSS `createNoopArtifactRegistry` returns `externalFailed: 0` and never
 trips this.
 
 The sandbox-step body MUST try the byte sync after each registration, also after a failed registration. Sync selects
@@ -369,9 +372,10 @@ only signal that degradation occurred.
 
 #### Scenario: A register err with suspend suspends the step
 
-- **GIVEN** a registry whose `register` gives `errAsync({ reason: "r", suspend: true })`
-- **WHEN** the sandbox-step body registers the artifacts of the step
-- **THEN** the step suspends with the reason `r`, and it does not fail
+- **GIVEN** a registry whose `register` gives `errAsync({ reason: "r", suspend: true })`, and then `ok`
+- **WHEN** the sandbox-step body registers the artifacts of the step, and the user resumes the run
+- **THEN** the step pauses with the cause `host` and the reason `r`, and it does not fail
+- **AND** after the resume, the body calls `register` again, and the step completes
 
 #### Scenario: A sync err does not fail the step
 

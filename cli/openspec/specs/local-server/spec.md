@@ -500,7 +500,7 @@ A refusal before the turn opens MUST be a JSON error:
 
 After the open, the stream MUST carry the frames of the turn and of its sub-agents. It MUST end with one `finish` frame for a turn that ended or aborted. It MUST end with one `error` frame for a turn that failed, with the remedy that the server knows.
 
-A client that disconnects MUST stop only the delivery of the frames, never the turn. `GET {T}/turns/:turnId/stream` MUST give the frames of a turn that the registry holds again, from the start of the turn. `POST {T}/turns/:turnId/abort` MUST stop the turn for each client. `GET {T}/turns` and `GET {T}/turns/:turnId` MUST give the running turns and the newest 100 ended turns. Each one has the status, the usage, and the failure detail. The answer of an ask MUST reach the turn that waits for it, through the chat turns of the harness.
+A client that disconnects MUST stop only the delivery of the frames, never the turn. `GET {T}/turns/:turnId/stream` MUST give the frames of a turn of the thread again, from the start of the turn. This includes a turn that a recovery runs and the registry does not hold. The stream of a paused turn MUST carry its `data-pause` frames, and it MUST stay open while the turn waits. `POST {T}/turns/:turnId/abort` MUST stop the turn for each client. `GET {T}/turns` and `GET {T}/turns/:turnId` MUST give the running turns and the newest 100 ended turns. Each one has the status, the usage, and the failure detail. The answer of an ask MUST reach the turn that waits for it, through the chat turns of the harness.
 
 At the end of each turn, the server MUST start the flush of the package adds that the turn queued.
 
@@ -527,36 +527,12 @@ At the end of each turn, the server MUST start the flush of the package adds tha
 - **WHEN** a client sends `GET {T}/turns/:turnId/stream`
 - **THEN** it gets each frame of the turn from its start, and a turn of a different thread gives 404
 
-### Requirement: A rename or a delete waits for no work
+#### Scenario: A client reads a paused turn after a restart
 
-A rename of an analysis and a delete of an analysis move or remove its workspace folder. The server MUST refuse them with 409 `busy` while work can hold that folder, and `details.reasons` MUST name the work:
-
-- `chat_turn`: a chat turn of the analysis runs
-- `data_profile`: a profile drive is queued or runs, or the profile ledger row is `running`
-- `run`: an active run has a live workflow
-- `profile_state_unreadable` or `run_state_unreadable`: a ledger read failed
-
-An unreadable state MUST read as busy. With no runtime, only the turn and the profile drive can hold the folder.
-
-One query MUST count the live durable work, for one analysis or for each analysis. The busy gate and the activity of a stop MUST both read it. A workflow is live when its status is `PENDING`, `ENQUEUED`, or `DELAYED`. A run counts when its ledger status is `running`, and a live workflow stands behind it. That workflow is the run, or one of its `<runId>-N` children. A crashed host leaves a `running` row for ever, thus the status of the workflow is the record of liveness. A `suspended_insufficient_funds` run is terminal, thus it never counts.
-
-#### Scenario: A rename during a run
-
-- **GIVEN** an analysis with a run whose workflow is live
-- **WHEN** a client renames the analysis
-- **THEN** the server answers 409 `busy` with the reason `run`
-
-#### Scenario: A stale run row does not block
-
-- **GIVEN** an analysis with a `running` run row whose workflow is terminal
-- **WHEN** a client renames the analysis
-- **THEN** the server does not give the reason `run`
-
-#### Scenario: A suspended run does not block
-
-- **GIVEN** an analysis whose only run row reads `suspended_insufficient_funds`
-- **WHEN** a client renames the analysis
-- **THEN** the server does not give the reason `run`
+- **GIVEN** a turn that waits in `paused`, and a server that started again
+- **WHEN** a client sends `GET {T}/turns/:turnId/stream`
+- **THEN** it gets each frame of the turn from its start, with the last `data-pause` frame
+- **AND** the stream stays open while the turn waits
 
 ### Requirement: Polls take the place of the bus
 
@@ -573,6 +549,7 @@ When the server that the boot store saw ready answers the probe, the tick MUST a
 - the analysis, `GET {A}` with `touch=false`, per `workspace-context`
 - the usage of the open session, per `sidebar-live`
 - the turns of the open thread (`GET {T}/turns`, a page of one) and its row (`GET {T}`), per `tui-harness-chat`
+- the paused work of the analysis, `GET {A}/paused-work`, per `tui-harness-chat`
 
 Thus an idle TUI sees the work of a different client at most 15 s late.
 
@@ -2671,3 +2648,59 @@ The server MUST read from the store only the turns of the page. Thus a request c
 
 - **WHEN** a client sends `GET {T}/messages` for a thread that has no live row
 - **THEN** the server answers 404 with the error `not_found`
+
+### Requirement: A rename or a delete waits for no live work
+
+A rename of an analysis and a delete of an analysis move or remove its workspace folder. The server MUST refuse them with 409 `busy` while work can hold that folder, and `details.reasons` MUST name the work:
+
+- `chat_turn`: a chat turn of the analysis runs, or waits in a pause
+- `data_profile`: a profile drive is queued or runs, or the profile ledger row is `running`
+- `run`: an active run has a live workflow
+- `profile_state_unreadable` or `run_state_unreadable`: a ledger read failed
+
+An unreadable state MUST read as busy. With no runtime, only the turn and the profile drive can hold the folder.
+
+One query MUST count the live durable work, for one analysis or for each analysis. The busy gate and the activity of a stop MUST both read it. A workflow is live when its status is `PENDING`, `ENQUEUED`, or `DELAYED`. A run counts when its ledger status is `running`, and a live workflow stands behind it. That workflow is the run, or one of its `<runId>-N` children. A crashed host leaves a `running` row for ever, thus the status of the workflow is the record of liveness. A run with a paused step has a live workflow, thus it counts.
+
+#### Scenario: A rename during a run
+
+- **GIVEN** an analysis with a run whose workflow is live
+- **WHEN** a client renames the analysis
+- **THEN** the server answers 409 `busy` with the reason `run`
+
+#### Scenario: A stale run row does not block
+
+- **GIVEN** an analysis with a `running` run row whose workflow is terminal
+- **WHEN** a client renames the analysis
+- **THEN** the server does not give the reason `run`
+
+#### Scenario: A paused run blocks
+
+- **GIVEN** an analysis with a run whose step waits in `paused`
+- **WHEN** a client renames the analysis
+- **THEN** the server answers 409 `busy` with the reason `run`
+
+### Requirement: The server lists and resumes paused work
+
+`GET {A}/paused-work` MUST give the paused work of the analysis from `pausedWork.list` of the harness. Each item MUST carry the work id, the kind, and the thread of a turn. It MUST carry each waiting workflow with its state, its cause, its attempt, and its next retry. For the cause `credential`, the item MUST carry the remedy that the server knows for a failed turn.
+
+`POST {A}/paused-work/:workId/resume` MUST resume the work through `pausedWork.resume`, with the session of the server. It MUST give 200 with the count of the resumed workflows. It MUST give 404 when the analysis has no such paused work. With no runtime, the two routes give 503.
+
+The stop of paused work MUST use the existing routes: the abort of a turn, and the cancel of a run.
+
+#### Scenario: A client resumes a paused run
+
+- **GIVEN** a run of the analysis whose step waits in `paused`
+- **WHEN** a client sends `POST {A}/paused-work/:workId/resume` with the run id
+- **THEN** the server gives 200 with one workflow, and the step sends its request again
+
+#### Scenario: A credential pause carries its remedy
+
+- **GIVEN** a turn that waits in `paused` with the cause `credential`, and a provider login that is dead
+- **WHEN** a client sends `GET {A}/paused-work`
+- **THEN** the item of the turn carries the remedy to sign in again
+
+#### Scenario: An unknown work id
+
+- **WHEN** a client sends `POST {A}/paused-work/:workId/resume` with an id that no paused work has
+- **THEN** the server gives 404
