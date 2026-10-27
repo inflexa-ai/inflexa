@@ -525,6 +525,144 @@ type InjectingFetch = (input: string | URL | Request, init?: RequestInit) => Pro
  */
 const CREDENTIAL_PLACEHOLDER_API_KEY = "inflexa-credential-source-placeholder";
 
+/** The chat credential of a connection: the key that the SDK sends, and the source that an injecting fetch reads, when one is configured. */
+export type ChatCredential = { readonly apiKey: string; readonly source?: CredentialSource };
+
+/**
+ * Resolve the chat credential of a connection. cliproxy discovers the minted proxy client key. direct reads a
+ * configured credential source, else the env key of its provider, and never touches the proxy.
+ */
+export async function resolveChatCredential(
+    connection: ResolvedModelConnection,
+    seams: Pick<BootSeams, "readKey" | "readModelApiKey">,
+): Promise<Result<ChatCredential, HarnessBootError>> {
+    if (connection.mode === "cliproxy") {
+        const keyResult = await seams.readKey();
+        return keyResult.isErr() ? err({ type: "proxy_key_missing", cause: keyResult.error }) : ok({ apiKey: keyResult.value });
+    }
+    if (connection.auth !== undefined) return ok({ apiKey: CREDENTIAL_PLACEHOLDER_API_KEY, source: createCredentialSource(connection.auth) });
+    const key = seams.readModelApiKey(connection.provider);
+    // Name the provider-conventional variable tried alongside the override, so the failure names both env vars.
+    if (!key) return err({ type: "model_api_key_missing", providerVar: providerApiKeyVar(connection.provider) });
+    return ok({ apiKey: key });
+}
+
+/**
+ * The model resolver of each agent. An agent resolves in order: `models.agents.<agent>` → `harness.model`
+ * (legacy both-agents fallback) → the connection's mode default. cliproxy's default is the proxy's
+ * auto-resolved id (the `/models` ranking). direct has no default, thus an agent left with nothing resolves
+ * to `model_required`.
+ *
+ * The cliproxy auto-default is memoized: when several agents fall through to it (the common no-`agents`
+ * config), the proxy's `/models` is hit ONCE and the provider-family guard runs once. The guard applies ONLY
+ * to that auto-resolved id — an explicit agent override or `harness.model` is trusted (it may be a proxy alias
+ * resolving to the right family). `modelMatchesProvider` reads the family table provider→family ONLY (a sanity
+ * check, never id→provider identity); with the default provider `anthropic` only Claude-family ids pass. The
+ * PROMISE is memoized, thus agents that resolve concurrently still share the one fetch.
+ */
+export function createAgentModelResolver(
+    connection: ResolvedModelConnection,
+    configModel: string | null,
+    apiKey: string,
+    resolveModel: BootSeams["resolveModel"],
+): (agent: AgentName) => Promise<Result<string, HarnessBootError>> {
+    let cliproxyAutoDefault: Promise<Result<string, HarnessBootError>> | null = null;
+    const resolveDefaultModel = (): Promise<Result<string, HarnessBootError>> => {
+        if (cliproxyAutoDefault !== null) return cliproxyAutoDefault;
+        cliproxyAutoDefault = resolveModel(apiKey).then((resolved) =>
+            resolved.match(
+                (m): Result<string, HarnessBootError> =>
+                    modelMatchesProvider(connection.provider, m) ? ok(m) : err({ type: "model_provider_mismatch", provider: connection.provider, model: m }),
+                (e): Result<string, HarnessBootError> => err({ type: "model_unresolved", cause: e }),
+            ),
+        );
+        return cliproxyAutoDefault;
+    };
+    return async (agent) => {
+        const override = connection.agents[agent];
+        if (override !== undefined) return ok(override);
+        if (configModel !== null) return ok(configModel);
+        if (connection.mode === "direct") return err({ type: "model_required", agents: [agent] });
+        return resolveDefaultModel();
+    };
+}
+
+/**
+ * The harness provider config of one agent selection over a resolved connection. cliproxy resolves to the
+ * Anthropic kind at the owned proxy URL with the proxy client key. direct resolves to the configured protocol
+ * kind at the configured endpoint. The harness owns the transport lift for a long request, thus the CLI adds
+ * no wrapper of its own: it supplies the connection values and the auth-injecting `fetch` only.
+ */
+export function agentProviderConfig(args: {
+    readonly connection: ResolvedModelConnection;
+    readonly selection: AgentSelection;
+    readonly apiKey: string;
+    readonly fetch?: ReturnType<typeof buildAuthInjectingFetch>;
+}): AiSdkProviderConfig {
+    const { connection, apiKey, fetch } = args;
+    const { model, effort } = args.selection;
+    // The request bounds the harness enforces and advertises: the per-attempt idle guard and the retry
+    // limit. The helper spreads a field only when it is present, so an absent config field yields an
+    // absent provider field, and the harness then keeps its own default.
+    const requestBounds = pickRequestBounds(connection);
+    // `imageToolResults` is a fact about the endpoint, thus each arm states its own value. The proxy
+    // translates each request onto the account that `inflexa setup` authenticated. That account can be
+    // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
+    // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
+    // inside a `tool_result`, and the Responses wire of the `openai` protocol renders one inside a
+    // function-call output. The chat-completions wire carries a tool result as text, unless the
+    // connection states that the endpoint takes a tool message of parts. The harness then sets the
+    // capability from that flag.
+    if (connection.mode === "cliproxy") {
+        return {
+            kind: "anthropic",
+            baseURL: env.cliproxyApiUrl,
+            apiKey,
+            model,
+            reasoning: effort,
+            capabilities: { toolCalling: true, imageToolResults: false },
+            ...requestBounds,
+        };
+    }
+    // A direct endpoint can serve a model with a small window. The configured value wins over the probed one.
+    const window = connection.contextWindow ?? probedContextWindow(model);
+    const contextWindow = window === undefined ? {} : { contextWindow: window };
+    return connection.protocol === "anthropic"
+        ? {
+              kind: "anthropic",
+              baseURL: connection.baseURL,
+              apiKey,
+              model,
+              reasoning: effort,
+              fetch,
+              capabilities: { toolCalling: true, imageToolResults: true, ...contextWindow },
+              ...requestBounds,
+          }
+        : connection.protocol === "openai"
+          ? {
+                kind: "openai",
+                baseURL: connection.baseURL,
+                apiKey,
+                model,
+                reasoning: effort,
+                fetch,
+                capabilities: { toolCalling: true, imageToolResults: true, ...contextWindow },
+                ...requestBounds,
+            }
+          : {
+                kind: "openai-compatible",
+                name: connection.provider,
+                baseURL: connection.baseURL,
+                apiKey,
+                model,
+                reasoning: effort,
+                fetch,
+                supportsMultiPartToolContent: connection.supportsMultiPartToolContent,
+                capabilities: { toolCalling: true, ...contextWindow },
+                ...requestBounds,
+            };
+}
+
 /**
  * Apply a resolved credential to an outgoing request's headers per scheme, replacing whatever the AI SDK
  * derived from the placeholder apiKey. Each branch strips the OTHER scheme's placeholder header so a stale
@@ -686,21 +824,10 @@ async function bootHarnessRuntimeOnce(
     // Otherwise the static env key ({@link resolveModelApiKey}, via the injectable seam) is passed as `apiKey`
     // exactly as before — the AI SDK sends it as the wire's conventional header, no injecting fetch — and its
     // absence fails boot up front.
-    let providerApiKey: string;
-    let credentialSource: CredentialSource | undefined;
-    if (connection.mode === "cliproxy") {
-        const keyResult = await seams.readKey();
-        if (keyResult.isErr()) return err({ type: "proxy_key_missing", cause: keyResult.error });
-        providerApiKey = keyResult.value;
-    } else if (connection.auth !== undefined) {
-        credentialSource = createCredentialSource(connection.auth);
-        providerApiKey = CREDENTIAL_PLACEHOLDER_API_KEY;
-    } else {
-        const key = seams.readModelApiKey(connection.provider);
-        // Name the provider-conventional variable tried alongside the override, so the failure names both env vars.
-        if (!key) return err({ type: "model_api_key_missing", providerVar: providerApiKeyVar(connection.provider) });
-        providerApiKey = key;
-    }
+    const credential = await resolveChatCredential(connection, seams);
+    if (credential.isErr()) return err(credential.error);
+    const providerApiKey = credential.value.apiKey;
+    const credentialSource = credential.value.source;
 
     // Probe the resolved embedder before anything expensive: embeddings are
     // consumed LATE in the profile workflow (after the sandbox agent spent its
@@ -714,35 +841,6 @@ async function bootHarnessRuntimeOnce(
             : err({ type: "embedding_probe_failed", detail: e.detail });
     }
 
-    // Per-agent model resolution. Each user-facing agent resolves in order:
-    // `models.agents.<agent>` → `harness.model` (legacy both-agents fallback) → the connection's mode
-    // default. cliproxy's default is the proxy's auto-resolved id (the `/models` ranking); direct has
-    // no default, so an agent left with nothing fails boot — the agents that reached this are trusted to
-    // resolve, so the failure is enumerated up front (below) rather than mid-loop.
-    //
-    // The cliproxy auto-default is memoized: when BOTH agents fall through to it (the common no-`agents`
-    // config), the proxy's `/models` is hit ONCE and the provider-family guard runs once. The guard
-    // applies ONLY to that auto-resolved id — an explicit agent override or `harness.model` is trusted
-    // (it may be a proxy alias resolving to the right family), exactly as the pre-agents path trusted an
-    // explicit `harness.model`. `modelMatchesProvider` reads the family table provider→family ONLY (a
-    // sanity check, never id→provider identity); with the default provider `anthropic` only Claude-family
-    // ids pass.
-    // Memoize the PROMISE so all roles falling through to the default share ONE `/models` fetch and one
-    // family-guard evaluation — even when they resolve concurrently. `.match` consumes the resolve
-    // Result and maps both arms back to a boot Result.
-    let cliproxyAutoDefault: Promise<Result<string, HarnessBootError>> | null = null;
-    const resolveDefaultModel = (): Promise<Result<string, HarnessBootError>> => {
-        if (cliproxyAutoDefault !== null) return cliproxyAutoDefault;
-        cliproxyAutoDefault = seams.resolveModel(providerApiKey).then((resolved) =>
-            resolved.match(
-                (m): Result<string, HarnessBootError> =>
-                    modelMatchesProvider(connection.provider, m) ? ok(m) : err({ type: "model_provider_mismatch", provider: connection.provider, model: m }),
-                (e): Result<string, HarnessBootError> => err({ type: "model_unresolved", cause: e }),
-            ),
-        );
-        return cliproxyAutoDefault;
-    };
-
     // Direct mode has no auto-default: any agent lacking BOTH its own override and `harness.model` is
     // unresolvable. Enumerate them into ONE actionable `model_required` naming every failing agent,
     // before touching the proxy — direct users name the model their endpoint serves.
@@ -751,13 +849,7 @@ async function bootHarnessRuntimeOnce(
         if (unresolved.length > 0) return err({ type: "model_required", agents: unresolved });
     }
 
-    const resolveAgentModel = async (agent: AgentName): Promise<Result<string, HarnessBootError>> => {
-        const override = connection.agents[agent];
-        if (override !== undefined) return ok(override);
-        if (cfg.model !== null) return ok(cfg.model);
-        // cliproxy only past the direct-mode guard above.
-        return resolveDefaultModel();
-    };
+    const resolveAgentModel = createAgentModelResolver(connection, cfg.model, providerApiKey, seams.resolveModel);
 
     const conversationResolved = await resolveAgentModel("conversation");
     if (conversationResolved.isErr()) return err(conversationResolved.error);
@@ -864,71 +956,10 @@ async function bootHarnessRuntimeOnce(
         // The auth-injecting fetch, present only when the connection gives a credential source. One
         // instance serves each per-model provider over this connection. Thus each agent shares the same
         // cached token and the same refresh. cliproxy and the static env key install nothing, because the
-        // SDK sends that key as it is. The harness owns the transport lift for a long request, thus the
-        // CLI adds no wrapper of its own. The CLI supplies the connection values and this fetch only.
+        // SDK sends that key as it is.
         const authFetch = credentialSource !== undefined ? buildAuthInjectingFetch(credentialSource) : undefined;
-        // The request bounds the harness enforces and advertises: the per-attempt idle guard and the retry
-        // limit. The helper spreads a field only when it is present, so an absent config field yields an
-        // absent provider field, and the harness then keeps its own default.
-        const requestBounds = pickRequestBounds(connection);
-        // `imageToolResults` is a fact about the endpoint, thus each arm states its own value. The proxy
-        // translates each request onto the account that `inflexa setup` authenticated. That account can be
-        // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
-        // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
-        // inside a `tool_result`, and the Responses wire of the `openai` protocol renders one inside a
-        // function-call output. The chat-completions wire carries a tool result as text, unless the
-        // connection states that the endpoint takes a tool message of parts. The harness then sets the
-        // capability from that flag.
-        // A direct endpoint can serve a model with a small window. The configured value wins over the probed one.
-        const contextWindowOf = (agentModel: string): { contextWindow?: number } => {
-            const window = connection.mode === "direct" ? (connection.contextWindow ?? probedContextWindow(agentModel)) : undefined;
-            return window === undefined ? {} : { contextWindow: window };
-        };
-        const providerConfigFor = ({ model: agentModel, effort }: AgentSelection): AiSdkProviderConfig =>
-            connection.mode === "cliproxy"
-                ? {
-                      kind: "anthropic",
-                      baseURL: env.cliproxyApiUrl,
-                      apiKey: providerApiKey,
-                      model: agentModel,
-                      reasoning: effort,
-                      capabilities: { toolCalling: true, imageToolResults: false },
-                      ...requestBounds,
-                  }
-                : connection.protocol === "anthropic"
-                  ? {
-                        kind: "anthropic",
-                        baseURL: connection.baseURL,
-                        apiKey: providerApiKey,
-                        model: agentModel,
-                        reasoning: effort,
-                        fetch: authFetch,
-                        capabilities: { toolCalling: true, imageToolResults: true, ...contextWindowOf(agentModel) },
-                        ...requestBounds,
-                    }
-                  : connection.protocol === "openai"
-                    ? {
-                          kind: "openai",
-                          baseURL: connection.baseURL,
-                          apiKey: providerApiKey,
-                          model: agentModel,
-                          reasoning: effort,
-                          fetch: authFetch,
-                          capabilities: { toolCalling: true, imageToolResults: true, ...contextWindowOf(agentModel) },
-                          ...requestBounds,
-                      }
-                    : {
-                          kind: "openai-compatible",
-                          name: connection.provider,
-                          baseURL: connection.baseURL,
-                          apiKey: providerApiKey,
-                          model: agentModel,
-                          reasoning: effort,
-                          fetch: authFetch,
-                          supportsMultiPartToolContent: connection.supportsMultiPartToolContent,
-                          capabilities: { toolCalling: true, ...contextWindowOf(agentModel) },
-                          ...requestBounds,
-                      };
+        const providerConfigFor = (selection: AgentSelection): AiSdkProviderConfig =>
+            agentProviderConfig({ connection, selection, apiKey: providerApiKey, fetch: authFetch });
         // The logger is what makes the retry envelope visible. It backs off up to 10 times
         // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
         // inside one tool call — indistinguishable, without these records, from a model
