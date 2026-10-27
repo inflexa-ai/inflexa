@@ -75,18 +75,20 @@ const ASKPASS_NAME = ".git-askpass";
 const ASKPASS_PATH = `${WORK_ROOT}/${ASKPASS_NAME}`;
 
 /**
- * The uid of the non-root execs. The provisioner image ships no named build
- * user, and its rocker base creates uid 1000, thus the numeric form needs no
- * passwd lookup; the session start chowns the working copy to this uid, so the
- * build commands can write it.
+ * The uid of the non-root execs. The provisioner image creates this build user
+ * (its Dockerfile), thus the execs resolve a home; the session start chowns
+ * the working copy to this uid, so the build commands can write it.
  */
 const SESSION_USER = "1000:1000";
 
 /** The per-command timeout, in seconds. A command that outlives it is killed inside the container. */
 const DEFAULT_EXEC_TIMEOUT_SECONDS = 900;
 
-/** The grace between the TERM of an expired command and the KILL that ends a command that traps TERM, in seconds. Only the exit of `timeout` itself (124) names a timed-out command — a KILL of another cause reads as its own failure. */
-const TIMEOUT_KILL_AFTER = "5";
+/** The grace between the TERM of an expired command and the KILL that ends a command that traps TERM, in seconds. A 137 counts as a timed-out command only past the deadline plus this grace, because the kill-after KILL cannot fire earlier — a 137 before it (an OOM kill) is a failure of its own. */
+const TIMEOUT_KILL_AFTER_SECONDS = 5;
+
+/** The grace of {@link TIMEOUT_KILL_AFTER_SECONDS} in milliseconds, the margin the timeout verdict keeps past the budget. */
+const TIMEOUT_KILL_AFTER_MS = TIMEOUT_KILL_AFTER_SECONDS * 1000;
 
 /** The line the egress-allowlist function prints when the wall is up — the readiness signal of a walled start. */
 const WALL_MARKER = "[egress-allowlist] active";
@@ -153,9 +155,9 @@ type LiveSession = {
     plan?: BuildPlan;
 };
 
-/** `timeout` exits 124 when it stops the command itself, and 137 when `--kill-after` KILLs a command that ignored TERM — a KILL the deadline alone lets happen. A 137 that arrived before the deadline (an OOM kill) stays a plain failure. */
+/** `timeout` exits 124 when it stops the command itself, and 137 when `--kill-after` KILLs a command that ignored TERM — a KILL the deadline alone lets happen. The host clock also wraps the exec startup and return, thus a 137 counts only past the budget plus the kill-after grace: a KILL before the deadline (an OOM kill) stays a plain failure, whatever the startup overhead. */
 const timedOut = (code: number, elapsedMs: number, budgetMs: number): boolean =>
-    code === 124 || (code === 137 && elapsedMs >= budgetMs);
+    code === 124 || (code === 137 && elapsedMs >= budgetMs + TIMEOUT_KILL_AFTER_MS);
 
 /** A full commit sha. */
 const FULL_SHA = /^[0-9a-f]{40}$/i;
@@ -221,7 +223,7 @@ function sessionExecArgs(
         containerName,
         "timeout",
         "--kill-after",
-        TIMEOUT_KILL_AFTER,
+        String(TIMEOUT_KILL_AFTER_SECONDS),
         `${timeout}`,
         "/bin/bash",
         "-c",
