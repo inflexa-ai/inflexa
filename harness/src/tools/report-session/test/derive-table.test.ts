@@ -670,6 +670,19 @@ describe("a rerun of a derivation call", () => {
         expect(ledger.records).toHaveLength(1);
     });
 
+    // The earlier run can crash between its record and its emit, thus the rerun emits the act again.
+    it("emits the derivation again from the record", async () => {
+        const root = await makeRoot();
+        const events: SessionProvenanceEvent[] = [];
+        const { tool } = makeTool({ root, provenance: { emitSessionEvent: (event) => events.push(event) } });
+
+        await derive(tool, {});
+        await derive(tool, {});
+
+        expect(events.map((event) => event.type)).toEqual(["run-derivation", "run-derivation"]);
+        expect(events[1]).toEqual(events[0]);
+    });
+
     it("refuses the name to a different call", async () => {
         const root = await makeRoot();
         const { tool, sandbox } = makeTool({ root });
