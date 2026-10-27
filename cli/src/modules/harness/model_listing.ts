@@ -5,7 +5,7 @@ import { env, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, type Credential, type CredentialError } from "../../lib/credential.ts";
 import { readApiKey, checkModelAccess, byRecencyThenId, releaseTimeOf, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
 import { AGENT_EFFORTS, type ModelAuthConfig } from "../../lib/config.ts";
-import { resolveModelConnection, type AgentEffort, type ResolvedModelConnection } from "./config.ts";
+import { resolveModelConnection, type AgentEffort, type ModelWireProtocol, type ResolvedModelConnection } from "./config.ts";
 
 // Live model listing for the agent-model picker. Deliberately DISTINCT from
 // `resolveModelId` (proxy/models.ts): that resolves ONE default id for boot and CACHES it per process
@@ -162,7 +162,7 @@ const realSeams: ListModelsSeams = {
  * surfaces authenticate the way the chat path does against a bearer-only gateway: the pre-auth-block
  * assumption "direct anthropic = x-api-key" is exactly what such a gateway rejects.
  */
-function credentialHeaders(cred: Credential, protocol: "anthropic" | "openai-compatible"): Record<string, string> {
+function credentialHeaders(cred: Credential, protocol: ModelWireProtocol): Record<string, string> {
     const auth: Record<string, string> = cred.scheme === "bearer" ? { Authorization: `Bearer ${cred.token}` } : { "x-api-key": cred.token };
     return protocol === "anthropic" ? { ...auth, "anthropic-version": ANTHROPIC_VERSION } : auth;
 }

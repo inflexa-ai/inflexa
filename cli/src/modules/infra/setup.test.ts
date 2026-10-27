@@ -128,6 +128,14 @@ describe("ecosystem env adoption — detection → non-secret connection", () =>
         });
     });
 
+    test("openai detection at the OpenAI API adopts the Responses wire", () => {
+        expect(adoptedConnection("openai", snapshot({ openaiApiKeySet: true }))).toEqual({
+            provider: "openai",
+            baseURL: "https://api.openai.com/v1",
+            protocol: "openai",
+        });
+    });
+
     test("key present but base URL absent defaults to the provider root", () => {
         expect(adoptedConnection("anthropic", snapshot({ anthropicApiKeySet: true })).baseURL).toBe("https://api.anthropic.com/v1");
         expect(adoptedConnection("openai", snapshot({ openaiApiKeySet: true })).baseURL).toBe("https://api.openai.com/v1");

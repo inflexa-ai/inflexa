@@ -180,12 +180,15 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         mode: z.literal("direct"),
         provider: z.string(),
         baseURL: z.string(),
-        protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
+        protocol: z.enum(["anthropic", "openai", "openai-compatible"]).optional(),
         // An optional refreshing credential source, in place of the static env key (see {@link modelAuthSchema}).
         auth: modelAuthSchema.optional(),
         // The context window of the models of this endpoint, in tokens. It wins over the window that a probe reads,
         // because only the user knows a server limit such as the `num_ctx` of Ollama. A chat thread compacts at 80% of it.
         contextWindow: z.number().int().positive().optional(),
+        // The endpoint takes a tool message whose content is a list of parts, thus a tool picture reaches the model.
+        // Only an openai-compatible endpoint reads it, and only the user knows if the backend takes the parts.
+        supportsMultiPartToolContent: z.boolean().optional(),
         // The per-attempt idle bound and the retry limit for the harness provider. requestTimeoutMs is a
         // positive integer. maxRetries is a non-negative integer, and zero means no retries. Boot carries
         // the two values into the provider config. An absent field keeps the current behavior.

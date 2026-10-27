@@ -732,7 +732,23 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection: directConnection() }))._unsafeUnwrap();
 
-        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(false);
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBeUndefined();
+    });
+
+    test("a direct openai-compatible endpoint that takes a tool message of parts carries the picture", async () => {
+        const calls: string[] = [];
+        const connection = directConnection({ supportsMultiPartToolContent: true });
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection }))._unsafeUnwrap();
+
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(true);
+    });
+
+    test("a direct endpoint with the openai protocol states that the Responses wire carries the picture", async () => {
+        const calls: string[] = [];
+        const connection = directConnection({ provider: "openai", baseURL: "https://api.openai.com/v1", protocol: "openai" });
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection }))._unsafeUnwrap();
+
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(true);
     });
 
     test("missing skills dir fails before any side effect", async () => {

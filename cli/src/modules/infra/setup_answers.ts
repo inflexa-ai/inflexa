@@ -163,7 +163,7 @@ export const setupAnswersSchema = z.strictObject({
              */
             provider: z.string().trim().toLowerCase().min(1, { error: "must not be empty" }).optional(),
             baseURL: urlAnswer().optional(),
-            protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
+            protocol: z.enum(["anthropic", "openai", "openai-compatible"]).optional(),
             model: trimmedAnswer("must not be empty").optional(),
             auth: setupAuthAnswerSchema.optional(),
         })
@@ -779,7 +779,7 @@ export type SetupAnswerFlags = {
     readonly provider?: string;
     /** `--base-url <url>`: the direct endpoint, `/v1`-terminated as the wire layer requires. */
     readonly baseUrl?: string;
-    /** `--protocol anthropic|openai-compatible`: the direct endpoint's wire kind (inferred from the provider when absent). */
+    /** `--protocol anthropic|openai|openai-compatible`: the direct endpoint's wire kind (inferred from the provider when absent). */
     readonly protocol?: string;
     /** `--model <id>`: pins BOTH user-facing agents, as the wizard's explicit pick does. */
     readonly model?: string;

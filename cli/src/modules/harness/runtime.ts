@@ -875,7 +875,10 @@ async function bootHarnessRuntimeOnce(
         // translates each request onto the account that `inflexa setup` authenticated. That account can be
         // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
         // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
-        // inside a `tool_result`. The chat-completions wire carries a tool result as text only.
+        // inside a `tool_result`, and the Responses wire of the `openai` protocol renders one inside a
+        // function-call output. The chat-completions wire carries a tool result as text, unless the
+        // connection states that the endpoint takes a tool message of parts. The harness then sets the
+        // capability from that flag.
         // A direct endpoint can serve a model with a small window. The configured value wins over the probed one.
         const contextWindowOf = (agentModel: string): { contextWindow?: number } => {
             const window = connection.mode === "direct" ? (connection.contextWindow ?? probedContextWindow(agentModel)) : undefined;
@@ -903,17 +906,29 @@ async function bootHarnessRuntimeOnce(
                         capabilities: { toolCalling: true, imageToolResults: true, ...contextWindowOf(agentModel) },
                         ...requestBounds,
                     }
-                  : {
-                        kind: "openai-compatible",
-                        name: connection.provider,
-                        baseURL: connection.baseURL,
-                        apiKey: providerApiKey,
-                        model: agentModel,
-                        reasoning: effort,
-                        fetch: authFetch,
-                        capabilities: { toolCalling: true, imageToolResults: false, ...contextWindowOf(agentModel) },
-                        ...requestBounds,
-                    };
+                  : connection.protocol === "openai"
+                    ? {
+                          kind: "openai",
+                          baseURL: connection.baseURL,
+                          apiKey: providerApiKey,
+                          model: agentModel,
+                          reasoning: effort,
+                          fetch: authFetch,
+                          capabilities: { toolCalling: true, imageToolResults: true, ...contextWindowOf(agentModel) },
+                          ...requestBounds,
+                      }
+                    : {
+                          kind: "openai-compatible",
+                          name: connection.provider,
+                          baseURL: connection.baseURL,
+                          apiKey: providerApiKey,
+                          model: agentModel,
+                          reasoning: effort,
+                          fetch: authFetch,
+                          supportsMultiPartToolContent: connection.supportsMultiPartToolContent,
+                          capabilities: { toolCalling: true, ...contextWindowOf(agentModel) },
+                          ...requestBounds,
+                      };
         // The logger is what makes the retry envelope visible. It backs off up to 10 times
         // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
         // inside one tool call — indistinguishable, without these records, from a model
