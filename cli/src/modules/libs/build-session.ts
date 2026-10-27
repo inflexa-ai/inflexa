@@ -154,6 +154,8 @@ type LiveSession = {
     /** The tree hash of the pristine copy of a folder source, taken before the first command. */
     folderTreeHash?: string;
     plan?: BuildPlan;
+    /** Whether the held container answers: a failed plan restart leaves it false, and the next exec retries the start. */
+    containerLive?: boolean;
 };
 
 /** `timeout` exits 124 when it stops the command itself, and 137 when `--kill-after` KILLs a command that ignored TERM — a KILL the deadline alone lets happen. The host clock also wraps the exec startup and return, thus a 137 counts only past the budget plus the kill-after grace: a KILL before the deadline (an OOM kill) stays a plain failure, whatever the startup overhead. */
@@ -268,7 +270,12 @@ function aptPinCommand(snapshotTimestamp: string): string {
         'codename=$(. /etc/os-release && printf %s "$VERSION_CODENAME")',
         'dir=/etc/apt/sources.list.d',
         `printf '${format}' "$codename" "$codename" "$codename" "$codename" > "$dir"/${APT_SOURCES_FILE}`,
-        `rm -f /etc/apt/sources.list "$dir"/ubuntu.sources "$dir"/*.list`,
+        `rm -f /etc/apt/sources.list`,
+        // Every other entry of sources.list.d dies, the same rule the clean
+        // run's pin applies: a base image that ships a live repo must not
+        // serve the session builds versions the dated snapshot cannot
+        // reproduce.
+        `find "$dir" -mindepth 1 -maxdepth 1 ! -name '${APT_SOURCES_FILE}' -exec rm -rf {} +`,
     ].join(" && ");
 }
 
@@ -628,6 +635,7 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
                     session.folderTreeHash = await hashSnapshot(session);
                 }
                 await startContainer(session, gitHost);
+                session.containerLive = true;
                 await makeWorkingCopy(session);
             } catch (cause) {
                 await teardown(sessionId);
@@ -645,9 +653,24 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
             const session = sessions.get(handle);
             if (session === undefined) throw new Error(`no build session ${handle}`);
             if (command.plan !== undefined) {
-                await stopContainer(session).catch(() => undefined);
-                await startContainer(session, sessionEgressAllow(command.plan.hosts));
+                // The plan binds before the restart: a failed restart must not
+                // drop the list the user approved, because the tool binds the
+                // plan at ask time and resends it unchanged.
                 session.plan = command.plan;
+                await stopContainer(session).catch(() => undefined);
+                session.containerLive = false;
+            }
+            // A failed restart leaves no container. The next exec retries the
+            // start under the approved plan, so a resend recovers instead of
+            // execing against a removed container.
+            if (session.containerLive !== true && session.plan !== undefined) {
+                try {
+                    await startContainer(session, sessionEgressAllow(session.plan.hosts));
+                    session.containerLive = true;
+                } catch (cause) {
+                    session.containerLive = false;
+                    throw new Error(`the session container is gone and the restart under the approved plan failed (${cause instanceof Error ? cause.message : String(cause)}). Stop the session and start a new one`, { cause });
+                }
             }
             const startedAt = Date.now();
             const captured = await execIn(session, { command: command.command, root: command.root === true, workdir: WORKING });
