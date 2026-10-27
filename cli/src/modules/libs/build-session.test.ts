@@ -394,8 +394,9 @@ describe("the exec channel", () => {
             "-c",
             "cat DESCRIPTION",
         ]);
-        // The expiry sends TERM first — only the exit of `timeout` itself reads
-        // as timed out — and the KILL stays bounded behind `--kill-after`.
+        // The expiry sends TERM first, and the KILL stays bounded behind
+        // `--kill-after`; a 137 counts as a timeout only past the deadline
+        // plus that grace, because the kill-after KILL cannot fire earlier.
         expect(first).not.toContain("--signal=KILL");
         // The second command is its own exec in its own shell — no state of the first rides it.
         expect(engine.execOf("R CMD INSTALL .")).not.toContain("cat DESCRIPTION");

@@ -71,6 +71,12 @@ RUN apt-get update \
       && apt-get install -y --no-install-recommends autoconf automake libtool meson ninja-build patchelf \
       && rm -rf /var/lib/apt/lists/*
 
+# The build session runs its commands as the numeric uid 1000 and chowns its
+# working copy to that uid. Creating the user here keeps the passwd entry and
+# its home under this image's control rather than the base's, thus a base
+# change cannot leave the session execs without a home.
+RUN useradd --create-home --uid 1000 --user-group inflexa-build
+
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the runtime image environment expects.
 ARG UV_VERSION=0.12.5
