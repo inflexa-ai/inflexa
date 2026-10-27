@@ -11,8 +11,10 @@ import { API_VERSION, type ServerBootState, type ServerDiscovery, type ShutdownM
 import { readServerDiscovery, serverBaseUrl } from "../client/api.ts";
 import { DEFAULT_ENSURE_SERVER_OPTS, describeServerError, lookupServer, waitForServer } from "../client/server.ts";
 import { describeCause } from "../lib/cause.ts";
-import { fail, selfInvocation } from "../lib/cli.ts";
-import { env } from "../lib/env.ts";
+import { fail } from "../lib/cli.ts";
+import { selfInvocation } from "../lib/self_invocation.ts";
+import { SERVE_DETACHED_CHILD_FLAG } from "../lib/child_flags.ts";
+import { env, fsPoolSize, serverChildEnv } from "../lib/env.ts";
 import { mkdirResult, renameResult, rmResult, writeFileResult, type FsError } from "../lib/fs.ts";
 import { isPidAlive } from "../lib/lock.ts";
 import { getLogger } from "../lib/log.ts";
@@ -29,9 +31,6 @@ import { createPageGrantStore, createSessionPagePublisherFactory } from "./repor
 /** The exit code after Ctrl+C: 128 + SIGINT. */
 const SIGINT_EXIT_CODE = 130;
 
-/** The hidden flag of `inflexa serve` that runs the detached child of `inflexa serve --detach`. */
-export const SERVE_DETACHED_CHILD_FLAG = "--run-detached";
-
 /**
  * The size at which the server log rotates. One old file (`<log>.1`) stays beside it, thus the two files hold
  * about twice this, plus what the server writes between two checks.
@@ -40,6 +39,35 @@ export const SERVER_LOG_ROTATE_BYTES = 10 * 1024 * 1024;
 
 /** How often a detached server measures its log. */
 const SERVER_LOG_CHECK_MS = 60_000;
+
+/** The options of the spawn of the detached server child. */
+export type DetachedServerSpawnOptions = {
+    /** The executable and the arguments of the detached child. */
+    readonly cmd: string[];
+    /** The working folder of the child: the home folder, so that the server holds no folder of the person open. */
+    readonly cwd: string;
+    /** The environment of the child, with the file pool size of the server. */
+    readonly env: Record<string, string | undefined>;
+    /** The child detaches from this process, thus it outlives the terminal of `serve --detach`. */
+    readonly detached: true;
+    /** The child reads no input. */
+    readonly stdin: "ignore";
+    /** The descriptor of the server log. */
+    readonly stdout: number;
+    /** The descriptor of the server log. */
+    readonly stderr: number;
+};
+
+/** What `inflexa serve --detach` starts its child with. Tests replace it. */
+export type ServeDetachedOpts = {
+    /** Start the detached child. It can throw, as `Bun.spawn` does. */
+    readonly spawn: (options: DetachedServerSpawnOptions) => Subprocess;
+};
+
+/** The production {@link ServeDetachedOpts}. */
+export const DEFAULT_SERVE_DETACHED_OPTS: ServeDetachedOpts = {
+    spawn: (options) => Bun.spawn(options),
+};
 
 /**
  * How `inflexa serve` runs. `foreground` is a server in the terminal of the person. `detached` is the child
@@ -137,10 +165,12 @@ export async function runServe(mode: ServeMode): Promise<void> {
     });
 
     const url = serverBaseUrl(env.serverPort);
+    // The requested size, not the measured one: the runtime clamps the value, and it gives no reader of its pool.
+    const pool = fsPoolSize() ?? "default";
     console.log(
         mode === "foreground"
-            ? `\n  Inflexa server at ${url}. Ctrl+C stops it.\n  Booting the harness runtime…`
-            : `Inflexa server ${pkg.version} at ${url}, pid ${process.pid}, started ${startedAt.toISOString()}. \`inflexa server stop\` stops it.`,
+            ? `\n  Inflexa server at ${url}, file pool ${pool}. Ctrl+C stops it.\n  Booting the harness runtime…`
+            : `Inflexa server ${pkg.version} at ${url}, pid ${process.pid}, file pool ${pool}, started ${startedAt.toISOString()}. \`inflexa server stop\` stops it.`,
     );
     await boot.start();
 }
@@ -150,7 +180,7 @@ export async function runServe(mode: ServeMode): Promise<void> {
  * runs in a new session, thus the close of the terminal does not stop it, and its stdout and stderr go to the
  * server log. When a server already answers, this starts none.
  */
-export async function runServeDetached(): Promise<void> {
+export async function runServeDetached(serveOpts: ServeDetachedOpts): Promise<void> {
     const opts = DEFAULT_ENSURE_SERVER_OPTS;
     const found = (await lookupServer(opts)).match(
         (lookup) => lookup,
@@ -166,7 +196,7 @@ export async function runServeDetached(): Promise<void> {
         () => undefined,
         (e) => console.error(`Could not rotate the server log ${env.serverLogPath} (${describeCause(e.cause)}). The start continues.`),
     );
-    const child = spawnDetachedServer(env.serverLogPath).match(
+    const child = spawnDetachedServer(env.serverLogPath, serveOpts).match(
         (c) => c,
         (e) => fail(`Could not start the Inflexa server (${describeCause(e.cause)}). See its log: ${env.serverLogPath}`),
     );
@@ -276,17 +306,19 @@ function boundServerLog(path: string): () => void {
 
 /**
  * Spawn the detached child of `inflexa serve --detach`, with its stdout and stderr appended to `logPath`. Its
- * working folder is the home folder, so that a long-lived server holds no folder of the person open.
+ * working folder is the home folder, so that a long-lived server holds no folder of the person open. Its environment
+ * requests the file pool of the server, which the runtime of the child reads at its first file call.
  */
-function spawnDetachedServer(logPath: string): Result<Subprocess, FsError> {
+export function spawnDetachedServer(logPath: string, serveOpts: ServeDetachedOpts): Result<Subprocess, FsError> {
     return mkdirResult(dirname(logPath), "make the server log folder").andThen((): Result<Subprocess, FsError> => {
         let fd: number | undefined;
         try {
             fd = openSync(logPath, "a", 0o600);
             writeSync(fd, `\n--- inflexa serve ${pkg.version}, started ${new Date().toISOString()} ---\n`);
-            const child = Bun.spawn({
+            const child = serveOpts.spawn({
                 cmd: selfInvocation(["serve", SERVE_DETACHED_CHILD_FLAG]),
                 cwd: homedir(),
+                env: serverChildEnv(undefined),
                 detached: true,
                 stdin: "ignore",
                 stdout: fd,

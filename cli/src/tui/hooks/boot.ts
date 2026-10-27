@@ -15,7 +15,7 @@ import {
     startDetachedServer,
 } from "../../client/server.ts";
 import { describeCause } from "../../lib/cause.ts";
-import { selfInvocation } from "../../lib/cli.ts";
+import { selfInvocation } from "../../lib/self_invocation.ts";
 import { notify } from "./notice.ts";
 import { chatStatus } from "./status.ts";
 

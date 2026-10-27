@@ -43,6 +43,7 @@ import { z } from "zod";
 import { parseQuery, type PackageQuery, type ParseQueryError } from "@inflexa-ai/harness";
 import { readFarmLock } from "@inflexa-ai/harness";
 
+import { STORE_FLUSH_FLAG } from "../../lib/child_flags.ts";
 import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, liveInstanceLockHolds, releaseInstanceLock, PACKAGE_STORE_RECLAIM_LOCK_KEY, TRANSFER_LOCK_KEY_PREFIX } from "../../lib/lock.ts";
 import type { IdOrName } from "../../lib/types.ts";
@@ -87,13 +88,6 @@ const FLIGHT_WAIT_MS = 600_000;
 
 /** How often a reclamation tests whether the flights and the compositions finished. */
 const FLIGHT_POLL_MS = 250;
-
-/**
- * The hidden flag that tells a re-invoked `inflexa store add` to run the flush
- * of the pending set in-process. The chat spawns exactly this when the asks of
- * a turn settle. The registry declares the same spelling as a hidden option.
- */
-export const STORE_FLUSH_FLAG = "--run-flush";
 
 /**
  * The hidden flag of the agent route: enqueue and return, with no flush. The

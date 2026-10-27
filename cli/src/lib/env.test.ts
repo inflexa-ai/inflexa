@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
@@ -11,14 +11,18 @@ import {
     embeddingEnvDoc,
     env,
     envDoc,
+    fsPoolVar,
     isDevelopmentBuild,
     isUnsandboxedTestRun,
     modelConnectionEnvDoc,
     providerApiKeyVar,
     resolveEmbeddingApiKey,
     resolveModelApiKey,
+    serverChildEnv,
+    serverFsPoolSize,
     stackPaths,
     stackPorts,
+    walkChildEnv,
 } from "./env.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
@@ -405,5 +409,72 @@ describe("the base folders of the data and the configuration", () => {
         const paths = resolvedPaths({ XDG_DATA_HOME: "/srv/data", XDG_CONFIG_HOME: "/srv/config" });
         expect(paths.dataDir).toBe("/srv/data/inflexa");
         expect(paths.configPath).toBe("/srv/config/inflexa/config.json");
+    });
+});
+
+describe("the file pool of a server", () => {
+    test("the size is 64 at the least, and 4 threads for each core above that", () => {
+        expect(serverFsPoolSize(2)).toBe(64);
+        expect(serverFsPoolSize(32)).toBe(128);
+    });
+
+    test("the server environment keeps a value of the base, and sets the size when the base has none", () => {
+        expect(serverChildEnv({ PATH: "/bin", [fsPoolVar]: "8" })).toEqual({ PATH: "/bin", [fsPoolVar]: "8" });
+        expect(serverChildEnv({ PATH: "/bin" })).toEqual({ PATH: "/bin", [fsPoolVar]: String(serverFsPoolSize(availableParallelism())) });
+    });
+
+    test("the walk environment holds no pool size, also when the base holds one", () => {
+        const walk = walkChildEnv({ PATH: "/bin", [fsPoolVar]: "128", GOMAXPROCS: "128" });
+        expect(walk).not.toHaveProperty(fsPoolVar);
+        expect(walk).not.toHaveProperty("GOMAXPROCS");
+        expect(walk.PATH).toBe("/bin");
+    });
+
+    // The child holds more opens on a FIFO with no writer than the default pool has threads, and fewer than the
+    // pool of the server. Each such open blocks its thread in the kernel, the same as a call on a hung mount.
+    const holdOpens = `
+        const { spawnSync } = require("node:child_process");
+        const { open, readdir } = require("node:fs/promises");
+        const { mkdtempSync, rmSync } = require("node:fs");
+        const { availableParallelism, tmpdir } = require("node:os");
+        const { join } = require("node:path");
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-pool-"));
+        const fifo = join(dir, "hung");
+        spawnSync("mkfifo", [fifo]);
+        const count = Math.max(16, 2 * availableParallelism());
+        for (let i = 0; i < count; i++) void open(fifo, "r").catch(() => undefined);
+        await Bun.sleep(300);
+        const answer = await Promise.race([readdir(dir).then(() => "ok"), Bun.sleep(2000).then(() => "BLOCKED")]);
+        console.log(answer);
+        rmSync(dir, { recursive: true, force: true });
+        process.exit(0);
+    `;
+
+    // The environment of the runner, without a pool size: a size that the runner sets would decide each result.
+    function unsizedEnv(): Record<string, string | undefined> {
+        const base = { ...Bun.env };
+        delete base[fsPoolVar];
+        delete base.GOMAXPROCS;
+        return base;
+    }
+
+    async function readFolderUnderHungOpens(childEnv: Record<string, string | undefined>): Promise<string> {
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", holdOpens], env: childEnv, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+        try {
+            const out = new Response(child.stdout).text();
+            const answer = await Promise.race([out, Bun.sleep(10_000).then(() => "TIMEOUT")]);
+            return answer.trim();
+        } finally {
+            // A child that hangs would keep its FIFO in the temp folder after the test.
+            child.kill(9);
+        }
+    }
+
+    test.skipIf(process.platform === "win32")("a process with the pool of the server reads a folder while hung opens hold threads", async () => {
+        expect(await readFolderUnderHungOpens(serverChildEnv(unsizedEnv()))).toBe("ok");
+    });
+
+    test.skipIf(process.platform === "win32")("a process with the default pool blocks there, thus the proof can fail", async () => {
+        expect(await readFolderUnderHungOpens(unsizedEnv())).toBe("BLOCKED");
     });
 });

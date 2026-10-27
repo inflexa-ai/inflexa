@@ -28,14 +28,6 @@ const TAG_END = 3;
 
 const ENTRY_HEADER_BYTES = 8;
 
-/** The arguments that start the walk child, before its scope and its flags. */
-export const WALK_COMMAND = ["server", "walk"] as const;
-
-/** True when `args`, the arguments of this process after the executable and the entry, start the walk child. */
-export function isWalkChildInvocation(args: readonly string[]): boolean {
-    return args[0] === WALK_COMMAND[0] && args[1] === WALK_COMMAND[1];
-}
-
 /** The size of one buffer of records. One write for each full buffer keeps the cost of a pipe write off each entry. */
 const RECORD_BUFFER_BYTES = 1 << 20;
 

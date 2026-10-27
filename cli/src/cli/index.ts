@@ -1,6 +1,7 @@
 import { Command, Option } from "commander";
 
 import pkg from "../../package.json";
+import { CATALOG_TRANSFER_FLAG, CLIENT_START_FLAG, IMAGE_TRANSFER_FLAG, SERVE_DETACHED_CHILD_FLAG, STORE_FLUSH_FLAG } from "../lib/child_flags.ts";
 import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc, type EnvDocEntry } from "../lib/env.ts";
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
@@ -409,13 +410,14 @@ export function buildProgram(): Command {
 
     // The local server: it boots the harness runtime and serves each client over HTTP on 127.0.0.1. Each
     // `instance` command starts it in the background when none answers. The hidden `--run-detached` is the
-    // detached child of `--detach`; its spelling is pinned against SERVE_DETACHED_CHILD_FLAG by serve.test.ts.
+    // detached child of `--detach`, and the hidden `--for-client` marks the `--detach` that a client starts.
     registerAction(
         cli
             .command("serve")
             .description("Run the local Inflexa server in the foreground (Ctrl+C stops it), or in the background with --detach")
             .option("--detach", "Start the server in the background, detached from this terminal, and return when it answers")
-            .addOption(new Option("--run-detached").hideHelp()),
+            .addOption(new Option(SERVE_DETACHED_CHILD_FLAG).hideHelp())
+            .addOption(new Option(CLIENT_START_FLAG).hideHelp()),
         "machine",
         {
             kind: "blocked",
@@ -424,9 +426,9 @@ export function buildProgram(): Command {
                 "It is not available to you.",
         },
         async (options: { detach?: boolean; runDetached?: boolean }) => {
-            const { runServe, runServeDetached } = await import("../server/serve.ts");
+            const { DEFAULT_SERVE_DETACHED_OPTS, runServe, runServeDetached } = await import("../server/serve.ts");
             if (options.runDetached === true) await runServe("detached");
-            else if (options.detach === true) await runServeDetached();
+            else if (options.detach === true) await runServeDetached(DEFAULT_SERVE_DETACHED_OPTS);
             else await runServe("foreground");
         },
     );
@@ -981,13 +983,12 @@ export function buildProgram(): Command {
     const sandbox = cli.command("sandbox").description("Manage the sandbox images (the runtime image and the provisioner image)");
 
     // `approval` (not `auto`): `pull` starts multi-GB downloads. The hidden
-    // `--run-transfer <kind>` is the detached child re-invoking itself; the
-    // spelling is pinned against `IMAGE_TRANSFER_FLAG` by the transfer tests.
+    // `--run-transfer <kind>` is the detached child re-invoking itself.
     registerAction(
         sandbox
             .command("pull")
             .description("Start the two detached image transfers (the runtime image and the provisioner image) and return at once")
-            .addOption(new Option("--run-transfer <kind>").hideHelp()),
+            .addOption(new Option(`${IMAGE_TRANSFER_FLAG} <kind>`).hideHelp()),
         "machine",
         { kind: "approval" },
         async (options: { runTransfer?: string }) => {
@@ -1034,8 +1035,7 @@ export function buildProgram(): Command {
     const store = cli.command("store").description("Manage the host package store (the pool, the per-analysis farms, and the catalog)");
 
     // The hidden flags: `--queued` is the agent route (enqueue, no flush), and
-    // `--run-flush` is the detached flush child. Their spellings are pinned by
-    // the store tests against STORE_QUEUED_FLAG / STORE_FLUSH_FLAG.
+    // `--run-flush` is the detached flush child.
     registerAction(
         store
             .command("add")
@@ -1045,7 +1045,7 @@ export function buildProgram(): Command {
             .option("--lang <ecosystem>", "The ecosystem: python or r (both searched otherwise)")
             .option("--analysis <ref>", "Extend the farm of this analysis after the commit (id or name)")
             .addOption(new Option("--queued").hideHelp())
-            .addOption(new Option("--run-flush").hideHelp()),
+            .addOption(new Option(STORE_FLUSH_FLAG).hideHelp()),
         "machine",
         { kind: "approval" },
         async (pkg: string | undefined, options: { version?: string; lang?: string; analysis?: string; queued?: boolean; runFlush?: boolean }) => {
@@ -1116,15 +1116,14 @@ export function buildProgram(): Command {
     );
 
     // `approval`: the catalog download moves gigabytes. The hidden
-    // `--run-transfer` is the detached child; the spelling is pinned against
-    // CATALOG_TRANSFER_FLAG by the download tests.
+    // `--run-transfer` is the detached child.
     registerAction(
         store
             .command("download")
             .description("Start the detached catalog transfer from GitHub Packages, or report why none is necessary")
             .option("--update", "Apply a moved catalog tag (replaces the dependency graph whole)")
             .option("--foreground", "Run the transfer in this process and carry the outcome in the exit code (for a one-shot container)")
-            .addOption(new Option("--run-transfer").hideHelp()),
+            .addOption(new Option(CATALOG_TRANSFER_FLAG).hideHelp()),
         "machine",
         { kind: "approval" },
         async (options: { update?: boolean; runTransfer?: boolean; foreground?: boolean }) => {

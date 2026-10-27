@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { availableParallelism, cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 /**
@@ -102,9 +102,61 @@ export function walkParentPid(): number | null {
 /**
  * The environment of a walk child: `base`, or the environment of this process when `base` is undefined, plus the pid
  * of this process as the server pid that {@link walkParentPid} reads in the child.
+ *
+ * The result never holds {@link fsPoolVar}, also when the person set it: the walk keeps the default file pool. A
+ * walk with a large pool measured about two times slower, and the variable targets the server, not the walk. A person
+ * thus cannot size the pool of a walk child. The result never holds `GOMAXPROCS` either: Bun reads it after
+ * {@link fsPoolVar} for the pool size, thus an inherited value would also widen the pool of the walk.
  */
 export function walkChildEnv(base: Record<string, string | undefined> | undefined): Record<string, string | undefined> {
-    return { ...(base ?? process.env), [walkParentPidVar]: String(process.pid) };
+    const childEnv: Record<string, string | undefined> = { ...(base ?? process.env), [walkParentPidVar]: String(process.pid) };
+    delete childEnv[fsPoolVar];
+    delete childEnv.GOMAXPROCS;
+    return childEnv;
+}
+
+/**
+ * The variable that sizes the pool of blocking threads that runs each async `node:fs` call of a Bun process. Bun reads
+ * it through `getenv` at the first use of the pool, then `GOMAXPROCS`, then the core count, and clamps it to 2 to
+ * 1024. On Windows the libuv pool, which runs `open`, `read`, and `write`, reads it too. An assignment to
+ * `process.env` inside a running process does not reach the pool, thus only the environment of a new process sets it.
+ */
+export const fsPoolVar = "UV_THREADPOOL_SIZE";
+
+/**
+ * The file pool that the server requests for `cores` cores. A call on a hung mount holds its thread forever, and one
+ * request can hold 16 calls (a staging walk, a folder list), thus the floor of 64 leaves threads for the other
+ * requests. Four threads for each core keeps that reserve on a large machine. An idle thread costs only its stack
+ * address space.
+ */
+export function serverFsPoolSize(cores: number): number {
+    return Math.max(64, 4 * cores);
+}
+
+/** The value of {@link fsPoolVar} in the environment of this process, read at call time, or `null` when it is absent. */
+export function fsPoolSize(): string | null {
+    return process.env[fsPoolVar] ?? null;
+}
+
+/**
+ * The whole environment of this process, for a caller that hands it on unchanged to a new process. A caller that wants
+ * one variable reads it through its own reader in this file.
+ */
+export function processEnv(): Record<string, string | undefined> {
+    return process.env;
+}
+
+/**
+ * The environment of a server process: `base`, or the environment of this process when `base` is undefined, plus
+ * {@link fsPoolVar} at {@link serverFsPoolSize} when the base has no such variable. A value in the base stays: the
+ * person who set it wins, also when it is small.
+ */
+export function serverChildEnv(base: Record<string, string | undefined> | undefined): Record<string, string | undefined> {
+    const source = base ?? process.env;
+    if (source[fsPoolVar] !== undefined) return { ...source };
+    // `availableParallelism` is younger than `cpus`, and a runtime without it still reports the cores through `cpus`.
+    const cores = typeof availableParallelism === "function" ? availableParallelism() : cpus().length;
+    return { ...source, [fsPoolVar]: String(serverFsPoolSize(cores)) };
 }
 
 // The XDG Base Directory specification makes a program ignore a relative value. Each process resolves a

@@ -2,11 +2,12 @@ import { join } from "node:path";
 
 import { err, ok, Result, ResultAsync } from "neverthrow";
 
-import { selfInvocation } from "../../lib/cli.ts";
+import { WALK_COMMAND } from "../../lib/child_flags.ts";
+import { selfInvocation } from "../../lib/self_invocation.ts";
 import { walkChildEnv } from "../../lib/env.ts";
 import { readError, type FolderEntry, type FolderEntryType, type FolderReadError } from "../../lib/folder_listing.ts";
 import { subsequenceScore, subsequenceScoreBytes } from "../../lib/fuzzy.ts";
-import { decodeRecords, ENTRY_KIND, WALK_COMMAND, type EntryKindCode, type RecordSink, type WalkOpts } from "./walk_child.ts";
+import { decodeRecords, ENTRY_KIND, type EntryKindCode, type RecordSink, type WalkOpts } from "./walk_child.ts";
 
 /** The caps of a search cache. A test sets small values to reach each cap on a small tree. */
 export type SearchLimits = {

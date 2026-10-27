@@ -3,14 +3,13 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { selfInvocation } from "../../lib/cli.ts";
+import { WALK_COMMAND } from "../../lib/child_flags.ts";
+import { selfInvocation } from "../../lib/self_invocation.ts";
 import { NameIndex } from "./search_index.ts";
 import {
     decodeRecords,
-    isWalkChildInvocation,
     parentGone,
     readFolderEntries,
-    WALK_COMMAND,
     walkToRecords,
     type EntryKindCode,
     type ReadEntries,
@@ -232,15 +231,6 @@ describe("walkToRecords and decodeRecords", () => {
             )
         )._unsafeUnwrap();
         expect(decode(root, chunks).events).toEqual(["scope read"]);
-    });
-});
-
-describe("isWalkChildInvocation", () => {
-    test("matches only the arguments that start the walk child", () => {
-        expect(isWalkChildInvocation(["server", "walk", "/data", "--depth", "64"])).toBe(true);
-        expect(isWalkChildInvocation(["server", "status"])).toBe(false);
-        expect(isWalkChildInvocation(["walk", "server"])).toBe(false);
-        expect(isWalkChildInvocation([])).toBe(false);
     });
 });
 
