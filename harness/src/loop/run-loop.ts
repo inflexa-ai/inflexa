@@ -777,6 +777,8 @@ async function runSeries(
         ],
     });
 
+    // The work before the current request, which an abort of the stream does not wait for.
+    let preparing: Promise<void> | undefined;
     // The first fatal error of a tool call or of an approval ends the series, and the series throws it.
     let fatal: unknown;
     const fatalController = new AbortController();
@@ -865,7 +867,9 @@ async function runSeries(
         stopWhen: () => stops(),
         prepareStep: async () => {
             open = openStep();
-            await target.beforeRequest?.();
+            const before = target.beforeRequest?.();
+            preparing = before;
+            await before;
             return { messages: requestView() };
         },
         onChunk: async ({ chunk }) => {
@@ -907,6 +911,9 @@ async function runSeries(
             failure ??= error;
         },
     });
+    // An abort ends the stream while the work before a request can still run, for example a compaction that
+    // writes its round. The series ends after that work, thus the run never writes a round beside it.
+    await preparing?.catch(() => undefined);
 
     const callerAborted = opts.signal.aborted;
     if (fatal !== undefined && !(callerAborted && errorNameOf(fatal) === "AbortError")) {
