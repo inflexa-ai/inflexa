@@ -46,6 +46,7 @@ import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import { markRunCanceledIfActive, queryRun, updateRunStatus } from "../state/runs.js";
 import type { RunStatus, StepExecutionRow } from "../state/schema.js";
 import { cancelRunningStepExecutions, queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
+import { clearPausesOfWork } from "../state/paused-work.js";
 import { createDbosWorkflowPurger, dbosClientFor } from "./dbos-workflow-purger.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
 import { parseRecordedRunEnd, RUN_END_EVENT_KEY, type RecordedRunEnd } from "./run-end-record.js";
@@ -108,7 +109,7 @@ export type RunCanceler = {
     cancel(runId: string, session: AgentSession): Promise<CancelRunResult>;
 };
 
-const TERMINAL: ReadonlySet<RunStatus> = new Set(["completed", "partial", "failed", "canceled", "suspended_insufficient_funds"]);
+const TERMINAL: ReadonlySet<RunStatus> = new Set(["completed", "partial", "failed", "canceled"]);
 
 export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
     const { pool, runCharge, runAuthorizer } = deps;
@@ -179,6 +180,9 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             } catch (err) {
                 logger.error("late-child cancel sweep failed", { runId, ...logger.errorFields(err) });
             }
+            // The cancel ended each wait of a paused step, and no workflow of the run deletes its row again.
+            const cleared = await clearPausesOfWork(pool, runId);
+            if (cleared.isErr()) logger.error("the pauses of the run did not clear", { runId, op: cleared.error.op });
 
             // The run end that the body recorded after a failed status write. A value
             // that is not a recorded run end counts as a failed read.

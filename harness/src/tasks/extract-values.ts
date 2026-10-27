@@ -23,7 +23,7 @@ import { safeParseJsonAs } from "../lib/parse-json.js";
 import type { ExtractionArm, ExtractionArtifact, ExtractionRequest } from "../report-model/production-resolver.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { passSpawnSession, withStepSandbox } from "../sandbox/step-sandbox.js";
-import type { Suspension } from "../workflows/suspension.js";
+import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import type { ExecRequest, ExecResult } from "../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
 
@@ -128,7 +128,7 @@ export async function runExtraction(
     deps: ExtractionDeps,
     caller: ExtractionCaller,
     requests: readonly ExtractionRequest[],
-): Promise<Result<ExtractValuesResult, Suspension>> {
+): Promise<Result<ExtractValuesResult, SuspendingRefusal>> {
     const logger = (deps.logger ?? createNoopLogger()).named("extract-values").with({ analysisId: caller.analysisId });
     try {
         const ran = await withStepSandbox(
@@ -147,7 +147,7 @@ export async function runExtraction(
             logger,
             async (exec) => parseExtractionOutput(await exec(buildExtractionExec(caller.analysisId, requests), EXTRACTION_DEADLINE_MS)),
         );
-        if (ran.isErr()) logger.warn("extraction suspended", { reason: ran.error.reason });
+        if (ran.isErr()) logger.warn("the host refused the sandbox of the extraction", { reason: ran.error.reason });
         return ran;
     } catch (cause) {
         logger.error("extraction failed", logger.errorFields(cause));
@@ -155,8 +155,8 @@ export async function runExtraction(
     }
 }
 
-/** Runs one extraction pass for the bound analysis, and gives the raw value map back, or the suspension. */
-export type ExtractionRunner = (requests: readonly ExtractionRequest[]) => Promise<Result<ExtractValuesResult, Suspension>>;
+/** Runs one extraction pass for the bound analysis, and gives the raw value map back, or the refusal of its sandbox. */
+export type ExtractionRunner = (requests: readonly ExtractionRequest[]) => Promise<Result<ExtractValuesResult, SuspendingRefusal>>;
 
 /**
  * Turn the raw script output into the arm result. A path with rows enters the map. A path with an error
@@ -177,7 +177,8 @@ export function extractionArtifactsFromResult(result: ExtractValuesResult): Map<
 /**
  * Make the extraction arm over a runner. One `extract` call makes one run with every request in it, and it
  * gives the value map. A run fault rejects the promise, and the resolver turns the rejection into a failed
- * reference. A suspension is the `err`, and the resolver reports its reason on each reference.
+ * reference. A refusal of the sandbox with the suspend flag is the `err`, and the resolver reports its reason on each
+ * reference.
  */
 export function createExtractionArm(run: ExtractionRunner): ExtractionArm {
     return {

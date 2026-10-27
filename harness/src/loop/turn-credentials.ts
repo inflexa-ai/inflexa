@@ -10,7 +10,11 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import type { LanguageModelMiddleware } from "ai";
+import { z } from "zod";
+
 import type { AuthContext } from "../auth/types.js";
+import { errorNameOf } from "../lib/thrown.js";
 
 const credentials = new Map<string, AuthContext>();
 let hostCredential: ((turnId: string) => AuthContext | undefined) | undefined;
@@ -41,4 +45,42 @@ export function withRootTurn<T>(turnId: string, body: () => Promise<T>): Promise
 /** The id of the root chat turn of the body that runs, or `undefined` outside a chat turn. */
 export function currentRootTurn(): string | undefined {
     return rootTurn.getStore();
+}
+
+/** The error of a model call of a turn whose host gives no credential. The turn pauses on it with the cause `credential`. */
+export class TurnCredentialMissingError extends Error {
+    constructor() {
+        super("The turn has no credential of its user.");
+        this.name = "TurnCredentialMissingError";
+    }
+}
+
+/**
+ * A middleware that fails each model call while `credentialOf` gives no credential. It runs inside the step of the
+ * call, thus a replay of a recorded call does not read the credential again.
+ */
+export function credentialGuard(credentialOf: () => AuthContext | undefined): LanguageModelMiddleware {
+    const missing = (): boolean => credentialOf() === undefined;
+    return {
+        specificationVersion: "v4",
+        wrapStream: ({ doStream }) => (missing() ? Promise.reject(new TurnCredentialMissingError()) : doStream()),
+        wrapGenerate: ({ doGenerate }) => (missing() ? Promise.reject(new TurnCredentialMissingError()) : doGenerate()),
+    };
+}
+
+/** A link of the chain whose cause is an error. The error of a missing credential is an `Error`, thus the walk follows errors only. */
+const CauseLinkSchema = z.looseObject({ cause: z.instanceof(Error) });
+
+/** The depth of a cause chain that the walk reads, as a bound for a chain with a cycle. */
+const CAUSE_CHAIN_DEPTH = 8;
+
+/** Whether an error, or an error on its cause chain, is a missing credential of a turn. A replay of a step gives the name again. */
+export function isTurnCredentialMissing(err: unknown): boolean {
+    let link: unknown = err;
+    for (let depth = 0; depth < CAUSE_CHAIN_DEPTH && link !== undefined; depth++) {
+        if (errorNameOf(link) === "TurnCredentialMissingError") return true;
+        const next = CauseLinkSchema.safeParse(link);
+        link = next.success ? next.data.cause : undefined;
+    }
+    return false;
 }

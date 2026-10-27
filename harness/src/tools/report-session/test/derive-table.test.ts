@@ -341,8 +341,12 @@ describe("a suspended derivation", () => {
 
         const result = await derive(tool, {});
 
-        expect(result).toMatchObject({ outcome: "suspended", reason: "account_frozen" });
-        expect(result.outcome === "suspended" ? result.detail : "").toContain("account_frozen");
+        expect(result).toEqual({
+            outcome: "suspended",
+            reason: "account_frozen",
+            detail: "the host refused the sandbox (account_frozen), thus the derivation did not run",
+        });
+        expect(sandbox.submits).toHaveLength(0);
         expect(ledger.records).toHaveLength(0);
     });
 });

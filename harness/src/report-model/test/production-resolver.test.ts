@@ -243,16 +243,18 @@ describe("production resolver, the fall-through", () => {
         expect(batches.length).toBe(1);
     });
 
-    test("a suspended pass reports the reason of the host on the reference", async () => {
-        const hash = await writeArtifact("odd-suspended.csv", "gene;pvalue;score\nBRCA1;0.01;0.9\nTP53;0.02;0,8\n");
-        const arm: ExtractionArm = { extract: () => Promise.resolve(err({ kind: "suspended", reason: "quota_exhausted" })) };
+    test("a pass whose spawn the host refused reports the reason of the host on the reference", async () => {
+        const hash = await writeArtifact("odd-refused.csv", "gene;pvalue;score\nBRCA1;0.01;0.9\nTP53;0.02;0,8\n");
+        const arm: ExtractionArm = {
+            extract: () => Promise.resolve(err({ type: "labels_refused", op: "createSandbox", reason: "quota_exhausted", suspend: true })),
+        };
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
-        const reference = valueRef("odd-suspended.csv", hash, "score", "gene", "TP53");
+        const reference = valueRef("odd-refused.csv", hash, "score", "gene", "TP53");
 
-        const failure = (await resolver.resolve(reference, snapshotOf([{ path: "odd-suspended.csv", hash }])))._unsafeUnwrapErr();
+        const failure = (await resolver.resolve(reference, snapshotOf([{ path: "odd-refused.csv", hash }])))._unsafeUnwrapErr();
 
         expect(failure.reason).toBe("extraction-unavailable");
-        expect(failure.detail).toContain("quota_exhausted");
+        expect(failure.detail).toBe("the host refused the sandbox (quota_exhausted), thus the file at odd-refused.csv was not read");
     });
 
     test("the same odd dialect fails extraction-unavailable when no arm is wired", async () => {

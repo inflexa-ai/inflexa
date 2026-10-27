@@ -440,20 +440,23 @@ describe("triggerDataProfile — a refused authorization", () => {
         expect(await analysisStatus("a-refused")).toBe("active");
     });
 
-    it("with the suspend flag, it also marks the analysis as suspended", async () => {
-        await seedAnalysis(pool, "a-suspended", "pending");
-        await setSeed(pool, "a-suspended", ["file-aaa"]);
+    it("with the suspend flag, fails the claimed row the same way, and leaves the analysis active", async () => {
+        await seedAnalysis(pool, "a-refused-suspend", "pending");
+        await setSeed(pool, "a-refused-suspend", ["file-aaa"]);
 
-        (
-            await triggerDataProfile(refusingDeps(true), { auth: makeLocalAuth(), analysisId: "a-suspended", stagedInputs: [stagedInput("file-aaa")] })
-        )._unsafeUnwrap();
+        expect(
+            (
+                await triggerDataProfile(refusingDeps(true), {
+                    auth: makeLocalAuth(),
+                    analysisId: "a-refused-suspend",
+                    stagedInputs: [stagedInput("file-aaa")],
+                })
+            )._unsafeUnwrap(),
+        ).toBe("started");
 
-        expect(await settledStatus("a-suspended")).toBe("failed");
-        const deadline = Date.now() + 5_000;
-        while ((await analysisStatus("a-suspended")) !== "suspended_insufficient_funds" && Date.now() < deadline) {
-            await sleep(20);
-        }
-        expect(await analysisStatus("a-suspended")).toBe("suspended_insufficient_funds");
+        expect(await settledStatus("a-refused-suspend")).toBe("failed");
+        expect((await loadDataProfileStatus(pool, "a-refused-suspend"))._unsafeUnwrap()?.error).toBe("no_funds");
+        expect(await analysisStatus("a-refused-suspend")).toBe("active");
     });
 });
 
@@ -496,29 +499,35 @@ describe("runDataProfile — the outcome of the dispatch", () => {
         expect((await tryRetryDataProfile(pool, analysisId))._unsafeUnwrap()).toBe(true);
     }
 
-    it("gives a refused authorization as its err, after it fails the row with the reason of the host", async () => {
-        await claimFailedRow("a-run-refused");
-        const refusing: DataProfileTriggerDeps = {
-            pool,
-            runAuthorizer: {
-                authorize: () => errAsync({ reason: "no_funds", suspend: false }),
-                revoke: () => okAsync(undefined),
-                revokeByJti: () => okAsync(undefined),
-            },
-            runLauncher: noEngineLauncher,
-            workflow: () => {
-                throw new Error("workflow must not be launched after a refused authorization");
-            },
-        };
+    for (const suspend of [false, true]) {
+        it(`gives a refused authorization with suspend ${String(suspend)} as its err, after it fails the row, and leaves the analysis active`, async () => {
+            const analysisId = `a-run-refused-${String(suspend)}`;
+            await claimFailedRow(analysisId);
+            const refusing: DataProfileTriggerDeps = {
+                pool,
+                runAuthorizer: {
+                    authorize: () => errAsync({ reason: "no_funds", suspend }),
+                    revoke: () => okAsync(undefined),
+                    revokeByJti: () => okAsync(undefined),
+                },
+                runLauncher: noEngineLauncher,
+                workflow: () => {
+                    throw new Error("workflow must not be launched after a refused authorization");
+                },
+            };
 
-        const failure = (
-            await runDataProfile(refusing, { auth: makeLocalAuth(), analysisId: "a-run-refused", stagedInputs: [stagedInput("file-aaa")] })
-        )._unsafeUnwrapErr();
+            const failure = (await runDataProfile(refusing, { auth: makeLocalAuth(), analysisId, stagedInputs: [stagedInput("file-aaa")] }))._unsafeUnwrapErr();
 
-        expect(failure).toEqual({ type: "refused", reason: "no_funds", suspend: false });
-        expect(await rawStatus(pool, "a-run-refused")).toBe("failed");
-        expect((await loadDataProfileStatus(pool, "a-run-refused"))._unsafeUnwrap()?.error).toBe("no_funds");
-    });
+            expect(failure).toEqual({ type: "refused", reason: "no_funds", suspend });
+            expect(await rawStatus(pool, analysisId)).toBe("failed");
+            expect((await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap()?.error).toBe("no_funds");
+            const analysis = await pool.query<{ status: string }>({
+                text: "SELECT status FROM cortex_analysis_state WHERE analysis_id = $1",
+                values: [analysisId],
+            });
+            expect(analysis.rows[0]?.status).toBe("active");
+        });
+    }
 
     it("gives a failed start as its err, after it compensates the row", async () => {
         // No DBOS engine runs in this file, thus the start of the launcher rejects.

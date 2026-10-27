@@ -5,7 +5,6 @@
  */
 
 import type { LanguageModelMiddleware, ModelMessage, UIMessageStreamWriter } from "ai";
-import { z } from "zod";
 
 import type { RequestSession } from "../auth/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -17,6 +16,7 @@ import type { Querier } from "../state/db.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { rulesForContextWindow, type CompactionPolicy } from "../loop/compaction.js";
 import { finalText, runLoop, type AgentFinish, type AgentRound, type LoopOptions } from "../loop/run-loop.js";
+import { isTurnCredentialMissing } from "../loop/turn-credentials.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import { compactionExchangeOf, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import type { ConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
@@ -239,6 +239,8 @@ export type TurnTransport = {
     readonly modelMiddleware?: readonly LanguageModelMiddleware[];
     /** The decision of the user on a call whose tool asks for approval. Absent: the loop denies such a call. */
     readonly approve?: LoopOptions["approve"];
+    /** The pause of the turn. A turn workflow gives it. Absent: each failure of a request fails the turn. */
+    readonly pause?: LoopOptions["pause"];
 };
 
 /** The values of a turn that its run reads. */
@@ -347,6 +349,7 @@ export async function runOpenTurn(
             compaction,
             logger: deps.logger,
             approve: transport.approve,
+            pause: transport.pause,
             onRound: storeRound,
         });
         outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
@@ -409,41 +412,14 @@ function compactionPolicy(deps: RunChatTurnDeps, analysisId: string, threadType:
     };
 }
 
-/** The error that ends a turn of a turn workflow whose host gives no credential, before its next model call. */
-export class TurnCredentialMissingError extends Error {
-    constructor() {
-        super("The turn has no credential of its user.");
-        this.name = "TurnCredentialMissingError";
-    }
-}
-
-/** The reason of a turn that a recovery found with no credential of its user. */
-export const TURN_INTERRUPTED_REASON = "interrupted";
-
-/** A link of the chain whose cause is an error. The error of a missing credential is an `Error`, thus the walk follows errors only. */
-const CauseLinkSchema = z.looseObject({ cause: z.instanceof(Error) });
-
-/** The depth of a cause chain that the walk reads, as a bound for a chain with a cycle. */
-const CAUSE_CHAIN_DEPTH = 8;
-
-/** Whether an error, or an error on its cause chain, carries the name. A replay of a step gives the name again. */
-function carriesErrorName(err: unknown, name: string): boolean {
-    let link: unknown = err;
-    for (let depth = 0; depth < CAUSE_CHAIN_DEPTH && link !== undefined; depth++) {
-        if (errorNameOf(link) === name) return true;
-        const next = CauseLinkSchema.safeParse(link);
-        link = next.success ? next.data.cause : undefined;
-    }
-    return false;
-}
-
-/** The reason of a failed turn. It never holds the error message, because each later turn sends the note to the vendor. */
 /**
- * The machine code of a failure, which the end frame of a turn carries for a host: the suspend reason of the host for
- * a billing refusal, else `credential`, `outage`, `internal`, or `interrupted`.
+ * The machine code of a failure, which the end frame of a turn carries for a host. A turn workflow pauses on a
+ * suspend error, a refused or missing credential, and an outage, thus their codes come only from a turn with no
+ * workflow: the suspend reason of the host, `credential`, or `outage`. Each other provider error gives `provider`,
+ * and each other error gives `internal`.
  */
 function failureCodeOf(err: unknown): string {
-    if (carriesErrorName(err, "TurnCredentialMissingError")) return TURN_INTERRUPTED_REASON;
+    if (isTurnCredentialMissing(err)) return "credential";
     const failure = modelFailureOf(err);
     switch (failure.kind) {
         case "billing":
@@ -453,12 +429,13 @@ function failureCodeOf(err: unknown): string {
         case "outage":
             return "outage";
         case "other":
-            return findProviderError(err) === undefined ? "internal" : "outage";
+            return findProviderError(err) === undefined ? "internal" : "provider";
     }
 }
 
+/** The reason of a failed turn. It never holds the error message, because each later turn sends the note to the vendor. */
 function failureReasonOf(err: unknown): string {
-    if (carriesErrorName(err, "TurnCredentialMissingError")) return TURN_INTERRUPTED_REASON;
+    if (isTurnCredentialMissing(err)) return "The turn has no credential of its user.";
     const failure = modelFailureOf(err);
     switch (failure.kind) {
         case "billing":

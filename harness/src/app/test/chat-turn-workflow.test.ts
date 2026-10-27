@@ -26,7 +26,9 @@ import type { ThreadAgentResolver } from "../../runtime/assemble.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptEntry, type ScriptStep } from "../../testing.js";
 import { createAskGateway } from "../../tools/approval/gateway.js";
 import { defineTool } from "../../tools/define-tool.js";
+import { workPause } from "../../workflows/pause.js";
 import { registerChatTurns } from "../chat-turn-workflow.js";
+import { createPausedWork, type PausedWork } from "../paused-work.js";
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -131,7 +133,39 @@ const research = defineTool({
     },
 });
 
-const agent = { id: "conversation-agent", systemPrompt: "Test.", model: "scripted-model", tools: [echo, crashAfter, guarded, research], maxIterations: 6 };
+const PAUSING_RESEARCHER = "test-pausing-researcher";
+
+/** A sub-agent that pauses with the work of its turn, as the assembly registers each sub-agent. */
+const pausingResearcher = registerSubAgent<{ readonly brief: string }, string>(
+    PAUSING_RESEARCHER,
+    async ({ payload, ctx, loop }) => {
+        const { messages } = await runLoop(
+            { ...researcherAgent, id: PAUSING_RESEARCHER },
+            [{ role: "user", content: payload.brief }],
+            forSubAgent(ctx.session, PAUSING_RESEARCHER),
+            { ...loop, provider: childProvider },
+        );
+        return finalText(messages);
+    },
+    (work, emit) => workPause({ pool: rig.pool, ...work, emit }).afterFailure,
+);
+
+const pausingResearch = defineTool({
+    id: "pausing_research",
+    description: "Research a brief in a sub-agent that can pause.",
+    inputSchema: z.object({ brief: z.string() }),
+    describeCall: "none",
+    startsWorkflow: true,
+    execute: async (input, ctx) => ok({ report: await pausingResearcher(input, ctx) }),
+});
+
+const agent = {
+    id: "conversation-agent",
+    systemPrompt: "Test.",
+    model: "scripted-model",
+    tools: [echo, crashAfter, guarded, research, pausingResearch],
+    maxIterations: 6,
+};
 
 /**
  * The pool of the turn. A parked write waits for the cancel of its step, thus the cancel of the test cuts the step
@@ -275,11 +309,11 @@ describe("a chat turn as a workflow", () => {
         expect(textOf(await readAll(turnId))).toBe("Done after the crash.");
     });
 
-    it("ends a recovered turn with no credential as interrupted, before its next model call", async () => {
+    it("pauses a recovered turn with no credential, and a resume with a credential continues it", async () => {
         toolRuns = 0;
         parkedWrite = false;
         credentialAfterRestart = undefined;
-        const scripted = scriptedModel([callTools(toolCall("c1", "crash_after", {})), reply([text("unused")])]);
+        const scripted = scriptedModel([callTools(toolCall("c1", "crash_after", {})), reply([text("after the resume")])]);
         provider = scripted.provider;
         const threadId = `thread-${rig.nextWorkflowId()}`;
 
@@ -292,13 +326,46 @@ describe("a chat turn as a workflow", () => {
             waitUntil(() => turnCredentials.of(turnId) === undefined),
         ]);
         const handle = await recoverAtCrashPoint(turnId, () => parkedWrite, { ended });
+
+        const paused = await pausedWorkOf(turnId);
+        expect(paused).toMatchObject({ kind: "turn", threadId, waiting: [{ workflowId: turnId, state: "paused", cause: { kind: "credential" } }] });
+        expect(scripted.calls).toHaveLength(1);
+        expect((await turnRecords(threadId)).map((record) => record.status)).toEqual(["open"]);
+
+        expect(await pausedWork.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
         await handle.getResult();
 
-        expect(scripted.calls).toHaveLength(1);
-        expect(await turnRecords(threadId)).toEqual([{ status: "failed", reason: "interrupted" }]);
-        expect(await turns.outcome(turnId)).toMatchObject({ status: "failed", code: "interrupted", opened: true });
-        expect((await readAll(turnId)).at(-1)).toMatchObject({ type: "error", reason: "interrupted" });
+        expect(scripted.calls).toHaveLength(2);
+        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
+        expect(await turns.outcome(turnId)).toMatchObject({ status: "done" });
+        const frames = await readAll(turnId);
+        expect(textOf(frames)).toContain("after the resume");
+        expect(frames.filter((frame) => frame.type === "data-pause").map((frame) => ("data" in frame ? frame.data : frame))).toEqual([
+            expect.objectContaining({ state: "paused", cause: { kind: "credential" } }),
+            expect.objectContaining({ state: "running" }),
+        ]);
+        expect(await pausedWork.list(ANALYSIS)).toEqual([]);
         credentialAfterRestart = makeLocalAuth();
+    }, 30_000);
+
+    it("closes a paused turn as aborted on a stop, and frees its thread", async () => {
+        const scripted = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }]);
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        expect(await pausedWorkOf(turnId)).toMatchObject({ waiting: [{ cause: { kind: "host", reason: "payment_required" } }] });
+        await turns.stop(turnId);
+        await DBOS.retrieveWorkflow(turnId).getResult();
+
+        expect(await turnRecords(threadId)).toEqual([{ status: "aborted", reason: null }]);
+        expect(await pausedWork.list(ANALYSIS)).toEqual([]);
+        const next = await turns.open(sessionWithSecret(), { analysisId: ANALYSIS, threadId, userInput: "again" });
+        expect(next.kind).toBe("started");
+        if (next.kind === "started") {
+            await turns.stop(next.turnId);
+            await DBOS.retrieveWorkflow(next.turnId).getResult();
+        }
     });
 
     it("refuses a second turn on a thread with a turn that runs, and a stop closes the first turn as aborted", async () => {
@@ -409,6 +476,33 @@ describe("the approval of a chat turn workflow", () => {
 });
 
 describe("the sub-agents of a chat turn workflow", () => {
+    it("pauses a sub-agent under its turn, and a resume of the turn ends the wait of the child", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        const child = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }, reply([text("a late report")])]);
+        childProvider = child.provider;
+        provider = scriptedModel([callTools(toolCall("p1", "pausing_research", { brief: "a" })), reply([text("Done.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const childId = `${turnId}-p1`;
+        expect(await pausedWorkOf(turnId)).toMatchObject({
+            kind: "turn",
+            threadId,
+            waiting: [{ workflowId: childId, state: "paused", cause: { kind: "host", reason: "payment_required" } }],
+        });
+        expect(await pausedWork.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+
+        const frames = await readAll(turnId);
+        expect(textOf(frames)).toBe("Done.");
+        expect(child.calls).toHaveLength(2);
+        const pauses = frames.filter((frame) => frame.type === "data-pause");
+        expect(pauses.map((frame) => frame.source?.callPath.join("/"))).toEqual([
+            `conversation-agent/${PAUSING_RESEARCHER}`,
+            `conversation-agent/${PAUSING_RESEARCHER}`,
+        ]);
+        expect(await pausedWork.list(ANALYSIS)).toEqual([]);
+    });
+
     it("runs the sub-agents of one reply as child workflows at the same time, and adds their usage to the turn", async () => {
         credentialAfterRestart = makeLocalAuth();
         let started = 0;
@@ -477,6 +571,23 @@ describe("the sub-agents of a chat turn workflow", () => {
         expect(frames.filter((frame) => frame.type === "data-subagent-activity")).toMatchObject([{ toolCallId: "r1" }]);
     });
 });
+
+const pausedWork = createPausedWork({
+    get pool() {
+        return rig.pool;
+    },
+});
+
+/** The paused work of a turn, when the turn waits in a pause. */
+async function pausedWorkOf(turnId: string, timeoutMs = 15_000): Promise<PausedWork> {
+    let found: PausedWork | undefined;
+    await waitUntilAsync(async () => {
+        found = (await pausedWork.list(ANALYSIS)).find((work) => work.workId === turnId);
+        return found !== undefined;
+    }, timeoutMs);
+    if (found === undefined) throw new Error(`the turn ${turnId} did not pause`);
+    return found;
+}
 
 async function waitUntilAsync(check: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;

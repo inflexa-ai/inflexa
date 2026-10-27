@@ -51,8 +51,8 @@ import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
-import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
-import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
+import { keepSuspendingRefusal, SandboxFailure, type SuspendingRefusal } from "../sandbox/sandbox-error.js";
+import { workPause } from "../workflows/pause.js";
 import type { SandboxRef } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -83,7 +83,6 @@ import {
     loadDataProfileStatus,
     loadSeedInputFileIds,
     recordDataProfileWorkflowId,
-    suspendAnalysis,
     tryRerunDataProfile,
     tryStartDataProfile,
     upsertArtifacts,
@@ -209,6 +208,8 @@ export type DataProfileDeps = EnvironmentStorePaths & {
      * body calls nothing. It is not a provenance hook.
      */
     readonly notifyDataProfileSettled?: NotifyDataProfileSettled;
+    /** The delays of the timer of an outage. Absent: the default of the pause. */
+    readonly pauseRetryDelaysMs?: readonly number[];
 };
 
 /**
@@ -509,26 +510,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
     const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
-    let selfCancelled: boolean | undefined;
-    // A suspension fails the row with the reason of the host, because the profile
-    // ledger has no suspended state and the retry path takes a `failed` row again.
-    const suspendProfile = async (suspension: Suspension): Promise<void> => {
-        logger.warn("profile suspended", { reason: suspension.reason });
-        await settleTerminalWrite(
-            logger,
-            analysisId,
-            unwrapOrThrow(await failDataProfile(deps.pool, analysisId, suspension.reason)),
-            "failed",
-            deps.notifyDataProfileSettled,
-        );
-        await revoke("data-profile-suspended");
-        unwrapOrThrow(await suspendAnalysis(deps.pool, analysisId));
-        await activity.failed(suspension.reason);
-        if (DBOS.workflowID === undefined) return;
-        selfCancelled = true;
-        await cancelSelf("self-cancel-suspended");
-    };
-
     // The profile's activity channel. The write to the stream is bound here, while every phase and
     // phrase lives in the emitter — the phrases are the observable contract of
     // this capability, and a body that composed its own strings is a body they can drift from.
@@ -602,6 +583,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
 
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
         const workflowId = DBOS.workflowID ?? `${DATA_PROFILE_RUN_LITERAL}:${executionId}`;
+        // The profile waits in place, with its row `running`: the profile pauses, and it does not fail.
+        const pause = workPause({
+            pool: deps.pool,
+            workId: workflowId,
+            workKind: "profile",
+            analysisId,
+            emit: (part) => DBOS.writeStream("events", part),
+            retryDelaysMs: deps.pauseRetryDelaysMs,
+            logger,
+        });
         const childSession = forSubAgent(runSession, DATA_PROFILE_AGENT_ID);
         // A resolver rejection fails the workflow loudly (workspace-root-resolution
         // contract) — profiling an analysis whose root cannot be resolved is
@@ -693,16 +684,21 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // run panel's activity readout was built to remove.
         await activity.sandboxInit();
 
-        const spawned = keepSuspendingRefusal(
-            await deps.sandboxClient.createSandbox(
-                forStep(runSession, DATA_PROFILE_STEP_LITERAL),
-                { childWorkflowId: workflowId, resources: estimateDataProfileResources(stagedInputs) },
-                mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
-            ),
-        );
-        if (spawned.isErr()) {
-            await suspendProfile(suspensionOfSpawnRefusal(spawned.error));
-            return;
+        const spawn = async (): Promise<Result<SandboxRef, SuspendingRefusal>> =>
+            keepSuspendingRefusal(
+                await deps.sandboxClient.createSandbox(
+                    forStep(runSession, DATA_PROFILE_STEP_LITERAL),
+                    { childWorkflowId: workflowId, resources: estimateDataProfileResources(stagedInputs) },
+                    mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
+                ),
+            );
+        let spawned = await spawn();
+        // A refusal of the label gate with the suspend flag waits in a pause, and the spawn runs again after the
+        // resume. A body that runs outside a workflow cannot wait, thus the refusal fails the profile there.
+        while (spawned.isErr()) {
+            const waited = await pause.forCause({ kind: "host", reason: spawned.error.reason }, 0);
+            if (waited === undefined) throw new SandboxFailure(spawned.error);
+            spawned = await spawn();
         }
         const sandbox = spawned.value;
 
@@ -818,6 +814,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     invocationId: workflowId,
                     usageRecorder: deps.usageRecorder,
                     toolOutputStore: deps.toolOutputStore,
+                    pause: pause.afterFailure,
                 },
                 {
                     tools: [SUBMIT_PROFILE_TOOL_ID],
@@ -882,12 +879,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
-        if (selfCancelled || isWorkflowCancellation(err)) throw err;
-        const suspension = suspensionOfFailure(err);
-        if (suspension !== undefined) {
-            await suspendProfile(suspension);
-            return;
-        }
+        if (isWorkflowCancellation(err)) throw err;
+        // A failure with a cause of a pause waited in the loop, thus this one fails the profile.
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
         await settleTerminalWrite(
@@ -1198,10 +1191,8 @@ async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: 
 async function refuseClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, refusal: GateRefusal): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
     logger.error("the profile was not authorized", { phase, reason: refusal.reason, suspend: refusal.kind === "suspended" });
+    // No work exists yet, thus a refusal with the suspend flag fails the row the same as each other refusal.
     await failClaimedProfile(deps, analysisId, phase, refusal.reason);
-    if (suspensionOfRefusal(refusal) === undefined) return;
-    const marked = await suspendAnalysis(deps.pool, analysisId);
-    if (marked.isErr()) logger.error("the analysis was not marked as suspended", { phase, err: marked.error });
 }
 
 async function failClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, reason: string): Promise<void> {

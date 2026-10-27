@@ -543,6 +543,38 @@ export type SubAgentActivityPart = {
     dropped: number;
 };
 
+// ── Pause (reconciling) ─────────────────────────────────────────────
+
+/**
+ * Why durable work waits: a provider outage that outlived its retries, a refusal of the host with its reason, or a
+ * credential that the endpoint refused or that the host did not give.
+ */
+export type PauseCause = { readonly kind: "outage" } | { readonly kind: "credential" } | { readonly kind: "host"; readonly reason: string };
+
+/** The kind of the work that a pause belongs to. A sub-agent belongs to its turn, and a sandbox step to its run. */
+export type PausedWorkKind = "turn" | "run" | "profile";
+
+/**
+ * The state of one waiting workflow of paused work. Re-emitted under the same `id` when the wait ends, with the
+ * state `running`, so reconciling readers keep the latest state of each workflow.
+ */
+export type PausePart = {
+    type: "data-pause";
+    /** The id of the workflow that waits. */
+    id: string;
+    /** The id of the work: the turn, the run, or the profile workflow. A resume names it. */
+    workId: string;
+    workKind: PausedWorkKind;
+    /** `retrying`: the system sends the request again at `retryAt`. `paused`: only a resume ends the wait. */
+    state: "retrying" | "paused" | "running";
+    /** Absent for the state `running`. */
+    cause?: PauseCause;
+    /** The count of timer retries before this wait. Absent for the state `running`. */
+    attempt?: number;
+    /** ISO 8601. Present for the state `retrying` only. */
+    retryAt?: string;
+};
+
 // ── Union ───────────────────────────────────────────────────────────
 
 /** The parts whose contracts this version of the package declares — the arms the part registry knows. */
@@ -569,7 +601,8 @@ export type KnownChatPart =
     | RunFailedPart
     | ChildSessionStartedPart
     | ReportRenderedPart
-    | CompactionPart;
+    | CompactionPart
+    | PausePart;
 
 /**
  * A part of a known contract, or a part whose type this build does not know. An emitter newer than this

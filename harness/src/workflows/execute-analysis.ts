@@ -39,23 +39,15 @@
  *       `partial`).
  *     - the halt cascade (cancel in-flight via
  *       `Promise.allSettled(handles.map(h => DBOS.cancelWorkflow(h.workflowID)))`,
- *       stop scheduling) survives only for a suspension of a child and the
- *       `neverFits` plan-validation guard.
- *  4. Suspension cascade (workflow-suspension spec)
- *     - a child that suspends sends a typed message on `CHILD_SUSPENDED_TOPIC`
- *       and cancels itself. The parent reads the kind of the message, never a
- *       reason string: it cancels the siblings, then self-cancels to
- *       `CANCELLED` (NOT `ERROR` — ERROR isn't resumable; NOTES #3)
- *     - a refusal of the `RunCharge.open` gate with the suspend flag suspends
- *       the run before any step starts
- *     - a `suspend` error of a synthesis model request suspends the run in
- *       place of the synthesis failure
- *     - the run row and the analysis flip to `suspended_insufficient_funds` in
- *       `collectAndComplete`. The run status is terminal and does not block a
- *       new run of the plan. The paused parent lands in `CANCELLED`, a
- *       durably reschedulable state; re-driving it is a future enhancement,
- *       not yet wired here. The reason of the host rides to the run row, the
- *       charge close, the metric, and the terminal part, unread.
+ *       stop scheduling) survives only for the `neverFits` plan-validation guard.
+ *  4. Pause (work-pause spec)
+ *     - a step pauses in its own workflow, and the parent waits for its result as
+ *       for a step that runs. The other steps go on, and the run row stays
+ *       `running`
+ *     - a refusal of the `RunCharge.open` gate with the suspend flag pauses the
+ *       run before any step starts, and the charge opens again after the resume
+ *     - a failed model request of the synthesis with a cause of a pause waits in
+ *       the loop of the synthesizer
  *  5. `synthesizeFindings` (single sequential block, no sandbox)
  *  6. `collectAndComplete` (terminal — runs on ALL paths)
  *     - determine final status from completed/cancelled/failed counts
@@ -105,12 +97,12 @@ import {
     queryStepsByRun,
     seedStepExecutions,
     setRunSynthesisOutcome,
-    suspendAnalysis as suspendAnalysisQuery,
     sweepPendingStepExecutions,
     updateRunStatus,
     updateStepExecution,
 } from "../state/index.js";
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
+import { clearPausesOfWork } from "../state/paused-work.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
@@ -139,8 +131,8 @@ import { isChatDataPart, synthesisEmission } from "../sandbox/sandbox-step-trans
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
 import { recordCancelledChild } from "./metrics.js";
-import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
-import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, type Suspension } from "./suspension.js";
+import { pauseAtGate, workPause, type WorkPause } from "./pause.js";
+import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import { presentGet } from "../lib/present.js";
 
 /** Registered child sandbox-step callable the parent's child-dispatch closes over. */
@@ -220,7 +212,7 @@ export type ExecuteAnalysisInput = {
  * path returns — the caller joined an in-flight run, no new workflow was
  * started. Every other variant is a terminal status the parent reached.
  */
-export type ExecuteAnalysisFinalStatus = "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
+export type ExecuteAnalysisFinalStatus = "running" | "completed" | "partial" | "failed" | "canceled";
 
 export type ExecuteAnalysisResult = {
     readonly runId: string;
@@ -305,6 +297,8 @@ export type ExecuteAnalysisDeps = {
     readonly literatureReviewer: Tool;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
     readonly runCharge: RunCharge;
+    /** The delays of the timer of an outage. Absent: the default of the pause. */
+    readonly pauseRetryDelaysMs?: readonly number[];
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
     readonly runAuthorizer: RunAuthorizer;
     /**
@@ -483,11 +477,10 @@ export function buildChildInput(args: {
     stepId: string;
     level: number;
     runId: string;
-    workflowId: string;
     prompt: string;
     templateBinding?: TemplateBinding;
 }): Omit<SandboxStepInput, "runSession"> {
-    const { input, stepId, level, runId, workflowId, prompt, templateBinding } = args;
+    const { input, stepId, level, runId, prompt, templateBinding } = args;
     const resources = input.resourcesByStepId[stepId];
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
@@ -514,7 +507,6 @@ export function buildChildInput(args: {
         templateBinding,
         level,
         prompt,
-        parentWorkflowId: workflowId,
         resources,
         timeoutSeconds: input.timeoutByStepId?.[stepId],
     };
@@ -852,12 +844,10 @@ async function collectUpstreamHandoffs(args: {
  * its reason in `blockedReason` — an honest agent-declared blocker, not an
  * error — and a failure carries the same reason string
  * `persist-synthesis-outcome` writes to `cortex_runs.synthesis_reason`, so the
- * two ledgers cannot disagree about why synthesis died. A suspension is not an
- * outcome: the row is canceled, as the row of a suspended step. Exported for
- * the projection tests (the `buildChildInput` pattern).
+ * two ledgers cannot disagree about why synthesis died. Exported for the
+ * projection tests (the `buildChildInput` pattern).
  */
-export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: string | null } | Suspension, durationMs: number): UpdateStepExecutionInput {
-    if ("kind" in outcome) return { status: "canceled", durationMs, error: outcome.reason };
+export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: string | null }, durationMs: number): UpdateStepExecutionInput {
     switch (outcome.status) {
         case "produced":
             return { status: "completed", durationMs };
@@ -889,6 +879,8 @@ export function synthesizeFindings(args: {
     completedSteps: readonly string[];
     session: RunSession;
     deps: ExecuteAnalysisDeps;
+    /** The pause of the run. The body of the run gives it, thus the synthesizer waits in place. */
+    pause?: WorkPause;
 }): Promise<{ findings: readonly RunFinding[]; synthesisStatus: Exclude<SynthesisStatus, "failed">; synthesisReason: string | null }> {
     const { analysisId, runId, completedSteps, session, deps } = args;
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis.synthesis");
@@ -938,6 +930,7 @@ export function synthesizeFindings(args: {
             // call path.
             session: forStep(session, SYNTHESIS_STEP_ID),
             emit,
+            pause: args.pause?.afterFailure,
             durably: (name, run) => DBOS.runStep(run, { name }),
             onProgress: async (phase, activity, extra = {}) => {
                 // The body checkpoints the clock and each write, thus a replay writes no entry again.
@@ -986,7 +979,16 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // the run authorization is already minted and rides in `input.runSession`.
     const runId = input.runSession.runFrame.runId;
     const workflowId = runId;
-    const init = await validateAndInit(input, runId, deps);
+    const pause = workPause({
+        pool: deps.pool,
+        workId: runId,
+        workKind: "run",
+        analysisId: input.analysisId,
+        emit: emitStreamPart,
+        retryDelaysMs: deps.pauseRetryDelaysMs,
+        logger,
+    });
+    const init = await validateAndInit(input, runId, deps, pause);
     if (init.kind === "joined-existing") {
         return {
             runId: init.runId,
@@ -998,7 +1000,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         };
     }
     if (init.kind === "charge-refused") {
-        const suspension = suspensionOfRefusal(init.refusal) ?? null;
         const refusedAtMs = await DBOS.now();
         const refused = await collectAndComplete({
             input,
@@ -1008,15 +1009,13 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             completed: new Set(),
             failed: new Set(),
             canceled: new Set(),
-            suspension,
             failureReason: init.refusal.reason,
-            forceFailed: suspension === null,
+            forceFailed: true,
             findings: [],
             synthesisOutcome: null,
             deps,
         });
         observeRunGuarded(deps, buildRunObservation({ input, runId, status: refused.status, stepStates: new Map() }));
-        if (suspension !== null) return cancelSelf("self-cancel-suspended");
         return refused;
     }
 
@@ -1100,12 +1099,10 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // after so the workflow record goes to ERROR.
     let synthesisError: unknown = null;
     let synthesisMessage: string | undefined;
-    let synthesisSuspension: Suspension | null = null;
     let synthesisFindings: readonly RunFinding[] = [];
     // Null when synthesis never ran (disabled or no completed steps): the ledger
     // columns stay NULL — "unknown", not a recorded skip — and the seeded
-    // `synthesis` row (if any) stays `pending` for the terminal sweep. Also null
-    // when synthesis suspended: a resume of the run gives the outcome.
+    // `synthesis` row (if any) stays `pending` for the terminal sweep.
     let synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null = null;
     if (synthesisEnabled && final.completed.size > 0) {
         // Bracketing clock reads for the row's duration_ms — checkpointed, so a
@@ -1125,7 +1122,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 childWorkflowId: null,
             }),
         );
-        let rowOutcome: { status: SynthesisStatus; reason: string | null } | Suspension;
+        let rowOutcome: { status: SynthesisStatus; reason: string | null };
         try {
             const synthOut = await synthesizeFindings({
                 analysisId: input.analysisId,
@@ -1133,6 +1130,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 completedSteps: [...final.completed],
                 session: input.runSession,
                 deps,
+                pause,
             });
             synthesisFindings = synthOut.findings;
             synthesisOutcome = { status: synthOut.synthesisStatus, reason: synthOut.synthesisReason };
@@ -1146,18 +1144,12 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             // stays consistent — the pre-existing cancelled-mid-flight wedge shape
             // `inflexa run` already detects via its DBOS-status cross-check.
             if (isWorkflowCancellation(err)) throw err;
-            const suspended = suspensionOfFailure(err);
-            if (suspended !== undefined) {
-                synthesisSuspension = suspended;
-                rowOutcome = suspended;
-                logger.warn("synthesizeFindings suspended — suspending the run", { runId, reason: suspended.reason });
-            } else {
-                synthesisError = err;
-                synthesisMessage = errorMessageOf(err);
-                synthesisOutcome = { status: "failed", reason: errorMessageOf(err) ?? textOf(err) };
-                rowOutcome = synthesisOutcome;
-                logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
-            }
+            // A failure with a cause of a pause waited in the loop of the synthesizer, thus this one fails the run.
+            synthesisError = err;
+            synthesisMessage = errorMessageOf(err);
+            synthesisOutcome = { status: "failed", reason: errorMessageOf(err) ?? textOf(err) };
+            rowOutcome = synthesisOutcome;
+            logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
         }
         // Terminal stamp for the `synthesis` row — deliberately BEFORE
         // `collectAndComplete` writes the run row's terminal status, so no reader
@@ -1178,7 +1170,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // (6) collectAndComplete — terminal block. Runs on EVERY path. When synthesis
     // failed, force a failed terminal status so the charge/run-authorization close correctly
     // and the run row + stream report the failure before we re-throw.
-    const suspension = final.suspension ?? synthesisSuspension;
     const result = await collectAndComplete({
         input,
         runId,
@@ -1187,16 +1178,9 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         completed: final.completed,
         failed: final.failed,
         canceled: final.canceled,
-        suspension,
         usage: final.usage,
         failureReason:
-            synthesisError === null
-                ? final.suspension === null && synthesisSuspension !== null
-                    ? synthesisSuspension.reason
-                    : final.failureReason
-                : synthesisMessage === undefined
-                  ? "synthesis-failed"
-                  : `synthesis-failed: ${synthesisMessage}`,
+            synthesisError === null ? final.failureReason : synthesisMessage === undefined ? "synthesis-failed" : `synthesis-failed: ${synthesisMessage}`,
         forceFailed: synthesisError !== null,
         findings: synthesisFindings,
         synthesisOutcome,
@@ -1205,14 +1189,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
 
     // Terminal snapshot, fired here rather than inside `collectAndComplete` because this is the
     // first point where BOTH the derived final status and the scheduler's final step map are in
-    // hand. It precedes the suspension self-cancel below on purpose: that branch raises out of the
-    // body, so an observer placed after it would never see a suspended run's last state.
+    // hand.
     observeRunGuarded(deps, buildRunObservation({ input, runId, status: result.status, stepStates: final.stepStates }));
-
-    // Synthesis failure takes priority over the suspension cascade: a run whose
-    // synthesis threw is definitively failed (ERROR), not a resumable
-    // suspension. Only self-cancel when synthesis did not throw a failure.
-    if (suspension !== null && synthesisError === null) return cancelSelf("self-cancel-suspended");
 
     // Re-throw after the terminal block so the workflow record goes to ERROR.
     // oxlint-disable-next-line typescript/only-throw-error -- the caught synthesis failure rides as-is so the workflow record fails with the original cause; a wrapper would erase its identity.
@@ -1239,7 +1217,7 @@ type ValidateAndInitChargeRefused = {
 
 type ValidateAndInitResult = ValidateAndInitFresh | ValidateAndInitJoinedExisting | ValidateAndInitChargeRefused;
 
-async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps: ExecuteAnalysisDeps): Promise<ValidateAndInitResult> {
+async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps: ExecuteAnalysisDeps, pause: WorkPause): Promise<ValidateAndInitResult> {
     // The cortex_runs row already exists (inserted by `executePlan`). Sanity-
     // check that no other active run for the same plan won the race — the
     // partial-unique index would have rejected the insert if so, so this is
@@ -1261,18 +1239,25 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
         { name: "init-run-filesystem" },
     );
 
-    const opened = await DBOS.runStep(
-        async () =>
-            await passGate(
-                "RunCharge.open",
-                deps.runCharge.open({
-                    analysisId: input.analysisId,
-                    runId,
-                    session: input.runSession,
-                }),
-            ),
-        { name: "open-running-charge" },
-    );
+    const openCharge = (): Promise<Result<void, GateRefusal>> =>
+        DBOS.runStep(
+            async () =>
+                await passGate(
+                    "RunCharge.open",
+                    deps.runCharge.open({
+                        analysisId: input.analysisId,
+                        runId,
+                        session: input.runSession,
+                    }),
+                ),
+            { name: "open-running-charge" },
+        );
+    let opened = await openCharge();
+    // A refusal with the suspend flag waits in a pause, and the charge opens again after the resume.
+    while (opened.isErr() && opened.error.kind === "suspended") {
+        await pauseAtGate(pause, opened.error.reason);
+        opened = await openCharge();
+    }
     if (opened.isErr()) return { kind: "charge-refused", refusal: opened.error };
 
     return { kind: "fresh" };
@@ -1292,7 +1277,6 @@ type SchedulerLoopOutcome = {
     readonly completed: Set<string>;
     readonly failed: Set<string>;
     readonly canceled: Set<string>;
-    readonly suspension: Suspension | null;
     readonly failureReason: string | null;
     /**
      * The scheduler's final per-step state, handed back so the terminal run observation is built
@@ -1316,8 +1300,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const canceled = new Set<string>();
     const inFlight = new Map<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>();
 
-    const childSuspensions = new Map<string, ChildSuspended>();
-
     // Run-level usage aggregate, folded from the children's own durable results.
     // `getResult` IS the replay-safe source: a recovered parent reads back the
     // identical value from each child's workflow record, so the sum reproduces
@@ -1325,7 +1307,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     // no result and therefore contributes nothing — same rule as its duration.
     const runUsage: AgentRunUsage = {};
 
-    // Child workflow ids the parent itself cancelled (suspension / neverFits halt cascade). Their `getResult`
+    // Child workflow ids the parent itself cancelled (the neverFits halt cascade). Their `getResult`
     // rejects with a DBOS cancellation error and lands in the settlement error branch — but the step was
     // CANCELED by us, not failed on its own merits. Keyed here (deterministic: `cancelInFlight` runs the
     // same way on a replay) so that branch records it as canceled everywhere, matching how a child that
@@ -1368,21 +1350,10 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         }
     };
 
-    // Halts scheduling entirely — reserved for a suspension of a child and the
-    // `neverFits` guard. An ordinary step failure does NOT set it: it dooms
-    // only that step's transitive dependents.
+    // Halts scheduling entirely — reserved for the `neverFits` guard. An ordinary
+    // step failure does NOT set it: it dooms only that step's transitive dependents.
     let halted = false;
-    let suspension: Suspension | null = null;
     let failureReason: string | null = null;
-
-    const haltForSuspension = async (child: ChildSuspended): Promise<void> => {
-        if (suspension === null) {
-            suspension = { kind: "suspended", reason: child.reason };
-            halted = true;
-            failureReason = child.reason;
-        }
-        await cancelInFlight(inFlight, child.reason, canceledByParent);
-    };
 
     const stepIndexById = new Map(input.steps.map((s, i) => [s.id, i] as const));
 
@@ -1424,7 +1395,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         observeRunGuarded(deps, buildRunObservation({ input, runId, status: "running", stepStates: stepRuntime }));
     };
 
-    const dbosParentId = DBOS.workflowID ?? workflowId;
     const dispatchReady = async (): Promise<void> => {
         if (halted) return;
         const inFlightStepIds = new Set([...inFlight.values()].map((h) => h.stepId));
@@ -1499,13 +1469,11 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 stepId,
                 level: levels.get(stepId) ?? 0,
                 runId,
-                workflowId,
                 prompt: seed.prompt,
                 templateBinding: seed.templateBinding,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,
-                parentWorkflowId: dbosParentId,
                 runSession: forStep(input.runSession, stepId),
             };
             const handle = await DBOS.startWorkflow(deps.sandboxStepCallable, {
@@ -1538,10 +1506,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             settled = { childId, stepId: entry.stepId, kind: "error", err };
         }
 
-        await drainChildSuspensions(childSuspensions);
-
-        const childSuspension = childSuspensions.get(settled.childId);
-
         // Terminal step status + duration for the provenance emission below. Every
         // settlement branch assigns both, so the emission fires exactly once per
         // settled child with the mapped status.
@@ -1563,7 +1527,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 await dispatchReady();
             } else if (r.status === "canceled") {
                 canceled.add(settled.stepId);
-                if (childSuspension !== undefined) await haltForSuspension(childSuspension);
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
                     durationMs: r.durationMs,
@@ -1592,7 +1555,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 await dispatchReady();
             }
         } else if (canceledByParent.has(settled.childId)) {
-            // The child threw because the PARENT cancelled it (suspension / neverFits halt cascade), not
+            // The child threw because the PARENT cancelled it (the neverFits halt cascade), not
             // because it failed on its own — its `getResult` rejects with a DBOS cancellation error.
             // Record it as canceled, mirroring the graceful `{status:"canceled"}` branch above so the
             // `canceled` set, the terminal result, and the `step_completed` provenance all agree. No
@@ -1607,20 +1570,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             stepStatus = "canceled";
             stepDurationMs = undefined;
             await emitDagSnapshot();
-        } else if (childSuspension !== undefined) {
-            // The child suspended: it sent its typed suspension, then cancelled
-            // itself, thus `getResult` rejects with a DBOS cancellation. The
-            // suspension halts the run — the cascade is a decision of the host,
-            // not a DAG one — and it dooms no dependent: the resumed run needs them.
-            canceled.add(settled.stepId);
-            await haltForSuspension(childSuspension);
-            stepRuntime.set(settled.stepId, { status: "failed", error: childSuspension.reason });
-            stepStatus = "canceled";
-            stepDurationMs = undefined;
-            await emitDagSnapshot();
         } else {
-            // The child threw on its own (not a parent-driven cancel, not a
-            // suspension). A throw is treated exactly like a step failure:
+            // The child threw on its own (not a parent-driven cancel). A throw is
+            // treated exactly like a step failure:
             // dependents doomed, siblings continue.
             failed.add(settled.stepId);
             failureReason ??= errorMessageOf(settled.err) ?? textOf(settled.err);
@@ -1658,25 +1610,14 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         );
     }
 
-    await drainChildSuspensions(childSuspensions);
-
     return {
         completed,
         failed,
         canceled,
-        suspension,
         failureReason,
         stepStates: stepRuntime,
         usage: hasReportedUsage(runUsage) ? { ...runUsage } : undefined,
     };
-}
-
-async function drainChildSuspensions(suspensions: Map<string, ChildSuspended>): Promise<void> {
-    for (;;) {
-        const msg = await DBOS.recv<ChildSuspended>(CHILD_SUSPENDED_TOPIC, 0);
-        if (!msg) return;
-        if (!suspensions.has(msg.childWorkflowId)) suspensions.set(msg.childWorkflowId, msg);
-    }
 }
 
 async function cancelInFlight(
@@ -1708,7 +1649,6 @@ type CollectAndCompleteArgs = {
     readonly completed: ReadonlySet<string>;
     readonly failed: ReadonlySet<string>;
     readonly canceled: ReadonlySet<string>;
-    readonly suspension: Suspension | null;
     readonly failureReason: string | null;
     /**
      * The run's aggregate token usage for the run-completed card. Absent when no
@@ -1728,9 +1668,7 @@ type CollectAndCompleteArgs = {
 };
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
-    const { input, runId, workflowId, startedAtMs, completed, failed, canceled, suspension, failureReason, forceFailed, deps } = args;
-    // A forced failure is terminal and never a resumable suspension.
-    const suspended = suspension !== null && !forceFailed ? suspension : null;
+    const { input, runId, workflowId, startedAtMs, completed, failed, canceled, failureReason, forceFailed, deps } = args;
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis").with({ runId, analysisId: input.analysisId });
 
     const status = forceFailed
@@ -1740,25 +1678,11 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
               completed,
               failed,
               canceled,
-              suspended: suspended !== null,
           });
 
     const chargeOutcome: RunChargeOutcome =
-        status === "completed" || status === "partial"
-            ? { kind: "ok" }
-            : status === "failed"
-              ? { kind: "error" }
-              : suspended !== null
-                ? { kind: "suspended", reason: suspended.reason }
-                : { kind: "canceled" };
-    const revokeReason =
-        status === "completed" || status === "partial"
-            ? "workflow-completed"
-            : status === "failed"
-              ? "workflow-failed"
-              : suspended !== null
-                ? "workflow-suspended"
-                : "workflow-canceled";
+        status === "completed" || status === "partial" ? { kind: "ok" } : status === "failed" ? { kind: "error" } : { kind: "canceled" };
+    const revokeReason = status === "completed" || status === "partial" ? "workflow-completed" : status === "failed" ? "workflow-failed" : "workflow-canceled";
 
     const finalError = failureReason ?? (status === "canceled" ? "external_cancel" : null);
 
@@ -1903,17 +1827,10 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         );
     }
 
-    // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
-    // paths. The gate is the BRANCH, not the written run status: the pending rows
-    // of a suspended run must survive for a later resume. Log-don't-rollback, like
-    // every other finalisation step here.
-    if (suspended === null) {
-        await ledgerStep(logger, "sweep-pending-steps", () => sweepPendingStepExecutions(deps.pool, runId));
-    }
-
-    if (suspended !== null) {
-        await ledgerStep(logger, "suspend-analysis", () => suspendAnalysisQuery(deps.pool, input.analysisId));
-    }
+    // Sweep never-started steps to `skipped`. Log-don't-rollback, like every other finalisation step here.
+    await ledgerStep(logger, "sweep-pending-steps", () => sweepPendingStepExecutions(deps.pool, runId));
+    // A step that the neverFits halt canceled in its pause leaves its row, thus the end of the run clears each row of the run.
+    await ledgerStep(logger, "clear-run-pauses", () => clearPausesOfWork(deps.pool, runId));
 
     // The run end was emitted above. These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.
@@ -1944,8 +1861,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         await emitStreamPart({
             type: "data-run-failed",
             runId,
-            error: failureReason ?? (suspended !== null ? suspended.reason : "Run canceled before completion"),
-            reason: suspended === null ? undefined : suspended.reason,
+            error: failureReason ?? "Run canceled before completion",
         });
     }
 
@@ -1970,10 +1886,8 @@ function deriveFinalStatus(args: {
     completed: ReadonlySet<string>;
     failed: ReadonlySet<string>;
     canceled: ReadonlySet<string>;
-    suspended: boolean;
 }): Exclude<ExecuteAnalysisFinalStatus, "running"> {
-    const { totalSteps, completed, failed, canceled, suspended } = args;
-    if (suspended) return "suspended_insufficient_funds";
+    const { totalSteps, completed, failed, canceled } = args;
     if (failed.size > 0) {
         return completed.size > 0 ? "partial" : "failed";
     }

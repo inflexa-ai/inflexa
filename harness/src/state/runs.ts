@@ -293,12 +293,11 @@ export function reconcileOrphanedRuns(pool: Querier, opts: { now?: number; grace
 export function updateRunStatus(
     pool: Querier,
     runId: string,
-    status: "running" | "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds",
+    status: "running" | "completed" | "partial" | "failed" | "canceled",
     error?: string | null,
 ): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
-    const isTerminal =
-        status === "completed" || status === "partial" || status === "failed" || status === "canceled" || status === "suspended_insufficient_funds";
+    const isTerminal = status === "completed" || status === "partial" || status === "failed" || status === "canceled";
     return tryMutation("runs.updateRunStatus", async () => {
         const result = await pool.query({
             text: `UPDATE cortex_runs

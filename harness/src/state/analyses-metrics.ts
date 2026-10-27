@@ -211,7 +211,7 @@ export function queryRunsEndedSince(pool: Querier, input: { since: string; limit
         const result = await pool.query<{ analysis_id: string; run_id: string; status: TerminalRunStatus; completed_at: string }>({
             text: `SELECT analysis_id, run_id, status, completed_at
              FROM cortex_runs
-             WHERE status IN ('completed', 'partial', 'failed', 'canceled', 'suspended_insufficient_funds')
+             WHERE status IN ('completed', 'partial', 'failed', 'canceled')
                AND completed_at >= $1
              ORDER BY completed_at DESC, run_id DESC
              LIMIT $2`,

@@ -432,7 +432,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("mint refused"))).toBe(true);
     });
 
-    it("cancels the reserved run and marks the analysis suspended when the gate refuses with the suspend flag", async () => {
+    it("marks the reserved run failed with the reason of the host, and marks no analysis, when the gate refuses with the suspend flag", async () => {
         setEnv();
         const { pool, queries } = fakePool({
             "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
@@ -454,13 +454,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        const refusal = result._unsafeUnwrapErr();
-        expect(refusal).toMatchObject({ retryable: false });
-        expect(refusal.error).toContain("no_funds");
-        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("suspended_insufficient_funds") && q.values.includes("no_funds"))).toBe(
-            true,
-        );
-        expect(queries.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(true);
+        expect(result._unsafeUnwrapErr()).toEqual({ error: "The host refused the run: no_funds", retryable: false });
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("no_funds"))).toBe(true);
+        expect(queries.some((q) => q.text.includes("cortex_analysis_state") && q.text.includes("UPDATE"))).toBe(false);
     });
 
     it("launches the run through the RunLauncher and returns the reserved runId", async () => {
@@ -1484,16 +1480,18 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(await runRows()).toMatchObject([{ status: "failed", error: "mint refused" }]);
         });
 
-        it("suspends the analysis and the run when the host asks for a suspension, and gives suspended with the reason", async () => {
+        it("ends the reserved run as failed when the host refuses with the suspend flag, gives suspended with the reason, and leaves the analysis as it was", async () => {
             await seedPlan(validPlan);
             const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
+            const before = await pool.query("SELECT status, updated_at FROM cortex_analysis_state WHERE analysis_id = $1", [ANALYSIS_ID]);
 
             const refusal = (await launchPlanRun(deps({ runAuthorizer: suspending }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
             expect(refusal).toEqual({ type: "suspended", reason: "no_funds" });
-            expect(await runRows()).toMatchObject([{ status: "suspended_insufficient_funds", error: "no_funds" }]);
-            const state = await pool.query("SELECT status FROM cortex_analysis_state WHERE analysis_id = $1", [ANALYSIS_ID]);
-            expect(state.rows[0]).toEqual({ status: "suspended_insufficient_funds" });
+            expect(await runRows()).toMatchObject([{ status: "failed", error: "no_funds" }]);
+            const after = await pool.query("SELECT status, updated_at FROM cortex_analysis_state WHERE analysis_id = $1", [ANALYSIS_ID]);
+            expect(before.rows).toMatchObject([{ status: "active" }]);
+            expect(after.rows).toEqual(before.rows);
         });
 
         it("keeps the refusal of the authorization when the write of the run status fails", async () => {
@@ -1506,14 +1504,14 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(refusal).toEqual({ type: "not_authorized", reason: "mint refused" });
         });
 
-        it("gives store_failed with the DbError when the suspension of the analysis fails", async () => {
+        it("keeps the suspended refusal when the write of the run status fails", async () => {
             await seedPlan(validPlan);
             const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
-            const flaky = poolFailingOn(pool, (text) => (text.includes("UPDATE cortex_analysis_state") ? new Error("suspend boom") : undefined));
+            const flaky = poolFailingOn(pool, (text) => (text.includes("UPDATE cortex_runs") ? new Error("status write boom") : undefined));
 
             const refusal = (await launchPlanRun(deps({ pool: flaky, runAuthorizer: suspending }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
-            expect(refusal).toMatchObject({ type: "store_failed", cause: { type: "mutation_failed", op: "analyses.suspendAnalysis" } });
+            expect(refusal).toEqual({ type: "suspended", reason: "no_funds" });
         });
 
         it("gives the run of a concurrent launch with started false when the reservation collides", async () => {
@@ -1781,7 +1779,7 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(await runRows()).toEqual([]);
         });
 
-        it("gives the error result of the authorization refusal and of the suspension", async () => {
+        it("gives the error result of the authorization refusal and of the refusal with the suspend flag", async () => {
             await seedPlan(validPlan);
             const refusing: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "mint refused", suspend: false }) };
             const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
@@ -1791,7 +1789,7 @@ describe("the launch of a stored plan, over a real database", () => {
                 retryable: false,
             });
             expect((await toolFor({ runAuthorizer: suspending }).run())._unsafeUnwrapErr()).toEqual({
-                error: "The analysis is suspended: no_funds",
+                error: "The host refused the run: no_funds",
                 retryable: false,
             });
         });

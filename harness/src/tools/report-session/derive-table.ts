@@ -37,7 +37,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { SpawnSession } from "../../auth/types.js";
-import type { Suspension } from "../../workflows/suspension.js";
+import type { SuspendingRefusal } from "../../sandbox/sandbox-error.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { classifyWithinRoot, computeSha256, computeSha256File } from "../../lib/fs-helpers.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
@@ -408,7 +408,7 @@ async function derive(args: {
         output: toSandboxPath(args.root, args.analysisId, absolute),
     });
 
-    let ran: Result<DeriveTableResult, Suspension>;
+    let ran: Result<DeriveTableResult, SuspendingRefusal>;
     try {
         ran = await withStepSandbox(
             args.sandboxClient,
@@ -428,7 +428,11 @@ async function derive(args: {
         return { outcome: "exec-failed", detail: "the derivation exec did not complete" };
     }
     if (ran.isErr()) {
-        return { outcome: "suspended", reason: ran.error.reason, detail: `the analysis is suspended (${ran.error.reason}), thus the derivation did not run` };
+        return {
+            outcome: "suspended",
+            reason: ran.error.reason,
+            detail: `the host refused the sandbox (${ran.error.reason}), thus the derivation did not run`,
+        };
     }
     return ran.value;
 }

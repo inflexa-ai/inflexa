@@ -365,7 +365,7 @@ describe("queryRunsEndedSince", () => {
 
     it("gives each terminal status, and no run that still runs", async () => {
         await seedAnalysis(pool, "status-a");
-        const statuses = ["completed", "partial", "failed", "canceled", "running", "suspended_insufficient_funds"];
+        const statuses = ["completed", "partial", "failed", "canceled", "running"];
         for (const [index, status] of statuses.entries()) {
             await seedRun(pool, {
                 runId: `status-${status}`,
@@ -378,7 +378,7 @@ describe("queryRunsEndedSince", () => {
 
         const entries = (await queryRunsEndedSince(pool, { since: "2026-10-06T00:00:00.000Z", limit: 10 }))._unsafeUnwrap();
 
-        expect(entries.map((entry) => entry.status)).toEqual(["suspended_insufficient_funds", "canceled", "failed", "partial", "completed"]);
+        expect(entries.map((entry) => entry.status)).toEqual(["canceled", "failed", "partial", "completed"]);
     });
 
     it("bounds the result with the limit, and breaks a tie of the completion time with the run id, descending", async () => {

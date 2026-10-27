@@ -20,19 +20,20 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { closeDurableStream } from "@dbos-inc/vercel-ai";
-import type { LanguageModelMiddleware } from "ai";
 
 import type { AgentSession, AuthContext, Identity, Provenance, RunFrame, Scope } from "../auth/types.js";
 import type { ChatFrame, ChatPartFrame } from "../contracts/chat-events.js";
+import type { PausedWorkKind, PausePart } from "../contracts/chat-parts.js";
+import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { ToolContext } from "../tools/define-tool.js";
 import { CHAT_STREAM_KEY, createTurnStreamWriter, SUB_AGENT_STREAM_PART } from "./chat-stream.js";
 import { addChatUsage, type AgentRunUsage } from "./metrics.js";
 import type { LoopOptions } from "./run-loop.js";
-import { currentRootTurn, turnCredentials, withRootTurn } from "./turn-credentials.js";
+import { credentialGuard, currentRootTurn, turnCredentials, withRootTurn } from "./turn-credentials.js";
 
 /** The options of the loop of a sub-agent that the place where it runs decides. */
-export type SubAgentLoopOptions = Pick<LoopOptions, "signal" | "emit" | "toolWriter" | "invocationId" | "turnUsage" | "modelMiddleware">;
+export type SubAgentLoopOptions = Pick<LoopOptions, "signal" | "emit" | "toolWriter" | "invocationId" | "turnUsage" | "modelMiddleware" | "pause">;
 
 /** One call of a sub-agent, as its body sees it. */
 export type SubAgentCall<P> = {
@@ -73,11 +74,24 @@ type ChildEnd<R> = {
     readonly activity?: ChatPartFrame;
 };
 
-/** A middleware that fails each model call of a child with no credential, before it reaches the provider. */
-function missingCredentialGuard(): LanguageModelMiddleware {
-    const fail = (): Promise<never> =>
-        Promise.reject(Object.assign(new Error("The sub-agent has no credential of its user."), { name: "TurnCredentialMissingError" }));
-    return { specificationVersion: "v4", wrapStream: fail, wrapGenerate: fail };
+/** The work that a child belongs to: the turn of a chat turn, or the run of a step or a synthesis. */
+export type SubAgentWork = {
+    readonly workId: string;
+    readonly workKind: PausedWorkKind;
+    readonly analysisId: string;
+    readonly threadId?: string;
+};
+
+/** Gives the pause of the loops of a child, which writes its part through `emit`. The assembly gives it. */
+export type SubAgentPauses = (work: SubAgentWork, emit: (part: PausePart) => Promise<void>) => LoopOptions["pause"];
+
+/** The work of a child, from its input. A data profile runs under one constant frame and starts no child, thus it gives none. */
+function workOf(input: SubAgentInput<unknown>): SubAgentWork | undefined {
+    const { analysisId, threadId } = input.scope;
+    if (input.rootTurnId !== undefined) return { workId: input.rootTurnId, workKind: "turn", analysisId, threadId };
+    const runId = input.runFrame?.runId;
+    if (runId === undefined || runId === DATA_PROFILE_RUN_LITERAL) return undefined;
+    return { workId: runId, workKind: "run", analysisId };
 }
 
 /**
@@ -98,17 +112,20 @@ export function inProcessSubAgent<P, R>(_name: string, body: SubAgentBody<P, R>)
  * Register a sub-agent as a child workflow, and give the function that its tool calls. Call it one time for each
  * process, before DBOS launches, because DBOS finds the workflow of a recovery by its registered name.
  */
-export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>): SubAgent<P, R> {
+export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>, pauses?: SubAgentPauses): SubAgent<P, R> {
     const workflow = DBOS.registerWorkflow(
         async (input: SubAgentInput<P>): Promise<ChildEnd<R>> => {
-            const auth = input.auth ?? (input.rootTurnId === undefined ? undefined : turnCredentials.of(input.rootTurnId));
+            const authOf = (): AuthContext | undefined => input.auth ?? (input.rootTurnId === undefined ? undefined : turnCredentials.of(input.rootTurnId));
             const session: AgentSession = {
                 identity: input.identity,
                 scope: input.scope,
                 provenance: input.provenance,
                 runFrame: input.runFrame,
-                // A child with no credential makes no model call, thus no adapter reads the empty value.
-                auth: auth ?? {},
+                // The credential comes at each read, thus a call after a resume of the turn uses the credential that the
+                // resume put. A child with no credential makes no model call, thus no adapter reads the empty value.
+                get auth(): AuthContext {
+                    return authOf() ?? {};
+                },
             };
             // The input holds the provenance of the caller. The body of the sub-agent extends it.
             const caller = { agentId: input.provenance.agentId, callPath: [...input.provenance.callPath] };
@@ -120,6 +137,14 @@ export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>): 
                 activity = tracker.track(frame, Date.now()) ?? activity;
             };
             const writer = createTurnStreamWriter(caller, observe);
+            const work = workOf(input);
+            const source = { agentId: name, callPath: [...caller.callPath, name] };
+            const pause =
+                pauses === undefined || work === undefined
+                    ? undefined
+                    : pauses(work, async (part) => {
+                          await writer.emit({ type: "data-pause", source, data: part });
+                      });
             // A recovered child replays its model calls, and the usage middleware adds each one again. Thus the total
             // covers the whole child, also after a crash.
             const turnUsage: AgentRunUsage = {};
@@ -136,7 +161,8 @@ export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>): 
                         toolWriter: writer.toolWriter,
                         invocationId: input.invocationId,
                         turnUsage,
-                        modelMiddleware: auth === undefined ? [missingCredentialGuard()] : undefined,
+                        modelMiddleware: [credentialGuard(authOf)],
+                        pause,
                     },
                     durably: (stepName, step) => DBOS.runStep(step, { name: stepName }),
                 });

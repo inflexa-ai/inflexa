@@ -47,7 +47,7 @@ import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { isSafeId, runDir } from "../workspace/paths.js";
 
-import { runWithSalvage, type LoopStep } from "../loop/run-loop.js";
+import { runWithSalvage, type LoopOptions, type LoopStep } from "../loop/run-loop.js";
 import { recordedInputOf } from "../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
@@ -280,6 +280,8 @@ export type GenerateRunSynthesisInput = {
     readonly signal?: AbortSignal;
     /** Optional UI event sink (chat data parts forwarded to the parent stream). */
     readonly emit?: EmitFn;
+    /** The pause of the run. The body of the run gives it, thus a failed request waits in place. */
+    readonly pause?: LoopOptions["pause"];
 };
 
 export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
@@ -327,6 +329,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
             usageRecorder: input.usageRecorder,
             toolOutputStore: input.toolOutputStore,
             policy: { budget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET } },
+            pause: input.pause,
         },
         {
             tools: [SUBMIT_SYNTHESIS_TOOL_ID, REPORT_BLOCKER_TOOL_ID],

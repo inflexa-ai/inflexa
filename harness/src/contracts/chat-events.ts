@@ -147,8 +147,8 @@ export type ChatErrorEvent = {
     /** Human-readable, scrubbed error message. */
     message: string;
     /**
-     * Machine-readable failure code. For a turn that a `suspend` error failed, it
-     * is the suspend reason of the host, carried unread (`suspensionOfFailure`).
+     * Machine-readable failure code. A turn workflow pauses on a `suspend` error, thus only a turn with no workflow
+     * carries the suspend reason of the host here, unread.
      */
     reason?: string;
     source: EventSource;

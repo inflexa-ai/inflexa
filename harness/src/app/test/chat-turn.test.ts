@@ -45,7 +45,7 @@ import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, ty
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createUpdateWorkingMemoryTool } from "../../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
-import { suspensionOfFailure } from "../../workflows/suspension.js";
+import { pauseCauseOf } from "../../workflows/pause.js";
 import { prepareChatTurn, type RunChatTurnDeps } from "../chat-turn.js";
 import { inProcessChatTurns, openInProcessTurn, runInProcessTurn, type InProcessTurnParams } from "../in-process-turn.js";
 
@@ -196,13 +196,13 @@ describe("prepareChatTurn", () => {
         )._unsafeUnwrap();
         (
             await insertRun(pool, {
-                runId: "run-suspended",
+                runId: "run-failed",
                 analysisId: ANALYSIS_A,
                 threadId: "another-thread",
                 workflowName: "executeAnalysis",
             })
         )._unsafeUnwrap();
-        (await updateRunStatus(pool, "run-suspended", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-failed", "failed"))._unsafeUnwrap();
         (await insertRun(pool, { runId: "run-other-analysis", analysisId: ANALYSIS_B, workflowName: "executeAnalysis" }))._unsafeUnwrap();
 
         const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "current-thread", userInput: "status?" });
@@ -212,7 +212,7 @@ describe("prepareChatTurn", () => {
         const joined = result.contextRecords.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("Running:");
         expect(joined).toContain("runId: run-other-thread");
-        expect(joined).not.toContain("Suspended:");
+        expect(joined).not.toContain("run-failed");
         expect(joined).not.toContain("run-suspended");
         expect(joined).toContain("planId: none");
         expect(joined).not.toContain("run-other-analysis");
@@ -620,14 +620,14 @@ describe("the run of a chat turn", () => {
         expect(contentText(sent[failedRequest.length]?.content)).toStartWith("[Turn Failed]");
     });
 
-    it("closes failed with the reason of the host on a suspend error", async () => {
+    it("closes a turn with no workflow as failed with the reason of the host on a suspend error, because it cannot pause", async () => {
         const model = scriptedModel([{ fail: apiFailure(402, "Payment Required") }]);
 
         const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
-        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "payment_required" } });
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "payment_required", code: "payment_required" } });
         if (result.kind !== "ran" || result.outcome.status !== "failed") throw new Error("unreachable");
-        expect(suspensionOfFailure(result.outcome.cause)).toEqual({ kind: "suspended", reason: "payment_required" });
+        expect(pauseCauseOf(result.outcome.cause)).toEqual({ kind: "host", reason: "payment_required" });
         expect(await turnRecords()).toEqual([{ status: "failed", reason: "payment_required" }]);
     });
 
@@ -636,7 +636,7 @@ describe("the run of a chat turn", () => {
 
         const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
 
-        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model request failed." } });
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model request failed.", code: "provider" } });
         expect(JSON.stringify((await storedRows()).map((row) => row.message))).not.toContain("sk-secret-123");
         expect(await turnRecords()).toEqual([{ status: "failed", reason: "The model request failed." }]);
     });

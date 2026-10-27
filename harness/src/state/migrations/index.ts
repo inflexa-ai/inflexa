@@ -20,6 +20,8 @@ import { recordTheAppliedMemoryEdits } from "./20261027120000_record_the_applied
 import { storeTheAuthoringResults } from "./20261027120100_store_the_authoring_results.js";
 import { keyTheGroupsOfATurn } from "./20261027120200_key_the_groups_of_a_turn.js";
 import { markTheActiveTurnOfAThread } from "./20261027120300_mark_the_active_turn_of_a_thread.js";
+import { recordThePausedWork } from "./20261028120000_record_the_paused_work.js";
+import { endTheSuspendedRuns } from "./20261028120100_end_the_suspended_runs.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -35,5 +37,7 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261027120100_store_the_authoring_results": storeTheAuthoringResults,
         "20261027120200_key_the_groups_of_a_turn": keyTheGroupsOfATurn,
         "20261027120300_mark_the_active_turn_of_a_thread": markTheActiveTurnOfAThread,
+        "20261028120000_record_the_paused_work": recordThePausedWork,
+        "20261028120100_end_the_suspended_runs": endTheSuspendedRuns,
     };
 }

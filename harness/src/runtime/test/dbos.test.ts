@@ -123,6 +123,12 @@ describe("dbosSdkConfig", () => {
         expect(sdk.otlpTracesEndpoints).toBeUndefined();
     });
 
+    it("enables patching, thus a host that gives no version keeps one version across upgrades", () => {
+        const sdk = dbosSdkConfig(fullConfig, silentLogger);
+        expect(sdk.enablePatching).toBe(true);
+        expect(sdk.applicationVersion).toBeUndefined();
+    });
+
     it("passes tracingEnabled through", () => {
         expect(dbosSdkConfig({ ...fullConfig, tracingEnabled: true }, silentLogger).tracingEnabled).toBe(true);
     });

@@ -73,10 +73,7 @@ export type RunProvenanceEvent =
           type: "run_completed";
           analysisId: string;
           runId: string;
-          /**
-           * The body's terminal status, resolved through `deriveFinalStatus`. A suspension is
-           * `"suspended_insufficient_funds"`.
-           */
+          /** The body's terminal status, resolved through `deriveFinalStatus`. */
           status: Exclude<ExecuteAnalysisFinalStatus, "running">;
           atMs: number;
           /** `atMs − run_started.atMs`: the workflow-observed run span in ms. */

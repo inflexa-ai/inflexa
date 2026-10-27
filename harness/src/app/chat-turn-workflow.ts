@@ -18,7 +18,6 @@ import { randomUUID } from "node:crypto";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { closeDurableStream } from "@dbos-inc/vercel-ai";
-import type { LanguageModelMiddleware } from "ai";
 import { z } from "zod";
 
 import type { AuthContext } from "../auth/types.js";
@@ -33,6 +32,8 @@ import type { ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import type { PromptCachePolicy } from "../providers/types.js";
 import { claimThreadForTurn, closeOpenTurnRecords, releaseThreadOfTurn, turnOfAsk } from "../state/active-turns.js";
+import { clearPausesOfWork } from "../state/paused-work.js";
+import { workPause } from "../workflows/pause.js";
 import type { AskReply, AskRequest } from "../tools/approval/contract.js";
 import { askPartOf, type AskGateway } from "../tools/approval/gateway.js";
 import type { AnswerOutcome } from "../tools/approval/queries.js";
@@ -42,7 +43,6 @@ import {
     openThread,
     readTurnContext,
     runOpenTurn,
-    TurnCredentialMissingError,
     userTextOf,
     type ChatTurnRan,
     type ChatTurnRefusal,
@@ -51,7 +51,7 @@ import {
     type TurnTransport,
 } from "./chat-turn.js";
 import { CHAT_STREAM_KEY, createTurnStreamWriter, readChatTurn } from "../loop/chat-stream.js";
-import { turnCredentials, withRootTurn } from "../loop/turn-credentials.js";
+import { credentialGuard, turnCredentials, withRootTurn } from "../loop/turn-credentials.js";
 import { assembleMessages, loadHistoryView, sanitizedUserMessage } from "./message-assembly.js";
 
 /** The name of the turn workflow. */
@@ -76,7 +76,10 @@ export type ChatTurnEnd = {
     readonly status: "done" | "aborted" | "failed";
     /** The text of a failure. */
     readonly reason?: string;
-    /** The machine code of a failure: the suspend reason of the host, `credential`, `outage`, `internal`, or `interrupted`. */
+    /**
+     * The machine code of a failure: `provider` or `internal`. A turn with no workflow also gives the suspend reason of
+     * the host, `credential`, or `outage`, because only a workflow can pause on them.
+     */
     readonly code?: string;
     readonly durationMs: number;
     /** True when the opening of the turn landed. */
@@ -124,10 +127,12 @@ export type ChatTurns = {
 export type ChatTurnWorkflowDeps = RunChatTurnDeps & {
     /**
      * The credential of a turn that the process did not open, for example after a restart. A host with one fixed
-     * credential gives it for each turn. Absent, or `undefined` for a turn: the turn ends as `interrupted` before
-     * its next model call.
+     * credential gives it for each turn. Absent, or `undefined` for a turn: the turn pauses with the cause `credential`
+     * before its next model call, until a resume gives a credential.
      */
     readonly credentialFor?: (turnId: string) => AuthContext | undefined;
+    /** The delays of the timer of an outage. Absent: the default of the pause. */
+    readonly pauseRetryDelaysMs?: readonly number[];
     /** How long a turn waits for the answer of an ask. Absent: {@link DEFAULT_ASK_WAIT_SECONDS}. */
     readonly askWaitSeconds?: number;
 };
@@ -151,15 +156,6 @@ const ACTIVE_STATUSES: ReadonlySet<string> = new Set(["PENDING", "ENQUEUED"]);
 /** The part of the stored input of a turn workflow that the stop of a turn reads. */
 const StoredTurnInputSchema = z.tuple([z.looseObject({ threadId: z.string() })]);
 
-/** A middleware that fails each model call that a recovered turn makes with no credential. */
-function missingCredentialGuard(): LanguageModelMiddleware {
-    return {
-        specificationVersion: "v4",
-        wrapStream: () => Promise.reject(new TurnCredentialMissingError()),
-        wrapGenerate: () => Promise.reject(new TurnCredentialMissingError()),
-    };
-}
-
 /**
  * Register the turn workflow and give the chat turns of the runtime. Call it before DBOS launches, because DBOS
  * finds the workflow of a recovery by its registered name.
@@ -175,7 +171,7 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
             const controller = new AbortController();
             controls.set(input.turnId, controller);
             try {
-                return await withRootTurn(input.turnId, () => runTurnWorkflow(deps, input, controller.signal, turnCredentials.of(input.turnId)));
+                return await withRootTurn(input.turnId, () => runTurnWorkflow(deps, input, controller.signal));
             } finally {
                 controls.delete(input.turnId);
                 turnCredentials.drop(input.turnId);
@@ -246,6 +242,8 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
             const status = await DBOS.getWorkflowStatus(turnId);
             if (status === null || !ACTIVE_STATUSES.has(status.status)) return;
             await DBOS.cancelWorkflow(turnId, { cancelChildren: true });
+            const cleared = await clearPausesOfWork(deps.pool, turnId);
+            if (cleared.isErr()) logger.warn("the pauses of a canceled turn did not clear", { turnId, op: cleared.error.op });
             const input = StoredTurnInputSchema.safeParse(status.input);
             if (!input.success) return;
             const [{ threadId }] = input.data;
@@ -321,12 +319,7 @@ function workflowApproval(
     };
 }
 
-async function runTurnWorkflow(
-    deps: ChatTurnWorkflowDeps,
-    input: ChatTurnInput,
-    signal: AbortSignal,
-    credential: AuthContext | undefined,
-): Promise<ChatTurnEnd> {
+async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput, signal: AbortSignal): Promise<ChatTurnEnd> {
     const agent = deps.agents.forThread(input.threadType);
     if (agent.isErr()) throw new Error(`No agent is registered for the thread type "${input.threadType}".`);
     const rootSource: EventSource = { agentId: agent.value.id, callPath: [agent.value.id] };
@@ -372,7 +365,7 @@ async function runTurnWorkflow(
         durably: (name, write) => DBOS.runStep(write, { name }),
         groupKey: (index) => `${input.turnId}:${index}`,
         announce: (messageId) => writer.write({ type: "message-start", messageId, role: "assistant", source: rootSource }),
-        modelMiddleware: credential === undefined ? [missingCredentialGuard()] : undefined,
+        modelMiddleware: [credentialGuard(() => turnCredentials.of(input.turnId))],
         approve:
             deps.askGateway === undefined
                 ? undefined
@@ -385,12 +378,27 @@ async function runTurnWorkflow(
                       signal,
                       deps.askWaitSeconds ?? DEFAULT_ASK_WAIT_SECONDS,
                   ),
+        pause: workPause({
+            pool: deps.pool,
+            workId: input.turnId,
+            workKind: "turn",
+            analysisId: input.analysisId,
+            threadId: input.threadId,
+            emit: async (part) => {
+                await writer.emit({ type: "data-pause", source: rootSource, data: part });
+            },
+            retryDelaysMs: deps.pauseRetryDelaysMs,
+            logger: deps.logger,
+        }).afterFailure,
     };
     const session: ChatTurnSession = {
         identity: { user: input.userId },
         scope: { kind: "analysis", analysisId: input.analysisId, threadId: input.threadId },
-        // A turn with no credential makes no model call, thus no adapter reads the empty value.
-        auth: credential ?? {},
+        // The credential comes at each read, thus a call after a resume uses the credential that the resume put. A
+        // turn with no credential makes no model call, thus no adapter reads the empty value.
+        get auth(): AuthContext {
+            return turnCredentials.of(input.turnId) ?? {};
+        },
     };
     const ran = await runOpenTurn(
         deps,
@@ -409,6 +417,8 @@ async function runTurnWorkflow(
     );
     await writer.settle();
     await closeDurableStream(CHAT_STREAM_KEY, outcome.status === "done" ? "stop" : outcome.status === "aborted" ? "aborted" : "error");
+    // A sub-agent that a stop canceled in its pause leaves its row, thus the end of the turn clears each row of the turn.
+    await DBOS.runStep(async () => unwrapOrThrow(await clearPausesOfWork(deps.pool, input.turnId)), { name: "chat-turn.clear-pauses" });
     await DBOS.runStep(async () => unwrapOrThrow(await releaseThreadOfTurn(deps.pool, input.threadId, input.turnId)), { name: "chat-turn.release" });
     return chatTurnEndOf(ran);
 }

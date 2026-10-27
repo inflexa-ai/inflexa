@@ -380,7 +380,10 @@ is an embedder concern.
   from its start, `stop` ends the turn, `answer` sends the answer of an ask to the
   turn, and `outcome` gives how the turn ended. The workflow input holds ids and
   settings, and no credential. The function `credentialFor` of the host gives the
-  credential of a turn that a recovery runs. The body runs `runOpenTurn`: the
+  credential of a turn that a recovery runs, and the turn reads it before each
+  model request. A turn with no credential pauses until a resume gives one. A
+  failure that a person or time can repair pauses the turn, and
+  `CoreRuntime.pausedWork` lists and resumes it. The body runs `runOpenTurn`: the
   root loop runs with a round sink that stores each round in a keyed step, and
   the turn closes with its outcome. The root loop compacts its view at the
   conversation budget. The host wraps this in its own request handler, because
@@ -590,12 +593,16 @@ The harness throws an exception only at these places:
 
 - a step or a workflow that must fail
 - a step that DBOS must retry
-- the self-cancel of a suspension (`cancelSelf`, `src/workflows/suspension.ts`)
 - a tool `execute` body. The tool adapter of the loop (`loop/tool-adapter.ts`)
   changes the throw into an error tool result.
 - a model call that fails after its retries. The AI SDK speaks exceptions, thus
   the retry envelope of the provider (`providers/ai-sdk.ts`) throws the
   classified `ProviderError`, and the loop throws it out of the run.
+
+A workflow body is code that DBOS replays from its checkpoints. A change of the
+operations of a body (a step, a `recv`, a stream write from the body, or a child
+start) before a wait goes behind `DBOS.patch`, because a paused workflow replays
+the old operations after an upgrade. A change inside a step needs nothing.
 
 The harness catches an exception only at these places:
 

@@ -1,6 +1,6 @@
 /**
- * The body of the data profile, driven outside a workflow: its suspension
- * (data-profile-init spec), where the body has nothing to cancel, the keys
+ * The body of the data profile, driven outside a workflow: a refused spawn
+ * (data-profile-init spec), where the body cannot wait in a pause, the keys
  * of its usage records (llm-usage-accounting spec), and the submission that
  * the profile records.
  */
@@ -48,7 +48,7 @@ const stagedInputs = [
 
 let root: string;
 beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "harness-profile-suspension-"));
+    root = await mkdtemp(join(tmpdir(), "harness-profile-body-"));
     for (const analysisId of [ANALYSIS_ID, OTHER_ANALYSIS_ID]) {
         const inputDir = join(root, analysisId, "data", "inputs", "f1");
         await mkdir(inputDir, { recursive: true });
@@ -107,40 +107,31 @@ function deps(pool: Querier, sandboxClient: SandboxClient, revoked: string[]): D
     };
 }
 
+/** A write of the status of the analysis, not of `data_profile_status`. */
+function writesAnalysisStatus(text: string): boolean {
+    return ["SET status", ", status ="].some((write) => text.includes(write));
+}
+
 describe("the data profile — a refused spawn", () => {
-    it("with the suspend flag, fails the row with the reason, revokes, and marks the analysis as suspended", async () => {
-        const { pool, statements } = statementPool();
-        const revoked: string[] = [];
-        const refusing = {
-            ...makeFakeSandboxClient(),
-            createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
-        };
+    for (const suspend of [true, false]) {
+        it(`with suspend ${String(suspend)}, fails the row with the reason, revokes, starts no pause, and does not mark the analysis`, async () => {
+            const { pool, statements } = statementPool();
+            const revoked: string[] = [];
+            const refusing = {
+                ...makeFakeSandboxClient(),
+                createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend }),
+            };
 
-        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
+            await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
-        const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
-        expect(failed).toHaveLength(1);
-        expect(presentAt(failed, 0).values).toContain("account_frozen");
-        expect(revoked).toEqual(["data-profile-suspended"]);
-        expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(true);
-    });
-
-    it("without the suspend flag, fails the row with the reason and does not mark the analysis", async () => {
-        const { pool, statements } = statementPool();
-        const revoked: string[] = [];
-        const refusing = {
-            ...makeFakeSandboxClient(),
-            createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-        };
-
-        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
-
-        const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
-        expect(failed).toHaveLength(1);
-        expect(textOf(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
-        expect(revoked).toEqual(["data-profile-failed"]);
-        expect(statements.some((q) => q.text.includes("SET status = 'suspended_insufficient_funds'"))).toBe(false);
-    });
+            const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
+            expect(failed).toHaveLength(1);
+            expect(textOf(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("account_frozen")))).toContain("account_frozen");
+            expect(revoked).toEqual(["data-profile-failed"]);
+            expect(statements.some((q) => q.text.includes("cortex_paused_work"))).toBe(false);
+            expect(statements.some((q) => writesAnalysisStatus(q.text))).toBe(false);
+        });
+    }
 
     it("passes a cancel from DBOS through with no change, and runs no failure path", async () => {
         const { pool, statements } = statementPool();

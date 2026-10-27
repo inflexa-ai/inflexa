@@ -45,37 +45,3 @@ export function loadAnalysisStatus(pool: Querier, resourceId: string): ResultAsy
         return { status: row.status, context: row.context ?? null };
     });
 }
-
-/**
- * Mark an analysis as suspended.
- * Idempotent — no-op if already suspended.
- *
- * `suspended_insufficient_funds` is the name of the one suspended state, for
- * each reason of the host, thus no reason is persisted. A chat turn never calls
- * it.
- */
-export function suspendAnalysis(pool: Querier, analysisId: string): ResultAsync<void, DbError> {
-    return tryMutation("analyses.suspendAnalysis", async () => {
-        await pool.query({
-            text: `UPDATE cortex_analysis_state
-            SET status = 'suspended_insufficient_funds', updated_at = $1
-            WHERE analysis_id = $2 AND status != 'suspended_insufficient_funds'`,
-            values: [new Date().toISOString(), analysisId],
-        });
-    });
-}
-
-/**
- * Resume a suspended analysis after the user tops up.
- * Only transitions from `suspended_insufficient_funds` → `active`.
- */
-export function resumeAnalysis(pool: Querier, analysisId: string): ResultAsync<void, DbError> {
-    return tryMutation("analyses.resumeAnalysis", async () => {
-        await pool.query({
-            text: `UPDATE cortex_analysis_state
-            SET status = 'active', updated_at = $1
-            WHERE analysis_id = $2 AND status = 'suspended_insufficient_funds'`,
-            values: [new Date().toISOString(), analysisId],
-        });
-    });
-}

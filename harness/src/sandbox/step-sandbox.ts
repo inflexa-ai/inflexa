@@ -14,10 +14,9 @@ import { randomUUID } from "node:crypto";
 import type { AuthContext, Identity, SpawnSession } from "../auth/types.js";
 import type { Logger } from "../lib/logger.js";
 import { durableStepKey } from "../tools/workspace/edit-file.js";
-import { suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { SandboxClient } from "./client.js";
 import { keyedSandboxIdentity } from "./identity.js";
-import { keepSuspendingRefusal } from "./sandbox-error.js";
+import { keepSuspendingRefusal, type SuspendingRefusal } from "./sandbox-error.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxSpec } from "./types.js";
 
 /** The pass of the harness that a sandbox serves. Its run id and its step id name no run of the analysis. */
@@ -68,7 +67,7 @@ export async function withStepSandbox<T>(
     request: StepSandboxRequest,
     logger: Logger,
     work: (exec: StepSandboxExec) => Promise<T>,
-): Promise<Result<T, Suspension>> {
+): Promise<Result<T, SuspendingRefusal>> {
     const stepKey = durableStepKey();
     const execId =
         stepKey === undefined ? `${request.session.runFrame.runId}:${randomUUID()}` : request.execKey === undefined ? stepKey : `${stepKey}:${request.execKey}`;
@@ -79,7 +78,7 @@ export async function withStepSandbox<T>(
             keyedSandboxIdentity(request.session.runFrame.runId, execId),
         ),
     );
-    if (spawned.isErr()) return err(suspensionOfSpawnRefusal(spawned.error));
+    if (spawned.isErr()) return err(spawned.error);
     const sandbox = spawned.value;
     try {
         return ok(await work(async (execRequest, budgetMs) => client.exec(sandbox, execRequest, noopEmit, (await DBOS.now()) + budgetMs, execId)));
