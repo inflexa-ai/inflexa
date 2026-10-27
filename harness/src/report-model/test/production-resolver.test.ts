@@ -5,6 +5,7 @@
  * realizations stay substitutable.
  */
 
+import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ok, err } from "neverthrow";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -255,6 +256,18 @@ describe("production resolver, the fall-through", () => {
 
         expect(failure.reason).toBe("extraction-unavailable");
         expect(failure.detail).toBe("the host refused the sandbox (quota_exhausted), thus the file at odd-refused.csv was not read");
+    });
+
+    test("a cancel of the workflow that the arm raises leaves the resolver with no change", async () => {
+        const hash = await writeArtifact("odd-cancelled.csv", "gene;pvalue;score\nBRCA1;0.01;0.9\nTP53;0.02;0,8\n");
+        const cancel = new DBOSErrors.DBOSWorkflowCancelledError("wf-turn");
+        const arm: ExtractionArm = { extract: () => Promise.reject(cancel) };
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
+        const reference = valueRef("odd-cancelled.csv", hash, "score", "gene", "TP53");
+
+        const outcome = resolver.resolve(reference, snapshotOf([{ path: "odd-cancelled.csv", hash }]));
+
+        await expect(outcome).rejects.toBe(cancel);
     });
 
     test("the same odd dialect fails extraction-unavailable when no arm is wired", async () => {
