@@ -32,7 +32,9 @@ as the `ChatUsage` of the call.
 each model call, thus a model call that fails after its last attempt throws a
 `ResultError` that carries the classified `ProviderError`. A client abort is
 re-raised verbatim, outside the `ProviderError` channel.
+
 ## Requirements
+
 ### Requirement: Prompt caching is a vendor-neutral policy translated at one site
 
 The harness MUST express prompt caching as `PromptCachePolicy`. A value of `{ ttl: "5m" | "1h" }` caches the request
@@ -242,7 +244,9 @@ The provider MUST give a failure of the AI SDK runtime as a classified `Provider
 after its last attempt MUST throw a `ResultError` that carries the value. It MUST NOT give an unclassified SDK exception. `ProviderError` MUST be the discriminated union
 `{ type: "auth" } | { type: "suspend"; reason: string; status?: number } | { type: "provider" }`. The `auth` and
 `suspend` kinds MUST NOT be retryable. A rate limit, a 5xx, and a connection failure MUST be retryable `provider`
-failures. Another concrete 4xx failure MUST be a non-retryable `provider` failure.
+failures. Another concrete 4xx failure MUST be a non-retryable `provider` failure. Only an error status, 400 or
+higher, MUST classify. A failure that carries a status below 400 came after a response that started, for example a
+stream that a reset connection broke. It MUST classify by the connection check, the same as a failure with no status.
 
 A provider `401` — read from the failure itself or from anywhere on its `cause` chain — SHALL classify as `auth`, and the wrapped `auth` message SHALL name the credential as the broken thing (expired, revoked, or absent), never the request. Classification SHALL key on the HTTP status only, never on provider message text. A client abort SHALL be re-thrown verbatim rather than classified.
 
@@ -304,6 +308,12 @@ Message composition SHALL happen strictly after classification and SHALL NOT fee
 #### Scenario: A transient upstream error is retryable
 
 - **GIVEN** a provider 503 response
+- **WHEN** the failure is classified
+- **THEN** the `ProviderError` has `type: "provider"` with `retryable: true`
+
+#### Scenario: A stream that broke after a 200 is retryable
+
+- **GIVEN** a model call whose response started with the status `200`, and whose stream a reset connection broke
 - **WHEN** the failure is classified
 - **THEN** the `ProviderError` has `type: "provider"` with `retryable: true`
 

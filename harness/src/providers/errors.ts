@@ -417,7 +417,11 @@ export function classifyProviderError(e: unknown, suspendOn: SuspendOn = DEFAULT
     // fall to a non-retryable path.
     if (findRequestTimeout(e) !== undefined || hasSdkTimeout(e)) return { kind: "provider", retryable: true };
 
-    const status = extractStatus(e);
+    // A status below 400 is the status of a response that started well, and the failure came later, for example a
+    // stream that a reset connection broke. Thus only an error status classifies, and the rest falls to the
+    // connection check.
+    const found = extractStatus(e);
+    const status = found !== undefined && found >= 400 ? found : undefined;
 
     if (status !== undefined) {
         const reason = suspendOn[status];
