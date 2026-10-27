@@ -13,11 +13,14 @@ never derived from a model id. Created by archiving change configure-model-conne
 
 The user config SHALL carry a top-level `models` block whose `connection` field selects the chat
 backend as a mode-discriminated union: `{ mode: "cliproxy", provider? }` (the managed local proxy)
-or `{ mode: "direct", provider, baseURL, protocol? }` (any user-supplied endpoint). `provider` is
+or `{ mode: "direct", provider, baseURL, protocol?, supportsMultiPartToolContent? }` (any user-supplied endpoint). `provider` is
 the vendor slug naming the model's provider — an OPEN string vocabulary (e.g. `anthropic`,
 `openai`, `google`), a configured FACT in both modes, never derived from a model id. `protocol`
-selects the harness provider kind (`"anthropic" | "openai-compatible"`); when absent it defaults
-to `anthropic` for `provider: "anthropic"` and `openai-compatible` otherwise. An absent `models`
+selects the harness provider kind (`"anthropic" | "openai" | "openai-compatible"`); `openai` is the
+Responses wire of the OpenAI API. When absent it defaults to `anthropic` for `provider: "anthropic"`,
+to `openai` for `provider: "openai"` at the host `api.openai.com`, and to `openai-compatible` otherwise.
+`supportsMultiPartToolContent` states that an `openai-compatible` endpoint takes a tool message of parts.
+Boot passes it to the harness, which then carries a tool picture to the model. An absent `models`
 block SHALL resolve to `{ mode: "cliproxy", provider: "anthropic" }` — behavior identical to the
 pre-change CLI. An invalid block SHALL fail closed to the default with a reported config error
 (the existing config-schema pattern), never a silent partial parse.
@@ -27,7 +30,7 @@ the chat wire path and any auxiliary request (model listing). Its convention is 
 for the `anthropic` protocol it is the `/v1`-terminated API root the wire layer appends
 `/messages` to (e.g. `https://api.anthropic.com/v1` — the `@ai-sdk/anthropic` convention); for
 `openai-compatible` it is the `/v1`-terminated root the wire layer appends `/chat/completions`
-to. No consumer SHALL assume a different form of the same `baseURL` (e.g. re-appending `/v1`),
+to, and for `openai` the same root the wire layer appends `/responses` to. No consumer SHALL assume a different form of the same `baseURL` (e.g. re-appending `/v1`),
 and setup's endpoint prompt SHALL state the expected form.
 
 #### Scenario: Absent block reproduces today's behavior
@@ -39,8 +42,19 @@ and setup's endpoint prompt SHALL state the expected form.
 #### Scenario: A direct connection reaches a non-proxy endpoint
 
 - **WHEN** `models.connection` is `{ mode: "direct", provider: "openai", baseURL: "https://api.openai.com/v1" }`
-- **THEN** chat traffic targets that endpoint over the OpenAI-compatible protocol and CLIProxyAPI
+- **THEN** chat traffic targets that endpoint over the Responses protocol and CLIProxyAPI
   is neither required nor contacted by the chat path
+
+#### Scenario: The provider openai at a gateway speaks OpenAI-compatible
+
+- **WHEN** `models.connection` is `{ mode: "direct", provider: "openai", baseURL: "https://gw.corp/v1" }`
+- **THEN** chat traffic targets that endpoint over the OpenAI-compatible protocol
+
+#### Scenario: A tool picture reaches the model
+
+- **WHEN** the connection uses the `anthropic` or the `openai` protocol at its endpoint, or the `openai-compatible`
+  protocol with `supportsMultiPartToolContent: true`
+- **THEN** boot states that the wire carries a tool picture, and the model gets the picture of a tool result
 
 #### Scenario: Protocol override for a gateway
 
@@ -339,7 +353,7 @@ heuristic only — its output is a model id, never a provider identity.
 offer a pre-filled connection the user confirms, copying only the non-secret fields into
 `config.models.connection`. The detection set SHALL be: `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`
 (⇒ provider `anthropic`, protocol `anthropic`) and `OPENAI_API_KEY` / `OPENAI_BASE_URL` (⇒ provider
-`openai`, protocol `openai-compatible`). The adopted `baseURL` SHALL be normalized to the
+`openai`, protocol `openai` at the host `api.openai.com` and `openai-compatible` at each other host). The adopted `baseURL` SHALL be normalized to the
 `/v1`-terminated form the wire layer requires — appending `/v1` when the path carries no version
 segment, and defaulting to the provider's public API root when no `*_BASE_URL` is set — and the
 normalized value SHALL be shown as an editable pre-fill the user confirms before it is written.
@@ -366,7 +380,7 @@ direct-mode signer).
 
 - **WHEN** `ANTHROPIC_API_KEY` is set and `ANTHROPIC_BASE_URL` is unset
 - **THEN** the offered baseURL defaults to `https://api.anthropic.com/v1` (and symmetrically
-  `https://api.openai.com/v1` for the OpenAI set)
+  `https://api.openai.com/v1` with protocol `openai` for the OpenAI set)
 
 #### Scenario: OpenAI-compatible environment adopted verbatim
 
