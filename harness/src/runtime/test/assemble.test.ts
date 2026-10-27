@@ -609,7 +609,7 @@ describe("the chat turns of the composition", () => {
                 expect(registered).toContain(name);
             }
             expect(Object.keys(runtime.chatTurns).sort()).toEqual(["answer", "open", "outcome", "read", "stop"]);
-            expect(Object.keys(runtime.pausedWork).sort()).toEqual(["list", "resume"]);
+            expect(Object.keys(runtime.pausedWork).sort()).toEqual(["hold", "list", "resume"]);
         } finally {
             Reflect.set(dbos.DBOS, "registerWorkflow", register);
         }

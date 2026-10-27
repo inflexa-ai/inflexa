@@ -119,6 +119,21 @@ export type ModelBinding = {
      * call with no live reader takes its whole reply inside each attempt.
      */
     readonly live: boolean;
+    /** Called before the wait of each retry of a request inside the retry envelope. */
+    readonly onRetry?: (retry: ModelRetry) => void;
+};
+
+/** One retry of a model request inside the retry envelope of the provider. */
+export type ModelRetry = {
+    /** The id of the request. Each retry of one request carries the same id. */
+    readonly requestId: string;
+    /** The number of this retry, from 1. */
+    readonly attempt: number;
+    readonly maxRetries: number;
+    /** The wait before the next attempt, in milliseconds. */
+    readonly delayMs: number;
+    /** The HTTP error status of the failed attempt, 400 or higher. Absent for a failure with no error status. */
+    readonly status?: number;
 };
 
 /** The model of one run, under the retry envelope of its provider, and the call settings of each request. */

@@ -45,6 +45,7 @@ export type {
     PauseCause,
     PausedWorkKind,
     PausePart,
+    ModelRetryPart,
     ChatPart,
     KnownChatPart,
 } from "./chat-parts.js";

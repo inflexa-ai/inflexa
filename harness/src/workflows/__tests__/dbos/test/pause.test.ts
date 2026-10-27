@@ -172,6 +172,25 @@ describe("the pause of a loop inside a workflow", () => {
         expect(current.script.calls).toHaveLength(3);
     });
 
+    it("moves a wait in retrying to paused on a hold, and the timer no longer retries", async () => {
+        const { workId, current } = start([failure(503), reply([text("held, then resumed")])], { retryDelaysMs: [60_000] });
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+        await waitForPause(workId, "retrying");
+
+        expect(await createPausedWork({ pool }).hold(session, workId)).toEqual({ kind: "held", workflows: 1 });
+
+        const row = await waitForPause(workId, "paused");
+        expect(row).toMatchObject({ state: "paused", cause: { kind: "outage" }, attempt: 0 });
+        expect(row.retryAt).toBeUndefined();
+        expect(current.parts.map((part) => part.state)).toEqual(["retrying", "paused"]);
+        expect(current.script.calls).toHaveLength(1);
+        expect(await createPausedWork({ pool }).hold(session, workId)).toEqual({ kind: "held", workflows: 0 });
+
+        await createPausedWork({ pool }).resume(session, workId);
+        expect(await handle.getResult()).toEqual({ reason: "stop", text: "held, then resumed" });
+        expect(current.script.calls).toHaveLength(2);
+    });
+
     it("keeps the deadline of a retry across a crash", async () => {
         const { workId } = start([failure(503), reply([text("on time")])], { retryDelaysMs: [4_000] });
         const first = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);

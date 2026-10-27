@@ -444,6 +444,17 @@ export const PausePartSchema = z.object({
     retryAt: z.string().optional(),
 });
 
+// ── Model retry ─────────────────────────────────────────────────────
+
+export const ModelRetryPartSchema = z.object({
+    type: z.literal("data-model-retry"),
+    id: z.string(),
+    attempt: z.number().int().positive(),
+    maxRetries: z.number().int().positive(),
+    retryAt: z.string(),
+    status: z.number().int().optional(),
+});
+
 // ── Sub-agent activity ──────────────────────────────────────────────
 
 export const SubAgentActivityEntrySchema = z.object({
@@ -491,4 +502,5 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     ReportRenderedPartSchema,
     CompactionPartSchema,
     PausePartSchema,
+    ModelRetryPartSchema,
 ]);

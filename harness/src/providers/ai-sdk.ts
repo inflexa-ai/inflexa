@@ -1,6 +1,6 @@
 import { errorOf, errorNameOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { wrapLanguageModel, type LanguageModelMiddleware, type LanguageModelUsage, type ProviderMetadata } from "ai";
 import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
@@ -22,10 +22,18 @@ import { ResultError } from "../lib/result.js";
 
 import { isUnknownArray } from "../lib/unknown-array.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
-import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
+import {
+    DEFAULT_SUSPEND_ON,
+    classifyProviderError,
+    extractStatus,
+    type ProviderError,
+    RequestTimeoutError,
+    type SuspendOn,
+    toProviderError,
+} from "./errors.js";
 import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
-import type { BoundModel, ChatProvider, ChatUsage, ModelBinding, ProviderCapabilities, ProviderOptions, ReasoningPolicy } from "./types.js";
+import type { BoundModel, ChatProvider, ChatUsage, ModelBinding, ModelRetry, ProviderCapabilities, ProviderOptions, ReasoningPolicy } from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -506,8 +514,16 @@ export function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): P
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
  */
-export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall): RetryFunction {
+export function createRetry(
+    signal: AbortSignal | undefined,
+    logger: Logger,
+    maxRetries: number,
+    suspendOn: SuspendOn,
+    hookCall: HookCall,
+    onRetry?: (retry: ModelRetry) => void,
+): RetryFunction {
     let retryCount = 0;
+    const requestId = randomUUID();
     return retryWithExponentialBackoff({
         maxRetries,
         initialDelayInMs: RETRY_INITIAL_DELAY_MS,
@@ -518,6 +534,8 @@ export function createRetry(signal: AbortSignal | undefined, logger: Logger, max
             const delayMs = computeRetryDelayMs(error, exponentialBackoffDelay);
             retryCount += 1;
             logger.debug("retrying provider call", { attempt: retryCount, delayMs, ...logger.errorFields(error) });
+            const status = extractStatus(error);
+            onRetry?.({ requestId, attempt: retryCount, maxRetries, delayMs, status: status !== undefined && status >= 400 ? status : undefined });
             return delayMs;
         },
         createRetryError: ({ message, errors }) => {
@@ -666,6 +684,7 @@ type EnvelopeOptions = {
     readonly suspendOn: SuspendOn;
     readonly requestTimeoutMs?: number;
     readonly resolveRequestHeaders?: ResolveRequestHeaders;
+    readonly onRetry?: (retry: ModelRetry) => void;
 };
 
 /**
@@ -682,7 +701,7 @@ type EnvelopeOptions = {
  * unchanged.
  */
 function retryEnvelope(options: EnvelopeOptions): LanguageModelMiddleware {
-    const { session, live, logger, maxRetries, suspendOn, requestTimeoutMs } = options;
+    const { session, live, logger, maxRetries, suspendOn, requestTimeoutMs, onRetry } = options;
     const workload = workloadOf(session);
 
     /** The one record of a call that the envelope gave up on: the reply carries the failure, and the operator sees this. */
@@ -711,7 +730,7 @@ function retryEnvelope(options: EnvelopeOptions): LanguageModelMiddleware {
         wrapStream: async ({ params, model }) => {
             const signal = params.abortSignal;
             const hookCall: HookCall = { unsettled: false };
-            const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
+            const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall, onRetry);
             let opened: {
                 readonly rest: Omit<Awaited<ReturnType<LanguageModelV4["doStream"]>>, "stream">;
                 readonly head: LanguageModelV4StreamPart[];
@@ -821,6 +840,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 suspendOn,
                 requestTimeoutMs,
                 resolveRequestHeaders: deps.resolveRequestHeaders,
+                onRetry: call.onRetry,
             }),
         });
         const providerOptions = deps.providerOptionsFor?.({ session: call.session, reasoning });

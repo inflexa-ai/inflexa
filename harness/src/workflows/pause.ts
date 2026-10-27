@@ -35,7 +35,11 @@ const PAUSED_WAIT_SECONDS = 60 * 60;
 /** The message that ends a wait. */
 export const RESUME_MESSAGE = { kind: "resume" } as const;
 
+/** The message that moves a wait in `retrying` to `paused`: the work waits for a resume, and the timer stops. */
+export const HOLD_MESSAGE = { kind: "hold" } as const;
+
 const ResumeMessageSchema = z.object({ kind: z.literal("resume") });
+const HoldMessageSchema = z.object({ kind: z.literal("hold") });
 
 /** The topic of the resume message of one pause. Each pause has its own topic, thus a late message never ends a later pause. */
 export function pauseTopic(pauseId: string): string {
@@ -97,12 +101,13 @@ function stopOf(signal: AbortSignal | undefined): Promise<typeof STOPPED> {
     });
 }
 
-async function waitForMessage(topic: string, delayMs: number | undefined, signal: AbortSignal | undefined): Promise<PauseEnd> {
+async function waitForMessage(topic: string, delayMs: number | undefined, signal: AbortSignal | undefined): Promise<PauseEnd | "hold"> {
     const stopped = stopOf(signal);
     if (delayMs !== undefined) {
         // DBOS records the deadline of the timeout at the first call, thus a recovery waits until the same time.
         const message = await Promise.race([DBOS.recv<unknown>(topic, Math.ceil(delayMs / 1000)), stopped]);
         if (message === STOPPED) return "abort";
+        if (HoldMessageSchema.safeParse(message).success) return "hold";
         return ResumeMessageSchema.safeParse(message).success ? "resume" : "retry";
     }
     for (;;) {
@@ -149,7 +154,34 @@ export function workPause(scope: PauseScope): WorkPause {
         await scope.emit({ type: "data-pause", id: workflowId, ...work, state, cause, attempt, retryAt });
         log.warn("work paused", { workflowId, ...work, state, cause: cause.kind, attempt });
 
-        const end = await waitForMessage(topic, delayMs, signal);
+        const waited = await waitForMessage(topic, delayMs, signal);
+        let end: PauseEnd;
+        if (waited === "hold") {
+            // A person held the work: the timer stops, and the work waits for a resume.
+            await DBOS.runStep(
+                async () =>
+                    unwrapOrThrow(
+                        await recordPause(scope.pool, {
+                            workflowId,
+                            ...work,
+                            analysisId: scope.analysisId,
+                            threadId: scope.threadId,
+                            state: "paused",
+                            cause,
+                            attempt,
+                            topic,
+                            pausedAt: new Date(pausedAt).toISOString(),
+                        }),
+                    ),
+                { name: "pause.hold" },
+            );
+            await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "paused", cause, attempt });
+            log.info("work held", { workflowId, ...work, attempt });
+            const held = await waitForMessage(topic, undefined, signal);
+            end = held === "hold" ? "resume" : held;
+        } else {
+            end = waited;
+        }
 
         await DBOS.runStep(async () => unwrapOrThrow(await clearPause(scope.pool, workflowId)), { name: "pause.clear" });
         await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "running" });

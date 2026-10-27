@@ -329,7 +329,7 @@ export type { SuspendOn } from "./providers/errors.js";
 // resumes it with `CoreRuntime.pausedWork`, and it reads the `data-pause` part
 // of each waiting workflow in the stream of the work.
 export { DEFAULT_PAUSE_RETRY_DELAYS_MS } from "./workflows/pause.js";
-export type { PausedWork, PausedWorkflow, PausedWorkResume, PausedWorkSurface } from "./app/paused-work.js";
+export type { PausedWork, PausedWorkflow, PausedWorkHold, PausedWorkResume, PausedWorkSurface } from "./app/paused-work.js";
 // Conversation turn + thread memory. A host opens a chat turn with the `open`
 // of `CoreRuntime.chatTurns`, which starts the workflow of the turn, and reads
 // its frames with `read`, live or again after a lost connection. The harness
@@ -467,6 +467,7 @@ export type {
     PauseCause,
     PausedWorkKind,
     PausePart,
+    ModelRetryPart,
     AskPart,
     ChildSessionStartedPart,
     ReportRenderedPart,

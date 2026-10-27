@@ -160,6 +160,28 @@ describe("runLoop", () => {
     });
 });
 
+describe("runLoop — a retry of the provider", () => {
+    it("emits a model-retry part before the wait of each retry of a request", async () => {
+        const unavailable = Object.assign(new Error("HTTP 503"), { statusCode: 503 });
+        const { provider, calls } = scriptedModel([{ fail: unavailable }, reply([text("back")])], { maxRetries: 1 });
+        const parts: unknown[] = [];
+        const emit: EmitFn = (event) => {
+            if (event.type === "data-model-retry") parts.push(event);
+        };
+        const before = Date.now();
+
+        const result = await runLoop(agentWith([]), [user("go")], makeSession(), options(provider, emit));
+
+        expect(result.finish.reason).toBe("stop");
+        expect(calls).toHaveLength(2);
+        expect(parts).toHaveLength(1);
+        expect(parts[0]).toMatchObject({ type: "data-model-retry", data: { attempt: 1, maxRetries: 1, status: 503 } });
+        const { data } = z.object({ data: z.object({ id: z.string(), retryAt: z.string() }) }).parse(parts[0]);
+        expect(data.id.length).toBeGreaterThan(0);
+        expect(Date.parse(data.retryAt)).toBeGreaterThanOrEqual(before);
+    }, 15_000);
+});
+
 describe("runLoop — the follow-up request", () => {
     it("declares each tool, lets only the masked tools run, and gives back only the new messages", async () => {
         const runs: string[] = [];
