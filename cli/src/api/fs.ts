@@ -74,6 +74,22 @@ export type FolderList = ListEnvelope<"entries", FolderEntryView> & {
     folder: FolderFacts;
 };
 
+/** One hit of `GET /api/v1/fs/search`. */
+export type FsSearchHit = {
+    /** The entry, in the shape and with the enrichment of a list entry. */
+    entry: FolderEntryView;
+    /** The path of the folder that holds the entry, relative to the canonical scope, with `/` as the separator. Empty for a direct child of the scope. */
+    subpath: string;
+};
+
+/** The body of `GET /api/v1/fs/search`: the best hits first. */
+export type FsSearch = {
+    /** At most `limit` hits, in the order of the score, then the shallower entry, then the code-unit name. */
+    hits: FsSearchHit[];
+    /** True when the walk of the scope had not ended at the time of the score, or when a cap stopped it. */
+    truncated: boolean;
+};
+
 /** Each kind of a file, in the order of the kind map. The count list of a folder preview follows this order. */
 export const FILE_KINDS = ["table", "figure", "code", "log", "data", "doc"] as const;
 

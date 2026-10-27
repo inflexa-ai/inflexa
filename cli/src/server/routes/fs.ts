@@ -1,6 +1,6 @@
 import { queryArtifactOrigins, type ArtifactOrigin, type DbError, type Pool } from "@inflexa-ai/harness";
 import type { BigIntStats } from "node:fs";
-import { lstat, type FileHandle } from "node:fs/promises";
+import { lstat, realpath, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -18,21 +18,40 @@ import {
     type FolderFacts,
     type FolderList,
     type FolderPreview,
+    type FsSearch,
+    type FsSearchHit,
     type HomeFolder,
     type TablePreview,
     type TextPreview,
 } from "../../api/fs.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
-import { compareEntries, countFolderEntries, entryDetails, readFolder, scanFolder, type FolderEntry, type FolderReadError } from "../../lib/folder_listing.ts";
+import {
+    compareEntries,
+    countFolderEntries,
+    entryDetails,
+    readError,
+    readFolder,
+    scanFolder,
+    type FolderEntry,
+    type FolderReadError,
+} from "../../lib/folder_listing.ts";
 import { errnoCode, isReadableBy, processIdentity, statResultAsync, type ProcessIdentity } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { contains, locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { inputAbsolutePaths } from "../../modules/analysis/input.ts";
 import { extensionOf, fileKindOf } from "../../modules/fs/file_kind.ts";
+import {
+    createSearchIndexCache,
+    DEFAULT_SEARCH_LIMITS,
+    readFolderEntries,
+    type ReadEntries,
+    type SearchIndexCache,
+    type SearchLimits,
+} from "../../modules/fs/search_index.ts";
 import { analysisQueryGuard, DEFAULT_ANALYSIS_GUARD_OPTS, type AnalysisGuardOpts } from "../analysis_guard.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, filterValue, holdConnection, internalError, listEnvelope, parsePage, type ServerEnv } from "../http.ts";
+import { apiError, filterValue, holdConnection, internalError, listEnvelope, parseCount, parsePage, type ServerEnv } from "../http.ts";
 import { closeHandle, DEFAULT_FILE_ROUTE_OPTS, openRealPath, serveFile, unreadable, type FileResponseOpts, type FileRouteOpts } from "./files.ts";
 
 /** The reads and the lock of the file system routes. A test replaces one to count the calls or to make a read fail. */
@@ -45,6 +64,14 @@ export type FsRouteOpts = FileRouteOpts &
         readonly previewBytes: number;
         /** The home folder of the server user. A test gives a path behind a link without a change to the `HOME` of the shared process. */
         readonly homedir: () => string;
+        /** The caps of the name search. A test sets small caps and a short TTL. */
+        readonly search: SearchLimits;
+        /** The clock of the search cache, for its TTL and its time budget. A test gives a fake clock. */
+        readonly now: () => number;
+        /** The folder read of the search walk. A test replaces it to hold a read or to count the reads. */
+        readonly readEntries: ReadEntries;
+        /** Gets the search cache of the routes once at their creation, so that a test can stop its walks and its timer. */
+        readonly onSearchCache?: (cache: SearchIndexCache) => void;
     };
 
 /** The production {@link FsRouteOpts}. */
@@ -55,10 +82,19 @@ export const DEFAULT_FS_ROUTE_OPTS: FsRouteOpts = {
     artifactOrigins: queryArtifactOrigins,
     previewBytes: 64 * 1024,
     homedir,
+    search: DEFAULT_SEARCH_LIMITS,
+    now: Date.now,
+    readEntries: readFolderEntries,
 };
 
 /** How many entries of one page read their facts at one time. A slow mount holds one slot and not the page. */
 const ENTRY_READ_WIDTH = 16;
+
+/** The count of the hits of a search without `limit`. */
+const SEARCH_DEFAULT_LIMIT = 50;
+
+/** The most hits of one search. */
+const SEARCH_MAX_LIMIT = 200;
 
 /** The facts of one request that do not depend on the entry. */
 type ListContext = {
@@ -143,6 +179,59 @@ async function readOrigins(
             return new Map<string, FileOrigin>();
         },
     );
+}
+
+/**
+ * The views of `entries` for one request: the facts, the item count, the input mark, and the origin of each entry, in the
+ * order of `entries`. The inputs and the workspace root of `analysisId` are read one time for the request, and the origins
+ * with one ledger read for `entries`. The error channel holds the 500 response to send.
+ */
+async function enrichEntries(
+    c: Context<ServerEnv>,
+    boot: ServerBoot,
+    opts: FsRouteOpts,
+    identity: ProcessIdentity | null,
+    entries: readonly FolderEntry[],
+    hidden: boolean,
+): Promise<Result<FolderEntryView[], Response>> {
+    const analysisId = filterValue(c.req.query("analysisId"));
+    const inputFiles = new Set<string>();
+    const inputFolders = new Set<string>();
+    let origins: Promise<ReadonlyMap<string, FileOrigin>> = Promise.resolve(new Map());
+    if (analysisId !== undefined) {
+        const inputs = listAnalysisInputs(analysisId);
+        if (inputs.isErr()) return err(internalError(c, inputs.error, "read the inputs of the analysis"));
+        const located = await inputAbsolutePaths(inputs.value);
+        for (const [input, inputPath] of located) {
+            if (inputPath !== null) (input.isDir ? inputFolders : inputFiles).add(inputPath);
+        }
+
+        const runtime = boot.runtime();
+        if (runtime !== null) {
+            const root = await locateWorkspaceReadRoot(analysisId);
+            if (root.isErr()) return err(internalError(c, root.error, "locate the workspace folder"));
+            if (root.value !== null) origins = readOrigins(entries, root.value.canonical, runtime.pool, analysisId, opts);
+        }
+    }
+
+    const list: ListContext = { identity, hidden, inputFiles, inputFolders };
+    const queue = new PQueue({ concurrency: ENTRY_READ_WIDTH });
+    const [views, originOf] = await Promise.all([Promise.all(entries.map((entry) => queue.add(() => entryView(entry, list, opts)))), origins]);
+    return ok(views.map((view): FolderEntryView => ({ ...view, origin: originOf.get(view.path) ?? null })));
+}
+
+/** The `hidden` query value of the list and the search: absent is false. The error channel holds the 400 response to send. */
+function hiddenOf(c: Context<ServerEnv>): Result<boolean, Response> {
+    const hidden = c.req.query("hidden");
+    if (hidden !== undefined && hidden !== "true" && hidden !== "false") {
+        return err(
+            apiError(c, "validation_error", "`hidden` must be `true` or `false`.", {
+                formErrors: [],
+                fieldErrors: { hidden: ["must be true or false"] },
+            }),
+        );
+    }
+    return ok(hidden === "true");
 }
 
 /** The response of `GET /read` for a file: no extra header, and the download flag is set per request. */
@@ -385,8 +474,8 @@ function readErrorResponse(c: Parameters<typeof apiError>[0], error: FolderReadE
 }
 
 /**
- * The file system routes under `/api/v1/fs`: the home folder, the entries of one folder, the bytes of one file, and the preview
- * of one file or folder.
+ * The file system routes under `/api/v1/fs`: the home folder, the entries of one folder, a name search under one folder, the
+ * bytes of one file, and the preview of one file or folder.
  * They read each path of the machine with no root limit. The list reads the harness runtime for the `origin` of its
  * entries only, and only when the boot is ready. Before that each `origin` is `null` and each route still answers.
  */
@@ -394,6 +483,10 @@ export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_
     const routes = new Hono<ServerEnv>();
     // A process cannot change its own ids, thus one read serves each request.
     const identity = processIdentity();
+
+    // One cache for the routes: each keystroke of a picker reads the index that its first search built.
+    const searchCache = createSearchIndexCache(opts.search, opts.now, opts.readEntries);
+    opts.onSearchCache?.(searchCache);
 
     routes.use("*", analysisQueryGuard(opts));
 
@@ -405,18 +498,13 @@ export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_
     routes.get("/list", async (c) => {
         const path = absolutePathOf(c);
         if (path.isErr()) return path.error;
-        const hidden = c.req.query("hidden");
-        if (hidden !== undefined && hidden !== "true" && hidden !== "false") {
-            return apiError(c, "validation_error", "`hidden` must be `true` or `false`.", {
-                formErrors: [],
-                fieldErrors: { hidden: ["must be true or false"] },
-            });
-        }
+        const hidden = hiddenOf(c);
+        if (hidden.isErr()) return hidden.error;
         // A read on a slow mount can run for longer than 10 s.
         holdConnection(c);
         // With a prefix, the read keeps the hidden names, because only a prefix that starts with a dot can select one.
         const namePrefix = filterValue(c.req.query("namePrefix"))?.toLowerCase();
-        const showHidden = hidden === "true";
+        const showHidden = hidden.value;
         const folder = await readFolder(path.value, showHidden || namePrefix !== undefined);
         if (folder.isErr()) return readErrorResponse(c, folder.error);
 
@@ -425,40 +513,49 @@ export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
         const pageEntries = entries.slice(page.page * page.perPage, (page.page + 1) * page.perPage);
 
-        // The inputs and the workspace root are read one time for the request.
-        const analysisId = filterValue(c.req.query("analysisId"));
-        const inputFiles = new Set<string>();
-        const inputFolders = new Set<string>();
-        let origins: Promise<ReadonlyMap<string, FileOrigin>> = Promise.resolve(new Map());
-        if (analysisId !== undefined) {
-            const inputs = listAnalysisInputs(analysisId);
-            if (inputs.isErr()) return internalError(c, inputs.error, "read the inputs of the analysis");
-            const located = await inputAbsolutePaths(inputs.value);
-            for (const [input, inputPath] of located) {
-                if (inputPath !== null) (input.isDir ? inputFolders : inputFiles).add(inputPath);
-            }
-
-            const runtime = boot.runtime();
-            if (runtime !== null) {
-                const root = await locateWorkspaceReadRoot(analysisId);
-                if (root.isErr()) return internalError(c, root.error, "locate the workspace folder");
-                if (root.value !== null) origins = readOrigins(pageEntries, root.value.canonical, runtime.pool, analysisId, opts);
-            }
-        }
-
-        const list: ListContext = { identity, hidden: showHidden, inputFiles, inputFolders };
-        const queue = new PQueue({ concurrency: ENTRY_READ_WIDTH });
-        const [views, originOf, readable] = await Promise.all([
-            Promise.all(pageEntries.map((entry) => queue.add(() => entryView(entry, list, opts)))),
-            origins,
+        const [items, readable] = await Promise.all([
+            enrichEntries(c, boot, opts, identity, pageEntries, showHidden),
             statResultAsync(canonical, "fsRoutes:folderStat").match(
                 (stats) => (identity ? isReadableBy(stats, identity) : null),
                 () => null,
             ),
         ]);
-        const items = views.map((view): FolderEntryView => ({ ...view, origin: originOf.get(view.path) ?? null }));
+        if (items.isErr()) return items.error;
         const facts: FolderFacts = { path: canonical, readable };
-        const body: FolderList = { ...listEnvelope("entries", items, entries.length, page), folder: facts };
+        const body: FolderList = { ...listEnvelope("entries", items.value, entries.length, page), folder: facts };
+        return c.json(body);
+    });
+
+    // The walk takes no signal of the request: a picker aborts its request at each keystroke, and the next keystroke reads
+    // the same index. A walk ends at a cap, at the end of the scope, or at an eviction.
+    routes.get("/search", async (c) => {
+        const path = absolutePathOf(c);
+        if (path.isErr()) return path.error;
+        const hidden = hiddenOf(c);
+        if (hidden.isErr()) return hidden.error;
+        const query = filterValue(c.req.query("q")) ?? "";
+        const limit = parseCount(c.req.query("limit"), SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT);
+        // A walk on a slow mount can run for longer than 10 s before its first answer.
+        holdConnection(c);
+        // The cache keys an index on the canonical scope, thus two paths to one folder share one walk.
+        const canonical = await ResultAsync.fromPromise(realpath(path.value), (cause) => readError(path.value, cause));
+        if (canonical.isErr()) return readErrorResponse(c, canonical.error);
+        const found = await searchCache.search(canonical.value, hidden.value, query, limit);
+        if (found.isErr()) return readErrorResponse(c, found.error);
+
+        const { hits, truncated } = found.value;
+        const views = await enrichEntries(
+            c,
+            boot,
+            opts,
+            identity,
+            hits.map((hit) => hit.entry),
+            hidden.value,
+        );
+        if (views.isErr()) return views.error;
+        // `enrichEntries` gives one view for each entry, in the order of the entries, thus index `k` holds a view.
+        const items = hits.map((hit, k): FsSearchHit => ({ entry: views.value[k]!, subpath: hit.subpath }));
+        const body: FsSearch = { hits: items, truncated };
         return c.json(body);
     });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { rankBy, subsequenceScore } from "./fuzzy.ts";
+import { rankBy, subsequenceScore, subsequenceScoreBytes } from "./fuzzy.ts";
 
 // These tests pin the scorer's CONTRACT, not its exact score magnitudes. They assert sign and
 // relative ordering only, so the scoring constants can be re-tuned without rewriting the suite.
@@ -33,6 +33,34 @@ describe("subsequenceScore", () => {
     test("a hit at the start of target outscores a mid-string hit", () => {
         // "ana" starts "analysis" but appears mid-string in "an analysis".
         expect(subsequenceScore("ana", "analysis")).toBeGreaterThan(subsequenceScore("ana", "_analysis"));
+    });
+});
+
+describe("subsequenceScoreBytes", () => {
+    const encoder = new TextEncoder();
+
+    /** The byte score of `query` against `name` placed inside a larger pool, so that the range offsets matter. */
+    function scoreInPool(query: string, name: string): number {
+        const pool = encoder.encode(`xx${name}yy`);
+        return subsequenceScoreBytes(encoder.encode(query.toLowerCase()), pool, 2, 2 + name.length);
+    }
+
+    test("equals the string score for each ASCII name and query", () => {
+        const names = ["Volcano.png", "volcano.png", "tokyo-night", "c_a_t", "cat", "README.md", "a", "", "_analysis", "analysis", "ABC-abc"];
+        const queries = ["volc", "VOLC", "tn", "cat", "ana", "rdm", "a", "abc", "zz", "png", "x"];
+        for (const name of names) {
+            for (const query of queries) expect(scoreInPool(query, name)).toBe(subsequenceScore(query, name));
+        }
+    });
+
+    test("rejects a non-subsequence with -1", () => {
+        expect(scoreInPool("zx", "tokyo-night")).toBe(-1);
+        expect(scoreInPool("nt", "tn")).toBe(-1);
+    });
+
+    test("an empty query is the neutral 0", () => {
+        expect(scoreInPool("", "anything")).toBe(0);
+        expect(scoreInPool("", "")).toBe(0);
     });
 });
 
