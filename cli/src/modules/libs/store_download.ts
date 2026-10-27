@@ -49,6 +49,7 @@ import {
     type FetchLike,
     type LivenessWatch,
 } from "../../lib/download.ts";
+import { CATALOG_TRANSFER_FLAG } from "../../lib/child_flags.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
 import type { TransferPhase } from "../../types/store.ts";
@@ -1219,14 +1220,6 @@ export type CatalogTransferStart =
     | { readonly type: "already_running"; readonly report: TransferReport }
     | { readonly type: "up_to_date"; readonly manifestDigest: string }
     | { readonly type: "update_available"; readonly installedDigest: string; readonly latestDigest: string };
-
-/**
- * The hidden flag that tells the re-invoked `inflexa store download` to move the bytes itself rather
- * than start a third process. The registry (`src/cli/index.ts`) declares the same spelling as a
- * hidden option, because a command registry that imported this module would give up its lazy-import
- * discipline for one string.
- */
-export const CATALOG_TRANSFER_FLAG = "--run-transfer";
 
 /** Record the resolve of the catalog transfer on its row, and ignore every other event. */
 function recordResolvedManifest(event: StoreDownloadProgress): void {

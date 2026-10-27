@@ -142,8 +142,12 @@ const LOCAL_MOUNT_NAME = "local";
 const LOCAL_MOUNT_SUBDIR = join("inputs", LOCAL_MOUNT_NAME);
 
 /**
- * How many `readdir`, `stat`, `rm`, and `rmdir` calls one walk or one stat pass keeps in flight. The local
- * server runs staging for a request, thus a tree on a hung mount holds this many threads of the pool, not all.
+ * How many `readdir`, `stat`, `rm`, and `rmdir` calls one walk or one stat pass keeps in flight. A tree on a hung
+ * mount holds this many threads of the file pool of its process, for as long as the mount hangs. The local server
+ * runs staging for a request. A detached server, and a foreground server outside Windows, request a pool of at least
+ * 64 threads, thus the other file calls of the server keep their threads. A pool size that the person sets, and a
+ * foreground server on Windows, keep their own pool. A person-run `inflexa run` keeps the pool of its own process.
+ * When that pool has 16 threads or fewer, 16 hung calls can hold each thread of it.
  */
 const METADATA_WIDTH = 16;
 

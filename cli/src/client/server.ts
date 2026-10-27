@@ -11,7 +11,9 @@ import {
     type ShutdownMode,
 } from "../api/server.ts";
 import { describeCause } from "../lib/cause.ts";
-import { fail, selfInvocation } from "../lib/cli.ts";
+import { CLIENT_START_FLAG } from "../lib/child_flags.ts";
+import { fail } from "../lib/cli.ts";
+import { selfInvocation } from "../lib/self_invocation.ts";
 import { env } from "../lib/env.ts";
 import { rmResult, type FsError } from "../lib/fs.ts";
 import { acquireInstanceLock, isPidAlive, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY, type LockOutcome } from "../lib/lock.ts";
@@ -255,7 +257,7 @@ const START_COMMAND_WAIT_MS = SERVER_START_WAIT_MS + 15_000;
  */
 export async function startDetachedServer(stderr: "inherit" | "pipe" = "inherit"): Promise<Result<void, string>> {
     const spawned = Result.fromThrowable(
-        () => Bun.spawn({ cmd: selfInvocation(["serve", "--detach"]), stdin: "ignore", stdout: "ignore", stderr }),
+        () => Bun.spawn({ cmd: selfInvocation(["serve", "--detach", CLIENT_START_FLAG]), stdin: "ignore", stdout: "ignore", stderr }),
         (cause) => describeCause(cause),
     )();
     if (spawned.isErr()) return err(`the spawn of \`inflexa serve --detach\` failed (${spawned.error})`);

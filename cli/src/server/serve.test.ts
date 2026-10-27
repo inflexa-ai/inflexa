@@ -3,10 +3,14 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Subprocess } from "bun";
+
 import type { ServerDiscovery } from "../api/server.ts";
 import { buildProgram } from "../cli/index.ts";
 import { readServerDiscovery } from "../client/api.ts";
-import { rotateServerLog, SERVE_DETACHED_CHILD_FLAG, serverStopLine, writeServerDiscovery } from "./serve.ts";
+import { SERVE_DETACHED_CHILD_FLAG } from "../lib/child_flags.ts";
+import { fsPoolVar, serverChildEnv } from "../lib/env.ts";
+import { rotateServerLog, serverStopLine, spawnDetachedServer, writeServerDiscovery, type DetachedServerSpawnOptions } from "./serve.ts";
 
 let dir: string | null = null;
 afterEach(() => {
@@ -100,6 +104,24 @@ describe("rotateServerLog", () => {
         expect(rotateServerLog(path, 10)._unsafeUnwrap()).toBe(true);
         expect(readFileSync(`${path}.1`, "utf8")).toBe("0123456789");
         expect(readFileSync(path, "utf8")).toBe("");
+    });
+});
+
+describe("spawnDetachedServer", () => {
+    test("the detached child gets the file pool of the server in its environment, and the child flag", () => {
+        const calls: DetachedServerSpawnOptions[] = [];
+        // The spawn reads only `unref` of the child, thus a stub with that one method stands in for the process.
+        const child = { unref: () => undefined } as unknown as Subprocess;
+        const spawned = spawnDetachedServer(join(tempDir(), "logs", "server.dev.log"), {
+            spawn: (options) => {
+                calls.push(options);
+                return child;
+            },
+        });
+        expect(spawned._unsafeUnwrap()).toBe(child);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.cmd).toContain(SERVE_DETACHED_CHILD_FLAG);
+        expect(calls[0]?.env[fsPoolVar]).toBe(serverChildEnv(undefined)[fsPoolVar]);
     });
 });
 

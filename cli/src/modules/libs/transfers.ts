@@ -21,7 +21,8 @@
 
 import { err, ok, type Result } from "neverthrow";
 
-import { selfInvocation } from "../../lib/cli.ts";
+import { IMAGE_TRANSFER_FLAG } from "../../lib/child_flags.ts";
+import { selfInvocation } from "../../lib/self_invocation.ts";
 import { ensureRuntime } from "../../lib/config.ts";
 import {
     capture,
@@ -126,15 +127,6 @@ export type TransferStart = { readonly type: "started"; readonly pid: number } |
 
 /** A transfer child could not be started. */
 export type TransferStartError = { readonly type: "spawn_failed"; readonly kind: TransferKind; readonly message: string; readonly cause?: unknown };
-
-/**
- * The hidden flag that tells a re-invoked `inflexa sandbox pull` to run ONE
- * image transfer in-process rather than start children. The registry
- * (`src/cli/index.ts`) declares the same spelling as a hidden option, because a
- * registry that imported this module would give up its lazy-import discipline
- * for one string.
- */
-export const IMAGE_TRANSFER_FLAG = "--run-transfer";
 
 /**
  * Start the detached child of one image transfer kind, or report the child that
