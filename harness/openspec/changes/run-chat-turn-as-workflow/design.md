@@ -34,7 +34,7 @@ These facts constrain the design:
 
 ### D1. The opening stays before the workflow
 
-The host opens the turn in its request, as today: the preparation, the agent of the thread, and the opening rows. Then the harness starts the turn workflow. The workflow input holds only ids and settings: the turn id, the analysis, the thread, the user, the thread type, the author, the start time, the cache policy, and the model reference. The workflow id is the turn id.
+The host opens the turn in its request, as today: the preparation, the agent of the thread, and the opening rows. Then the harness starts the turn workflow. The workflow input holds only ids and settings: the turn id, the analysis, the thread, the user, the thread type, the author, the start time, and the cache policy. The workflow id is the turn id.
 
 The first step of the workflow loads the view of the conversation. Thus the raw user input never goes into a workflow input, and a refusal of the opening stays a synchronous answer to the host.
 
@@ -97,7 +97,7 @@ The opening refuses a turn when the thread has an open turn record. The refusal 
 
 Each sub-agent kind registers one workflow at the assembly: the literature reviewer, the planner, and the analogy reporter. The tool of the sub-agent starts the child with the id `${DBOS.workflowID}-${toolCallId}`, and it waits for the result. The tool does not run in a step, thus `durableTools` must leave it out. The start comes before the first `await` of the call. Thus the function ids of parallel calls do not depend on the order of the scheduler.
 
-The child input holds the brief, the serializable parts of the session, the root turn id, the model reference, and the id of the call. A run gives its `RunSession`, which can go into a workflow input. The child returns its outcome and its usage, and the caller adds the usage to the total of the turn.
+The child input holds the brief, the serializable parts of the session, the root turn id, and the id of the call. A run gives its `RunSession`, which can go into a workflow input. The child returns its outcome and its usage, and the caller adds the usage to the total of the turn.
 
 Outside a workflow, the tool runs the body of the child in its own process, as in stage 1.
 
@@ -134,9 +134,11 @@ When the hook gives a request:
 
 `derive_table` and the extraction of `preview_report` and `record_report_version` make the sandbox, run one exec, and remove the sandbox inside the step of the call. The sandbox name and the exec id come from the step, thus a rerun adopts the same container, and the sandbox server dedups the exec. A derivation mints no mandate (decision Q7). The workflows `derive-table-exec` and `extract-values` go.
 
-### D12. A workflow takes its model from its input
+### D12. A recovered workflow uses the configured model
 
-The input of a turn, of a run, and of the data profile holds a model reference. The runtime resolves the provider from it. A change of the configured model does not change a turn or a run that started before the change. The CLI swap at idle changes the reference of the next turn.
+A workflow input holds no model reference. A turn, a run, and a data profile take their provider from the runtime when they run. Thus a workflow that a recovery runs after a change of the configured model uses the new model. The user selected that model.
+
+Rejected: a model reference in each workflow input. It changes how the host swaps the model of each role, and it keeps a model that the user replaced.
 
 ### D13. The host surface
 

@@ -2,7 +2,7 @@
 
 ### Requirement: A chat turn runs as a workflow
 
-After its opening, a chat turn MUST run as a DBOS workflow. The workflow id MUST be the turn id. The workflow input MUST hold the ids and the settings of the turn: the turn, the analysis, the thread, the user, the thread type, the author, the start time, the cache policy, and the model reference. It MUST hold the user text after the sanitization of the opening. It MUST NOT hold the history or a credential of a request. The first step of the workflow MUST load the view of the conversation.
+After its opening, a chat turn MUST run as a DBOS workflow. The workflow id MUST be the turn id. The workflow input MUST hold the ids and the settings of the turn: the turn, the analysis, the thread, the user, the thread type, the author, the start time, and the cache policy. It MUST hold the user text after the sanitization of the opening. It MUST NOT hold the history or a credential of a request. The first step of the workflow MUST load the view of the conversation.
 
 #### Scenario: A crash during a tool round
 
