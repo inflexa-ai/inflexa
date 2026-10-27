@@ -1,0 +1,23 @@
+{
+    "name": "@inflexa-ai/evals",
+    "private": true,
+    "type": "module",
+    "description": "Decision evals of the Inflexa agents: fast checks, on real model calls, that a prompt or a tool change keeps the decisions of an agent.",
+    "scripts": {
+        "evals": "bun main.ts",
+        "test": "bun test",
+        "typecheck": "tsc --noEmit",
+        "lint": "oxlint",
+        "format": "prettier --write '**/*.ts'"
+    },
+    "dependencies": {
+        "neverthrow": "8.2.0",
+        "zod": "4.4.3"
+    },
+    "devDependencies": {
+        "@types/bun": "latest",
+        "oxlint": "1.85.0",
+        "prettier": "^3.9.5",
+        "@typescript/native": "npm:typescript@7.0.2"
+    }
+}

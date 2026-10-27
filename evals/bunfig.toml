@@ -1,0 +1,10 @@
+# The evals load the harness from its source, thus a prompt edit reaches the next run with no build.
+# The CLI files that the evals import resolve `@inflexa-ai/harness` through the same plugin, thus one
+# copy of the harness serves the two (see harness-source.ts).
+preload = ["./harness-source.ts"]
+
+# `bun test` reads [test].preload in place of the top-level preload. The CLI preload points XDG_* at a
+# temporary directory before the first import of cli/src/lib/env.ts, whose guard refuses a test process
+# without it.
+[test]
+preload = ["./harness-source.ts", "../cli/src/test_support/preload.ts"]
