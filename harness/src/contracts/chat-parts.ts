@@ -8,6 +8,7 @@
  *   Approval:        data-ask (a tool's pending user-approval prompt),
  *                    data-plan-approval (the record of an approved plan)
  *   Compaction:      data-compaction (a compaction of the conversation thread)
+ *   Model retry:     data-model-retry (a retry of a model request inside the retry envelope of the provider)
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
@@ -551,6 +552,25 @@ export type SubAgentActivityPart = {
  */
 export type PauseCause = { readonly kind: "outage" } | { readonly kind: "credential" } | { readonly kind: "host"; readonly reason: string };
 
+/**
+ * One retry of a model request inside the retry envelope of the provider, before the wait of that retry. Re-emitted
+ * under the same `id` for each retry of the request. A later frame of the same agent ends it: the request then gave
+ * a reply, or it failed after the last retry.
+ */
+export type ModelRetryPart = {
+    type: "data-model-retry";
+    /** The id of the model request. */
+    id: string;
+    /** The number of this retry, from 1. */
+    attempt: number;
+    /** The count of retries that the envelope makes before it gives up. */
+    maxRetries: number;
+    /** ISO 8601. The time of the next attempt. */
+    retryAt: string;
+    /** The HTTP status of the failed attempt. Absent for a failure with no status, for example a lost connection. */
+    status?: number;
+};
+
 /** The kind of the work that a pause belongs to. A sub-agent belongs to its turn, and a sandbox step to its run. */
 export type PausedWorkKind = "turn" | "run" | "profile";
 
@@ -602,7 +622,8 @@ export type KnownChatPart =
     | ChildSessionStartedPart
     | ReportRenderedPart
     | CompactionPart
-    | PausePart;
+    | PausePart
+    | ModelRetryPart;
 
 /**
  * A part of a known contract, or a part whose type this build does not know. An emitter newer than this

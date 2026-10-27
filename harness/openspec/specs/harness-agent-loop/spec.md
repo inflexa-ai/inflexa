@@ -330,3 +330,13 @@ A tool that runs a sub-agent MUST run it under a child session. The agent id of 
 
 - **WHEN** the planner runs inside `generate_plan`
 - **THEN** each event of the planner carries the call path of the conversation agent, then the planner
+
+### Requirement: The loop reports each retry of a model request
+
+The model binding MUST accept `onRetry`. The retry envelope of the provider MUST call it before the wait of each retry of a request, with the id of the request, the number of the retry, the count of retries, the wait, and the HTTP error status of the failed attempt when it has one. The loop MUST then emit the part `data-model-retry` with the same id, the number, the count, the time of the next attempt, and the status. The part MUST be transient: the stored transcript does not hold it. A failed write of the part MUST NOT change the request.
+
+#### Scenario: A request that the envelope retries
+
+- **GIVEN** a provider with one retry, and a model whose first attempt fails with `503`
+- **WHEN** the loop sends the request
+- **THEN** the loop emits one `data-model-retry` part with the retry 1 of 1 and the status `503`, and the second attempt gives the reply

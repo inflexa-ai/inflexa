@@ -184,3 +184,13 @@ The stop of a turn and the cancel of a run MUST end paused work, and they MUST d
 - **GIVEN** a run whose step waits in `paused`
 - **WHEN** the run canceler cancels the run
 - **THEN** the run row is `canceled`, and no row of a pause of the run is left
+
+### Requirement: A person holds work that waits to retry
+
+A wait in `retrying` MUST accept the message `{ kind: "hold" }` on the topic of its pause. On a hold, the wait MUST record its row as `paused` with no retry time, emit its part as `paused`, and wait for a resume with no timer. A wait in `paused` MUST ignore a hold. `CoreRuntime.pausedWork.hold` MUST send the hold to each wait of the work in `retrying`, with a key that names the pause, thus a second hold sends nothing new. It MUST give the count of those waits, and `not_found` for work of a different analysis than the session.
+
+#### Scenario: A hold stops the timer of an outage
+
+- **GIVEN** a run that waits in `retrying` after an outage
+- **WHEN** a host holds the run
+- **THEN** the row and the part of the wait read `paused`, the timer sends no request, and a resume sends the request again

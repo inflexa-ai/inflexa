@@ -15,7 +15,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { turnCredentials } from "../loop/turn-credentials.js";
 import type { Querier } from "../state/db.js";
 import { clearPauses, queryPausesOfAnalysis, queryPausesOfWork, type PauseRecord } from "../state/paused-work.js";
-import { RESUME_MESSAGE } from "../workflows/pause.js";
+import { HOLD_MESSAGE, RESUME_MESSAGE } from "../workflows/pause.js";
 import type { ChatTurnSession } from "./chat-turn.js";
 
 /** One waiting workflow of paused work. */
@@ -43,6 +43,9 @@ export type PausedWork = {
 
 export type PausedWorkResume = { readonly kind: "resumed"; readonly workflows: number } | { readonly kind: "not_found" };
 
+/** `workflows` is the count of waits in `retrying` that the hold reached. A wait in `paused` needs no hold. */
+export type PausedWorkHold = { readonly kind: "held"; readonly workflows: number } | { readonly kind: "not_found" };
+
 /** The paused work of a runtime, as a host uses it. */
 export type PausedWorkSurface = {
     /** The paused work of an analysis. A row whose workflow ended is not in it, and the list deletes that row. */
@@ -53,6 +56,11 @@ export type PausedWorkSurface = {
      * different analysis than the session gives `not_found`.
      */
     resume(session: ChatTurnSession, workId: string): Promise<PausedWorkResume>;
+    /**
+     * Hold the work: each of its waits in `retrying` moves to `paused`, and its timer stops. The work then waits for a
+     * resume. Work of a different analysis than the session gives `not_found`.
+     */
+    hold(session: ChatTurnSession, workId: string): Promise<PausedWorkHold>;
 };
 
 export type PausedWorkDeps = {
@@ -112,6 +120,15 @@ export function createPausedWork(deps: PausedWorkDeps): PausedWorkSurface {
             await Promise.all(records.map((record) => DBOS.send(record.workflowId, RESUME_MESSAGE, record.topic, record.topic)));
             logger.info("work resumed", { workId, workflows: records.length });
             return { kind: "resumed", workflows: records.length };
+        },
+        async hold(session, workId) {
+            const records = unwrapOrThrow(await queryPausesOfWork(deps.pool, session.scope.analysisId, workId));
+            if (records.length === 0) return { kind: "not_found" };
+            const retrying = records.filter((record) => record.state === "retrying");
+            // The key of the send names the pause, thus a second hold of the same pause sends nothing new.
+            await Promise.all(retrying.map((record) => DBOS.send(record.workflowId, HOLD_MESSAGE, record.topic, `${record.topic}:hold`)));
+            logger.info("work held", { workId, workflows: retrying.length });
+            return { kind: "held", workflows: retrying.length };
         },
     };
 }

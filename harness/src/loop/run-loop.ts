@@ -744,7 +744,23 @@ async function runSeries(
 
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
     const source = sourceOf(session, opts.invocationId);
-    const bound = opts.provider.bind({ session, reasoning: opts.reasoning, live: target.onText !== undefined });
+    const bound = opts.provider.bind({
+        session,
+        reasoning: opts.reasoning,
+        live: target.onText !== undefined,
+        // A reader sees the retries of a request, thus a wait of the envelope is no silence. The part is transient,
+        // and a failed write of it changes nothing of the request.
+        onRetry: (retry) => {
+            const part = {
+                id: retry.requestId,
+                attempt: retry.attempt,
+                maxRetries: retry.maxRetries,
+                retryAt: new Date(Date.now() + retry.delayMs).toISOString(),
+                status: retry.status,
+            };
+            void Promise.resolve(opts.emit({ type: "data-model-retry", source, data: part })).catch(() => undefined);
+        },
+    });
     const model = wrapLanguageModel({
         model: bound.model,
         middleware: [
