@@ -69,12 +69,11 @@ Alternative: refuse the search with 503. Rejected: a picker would show an error 
 
 ### D6. The child exits when the parent is gone
 
-The child writes each buffer with `Bun.write(Bun.stdout, bytes)` and exits on its rejection (`EPIPE` when the reader is closed). A `FileSink` writer does not fit: after `EPIPE` it rejects one write, then drops each later write and the walk runs to its end. It also reads `process.ppid` at the start and on an `unref` interval of 1 s. It exits on one of two rules:
+The child writes each buffer with `Bun.write(Bun.stdout, bytes)` and exits on its rejection (`EPIPE` when the reader is closed). A `FileSink` writer does not fit: after `EPIPE` it rejects one write, then drops each later write and the walk runs to its end.
 
-- The value differs from the start value. A dead parent reparents the child.
-- The value is 1. macOS reparents to launchd, and Linux without a subreaper reparents to init. This rule also catches a server that died before the start.
+The server gives its pid to the child in the variable `INFLEXA_WALK_PARENT_PID`. Before the walk, the child compares `process.ppid` with that pid and exits on a difference. It does the same comparison on an `unref` interval of 1 s. A dead parent reparents the child, thus the values differ.
 
-The accepted limit is a subreaper plus a server death before the start. Then only the walk end or a failed write ends the child. A `kill(9)` needs neither rule.
+There is no rule for pid 1. Thus a server that runs as pid 1, for example a container entrypoint, is a normal parent. The first comparison also catches a server that died before the child started. Without the variable, for example in a manual run, the parent at the start is the expected parent. A `kill(9)` needs no comparison.
 
 ### D7. Tests
 

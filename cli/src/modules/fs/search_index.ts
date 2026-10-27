@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 
 import { selfInvocation } from "../../lib/cli.ts";
+import { walkChildEnv } from "../../lib/env.ts";
 import { readError, type FolderEntry, type FolderEntryType, type FolderReadError } from "../../lib/folder_listing.ts";
 import { subsequenceScore, subsequenceScoreBytes } from "../../lib/fuzzy.ts";
 import { decodeRecords, ENTRY_KIND, WALK_COMMAND, type EntryKindCode, type RecordSink, type WalkOpts } from "./walk_child.ts";
@@ -65,15 +66,17 @@ export type WalkSpawner = (scope: string, opts: WalkOpts) => Result<WalkChild, W
 
 /**
  * A {@link WalkSpawner} that starts this CLI again, as `inflexa server walk`, with `env` as the environment of the child,
- * or the environment of the server at its start when `env` is undefined. A read that hangs in the kernel then holds a
- * thread of the child, because each async file call of a process runs on one shared pool of threads, and a timer of the
- * server cannot free such a thread. The child does not keep the server alive, and its stderr goes nowhere.
+ * or the environment of the server at its start when `env` is undefined. The child also gets the pid of the server, to
+ * see its death. A read that hangs in the kernel then holds a thread of the child, because each async file call of a
+ * process runs on one shared pool of threads, and a timer of the server cannot free such a thread. The child does not
+ * keep the server alive, and its stderr goes nowhere.
  */
 export function spawnWalkChildWith(env: Record<string, string | undefined> | undefined): WalkSpawner {
+    const childEnv = walkChildEnv(env);
     return (scope, opts) => {
         const flags = [...(opts.hidden ? ["--hidden"] : []), "--depth", String(opts.maxDepth), "--width", String(opts.width)];
         const spawn = Result.fromThrowable(
-            () => Bun.spawn({ cmd: selfInvocation([...WALK_COMMAND, scope, ...flags]), env, stdin: "ignore", stdout: "pipe", stderr: "ignore" }),
+            () => Bun.spawn({ cmd: selfInvocation([...WALK_COMMAND, scope, ...flags]), env: childEnv, stdin: "ignore", stdout: "pipe", stderr: "ignore" }),
             (cause): WalkSpawnError => ({ type: "spawn_failed", cause }),
         );
         return spawn().map((child): WalkChild => {
