@@ -1315,7 +1315,7 @@ async function bootHarnessRuntimeOnce(
             utility: utilityBackend,
             pool,
             askGateway: core.askGateway,
-            triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
+            triggerDeps: { pool, runAuthorizer, runLauncher, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             agents: core.agents,
             approvePlan: core.approvePlan,

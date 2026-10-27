@@ -807,3 +807,13 @@ A tree that the scan kept nothing of MUST NOT reach the agent. The body MUST com
 - **GIVEN** staged inputs that the scan quarantines in full
 - **THEN** the body completes the profile with no groups and the full quarantine accounting, and it starts no sandbox and calls no model
 - **AND** `inspect_data_profile` serves its structure scope as available
+
+### Requirement: The profile trigger starts its workflow through the run launcher
+
+`triggerDataProfile` and `runDataProfile` MUST start the profile workflow through the `RunLauncher` of their deps, and never through `DBOS.startWorkflow`. A tool call of a chat turn runs in a step of the turn workflow, and DBOS refuses a workflow start inside a step. The launcher enqueues the workflow inside a workflow, and starts it elsewhere. The id of the profile workflow does not change.
+
+#### Scenario: A tool call of a turn starts the profile
+
+- **GIVEN** a profile row that a claim moved to `running`
+- **WHEN** a step of a workflow calls `runDataProfile`
+- **THEN** the profile workflow starts, the call gives `ok`, and the row stays `running`
