@@ -878,3 +878,22 @@ A paused turn of the open thread that the TUI does not stream MUST make the TUI 
 - **GIVEN** a turn of the open thread that waits in `paused`
 - **WHEN** the TUI opens the thread
 - **THEN** the TUI reads the turn again, and it docks the pause prompt
+
+### Requirement: The header shows a retry of a model request
+
+While a turn of this client runs, a `data-model-retry` frame MUST set the state segment of the header to `retrying the model request (n/max, reason)`. The reason is `HTTP <status>`, or `no connection` for a retry with no status. The next frame of the turn MUST clear it, and the header then reads `thinking` again. The part MUST NOT land in the transcript. The design gallery MUST show the state.
+
+#### Scenario: A retry, then the reply
+
+- **WHEN** the turn sends a `data-model-retry` frame with the retry 2 of 10 and the status `503`, and then a text delta
+- **THEN** the header reads `retrying the model request (2/10, HTTP 503)` until the text delta, and the transcript holds no part of the retry
+
+### Requirement: The pause prompt holds a turn that waits to retry
+
+In `retrying`, the pause prompt MUST offer `h` hold, between `r` retry now and `s` stop. A hold MUST send `POST {A}/paused-work/:workId/hold` for the turn, and the `paused` frame of each wait then updates the prompt. In `paused`, the prompt MUST NOT offer the hold, and `h` does nothing.
+
+#### Scenario: A hold of a turn that waits to retry
+
+- **GIVEN** a docked pause prompt in `retrying` that holds the focus
+- **WHEN** the person pushes `h`
+- **THEN** the TUI holds the turn, and the prompt reads "The turn is paused" when the `paused` frame arrives

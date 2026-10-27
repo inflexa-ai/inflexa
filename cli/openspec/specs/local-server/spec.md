@@ -2704,3 +2704,13 @@ The stop of paused work MUST use the existing routes: the abort of a turn, and t
 
 - **WHEN** a client sends `POST {A}/paused-work/:workId/resume` with an id that no paused work has
 - **THEN** the server gives 404
+
+### Requirement: The server holds paused work
+
+`POST {A}/paused-work/:workId/hold` MUST hold the work through `pausedWork.hold`, with the session of the server. It MUST give 200 with the count of the waits in `retrying` that the hold moved to `paused`. It MUST give 404 when the analysis has no such paused work, and 503 with no runtime.
+
+#### Scenario: A hold of a run that waits to retry
+
+- **GIVEN** a run with one wait in `retrying` and one wait in `paused`
+- **WHEN** a client sends `POST {A}/paused-work/:workId/hold` with the run id
+- **THEN** the server answers 200 with the count 1

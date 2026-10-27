@@ -32,6 +32,8 @@ import { CompactionBlock } from "../components/compaction_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { PausePrompt } from "../components/pause_prompt.tsx";
+import { StatusBar } from "./status_bar.tsx";
+import { modelRetryText } from "../hooks/status.ts";
 import { describePauseCause, nextRetryOf } from "../../lib/pause_words.ts";
 import { MessageBlock } from "./message_block.tsx";
 import { ChatBar } from "./chat_bar.tsx";
@@ -1178,6 +1180,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         othersWaiting={mockPausedWaits.hostRefusal.othersWaiting}
                         inert
                         onResume={noop}
+                        onHold={noop}
                         onStop={noop}
                     />
                     <text fg={theme().fgMuted}>paused for a credential — the remedy of the server under the cause:</text>
@@ -1188,9 +1191,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         othersWaiting={mockPausedWaits.credential.othersWaiting}
                         inert
                         onResume={noop}
+                        onHold={noop}
                         onStop={noop}
                     />
-                    <text fg={theme().fgMuted}>retrying after an outage — the next retry of the timer, and "retry now" in place of resume:</text>
+                    <text fg={theme().fgMuted}>retrying after an outage — the next retry of the timer, "retry now" in place of resume, and hold:</text>
                     <PausePrompt
                         state={mockPausedWaits.outage.state}
                         cause={describePauseCause(mockPausedWaits.outage.cause)}
@@ -1198,7 +1202,24 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         othersWaiting={mockPausedWaits.outage.othersWaiting}
                         inert
                         onResume={noop}
+                        onHold={noop}
                         onStop={noop}
+                    />
+                </State>
+                <State n="29" label="status bar — a model request that the provider retries">
+                    {/* The state segment while the retry envelope of the provider waits: the `data-model-retry` part
+                        of the turn. A later frame of the turn clears it, and the segment reads "thinking" again. */}
+                    <StatusBar
+                        title="inflexa"
+                        subtitle="rna-seq-2026"
+                        state={{ text: `${GLYPHS.circleHalf} ${modelRetryText({ attempt: 3, maxRetries: 10 })}${GLYPHS.ellipsis}`, tone: "warn" }}
+                        hints={["ctrl+k"]}
+                    />
+                    <StatusBar
+                        title="inflexa"
+                        subtitle="rna-seq-2026"
+                        state={{ text: `${GLYPHS.circleHalf} ${modelRetryText({ attempt: 1, maxRetries: 10, status: 503 })}${GLYPHS.ellipsis}`, tone: "warn" }}
+                        hints={["ctrl+k"]}
                     />
                 </State>
             </ScrollPane>

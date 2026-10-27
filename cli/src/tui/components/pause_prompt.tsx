@@ -12,6 +12,8 @@ import { Bold, Fg } from "./emphasis.tsx";
 const RESUME_KEY: Chord = { key: "r" };
 /** The key that stops the paused work. */
 const STOP_KEY: Chord = { key: "s" };
+/** The key that holds work in `retrying`: its timer stops, and it waits for a resume. */
+const HOLD_KEY: Chord = { key: "h" };
 
 /** Props for {@link PausePrompt}. */
 export type PausePromptProps = {
@@ -33,6 +35,8 @@ export type PausePromptProps = {
     onResume: () => void;
     /** Stop the work. */
     onStop: () => void;
+    /** Hold work in `retrying`: its timer stops, and it waits for a resume. The prompt offers it in `retrying` only. */
+    onHold: () => void;
     /** Receives the focusable box of the prompt on mount. The host focuses it, the same as the docked ask prompt. */
     onFocusReady?: (r: BoxRenderable) => void;
 };
@@ -63,10 +67,16 @@ export function PausePrompt(props: PausePromptProps): JSX.Element {
         props.onStop();
     }
 
-    function onActionClick(action: "resume" | "stop"): void {
+    function hold(): void {
+        if (props.busy || props.state !== "retrying") return;
+        props.onHold();
+    }
+
+    function onActionClick(action: "resume" | "hold" | "stop"): void {
         if (props.inert) return;
         if (renderer.getSelection()?.getSelectedText()) return;
         if (action === "resume") resume();
+        else if (action === "hold") hold();
         else stop();
     }
 
@@ -78,6 +88,7 @@ export function PausePrompt(props: PausePromptProps): JSX.Element {
         target: boxRef,
         bindings: [
             { chord: RESUME_KEY, run: resume, desc: resumeLabel() === "resume" ? "Resume" : "Retry now", group: "Pause" },
+            { chord: HOLD_KEY, run: hold, desc: "Hold", group: "Pause", enabled: props.state === "retrying" },
             { chord: STOP_KEY, run: stop, desc: "Stop", group: "Pause" },
         ],
     }));
@@ -130,6 +141,17 @@ export function PausePrompt(props: PausePromptProps): JSX.Element {
                         </Fg>
                         <Fg role="fgMuted">{` ${resumeLabel()}`}</Fg>
                     </text>
+                    <Show when={props.state === "retrying"}>
+                        <text>
+                            <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                        </text>
+                        <text selectable={false} onMouseUp={() => onActionClick("hold")}>
+                            <Fg role="accent">
+                                <Bold>{chordLabel(HOLD_KEY)}</Bold>
+                            </Fg>
+                            <Fg role="fgMuted"> hold</Fg>
+                        </text>
+                    </Show>
                     <text>
                         <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
                     </text>

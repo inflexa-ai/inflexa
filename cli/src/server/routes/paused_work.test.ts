@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { ChatTurnSession, PausedWork, PausedWorkSurface } from "@inflexa-ai/harness";
 
-import type { PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
+import type { HeldWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
 import type { ServerBootState } from "../../api/server.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { idleBoot } from "../../test_support/server.ts";
@@ -37,11 +37,15 @@ const PAUSED_RUN: PausedWork = {
 };
 
 /** A fake of the paused work of the runtime, with each resume that it got. */
-function fakePausedWork(items: PausedWork[]): PausedWorkSurface & { resumed: { session: ChatTurnSession; workId: string }[]; listed: string[] } {
+function fakePausedWork(
+    items: PausedWork[],
+): PausedWorkSurface & { resumed: { session: ChatTurnSession; workId: string }[]; held: string[]; listed: string[] } {
     const resumed: { session: ChatTurnSession; workId: string }[] = [];
+    const held: string[] = [];
     const listed: string[] = [];
     return {
         resumed,
+        held,
         listed,
         list: async (analysisId) => {
             listed.push(analysisId);
@@ -51,6 +55,11 @@ function fakePausedWork(items: PausedWork[]): PausedWorkSurface & { resumed: { s
             resumed.push({ session, workId });
             const work = items.find((item) => item.workId === workId && item.analysisId === session.scope.analysisId);
             return work === undefined ? { kind: "not_found" } : { kind: "resumed", workflows: work.waiting.length };
+        },
+        hold: async (session, workId) => {
+            held.push(workId);
+            const work = items.find((item) => item.workId === workId && item.analysisId === session.scope.analysisId);
+            return work === undefined ? { kind: "not_found" } : { kind: "held", workflows: work.waiting.filter((wait) => wait.state === "retrying").length };
         },
     };
 }
@@ -110,6 +119,7 @@ describe("GET {A}/paused-work", () => {
         const failing: PausedWorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
             resume: async () => ({ kind: "not_found" }),
+            hold: async () => ({ kind: "not_found" }),
         };
         const response = await appWith(readyBoot(failing)).request("");
         expect(response.status).toBe(500);
@@ -131,6 +141,23 @@ describe("POST {A}/paused-work/:workId/resume", () => {
 
     test("an id that no paused work of the analysis has gives 404 `not_found`", async () => {
         const response = await appWith(readyBoot(fakePausedWork([PAUSED_RUN]))).request("/run-unknown/resume", { method: "POST" });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ error: "not_found" });
+    });
+});
+
+describe("POST {A}/paused-work/:workId/hold", () => {
+    test("holds the work, and gives the count of the waits in retrying that it moved to paused", async () => {
+        const paused = fakePausedWork([PAUSED_RUN]);
+        const response = await appWith(readyBoot(paused)).request("/run-1/hold", { method: "POST" });
+
+        expect(response.status).toBe(200);
+        expect((await response.json()) as HeldWork).toEqual({ workId: "run-1", workflows: 1 });
+        expect(paused.held).toEqual(["run-1"]);
+    });
+
+    test("an id that no paused work of the analysis has gives 404 `not_found`", async () => {
+        const response = await appWith(readyBoot(fakePausedWork([PAUSED_RUN]))).request("/run-unknown/hold", { method: "POST" });
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({ error: "not_found" });
     });

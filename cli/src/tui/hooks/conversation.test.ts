@@ -43,7 +43,7 @@ import { dockedPause } from "./pauses.ts";
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boot.ts";
 import { activeAsk, queuedCount } from "./asks.ts";
 import { __resetNoticesForTest, currentNotice } from "./notice.ts";
-import { chatStatus } from "./status.ts";
+import { chatStatus, modelRetry, type ModelRetryStatus } from "./status.ts";
 import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../types/session.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
@@ -827,6 +827,26 @@ describe("send() reads the end of a turn from its stream when the summary is gon
         expect(part?.type === "text" ? part.text : undefined).toBe("Hello world.");
         expect(errorMsg()).toBeNull();
         expect(chatStatus()).toBe("idle");
+    });
+});
+
+describe("send() shows a retry of a model request until a later frame of the turn", () => {
+    test("a model-retry frame sets the retry, a later frame clears it, and the transcript holds no part of it", async () => {
+        const seen: (ModelRetryStatus | null)[] = [];
+        const server = fakeServer(done(), async (emit) => {
+            await emit({
+                type: "data-model-retry",
+                source: ROOT,
+                data: { id: "request-1", attempt: 2, maxRetries: 10, retryAt: "2026-10-27T10:00:00.000Z", status: 503 },
+            });
+            seen.push(modelRetry());
+            await emit({ type: "text-delta", text: "back" });
+            seen.push(modelRetry());
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(seen).toEqual([{ attempt: 2, maxRetries: 10, status: 503 }, null]);
+        expect(messages[1]?.parts.some((part) => part.type === "data-model-retry") ?? false).toBe(false);
     });
 });
 

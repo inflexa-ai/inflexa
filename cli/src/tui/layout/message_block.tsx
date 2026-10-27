@@ -297,6 +297,9 @@ export function MessageBlock(props: MessageBlockProps) {
                     case "data-run-completed":
                     case "data-run-failed":
                         return <MarkdownBody content={mention(part.type)} paddingLeft={bodyPadLeft()} />;
+                    case "data-model-retry":
+                        // The header shows a retry of a model request, and the part never lands in a message.
+                        return null;
                     default: {
                         // Exhaustive: a new part kind without a case fails the build here. The registry guard
                         // above already routed every type this build does not know to its own rendering, thus
