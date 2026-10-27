@@ -825,7 +825,7 @@ describe("flySourceBuild", () => {
             { ...params, storeRoot: root },
             {
                 run: sourceRunner(GREEN_OUTCOME, nodes),
-                loadCheck: async (check) =>
+                loadCheck: async () =>
                     ok({
                         code: 1,
                         stdout: JSON.stringify({ results: [{ package: ROOT_DIR, track: "r", ok: false, error: "links a library the image does not carry: libfoo.so.1 (linked by /work/src/SeedMatchR/libs/SeedMatchR.so)" }] }),

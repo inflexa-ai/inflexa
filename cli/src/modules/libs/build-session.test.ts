@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ok } from "neverthrow";
 
 import { runtimes, type CaptureResult, type ContainerRuntime } from "../../lib/container.ts";
-import { ACQUIRE_EGRESS_ALLOW, SESSION_CLASS_HOSTS, sessionEgressAllow } from "./provisioner.ts";
+import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "./provisioner.ts";
 import { createBuildSession } from "./build-session.ts";
 import type { SourceFlightOutcome, SourceFlightParams } from "./store_flight.ts";
 

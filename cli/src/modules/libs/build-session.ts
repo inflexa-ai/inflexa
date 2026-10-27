@@ -53,6 +53,7 @@ import type {
 
 import { ensureRuntime } from "../../lib/config.ts";
 import { capture, type CaptureResult, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
+import { readEnvCredentialVar } from "../../lib/env.ts";
 import { provisionerImageFor } from "./images.ts";
 import { ensureImagePresent, configuredSandboxImage, type ImageAbsentError } from "./pull.ts";
 import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "./provisioner.ts";
@@ -613,7 +614,7 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
                     // The token rides the clone steps alone: a helper script the
                     // clone containers name by path, never an argument or an
                     // environment list that holds the value.
-                    const token = (host.hostEnv ?? process.env)["GITHUB_PAT"];
+                    const token = host.hostEnv === undefined ? readEnvCredentialVar("GITHUB_PAT") : host.hostEnv["GITHUB_PAT"];
                     // `gitHost` is the git source's host, non-null inside this branch.
                     const sourceHost = gitHostOf(source.url);
                     const askpassHost = token === undefined || token === "" ? undefined : writeAskpass(session.scratch, token, sourceHost);
