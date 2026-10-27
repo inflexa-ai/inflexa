@@ -7,9 +7,9 @@
 
 ## 2. The stream of a turn
 
-- [ ] 2.1 Write the text deltas from inside the model step, with the attempt of the call (D4). Do a DBOS test: a model call that runs again shows its text one time in the fold of a reader.
-- [ ] 2.2 Write the body events of a turn (the start of a message, a refused call, a compaction part, the terminal frame) in order from the workflow body. Do a test: the stream of a turn ends with one `finish` frame.
-- [ ] 2.3 Add the reader of a turn: the frames from the start, live, until the terminal frame or the end of the workflow, merged with the stream of each child that the turn names. Do tests: a second read gives the same frames, and a reader gives the tool frames of a sub-agent with its call path.
+- [ ] 2.1 Give `durableCalls` and `durableTools` the `durableStream` option of the library inside a turn (D4). Write the facts of each tool call (the detail at the start, the outcome and the duration at the end) through the tool writer of the library. Do a DBOS test: a model call that runs again shows its text one time.
+- [ ] 2.2 Write the facts of the body (the id of each assistant message, a refused call, a compaction part, a not-run answer, the end with the usage or the error) as `data-*` chunks, in order. Close the stream at the end. Do a test: the reader gives one `finish` at the end.
+- [ ] 2.3 Add the reader of a turn on the reader of the library, with the converter to `ChatFrame` and the merge of the stream of each child. Do tests: the frames hold no tool input and no tool output, a second read gives the same frames, and a sub-agent frame carries its call path.
 
 ## 3. The turn workflow
 

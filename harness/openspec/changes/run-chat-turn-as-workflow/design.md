@@ -57,20 +57,24 @@ A body that gets nothing ends the turn as `failed` with the reason `interrupted`
 
 Rejected: the credential in the input (decision Q5). Rejected: a mandate for each turn (decision Q5).
 
-### D4. The turn writes harness frames to a DBOS stream
+### D4. The turn uses the durable stream of the library, and the harness converts at its edge
 
-The turn writes each `ChatFrame` (the output of `toChatFrame`) to the stream `chat` of its workflow:
+The turn writes to the durable stream `chat` of its workflow with the writer of `@dbos-inc/vercel-ai`. Inside, the stream holds AI SDK `UIMessageChunk`s:
 
-- The text deltas come from inside the model step, through a model middleware inside `durableCalls`. Each text frame carries the attempt of the call. A new attempt for a message replaces the text of that message in the reader. Thus a rerun of a model call does not show its text two times.
-- The tool events come from inside the tool step, as in stage 1.
-- The events of the body (the start of a message, a refused call, a compaction part, the end) come from the body, each one awaited in order.
-- The workflow writes the terminal frame, `finish` or `error`. The host does not.
+- `durableCalls` with the `durableStream` option writes the text of each model call from inside its step. The reader of the library drops the text of an attempt that a rerun replaced.
+- `durableTools` with the `durableStream` option writes the record of each tool call. A tool step writes the facts of the harness through the tool writer of the library, as `data-*` chunks keyed by the tool call id:
+  - at the start, a transient chunk with the detail of the call
+  - at the end, a chunk with the outcome, the detail, and the duration
+- The body writes its own facts as `data-*` chunks: the stored id of each assistant message, a refused call, a compaction part, a not-run answer at an exit, and the end with the usage of the turn or the reason of an error.
+- The body closes the stream at the end of the turn.
 
-A sub-agent child writes to its own stream. The stream of the caller holds a marker frame with the id of the child. The reader of a turn merges the stream of each child that the turn names, as the reader of a run merges its step children.
+The reader of the harness reads the stream with the reader of the library, and it converts each chunk to a `ChatFrame` at its edge. The converter drops the input and the output of each tool call, thus a client gets the same frames as before. A sub-agent child writes to its own stream. The stream of the caller holds a `data-*` chunk with the id of the child, and the reader merges the stream of each child. The source of each frame comes from the stream that it came from.
 
-A reader reads a turn from its start, live, until the terminal frame or the end status of the workflow. A client that connects again reads the turn again from its start and folds the frames again. A turn is bounded, thus the read again costs little, and the fold of `applyChatFrame` gives the same messages.
+A reader reads a turn from its start, live, until its end. A client that connects again reads the turn again from its start and folds the frames again.
 
-Rejected: the durable stream of the library with `UIMessageChunk`. A chunk has no call path, no tool outcome, no detail, and no duration. The library also stores the whole input and output of each tool call in the stream. The TUI and Cortex would change their readers.
+Trade-off: the stream keeps a second copy of the input and the output of each tool call, pictures included, beside the checkpoint of the step. The library writes text in batches of up to 20 parts or 25 ms.
+
+Rejected: our own writer and reader of `ChatFrame`s. It builds again what the library gives: the writes from inside the step, the drop of a replaced attempt, the dedup of a rerun tool, and the read from an offset.
 
 ### D5. A stop goes through the process that runs the turn
 
