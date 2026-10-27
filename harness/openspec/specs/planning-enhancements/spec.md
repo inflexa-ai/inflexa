@@ -20,8 +20,8 @@ committed to reference data the environment actually holds). That split, not the
 size of either set, is the invariant: a plan reaches the caller only through a
 terminal call, and non-terminal tools record no outcome. The whole
 invocation is bounded by one wall-clock guard, merged with the caller's abort
-signal. The guard is 600s, or the advertised provider request timeout when
-larger; the planner loop is iteration-capped at 13. There is no per-attempt
+signal. The guard is 1800s, or the advertised provider request timeout when
+larger; the planner loop is iteration-capped at 300. There is no per-attempt
 timeout, no internal retry counter, and no `adaptive` thinking or `budget_tokens`
 anywhere in the planning path.
 
@@ -50,7 +50,7 @@ only through terminal tool calls; its text reply SHALL be discarded.
 
 The tool MUST bound the entire invocation with a single wall-clock guard,
 merged with the caller's abort signal through `AbortSignal.any`. The guard value
-MUST be the maximum of 600s (`PLAN_TIMEOUT_MS = 600_000`) and the
+MUST be the maximum of 1800s (`PLAN_TIMEOUT_MS = 1_800_000`) and the
 `requestTimeoutMs` that the planner provider advertises. There MUST be no
 per-attempt timeout and no internal retry counter.
 
@@ -61,9 +61,9 @@ per-attempt timeout and no internal retry counter.
 
 #### Scenario: A slow provider raises the guard
 
-- **GIVEN** a planner provider that advertises a `requestTimeoutMs` above 600s
+- **GIVEN** a planner provider that advertises a `requestTimeoutMs` above 1800s
 - **WHEN** the tool arms its wall-clock guard
-- **THEN** the guard value is the advertised value, not 600s
+- **THEN** the guard value is the advertised value, not 1800s
 
 #### Scenario: Caller abort cancels the planner
 
