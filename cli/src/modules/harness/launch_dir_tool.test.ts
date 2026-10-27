@@ -18,8 +18,6 @@ function ctxFor(analysisId: string): ToolContext {
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
-        // The launch-dir tool never asks — surface an ask that fails loudly if it ever does.
-        ask: () => Promise.reject(new Error("list_launch_dir must not ask")),
     };
 }
 
@@ -76,7 +74,6 @@ describe("list_launch_dir tool", () => {
             invocationId: "test-tool-call",
             signal: new AbortController().signal,
             emit: () => {},
-            ask: () => Promise.reject(new Error("no ask")),
         };
         const result = (await tool.execute({}, ctx))._unsafeUnwrap();
         expect(result.status).toBe("no_analysis");

@@ -1,9 +1,9 @@
 import type { TurnStatus, TurnSummary } from "../api/conversation.ts";
 
 // The turn registry of the server (draft section 3): each chat turn that runs, with the controller that
-// stops it, and the summaries of the newest ended turns. It is process memory, because a turn runs inside
-// this process and ends with it. The busy gate reads `hasRunningTurn` before a rename or a delete moves
-// the workspace of an analysis.
+// stops it, and the summaries of the newest ended turns. It is process memory: the harness keeps the turn
+// itself in its workflow, and the registry keeps what this server started. The busy gate reads
+// `hasRunningTurn` before a rename or a delete moves the workspace of an analysis.
 
 /** The count of ended summaries that the registry keeps for `GET {T}/turns/:turnId`. It forgets an older one. */
 export const ENDED_TURN_LIMIT = 100;
@@ -21,15 +21,31 @@ export type TurnEnding = Omit<TurnSummary, "turnId" | "threadId" | "analysisId" 
 };
 
 const running = new Map<string, { summary: TurnSummary; controller: AbortController }>();
+// The turns that open now. The harness gives the id of a turn at its open, thus such a turn has no entry yet.
+let opening = 0;
 // The insertion order is the order of the ends, thus the first key is the oldest ended turn.
 const ended = new Map<string, TurnSummary>();
 // The stop of the server sets it, and nothing clears it: a server that stops takes no new turn.
 let refusing = false;
 const idleWaiters: (() => void)[] = [];
 
-/** Register a turn that starts now. The signal aborts when a client sends the abort of the turn. */
-export function startTurn(identity: TurnIdentity, startedAt: Date): AbortSignal {
-    const controller = new AbortController();
+/**
+ * Hold the place of a turn that opens now, thus a stop of the server waits for it. Call the release one time, after
+ * {@link startTurn} or after a refusal.
+ */
+export function holdOpening(): () => void {
+    opening += 1;
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        opening -= 1;
+        releaseIdleWaiters();
+    };
+}
+
+/** Register a turn that started. `controller` aborts when a client sends the abort of the turn. */
+export function startTurn(identity: TurnIdentity, startedAt: Date, controller: AbortController): void {
     running.set(identity.turnId, {
         controller,
         summary: {
@@ -40,7 +56,6 @@ export function startTurn(identity: TurnIdentity, startedAt: Date): AbortSignal 
             startedAt: startedAt.toISOString(),
         },
     });
-    return controller.signal;
 }
 
 /** Move a running turn to the ended summaries. It does nothing for a turn that is not running. */
@@ -57,12 +72,6 @@ export function endTurn(turnId: string, ending: TurnEnding, endedAt: Date): void
     releaseIdleWaiters();
 }
 
-/** Drop a running turn with no summary: the turn was refused before it opened, thus no client knows its id. */
-export function forgetTurn(turnId: string): void {
-    running.delete(turnId);
-    releaseIdleWaiters();
-}
-
 /** From now on, the chat route refuses each new turn. The stop of the server calls it. */
 export function refuseNewTurns(): void {
     refusing = true;
@@ -73,9 +82,9 @@ export function newTurnsRefused(): boolean {
     return refusing;
 }
 
-/** The count of the chat turns that run now, over each analysis. */
+/** The count of the chat turns that run or open now, over each analysis. */
 export function runningTurnCount(): number {
-    return running.size;
+    return running.size + opening;
 }
 
 /** Abort each running turn. Each one ends when the harness unwinds it. */
@@ -83,14 +92,14 @@ export function abortRunningTurns(): void {
     for (const entry of running.values()) entry.controller.abort();
 }
 
-/** Settles when no turn runs: at once when none runs now, else at the end of the last running turn. */
+/** Settles when no turn runs or opens: at once when none does now, else at the end of the last one. */
 export function whenNoRunningTurns(): Promise<void> {
-    if (running.size === 0) return Promise.resolve();
+    if (running.size === 0 && opening === 0) return Promise.resolve();
     return new Promise((resolve) => idleWaiters.push(resolve));
 }
 
 function releaseIdleWaiters(): void {
-    if (running.size > 0) return;
+    if (running.size > 0 || opening > 0) return;
     for (const release of idleWaiters.splice(0)) release();
 }
 
@@ -154,6 +163,7 @@ export function hasRunningTurn(analysisId: string): boolean {
 export function __resetTurnsForTest(): void {
     running.clear();
     ended.clear();
+    opening = 0;
     refusing = false;
     releaseIdleWaiters();
 }

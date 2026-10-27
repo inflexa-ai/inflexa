@@ -505,6 +505,32 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
         // two ways. The leading `inflexa` of the prompt stays off, because the
         // surface that renders a detail already prints the name of the tool.
         describeCall: ({ argv }) => toEffectiveArgv(argv).map(displayArgvElement).join(" "),
+        // The loop asks the user before the call runs. A command that the policy blocks, or an argv that does
+        // not parse, needs no approval: `execute` gives the model its refusal.
+        approval: async (input): Promise<AskRequest | undefined> => {
+            const c = await classifyInflexaArgv(input.argv);
+            if (c.kind !== "action") return undefined;
+            const decision = decideAction(c.policy, c.grantKey, c.setOptions);
+            if (decision.kind !== "ask") return undefined;
+            const transfer = isTransferPolicy(c.policy);
+            return {
+                title: "Run inflexa command",
+                // The EXACT argv that will run — what the user approves is precisely what
+                // executes, nothing hidden. Spaced elements render quoted so the word
+                // boundaries the user reads are the word boundaries that spawn.
+                command: ["inflexa", ...c.argv.map(displayArgvElement)].join(" "),
+                // The caveat leads, because it is what this approval buys that the argv line does not
+                // show: consent to a run with no deadline. It states the one condition that ends
+                // such a run, so "no time limit" cannot read as "no way out".
+                detail: `${transfer ? TRANSFER_DETAIL : ""}Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.`,
+                // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
+                // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
+                // (`inflexa X --destructive`) of the same subcommand without a fresh prompt. That is tolerable
+                // because `command` above always shows the EXACT argv at the moment consent is given — nothing is
+                // hidden when the user decides; only a silent RE-RUN of the same subcommand is what the grant covers.
+                grantKey: c.grantKey,
+            };
+        },
         execute: async (input, ctx): Promise<Result<RunInflexaResult, ToolError>> => {
             // The classification parses THIS process's commander tree; the spawned
             // child rebuilds its own. The two agree because the dev-command gate
@@ -524,34 +550,10 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             const transfer = c.kind === "action" && isTransferPolicy(c.policy);
 
             if (c.kind === "action") {
-                // The registration-declared policy is the floor. `decideAction` runs it before any
-                // grant/ask interaction, so a `blocked` command (or an unclassified one, fail-closed)
-                // is refused here rather than prompting for something that is not the user's decision.
+                // The registration-declared policy is the floor. The check runs again here, after the approval of
+                // the loop, thus a `blocked` command (or an unclassified one, fail-closed) never runs.
                 const decision = decideAction(c.policy, c.grantKey, c.setOptions);
                 if (decision.kind === "blocked") return ok({ status: "blocked", message: decision.message });
-
-                if (decision.kind === "ask") {
-                    const request: AskRequest = {
-                        title: "Run inflexa command",
-                        // The EXACT argv that will run — what the user approves is precisely what
-                        // executes, nothing hidden. Spaced elements render quoted so the word
-                        // boundaries the user reads are the word boundaries that spawn.
-                        command: ["inflexa", ...c.argv.map(displayArgvElement)].join(" "),
-                        // The caveat leads, because it is what this approval buys that the argv line does not
-                        // show: consent to a run with no deadline. It states the one condition that ends
-                        // such a run, so "no time limit" cannot read as "no way out".
-                        detail: `${transfer ? TRANSFER_DETAIL : ""}Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.`,
-                        // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
-                        // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
-                        // (`inflexa X --destructive`) of the same subcommand without a fresh prompt. That is tolerable
-                        // because `command` above always shows the EXACT argv at the moment consent is given — nothing is
-                        // hidden when the user decides; only a silent RE-RUN of the same subcommand is what the grant covers.
-                        grantKey: c.grantKey,
-                    };
-                    // `ctx.ask` throws `AskRejectedError` on denial. Deliberately NOT caught: the harness loop maps the
-                    // throw to an execution-denied tool result and ends the turn, which is exactly the denial behavior.
-                    await ctx.ask(request);
-                }
                 // `decision.kind === "spawn"` (an `auto` run within its safeFlags) and an approved `ask`
                 // both fall through to the shared run path below — an `auto` run leaves no ask-ledger
                 // row, deliberately matching introspection's audit posture.

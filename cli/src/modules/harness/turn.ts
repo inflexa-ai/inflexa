@@ -2,16 +2,14 @@ import { type ResultAsync, okAsync } from "neverthrow";
 import {
     createThreadHistory,
     makeLocalAuth,
-    openChatTurn,
     type AgentFinish,
-    type ChatTurnResult,
+    type ChatFrame,
+    type ChatTurnEnd,
+    type ChatTurns,
     type ChatTurnSession,
     type DbError,
-    type EmitFn,
     type Pool,
     type RetractOutcome,
-    type RunChatTurnDeps,
-    type RunChatTurnParams,
     type ThreadHistory,
     type ThreadType,
 } from "@inflexa-ai/harness";
@@ -20,8 +18,8 @@ import { getLogger } from "../../lib/log.ts";
 import { currentUserEmail } from "../auth/whoami.ts";
 import { enterChatTurn } from "./agent_switch.ts";
 
-// The headless chat turn engine that the chat route of the local server runs. It gives the `runChatTurn`
-// of the harness the values of the surface and maps the result. It does no terminal output.
+// The headless chat turn engine that the chat route of the local server runs. It opens the turn workflow of the
+// harness, gives the frames of the turn to the surface, and maps the outcome. It does no terminal output.
 
 /**
  * What one whole turn spent, per quantity — the harness's own rollup shape, carried
@@ -44,39 +42,46 @@ export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
 
 /**
  * The result of one chat turn. The harness stores the opening, each round, and the outcome, thus a
- * throw keeps the stored rounds. The four kinds that ran carry `opened`, and a store fault as `appendError`.
+ * failure keeps the stored rounds. The four kinds that ran carry `opened`, and a store fault as `storeFailed`.
  */
 export type TurnOutcome =
-    | { readonly kind: "ok"; readonly opened: boolean; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
+    | { readonly kind: "ok"; readonly opened: boolean; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly storeFailed?: boolean }
     | {
           readonly kind: "filtered";
           readonly opened: boolean;
           readonly fallbackText: string;
           readonly rawFinishReason?: string;
           readonly turnUsage?: TurnUsage;
-          readonly appendError?: DbError;
+          readonly storeFailed?: boolean;
       }
-    | { readonly kind: "aborted"; readonly opened: boolean; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
-    | { readonly kind: "failed"; readonly opened: boolean; readonly cause: unknown; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
+    | { readonly kind: "aborted"; readonly opened: boolean; readonly turnUsage?: TurnUsage; readonly storeFailed?: boolean }
+    | {
+          readonly kind: "failed";
+          readonly opened: boolean;
+          /** The text of the failure, scrubbed by the harness. */
+          readonly reason: string;
+          /** The machine code of the failure, for example `credential`. */
+          readonly code?: string;
+          readonly turnUsage?: TurnUsage;
+          readonly storeFailed?: boolean;
+      }
     | { readonly kind: "prepare_failed"; readonly cause: unknown }
     | { readonly kind: "thread_gone" }
-    | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType };
+    | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType }
+    | { readonly kind: "turn_in_progress" };
 
-/** The transport values of one chat turn, which the harness turn stores and runs. */
+/** The values of one chat turn. */
 export type RunChatTurnArgs = {
-    /**
-     * The runtime values of the turn (`runtime.chatTurns`): the pool, the agent resolver, the model, the
-     * usage recorder, and the approval gateway, as the harness assembled them.
-     */
-    readonly chatTurns: RunChatTurnDeps;
+    /** The chat turns of the runtime (`runtime.chatTurns`). */
+    readonly chatTurns: ChatTurns;
     /**
      * Carries `threadId` in scope, so a plan launched here stamps `cortex_runs.thread_id`. The harness
      * sets the provenance from the agent of the thread.
      */
     readonly session: ChatTurnSession;
-    /** The surface's live event sink; the display recorder forwards every event here. */
-    readonly emit: EmitFn;
-    /** Turn-scoped cancellation, which the caller owns. */
+    /** The live frame sink of the surface. The end frame of the turn does not reach it, because the caller sends its own. */
+    readonly emit: (frame: ChatFrame) => void;
+    /** The abort of the turn, which the caller owns. It stops the turn. */
     readonly signal: AbortSignal;
     /** The resolved analysis this turn is scoped to (ownership check + context load). */
     readonly analysisId: string;
@@ -85,19 +90,14 @@ export type RunChatTurnArgs = {
     /** The sanitized user input opening the turn. */
     readonly userInput: string;
     /**
-     * Runs one time when the turn is open: the thread is ready and the agent is resolved. A refusal never
-     * calls it. The chat route of the server sends its stream headers at this moment.
+     * Runs one time when the turn is open, with the id of the turn. A refusal never calls it. The chat route of
+     * the server registers the turn and sends its stream headers at this moment.
      */
-    readonly onOpened?: () => void;
+    readonly onOpened?: (turnId: string) => void;
 };
 
-/** The whole harness turn: open it, then run it. `onOpened` runs between the two steps. */
-export type HarnessTurn = (deps: RunChatTurnDeps, params: RunChatTurnParams & { readonly onOpened?: () => void }) => Promise<ChatTurnResult>;
-
-/** Injectable harness edges, thus {@link runChatTurn} is unit-testable offline. */
+/** Injectable edges, thus {@link runChatTurn} is unit-testable offline. The chat turns themselves ride in the args. */
 export type ChatTurnSeams = {
-    /** The whole chat turn. Real: the `openChatTurn` of the harness, then the `run` of the open turn. */
-    readonly turn: HarnessTurn;
     /**
      * Who sent the message: the email of the signed-in identity, or `null` when the cli can name
      * nobody. Real: `currentUserEmail`. Injectable, because the suite runs with no auth file.
@@ -105,16 +105,7 @@ export type ChatTurnSeams = {
     readonly readAuthor: () => string | null;
 };
 
-/** The `runChatTurn` of the harness in its two steps, thus the caller learns the moment that the turn is open. */
-async function openAndRunTurn(deps: RunChatTurnDeps, params: RunChatTurnParams & { readonly onOpened?: () => void }): Promise<ChatTurnResult> {
-    const { analysisId, threadId, userInput, onOpened, ...run } = params;
-    const opened = await openChatTurn(deps, { analysisId, threadId, userInput });
-    if (opened.kind !== "ready") return opened;
-    onOpened?.();
-    return opened.run(run);
-}
-
-const realTurnSeams: ChatTurnSeams = { turn: openAndRunTurn, readAuthor: currentUserEmail };
+const realTurnSeams: ChatTurnSeams = { readAuthor: currentUserEmail };
 
 /**
  * Build the {@link ChatTurnSession} a chat turn runs under. The harness stamps the provenance of the
@@ -132,9 +123,9 @@ export function buildChatSession(analysisId: string, threadId: string): ChatTurn
 }
 
 /**
- * Run one chat turn through the `runChatTurn` of the harness, and map its result to a
- * {@link TurnOutcome}. The harness stores the opening, each round, and the outcome, thus a throw
- * keeps the stored rounds. The caller renders the outcome.
+ * Run one chat turn through the turn workflow of the harness, and map its outcome to a {@link TurnOutcome}.
+ * The harness stores the opening, each round, and the outcome, thus a failure keeps the stored rounds. The
+ * caller renders the outcome.
  */
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
     const { chatTurns, session, emit, signal, analysisId, threadId, userInput, onOpened } = args;
@@ -147,63 +138,88 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // Read at the top, because the author is who sent the message: a sign-out during the turn
         // must not erase that person. Inside the `try`, thus a throw cannot strand the turn token.
         const author = seams.readAuthor();
-        const result = await seams.turn(chatTurns, {
+        const started = await chatTurns.open(session, {
             analysisId,
             threadId,
             userInput,
-            session,
-            emit,
-            signal,
             startedAtMs: turnStartedAt,
-            ...(onOpened ? { onOpened } : {}),
             // An empty email is no sender, thus it never reaches the store as a name.
             ...(author ? { author } : {}),
         });
-        switch (result.kind) {
+        switch (started.kind) {
             case "prepare_failed":
                 // The surface shows one line, thus the log keeps the whole cause.
-                getLogger("harness").error({ cause: result.cause }, "chat turn prepare failed");
-                return { kind: "prepare_failed", cause: result.cause };
+                getLogger("harness").error({ cause: started.cause }, "chat turn prepare failed");
+                return { kind: "prepare_failed", cause: started.cause };
             case "not_found":
                 return { kind: "thread_gone" };
             case "agent_unresolved":
-                getLogger("harness").error({ threadType: result.threadType }, "chat turn agent unresolved");
-                return { kind: "agent_unresolved", threadType: result.threadType };
-            case "ran":
-                return outcomeOfRun(result);
+                getLogger("harness").error({ threadType: started.threadType }, "chat turn agent unresolved");
+                return { kind: "agent_unresolved", threadType: started.threadType };
+            case "turn_in_progress":
+                return { kind: "turn_in_progress" };
+            case "started":
+                break;
             default: {
-                const exhaustive: never = result;
-                throw new Error(`unhandled turn result: ${JSON.stringify(exhaustive)}`);
+                const exhaustive: never = started;
+                throw new Error(`unhandled turn start: ${JSON.stringify(exhaustive)}`);
             }
         }
+
+        const { turnId } = started;
+        onOpened?.(turnId);
+        const stop = (): void => {
+            chatTurns.stop(turnId).catch((cause: unknown) => getLogger("harness").warn({ err: cause, turnId }, "the stop of a chat turn failed"));
+        };
+        if (signal.aborted) stop();
+        else signal.addEventListener("abort", stop, { once: true });
+        try {
+            for await (const frame of chatTurns.read(turnId)) {
+                // The caller sends the end frame of the turn, with the remedy of a failure that it knows.
+                if (frame.type === "finish" || frame.type === "error") continue;
+                emit(frame);
+            }
+        } finally {
+            signal.removeEventListener("abort", stop);
+        }
+        return outcomeOfEnd(await chatTurns.outcome(turnId));
     } finally {
         leaveChatTurn();
     }
 }
 
-function outcomeOfRun(result: Extract<ChatTurnResult, { kind: "ran" }>): TurnOutcome {
-    const { opened, outcome } = result;
-    const appendError = result.storeError;
-    if (appendError) getLogger("harness").warn({ appendError }, "chat turn append failed");
+function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
+    // A turn workflow that ended with no result was canceled, or its body threw past the turn.
+    if (end === null) return { kind: "failed", opened: true, reason: "The turn ended with no outcome." };
+    if (end.storeFailed === true) getLogger("harness").warn({ storeFailed: true }, "chat turn append failed");
     // A copy, because the value travels into the turn registry. An absent rollup leaves no key.
-    const spend = result.turnUsage ? { turnUsage: { ...result.turnUsage } } : {};
-    const fallbackText = result.fallbackText ?? "";
-    switch (outcome.status) {
+    const spend = {
+        ...(end.turnUsage === undefined ? {} : { turnUsage: { ...end.turnUsage } }),
+        ...(end.storeFailed === true ? { storeFailed: true } : {}),
+    };
+    const opened = end.opened;
+    const fallbackText = end.fallbackText ?? "";
+    switch (end.status) {
         case "done": {
-            const { rawFinishReason } = outcome.finish;
-            if (outcome.finish.reason !== "content-filter") return { kind: "ok", opened, fallbackText, ...spend, appendError };
+            if (end.finishReason !== "content-filter") return { kind: "ok", opened, fallbackText, ...spend };
             // The one place the endpoint's own word survives — the banner shows only the generic line.
-            getLogger("harness").warn({ rawFinishReason }, "chat turn stopped by the model content filter");
-            return { kind: "filtered", opened, fallbackText, ...(rawFinishReason !== undefined ? { rawFinishReason } : {}), ...spend, appendError };
+            getLogger("harness").warn({ rawFinishReason: end.rawFinishReason }, "chat turn stopped by the model content filter");
+            return { kind: "filtered", opened, fallbackText, ...(end.rawFinishReason === undefined ? {} : { rawFinishReason: end.rawFinishReason }), ...spend };
         }
         case "aborted":
-            return { kind: "aborted", opened, ...spend, appendError };
+            return { kind: "aborted", opened, ...spend };
         case "failed":
-            getLogger("harness").error({ cause: outcome.cause }, "chat turn failed");
-            return { kind: "failed", opened, cause: outcome.cause, ...spend, appendError };
+            getLogger("harness").error({ reason: end.reason, code: end.code }, "chat turn failed");
+            return {
+                kind: "failed",
+                opened,
+                reason: end.reason ?? "The turn failed.",
+                ...(end.code === undefined ? {} : { code: end.code }),
+                ...spend,
+            };
         default: {
-            const exhaustive: never = outcome;
-            throw new Error(`unhandled turn outcome: ${JSON.stringify(exhaustive)}`);
+            const exhaustive: never = end.status;
+            throw new Error(`unhandled turn status: ${JSON.stringify(exhaustive)}`);
         }
     }
 }

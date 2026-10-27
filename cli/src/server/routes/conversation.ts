@@ -1,6 +1,5 @@
 import { join } from "node:path";
 
-import { randomUUIDv7 } from "bun";
 import { Hono, type Context } from "hono";
 import { Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
@@ -9,7 +8,6 @@ import {
     createThreadStore,
     reportSessionDir,
     storedMessagesToChat,
-    toChatFrame,
     type ChatFrame,
     type AskGateway,
     type DbError,
@@ -41,7 +39,7 @@ import {
     type TurnList,
 } from "../../api/conversation.ts";
 import { findAnalysesByRef } from "../../db/primary_query.ts";
-import { causeDetailLines, describeCause, findAuthCause } from "../../lib/cause.ts";
+import { causeDetailLines, describeCause } from "../../lib/cause.ts";
 import { rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
@@ -65,7 +63,7 @@ import {
     type ServerEnv,
     type SseOpts,
 } from "../http.ts";
-import { abortTurn, endTurn, findTurn, forgetTurn, listThreadTurns, newTurnsRefused, runningTurnsByThread, startTurn, type TurnEnding } from "../turns.ts";
+import { abortTurn, endTurn, findTurn, holdOpening, listThreadTurns, newTurnsRefused, runningTurnsByThread, startTurn, type TurnEnding } from "../turns.ts";
 
 /**
  * Where the page files of an analysis live, or why the server cannot name them. An analysis whose workspace
@@ -333,6 +331,20 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         return c.json(turn);
     });
 
+    routes.get("/:analysisId/threads/:threadId/turns/:turnId/stream", runtime, (c) => {
+        const { analysisId, threadId, turnId } = c.req.param();
+        const turn = findTurn(turnId);
+        if (turn === null || turn.analysisId !== analysisId || turn.threadId !== threadId) return turnNotFound(c);
+        const chatTurns = c.get("runtime").chatTurns;
+        // The harness keeps the frames of the turn, thus this read gives each frame again from the start of the turn.
+        return sseResponse(async (writer) => {
+            for await (const frame of chatTurns.read(turnId)) {
+                if (writer.signal.aborted) return;
+                writer.send(frame);
+            }
+        }, opts.sse);
+    });
+
     routes.post("/:analysisId/threads/:threadId/turns/:turnId/abort", (c) => {
         const { analysisId, threadId, turnId } = c.req.param();
         const turn = findTurn(turnId);
@@ -369,14 +381,15 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         const { analysisId, askId } = c.req.param();
         const body = await readBody(c, askReplyBody);
         if (body.isErr()) return body.error;
-        const gateway = c.get("runtime").askGateway;
+        const { askGateway: gateway, chatTurns } = c.get("runtime");
         const answered = await ResultAsync.fromPromise(gateway.pending(), (cause) => cause).andThen((pending) => {
             // An ask of a different analysis is absent for this one. A terminal ask is not in the pending set,
             // thus the gateway answers it with its own outcome.
             const scoped = pending.find((ask) => ask.id === askId);
             if (scoped !== undefined && scoped.analysisId !== analysisId)
                 return ResultAsync.fromSafePromise<"not_found", unknown>(Promise.resolve("not_found"));
-            return ResultAsync.fromPromise(gateway.answer(askId, body.value), (cause) => cause);
+            // The turn that waits for the ask gets the answer through the harness, in the process that runs it.
+            return ResultAsync.fromPromise(chatTurns.answer(askId, body.value), (cause) => cause);
         });
         return answered.match(
             (outcome) => {
@@ -407,56 +420,50 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
  * registry.
  *
  * The headers go out when the turn is open, before the first frame. A refusal comes before that moment, thus
- * it is still a JSON error: 404 for a thread of a different analysis, 500 for `prepare_failed` and
- * `agent_unresolved`, as in Cortex. Cortex waits for the first frame instead. That wait would hide the turn id
- * from the sender until the model answers, thus an abort in that window would have no id, and a silent wait
- * longer than 10 s meets the idle timeout of `Bun.serve`. After the headers, the `: ping` of the stream covers
- * a silent model.
+ * it is still a JSON error: 404 for a thread of a different analysis, 409 for a thread with a turn that runs,
+ * and 500 for `prepare_failed` and `agent_unresolved`. Cortex waits for the first frame instead. That wait
+ * would hide the turn id from the sender until the model answers, thus an abort in that window would have no
+ * id, and a silent wait longer than 10 s meets the idle timeout of `Bun.serve`. After the headers, the `: ping`
+ * of the stream covers a silent model.
  */
 async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId: string, message: string, opts: ConversationRouteOpts): Promise<Response> {
-    // No `await` between this test and `startTurn`, thus a stop that starts after the test waits for this turn.
+    // No `await` between this test and the hold, thus a stop that starts after the test waits for this turn.
     if (newTurnsRefused())
         return apiError(c, "draining", "The Inflexa server is stopping and starts no new chat turn. Send the message again after it starts again.");
+    const releaseOpening = holdOpening();
     const runtime = c.get("runtime");
-    const turnId = randomUUIDv7();
-    const signal = startTurn({ turnId, threadId, analysisId }, new Date());
+    const controller = new AbortController();
     const queue = createFrameQueue();
-    let markOpened: () => void = () => undefined;
-    const opened = new Promise<null>((resolve) => {
-        markOpened = () => resolve(null);
+    let markOpened: (turnId: string) => void = () => undefined;
+    const opened = new Promise<string>((resolve) => {
+        markOpened = resolve;
     });
 
     const settled = opts
         .runTurn({
             chatTurns: runtime.chatTurns,
             session: buildChatSession(analysisId, threadId),
-            emit: (event) => {
-                const frame = toChatFrame(event, ROOT_SOURCE);
-                if (frame === null) return;
-                // In-process `emit` shares mutable references with the agent loop, and a frame waits in the
-                // queue until the writer serializes it. Thus the queue keeps a copy taken now.
-                cloneFrame(frame).match(
-                    (copy) => queue.push(copy),
-                    (cause) => getLogger("server").warn({ err: cause, type: frame.type }, "a chat frame was dropped: it could not be copied"),
-                );
-            },
-            signal,
+            // Each frame comes from the parse of the stored stream of the turn, thus it shares no reference with the loop.
+            emit: (frame) => queue.push(frame),
+            signal: controller.signal,
             analysisId,
             threadId,
             userInput: message,
-            onOpened: () => markOpened(),
+            onOpened: (turnId) => {
+                startTurn({ turnId, threadId, analysisId }, new Date(), controller);
+                releaseOpening();
+                markOpened(turnId);
+            },
         })
         // The engine gives each failure as an outcome. A throw past it gives no sign that the opening landed.
-        .catch((cause: unknown): TurnOutcome => ({ kind: "failed", opened: false, cause }));
+        .catch((cause: unknown): TurnOutcome => ({ kind: "failed", opened: false, reason: describeCause(cause) }));
 
     const early = await Promise.race([opened, settled]);
-    if (early !== null) {
-        const refusal = refusalOf(c, early);
-        if (refusal !== null) {
-            forgetTurn(turnId);
-            return refusal;
-        }
+    if (typeof early !== "string") {
+        releaseOpening();
+        return refusalOf(c, early);
     }
+    const turnId = early;
     // A refused turn ran nothing, thus it is no activity.
     noteAnalysisActivity(analysisId, Date.now());
 
@@ -470,8 +477,8 @@ async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId
     );
 }
 
-/** The JSON refusal of a turn that ended before it opened, or `null` for a turn that ran. */
-function refusalOf(c: Context<ServerEnv>, outcome: TurnOutcome): Response | null {
+/** The JSON refusal of a turn that ended before it opened. */
+function refusalOf(c: Context<ServerEnv>, outcome: TurnOutcome): Response {
     switch (outcome.kind) {
         case "prepare_failed":
             return internalError(c, outcome.cause, "prepare the chat turn");
@@ -479,11 +486,14 @@ function refusalOf(c: Context<ServerEnv>, outcome: TurnOutcome): Response | null
             return threadNotFound(c);
         case "agent_unresolved":
             return apiError(c, "internal_error", `No agent is registered for "${outcome.threadType}" threads in this build.`);
+        case "turn_in_progress":
+            return apiError(c, "conflict", "A turn runs on this thread. Wait for its end, or stop it, then send the message again.");
         case "ok":
         case "filtered":
         case "aborted":
         case "failed":
-            return null;
+            // The engine opens each turn that runs, thus an outcome before the open is a failure of the open.
+            return internalError(c, outcome.kind === "failed" ? new Error(outcome.reason) : null, "open the chat turn");
         default: {
             const exhaustive: never = outcome;
             throw new Error(`unhandled turn outcome: ${JSON.stringify(exhaustive)}`);
@@ -550,7 +560,7 @@ async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Prom
         case "aborted":
             return { ending: { status: "aborted", opened: outcome.opened, ...spendOf(outcome) }, frame: finishFrame(outcome) };
         case "failed": {
-            const failure = await failureOf(outcome.cause, opts);
+            const failure = await failureOf(outcome, opts);
             return {
                 ending: { status: "failed", opened: outcome.opened, ...spendOf(outcome), failure },
                 frame: { type: "error", message: failure.message, source: ROOT_SOURCE },
@@ -559,7 +569,8 @@ async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Prom
         case "prepare_failed":
         case "thread_gone":
         case "agent_unresolved":
-            // A refusal that arrives after the turn opened is not possible, because `openChatTurn` gives each
+        case "turn_in_progress":
+            // A refusal that arrives after the turn opened is not possible, because the engine gives each
             // refusal before `onOpened`. A fake turn of a test can still give one, thus it ends as a failure.
             return {
                 ending: { status: "failed", opened: false, failure: { message: `The turn did not start (${outcome.kind}).`, detailLines: [] } },
@@ -576,7 +587,7 @@ async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Prom
 function spendOf(outcome: Extract<TurnOutcome, { opened: boolean }>): Pick<TurnEnding, "turnUsage" | "storeFailed"> {
     return {
         ...(outcome.turnUsage === undefined ? {} : { turnUsage: { ...outcome.turnUsage } }),
-        ...(outcome.appendError === undefined ? {} : { storeFailed: true }),
+        ...(outcome.storeFailed === true ? { storeFailed: true } : {}),
     };
 }
 
@@ -590,10 +601,11 @@ function finishFrame(outcome: Extract<TurnOutcome, { opened: boolean }>): ChatFr
  * and a rate limit both reach the harness as a retryable provider error, and only the proxy can tell them
  * apart. The read has its own timeout, thus it delays the end of the turn for a bounded time.
  */
-async function failureOf(cause: unknown, opts: ConversationRouteOpts): Promise<TurnFailure> {
+async function failureOf(failed: { readonly reason: string; readonly code?: string }, opts: ConversationRouteOpts): Promise<TurnFailure> {
     const connection = opts.connection();
-    const detailLines = causeDetailLines(cause);
-    if (findAuthCause(cause) !== null) {
+    // The turn workflow gives the scrubbed text of the failure and its code, and keeps the cause in its own log.
+    const detailLines = [failed.reason];
+    if (failed.code === "credential") {
         if (connection.mode === "direct") {
             return {
                 // The server reads the key from its own environment at its boot, thus only a new server sees a new key.
@@ -604,7 +616,7 @@ async function failureOf(cause: unknown, opts: ConversationRouteOpts): Promise<T
         }
         return { message: deadLoginMessage(connection.provider), detailLines, auth: { provider: connection.provider } };
     }
-    const generic: TurnFailure = { message: `The turn failed: ${describeCause(cause)}`, detailLines };
+    const generic: TurnFailure = { message: `The turn failed: ${failed.reason}`, detailLines };
     if (connection.mode !== "cliproxy") return generic;
     const verdict = await opts.readCredentialVerdict();
     if (verdict.isErr()) {
@@ -685,12 +697,6 @@ function createFrameQueue(): FrameQueue {
         },
     };
 }
-
-/** `structuredClone` throws only for a value that no JSON holds, for example a function. `unknown`: a throw carries anything. */
-const cloneFrame = Result.fromThrowable(
-    (frame: ChatFrame): ChatFrame => structuredClone(frame),
-    (cause): unknown => cause,
-);
 
 /** The live thread of the analysis, or `null` when it is absent, archived, or of a different analysis. */
 function liveThreadOf(store: ThreadStore, analysisId: string, threadId: string): ResultAsync<Thread | null, DbError> {

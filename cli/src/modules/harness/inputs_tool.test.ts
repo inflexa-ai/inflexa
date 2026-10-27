@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DETAIL_MAX_LENGTH, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
+import { DETAIL_MAX_LENGTH, type AgentSession, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
@@ -18,28 +18,40 @@ import { freshDb } from "../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../analysis/analysis.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 
-/** A minimal `ToolContext` carrying the analysis scope the tool reads, plus a stub `ask`. */
-function ctxFor(analysisId: string, ask: (r: AskRequest) => Promise<AskApproval>): ToolContext {
+/** A minimal `ToolContext` carrying the analysis scope the tool reads. */
+function ctxFor(analysisId: string): ToolContext {
     return {
         // The tool reads only `session.scope`; a cast avoids constructing the full value object.
         session: { scope: { kind: "analysis", analysisId } } as unknown as AgentSession,
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
-        ask,
     };
 }
 
-/** An `ask` seam that records its requests and approves once. */
-function recordingAsk(reply: AskApproval = { kind: "once" }): { fn: (r: AskRequest) => Promise<AskApproval>; calls: AskRequest[] } {
+/** The decision of a user that approves each request, and keeps the requests. */
+function recordingAsk(): { fn: (r: AskRequest) => Promise<void>; calls: AskRequest[] } {
     const calls: AskRequest[] = [];
     return {
         fn: (r) => {
             calls.push(r);
-            return Promise.resolve(reply);
+            return Promise.resolve();
         },
         calls,
     };
+}
+
+/** Run one call the way the loop runs it: the approval hook, then the decision of the user on a request, then `execute`. */
+async function runCall(
+    tool: ReturnType<typeof createManageInputsTool>,
+    input: { action: "add" | "remove" | "list"; paths?: string[] },
+    analysisId: string,
+    approve: (request: AskRequest) => Promise<void>,
+): ReturnType<ReturnType<typeof createManageInputsTool>["execute"]> {
+    const ctx = ctxFor(analysisId);
+    const request = await tool.approval?.(input, { invocationId: ctx.invocationId, session: ctx.session });
+    if (request !== undefined) await approve(request);
+    return tool.execute(input, ctx);
 }
 
 /** Capture the input-mutation provenance events the profile-parity watcher (edge 2) consumes. */
@@ -73,7 +85,7 @@ describe("manage_inputs tool", () => {
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
         const prov = captureProv();
-        const result = (await tool.execute({ action: "add", paths: ["data.csv"] }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
         prov.stop();
 
         expect(result.status).toBe("added");
@@ -86,7 +98,7 @@ describe("manage_inputs tool", () => {
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
         const prov = captureProv();
-        const result = (await tool.execute({ action: "add", paths: ["ghost.csv"] }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "add", paths: ["ghost.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
         prov.stop();
 
         expect(result.status).toBe("not_found");
@@ -99,7 +111,7 @@ describe("manage_inputs tool", () => {
         writeFileSync(join(dir, "data.csv"), "x\n");
         // Deliberately do NOT acquire the lock.
         const ask = recordingAsk();
-        const result = (await tool.execute({ action: "add", paths: ["data.csv"] }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
 
         expect(result.status).toBe("error");
         expect(ask.calls).toHaveLength(0);
@@ -109,10 +121,10 @@ describe("manage_inputs tool", () => {
         writeFileSync(join(dir, "data.csv"), "x\n");
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
-        await tool.execute({ action: "add", paths: ["data.csv"] }, ctxFor(analysisId, ask.fn));
+        await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn);
 
         const prov = captureProv();
-        const result = (await tool.execute({ action: "remove", paths: ["data.csv"] }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "remove", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
         prov.stop();
 
         expect(result.status).toBe("removed");
@@ -133,7 +145,7 @@ describe("manage_inputs tool", () => {
         });
         acquireInstanceLock(analysisId);
 
-        const result = (await failingTool.execute({ action: "remove", paths: names }, ctxFor(analysisId, recordingAsk().fn)))._unsafeUnwrap();
+        const result = (await runCall(failingTool, { action: "remove", paths: names }, analysisId, recordingAsk().fn))._unsafeUnwrap();
 
         expect(result.status).toBe("error");
         if (result.status === "error") {
@@ -151,7 +163,7 @@ describe("manage_inputs tool", () => {
     test("remove reports a path that is not a current input as a no-op", async () => {
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
-        const result = (await tool.execute({ action: "remove", paths: ["never-added.csv"] }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "remove", paths: ["never-added.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
 
         expect(result.status).toBe("removed");
         if (result.status === "removed") {
@@ -165,10 +177,10 @@ describe("manage_inputs tool", () => {
         writeFileSync(join(dir, "data.csv"), "x\n");
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
-        await tool.execute({ action: "add", paths: ["data.csv"] }, ctxFor(analysisId, ask.fn));
+        await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn);
         releaseInstanceLock(analysisId);
 
-        const result = (await tool.execute({ action: "list" }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "list" }, analysisId, ask.fn))._unsafeUnwrap();
         expect(result.status).toBe("listed");
         if (result.status === "listed") expect(result.inputs.map((i) => i.path)).toContain("data.csv");
     });
@@ -177,7 +189,7 @@ describe("manage_inputs tool", () => {
         // A well-formed id with no DB row: findAnalysis returns ok(null) — nothing to act on, which is
         // no_analysis. no_anchor is reserved for an existing analysis whose anchor folder moved.
         const ask = recordingAsk();
-        const result = (await tool.execute({ action: "list" }, ctxFor(randomUUIDv7(), ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { action: "list" }, randomUUIDv7(), ask.fn))._unsafeUnwrap();
         expect(result.status).toBe("no_analysis");
     });
 });

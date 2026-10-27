@@ -1,5 +1,5 @@
 import { randomUUIDv7 } from "bun";
-import type { ResultAsync } from "neverthrow";
+import type { Result, ResultAsync } from "neverthrow";
 import { createEffect, createSignal, on } from "solid-js";
 import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import {
@@ -17,7 +17,17 @@ import {
 
 import { MAX_TRANSCRIPT_TURNS, type MessageList, type RetractResponse, type ThreadSummary, type TurnList, type TurnSummary } from "../../api/conversation.ts";
 import { describeClientError, type ClientError } from "../../client/api.ts";
-import { abortTurn, createChatTurn, fetchMessages, fetchThread, fetchTurn, fetchTurns, retractTurn, type ChatTurnStream } from "../../client/conversation.ts";
+import {
+    abortTurn,
+    createChatTurn,
+    fetchMessages,
+    fetchThread,
+    fetchTurn,
+    fetchTurns,
+    readChatTurn,
+    retractTurn,
+    type ChatTurnStream,
+} from "../../client/conversation.ts";
 import { describeCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { isKnownPart, isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
@@ -542,6 +552,27 @@ function startAssistantTurn(sessionId: string): string {
         }),
     );
     return assistantId;
+}
+
+/**
+ * Clear the assistant message of the turn and its asks, thus a read of the turn from its start applies each frame
+ * one time.
+ */
+function restartAssistantTurn(): void {
+    const id = currentAssistantId;
+    if (id === null) return;
+    turnMessages = [];
+    openTools.clear();
+    deepestSubAgentDepth = 0;
+    clearAsks();
+    setStreamPartId(null);
+    setStreamText("");
+    setMessages(
+        produce((msgs) => {
+            const message = msgs.find((m) => m.id === id);
+            if (message !== undefined) message.parts = [];
+        }),
+    );
 }
 
 /**
@@ -1083,6 +1114,8 @@ export type SendOpts = {
     readonly abortTurn: (analysisId: string, threadId: string, turnId: string) => ResultAsync<unknown, ClientError>;
     /** The summary of the ended turn: `GET {T}/turns/:turnId`. Real: {@link fetchTurn}. */
     readonly fetchTurn: (analysisId: string, threadId: string, turnId: string) => ResultAsync<TurnSummary, ClientError>;
+    /** The frames of the turn again, from its start: `GET {T}/turns/:turnId/stream`. Real: {@link readChatTurn}. */
+    readonly rereadTurn: (analysisId: string, threadId: string, turnId: string) => ResultAsync<AsyncGenerator<Result<ChatFrame, ClientError>>, ClientError>;
     /**
      * Re-mount the thread after the turn when the initial transcript load was superseded by this
      * turn's boot-edge submit (see {@link send}). Real: {@link loadMessages}.
@@ -1106,20 +1139,33 @@ export const DEFAULT_SEND_OPTS: SendOpts = {
     startTurn: (analysisId, threadId, message) => createChatTurn(analysisId, { threadId, message }),
     abortTurn: (analysisId, threadId, turnId) => abortTurn(analysisId, threadId, turnId),
     fetchTurn: (analysisId, threadId, turnId) => fetchTurn(analysisId, threadId, turnId),
+    rereadTurn: (analysisId, threadId, turnId) => readChatTurn(analysisId, threadId, turnId),
     reloadTranscript: (analysisId, sessionId) => loadMessages(analysisId, sessionId),
     healRetract: (analysisId, threadId) => retractTurn(analysisId, threadId, { ifOrphan: true }),
     transcript: DEFAULT_LOAD_OPTS,
 };
 
+/** How many times a turn reads its frames again after a lost connection. */
+const TURN_REREAD_LIMIT = 3;
+
 /**
  * Run one turn on the server and drive its stream: each frame goes to `onFrame`, the abort of `signal`
  * sends the abort of the turn, and the summary of the turn ends it. The turn does not stop when the
  * client stops reading, thus the abort is the one way to stop it, and the stream is read to its end.
+ * A connection that breaks reads the turn again from its start: `onRestart` clears what the frames built,
+ * and each frame applies again.
  *
  * It never rejects: each failure is a {@link TurnResult}.
  */
 async function driveTurn(
-    turn: { analysisId: string; threadId: string; userText: string; signal: AbortSignal; onFrame: (frame: ChatFrame) => void },
+    turn: {
+        analysisId: string;
+        threadId: string;
+        userText: string;
+        signal: AbortSignal;
+        onFrame: (frame: ChatFrame) => void;
+        onRestart: () => void;
+    },
     opts: SendOpts,
 ): Promise<TurnResult> {
     const started = await opts.startTurn(turn.analysisId, turn.threadId, turn.userText);
@@ -1137,17 +1183,32 @@ async function driveTurn(
     else turn.signal.addEventListener("abort", sendAbort, { once: true });
 
     let terminal: ChatFrame | null = null;
-    let broken: string | null = null;
-    for await (const item of frames) {
-        if (item.isErr()) {
-            // A frame that is not JSON is skipped; a broken connection is the last item of the stream.
-            if (item.error.type === "bad_json") getLogger("chat").warn({ turnId, detail: item.error.detail }, "chat frame dropped: it is not JSON");
-            else broken = describeClientError(item.error);
-            continue;
+    let broken: string | null;
+    let stream = frames;
+    for (let rereads = 0; ; rereads += 1) {
+        broken = null;
+        for await (const item of stream) {
+            if (item.isErr()) {
+                // A frame that is not JSON is skipped; a broken connection is the last item of the stream.
+                if (item.error.type === "bad_json") getLogger("chat").warn({ turnId, detail: item.error.detail }, "chat frame dropped: it is not JSON");
+                else broken = describeClientError(item.error);
+                continue;
+            }
+            const frame = item.value;
+            if (frame.type === "finish" || frame.type === "error") terminal = frame;
+            else turn.onFrame(frame);
         }
-        const frame = item.value;
-        if (frame.type === "finish" || frame.type === "error") terminal = frame;
-        else turn.onFrame(frame);
+        if (broken === null || rereads >= TURN_REREAD_LIMIT) break;
+        // The server keeps the frames of the turn, thus a new read gives each frame again from the start.
+        const again = await opts.rereadTurn(turn.analysisId, turn.threadId, turnId);
+        if (again.isErr()) {
+            getLogger("chat").warn({ turnId, err: describeClientError(again.error) }, "the turn could not be read again after a lost connection");
+            break;
+        }
+        getLogger("chat").info({ turnId, rereads: rereads + 1 }, "the turn is read again after a lost connection");
+        turn.onRestart();
+        terminal = null;
+        stream = again.value;
     }
     turn.signal.removeEventListener("abort", sendAbort);
 
@@ -1282,6 +1343,9 @@ async function sendTurn(turn: { sessionId: string; analysisId: string; userText:
             // can never write the new turn's streaming signals or store.
             onFrame: (frame) => {
                 if (abortController === myTurn) applyServerFrame(frame);
+            },
+            onRestart: () => {
+                if (abortController === myTurn) restartAssistantTurn();
             },
         },
         opts,

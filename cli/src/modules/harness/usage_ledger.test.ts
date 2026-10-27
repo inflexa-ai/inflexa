@@ -2,19 +2,20 @@ import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
-import { defineTool, runChatTurn as runHarnessChatTurn, type AgentDefinition, type AgentSession, type RunChatTurnDeps, type Tool } from "@inflexa-ai/harness";
-import { reply, scriptedModel, text, toolCall, type ScriptStep } from "@inflexa-ai/harness/testing";
+import { defineTool, type AgentDefinition, type AgentSession, type Pool, type Tool } from "@inflexa-ai/harness";
+import { inProcessChatTurns, reply, scriptedModel, text, toolCall, type ScriptStep } from "@inflexa-ai/harness/testing";
 
 import { freshDb } from "../../test_support/db.ts";
 import { getAnalysisUsageTotals } from "../../db/primary_query.ts";
 import { buildChatSession, runChatTurn, type TurnOutcome } from "./turn.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
 
-// End to end over the real pieces: the cli's turn engine, the harness's own chat turn and loop, the
-// cli's `createUsageRecorder` realization, the real `upsertLlmUsage`, and a real migrated SQLite file.
-// Only the model and the Postgres of the harness are stand-ins — everything between the completed call
-// and the persisted row is production code, which is the point: the seam, the mapping, and the schema
-// each look right in isolation and can still disagree about which column an id lands in.
+// End to end over the real pieces: the cli's turn engine, the harness's own chat turn and loop (in process,
+// through the chat turns of the test kit), the cli's `createUsageRecorder` realization, the real
+// `upsertLlmUsage`, and a real migrated SQLite file. Only the model, the Postgres of the harness, and the
+// workflow engine are stand-ins — everything between the completed call and the persisted row is
+// production code, which is the point: the seam, the mapping, and the schema each look right in isolation
+// and can still disagree about which column an id lands in.
 //
 // The session is built by `buildChatSession`, the same function the TUI and the REPL drive, and the
 // harness turn stamps the provenance from the resolved agent. Thus the attribution asserted below is the
@@ -25,10 +26,10 @@ import { createUsageRecorder } from "./usage_recorder.ts";
  * land nowhere, which the turn reports as a store fault and survives. Thus the model calls are the only
  * thing of the turn that reaches a store, and that store is the ledger under test.
  */
-const emptyPool: RunChatTurnDeps["pool"] = {
+const emptyPool = {
     query: async () => ({ rows: [], rowCount: 0 }),
     connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => {} }),
-};
+} as unknown as Pool;
 
 let conn: Database;
 
@@ -46,7 +47,12 @@ async function chatTurn(analysisId: string, threadId: string, script: readonly S
     const conversation = agent("conversation-agent", tools);
     const outcome = await runChatTurn(
         {
-            chatTurns: { pool: emptyPool, agents: { forThread: () => ok(conversation) }, provider: model.provider, usageRecorder: createUsageRecorder() },
+            chatTurns: inProcessChatTurns({
+                pool: emptyPool,
+                agents: { forThread: () => ok(conversation) },
+                provider: model.provider,
+                usageRecorder: createUsageRecorder(),
+            }),
             session: buildChatSession(analysisId, threadId),
             emit: () => {},
             signal: new AbortController().signal,
@@ -55,7 +61,7 @@ async function chatTurn(analysisId: string, threadId: string, script: readonly S
             userInput: "go",
         },
         // No identity: these cases are about the usage ledger, thus the turn stamps no author.
-        { turn: runHarnessChatTurn, readAuthor: () => null },
+        { readAuthor: () => null },
     );
     expect(model.calls).toHaveLength(script.length);
     return outcome;

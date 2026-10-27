@@ -9,7 +9,9 @@ import {
     createCitationResolver,
     createNoopUsageRecorder,
     createSandboxClient,
+    makeLocalAuth,
     PAGE_ASSETS,
+    type ChatTurns,
     type MakeSessionPagePublisher,
     type CoreRuntimeDeps,
     type CreateSandboxClientConfig,
@@ -17,6 +19,7 @@ import {
     type LlmUsageRecord,
     type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
+import { inProcessChatTurns } from "@inflexa-ai/harness/testing";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
@@ -57,6 +60,7 @@ let skillsDir: string;
  * fact instead of piling more expectations into the `boot` stub.
  */
 let lastCore: CoreRuntimeDeps | null = null;
+let lastChatTurns: ChatTurns | null = null;
 
 function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHarnessConfig {
     skillsDir = join(tmpdir(), `harness-runtime-test-skills-${randomUUIDv7()}`);
@@ -173,21 +177,23 @@ function recordingSeams(calls: string[]): BootSeams {
             const agents: ThreadAgentResolver = {
                 forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }),
             };
-            // The gateway and the chat-turn deps stand in the way `assembleCoreRuntime` builds them: one gateway,
+            // The gateway and the chat turns stand in the way `assembleCoreRuntime` builds them: one gateway,
             // shared by the turn, and the recorder and the conversation provider of `core`. The real
             // constructor connects lazily, and the offline boot runs no turn.
             const askGateway = createAskGateway({ pool: conversation.pool });
+            const chatTurns = inProcessChatTurns({
+                pool: conversation.pool,
+                agents,
+                provider: conversation.provider,
+                usageRecorder: deps.core.usageRecorder ?? createNoopUsageRecorder(),
+                askGateway,
+            });
+            lastChatTurns = chatTurns;
             return {
                 runtime: {
                     agents,
                     askGateway,
-                    chatTurns: {
-                        pool: conversation.pool,
-                        agents,
-                        provider: conversation.provider,
-                        usageRecorder: deps.core.usageRecorder ?? createNoopUsageRecorder(),
-                        askGateway,
-                    },
+                    chatTurns,
                     // The offline boot never drives a report turn, thus this anchor never runs. A
                     // failed arm is the minimal stand-in — a ready arm would build a full durable
                     // session-state row that no assertion here reads.
@@ -923,26 +929,20 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
         expect(() => lastCore?.usageRecorder?.record(chatRecord())).not.toThrow();
     });
 
-    test("the chat-turn deps on the handle carry the SAME recorder the composition root supplied", async () => {
-        const calls: string[] = [];
-        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
-
-        // Identity, not merely a recorder: the stand-in boot stamps the bag the way `assembleCoreRuntime`
-        // does, thus anything OTHER than the stamped instance means that the handle built its own bag, and
-        // the turn's rows would land in a different accounting than every workflow's. `turn.ts` is where
-        // it is consumed; `usage_ledger.test.ts` proves a row lands. `defined` rides along so the identity
-        // claim cannot pass vacuously on two `undefined`s.
-        expect({ defined: lastCore?.usageRecorder !== undefined, same: runtime.chatTurns.usageRecorder === lastCore?.usageRecorder }).toEqual({
-            defined: true,
-            same: true,
-        });
-    });
-
-    test("the handle answers asks through the gateway that the chat turn asks through", async () => {
+    test("the handle carries the chat turns that the boot built over the supplied recorder", async () => {
         const runtime = (await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() }))._unsafeUnwrap();
 
-        expect(runtime.askGateway).toBeDefined();
-        expect(runtime.chatTurns.askGateway).toBe(runtime.askGateway);
+        // Identity: a handle that built its own turns would record the turn's calls apart from every
+        // workflow's. `usage_ledger.test.ts` proves a row lands.
+        expect(lastCore?.usageRecorder).toBeDefined();
+        expect(lastChatTurns).not.toBeNull();
+        expect(runtime.chatTurns === lastChatTurns).toBe(true);
+    });
+
+    test("a turn that a recovery runs after a restart gets the local credential", async () => {
+        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+
+        expect(lastCore?.credentialFor?.("turn-after-a-restart")).toEqual(makeLocalAuth());
     });
 
     test("the recorder is built once per runtime, not per boot call", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ok, okAsync, type Result } from "neverthrow";
+import { errAsync, ok, okAsync, type Result } from "neverthrow";
 import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
 import type { ChatFrame } from "@inflexa-ai/harness/contracts/index.js";
@@ -63,6 +63,7 @@ describe("streamed assistant text survives finalization (rendered)", () => {
                 abortTurn: (_analysisId, _threadId, turnId) => okAsync({ turnId, outcome: "aborting" }),
                 fetchTurn: (analysisId, threadId, turnId) =>
                     okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", status: "done", opened: true }),
+                rereadTurn: () => errAsync({ type: "http", status: 404, body: { error: "not_found", message: "Turn not found." } }),
                 reloadTranscript: async () => undefined,
                 transcript: {
                     fetchThread: () => okAsync(null),
