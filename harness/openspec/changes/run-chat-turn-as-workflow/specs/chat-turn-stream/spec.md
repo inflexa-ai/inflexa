@@ -27,13 +27,13 @@ A chat turn MUST write each fact that a host shows to the durable stream of its 
 
 ### Requirement: The text of a rerun model call shows one time
 
-The text frames of a model call MUST carry the attempt of the call. When a recovery runs a model call again, a reader MUST show only the text of the last attempt for that message.
+The text frames of a model call MUST carry the attempt of the call. When a recovery runs a model call again, a read that starts after the recovery MUST show only the text of the last attempt for that message.
 
 #### Scenario: A crash during a reply
 
 - **GIVEN** a model call that streamed half of its text, and then the host stopped
 - **WHEN** the turn recovers and the call runs again
-- **THEN** a reader shows the text of the second attempt one time, and not the half text of the first
+- **THEN** a read after the recovery shows the text of the second attempt one time, and not the half text of the first
 
 ### Requirement: A reader reads a turn again from its start
 

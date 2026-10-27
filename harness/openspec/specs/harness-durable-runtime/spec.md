@@ -579,7 +579,7 @@ host-hooks spec). Thus `executeAnalysis` MUST NOT put a `try` or a `catch` aroun
 
 The sandbox step MUST give the store to `SandboxAgentBuildContext` and to each loop that it runs. These loops are the task and the two post-step continuations. When the step has a store and the agent of `buildAgent` does not declare `read_tool_output`, the step MUST log one warn.
 
-`runChatTurn` MUST give the root loop of a turn a store over the pool of its deps. `prepareChatTurn` makes the thread history over that pool in the same way. The realization holds no state apart from its table. Thus two instances over one pool read and write the same rows.
+The chat turn MUST give its root loop a store over the pool of its deps. `prepareChatTurn` makes the thread history over that pool in the same way. The realization holds no state apart from its table. Thus two instances over one pool read and write the same rows.
 
 #### Scenario: The loops of a run share one table
 
@@ -601,5 +601,5 @@ The sandbox step MUST give the store to `SandboxAgentBuildContext` and to each l
 #### Scenario: A chat turn keeps the text of its root loop
 
 - **GIVEN** a chat turn whose tool gives a result of 50,000 characters
-- **WHEN** `runChatTurn` runs the turn
+- **WHEN** the turn runs
 - **THEN** the stored round holds the excerpt, and `cortex_tool_outputs` holds the whole text under the reference of the excerpt

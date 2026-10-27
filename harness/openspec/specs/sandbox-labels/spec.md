@@ -29,7 +29,7 @@ the suspend flag is true, the caller suspends the work (see the workflow-suspens
 #### Scenario: A spawn path with no label code gets the host labels
 
 - **GIVEN** a sandbox client whose hook gives `{ "example.com/tenant": "acme" }`
-- **WHEN** `derive-table-exec` makes a sandbox
+- **WHEN** the derivation of `derive_table` makes a sandbox
 - **THEN** the sandbox carries the label `example.com/tenant=acme`
 
 #### Scenario: The hook gets the session of the spawn

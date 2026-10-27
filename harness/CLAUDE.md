@@ -50,11 +50,11 @@ that an embedder faces:
 - `RunLauncher`/`createDbosRunLauncher`
 - the `Logger` seam and its realizations (`createConsoleLogger`,
   `createNoopLogger`, `defaultErrorFields`)
-- `defineTool`, and the chat turn (`openChatTurn` and `runChatTurn`)
+- `defineTool`, and the types of the chat turns (`ChatTurns`, `CoreRuntime.chatTurns`)
 - the public types of the loop, the session, and the provider.
 
-No embedder drives the loop. A host runs a chat turn, and the harness runs each
-loop.
+No embedder drives the loop. A host opens a chat turn, and the harness runs each
+loop in the workflow of the turn.
 
 Prefer an import from `@inflexa-ai/harness`, because the bare specifier resolves to
 this barrel. Each deep subpath (`@inflexa-ai/harness/...`) stays importable for
@@ -62,7 +62,9 @@ internal wiring. The barrel is additive, not a wall.
 
 The test kit is `src/testing.ts`. An embedder imports it from
 `@inflexa-ai/harness/testing`. Its `scriptedModel` gives a `ChatProvider` over a
-scripted model, for a test of a chat turn or of a tool that runs a sub-agent.
+scripted model, for a test of a chat turn or of a tool that runs a sub-agent. Its
+`inProcessChatTurns` gives the chat turns of a runtime with no DBOS engine, over
+the turn in the process of the test.
 
 `harness/package.json` is the package manifest. It declares the name
 `@inflexa-ai/harness` and `type: "module"`. It declares the `exports` map: `.` goes
@@ -124,19 +126,19 @@ file. Use `bun run format` for the format of the full project.
 ## Architecture
 
 **Core Philosophy**: The harness has the agent loop and the execution boundary.
-Chat is regular HTTP. A durable operation is a DBOS workflow. The same loop
-(`runLoop`) runs in both. The operative architectural decisions are in
+A chat turn and each other durable operation is a DBOS workflow. The same loop
+(`runLoop`) runs in each one. The operative architectural decisions are in
 [`CONTEXT.md`](CONTEXT.md) and in the OpenSpec specs
 ([`openspec/specs/`](openspec/specs/)).
 
 ### Two-Layer Architecture
 
-Chat is regular HTTP, with one replica for each turn. A durable operation is a
-DBOS workflow. The layer model is in [`CONTEXT.md`](CONTEXT.md), under
-`Workflow scope`.
+A chat turn is a DBOS workflow, and a host reads its frames from the durable
+stream of the turn. A run and the data profile are DBOS workflows too. The layer
+model is in [`CONTEXT.md`](CONTEXT.md), under `Workflow scope`.
 
-**There is no sandbox access from the chat route.** Sandbox work happens inside a
-workflow.
+**There is no sandbox access from the route of a host.** Sandbox work happens
+inside a step of a workflow.
 
 ### Design Principles
 
@@ -172,8 +174,8 @@ them. These two rules bind the code, and `CONTEXT.md` does not carry them:
 2. **Keep a step body self-contained.** Each child workflow runs the sandbox
    agent, generates the file metadata, summarizes, registers the artifacts, and
    indexes. All of that stays inside the same DBOS workflow body. The synthesis,
-   which is a cross-step literature-grounded aggregation, is the final step of the
-   parent.
+   which is a cross-step literature-grounded aggregation, is the last stage of the
+   parent body.
 
 ### Append-only agent conversations
 
@@ -351,8 +353,10 @@ is an embedder concern.
 - **Literature Reviewer** (`tools/research/literature-reviewer.ts`): a sub-agent
   that is a tool. It receives a research brief, investigates with the bio-lookup
   tools, and gives a structured evidence report. It runs `runLoop` under a child
-  session (`forSubAgent`). Inside a workflow, the whole tool call is one step, thus
-  the calls of the child run directly inside that step.
+  session (`forSubAgent`). Inside the body of a workflow, the call starts a child
+  workflow (`loop/sub-agent.ts`), thus each model call and each tool call of the
+  child is a step of the child. The assembly registers the workflow of each
+  sub-agent kind one time, before DBOS launches.
 - **`generatePlan` Tool** (`tools/research/generate-plan.ts`): an internal-LLM
   tool. It selects the planner outcome from the recorded results of the terminal
   tools: the last accepted plan, else the last clarification, else the first
@@ -366,20 +370,21 @@ is an embedder concern.
   `generateStepSummary`, then the artifact registration through
   `ArtifactRegistry`, then the index in the vector store. The metadata and the
   summary are follow-up requests (`continueLoop`) in the conversation of the step
-  agent. The final step of the parent is the literature-grounded synthesis.
-- **Chat turn** (`app/chat-turn.ts`): a turn is `runChatTurn` over
-  `CoreRuntime.chatTurns`. The host gives only its transport values: the emit
-  sink, the abort signal, the author of the user message, and the start time. The
-  harness makes the model, the text stream, the usage recorder, and the approval
-  binding of the turn from its runtime. `runChatTurn` prepares the turn with
-  `prepareChatTurn`, resolves the agent of the thread type, and stores the opening.
-  A host that must know the agent, or answer a refusal before it streams, calls
-  `openChatTurn` and then the `run` of the open turn. The host gives the session
-  with no provenance. The harness sets the provenance from the resolved agent.
-  Then it runs `runLoop` with a round sink that stores each round, and it closes
-  the turn with its outcome. The root loop compacts its view at the conversation
-  budget. The host wraps this in its own request handler, because the harness
-  ships no HTTP route layer.
+  agent. The last stage of the parent is the literature-grounded synthesis. It
+  runs in the body of the parent: each read and write is a step, each model call
+  is a step, and each reviewer call starts a child workflow.
+- **Chat turn** (`app/chat-turn-workflow.ts`, `app/chat-turn.ts`): a host uses
+  `CoreRuntime.chatTurns`. `open` checks the thread, resolves the agent of the
+  thread type, claims the thread, and starts the workflow of the turn. A refusal
+  comes back before the turn writes a row. `read` gives the frames of the turn
+  from its start, `stop` ends the turn, `answer` sends the answer of an ask to the
+  turn, and `outcome` gives how the turn ended. The workflow input holds ids and
+  settings, and no credential. The function `credentialFor` of the host gives the
+  credential of a turn that a recovery runs. The body runs `runOpenTurn`: the
+  root loop runs with a round sink that stores each round in a keyed step, and
+  the turn closes with its outcome. The root loop compacts its view at the
+  conversation budget. The host wraps this in its own request handler, because
+  the harness ships no HTTP route layer.
 - **Run-event stream**: a single DBOS-backed stream for each workflow. The
   workflow bodies produce it, and a reader of the typed run-event parts of the
   harness (`harness/src/contracts/`) consumes it. There is no standalone route file

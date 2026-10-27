@@ -59,7 +59,7 @@ The conversation agent deps SHALL accept an optional web-search engine. When the
 
 The harness SHALL provide a `web_fetch` tool that reads one URL. The tool SHALL accept only the `http:` and `https:` schemes and SHALL refuse any other scheme as a normal result.
 
-The tool SHALL classify each address that the connection uses — loopback, private, link-local, shared, multicast, and reserved ranges, IPv4 and IPv6 — as a guarded address. The check SHALL run on the address that the connection uses, not on a separate name resolution, so a name that resolves differently between the check and the connection (DNS rebinding) cannot bypass the guard. For a host that is an IP literal, the tool SHALL classify the literal itself before it sends the request, because the connection layer runs no name lookup for a literal. For a host name, the check SHALL run in the lookup of the connection, and a name SHALL be guarded when ANY address of its resolution is guarded: the check SHALL classify every address the resolver returns before the connect, because the connect layer can fall back to a later address of the list after an earlier one fails. Before the tool connects to a guarded address, it SHALL ask the user through the tool approval contract; an `always` approval SHALL apply to the origin of the URL through the grant key, and an origin that was never approved SHALL ask again. The request content SHALL make that breadth visible: the detail of the ask SHALL name the origin that an `always` answer approves. When the host has no interactive surface (`UnavailableAsk`), the tool SHALL refuse the guarded address as a normal result.
+The tool SHALL classify each address that the connection uses — loopback, private, link-local, shared, multicast, and reserved ranges, IPv4 and IPv6 — as a guarded address. The check SHALL run on the address that the connection uses, not on a separate name resolution, so a name that resolves differently between the check and the connection (DNS rebinding) cannot bypass the guard. For a host that is an IP literal, the tool SHALL classify the literal itself before it sends the request, because the connection layer runs no name lookup for a literal. For a host name, the check SHALL run in the lookup of the connection, and a name SHALL be guarded when ANY address of its resolution is guarded: the check SHALL classify every address the resolver returns before the connect, because the connect layer can fall back to a later address of the list after an earlier one fails. Before the tool connects to a guarded address, it SHALL ask the user through the tool approval contract; an `always` approval SHALL apply to the origin of the URL through the grant key, and an origin that was never approved SHALL ask again. The request content SHALL make that breadth visible: the detail of the ask SHALL name the origin that an `always` answer approves. When the turn has no approver, the loop SHALL deny the call, and the call SHALL end as a normal denied result.
 
 A refused URL, a denied approval, and an HTTP error SHALL be normal results, never a failure of the turn.
 
@@ -88,10 +88,10 @@ A refused URL, a denied approval, and an HTTP error SHALL be normal results, nev
 - **WHEN** the user denies the approval of a guarded address
 - **THEN** the tool returns a refusal as a normal result, and the turn does not fail
 
-#### Scenario: `UnavailableAsk` refuses the guarded address
+#### Scenario: A turn with no approver refuses the guarded address
 
-- **WHEN** the host wires no interactive surface and the model calls `web_fetch` on a guarded address
-- **THEN** the tool refuses the address as a normal result
+- **WHEN** the turn has no approver and the model calls `web_fetch` on a guarded address
+- **THEN** the call ends as a denied result, and the fetch does not run
 
 #### Scenario: An `always` approval is scoped to the origin
 

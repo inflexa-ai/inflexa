@@ -54,9 +54,9 @@ The owner of the result of a workflow MUST select the mechanism of a suspension.
 When a durable owner suspends, it MUST record the reason in its stored state. Then it MUST end in the DBOS state
 `CANCELLED`, and never in the state `ERROR`, because `resumeWorkflow` reads the state `CANCELLED`.
 
-`derive-table-exec` and `extract-values` have a live caller. A chat turn awaits the result of each, and nothing reads
-the result after that turn. When such a workflow suspends, it MUST NOT cancel. It MUST return
-`err({ kind: "suspended", reason })` as its value. The tool that awaits the workflow MUST report the reason.
+A derivation of `derive_table` and an extraction of a report runs inside the step of its tool call, and the tool reads
+the result. When the spawn of such a sandbox suspends, the step MUST NOT cancel. The spawn gives
+`err({ kind: "suspended", reason })` as its value, and the tool MUST report the reason.
 
 #### Scenario: A sandbox step that suspends ends canceled
 
@@ -70,11 +70,11 @@ the result after that turn. When such a workflow suspends, it MUST NOT cancel. I
 - **WHEN** its model request fails with a `suspend` error with the reason `payment_required`
 - **THEN** the workflow records the reason, and it ends in the DBOS state `CANCELLED`
 
-#### Scenario: A workflow with a live caller gives the suspension as a value
+#### Scenario: A derivation in a tool call gives the suspension as a value
 
-- **GIVEN** a chat turn whose tool awaits `derive-table-exec`
-- **WHEN** a gate failure with the reason `account_frozen` and the suspend flag stops the spawn of the workflow
-- **THEN** the workflow does not cancel, and it returns `err({ kind: "suspended", reason: "account_frozen" })`
+- **GIVEN** a chat turn whose `derive_table` call runs a derivation
+- **WHEN** a gate failure with the reason `account_frozen` and the suspend flag stops the spawn of the sandbox
+- **THEN** the step of the call does not cancel, and the spawn gives `err({ kind: "suspended", reason: "account_frozen" })`
 - **AND** the tool reports the reason `account_frozen`
 
 ### Requirement: One function marks the analysis as suspended
@@ -83,11 +83,11 @@ For each suspension of an analysis run or of a data profile, the harness MUST ma
 one function. The function MUST set the status of the analysis to `suspended_insufficient_funds` for each reason. This
 literal is the name of the one suspended state. Thus no data migration is necessary.
 
-A workflow with a live caller MUST NOT mark the analysis. The tool that awaits the workflow reports the suspension to
-the conversation agent, and the agent selects the next step.
+A derivation or an extraction in a tool call MUST NOT mark the analysis. The tool reports the suspension to the
+conversation agent, and the agent selects the next step.
 
-A chat turn is not a workflow. If a model request of a chat turn fails with a `suspend` error, the turn MUST fail with
-the reason. The turn MUST NOT mark the analysis.
+A chat turn is a workflow that a host reads live. If a model request of a chat turn fails with a `suspend` error, the
+turn MUST fail with the reason. The turn MUST NOT cancel itself, and it MUST NOT mark the analysis.
 
 #### Scenario: A suspension of an analysis run marks the analysis
 
@@ -95,10 +95,10 @@ the reason. The turn MUST NOT mark the analysis.
 - **WHEN** the run ends
 - **THEN** the status of the analysis is `suspended_insufficient_funds`
 
-#### Scenario: A suspension of a workflow with a live caller does not mark the analysis
+#### Scenario: A suspension of an extraction in a tool call does not mark the analysis
 
-- **GIVEN** an analysis with the status `active`, and a chat turn whose tool awaits `extract-values`
-- **WHEN** the workflow suspends with the reason `quota_exhausted`
+- **GIVEN** an analysis with the status `active`, and a chat turn whose tool runs an extraction
+- **WHEN** the spawn of its sandbox suspends with the reason `quota_exhausted`
 - **THEN** the tool reports the reason `quota_exhausted`, and the status of the analysis does not change
 
 #### Scenario: The status literal does not change with the reason

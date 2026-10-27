@@ -221,7 +221,7 @@ The result MUST carry the error as `cause`. Thus a host reads a suspension with 
 
 ### Requirement: The root loop of a chat turn caches its prefix for 1 hour
 
-`runChatTurn` MUST run the root conversation loop with the cache policy `{ ttl: "1h" }`, through `RunAgentOptions.promptCache`. A host MUST be able to pass a different policy with the optional parameter `promptCache`, for example `{ ttl: "5m" }` or `"off"`.
+The chat turn MUST run the root conversation loop with the cache policy `{ ttl: "1h" }`, through `RunAgentOptions.promptCache`. A host MUST be able to pass a different policy with the optional parameter `promptCache`, for example `{ ttl: "5m" }` or `"off"`.
 
 A person can reply 5 to 60 minutes after the last reply. A 1-hour entry stays in the cache for that gap, and a 5-minute entry does not. A 1-hour write costs 2 times the base input price, and a 5-minute write costs 1.25 times.
 
@@ -254,7 +254,7 @@ The requests of such a loop start less than 5 minutes apart, thus a 1-hour write
 
 ### Requirement: The root loop of a chat turn compacts the conversation
 
-`runChatTurn` MUST give the root loop a compaction policy when the agent of the thread declares compaction rules, `AgentDefinition.compaction` (see the harness-agent-loop capability). The budgets MUST come from those rules. An agent with no rules gets no policy, and its conversation never compacts. The chat turn MUST NOT take a budget from the host.
+The chat turn MUST give the root loop a compaction policy when the agent of the thread declares compaction rules, `AgentDefinition.compaction` (see the harness-agent-loop capability). The budgets MUST come from those rules. An agent with no rules gets no policy, and its conversation never compacts. The chat turn MUST NOT take a budget from the host.
 
 The agents of a chat thread declare these rules:
 
