@@ -9,7 +9,9 @@
  * through a `DBOSClient` on the run queue, which no step check covers, and
  * which keeps the run out of the children of the caller. Both paths take the
  * run id as the workflow id, and DBOS gives back the existing workflow for an
- * id that it holds. Thus a second launch of one run id starts nothing.
+ * id that it holds. Thus a second launch of one run id starts nothing. A launch
+ * that fails while a workflow of its run id exists resolves, because the run is
+ * durably started.
  *
  * A launch detaches the run from the caller's trace. The DBOS workflow span
  * takes the active context as its parent, and the caller is a chat request
@@ -64,6 +66,20 @@ export function createDbosRunLauncher(deps: DbosRunLauncherDeps): RunLauncher {
         await client.enqueue({ workflowName: workflow.name, queueName: RUN_QUEUE, workflowID: opts.workflowId, appVersion: DBOS.applicationVersion }, input);
     };
 
+    // An earlier launch of the run id can start the run, and a later launch can then fail for a transient reason.
+    // The run is durably started, thus the fault is not a fault of the launch. The read goes through the client,
+    // because a status read of `DBOS` in a workflow body takes a checkpoint, and only this failure path reads.
+    // A failed read keeps the fault of the start, because the existence of the run is then unknown.
+    const workflowExists = async (workflowId: string): Promise<boolean> => {
+        try {
+            const client = await dbosClientFor(deps.pool, logger);
+            return (await client.getWorkflow(workflowId)) !== undefined;
+        } catch (cause) {
+            logger.warn("the workflow of a run whose launch failed was not read", { runId: workflowId, ...logger.errorFields(cause) });
+            return false;
+        }
+    };
+
     return {
         async launch<I>(workflow: (input: I) => Promise<unknown>, opts: LaunchOptions, input: I): Promise<void> {
             const inWorkflow = DBOS.isWithinWorkflow();
@@ -80,6 +96,9 @@ export function createDbosRunLauncher(deps: DbosRunLauncherDeps): RunLauncher {
                     return;
                 }
                 await context.with(trace.setSpan(ROOT_CONTEXT, root), () => DBOS.startWorkflow(workflow, { workflowID: opts.workflowId })(input));
+            } catch (cause) {
+                if (await workflowExists(opts.workflowId)) return;
+                throw cause;
             } finally {
                 root.end();
             }
