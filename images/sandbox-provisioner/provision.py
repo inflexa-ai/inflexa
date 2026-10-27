@@ -122,6 +122,10 @@ PYTHON = "/usr/bin/python3"
 # hash check rather than installing. The egress allowlist of the image is the
 # network half of the same boundary; this is the resolver half.
 INDEX_URL = os.environ.get("INFLEXA_INDEX_URL", "https://pypi.org/simple")
+# The session exec carries its own shorter budget in the normal path. This
+# bound exists for a direct run of the subcommand, so a wedged build ends as a
+# clean refusal instead of a hung process.
+BUILD_SCRIPT_TIMEOUT_SECONDS = 3600
 
 # Marker written inside each store directory: the exact pin it was installed
 # from, thus a name+version glob can be confirmed rather than trusted.
@@ -1871,6 +1875,9 @@ def cmd_acquire_source(args) -> int:
         # The dependencies an R tree installs before its script; a refusal of
         # the run removes the store directories this run created from it.
         stored: list[tuple[Path, str, bool]] = []
+        # The root this run published before the graph check: a refusal frees
+        # it beside the dependency closure, so the pool holds no orphan.
+        published: list[tuple[Path, bool]] = []
         try:
             if not snapshot.is_dir():
                 raise SourceBuildError(f"the pristine source snapshot {snapshot} is absent")
@@ -1900,8 +1907,13 @@ def cmd_acquire_source(args) -> int:
             env = dict(os.environ)
             if r_library is not None:
                 env["R_LIBS_USER"] = str(r_library)
-            proc = subprocess.run(["bash", str(script)], cwd=str(snapshot),
-                                  capture_output=True, text=True, env=env)
+            try:
+                proc = subprocess.run(["bash", str(script)], cwd=str(snapshot),
+                                      capture_output=True, text=True, env=env,
+                                      timeout=BUILD_SCRIPT_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                raise SourceBuildError(
+                    f"the build script ran past {BUILD_SCRIPT_TIMEOUT_SECONDS} s, so the run ended it")
             if proc.returncode != 0:
                 tail = "\n".join((proc.stderr or proc.stdout or "").strip().splitlines()[-6:])
                 raise SourceBuildError(
@@ -1915,6 +1927,7 @@ def cmd_acquire_source(args) -> int:
             if track == "r":
                 record = build_record(args, script, tree_digest)
                 root_dir, pin, name, root_new = store_r_root(artifact, qualifier, record)
+                published.append((root_dir, root_new))
             else:
                 staging = stage_python_root(artifact)
                 name, version = wheel_identity(staging)
@@ -1922,6 +1935,7 @@ def cmd_acquire_source(args) -> int:
                 record = build_record(args, script, tree_digest)
                 pin = f"{name}=={version}{qualifier}"
                 root_dir, root_new = publish_python_root(staging, name, version, qualifier, record)
+                published.append((root_dir, root_new))
                 stored = dep_stored
             entries = [(root_dir, pin, root_new), *stored]
             unique_dirs = sorted({d for d, _pin, _new in entries}, key=lambda d: d.name)
@@ -1942,6 +1956,9 @@ def cmd_acquire_source(args) -> int:
             nodes = {}
             outcome = {"outcome": "refused", "reason": str(exc)}
             for store_dir, _pin, created in stored:
+                if created:
+                    shutil.rmtree(store_dir, ignore_errors=True)
+            for store_dir, created in published:
                 if created:
                     shutil.rmtree(store_dir, ignore_errors=True)
         shutil.rmtree(staging_dir("python"), ignore_errors=True)

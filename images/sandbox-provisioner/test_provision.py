@@ -36,6 +36,7 @@ import tempfile
 import time
 import traceback
 import unittest
+from unittest import mock
 import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
@@ -2510,6 +2511,9 @@ class AcquireSourceRunTests(StoreTestCase):
         self.assertIn("->", outcome["reason"])
         self.assertEqual(report["nodes"], {})
         self.assertFalse((provision.LIBS / "deps.json").exists())
+        # The root reached the pool before the graph check: the refusal frees
+        # it beside the dependency closure.
+        self.assertEqual(list(provision.STORE.iterdir()), [])
 
     def test_a_failing_script_refuses_with_its_own_output(self):
         snapshot = self._r_source()
@@ -2522,6 +2526,26 @@ class AcquireSourceRunTests(StoreTestCase):
         self.assertEqual(outcome["outcome"], "refused")
         self.assertIn("exited non-zero", outcome["reason"])
         self.assertIn("no such source file", outcome["reason"])
+        self.assertEqual(list(provision.STORE.iterdir()), [])
+
+    def test_a_build_script_past_the_budget_refuses_and_frees_the_pool(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._script("#!/bin/sh\nwhile true; do :; done\n")
+
+        real_run = provision.subprocess.run
+
+        def run_past_budget(cmd, *args, **kwargs):
+            if cmd[0] == "bash":
+                raise subprocess.TimeoutExpired(cmd="bash", timeout=provision.BUILD_SCRIPT_TIMEOUT_SECONDS)
+            return real_run(cmd, *args, **kwargs)
+
+        with mock.patch.object(provision.subprocess, "run", side_effect=run_past_budget):
+            report = self._git_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn(str(provision.BUILD_SCRIPT_TIMEOUT_SECONDS), outcome["reason"])
         self.assertEqual(list(provision.STORE.iterdir()), [])
 
     def test_an_artifact_that_is_neither_track_refuses(self):

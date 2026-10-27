@@ -672,3 +672,60 @@ describe("install_from_source — commit semantics", () => {
         expect(unknown).toEqual({ status: "unknown_session", sessionId: "nope" });
     });
 });
+
+describe("install_from_source — a live engine throw", () => {
+    it("a thrown exec answers failed and names the cause", async () => {
+        const inner = stubBuildSession();
+        const failFirst = { on: true };
+        const buildSession: BuildSession = {
+            ...inner.buildSession,
+            exec: (handle, command) =>
+                failFirst.on ? Promise.reject(new Error("engine gone")) : inner.buildSession.exec(handle, command),
+        };
+        const tool = createInstallFromSourceTool({ buildSession });
+        const { ctx } = askRecording([]);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx))._unsafeUnwrap();
+
+        expect(result.status).toBe("failed");
+        if (result.status === "failed") expect(result.reason).toContain("engine gone");
+        // The session survives the throw: a later exec reaches the engine again.
+        failFirst.on = false;
+        const retried = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx))._unsafeUnwrap();
+        expect(retried.status).toBe("ran");
+    });
+
+    it("a thrown commit answers failed, and the session stays open for a retry", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { ctx } = askRecording(["once", "once", "once", "once"]);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
+        stub.buildSession.commit = () => Promise.reject(new Error("store write lost"));
+
+        const result = (await tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." }, ctx))._unsafeUnwrap();
+
+        expect(result.status).toBe("failed");
+        if (result.status === "failed") expect(result.reason).toContain("store write lost");
+
+        stub.buildSession.commit = () => Promise.resolve({ kind: "committed" as const, pin: PIN, storeDir: STORE_DIR });
+        const retried = (await tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." }, ctx))._unsafeUnwrap();
+        expect(retried.status).toBe("committed");
+    });
+
+    it("a thrown stop answers failed and leaves the session stoppable again", async () => {
+        const stub = stubBuildSession();
+        stub.buildSession.stop = () => Promise.reject(new Error("engine gone"));
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { ctx } = askRecording([]);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        const result = (await tool.execute({ op: "stop", sessionId: "sess-1" }, ctx))._unsafeUnwrap();
+        expect(result.status).toBe("failed");
+
+        stub.buildSession.stop = () => Promise.resolve();
+        const again = (await tool.execute({ op: "stop", sessionId: "sess-1" }, ctx))._unsafeUnwrap();
+        expect(again).toEqual({ status: "stopped", sessionId: "sess-1" });
+    });
+});
