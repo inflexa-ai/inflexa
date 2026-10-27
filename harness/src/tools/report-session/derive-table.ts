@@ -215,6 +215,18 @@ export function describeExecFailure(result: ExecResult): string | undefined {
 export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTableInput, DeriveTableResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table");
     const observe = bindSessionEmit(deps.provenance, logger);
+    const observeDerived = (analysisId: string, threadId: string, result: DeriveTableResult): void => {
+        if (result.outcome !== "derived") return;
+        observe({
+            type: "run-derivation",
+            analysisId,
+            threadId,
+            outputPath: result.path,
+            outputHash: result.hash,
+            scriptHash: result.scriptHash,
+            sources: result.sources,
+        });
+    };
     const { sandboxClient } = deps;
 
     return defineTool({
@@ -313,14 +325,18 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             // the record by now, thus the name test below would refuse the call its own table.
             const recorded = derivations.find((record) => record.toolCallId === ctx.invocationId);
             if (recorded !== undefined) {
-                return ok({
+                const replayed: DeriveTableResult = {
                     outcome: "derived",
                     path: recorded.outputPath,
                     hash: recorded.outputHash,
                     scriptHash: recorded.scriptHash,
                     sources: [...recorded.sources],
                     columns: await readColumnsQuietly(outputPath, join(root, outputPath), logger),
-                });
+                };
+                // A crash between the record and the emit of the earlier run loses its event, thus the rerun
+                // emits again. A consumer can get the act two times, never zero times.
+                observeDerived(analysisId, threadId, replayed);
+                return ok(replayed);
             }
 
             // The served membership carries each derivation of the session, thus this one test refuses a
@@ -355,17 +371,7 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             });
             // The record of the derivation lands before this point, thus the event states a table that the
             // session already holds as evidence. Each other arm derived nothing.
-            if (result.outcome === "derived") {
-                observe({
-                    type: "run-derivation",
-                    analysisId,
-                    threadId,
-                    outputPath: result.path,
-                    outputHash: result.hash,
-                    scriptHash: result.scriptHash,
-                    sources: result.sources,
-                });
-            }
+            observeDerived(analysisId, threadId, result);
             return ok(result);
         },
     });

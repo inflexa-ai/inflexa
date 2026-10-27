@@ -372,7 +372,7 @@ describe("createReportSessionRuntime", () => {
         await seedThread(threadId, analysisId);
         const runtime = createReportSessionRuntime({ pool });
         await runtime.gateway.load(threadId);
-        const landed = { applied: true as const, changed: [] };
+        const landed = { applied: true as const, changed: [], events: [] };
 
         const first = await runtime.gateway.persist(threadId, DOC_ONE, null, { key: "wf-persist:5", result: landed });
         // The second run read the state before the first run landed, thus it carries the stale token.

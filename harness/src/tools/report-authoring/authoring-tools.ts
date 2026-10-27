@@ -206,6 +206,11 @@ const DRAFT_BLOCK_KINDS: Record<DraftBlock["kind"], true> = {
     citation: true,
 };
 
+/** The events that a stored result carries. The harness wrote each one, thus a check of the event type is enough. */
+const StoredEventsSchema = z.object({
+    events: z.array(z.custom<SessionProvenanceEvent>((value) => z.object({ type: z.string() }).safeParse(value).success)),
+});
+
 const LandedResultSchema: z.ZodType<LandedResult> = z.object({
     applied: z.literal(true),
     changed: z.array(
@@ -288,10 +293,13 @@ export type SessionStateLoad =
 export type SessionStatePersist =
     { outcome: "persisted" } | { outcome: "conflict" } | { outcome: "replayed"; landed: unknown } | { outcome: "failed"; detail: string };
 
-/** The authoring call of a persist: the key of its durable step, and the result that it gives when the document lands. */
+/**
+ * The authoring call of a persist: the key of its durable step, and the result that it gives when the document lands.
+ * The result carries the events of the act, thus a rerun that finds the result can emit them again.
+ */
 export type LandingCall = {
     readonly key: string;
-    readonly result: LandedResult;
+    readonly result: LandedResult & { readonly events: readonly SessionProvenanceEvent[] };
 };
 
 /**
@@ -691,12 +699,23 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
 
     const refuse = (refusal: DraftRefusal | SessionRefusal): MutationResult => ({ applied: false, refusal });
 
-    /** The stored result of an earlier run of the call. The row holds what `land` stored, and a row that does not parse refuses. */
+    /**
+     * The stored result of an earlier run of the call. The row holds what `land` stored, and a row that does not parse refuses.
+     *
+     * A crash between the persist and the emit of the earlier run loses its events, thus the rerun emits the stored
+     * events again. A consumer can get an act two times, never zero times. The parse of the result drops the events,
+     * thus the model reads the result alone.
+     */
     const replayed = (landed: unknown): MutationResult => {
         const parsed = LandedResultSchema.safeParse(landed);
-        return parsed.success
-            ? parsed.data
-            : refuse({ reason: "state-unavailable", detail: "the stored result of an earlier run of this call does not parse" });
+        if (!parsed.success) {
+            return refuse({ reason: "state-unavailable", detail: "the stored result of an earlier run of this call does not parse" });
+        }
+        const stored = StoredEventsSchema.safeParse(landed);
+        for (const observed of stored.success ? stored.data.events : []) {
+            observe(observed);
+        }
+        return parsed.data;
     };
 
     /**
@@ -744,7 +763,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         // A move inside one container names the same holder two times.
         const unique = [...new Set(holders(previous, next))];
         const landed: LandedResult = { applied: true, changed: unique.map((parentId) => containerIn(next, parentId)) };
-        const call = opened.callKey === undefined ? undefined : { key: opened.callKey, result: landed };
+        const observed = events(previous, next);
+        const call = opened.callKey === undefined ? undefined : { key: opened.callKey, result: { ...landed, events: observed } };
         const persisted = await gateway.persist(opened.threadId, next, opened.token, call);
         if (persisted.outcome === "conflict") {
             return {
@@ -758,8 +778,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         if (persisted.outcome === "replayed") {
             return replayed(persisted.landed);
         }
-        for (const observed of events(previous, next)) {
-            observe(observed);
+        for (const event of observed) {
+            observe(event);
         }
         return landed;
     };

@@ -78,6 +78,7 @@ function peeked(gateway: FakeGateway, threadId: string): ReportSessionState {
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();
+    const calls = new Map<string, unknown>();
     let fault = false;
     let persistFault = false;
     return {
@@ -94,7 +95,7 @@ function makeFakeGateway(): FakeGateway {
         setPersistFault(value): void {
             persistFault = value;
         },
-        load(threadId): Promise<SessionStateLoad> {
+        load(threadId, callKey): Promise<SessionStateLoad> {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
             }
@@ -103,10 +104,19 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const state = structuredClone(row.state);
-            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: null, derivations: [] });
+            const landed = callKey === undefined ? undefined : calls.get(callKey);
+            return Promise.resolve({
+                outcome: "found",
+                state,
+                analysisId: row.analysisId,
+                token: state.document,
+                seenDocumentHash: null,
+                derivations: [],
+                landed: structuredClone(landed),
+            });
         },
         ...stampStubs,
-        persist(threadId, document): Promise<SessionStatePersist> {
+        persist(threadId, document, _expected, call): Promise<SessionStatePersist> {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
             }
@@ -118,6 +128,7 @@ function makeFakeGateway(): FakeGateway {
             const snapshotOfThread = existing?.state.snapshot ?? snapshot;
             const analysisId = existing?.analysisId ?? DEFAULT_ANALYSIS_ID;
             rows.set(threadId, { state: { document: structuredClone(document), snapshot: snapshotOfThread }, analysisId });
+            if (call !== undefined) calls.set(call.key, structuredClone(call.result));
             return Promise.resolve({ outcome: "persisted" });
         },
     };
@@ -911,6 +922,23 @@ describe("the report observation", () => {
             // The next document holds no removed block, thus the kind comes out of the previous one.
             { type: "remove-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t1", blockKind: "citation" },
         ]);
+    });
+
+    // The earlier run can crash between its persist and its emit, thus the rerun emits the act again.
+    it("emits the events of a landed call again on a rerun that finds its stored result", async () => {
+        const events: SessionProvenanceEvent[] = [];
+        const { tools, gateway } = seeded({ provenance: { emitSessionEvent: (event) => events.push(event) }, stepKey: () => "wf-1:4" });
+        const ctx = ctxForThread("t1");
+        const addBlock = (): ReturnType<typeof tools.add_block.execute> =>
+            tools.add_block.execute({ block: { kind: "text", id: "t3", content: { prose: "c" } }, parentId: "s1" }, ctx);
+
+        const first = (await addBlock())._unsafeUnwrap();
+        const second = (await addBlock())._unsafeUnwrap();
+
+        expect(second).toEqual(first);
+        const added: SessionProvenanceEvent = { type: "add-block", analysisId: DEFAULT_ANALYSIS_ID, threadId: "t1", blockId: "t3", blockKind: "text" };
+        expect(events).toEqual([added, added]);
+        expect(peeked(gateway, "t1").document.sections[0]?.blocks.map((block) => block.id)).toEqual(["t1", "t2", "t3"]);
     });
 
     it("names the kind of a section that the call adds", async () => {

@@ -1,0 +1,135 @@
+## MODIFIED Requirements
+
+### Requirement: The session emits observation events
+
+The harness MUST emit one typed session event for each of these actions, when
+the member is bound:
+
+- make a session, of the kind `conversation` or of the kind `report`
+- add a block, for each block that the add lands
+- change a block
+- remove a block
+- move a block
+- set the title
+- run a derivation
+- preview the page
+- record a version
+- write a file with a file tool, from a conversation turn
+- approve a plan, when the approval starts the run of the plan
+
+Each event carries the analysis id and the data of its action. Each event
+except `write-file` carries the thread id. The `write-file` event carries the
+thread id when the scope of the session holds one.
+
+A block event names the block id and the kind of the block. On a change, the
+event records the kind after the act, because a kind change is permitted. On
+a remove, the event records the kind of the removed block. The set-title
+event targets the document, and it carries no block id.
+
+One add can land a section with its child blocks. Thus an add MUST emit one
+`add-block` event for each block that it lands, in document order: the added
+block first, and then each block under it. A reader of the record then
+places each block by its own event. A refused add emits nothing.
+
+The `create-session` event MUST come from the site that writes the thread
+row. The site emits it after the row lands, and before any act of that
+session. A refused write emits nothing, because no
+session exists. The store of the threads MUST NOT emit, because the state
+layer knows no seam.
+
+The `create-session` event MUST name the kind of the session, and it MUST
+name the parent thread of a child session. Thus the document of the analysis
+tells the whole tree of the sessions. A reader walks that tree with no second
+read of the seam. A root session has no parent, thus the event carries none.
+
+The `write-file` event MUST come from the mutate seam of the conversation
+agent, after the bytes land. It carries the analysis-root-relative path, the
+SHA-256 hash of the exact bytes, the size in bytes, and the tool name. It
+also carries the `invocationId` of the tool call. The invocation id is the
+replay-stable identity of the write, and the consumer keys the deterministic
+call activity on it. A refused write and a failed write emit nothing.
+
+The `approve-plan` event MUST come from the approval of a plan, after the
+launch starts the run. It carries the analysis id, the thread id, the plan id,
+the run id, and `atMs`. `atMs` is the epoch time in milliseconds of the
+approval, read before the launch. It is the one session event that carries a
+time, because the record must place the approval before the start of its run.
+An approval whose plan has an active run emits nothing, and a refused approval
+emits nothing.
+
+A durable step can stop after its act lands and before its emit. A rerun of
+the step then finds the act. Thus a rerun that finds a landed act MUST emit
+the events of that act again. This applies to the spawn of a report session,
+to an authoring act that lands the document, and to a derivation. A consumer
+gets each of these acts at least one time, and it can get an act two times.
+
+#### Scenario: A rerun of a landed authoring act emits again
+
+- **GIVEN** an `add_block` call whose step landed its block and then stopped
+- **WHEN** the step runs again and finds the stored result of the call
+- **THEN** the member receives the `add-block` event of the block again
+- **AND** the draft holds the block one time
+
+#### Scenario: A rerun of a recorded derivation emits again
+
+- **GIVEN** a `derive_table` call whose record landed
+- **WHEN** the call runs again and finds its record
+- **THEN** the member receives the `run-derivation` event of the record again
+
+#### Scenario: The creation of a conversation emits
+
+- **WHEN** the turn writes a new conversation thread and the member is bound
+- **THEN** the member receives one `create-session` event with the kind
+  `conversation`, and with no parent thread id
+
+#### Scenario: A turn on a thread that exists emits nothing
+
+- **WHEN** the turn runs on a conversation thread that the store already
+  holds
+- **THEN** the member receives no `create-session` event
+
+#### Scenario: The creation of a report session emits
+
+- **WHEN** the spawn of a report session succeeds and the member is bound
+- **THEN** the member receives one `create-session` event with the kind
+  `report`, the new thread id, and the parent thread id
+
+#### Scenario: A block act names its kind
+
+- **WHEN** the agent adds a chart block and the member is bound
+- **THEN** the member receives one event with the action, the block id, the
+  kind `chart`, the analysis id, and the thread id
+
+#### Scenario: A nested add names each block
+
+- **WHEN** the agent adds a section that carries a text block and a chart
+  block, and the member is bound
+- **THEN** the member receives three `add-block` events, in this order: the
+  section, the text block, and the chart block, each with its own kind
+
+#### Scenario: A refused nested add emits nothing
+
+- **WHEN** the agent adds a section whose child block the validation refuses
+- **THEN** the member receives no `add-block` event
+
+#### Scenario: The set-title action emits
+
+- **WHEN** the agent sets the title and the member is bound
+- **THEN** the member receives one event that targets the document, with no
+  block id
+
+#### Scenario: A conversation file write emits
+
+- **WHEN** a `write_file` call of the conversation agent lands its bytes and
+  the member is bound
+- **THEN** the member receives one `write-file` event with the analysis id,
+  the thread id, the path, the hash, the size, and the tool `write_file`
+- **AND** the event carries the invocation id of the call
+
+#### Scenario: An approval that starts a run emits
+
+- **WHEN** a host approves a plan, the launch starts run `r1`, and the member
+  is bound
+- **THEN** the member receives one `approve-plan` event with the analysis id,
+  the thread id, the plan id, and the run id `r1`
+- **AND** the event carries the time of the approval
