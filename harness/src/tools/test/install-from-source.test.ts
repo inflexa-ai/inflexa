@@ -308,7 +308,7 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["reject"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "cat DESCRIPTION" }, ctx))._unsafeUnwrap();
 
@@ -324,7 +324,7 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
 
@@ -346,10 +346,10 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
 
-        await tool.execute({ op: "exec", sessionId: "sess-1", command: "R CMD INSTALL --library=/work/out ." }, ctx);
+        (await tool.execute({ op: "exec", sessionId: "sess-1", command: "R CMD INSTALL --library=/work/out ." }, ctx))._unsafeUnwrap();
 
         expect(requests).toHaveLength(3);
         expect(requests.at(-1)?.title).toBe("Run build-session command");
@@ -360,10 +360,10 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once", "once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/other/pkg" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
-        await tool.execute({ ...FIRST_BUILD, sessionId: "sess-2" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/other/pkg" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
+        (await tool.execute({ ...FIRST_BUILD, sessionId: "sess-2" }, ctx))._unsafeUnwrap();
 
         const keys = requests.filter((r) => r.title === "Run build-session command").map((r) => r.grantKey);
         expect(keys).toEqual(["install_from_source:sess-1", "install_from_source:sess-2"]);
@@ -373,12 +373,12 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once", "once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
         requests.length = 0;
 
-        await tool.execute({ op: "exec", sessionId: "sess-1", command: "apt-get update", root: true }, ctx);
-        await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx);
+        (await tool.execute({ op: "exec", sessionId: "sess-1", command: "apt-get update", root: true }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx))._unsafeUnwrap();
 
         expect(requests[0]?.detail).toContain("runs as root");
         expect(requests[1]?.detail).not.toContain("runs as root");
@@ -389,7 +389,7 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession({ classHosts: ["snapshot.ubuntu.com", "pypi.org", "packagemanager.posit.co"] });
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ ...FIRST_BUILD, hosts: ["github.com"] }, ctx))._unsafeUnwrap();
 
@@ -408,7 +408,7 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "apt-get update", root: true }, ctx))._unsafeUnwrap();
 
@@ -425,7 +425,7 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ ...FIRST_BUILD, command: "apt-get update", root: true }, ctx))._unsafeUnwrap();
 
@@ -440,8 +440,8 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once", "once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
 
         const amended = await tool.execute(
             { ...FIRST_BUILD, command: "curl https://apt.example.org/key", hosts: [...(FIRST_BUILD.hosts ?? []), "apt.example.org"] },
@@ -461,12 +461,12 @@ describe("install_from_source — the ask flow", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
         const asksBefore = requests.length;
         const execsBefore = stub.calls.filter((c) => c.op === "exec").length;
 
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
 
         expect(requests).toHaveLength(asksBefore + 1);
         expect(requests.at(-1)?.title).toBe("Run build-session command");
@@ -482,7 +482,7 @@ describe("install_from_source — rejections end the session with no store chang
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { ctx } = askRecording(["once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         await expect(tool.execute(FIRST_BUILD, ctx)).rejects.toBeInstanceOf(AskRejectedError);
 
@@ -496,7 +496,7 @@ describe("install_from_source — rejections end the session with no store chang
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "reject"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         await expect(tool.execute(FIRST_BUILD, ctx)).rejects.toBeInstanceOf(AskRejectedError);
 
@@ -509,8 +509,8 @@ describe("install_from_source — rejections end the session with no store chang
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { requests, ctx } = askRecording(["once", "once", "reject"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
 
         await expect(tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." }, ctx)).rejects.toBeInstanceOf(AskRejectedError);
 
@@ -526,12 +526,12 @@ describe("install_from_source — exec semantics", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/other/pkg" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/other/pkg" }, ctx))._unsafeUnwrap();
 
-        await tool.execute({ op: "exec", sessionId: "sess-1", command: "cat DESCRIPTION" }, ctx);
-        await tool.execute({ op: "exec", sessionId: "sess-2", command: "cat README" }, ctx);
-        await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx);
+        (await tool.execute({ op: "exec", sessionId: "sess-1", command: "cat DESCRIPTION" }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "exec", sessionId: "sess-2", command: "cat README" }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx))._unsafeUnwrap();
 
         const execIds = stub.calls.filter((c) => c.op === "exec").map((c) => c.command.execId);
         expect(execIds).toEqual(["sess-1-1", "sess-2-1", "sess-1-2"]);
@@ -542,7 +542,7 @@ describe("install_from_source — exec semantics", () => {
         const recorder = recordingStore();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession, toolOutputStore: recorder.store });
         const { ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "R CMD build ." }, ctx))._unsafeUnwrap();
 
@@ -558,7 +558,7 @@ describe("install_from_source — exec semantics", () => {
         const recorder = recordingStore();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession, toolOutputStore: recorder.store });
         const { ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "make" }, ctx))._unsafeUnwrap();
 
@@ -579,7 +579,7 @@ describe("install_from_source — exec semantics", () => {
         const stub = stubBuildSession({ exec: () => ({ stdout: long, stderr: "" }) });
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "make" }, ctx))._unsafeUnwrap();
 
@@ -593,8 +593,8 @@ describe("install_from_source — commit semantics", () => {
     async function sessionInBuildPhase(tool: ReturnType<typeof createInstallFromSourceTool>) {
         // The third "once" is the commit ask of the caller's test.
         const { requests, ctx } = askRecording(["once", "once", "once"]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
-        await tool.execute(FIRST_BUILD, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
         return { requests, ctx };
     }
 
@@ -602,7 +602,7 @@ describe("install_from_source — commit semantics", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." }, ctx))._unsafeUnwrap();
 
@@ -660,7 +660,7 @@ describe("install_from_source — commit semantics", () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { ctx } = askRecording([]);
-        await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const stopped = (await tool.execute({ op: "stop", sessionId: "sess-1" }, ctx))._unsafeUnwrap();
         expect(stopped).toEqual({ status: "stopped", sessionId: "sess-1" });
