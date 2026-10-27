@@ -36,7 +36,8 @@ import type { SubAgentRegistrar } from "../loop/sub-agent.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
-import type { ExtendAnalysisFarm } from "../sandbox/types.js";
+import { createInstallFromSourceTool } from "../tools/install-from-source.js";
+import type { BuildSession, ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
@@ -225,6 +226,13 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
      * it, the link pass returns at once.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
+    /**
+     * The build-session interface of the embedder. When it is bound, the
+     * conversation roster gains `install_from_source` — the tool that builds a
+     * package no index serves from its source. No sandbox roster holds the
+     * tool, because an acquisition stays a host action.
+     */
+    readonly buildSession?: BuildSession;
 };
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
@@ -388,6 +396,11 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             logger: deps.logger,
             usageRecorder,
         }),
+        // The source-build session of the embedder, bound by the host the same
+        // way the farm-extension interface is: absent, the conversation agent has
+        // no way to build a package the indexes do not serve, and no roster
+        // holds the tool.
+        ...(deps.buildSession ? [createInstallFromSourceTool({ buildSession: deps.buildSession, toolOutputStore: deps.toolOutputStore })] : []),
         // The one report path. The tool starts a report thread as a child of the
         // conversation, and the user composes the report there with the Report
         // Builder.

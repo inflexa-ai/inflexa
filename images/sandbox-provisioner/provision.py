@@ -28,23 +28,27 @@ its own farm as a second read-only bind at /mnt/libs/farm, nested inside the
 store-root bind, and the invoker of the container adds that bind. Thus two
 analyses resolve two farms at the same time.
 
-The entrypoint has five subcommands, one mode each. An impossible combination
+The entrypoint has six subcommands, one mode each. An impossible combination
 is impossible by structure, because argparse accepts one subcommand:
 
-  build       — the store build workflow. It resolves the manifest, builds the
-                catalog farm, writes its `inflexa.lock` last, and publishes the
-                farm by a crash-atomic staging swap.
-  acquire     — the acquisition flights of the host. It installs a spec set
-                into the pool, and it stages the graph nodes for the host
-                commit. It writes no farm and it never touches deps.json.
-  prepare     — the store build workflow. It runs the warm script of each
-                manifest entry that names one, against the catalog farm, and
-                it records the cache entries per package in the farm lock.
-  reclaim     — the host reclamation command. It removes the store
-                directories that no farm links and the graph does not
-                advertise, under the exclusive lock.
-  remove-farm — the analysis delete flow of the host. It removes one farm and
-                never touches the pool.
+  build          — the store build workflow. It resolves the manifest, builds the
+                   catalog farm, writes its `inflexa.lock` last, and publishes the
+                   farm by a crash-atomic staging swap.
+  acquire        — the acquisition flights of the host. It installs a spec set
+                   into the pool, and it stages the graph nodes for the host
+                   commit. It writes no farm and it never touches deps.json.
+  acquire-source — the source-build flight of the host. It runs the approved
+                   build script over a pristine source snapshot, writes the root
+                   artifact into the pool, stages the graph nodes for the host
+                   commit, and writes the build record beside the pin marker.
+  prepare        — the store build workflow. It runs the warm script of each
+                   manifest entry that names one, against the catalog farm, and
+                   it records the cache entries per package in the farm lock.
+  reclaim        — the host reclamation command. It removes the store
+                   directories that no farm links and the graph does not
+                   advertise, under the exclusive lock.
+  remove-farm    — the analysis delete flow of the host. It removes one farm and
+                   never touches the pool.
 
 Repair of abandoned staging debris runs as an internal step at the start of
 each run, never as a subcommand. Refer to store_lock().
@@ -132,10 +136,16 @@ HASH_MARKER = ".inflexa-hash"
 # its DESCRIPTION, recorded as build metadata. LinkingTo gives no graph edge.
 R_LINKING_MARKER = ".inflexa-r-linking"
 
+# Marker beside PIN_MARKER of a source-built root: the build record. A source
+# build carries no index hash — no index served it — thus the script and this
+# record are its provenance, and like the other markers the record stays out of
+# the content address and out of every farm link.
+BUILD_MARKER = ".inflexa-build.json"
+
 # Never part of a distribution's content and never farmed: `.lock` is uv's own
 # per-target mutex. The markers are provisioner metadata, not installed
 # content, thus they stay out of the content address too.
-NOT_CONTENT = {PIN_MARKER, HASH_MARKER, R_LINKING_MARKER, ".lock"}
+NOT_CONTENT = {PIN_MARKER, HASH_MARKER, R_LINKING_MARKER, BUILD_MARKER, ".lock"}
 
 # Derived data that must not participate in the content address: warm-up
 # writes numba artifacts and CPython bytecode into the tree AFTER the hash is
@@ -270,13 +280,21 @@ class ResolveError(Exception):
 
 def find_stored(pin: str, track: str) -> Path | None:
     """An existing store directory that holds exactly this pin.
-
     The directory carries the ADDRESS of the identity, not its name: `GO.db`
     stores under `go-db-<version>-<hash16>`. The pin marker inside carries the
     identity, thus two identities of one address stay apart.
+
+    A source pin carries a qualifier (`name==version@git:<sha>` or
+    `name==version@tree:<sha16>`), and the DIRECTORY keeps the bare version,
+    because the graph node reads its version from the directory name. The glob
+    therefore strips the qualifier, and the marker match requires the full pin
+    text: an index pin never matches a source build, a source pin never matches
+    an index build, and a repeat source build of one qualified pin reuses its
+    own directory.
     """
     name, version = pin.split("==", 1)
-    for candidate in sorted(STORE.glob(f"{address(identity_of(track, name))}-{version}-*")):
+    bare = version.split("@", 1)[0]
+    for candidate in sorted(STORE.glob(f"{address(identity_of(track, name))}-{bare}-*")):
         for marker in (candidate / PIN_MARKER, candidate / name / PIN_MARKER):
             if marker.is_file() and marker.read_text().strip() == pin:
                 return candidate
@@ -528,17 +546,24 @@ def read_r_linking(pkg_dir: Path) -> list[str]:
     return names
 
 
-def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
+def store_r_package(pkg_dir: Path, qualifier: str = "",
+                    record: dict | None = None) -> tuple[Path, bool]:
     """Content-address an installed R package directory into the store.
 
     The store DIRECTORY carries the address of the identity, and it nests the
     package one level down under the identity NAME: R rebuilds its own path as
     libname/packagename, and the nesting is what makes that resolve. renv's
     cache proves the layout.
+
+    `qualifier` is the source suffix of a source-built root (`@git:<full sha>`
+    or `@tree:<sha16>`): it rides the pin marker alone, and the directory name
+    keeps the bare version, because emit_deps derives the node version from
+    the directory name. `record` is the build record, written beside the pin
+    marker and out of the content address with it.
     """
     name, version = read_r_pkg(pkg_dir)
     identity = r_identity(name)
-    pin = f"{name}=={version}"
+    pin = f"{name}=={version}{qualifier}"
     existing = find_stored(pin, "r")
     if existing is not None:
         return existing, False
@@ -556,6 +581,8 @@ def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     (inner / PIN_MARKER).write_text(pin + "\n")
     (inner / HASH_MARKER).write_text(digest + "\n")
     (inner / R_LINKING_MARKER).write_text(json.dumps(read_r_linking(inner)) + "\n")
+    if record is not None:
+        (inner / BUILD_MARKER).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     subprocess.run(["chmod", "-R", "a+rX", str(wrap)], check=True)
     return _publish_store_dir(wrap, final)
 
@@ -1382,6 +1409,565 @@ def cmd_acquire(args) -> int:
     return 0
 
 
+# --- acquire-source -------------------------------------------------------------
+
+
+# The output directory the script contract names: the approved script builds
+# exactly one root artifact into it. The clean run and the session agree on
+# this path, and the option exists for a host that mounts it elsewhere.
+DEFAULT_BUILD_OUT = "/work/out"
+
+# The launch environment carries both image digests, because a process inside
+# the container cannot read its own image digest: the host names the provisioner
+# image it ran and the base image both images share, and the build record
+# copies the two values verbatim.
+PROVISIONER_DIGEST_ENV = "INFLEXA_PROVISIONER_DIGEST"
+BASE_DIGEST_ENV = "INFLEXA_BASE_IMAGE_DIGEST"
+
+# The dated Ubuntu snapshot every apt source points at once the run pins them.
+# A timestamp of the form `YYYYMMDDTHHMMSSZ` selects the snapshot the URL names.
+SNAPSHOT_ARCHIVE = "https://snapshot.ubuntu.com/ubuntu"
+APT_SOURCES_FILE = "inflexa-snapshot.sources"
+
+
+def _apt_conf_root() -> Path:
+    """The root the apt configuration lives under. `INFLEXA_APT_CONF_ROOT`
+    moves it, thus the test suite pins sources inside its temp tree and never
+    touches a real `/etc`."""
+    return Path(os.environ.get("INFLEXA_APT_CONF_ROOT", "/"))
+
+
+def _ubuntu_codename(root: Path) -> str:
+    """The `VERSION_CODENAME` of the os-release under `root`."""
+    release = root / "etc" / "os-release"
+    for line in release.read_text(errors="replace").splitlines():
+        if line.startswith("VERSION_CODENAME="):
+            value = line.split("=", 1)[1].strip().strip('"')
+            if value:
+                return value
+    raise SourceBuildError(
+        f"{release} names no VERSION_CODENAME, thus the apt sources cannot name "
+        f"the suites of the snapshot {SNAPSHOT_ARCHIVE}")
+
+
+def pin_apt_sources(snapshot_timestamp: str) -> Path:
+    """Point every apt source at the dated Ubuntu snapshot, and drop the
+    live-archive sources the image ships.
+
+    The run writes this BEFORE the build script, because the script's own
+    `apt-get update` must obey the pin: a plain update over the live archives
+    would resolve versions no dated snapshot served, and the build record's
+    apt block would then name versions the snapshot cannot reproduce.
+    """
+    root = _apt_conf_root()
+    sources_dir = root / "etc" / "apt" / "sources.list.d"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    codename = _ubuntu_codename(root)
+    text = (
+        "Types: deb\n"
+        f"URIs: {SNAPSHOT_ARCHIVE}/{snapshot_timestamp}/\n"
+        f"Suites: {codename} {codename}-updates {codename}-backports {codename}-security\n"
+        "Components: main restricted universe multiverse\n"
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+        "Check-Valid-Until: no\n")
+    written = sources_dir / APT_SOURCES_FILE
+    written.write_text(text)
+    for other in sources_dir.iterdir():
+        if other.name != APT_SOURCES_FILE:
+            if other.is_dir():
+                shutil.rmtree(other, ignore_errors=True)
+            else:
+                other.unlink(missing_ok=True)
+    (root / "etc" / "apt" / "sources.list").unlink(missing_ok=True)
+    return written
+
+
+class SourceBuildError(Exception):
+    """A refusal of one acquire-source run. The command catches it, thus the
+    report carries the refusal as its outcome and the host settles a failed
+    row, exactly as an index acquisition does."""
+
+
+def pak_version() -> str:
+    proc = subprocess.run(["Rscript", "-e", 'cat(as.character(packageVersion("pak")))'],
+                          capture_output=True, text=True)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def tool_versions() -> dict[str, str]:
+    """The versions of the tools a source build compiles against.
+
+    The record names the tools that decide the artifact: the compilers, the
+    build tools, and the two runtimes with their resolvers. A tool that answers
+    nothing records the empty string rather than stopping the run, because a
+    missing version is a gap in the record, not a fault of the artifact that
+    the script just built.
+    """
+    tools = {}
+    for name in ("gcc", "g++", "gfortran", "cmake", "uv"):
+        proc = subprocess.run([name, "--version"], capture_output=True, text=True)
+        first = proc.stdout.strip().splitlines()[0].strip() if proc.stdout.strip() else ""
+        tools[name] = first if proc.returncode == 0 else ""
+    tools["R"] = r_runtime_version()
+    tools["Python"] = python_runtime_version()
+    tools["pak"] = pak_version()
+    return tools
+
+
+def apt_versions(names: list[str]) -> dict[str, str]:
+    """The installed version of each apt package the plan named, from dpkg.
+
+    The script ran its apt-get install in THIS container, thus dpkg holds the
+    resolved versions. A plan names names; the record holds what installed. A
+    package dpkg does not know records the empty string, never a refusal: the
+    artifact is built, and the record states the gap.
+    """
+    out: dict[str, str] = {}
+    for name in names:
+        proc = subprocess.run(["dpkg-query", "-W", "-f=${Version}", name],
+                              capture_output=True, text=True)
+        out[name] = proc.stdout.strip() if proc.returncode == 0 else ""
+    return dict(sorted(out.items()))
+
+
+def build_record(args, script: Path, tree_digest: str) -> dict:
+    """The provenance record of one source build, written beside the pin marker.
+
+    The record replaces the index hash that a source build cannot carry. The
+    source names the URL and the full commit of a git build, or the tree hash
+    of the folder copy. No credential enters it: the token of a private source
+    reaches the clone command of the session alone, and nothing here reads the
+    environment for it.
+    """
+    if args.git_url:
+        source = {"url": args.git_url, "commit": args.commit or ""}
+    else:
+        source = {"tree_hash": tree_digest}
+    return {
+        "schema": 1,
+        "source": source,
+        "images": {
+            "provisioner": os.environ.get(PROVISIONER_DIGEST_ENV, ""),
+            "base": os.environ.get(BASE_DIGEST_ENV, ""),
+        },
+        "apt": {
+            "snapshot_date": args.apt_snapshot_date or "",
+            "packages": apt_versions(list(args.apt_package)),
+        },
+        "tools": tool_versions(),
+        "script": script.read_text(),
+        "script_sha256": script_sha256(script),
+        "arch": arch(),
+    }
+
+
+def source_qualifier(args, tree_digest: str) -> str:
+    """`@git:<full sha>` for a git source, `@tree:<sha16>` for a folder."""
+    if args.git_url:
+        if not args.commit:
+            raise SourceBuildError(
+                "a git source names its full commit sha — the pin qualifier and "
+                "the build record read it, and the plan resolved it")
+        return f"@git:{args.commit}"
+    return f"@tree:{tree_digest[:16]}"
+
+
+def root_artifact(out: Path) -> tuple[str, Path]:
+    """The one root artifact the script built, and its track.
+
+    The script contract: exactly one installed R package directory (its
+    DESCRIPTION names it) or exactly one built wheel, and nothing else in the
+    output directory. A second entry — a wheel beside the root, or a
+    dependency the script installed itself — refuses the run, because the
+    dependencies belong to the hash-pinned paths and the root is the only
+    thing the record proves.
+    """
+    entries = sorted(p for p in out.iterdir()) if out.is_dir() else []
+    if not entries:
+        raise SourceBuildError(
+            f"the build script left no artifact in {out}: the script must build "
+            f"exactly one root artifact — an installed R package directory or a "
+            f"built wheel — into the output directory")
+    if len(entries) > 1:
+        names = ", ".join(e.name for e in entries)
+        raise SourceBuildError(
+            f"the output directory {out} holds more than the one root artifact "
+            f"({names}): the script must install no dependencies, because "
+            f"acquire-source resolves and installs them itself through the "
+            f"hash-pinned paths")
+    entry = entries[0]
+    if entry.is_dir() and (entry / "DESCRIPTION").is_file():
+        return "r", entry
+    if entry.is_file() and entry.name.endswith(".whl"):
+        return "python", entry
+    raise SourceBuildError(
+        f"{entry} is neither an installed R package directory (no DESCRIPTION) "
+        f"nor a built wheel, thus the run cannot store it")
+
+
+def store_r_root(artifact: Path, qualifier: str, record: dict) -> tuple[Path, str, str, bool]:
+    """(store directory, pin, name) of a source-built R root.
+
+    The name and the version come from the DESCRIPTION of the artifact, never
+    from the repository or the script.
+    """
+    name, _version = read_r_pkg(artifact)
+    store_dir, is_new = store_r_package(artifact, qualifier=qualifier, record=record)
+    pin = (store_dir / name / PIN_MARKER).read_text().strip()
+    return store_dir, pin, name, is_new
+
+
+def wheel_identity(staged: Path) -> tuple[str, str]:
+    """(name, version) of the staged root, from its .dist-info.
+
+    The metadata is the authority — never the wheel file name, which a build
+    step can spell its own way, and never the repository name.
+    """
+    infos = sorted(p for p in staged.iterdir()
+                   if p.is_dir() and p.name.endswith(".dist-info"))
+    if not infos:
+        raise SourceBuildError(
+            f"the installed root of {staged} carries no .dist-info directory, "
+            f"thus its name and version cannot be read")
+    name = version = None
+    for line in (infos[0] / "METADATA").read_text(errors="replace").splitlines():
+        if line.startswith("Name:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Version:"):
+            version = line.split(":", 1)[1].strip()
+        if name and version:
+            break
+    if not name or not version:
+        stem = infos[0].name[:-len(".dist-info")]
+        name, _, version = stem.rpartition("-")
+    if not name or not version:
+        raise SourceBuildError(
+            f"the .dist-info of {staged} names no Name and Version, thus the "
+            f"identity of the source-built root cannot be read")
+    return name, version
+
+
+def root_requirements(staged: Path) -> list[str]:
+    """The Requires-Dist lines of the staged root, markers included.
+
+    The requirements ride to the resolver as they are: uv reads each marker
+    against the same interpreter the sandbox runs, thus a false marker drops
+    at the resolve and never installs.
+    """
+    info = next((p for p in sorted(staged.iterdir())
+                 if p.is_dir() and p.name.endswith(".dist-info")), None)
+    if info is None:
+        return []
+    return [line.split(":", 1)[1].strip()
+            for line in (info / "METADATA").read_text(errors="replace").splitlines()
+            if line.startswith("Requires-Dist:")]
+
+
+def stage_python_root(wheel: Path) -> Path:
+    """Install the built wheel into a private staging tree with no
+    dependencies, and give the tree back.
+
+    The staging holds the installed root whose `.dist-info` names the identity
+    and the requirements. The publish step — the markers, the build record,
+    and the move into the pool — runs AFTER the dependency installs, so the
+    record's apt block reads dpkg at its final state.
+    """
+    staging = staging_dir("python") / "source-root"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    log(f"installing the source-built root from {wheel.name}")
+    proc = subprocess.run(
+        ["uv", "pip", "install", "--python", PYTHON, "--no-deps", "--no-cache",
+         "--break-system-packages", "--target", str(staging), str(wheel)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise SourceBuildError(
+            f"uv could not install the built wheel {wheel.name} (exit {proc.returncode}).\n"
+            f"{proc.stderr.strip() or '(uv wrote nothing to stderr)'}")
+    return staging
+
+
+def publish_python_root(staging: Path, name: str, version: str, qualifier: str, record: dict) -> tuple[Path, str, bool]:
+    """(store directory, is_new) of a staged source-built Python root.
+
+    The root installs from the built wheel with no index hash — no index
+    served it — under `--no-deps`, because acquire-source resolves and installs
+    the dependencies itself through the hash-pinned index path.
+    """
+    identity = python_identity(name)
+    pin = f"{name}=={version}{qualifier}"
+    existing = find_stored(pin, "python")
+    if existing is not None:
+        return existing, False
+    digest = tree_hash(staging)
+    final = STORE / f"{address(identity)}-{version}-{digest[:16]}"
+    if final.exists():
+        return final, False
+    (staging / PIN_MARKER).write_text(pin + "\n")
+    (staging / HASH_MARKER).write_text(digest + "\n")
+    (staging / BUILD_MARKER).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    subprocess.run(["chmod", "-R", "a+rX", str(staging)], check=True)
+    final, is_new = _publish_store_dir(staging, final)
+    return final, is_new
+
+
+def source_r_dependencies(snapshot: Path, root_name: str) -> tuple[list[tuple[Path, str, bool]], Path]:
+    """The store directories of the dependency closure of a source-built R root,
+    beside the staged library that holds them loadable.
+
+    pak resolves the SNAPSHOT tree, whose DESCRIPTION names the dependencies,
+    and the entries the pool does not hold install into a private staging
+    library through the same lockfile path an index acquisition uses. The root
+    itself never installs here: its provenance is the build record, not the
+    pak lock, and its bytes come from the output artifact. The root's own
+    name leaves the entry list ENTIRELY — an index build of the same name in
+    the pool must join no stage, because the root is the one package whose
+    provenance this run replaces.
+
+    The staging library STAYS ALIVE for the script as links to the pool
+    packages: `store_r_package` moves a fresh install out of the staging tree,
+    and the clean run mounts no farm, thus nothing else puts these
+    dependencies on R's library path while `R CMD INSTALL` loads the root's
+    imports. The caller removes the library once the script and the record
+    are done.
+    """
+    lock_out = run_temp("pak-lock-source.json")
+    proc = subprocess.run(
+        ["Rscript", "/usr/local/bin/acquire_r.R", "resolve", str(snapshot), str(lock_out)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise SourceBuildError(
+            f"pak could not resolve the dependency closure of {snapshot}.\n"
+            f"{proc.stderr.strip() or '(pak wrote nothing to stderr)'}")
+    pak_lock = json.loads(lock_out.read_text())
+    entries = [
+        {"name": p["package"], "version": p["version"]}
+        for p in pak_lock.get("packages", [])
+        if isinstance(p, dict) and p.get("package") and p.get("version")
+        and p["package"] != root_name
+    ]
+    staging = staging_dir("r") / "source"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    needed = {e["name"] for e in entries
+              if find_stored(f"{e['name']}=={e['version']}", "r") is None}
+    if needed:
+        filtered = dict(pak_lock)
+        filtered["packages"] = [p for p in pak_lock.get("packages", [])
+                                if isinstance(p, dict) and p.get("package") in needed]
+        filtered_path = run_temp("pak-lock-source-needed.json")
+        filtered_path.write_text(json.dumps(filtered) + "\n")
+        proc = subprocess.run(
+            ["Rscript", "/usr/local/bin/acquire_r.R", "install",
+             str(filtered_path), str(staging)],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise SourceBuildError(
+                f"pak could not install the resolved dependencies of the source "
+                f"tree.\n{proc.stderr.strip() or '(pak wrote nothing to stderr)'}")
+
+    stored: list[tuple[Path, str, bool]] = []
+    seen: set[Path] = set()
+    for pkg_dir in sorted(p for p in staging.iterdir() if (p / "DESCRIPTION").is_file()):
+        name, version = read_r_pkg(pkg_dir)
+        store_dir, is_new = store_r_package(pkg_dir)
+        if store_dir in seen:
+            continue
+        seen.add(store_dir)
+        stored.append((store_dir, f"{name}=={version}", is_new))
+    for entry in entries:
+        hit = find_stored(f"{entry['name']}=={entry['version']}", "r")
+        if hit is not None and hit not in seen:
+            seen.add(hit)
+            stored.append((hit, f"{entry['name']}=={entry['version']}", False))
+    for store_dir, pin, _is_new in stored:
+        name = pin.split("==", 1)[0]
+        link = staging / name
+        if not link.exists():
+            link.symlink_to(store_dir / name)
+    return stored, staging
+
+
+def source_python_dependencies(root_dir: Path) -> list[tuple[Path, str, bool]]:
+    """The store directories of the dependency closure of a source-built root.
+
+    The requirements come from the wheel the script built — the published
+    store directory holds the same metadata — and every pin installs through
+    the hash-enforced index path: a source build trades the hash of its root
+    for the record, never the hashes of its dependencies.
+    """
+    requirements = root_requirements(root_dir)
+    if not requirements:
+        return []
+    try:
+        constraints = _pool_constraints()
+        if constraints is None:
+            pins = resolve(requirements)
+        else:
+            try:
+                pins = resolve(requirements, constraints)
+            except ResolveError:
+                log("the held pins conflict with the source requirements; resolving fresh")
+                pins = resolve(requirements)
+    except ResolveError as exc:
+        raise SourceBuildError(str(exc)) from exc
+    stored: list[tuple[Path, str, bool]] = []
+    for pin in pins:
+        path, is_new = ensure_stored(pin, pins[pin])
+        stored.append((path, pin, is_new))
+    return stored
+
+
+def refuse_dangling_edges(nodes: dict) -> None:
+    """Refuse an edge of the staged set that names no pool package and no
+    image-owned name.
+
+    `collect` keeps such an edge under its bare name. The published graph
+    counts as a target too, because an edge into a pool package the run reused
+    resolves there and not inside the staged set.
+    """
+    published: dict = {}
+    deps_path = LIBS / emit_deps.GRAPH_NAME
+    if deps_path.is_file():
+        with contextlib.suppress(OSError, ValueError):
+            published = json.loads(deps_path.read_text()).get("nodes", {})
+    bad = [(key, edge) for key, node in sorted(nodes.items())
+           for edge in node.get("edges", [])
+           if edge not in nodes and edge not in published]
+    if not bad:
+        return
+    lines = "\n".join(f"  {key} -> {edge}" for key, edge in bad)
+    raise SourceBuildError(
+        f"{len(bad)} dependency edge(s) of the source build name no pool package "
+        f"and no image-owned package, thus the graph would hold a dangling "
+        f"edge:\n{lines}")
+
+
+def cmd_acquire_source(args) -> int:
+    """Run one clean source build: the apt pin, the dependency resolve in the
+    track's order, the script, the pool writes, the staged nodes, and the
+    build record.
+
+    The two-phase contract of `acquire` holds here too: the pool and the report
+    are the only writes, deps.json and every farm stay untouched, and the host
+    commits the staged nodes only after the load check passes inside the
+    sandbox image. A failed check leaves no advertised state, and reclaim
+    frees the orphaned bytes.
+    """
+    global RUN_TOKEN
+    RUN_TOKEN = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+    snapshot = Path(args.snapshot)
+    script = Path(args.script)
+    with store_lock(shared=True):
+        STORE.mkdir(parents=True, exist_ok=True)
+        nodes: dict = {}
+        # The dependencies an R tree installs before its script; a refusal of
+        # the run removes the store directories this run created from it.
+        stored: list[tuple[Path, str, bool]] = []
+        try:
+            if not snapshot.is_dir():
+                raise SourceBuildError(f"the pristine source snapshot {snapshot} is absent")
+            if not script.is_file():
+                raise SourceBuildError(f"the approved build script {script} is absent")
+            # The apt sources pin to the dated snapshot BEFORE anything runs,
+            # because the script's own `apt-get update` must obey the pin.
+            if args.apt_snapshot_date:
+                pin_apt_sources(args.apt_snapshot_date)
+            # The folder hash reads the pristine copy before the script runs,
+            # because a build can write into its own source tree and the record
+            # must hold the tree the session approved.
+            tree_digest = "" if args.git_url else tree_hash(snapshot)
+            qualifier = source_qualifier(args, tree_digest)
+            # The dependency order follows the track. An R tree resolves and
+            # installs its dependencies BEFORE the script, because `R CMD
+            # INSTALL` refuses a package whose imports are absent; a Python
+            # tree builds the wheel first (a wheel build needs no runtime
+            # dependencies) and resolves the wheel's requirements after.
+            r_library: Path | None = None
+            if (snapshot / "DESCRIPTION").is_file():
+                root_name, _version = read_r_pkg(snapshot)
+                stored, r_library = source_r_dependencies(snapshot, root_name)
+            # The script's `R CMD INSTALL` loads the root's imports from the
+            # staged library alone: no farm is mounted here, thus no other
+            # copy of a dependency sits on R's library path.
+            env = dict(os.environ)
+            if r_library is not None:
+                env["R_LIBS_USER"] = str(r_library)
+            proc = subprocess.run(["bash", str(script)], cwd=str(snapshot),
+                                  capture_output=True, text=True, env=env)
+            if proc.returncode != 0:
+                tail = "\n".join((proc.stderr or proc.stdout or "").strip().splitlines()[-6:])
+                raise SourceBuildError(
+                    f"the build script exited non-zero (exit {proc.returncode})."
+                    f"\n{tail or '(the script wrote nothing to its streams)'}")
+            # The record is built AFTER the script and the dependency installs,
+            # because dpkg then holds the versions the plan's apt packages
+            # resolved to, and the record states what installed, not what a
+            # plan named.
+            track, artifact = root_artifact(Path(args.output))
+            if track == "r":
+                record = build_record(args, script, tree_digest)
+                root_dir, pin, name, root_new = store_r_root(artifact, qualifier, record)
+            else:
+                staging = stage_python_root(artifact)
+                name, version = wheel_identity(staging)
+                dep_stored = source_python_dependencies(staging)
+                record = build_record(args, script, tree_digest)
+                pin = f"{name}=={version}{qualifier}"
+                root_dir, root_new = publish_python_root(staging, name, version, qualifier, record)
+                stored = dep_stored
+            entries = [(root_dir, pin, root_new), *stored]
+            unique_dirs = sorted({d for d, _pin, _new in entries}, key=lambda d: d.name)
+            nodes = emit_deps.collect(unique_dirs)
+            refuse_dangling_edges(nodes)
+            outcome = {
+                "outcome": "source",
+                "spec": f"{track}:{pin}",
+                "ecosystem": track,
+                "pin": pin,
+                "name": name,
+                "store_dir": root_dir.name,
+                "installed": [pin for _d, pin, new in entries if new],
+                "reused": [pin for _d, pin, new in entries if not new],
+                "store_dirs": [d.name for d in unique_dirs],
+            }
+        except SourceBuildError as exc:
+            nodes = {}
+            outcome = {"outcome": "refused", "reason": str(exc)}
+            for store_dir, _pin, created in stored:
+                if created:
+                    shutil.rmtree(store_dir, ignore_errors=True)
+        shutil.rmtree(staging_dir("python"), ignore_errors=True)
+        shutil.rmtree(staging_dir("r"), ignore_errors=True)
+
+        report = {
+            "schema": 1,
+            "arch": arch(),
+            "outcomes": [outcome],
+            "nodes": nodes,
+        }
+        report_path = Path(args.report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = report_path.with_suffix(report_path.suffix + ".tmp")
+        temp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        os.replace(temp, report_path)
+
+    if outcome["outcome"] == "source":
+        log(f"acquire-source: {outcome['pin']} built and staged ({len(outcome['store_dirs'])} "
+            f"store dir(s)); report at {args.report}; deps.json untouched — the host "
+            f"commits after the load check")
+    else:
+        log(f"acquire-source: refused — {outcome['reason']}")
+    return 0
+
+
 # --- build ---------------------------------------------------------------------
 
 
@@ -1799,6 +2385,28 @@ def main() -> int:
     acquire.add_argument("specs", nargs="+",
                          help="package requests; the internal form python:<spec> / r:<spec> names the ecosystem")
     acquire.set_defaults(func=cmd_acquire)
+
+    acquire_source = sub.add_parser(
+        "acquire-source",
+        help="run the approved build script over a pristine source snapshot and store the root it builds")
+    acquire_source.add_argument("--report", required=True,
+                                help="path of the report file: the source outcome plus the staged graph nodes")
+    acquire_source.add_argument("--snapshot", required=True,
+                                help="the pristine source snapshot: a git work tree at the pinned commit, or a copy of a local folder")
+    acquire_source.add_argument("--script", required=True,
+                                help="the approved build script; it builds exactly one root artifact into the output "
+                                     "directory and installs no dependencies")
+    acquire_source.add_argument("--output", default=DEFAULT_BUILD_OUT,
+                                help=f"the output directory of the root artifact (default: {DEFAULT_BUILD_OUT})")
+    acquire_source.add_argument("--git-url", default=None,
+                                help="the URL of the git source; absent means a local-folder source")
+    acquire_source.add_argument("--commit", default=None,
+                                help="the full commit sha of the git source, as the plan resolved it")
+    acquire_source.add_argument("--apt-snapshot-date", default=None,
+                                help="the timestamp of the Ubuntu snapshot the session's apt step used, as the image-creation time spells it (YYYYMMDDThhmmssZ)")
+    acquire_source.add_argument("--apt-package", action="append", default=[], metavar="NAME",
+                                help="an apt package the build installed; repeat for each one")
+    acquire_source.set_defaults(func=cmd_acquire_source)
 
     prepare = sub.add_parser("prepare", help="run the per-package warm scripts against the catalog farm")
     prepare.add_argument("--manifest", required=True, help="path to the package-store manifest")

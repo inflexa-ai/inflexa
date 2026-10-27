@@ -156,6 +156,23 @@ describe("the failed flights", () => {
         expect(listPendingStoreAdds()._unsafeUnwrap()).toMatchObject([{ spelling: "polars", ecosystem: "python", specifier: "" }]);
     });
 
+    test("a retry of a source row refuses and enqueues nothing, because an index store add cannot refly a source build", async () => {
+        const stub = stubbed(tempStore());
+        const id = "r::SeedMatchR::==2.0.0@git:2fc0c4f";
+        claimStoreFlight({ id, ecosystem: "r", spelling: "SeedMatchR", specifier: "==2.0.0@git:2fc0c4f", holderPid: process.pid })._unsafeUnwrap();
+        settleStoreFlightFailure({ id, message: "load_check: the load check failed inside the sandbox image" })._unsafeUnwrap();
+
+        const response = await storeRoutes(stub.opts).request(`/store/flights/${encodeURIComponent(id)}/retry`, post());
+
+        expect(response.status).toBe(409);
+        const body = (await response.json()) as { error: string; message: string };
+        expect(body.error).toBe("conflict");
+        expect(body.message).toContain("SeedMatchR==2.0.0@git:2fc0c4f (r)");
+        expect(body.message).toContain("install-from-source");
+        expect(stub.flushes()).toBe(0);
+        expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
+    });
+
     test("a delete removes the record and runs the debris pass", async () => {
         const stub = stubbed(tempStore());
         const id = seedFailedFlight("polars");

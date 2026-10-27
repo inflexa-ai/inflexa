@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { err, ok } from "neverthrow";
+import { randomUUIDv7 } from "bun";
 
 import { env } from "../../lib/env.ts";
 import * as lockModule from "../../lib/lock.ts";
@@ -22,11 +23,14 @@ import {
     describeStoreFlightSpec,
     enqueueStoreAdd,
     flushPendingStoreAdds,
+    flySourceBuild,
+    isSourceFlightSpecifier,
     readStoreFlights,
     storeFlightKey,
 } from "./store_flight.ts";
 import { flushAndPrint } from "./store.ts";
-import type { LoadCheckRunner, ProvisionerRunner } from "./provisioner.ts";
+import { acquireSourceArgs, type LoadCheckRunner, type ProvisionerRunner, type SourceBuildRunner } from "./provisioner.ts";
+import { runtimes } from "../../lib/container.ts";
 
 // The flush is the two-phase flight over the pending set: one provisioner
 // `acquire` run for the whole batch, the load check inside the sandbox image,
@@ -678,5 +682,243 @@ describe("the spelling of a request", () => {
 
         const pending = listPendingStoreAdds()._unsafeUnwrap();
         expect(pending.map((entry) => entry.spelling).sort()).toEqual(["GO.db", "go.db"]);
+    });
+});
+
+// --- The source-build flight ------------------------------------------------------
+
+describe("the acquire-source launch", () => {
+    test("the container arguments carry the session egress, both digests, and the read-only source mounts", () => {
+        const rt = runtimes.docker;
+        const args = acquireSourceArgs(rt, "inflexa-provisioner:test", {
+            storeRoot: "/store/root",
+            egressAllow: "github.com,snapshot.ubuntu.com,pypi.org",
+            snapshotHost: "/scratch/src",
+            scriptHost: "/scratch/build.sh",
+            reportName: ".inflexa-download/source-1.json",
+            git: { url: "https://github.com/tacazares/SeedMatchR", commit: "2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a" },
+            aptSnapshotDate: "2026-02-14",
+            aptPackages: ["libcurl4-openssl-dev", "libgit2-dev"],
+            imageDigests: { provisioner: "sha256:prov", base: "sha256:base" },
+        });
+
+        expect(args).toContain("acquire-source");
+        expect(args).toContain("INFLEXA_EGRESS_ALLOW=github.com,snapshot.ubuntu.com,pypi.org");
+        // A process inside the container cannot read its own image digest, thus the launch names both.
+        expect(args).toContain("INFLEXA_PROVISIONER_DIGEST=sha256:prov");
+        expect(args).toContain("INFLEXA_BASE_IMAGE_DIGEST=sha256:base");
+        expect(args).toContain("--cap-add");
+        expect(args[args.indexOf("--cap-add") + 1]).toBe("NET_ADMIN");
+        // The store mounts read-write, the pristine snapshot and the script read-only.
+        expect(args).toContain("/store/root:/mnt/libs");
+        expect(args).toContain("/scratch/src:/work/src:ro");
+        expect(args).toContain("/scratch/build.sh:/work/build.sh:ro");
+        expect(args).toContain("--report");
+        expect(args[args.indexOf("--report") + 1]).toBe("/mnt/libs/.inflexa-download/source-1.json");
+        expect(args).toContain("--snapshot");
+        expect(args[args.indexOf("--snapshot") + 1]).toBe("/work/src");
+        expect(args).toContain("--script");
+        expect(args[args.indexOf("--script") + 1]).toBe("/work/build.sh");
+        expect(args).toContain("--git-url");
+        expect(args[args.indexOf("--git-url") + 1]).toBe("https://github.com/tacazares/SeedMatchR");
+        expect(args).toContain("--commit");
+        expect(args).toContain("--apt-snapshot-date");
+        expect(args[args.indexOf("--apt-snapshot-date") + 1]).toBe("2026-02-14");
+        // Each apt package rides as its own repeat of the flag.
+        expect(args.filter((arg) => arg === "--apt-package")).toHaveLength(2);
+        expect(args.join(" ")).not.toContain("--network none");
+    });
+
+    test("a folder source names no git pair", () => {
+        const args = acquireSourceArgs(runtimes.docker, "img", {
+            storeRoot: "/store/root",
+            egressAllow: "pypi.org",
+            snapshotHost: "/scratch/src",
+            scriptHost: "/scratch/build.sh",
+            reportName: "r.json",
+            git: null,
+            aptSnapshotDate: "2026-02-14",
+            aptPackages: [],
+            imageDigests: { provisioner: "p", base: "b" },
+        });
+
+        expect(args).not.toContain("--git-url");
+        expect(args).not.toContain("--commit");
+    });
+});
+
+describe("flySourceBuild", () => {
+    const ROOT_DIR = "seedmatchr-2.0.0-0000000000src01";
+
+    /** A runner that writes one source report with the staged pool directories and markers. */
+    function sourceRunner(outcome: Record<string, unknown>, nodes: Record<string, unknown>): SourceBuildRunner {
+        return async (run) => {
+            for (const dir of Object.keys(nodes)) {
+                const home = join(run.storeRoot, "store", dir);
+                mkdirSync(join(home, "SeedMatchR"), { recursive: true });
+                writeFileSync(join(home, "SeedMatchR", ".inflexa-pin"), `${outcome["pin"] ?? "SeedMatchR==2.0.0"}\n`);
+                writeFileSync(join(home, "SeedMatchR", ".inflexa-hash"), `${"a".repeat(64)}\n`);
+            }
+            writeFileSync(
+                join(run.storeRoot, run.reportName),
+                `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:SeedMatchR==2.0.0@git:2fc0c4f6", ...outcome }], nodes }, null, 2)}\n`,
+            );
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+    }
+
+    const params = {
+        storeRoot: "",
+        analysisId: null as string | null,
+        snapshotHost: "/scratch/src",
+        scriptHost: "/scratch/build.sh",
+        egressAllow: "github.com,pypi.org",
+        git: { url: "https://github.com/tacazares/SeedMatchR", commit: "2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a" },
+        pinQualifier: "@git:2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a",
+        sourceSpelling: "SeedMatchR",
+        aptSnapshotDate: "20260214T093000Z",
+        aptPackages: ["libcurl4-openssl-dev"],
+        imageDigests: { provisioner: "sha256:prov", base: "sha256:base" },
+    };
+
+    const GREEN_OUTCOME = {
+        outcome: "source",
+        pin: "SeedMatchR==2.0.0@git:2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a",
+        ecosystem: "r",
+        name: "SeedMatchR",
+        store_dir: ROOT_DIR,
+        store_dirs: [ROOT_DIR],
+    };
+
+    test("a source report parses through the acquire schema with its pin and store directories", () => {
+        const parsed = acquireReportSchema.safeParse({
+            schema: 1,
+            outcomes: [{ spec: "r:SeedMatchR==2.0.0@git:2fc0c4f", ...GREEN_OUTCOME, installed: ["SeedMatchR==2.0.0@git:2fc0c4f"], reused: [] }],
+            nodes: {},
+        });
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.data?.outcomes[0]).toMatchObject({ outcome: "source", pin: GREEN_OUTCOME.pin, ecosystem: "r", store_dir: ROOT_DIR });
+    });
+
+    test("a green clean run lands in the pool and the graph, and its success row is noise", async () => {
+        const root = tempStore();
+        const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
+
+        const flown = await flySourceBuild(
+            { ...params, storeRoot: root },
+            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]) },
+        );
+
+        expect(flown).toEqual({ kind: "committed", pin: GREEN_OUTCOME.pin, storeDir: ROOT_DIR, storeDirs: [ROOT_DIR] });
+        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown>; by_name: { r: Record<string, string[]> } };
+        expect(graph.nodes[ROOT_DIR]).toBeDefined();
+        expect(graph.by_name.r["SeedMatchR"]).toEqual([ROOT_DIR]);
+        expect(readStoreFlights()).toEqual([]);
+    });
+
+    test("a red link rule advertises nothing and settles a failed row that names the phase and the store directory", async () => {
+        const root = tempStore();
+        const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
+
+        const flown = await flySourceBuild(
+            { ...params, storeRoot: root },
+            {
+                run: sourceRunner(GREEN_OUTCOME, nodes),
+                loadCheck: async (check) =>
+                    ok({
+                        code: 1,
+                        stdout: JSON.stringify({ results: [{ package: ROOT_DIR, track: "r", ok: false, error: "links a library the image does not carry: libfoo.so.1 (linked by /work/src/SeedMatchR/libs/SeedMatchR.so)" }] }),
+                        stderr: "",
+                    }),
+            },
+        );
+
+        expect(flown.kind).toBe("failed");
+        if (flown.kind === "failed") expect(flown.reason).toContain("libfoo.so.1");
+        // No advertised state: the graph holds no node, and the pool bytes stay for the debris pass.
+        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown> };
+        expect(graph.nodes[ROOT_DIR]).toBeUndefined();
+        expect(existsSync(join(root, "store", ROOT_DIR))).toBe(true);
+        const rows = readStoreFlights();
+        expect(rows).toHaveLength(1);
+        // The row is keyed by the qualified source the session knew before the
+        // launch — the run resolves the metadata version only after it built.
+        expect(rows[0]?.row.id).toBe(`any::SeedMatchR::@git:${"2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a"}`);
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(rows[0]?.row.message).toStartWith("load_check: ");
+        expect(rows[0]?.row.message).toContain(ROOT_DIR);
+    });
+
+    test("a refusal of the run itself settles the claimed row failed, because the claim preceded the launch", async () => {
+        const root = tempStore();
+        const refusing: SourceBuildRunner = async (run) => {
+            writeFileSync(
+                join(run.storeRoot, run.reportName),
+                `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:?", outcome: "refused", reason: "the build script exited non-zero (exit 2)." }], nodes: {} })}\n`,
+            );
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+
+        const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: refusing });
+
+        expect(flown).toEqual({ kind: "failed", reason: "resolve: the build script exited non-zero (exit 2)." });
+        const rows = readStoreFlights();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(rows[0]?.row.message).toStartWith("resolve: ");
+    });
+
+    test("a claim another process owns refuses to run, joined, and no container starts", async () => {
+        const root = tempStore();
+        // The live row of another holder: the same qualified source, claimed by a pid this process is not.
+        claimStoreFlight({
+            id: "any::SeedMatchR::@git:2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a",
+            ecosystem: null,
+            spelling: "SeedMatchR",
+            specifier: "@git:2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a",
+            holderPid: 999999,
+        }).unwrapOr(false);
+        let started = 0;
+        const runner: SourceBuildRunner = async () => {
+            started += 1;
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+
+        const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: runner });
+
+        expect(flown.kind).toBe("failed");
+        if (flown.kind === "failed") {
+            expect(flown.reason).toContain("another process already flies");
+            expect(flown.reason).toContain("@git:2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a");
+        }
+        expect(started).toBe(0);
+    });
+
+    test("a farm-extension failure does not fail the flight", async () => {
+        const root = tempStore();
+        // The farm exists, but the catalog template is gone, thus the extension
+        // refuses. The flight still commits: the packages are in the pool and the graph.
+        const analysisId = randomUUIDv7();
+        mkdirSync(join(root, "farms", analysisId), { recursive: true });
+        rmSync(join(root, "farms", "catalog"), { recursive: true, force: true });
+        const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
+        const lines: string[] = [];
+
+        const flown = await flySourceBuild(
+            { ...params, storeRoot: root, analysisId },
+            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]), onProgress: (line) => lines.push(line) },
+        );
+
+        expect(flown.kind).toBe("committed");
+        expect(lines.some((line) => line.includes("was not extended"))).toBe(true);
+        expect(readStoreFlights()).toEqual([]);
+    });
+
+    test("a source specifier is one that carries a qualifier", () => {
+        expect(isSourceFlightSpecifier("==2.0.0@git:2fc0c4f6")).toBe(true);
+        expect(isSourceFlightSpecifier("==0.1.0@tree:e5e5e5e5e5e5e5e5")).toBe(true);
+        expect(isSourceFlightSpecifier("==2.0.0")).toBe(false);
+        expect(isSourceFlightSpecifier("")).toBe(false);
     });
 });

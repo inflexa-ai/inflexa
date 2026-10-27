@@ -98,6 +98,22 @@ class StoreTestCase(unittest.TestCase):
         provision.RUN_TOKEN = ""
         provision.STORE.mkdir(parents=True, exist_ok=True)
         provision.FARMS.mkdir(parents=True, exist_ok=True)
+        # The apt pin of `acquire-source` writes real files, thus every test
+        # runs it against a fixture root: an os-release that names the suite,
+        # the live sources the pin replaces, and none of the host's `/etc`.
+        self.apt_root = self.root / "aptroot"
+        self.apt_sources = self.apt_root / "etc" / "apt" / "sources.list.d"
+        self.apt_sources.mkdir(parents=True)
+        (self.apt_root / "etc" / "os-release").write_text(
+            'ID=ubuntu\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n')
+        (self.apt_root / "etc" / "apt" / "sources.list").write_text(
+            "deb http://archive.ubuntu.com/ubuntu noble main\n")
+        (self.apt_sources / "ubuntu.sources").write_text(
+            "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu/\n"
+            "Suites: noble noble-updates\nComponents: main universe\n")
+        self._apt_env = unittest.mock.patch.dict(
+            os.environ, {"INFLEXA_APT_CONF_ROOT": str(self.apt_root)})
+        self._apt_env.start()
 
         # Canned outputs the fake subprocess.run produces for the tool it
         # stands in for; a test overrides these before exercising the path.
@@ -122,11 +138,32 @@ class StoreTestCase(unittest.TestCase):
         self.cache_events: dict[str, list[tuple[str, str]]] = {}
         # The argv of every external tool the run shelled out to.
         self.calls: list[list[str]] = []
+        # Canned outputs of the source-build probes: the `--version` first line
+        # of each build tool, the R and pak runtime versions, and the resolved
+        # dpkg version of an apt package.
+        self.tool_versions = {
+            "gcc": "gcc (Ubuntu 13.2.0-23ubuntu4) 13.2.0\n",
+            "g++": "g++ (Ubuntu 13.2.0-23ubuntu4) 13.2.0\n",
+            "gfortran": "GNU Fortran (Ubuntu 13.2.0-23ubuntu4) 13.2.0\n",
+            "cmake": "cmake version 3.28.3\n",
+            "uv": "uv 0.12.5\n",
+        }
+        self.r_version = "4.6.0\n"
+        self.pak_version = "1.1.0\n"
+        self.dpkg_versions: dict[str, str] = {}
+        # The pak lock a resolve of a source tree answers, keyed by the ref.
+        self.pak_locks: dict[str, dict] = {}
+        # The Depends/Imports fields emit_deps reads, keyed by the inner path.
+        self.dcf_fields: dict[str, str] = {}
+        # The tree a source-root wheel install lands (uv install with a wheel
+        # path and no `-r` file); `install_tree` serves the `-r` installs.
+        self.root_install_tree: dict[str, str] = {}
 
         self._orig_run = provision.subprocess.run
         provision.subprocess.run = self._fake_run
 
     def tearDown(self):
+        self._apt_env.stop()
         provision.subprocess.run = self._orig_run
         shutil.rmtree(self.root, ignore_errors=True)
 
@@ -138,6 +175,18 @@ class StoreTestCase(unittest.TestCase):
         prog = argv[0]
         if prog == "chmod":
             return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if prog == "bash":
+            # The approved build script runs for real: it only copies fixture
+            # trees around the temp store.
+            return self._orig_run(cmd, *args, **kwargs)
+        if prog in self.tool_versions and "--version" in argv:
+            return SimpleNamespace(returncode=0, stdout=self.tool_versions[prog], stderr="")
+        if prog == "Rscript":
+            return self._fake_rscript(argv, kwargs)
+        if prog == "dpkg-query":
+            return SimpleNamespace(returncode=0,
+                                   stdout=self.dpkg_versions.get(argv[-1], "1.2.3-1build2"),
+                                   stderr="")
         if prog == "uv" and "compile" in argv:
             req_text = Path(argv[-3]).read_text().strip()
             if req_text in self.compile_failures:
@@ -151,7 +200,8 @@ class StoreTestCase(unittest.TestCase):
         if prog == "uv" and "install" in argv:
             if self.uv_rc:
                 return SimpleNamespace(returncode=self.uv_rc, stdout="", stderr=self.uv_stderr)
-            self._write_tree(Path(argv[argv.index("--target") + 1]), self.install_tree)
+            tree = self.root_install_tree if "-r" not in argv else self.install_tree
+            self._write_tree(Path(argv[argv.index("--target") + 1]), tree)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if prog == provision.PYTHON:
             if argv[1:2] == ["-c"] and "platform" in argv[2]:
@@ -183,6 +233,37 @@ class StoreTestCase(unittest.TestCase):
         (where / "R").mkdir(exist_ok=True)
         (where / "R" / "code.R").write_text("f <- function() 1L\n")
         return where
+
+    def _fake_rscript(self, argv: list[str], kwargs: dict) -> SimpleNamespace:
+        """The R helpers: the emitter's read.dcf read, the acquire_r.R modes,
+        and the two version probes of the build record."""
+        if "read.dcf" in argv[-1]:
+            asked = (kwargs.get("input") or "").splitlines()
+            lines = "".join(f"{path}\t{self.dcf_fields.get(Path(path).name, '')}\n"
+                            for path in asked)
+            return SimpleNamespace(returncode=0, stdout=lines, stderr="")
+        if len(argv) > 2 and argv[1].endswith("acquire_r.R"):
+            mode = argv[2]
+            if mode == "resolve":
+                ref, lock_out = argv[3], Path(argv[4])
+                if ref not in self.pak_locks:
+                    return SimpleNamespace(returncode=1, stdout="",
+                                           stderr=f"pak cannot resolve {ref}")
+                lock_out.write_text(json.dumps(self.pak_locks[ref]) + "\n")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if mode == "install":
+                lock = json.loads(Path(argv[3]).read_text())
+                lib = Path(argv[4])
+                lib.mkdir(parents=True, exist_ok=True)
+                for entry in lock.get("packages", []):
+                    self._make_r_pkg(lib / entry["package"], entry["package"], entry["version"])
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=1, stdout="", stderr=f"unknown mode {mode}")
+        if "getRversion" in " ".join(argv):
+            return SimpleNamespace(returncode=0, stdout=self.r_version, stderr="")
+        if "packageVersion" in " ".join(argv):
+            return SimpleNamespace(returncode=0, stdout=self.pak_version, stderr="")
+        raise AssertionError(f"test triggered an unexpected Rscript call: {argv!r}")
 
 
 FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
@@ -2135,6 +2216,481 @@ class StageRSubtreesTests(StoreTestCase):
         self.assertEqual({sub: [name for name, _ in pkgs] for sub, pkgs in stored.items()},
                          {"cran": [], "bioconductor": ["limma"], "github": []})
         self.assertEqual([e["name"] for e in packages], ["limma"])
+
+
+class SourcePinQualifierTests(StoreTestCase):
+    """The qualifier rides the pin marker alone; the directory name keeps the
+    bare version, and the marker match is exact in both directions."""
+
+    SHA = "2fc0c4f7d2be974cd8fa4f2a55a71c1a63d38b1e"
+
+    @staticmethod
+    def _held(name: str, version: str, marker: str, tag: str = "0" * 16) -> Path:
+        store_dir = provision.STORE / f"{name}-{version}-{tag}"
+        (store_dir / name).mkdir(parents=True)
+        (store_dir / name / "DESCRIPTION").write_text(
+            f"Package: {name}\nVersion: {version}\n")
+        (store_dir / name / provision.PIN_MARKER).write_text(marker + "\n")
+        return store_dir
+
+    def test_an_index_pin_never_matches_a_source_build(self):
+        self._held("foo", "1.0", f"foo==1.0@git:{self.SHA}")
+
+        self.assertIsNone(provision.find_stored("foo==1.0", "python"))
+        self.assertEqual(provision.find_stored(f"foo==1.0@git:{self.SHA}", "python").name,
+                         "foo-1.0-0000000000000000")
+
+    def test_a_source_pin_never_matches_an_index_build(self):
+        self._held("foo", "1.0", "foo==1.0")
+
+        self.assertEqual(provision.find_stored("foo==1.0", "python").name,
+                         "foo-1.0-0000000000000000")
+        self.assertIsNone(provision.find_stored(f"foo==1.0@git:{self.SHA}", "python"))
+
+    def test_two_qualifiers_of_one_version_globe_together_and_match_apart(self):
+        # The directory keeps the bare version, thus the glob of either
+        # qualified pin reaches both directories and the marker text decides.
+        self._held("foo", "1.0", f"foo==1.0@git:{self.SHA}", tag="a" * 16)
+        self._held("foo", "1.0", "foo==1.0@tree:9b1deb4d3b7d4bad", tag="b" * 16)
+
+        git = provision.find_stored(f"foo==1.0@git:{self.SHA}", "python")
+        tree = provision.find_stored("foo==1.0@tree:9b1deb4d3b7d4bad", "python")
+        self.assertNotEqual(git, tree)
+        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 2)
+
+
+class AcquireSourceRunTests(StoreTestCase):
+    """The acquire-source run: the script contract, the dependency resolve,
+    the qualified pin, the staged nodes, and the report. The build script runs
+    for real over fixture trees; every tool it would call is the fake above."""
+
+    SHA = "2fc0c4f7d2be974cd8fa4f2a55a71c1a63d38b1e"
+
+    def _snapshot(self, name: str = "src") -> Path:
+        snapshot = self.root / "snapshot" / name
+        snapshot.mkdir(parents=True)
+        return snapshot
+
+    def _r_source(self, imports: str = "Rcpp, utils", built_name: str | None = None,
+                  name: str = "SeedMatchR", version: str = "2.0.0") -> Path:
+        snapshot = self._snapshot("r")
+        pkg = self._make_r_pkg(snapshot / "built" / (built_name or name), name, version)
+        (pkg / "DESCRIPTION").write_text(
+            f"Package: {name}\nVersion: {version}\nTitle: t\nImports: {imports}\n")
+        # The root DESCRIPTION is the tree pak resolves, and the mark the run
+        # reads to know the R track before the script runs.
+        (snapshot / "DESCRIPTION").write_text(
+            f"Package: {name}\nVersion: {version}\nTitle: t\nImports: {imports}\n")
+        self.dcf_fields = {name: imports}
+        self.pak_locks[str(snapshot)] = {
+            "packages": [{"package": "Rcpp", "version": "1.0.13"},
+                         {"package": name, "version": version}]}
+        return snapshot
+
+    def _script(self, text: str) -> Path:
+        script = self.root / "build.sh"
+        script.write_text(text)
+        return script
+
+    def _copy_script(self, snapshot: Path, out: Path, *names: str) -> Path:
+        lines = ["#!/bin/sh", "set -e", f'mkdir -p "{out}"']
+        lines += [f'cp -a "{snapshot}/built/{n}" "{out}/{n}"' for n in names]
+        return self._script("\n".join(lines) + "\n")
+
+    def _acquire_source(self, snapshot: Path, script: Path, out: Path, **kw) -> tuple[int, dict]:
+        report = self.root / "report.json"
+        args = SimpleNamespace(
+            report=str(report), snapshot=str(snapshot), script=str(script), output=str(out),
+            git_url=kw.get("git_url"), commit=kw.get("commit"),
+            apt_snapshot_date=kw.get("apt_snapshot_date"),
+            apt_package=kw.get("apt_package", []))
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = provision.cmd_acquire_source(args)
+        return code, json.loads(report.read_text())
+
+    def _git_source(self, snapshot: Path, script: Path, out: Path) -> dict:
+        _code, report = self._acquire_source(
+            snapshot, script, out,
+            git_url="https://github.com/tacazares/SeedMatchR", commit=self.SHA,
+            apt_snapshot_date="20260901T093000Z", apt_package=["libcurl4-openssl-dev"])
+        return report
+    # --- the clean paths -----------------------------------------------------
+
+    def test_the_clean_r_path_stores_the_root_and_resolves_its_dependencies(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        report = self._git_source(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        pin = f"SeedMatchR==2.0.0@git:{self.SHA}"
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["pin"], pin)
+        # The directory keeps the BARE version: emit_deps reads the node
+        # version from the directory name, and the qualifier lives on the pin.
+        self.assertRegex(outcome["store_dir"], r"^seedmatchr-2\.0\.0-[0-9a-f]{16}$")
+        root = provision.STORE / outcome["store_dir"]
+        self.assertEqual((root / "SeedMatchR" / provision.PIN_MARKER).read_text().strip(), pin)
+        # The dependency resolved through the pak lockfile of the snapshot and
+        # stored as an index package: its marker carries no qualifier.
+        rcpp = next(iter(provision.STORE.glob("rcpp-1.0.13-*")))
+        self.assertEqual((rcpp / "Rcpp" / provision.PIN_MARKER).read_text().strip(),
+                         "Rcpp==1.0.13")
+        # The staged nodes cover the root and the dependency, and the root's
+        # edge lands on the dependency (utils belongs to the image).
+        root_node = report["nodes"][root.name]
+        self.assertEqual(root_node["edges"], [rcpp.name])
+        self.assertEqual(sorted(report["nodes"]), sorted([root.name, rcpp.name]))
+        self.assertEqual(sorted(outcome["installed"]), sorted([pin, "Rcpp==1.0.13"]))
+        # The two-phase contract: no advertised state before the host commit.
+        self.assertFalse((provision.LIBS / "deps.json").exists())
+        self.assertEqual(sorted(p.name for p in provision.STORE.glob(".staging*")), [])
+
+    def test_the_clean_python_path_resolves_the_wheel_requirements_hash_pinned(self):
+        snapshot = self._snapshot("py")
+        built = snapshot / "built"
+        built.mkdir()
+        (built / "demo-1.0-py3-none-any.whl").write_bytes(b"PK\x03\x04not a real wheel\n")
+        self.root_install_tree = {
+            "demo/__init__.py": "x = 1\n",
+            "demo-1.0.dist-info/METADATA":
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\nRequires-Dist: foo\n",
+            "demo-1.0.dist-info/RECORD": "demo/__init__.py,,\n"}
+        self.compile_by_input = {"foo": FOO_1}
+        self.install_tree = dict(FOO_1_TREE)
+        out = self.root / "out"
+
+        _code, report = self._acquire_source(
+            snapshot, self._copy_script(snapshot, out, "demo-1.0-py3-none-any.whl"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "source")
+        # A folder source qualifies its pin with the tree hash of the snapshot.
+        tree = provision.tree_hash(snapshot)
+        self.assertEqual(outcome["pin"], f"demo==1.0@tree:{tree[:16]}")
+        self.assertRegex(outcome["store_dir"], r"^demo-1\.0-[0-9a-f]{16}$")
+        root = provision.STORE / outcome["store_dir"]
+        self.assertEqual((root / provision.PIN_MARKER).read_text().strip(), outcome["pin"])
+        # The dependency installed through the hash-pinned index path.
+        dep = next(iter(provision.STORE.glob("foo-1.0-*")))
+        installs = [argv for argv in self.calls
+                    if argv[0] == "uv" and "install" in argv and "-r" in argv]
+        self.assertTrue(installs)
+        self.assertIn("--require-hashes", installs[0])
+        self.assertEqual(report["nodes"][root.name]["edges"], [dep.name])
+
+    def test_the_run_pins_apt_to_the_dated_snapshot_before_the_script(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        pinned = self.apt_sources / provision.APT_SOURCES_FILE
+        # The script refuses to run unless the pin already landed, thus the
+        # pass proves the order, not only the file.
+        script = self._script(
+            f'#!/bin/sh\nset -e\ntest -f "{pinned}"\n'
+            f'mkdir -p "{out}"\ncp -a "{snapshot}/built/SeedMatchR" "{out}/SeedMatchR"\n')
+
+        report = self._git_source(snapshot, script, out)
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        text = pinned.read_text()
+        self.assertIn(f"URIs: {provision.SNAPSHOT_ARCHIVE}/20260901T093000Z/", text)
+        self.assertIn("Suites: noble noble-updates noble-backports noble-security", text)
+        self.assertIn("Check-Valid-Until: no", text)
+        # The live-archive sources the image shipped are gone, thus a plain
+        # `apt-get update` obeys the pin alone.
+        self.assertEqual(list(self.apt_sources.iterdir()), [pinned])
+        self.assertFalse((self.apt_root / "etc" / "apt" / "sources.list").exists())
+
+    def test_the_r_dependencies_install_before_the_script_and_the_record_reads_after_it(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+
+        report = self._git_source(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        argvs = [argv for argv in self.calls if argv[0] in ("Rscript", "bash", "dpkg-query")]
+        dep_install = next(i for i, argv in enumerate(argvs)
+                           if argv[0] == "Rscript" and "install" in argv)
+        script_at = next(i for i, argv in enumerate(argvs) if argv[0] == "bash")
+        record_at = next(i for i, argv in enumerate(argvs) if argv[0] == "dpkg-query")
+        self.assertLess(dep_install, script_at,
+                        "the imports of the snapshot tree install before the script runs")
+        self.assertLess(script_at, record_at,
+                        "the build record reads dpkg only after the script installed")
+
+    def test_the_script_runs_with_the_staged_r_library_alive_on_its_library_path(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        seen = self.root / "r-libs-user"
+        # The script itself is the probe: it records the library path it ran
+        # under, and it fails unless Rcpp is loadable in that library while
+        # the script still runs.
+        script = self._script(
+            "#!/bin/sh\nset -e\n"
+            f'printf \'%s\' "$R_LIBS_USER" > "{seen}"\n'
+            'test -f "$R_LIBS_USER/Rcpp/DESCRIPTION"\n'
+            f'mkdir -p "{out}"\ncp -a "{snapshot}/built/SeedMatchR" "{out}/SeedMatchR"\n')
+
+        first = self._git_source(snapshot, script, out)["outcomes"][0]
+
+        self.assertEqual(first["outcome"], "source")
+        staging = provision.staging_dir("r") / "source"
+        self.assertEqual(seen.read_text(), str(staging),
+                         "the script environment carries the staged library path")
+        # The run removed the library only after the script and the record.
+        self.assertFalse(staging.exists())
+
+        # The second run holds Rcpp in the pool, thus no fresh install happens:
+        # the staged library carries it as a link to the store package, and the
+        # script still finds its imports.
+        second = self._git_source(snapshot, script, out)["outcomes"][0]
+
+        self.assertEqual(second["outcome"], "source")
+        staging = provision.staging_dir("r") / "source"
+        self.assertEqual(seen.read_text(), str(staging))
+        self.assertFalse(staging.exists())
+
+    def test_the_index_build_of_the_root_name_joins_no_stage(self):
+        snapshot = self._r_source()
+        held = provision.STORE / "seedmatchr-2.0.0-1111111111111111"
+        (held / "SeedMatchR").mkdir(parents=True)
+        (held / "SeedMatchR" / "DESCRIPTION").write_text("Package: SeedMatchR\nVersion: 2.0.0\n")
+        (held / "SeedMatchR" / provision.PIN_MARKER).write_text("SeedMatchR==2.0.0\n")
+        out = self.root / "out"
+
+        report = self._git_source(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "source")
+        self.assertNotIn(held.name, outcome["store_dirs"])
+        pins = set(outcome["installed"]) | set(outcome["reused"])
+        self.assertNotIn("SeedMatchR==2.0.0", pins,
+                         "the index build of the root's own name must join no stage")
+
+    # --- the refusals ---------------------------------------------------------
+
+    def test_a_script_that_builds_nothing_refuses_and_names_the_artifact(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._script(f'#!/bin/sh\nset -e\nmkdir -p "{out}"\n')
+
+        report = self._git_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("no artifact", outcome["reason"])
+        self.assertEqual(report["nodes"], {})
+        self.assertEqual(list(provision.STORE.iterdir()), [])
+
+    def test_a_script_that_installs_dependencies_refuses_the_extra_artifacts(self):
+        snapshot = self._r_source()
+        self._make_r_pkg(snapshot / "built" / "Rcpp", "Rcpp", "1.0.13")
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR", "Rcpp"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("more than the one root artifact", outcome["reason"])
+        self.assertIn("SeedMatchR", outcome["reason"])
+        self.assertIn("Rcpp", outcome["reason"])
+
+    def test_a_dangling_edge_refuses_and_names_the_edge(self):
+        snapshot = self._r_source(imports="nowheremuch")
+        self.pak_locks[str(snapshot)] = {
+            "packages": [{"package": "SeedMatchR", "version": "2.0.0"}]}
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("nowheremuch", outcome["reason"])
+        self.assertIn("->", outcome["reason"])
+        self.assertEqual(report["nodes"], {})
+        self.assertFalse((provision.LIBS / "deps.json").exists())
+
+    def test_a_failing_script_refuses_with_its_own_output(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._script('#!/bin/sh\necho "cc: error: no such source file" >&2\nexit 3\n')
+
+        report = self._git_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("exited non-zero", outcome["reason"])
+        self.assertIn("no such source file", outcome["reason"])
+        self.assertEqual(list(provision.STORE.iterdir()), [])
+
+    def test_an_artifact_that_is_neither_track_refuses(self):
+        snapshot = self._snapshot("junk")
+        (snapshot / "built").mkdir()
+        (snapshot / "built" / "README").write_text("not a package\n")
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "README"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("neither an installed R package", outcome["reason"])
+
+    # --- the identity rule -----------------------------------------------------
+
+    def test_the_r_identity_comes_from_the_description(self):
+        # The artifact directory and the repository spell their own names; the
+        # DESCRIPTION alone names the package and its version.
+        snapshot = self._r_source(built_name="fork-built-pkg")
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "fork-built-pkg"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "source")
+        self.assertEqual(outcome["name"], "SeedMatchR")
+        self.assertRegex(outcome["store_dir"], r"^seedmatchr-2\.0\.0-[0-9a-f]{16}$")
+        self.assertTrue((provision.STORE / outcome["store_dir"] / "SeedMatchR").is_dir())
+
+    def test_the_python_identity_comes_from_the_dist_info(self):
+        snapshot = self._snapshot("py")
+        built = snapshot / "built"
+        built.mkdir()
+        # The wheel file name spells a different name and version than the
+        # metadata; the metadata wins.
+        (built / "fork-wheel-9.9-py3-none-any.whl").write_bytes(b"PK\x03\x04\n")
+        self.root_install_tree = {
+            "demo/__init__.py": "x = 1\n",
+            "demo-1.0.dist-info/METADATA":
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"}
+        out = self.root / "out"
+
+        _code, report = self._acquire_source(
+            snapshot, self._copy_script(snapshot, out, "fork-wheel-9.9-py3-none-any.whl"),
+            out, git_url="https://github.com/x/demo", commit=self.SHA)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "source")
+        self.assertEqual(outcome["pin"], f"demo==1.0@git:{self.SHA}")
+        self.assertTrue(outcome["store_dir"].startswith("demo-1.0-"))
+
+    def test_a_repeat_source_build_reuses_its_own_directory(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._copy_script(snapshot, out, "SeedMatchR")
+
+        first = self._git_source(snapshot, script, out)["outcomes"][0]
+        second = self._git_source(snapshot, script, out)["outcomes"][0]
+
+        self.assertEqual(first["outcome"], "source")
+        self.assertEqual(second["outcome"], "source")
+        self.assertEqual(second["store_dir"], first["store_dir"])
+        self.assertIn(first["pin"], second["reused"])
+        self.assertNotIn(first["pin"], second["installed"])
+        self.assertEqual(len(list(provision.STORE.glob("seedmatchr-2.0.0-*"))), 1)
+        self.assertEqual(len(list(provision.STORE.glob("rcpp-1.0.13-*"))), 1)
+
+
+class BuildRecordTests(StoreTestCase):
+    """The build record: the provenance that replaces the index hash of a
+    source-built root, beside the pin marker and out of every hash and link."""
+
+    SHA = "2fc0c4f7d2be974cd8fa4f2a55a71c1a63d38b1e"
+
+    def _run_r_source(self, **env) -> tuple[Path, Path, dict]:
+        snapshot = self.root / "snapshot"
+        pkg = self._make_r_pkg(snapshot / "built" / "SeedMatchR", "SeedMatchR", "2.0.0")
+        (pkg / "DESCRIPTION").write_text(
+            "Package: SeedMatchR\nVersion: 2.0.0\nTitle: t\n")
+        self.pak_locks[str(snapshot)] = {"packages": []}
+        out = self.root / "out"
+        script = self.root / "build.sh"
+        script.write_text(f'#!/bin/sh\nset -e\nmkdir -p "{out}"\n'
+                          f'cp -a "{snapshot}/built/SeedMatchR" "{out}/SeedMatchR"\n')
+        report = self.root / "report.json"
+        args = SimpleNamespace(
+            report=str(report), snapshot=str(snapshot), script=str(script), output=str(out),
+            git_url="https://github.com/tacazares/SeedMatchR", commit=self.SHA,
+            apt_snapshot_date="2026-09-01", apt_package=["libcurl4-openssl-dev"])
+        with unittest.mock.patch.dict(os.environ, env), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_acquire_source(args), 0)
+        root = next(iter(provision.STORE.glob("seedmatchr-2.0.0-*")))
+        record_path = root / "SeedMatchR" / provision.BUILD_MARKER
+        return root, script, json.loads(record_path.read_text())
+
+    def test_the_record_holds_the_provenance_and_no_credential(self):
+        root, script, record = self._run_r_source(
+            GITHUB_PAT="ghp_secret_value_never_in_a_record",
+            **{provision.PROVISIONER_DIGEST_ENV: "sha256:prov",
+               provision.BASE_DIGEST_ENV: "sha256:base"})
+
+        self.assertEqual(record["schema"], 1)
+        self.assertEqual(record["source"],
+                         {"url": "https://github.com/tacazares/SeedMatchR",
+                          "commit": self.SHA})
+        self.assertEqual(record["images"], {"provisioner": "sha256:prov", "base": "sha256:base"})
+        self.assertEqual(record["apt"]["snapshot_date"], "2026-09-01")
+        self.assertEqual(record["apt"]["packages"], {"libcurl4-openssl-dev": "1.2.3-1build2"})
+        self.assertEqual(record["tools"]["R"], "4.6.0")
+        self.assertEqual(record["tools"]["Python"], "3.12.0")
+        self.assertEqual(record["tools"]["pak"], "1.1.0")
+        for tool in ("gcc", "g++", "gfortran", "cmake", "uv"):
+            self.assertTrue(record["tools"][tool], tool)
+        self.assertEqual(record["script"], script.read_text())
+        self.assertEqual(record["script_sha256"], provision.script_sha256(script))
+        self.assertIn(record["arch"], ("amd64", "arm64"))
+        self.assertNotIn("ghp_secret_value_never_in_a_record",
+                         (root / "SeedMatchR" / provision.BUILD_MARKER).read_text())
+
+        # Out of the content hash: the marker was taken before the record
+        # wrote beside it, and a fresh hash over the published tree (record
+        # present) still equals it.
+        marker = (root / "SeedMatchR" / provision.HASH_MARKER).read_text().strip()
+        self.assertEqual(provision.tree_hash(root), marker)
+
+    def test_the_record_of_a_folder_holds_the_tree_hash(self):
+        snapshot = self.root / "snapshot"
+        built = snapshot / "built"
+        built.mkdir(parents=True)
+        (built / "demo-1.0-py3-none-any.whl").write_bytes(b"PK\x03\x04\n")
+        self.root_install_tree = {
+            "demo/__init__.py": "x = 1\n",
+            "demo-1.0.dist-info/METADATA":
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"}
+        out = self.root / "out"
+        script = self.root / "build.sh"
+        script.write_text(f'#!/bin/sh\nset -e\nmkdir -p "{out}"\n'
+                          f'cp "{built}/demo-1.0-py3-none-any.whl" "{out}/"\n')
+        report = self.root / "report.json"
+        args = SimpleNamespace(report=str(report), snapshot=str(snapshot),
+                               script=str(script), output=str(out),
+                               git_url=None, commit=None,
+                               apt_snapshot_date=None, apt_package=[])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_acquire_source(args), 0)
+
+        root = next(iter(provision.STORE.glob("demo-1.0-*")))
+        record = json.loads((root / provision.BUILD_MARKER).read_text())
+        # The folder hashes through the tree-hash function over the pristine
+        # copy — a full sha256, of which the pin qualifier holds the head 16.
+        self.assertEqual(record["source"]["tree_hash"], provision.tree_hash(snapshot))
+        self.assertNotIn("url", record["source"])
+        self.assertEqual((root / provision.PIN_MARKER).read_text().strip(),
+                         f"demo==1.0@tree:{record['source']['tree_hash'][:16]}")
+
+        # Out of every farm link: the python track links the content entries
+        # of the store directory, and the record is not one of them.
+        farm = provision.FARMS / "an1"
+        with contextlib.redirect_stdout(io.StringIO()):
+            provision.build_python_track(farm, [root])
+        site = farm / "python" / "site-packages"
+        self.assertTrue((site / "demo").is_symlink())
+        self.assertFalse((site / provision.BUILD_MARKER).exists())
+        self.assertEqual(provision.tree_hash(root),
+                         (root / provision.HASH_MARKER).read_text().strip())
 
 
 if __name__ == "__main__":

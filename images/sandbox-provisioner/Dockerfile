@@ -62,6 +62,15 @@ COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
 RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables nftables dnsmasq-base jags libuv1t64 libprotobuf32t64 libglpk40 \
       libglpk-dev libgmp-dev libmpfr-dev libgl1-mesa-dev libglu1-mesa-dev libprotobuf-dev protobuf-compiler
 
+# The source-build toolchain of `acquire-source`: the autotools and meson/ninja
+# that a repository's own build files expect, and patchelf for an rpath repair
+# of a built artifact. These stay on the provisioner's own line and out of
+# install-build-toolchain.sh, because the shared script's package set serves
+# every image of the family and this set serves a source build alone.
+RUN apt-get update \
+      && apt-get install -y --no-install-recommends autoconf automake libtool meson ninja-build patchelf \
+      && rm -rf /var/lib/apt/lists/*
+
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the runtime image environment expects.
 ARG UV_VERSION=0.12.5
@@ -130,5 +139,12 @@ RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
 # this label to link the new package to the repository. A linked package takes
 # the repository visibility. An unlinked package stays private.
 LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
+
+# The base the provisioner compiled against. A process in the container cannot
+# read the digest of the image it runs in, and the sandbox image id would name
+# the wrong base (the two images share the base, not the layers), thus the build
+# bakes its own base reference here and the CLI reads this label for the build
+# record's base digest.
+LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"
 
 ENTRYPOINT ["/usr/local/bin/provisioner-entrypoint.sh"]

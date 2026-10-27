@@ -113,6 +113,76 @@ export type PackageRequestOutcome =
  */
 export type ExtendAnalysisFarm = (analysisId: string, queries: readonly PackageQuery[]) => ResultAsync<readonly PackageRequestOutcome[], GateFailure>;
 
+/** The source of a build session: a git repository (an optional ref names a commit, a tag, or a branch), or a folder of the host. */
+export type BuildSource = { readonly kind: "git"; readonly url: string; readonly ref?: string } | { readonly kind: "folder"; readonly path: string };
+
+/** The plan of one build: the hosts the session egress must hold in the build phase, the apt packages it installs, and the build strategy. */
+export type BuildPlan = {
+    readonly hosts: readonly string[];
+    readonly aptPackages: readonly string[];
+    readonly strategy: string;
+};
+
+/** A started build session. */
+export type BuildSessionHandle = {
+    readonly sessionId: string;
+    /** The full commit sha the host resolved and cloned. Absent for a folder source. */
+    readonly commit?: string;
+    /** The root of the session's working copy of the source — the default working directory of each exec. */
+    readonly workingDir: string;
+    /** The fixed hosts of the source-build class — the dated Ubuntu snapshot host beside the index and pak hosts — which the session egress holds beside every host the plan names. The plan ask shows them with the plan's own hosts, because the user approves exactly what the wall will allow. */
+    readonly classHosts?: readonly string[];
+};
+
+/** One command of a build session. */
+export type BuildSessionCommand = {
+    readonly command: string;
+    /** Session id plus per-session sequence, minted by the tool: the chat path has no durable step to derive it from. */
+    readonly execId: string;
+    /** Runs as root. The default is the non-root user of the image. */
+    readonly root?: boolean;
+    /** The plan this command runs under. The realization restarts the session container under the plan's host list before the command runs. */
+    readonly plan?: BuildPlan;
+};
+
+/** The outcome of one session exec. `exitCode` is null when the exec produced no exit (a launch failure of the exec channel). */
+export type BuildExecResult = {
+    readonly execId: string;
+    readonly exitCode: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly timedOut: boolean;
+};
+
+/** The outcome of one clean run: `committed` holds the qualified pin and the store directory the run wrote; `failed` keeps the session open. */
+export type BuildCommitResult =
+    { readonly kind: "committed"; readonly pin: string; readonly storeDir: string } | { readonly kind: "failed"; readonly reason: string };
+
+/**
+ * The build-session interface of the embedder, behind the `install_from_source`
+ * conversation tool. The embedder owns the container the build runs in, the
+ * egress wall around it, and every store write — the harness drives the session
+ * call by call and writes none of these itself. `start` carries the analysis
+ * id of the conversation session the tool serves, and the commit extends the
+ * farm of that analysis.
+ *
+ * `start` begins an exploration phase: the source is cloned at the resolved
+ * commit (or the folder is copied in) before the first command, and the egress
+ * of the container holds the host of the git source alone — a folder source
+ * holds no host. A command that carries a plan moves the session to its build
+ * phase: the realization restarts the container under the plan's host list over
+ * the same tree, and a later plan restarts it again under the amended list.
+ * `commit` runs the script in one new container over the pristine snapshot, and
+ * that run alone writes the store. A `stop`, and a `commit` that answers
+ * `committed`, end the session; the realization removes the container.
+ */
+export type BuildSession = {
+    start(source: BuildSource, analysisId: string): Promise<BuildSessionHandle>;
+    exec(handle: string, command: BuildSessionCommand): Promise<BuildExecResult>;
+    commit(handle: string, script: string): Promise<BuildCommitResult>;
+    stop(handle: string): Promise<void>;
+};
+
 /**
  * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when
  * `alive` is false: true when the backend reports the machine was killed for

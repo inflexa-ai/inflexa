@@ -80,13 +80,15 @@ const TRACK_TITLES: Record<string, string> = {
     cran: "R (CRAN)",
     bioconductor: "R (Bioconductor)",
     github: "R (GitHub)",
+    source: "R (source-built)",
     node: NODE_TITLE,
 };
 
 /**
  * The ecosystem of one lock subtree. `python` gives the Python track, and
- * `cran`, `bioconductor`, and `github` give the R track — three subtrees of
- * one ecosystem, because a repository is a source and not an identity rule.
+ * `cran`, `bioconductor`, `github`, and `source` give the R track — four
+ * subtrees of one ecosystem, because a repository, a release, and a source
+ * build are sources and not identity rules.
  *
  * A subtree that names neither, such as `node`, carries no track: its packages
  * are not in the pool of the two ecosystems, and a `names` lookup matches them
@@ -94,7 +96,7 @@ const TRACK_TITLES: Record<string, string> = {
  */
 export function trackOfLockSubtree(subtree: string): Track | undefined {
     if (subtree === "python") return "python";
-    return subtree === "cran" || subtree === "bioconductor" || subtree === "github" ? "r" : undefined;
+    return subtree === "cran" || subtree === "bioconductor" || subtree === "github" || subtree === "source" ? "r" : undefined;
 }
 
 /**

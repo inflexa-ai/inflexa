@@ -12,6 +12,7 @@ import { commitStagedNodes } from "./store_flight.ts";
 import {
     closureOf,
     composeFullFarm,
+    describeFarmCompositionError,
     extendFarm,
     linkPackagesIntoFarm,
     makeEmptyFarm,
@@ -1264,6 +1265,143 @@ describe("a chat-only analysis", () => {
 
         // The deletion of the analysis takes the farm away again.
         (await removeAnalysisFarm({ storeRoot: root, analysisId }))._unsafeUnwrap();
+        expect(readdirSync(join(root, "farms"))).toEqual(["catalog"]);
+    });
+});
+
+// --- A source-built package --------------------------------------------------------
+
+describe("a source-built package", () => {
+    /** The fork of the first acceptance case, and its CRAN twin of one name and version. */
+    const SEED_COMMIT = "2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a";
+    const SEED_PIN = `SeedMatchR==2.0.0@git:${SEED_COMMIT}`;
+    const SEEDMATCHR_CRAN = "seedmatchr-2.0.0-0000000000cran1";
+    const SEEDMATCHR_SRC = "seedmatchr-2.0.0-0000000000src1";
+    const PYSRC = "pysrc-1.0-0000000000pysr01";
+
+    /** The fixture store, plus one source-built R pair, one CRAN twin, and one source-built Python root. */
+    function sourceStore(): string {
+        const root = tempStore();
+        const rInner = (dir: string, pin: string, record?: Record<string, unknown>): void => {
+            const home = join(root, "store", dir, "SeedMatchR");
+            mkdirSync(home, { recursive: true });
+            writeFileSync(join(home, ".inflexa-pin"), `${pin}\n`);
+            writeFileSync(join(home, ".inflexa-hash"), `${"c".repeat(64)}\n`);
+            writeFileSync(join(home, "DESCRIPTION"), "Package: SeedMatchR\nVersion: 2.0.0\n");
+            if (record !== undefined) writeFileSync(join(home, ".inflexa-build.json"), `${JSON.stringify(record, null, 2)}\n`);
+        };
+        rInner(SEEDMATCHR_CRAN, "SeedMatchR==2.0.0");
+        rInner(SEEDMATCHR_SRC, SEED_PIN, { schema: 1, source: { url: "https://github.com/tacazares/SeedMatchR", commit: SEED_COMMIT } });
+
+        const pyHome = join(root, "store", PYSRC);
+        mkdirSync(join(pyHome, "pysrc"), { recursive: true });
+        writeFileSync(join(pyHome, ".inflexa-pin"), `pysrc==1.0@tree:${"e".repeat(16)}\n`);
+        writeFileSync(join(pyHome, ".inflexa-hash"), `${"e".repeat(64)}\n`);
+        writeFileSync(join(pyHome, ".inflexa-build.json"), `${JSON.stringify({ schema: 1, source: { tree_hash: "e".repeat(64) } })}\n`);
+
+        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
+            nodes: Record<string, { track: string; name: string; version: string; imports: string[]; entry_points: string[]; edges: string[] }>;
+            by_name: { python: Record<string, string[]>; r: Record<string, string[]> };
+        };
+        for (const dir of [SEEDMATCHR_CRAN, SEEDMATCHR_SRC]) graph.nodes[dir] = { track: "r", name: "SeedMatchR", version: "2.0.0", imports: [], entry_points: [], edges: [] };
+        graph.nodes[PYSRC] = { track: "python", name: "pysrc", version: "1.0", imports: ["pysrc"], entry_points: [], edges: [] };
+        graph.by_name.r["SeedMatchR"] = [SEEDMATCHR_CRAN, SEEDMATCHR_SRC];
+        graph.by_name.python["pysrc"] = [PYSRC];
+        writeFileSync(join(root, "deps.json"), JSON.stringify(graph));
+        return root;
+    }
+
+    test("links under r/source, and its lock entry carries the source block of the build record", async () => {
+        const root = sourceStore();
+        const analysisId = randomUUIDv7();
+
+        const farm = (await extendFarm({ storeRoot: root, analysisId, roots: [SEEDMATCHR_SRC] }))._unsafeUnwrap();
+
+        expect([...farm.storeDirs]).toEqual([SEEDMATCHR_SRC]);
+        const tree = treeOf(farm.farmPath);
+        expect(tree.get("r/source/SeedMatchR")).toBe(`link:${MOUNT}/store/${SEEDMATCHR_SRC}/SeedMatchR`);
+        expect(tree.has("r/cran/SeedMatchR")).toBe(false);
+        const lock = farmLockOf(farm.farmPath);
+        const entry = lock.packages.find((candidate) => candidate.store_dir === SEEDMATCHR_SRC);
+        expect(entry).toMatchObject({
+            name: "SeedMatchR",
+            version: "2.0.0",
+            track: "source",
+            source: { url: "https://github.com/tacazares/SeedMatchR", commit: SEED_COMMIT, pin: SEED_PIN },
+        });
+    });
+
+    test("a source-built Python root keeps the python track and carries the tree hash", async () => {
+        const root = sourceStore();
+        const analysisId = randomUUIDv7();
+
+        (await extendFarm({ storeRoot: root, analysisId, roots: [PYSRC] }))._unsafeUnwrap();
+
+        const tree = treeOf(join(root, "farms", analysisId));
+        expect(tree.get("python/site-packages/pysrc")).toBe(`link:${MOUNT}/store/${PYSRC}/pysrc`);
+        // The build record is a record of the store, thus no farm link carries it.
+        expect(tree.has("python/site-packages/.inflexa-build.json")).toBe(false);
+        const lock = farmLockOf(join(root, "farms", analysisId));
+        expect(lock.packages.find((candidate) => candidate.store_dir === PYSRC)).toMatchObject({
+            track: "python",
+            source: { treeHash: "e".repeat(64), pin: `pysrc==1.0@tree:${"e".repeat(16)}` },
+        });
+    });
+
+    test("a CRAN package and its fork never share one farm, and the refusal names both directories", async () => {
+        const root = sourceStore();
+        const analysisId = randomUUIDv7();
+        (await extendFarm({ storeRoot: root, analysisId, roots: [SEEDMATCHR_CRAN] }))._unsafeUnwrap();
+        const before = treeOf(join(root, "farms", analysisId));
+
+        const failed = (await extendFarm({ storeRoot: root, analysisId, roots: [SEEDMATCHR_SRC] }))._unsafeUnwrapErr();
+
+        expect(failed).toMatchObject({ type: "version_collision", name: "SeedMatchR", existing: SEEDMATCHR_CRAN, incoming: SEEDMATCHR_SRC });
+        expect(describeFarmCompositionError(failed)).toContain(SEEDMATCHR_CRAN);
+        expect(describeFarmCompositionError(failed)).toContain(SEEDMATCHR_SRC);
+        // The farm stayed exactly as it was: no r/source link arrived.
+        expect(treeOf(join(root, "farms", analysisId))).toEqual(before);
+
+        // One composition of both roots refuses the same way.
+        const together = (await extendFarm({ storeRoot: root, analysisId: randomUUIDv7(), roots: [SEEDMATCHR_CRAN, SEEDMATCHR_SRC] }))._unsafeUnwrapErr();
+        expect(together).toMatchObject({ type: "version_collision", name: "SeedMatchR" });
+    });
+
+    test("a version query that two directories of one identity answer refuses in both forms, versioned and version-less", () => {
+        const graph = readDepsGraph(sourceStore())._unsafeUnwrap();
+
+        const refused = resolvePackageRequest(graph, { spelling: "SeedMatchR", track: "r", version: "2.0.0" })._unsafeUnwrapErr();
+        expect(refused).toEqual({ type: "ambiguous_version", version: "2.0.0", candidates: [SEEDMATCHR_CRAN, SEEDMATCHR_SRC] });
+
+        // The version-less form takes the head version, and two directories of
+        // that one version answer it — an index build and a source build of one
+        // name and version. A silent pick would serve the fork to a caller that
+        // named neither build, thus it refuses with both named too.
+        const headless = resolvePackageRequest(graph, { spelling: "SeedMatchR", track: "r" })._unsafeUnwrapErr();
+        expect(headless).toEqual({ type: "ambiguous_version", candidates: [SEEDMATCHR_CRAN, SEEDMATCHR_SRC] });
+    });
+
+    test("a version-less query still takes the head when each version answers alone", () => {
+        const graph = readDepsGraph(tempStore())._unsafeUnwrap();
+
+        // The pool holds two versions of alpha, one directory each: the emitter
+        // ordered them, the head answers alone, and the pick stays silent.
+        expect(resolvePackageRequest(graph, { spelling: "alpha" })._unsafeUnwrap()).toMatchObject({
+            storeDir: ALPHA_2,
+            version: "2.0.0",
+        });
+    });
+
+    test("the farm-extension seam reports the pair as a collision, and neither build links in silence", async () => {
+        const root = sourceStore();
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "SeedMatchR", track: "r", version: "2.0.0" }]);
+
+        expect(outcomes).toHaveLength(1);
+        const [first] = outcomes;
+        expect(first).toMatchObject({ kind: "collision", spelling: "SeedMatchR", storeDirs: [SEEDMATCHR_CRAN, SEEDMATCHR_SRC] });
+        if (first?.kind === "collision") expect(first.detail).toContain("source build");
+        // Nothing linked: no farm of that analysis exists at all.
         expect(readdirSync(join(root, "farms"))).toEqual(["catalog"]);
     });
 });

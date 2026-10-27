@@ -32,7 +32,7 @@
  * that the provisioner writes ({@link FarmLockSchema} is the shared contract).
  */
 
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { FARM_LOCK_FILE, formatQuery, identityAddress, identityKey, identityOf, parseIdentityKey, readFarmLock, resolveQuery } from "@inflexa-ai/harness";
@@ -83,7 +83,13 @@ const SANDBOX_LIB_MOUNT = "/mnt/libs";
  * The entries of a store directory that are records of the store, not content.
  * The provisioner skips the same names when it links a store directory.
  */
-const NOT_CONTENT: ReadonlySet<string> = new Set([".inflexa-pin", ".inflexa-hash", ".inflexa-r-linking", ".lock"]);
+const NOT_CONTENT: ReadonlySet<string> = new Set([".inflexa-pin", ".inflexa-hash", ".inflexa-r-linking", ".inflexa-build.json", ".lock"]);
+
+/** The marker inside a store directory that carries the provenance record of a source build, written beside the pin marker by the provisioner. */
+const BUILD_RECORD_MARKER = ".inflexa-build.json";
+
+/** The marker inside a store directory that carries the exact pin it was installed from. A pin that carries `@` names a source build. */
+const PIN_MARKER = ".inflexa-pin";
 
 /**
  * The marker inside a store directory that carries the full sha256 of the sorted
@@ -94,10 +100,10 @@ const NOT_CONTENT: ReadonlySet<string> = new Set([".inflexa-pin", ".inflexa-hash
  */
 const HASH_MARKER = ".inflexa-hash";
 
-/** The three R library subtrees that `R_LIBS_SITE` carries, in the order the provisioner uses. */
-const R_SUBTREES = ["cran", "bioconductor", "github"] as const;
+/** The four R library subtrees that `R_LIBS_SITE` carries. */
+const R_SUBTREES = ["cran", "bioconductor", "github", "source"] as const;
 
-/** One of the three R library subtrees. */
+/** One of the four R library subtrees. */
 type RSubtree = (typeof R_SUBTREES)[number];
 
 /** The two runtime tracks of the store. */
@@ -560,6 +566,20 @@ export type RequestResolutionError =
           readonly identities: readonly [string, string];
           /** The head store directory of each track that holds the spelling: Python first, then R. */
           readonly candidates: readonly [string, string];
+      }
+    | {
+          /**
+           * The identity holds two store directories of the version the query
+           * named — an index build and a source build of one name and version —
+           * or of the version a version-less query would take as its head. A
+           * silent pick would serve the fork to a caller that named neither
+           * build, thus the resolution stops with both named.
+           */
+          readonly type: "ambiguous_version";
+          /** The version the query named; absent when the query named none and the head version answered it. */
+          readonly version?: string;
+          /** The two store directories that answer it. */
+          readonly candidates: readonly [string, string];
       };
 
 /**
@@ -603,13 +623,21 @@ function pickVersion(graph: DepsGraph, query: PackageQuery, identity: PackageIde
     // resolution said `resolved`, thus the shelf was not empty; only a graph
     // that disagrees with itself reaches here.
     if (head === undefined) return err({ type: "unknown_distribution" });
-    if (query.version === undefined) return ok(head);
-
-    const exact = candidates.find((candidate) => candidate.version === query.version);
-    if (exact === undefined) {
-        return err({ type: "unknown_version", version: query.version, available: candidates.map((candidate) => candidate.version) });
+    // A query that names no version takes the head of the ordering; the
+    // directories at that head version are the ones that answer it, and two
+    // of them — an index build and a source build of one name and version —
+    // refuse with both named, exactly as the versioned form does.
+    const picked = query.version ?? head.version;
+    const exact = candidates.filter((candidate) => candidate.version === picked);
+    if (exact.length === 0) {
+        return err({ type: "unknown_version", version: picked, available: candidates.map((candidate) => candidate.version) });
     }
-    return ok(exact);
+    const [first, second] = exact;
+    if (first === undefined) return err({ type: "unknown_distribution" });
+    if (second !== undefined) {
+        return err({ type: "ambiguous_version", ...(query.version === undefined ? {} : { version: query.version }), candidates: [first.storeDir, second.storeDir] });
+    }
+    return ok(first);
 }
 
 /**
@@ -949,6 +977,51 @@ function storedFullHash(storeRoot: string, storeDir: string, node: DepsNode): Re
     return readFileResult(marker, `read the hash marker of ${storeDir}`).map((raw) => raw.trim());
 }
 
+/** Whether the pin marker of one store directory carries a source qualifier. */
+function isSourceBuiltDir(storeRoot: string, storeDir: string, node: DepsNode): boolean {
+    const base = join(storeRoot, POOL_DIR, storeDir);
+    const marker = node.track === "python" ? join(base, PIN_MARKER) : join(base, node.name, PIN_MARKER);
+    try {
+        return readFileSync(marker, "utf8").trim().includes("@");
+    } catch {
+        return false;
+    }
+}
+
+/** The `source` block of a build record, the one part the farm lock copies. */
+const buildRecordSchema = z.object({ source: z.union([z.object({ url: z.string(), commit: z.string() }), z.object({ tree_hash: z.string() })]) }).passthrough();
+
+/** The provenance of one source-built distribution, in the shape the farm lock carries. */
+type PackageProvenance = NonNullable<FarmLock["packages"][number]["source"]>;
+
+/**
+ * The provenance of one store directory whose pin marker carries a source
+ * qualifier, read from the build record the provisioner wrote beside the pin.
+ *
+ * The record is the one provenance surface: the provisioner writes it and this
+ * reader copies it, and no second writer exists. A pin with no qualifier is an
+ * index build, whose provenance is the pinned index, thus `null`.
+ */
+function sourceProvenanceOf(storeRoot: string, storeDir: string, node: DepsNode): Result<PackageProvenance | null, FarmCompositionError> {
+    if (!isSourceBuiltDir(storeRoot, storeDir, node)) return ok(null);
+    const base = join(storeRoot, POOL_DIR, storeDir);
+    const inner = node.track === "python" ? base : join(base, node.name);
+    return readFileResult(join(inner, BUILD_RECORD_MARKER), `read the build record of ${storeDir}`).andThen((raw) => {
+        const record = JSON.parseWith(raw, buildRecordSchema);
+        if (record === null) {
+            return err<PackageProvenance | null, FarmCompositionError>({
+                type: "io_failed",
+                op: `read the build record of ${storeDir}`,
+                cause: new Error("the record does not parse"),
+            });
+        }
+        const pin = readFileSync(join(inner, PIN_MARKER), "utf8").trim();
+        return ok<PackageProvenance, FarmCompositionError>(
+            "url" in record.source ? { url: record.source.url, commit: record.source.commit, pin } : { treeHash: record.source.tree_hash, pin },
+        );
+    });
+}
+
 /** One `packages` entry of the farm lock, for one linked store directory. */
 function lockPackageEntry(
     storeRoot: string,
@@ -957,16 +1030,21 @@ function lockPackageEntry(
     template: Template,
     requested: boolean,
 ): Result<FarmLock["packages"][number], FarmCompositionError> {
-    return storedFullHash(storeRoot, storeDir, node).map((hash) => ({
-        name: node.name,
-        version: node.version,
-        track: node.track === "python" ? "python" : (template.rSubtrees.get(storeDir) ?? "cran"),
-        store_dir: storeDir,
-        hash,
-        // `requested` obeys the PEP 376 meaning: true for a direct ask, false for
-        // a transitive dependency.
-        requested,
-    }));
+    return storedFullHash(storeRoot, storeDir, node)
+        .andThen((hash) => sourceProvenanceOf(storeRoot, storeDir, node).map((source) => ({ hash, source })))
+        .map(({ hash, source }) => ({
+            name: node.name,
+            version: node.version,
+            // A source-built R package links under its own subtree: the template
+            // of the catalog says nothing about a directory the catalog never held.
+            track: node.track === "python" ? "python" : source !== null ? "source" : (template.rSubtrees.get(storeDir) ?? "cran"),
+            store_dir: storeDir,
+            hash,
+            ...(source !== null ? { source } : {}),
+            // `requested` obeys the PEP 376 meaning: true for a direct ask, false for
+            // a transitive dependency.
+            requested,
+        }));
 }
 
 /**
@@ -1080,13 +1158,30 @@ function linkClosure(
         // is the real package name. Thus a package that rebuilds its own path as
         // `libname/packagename` resolves itself through the link.
         for (const key of rNodes) {
-            const inner = graph.nodes.get(key)?.name;
-            if (inner === undefined) continue;
-            const subtree = template.rSubtrees.get(key) ?? "cran";
+            if (plan.collision) break;
+            const node = graph.nodes.get(key);
+            const inner = node?.name;
+            if (node === undefined || inner === undefined) continue;
+            const target = `${bakedPoolPath(key)}/${inner}`;
+            const subtree: RSubtree = isSourceBuiltDir(storeRoot, key, node) ? "source" : (template.rSubtrees.get(key) ?? "cran");
             const link = join(farmPath, "r", subtree, inner);
+            // One R name in one farm, across every subtree: R loads one version of
+            // a package per library path, thus a second store directory of the
+            // same name — a fork beside an index build — would shadow one build
+            // with the other in silence. The Python pass refuses the same shape
+            // through `isVersionCollision`; the R pass reads each subtree, because
+            // the two builds of one name sit in two subtrees.
+            for (const other of R_SUBTREES) {
+                const at = entryAt(plan, other === subtree ? link : join(farmPath, "r", other, inner));
+                if (at.kind === "link" && at.target !== target && isVersionCollision(graph, at.target, target)) {
+                    refuse(plan, inner, at.target, target);
+                    break;
+                }
+            }
+            if (plan.collision) break;
             if (entryAt(plan, link).kind !== "absent") continue;
-            plan.ops.push({ kind: "mkdir", path: join(farmPath, "r", subtree) }, { kind: "symlink", path: link, target: `${bakedPoolPath(key)}/${inner}` });
-            plan.planned.set(link, { kind: "link", target: `${bakedPoolPath(key)}/${inner}` });
+            plan.ops.push({ kind: "mkdir", path: join(farmPath, "r", subtree) }, { kind: "symlink", path: link, target });
+            plan.planned.set(link, { kind: "link", target });
         }
         return plan;
     });
@@ -1629,6 +1724,20 @@ function absentOutcome(query: PackageQuery, failure: RequestResolutionError): Pa
                     `ask again for \`${formatQuery({ spelling: query.spelling, track: "python" })}\` ` +
                     `or \`${formatQuery({ spelling: query.spelling, track: "r" })}\``,
             };
+        case "ambiguous_version": {
+            // Two store directories of one name and version: an index build and
+            // a source build. A silent pick of the head would serve the fork to
+            // a caller that named neither build, thus the outcome carries both.
+            const asked = failure.version === undefined ? query.spelling : `${query.spelling}==${failure.version}`;
+            return {
+                kind: "collision",
+                spelling: query.spelling,
+                storeDirs: failure.candidates,
+                detail:
+                    `two store directories answer "${asked}" — ${failure.candidates[0]} and ` +
+                    `${failure.candidates[1]}; one of the two is a source build, and the query named neither`,
+            };
+        }
         default: {
             const unreachable: never = failure;
             throw new Error(`unhandled resolution failure: ${JSON.stringify(unreachable)}`);

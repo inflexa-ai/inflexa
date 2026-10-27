@@ -52,6 +52,7 @@ import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { notifyProfileSettledActivity } from "../analysis/activity.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
+import { createBuildSession } from "../libs/build-session.ts";
 import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
 import { readPoolInventorySections } from "../libs/packages.ts";
 import { classifyPoolMiss } from "../libs/store_flight.ts";
@@ -1247,6 +1248,16 @@ async function bootHarnessRuntimeOnce(
                         return query === undefined ? outcome : withPoolMissRemedy(outcome, query);
                     }),
                 ),
+            // The build-session binding behind the harness `install_from_source`
+            // tool. The session realization holds its own containers on the engine
+            // the boot pinned above, thus the engine gate of the boot IS the gate of
+            // the tool: a boot with no working engine fails before this composition
+            // runs, and the roster then holds no `install_from_source` at all. The
+            // harness adds the tool through this interface alone — nothing rides
+            // `hostTools` below, because one tool of one name must not register
+            // twice. The analysis arrives per start call, read from the session
+            // scope of the tool, and the commit extends the farm of that analysis.
+            buildSession: createBuildSession(env.packageStoreDir),
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove

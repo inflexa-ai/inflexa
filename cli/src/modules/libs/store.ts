@@ -1213,6 +1213,13 @@ export function describeRequestRefusal(error: RequestResolutionError, query: Pac
                 `Both ecosystems hold "${query.spelling}" (${error.candidates.join(" and ")}), and the request names none. ` +
                 "Run the command again with `--lang python` or `--lang r`."
             );
+        case "ambiguous_version": {
+            const asked = error.version === undefined ? query.spelling : `${query.spelling}==${error.version}`;
+            return (
+                `Two store directories of the pool answer "${asked}": ${error.candidates.join(" and ")}. ` +
+                "One of the two is a source build, and the request named neither. Nothing was linked."
+            );
+        }
         default: {
             // The union is closed, thus the compiler proves that this is unreachable.
             const unreachable: never = error;
