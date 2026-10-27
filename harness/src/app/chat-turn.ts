@@ -359,6 +359,9 @@ export async function runOpenTurn(
         // A provider failure that races an abort stays a failure, thus both facts must hold.
         const aborted = transport.signal.aborted && errorNameOf(cause) === "AbortError";
         outcome = aborted ? { status: "aborted" } : { status: "failed", reason: failureReasonOf(cause), code: failureCodeOf(cause), cause };
+        // A host gets the scrubbed text and the code of the failure. This record is the one place where the whole
+        // cause survives.
+        if (outcome.status === "failed") logger.error("chat turn failed", { threadId: turn.threadId, code: outcome.code, ...logger.errorFields(cause) });
     }
 
     const durationMs = Date.now() - params.startedAtMs;
