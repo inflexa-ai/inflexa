@@ -1,10 +1,9 @@
-# Spec Delta
+# sub-agent-workflows Specification
 
 ## Purpose
-
 A sub-agent runs as a child workflow of the workflow of its caller. Each of its calls is a checkpoint, and two sub-agents of one reply run at the same time.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: A sub-agent call inside a workflow is a child workflow
 

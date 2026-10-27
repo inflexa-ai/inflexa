@@ -1,10 +1,9 @@
-# Spec Delta
+# chat-turn-stream Specification
 
 ## Purpose
-
 The durable stream of a chat turn. The turn writes its frames to the stream of its workflow, and a host reads them, live or again after a lost connection.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: A turn writes each frame to its durable stream
 

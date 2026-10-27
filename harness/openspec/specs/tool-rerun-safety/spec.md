@@ -1,10 +1,9 @@
-# Spec Delta
+# tool-rerun-safety Specification
 
 ## Purpose
-
 A tool call that runs again after a crash gives the same effect and the same result. A crash can come after the write of a tool and before the checkpoint of its step.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: A tool call that writes keys its write by the call
 

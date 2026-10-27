@@ -490,9 +490,19 @@ The run stream MUST deliver the parts of the harness run-event reader, and it MU
 
 ### Requirement: The chat turn runs apart from its request
 
-`POST {A}/chat` with `{threadId, message}` MUST start one turn in the server. The server MUST make a turn id, register the turn, and send the id in the response header `Inflexa-Turn-Id` when the turn opens. A refusal before the turn opens MUST be a JSON error: 404 for a thread that is absent or of a different analysis, and 500 for a turn that cannot prepare or has no agent. After the open, the stream MUST carry the frames of the turn and of its sub-agents. It MUST end with one `finish` frame for a turn that ended or aborted. It MUST end with one `error` frame for a turn that failed.
+`POST {A}/chat` with `{threadId, message}` MUST open one turn through the chat turns of the harness. The harness runs the turn as a workflow, and it makes the id of the turn. The server MUST register the turn when it opens, and send the id in the response header `Inflexa-Turn-Id`. A stop of the server MUST also wait for a turn that still opens.
 
-A client that disconnects MUST stop only the delivery of the frames, never the turn. `POST {T}/turns/:turnId/abort` MUST abort the turn for each client. `GET {T}/turns` and `GET {T}/turns/:turnId` MUST give the running turns and the newest 100 ended turns, with the status, the usage, and the failure detail of each one. The server MUST NOT refuse a second turn on the same thread, because the harness and Cortex do not serialize turns. At the end of each turn, the server MUST start the flush of the package adds that the turn queued.
+A refusal before the turn opens MUST be a JSON error:
+
+- 404 for a thread that is absent or of a different analysis
+- 409 `conflict` for a thread whose turn still runs
+- 500 for a turn that cannot prepare or has no agent
+
+After the open, the stream MUST carry the frames of the turn and of its sub-agents. It MUST end with one `finish` frame for a turn that ended or aborted. It MUST end with one `error` frame for a turn that failed, with the remedy that the server knows.
+
+A client that disconnects MUST stop only the delivery of the frames, never the turn. `GET {T}/turns/:turnId/stream` MUST give the frames of a turn that the registry holds again, from the start of the turn. `POST {T}/turns/:turnId/abort` MUST stop the turn for each client. `GET {T}/turns` and `GET {T}/turns/:turnId` MUST give the running turns and the newest 100 ended turns. Each one has the status, the usage, and the failure detail. The answer of an ask MUST reach the turn that waits for it, through the chat turns of the harness.
+
+At the end of each turn, the server MUST start the flush of the package adds that the turn queued.
 
 #### Scenario: A second client aborts a turn
 
@@ -504,6 +514,18 @@ A client that disconnects MUST stop only the delivery of the frames, never the t
 
 - **WHEN** the client of a turn closes its connection
 - **THEN** the turn runs to its end, and `GET {T}/turns/:turnId` gives its outcome
+
+#### Scenario: A second turn on a thread with a turn that runs
+
+- **GIVEN** a turn that runs on a thread
+- **WHEN** a client sends a message to the same thread
+- **THEN** the server gives 409 `conflict`, and it starts no turn
+
+#### Scenario: A client reads a turn again
+
+- **GIVEN** a turn that the registry holds
+- **WHEN** a client sends `GET {T}/turns/:turnId/stream`
+- **THEN** it gets each frame of the turn from its start, and a turn of a different thread gives 404
 
 ### Requirement: A rename or a delete waits for no work
 
@@ -1792,7 +1814,6 @@ The search route MUST take the `path` rules of the list: 400 `validation_error` 
 
 - **WHEN** a client sends `GET /api/v1/fs/search?path=/&q=a&analysisId=nope`, and no analysis has the id `nope`
 - **THEN** the server answers 404 `not_found`, and it reads no folder
-
 
 ### Requirement: The server keeps the page grants of the report sessions
 

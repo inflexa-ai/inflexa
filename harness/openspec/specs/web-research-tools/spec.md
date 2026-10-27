@@ -55,68 +55,6 @@ The conversation agent deps SHALL accept an optional web-search engine. When the
 - **WHEN** the composition runs with a web-search engine
 - **THEN** the conversation agent roster holds `web_search`
 
-### Requirement: `web_fetch` reads one URL under a guarded-address approval
-
-The harness SHALL provide a `web_fetch` tool that reads one URL. The tool SHALL accept only the `http:` and `https:` schemes and SHALL refuse any other scheme as a normal result.
-
-The tool SHALL classify each address that the connection uses — loopback, private, link-local, shared, multicast, and reserved ranges, IPv4 and IPv6 — as a guarded address. The check SHALL run on the address that the connection uses, not on a separate name resolution, so a name that resolves differently between the check and the connection (DNS rebinding) cannot bypass the guard. For a host that is an IP literal, the tool SHALL classify the literal itself before it sends the request, because the connection layer runs no name lookup for a literal. For a host name, the check SHALL run in the lookup of the connection, and a name SHALL be guarded when ANY address of its resolution is guarded: the check SHALL classify every address the resolver returns before the connect, because the connect layer can fall back to a later address of the list after an earlier one fails. Before the tool connects to a guarded address, it SHALL ask the user through the tool approval contract; an `always` approval SHALL apply to the origin of the URL through the grant key, and an origin that was never approved SHALL ask again. The request content SHALL make that breadth visible: the detail of the ask SHALL name the origin that an `always` answer approves. When the turn has no approver, the loop SHALL deny the call, and the call SHALL end as a normal denied result.
-
-A refused URL, a denied approval, and an HTTP error SHALL be normal results, never a failure of the turn.
-
-#### Scenario: A public URL is fetched without a prompt
-
-- **WHEN** the model calls `web_fetch` on a public `https:` URL
-- **THEN** the tool fetches it with no approval prompt
-
-#### Scenario: A guarded address asks first
-
-- **WHEN** the model calls `web_fetch` on `127.0.0.1`, `169.254.169.254`, `10.0.0.1`, `[::1]`, or `[::ffff:169.254.169.254]` (each an IP literal, the mapped form normalized to its IPv4 half), or on a name that resolves to a guarded address
-- **THEN** the tool asks the user before it fetches, and it fetches only after an approval
-
-#### Scenario: A resolution with one guarded address is guarded
-
-- **WHEN** a host name resolves to a public address and a guarded address, and the connect falls back to the guarded address
-- **THEN** the tool asked the user before any connect of that hop, because the check classified both addresses of the resolution
-
-#### Scenario: The ask names the breadth of an always answer
-
-- **WHEN** the tool asks for a guarded origin
-- **THEN** the detail of the ask names the origin that an `always` answer approves
-
-#### Scenario: A denied approval is a normal result
-
-- **WHEN** the user denies the approval of a guarded address
-- **THEN** the tool returns a refusal as a normal result, and the turn does not fail
-
-#### Scenario: A turn with no approver refuses the guarded address
-
-- **WHEN** the turn has no approver and the model calls `web_fetch` on a guarded address
-- **THEN** the call ends as a denied result, and the fetch does not run
-
-#### Scenario: An `always` approval is scoped to the origin
-
-- **WHEN** the user answers `always` for one origin
-- **THEN** a later fetch of that origin asks nothing, and a fetch of a different origin asks again
-
-#### Scenario: The scheme is checked
-
-- **WHEN** the model calls `web_fetch` on a `file:` or `ftp:` URL
-- **THEN** the tool refuses the URL as a normal result
-
-### Requirement: `web_fetch` follows redirects under the same guard
-
-The tool SHALL follow at most 5 redirects, in the tool code. For each redirect target, the tool SHALL repeat the whole per-hop sequence: scheme check, guarded-address check (the literal itself for a literal host, the lookup of the connection for a name), and the approval of the target origin. A chain that needs a sixth redirect SHALL end as a normal result that names the redirect limit.
-
-#### Scenario: A redirect to a guarded address asks first
-
-- **WHEN** a public URL redirects to `127.0.0.1` or another guarded address
-- **THEN** the tool asks the user before it follows the redirect, and it follows only after an approval
-
-#### Scenario: Five redirects succeed, the sixth is refused
-
-- **WHEN** a URL redirects 5 times to a public address, or 6 times
-- **THEN** the tool follows at most 5 redirects, and a chain that needs a sixth ends as a normal result that names the redirect limit
-
 ### Requirement: `web_fetch` bounds the body and extracts text
 
 The tool SHALL refuse a body larger than 5 MB for HTML and text, larger than 20 MB for a PDF, and larger than 5 MB for an unknown content type. A body of at most the limit succeeds; the byte that passes the limit stops the read and refuses the body. The limits SHALL apply to the decoded body: the tool asks for no compression, and it decodes gzip, deflate, and brotli when a server sends them anyway. The tool SHALL read at most the first 100 pages of a PDF, and the result of a cut PDF SHALL name the cut. HTML SHALL become Markdown through a readability extraction and a Markdown conversion over a DOM that needs no browser. A PDF SHALL be read with the PDF parser the harness already holds. A plain-text or JSON body SHALL pass through. A body type the tool cannot extract SHALL end as a normal result that names the content type.
@@ -195,3 +133,45 @@ The guarded-address classification SHALL cover exactly these ranges — a pinned
 
 - **WHEN** the classifier reads `93.184.216.34` or `2606:2800:220:1:248:1893:25c8:1946`
 - **THEN** the address is not guarded
+
+### Requirement: `web_fetch` reads one URL and refuses an internal address
+
+The harness MUST give a `web_fetch` tool that reads one URL. The tool MUST accept only the `http:` and `https:` schemes, and it MUST refuse each other scheme as a normal result.
+
+The tool MUST classify each address that the connection uses as guarded: loopback, private, link-local, shared, multicast, and reserved ranges, IPv4 and IPv6. The check MUST run on the address that the connection uses, not on a separate name resolution. Thus a name that resolves differently between the check and the connection (DNS rebinding) cannot pass the guard. For an IP literal, the tool MUST classify the literal before it sends the request. For a host name, the check MUST run in the lookup of the connection. It MUST classify each address that the resolver gives before the connect.
+
+The tool MUST refuse a guarded address as a normal result, with no ask, and it MUST NOT connect to it. The refusal MUST name the origin. A refused URL and an HTTP error MUST be normal results, never a failure of the turn.
+
+#### Scenario: A public URL is fetched without a prompt
+
+- **WHEN** the model calls `web_fetch` on a public `https:` URL
+- **THEN** the tool fetches it with no approval prompt
+
+#### Scenario: A guarded address is refused with no ask
+
+- **WHEN** the model calls `web_fetch` on `127.0.0.1`, `169.254.169.254`, `10.0.0.1`, `[::1]`, or `[::ffff:169.254.169.254]`, or on a name that resolves to a guarded address
+- **THEN** the tool refuses the address as a normal result, it asks nothing, and it connects to no guarded address
+
+#### Scenario: A resolution with one guarded address is guarded
+
+- **WHEN** a host name resolves to a public address and a guarded address
+- **THEN** the tool refuses the hop before any connect, because the check classified both addresses of the resolution
+
+#### Scenario: The scheme is checked
+
+- **WHEN** the model calls `web_fetch` on a `file:` or `ftp:` URL
+- **THEN** the tool refuses the URL as a normal result
+
+### Requirement: `web_fetch` follows redirects under the guard of each hop
+
+The tool MUST follow a maximum of 5 redirects, in the tool code. For each redirect target, the tool MUST do the whole sequence of a hop again: the scheme check and the guarded-address check. A redirect to a guarded address MUST end as a refusal, with no ask. A chain that needs a sixth redirect MUST end as a normal result that names the redirect limit.
+
+#### Scenario: A redirect to a guarded address is refused
+
+- **WHEN** a public URL redirects to `127.0.0.1` or to another guarded address
+- **THEN** the tool refuses the redirect as a normal result, and it does not follow it
+
+#### Scenario: Five redirects succeed, the sixth is refused
+
+- **WHEN** a URL redirects 5 times to a public address, or 6 times
+- **THEN** the tool follows a maximum of 5 redirects, and a chain that needs a sixth ends as a normal result that names the redirect limit
