@@ -158,6 +158,11 @@ describe("StatusBar state segment", () => {
         expect(frame).toContain("server not running");
     });
 
+    test("a server that stopped answering while the chat was open says that it stopped", () => {
+        const crashed: BootState = { phase: "failed", message: "The Inflexa server stopped answering.", recovery: "restart_server" };
+        expect(headerStatusOf(crashed, "idle", false)).toEqual({ text: `${GLYPHS.cross} server stopped`, tone: "error" });
+    });
+
     test("a boot that failed keeps its own words", () => {
         const failed: BootState = { phase: "failed", message: "pid 4821 holds it", recovery: "boot_again" };
         expect(headerStatusOf(failed, "idle", false)).toEqual({ text: `${GLYPHS.cross} boot failed`, tone: "error" });

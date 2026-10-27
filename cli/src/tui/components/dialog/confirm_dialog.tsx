@@ -30,6 +30,8 @@ export function ConfirmDialog(props: {
     onConfirm: () => void;
     /** Called when the user cancels: enter with "cancel" active, or any non-commit close (esc, click-outside). */
     onCancel: () => void;
+    /** Override label for the confirm button (defaults to "confirm"). */
+    confirmLabel?: string;
     /** Override label for the cancel button (defaults to "cancel"). */
     cancelLabel?: string;
     /** The initially-active choice — defaults to "cancel" so enter doesn't confirm by accident. */
@@ -72,7 +74,7 @@ export function ConfirmDialog(props: {
             <box flexDirection="row" justifyContent="flex-end" gap={1}>
                 <For each={choices()}>
                     {(key) => {
-                        const label = () => (key === "cancel" ? (props.cancelLabel ?? key) : key);
+                        const label = () => (key === "cancel" ? (props.cancelLabel ?? key) : (props.confirmLabel ?? key));
                         const isActive = () => active() === key;
                         return (
                             <box
