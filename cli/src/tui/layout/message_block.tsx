@@ -275,6 +275,10 @@ export function MessageBlock(props: MessageBlockProps) {
                                 durationMs={part.durationMs}
                             />
                         );
+                    // The docked pause prompt is the surface of a pause, and the latest part of a wait that
+                    // ended reads `running`, which has nothing to show. Thus the transcript shows no pause.
+                    case "data-pause":
+                        return null;
                     // The parts that the conversation has no first-class renderer for: the sidebar parts
                     // of a run, and the record of a report render.
                     case "data-report-rendered":

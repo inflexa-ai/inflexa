@@ -3,10 +3,12 @@ import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import type { ResultAsync } from "neverthrow";
 
+import type { PausedWork } from "../../../api/paused_work.ts";
 import type { RunDetail, RunSummary } from "../../../api/runs.ts";
 import type { UsageTotals } from "../../../api/usage.ts";
 import type { ClientError } from "../../../client/api.ts";
 import { GLYPHS } from "../../../lib/design_system.ts";
+import { describePausedWait } from "../../../lib/pause_words.ts";
 import { formatTokenFigure, formatTokenFigureLabelled, NOT_REPORTED } from "../../../lib/usage_format.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
@@ -35,6 +37,8 @@ export type RunDetailDialogProps = {
      * Injected so the dialog stays offline-testable and gallery-showcaseable.
      */
     loadDetail: (runId: string) => ResultAsync<RunDetail, ClientError>;
+    /** The paused-work item of the run when a workflow of the run waits in a pause, captured at open. */
+    paused?: PausedWork;
     /** Wired to every non-commit close (esc, click-outside, ctrl+c) and the q/enter close keys. */
     onClose: () => void;
 };
@@ -59,9 +63,13 @@ export type RunDetailDialogProps = {
  * would otherwise be counted in the headline and shown nowhere — a total disagreeing with its parts,
  * which reads as a broken ledger rather than as work that ran outside a step. It arrives with the
  * detail fetch, thus the line appears once the steps load.
+ *
+ * `paused` is the paused-work item of the run. A run whose step waits in a pause keeps the status `running`, thus one
+ * line for each waiting workflow follows the status line and gives its state and its cause.
  */
-export function runDetailLines(run: RunSummary, usage?: UsageTotals, unattributed?: UsageTotals | null): string[] {
+export function runDetailLines(run: RunSummary, usage?: UsageTotals, unattributed?: UsageTotals | null, paused?: PausedWork): string[] {
     const lines: string[] = [`status: ${run.status}`];
+    for (const wait of paused?.waiting ?? []) lines.push(describePausedWait(wait));
     if (run.startedAt) lines.push(`started ${absTime(run.startedAt)}`);
     if (run.completedAt) lines.push(`completed ${absTime(run.completedAt)}`);
     const startedMs = run.startedAt ? Date.parse(run.startedAt) : NaN;
@@ -157,7 +165,9 @@ export function RunDetailDialog(props: RunDetailDialogProps): JSX.Element {
         >
             <ScrollPane focusOnMount={false} onRef={(r: ScrollBoxRenderable) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={1}>
                 {/* The row is a point-in-time capture; only the outside-any-step line waits for the detail. */}
-                <For each={runDetailLines(props.run, props.run.usage, unattributed())}>{(line) => <text fg={theme().fgMuted}>{line || " "}</text>}</For>
+                <For each={runDetailLines(props.run, props.run.usage, unattributed(), props.paused)}>
+                    {(line) => <text fg={theme().fgMuted}>{line || " "}</text>}
+                </For>
                 <box paddingTop={1}>
                     <Switch>
                         <Match when={detail().kind === "loading"}>

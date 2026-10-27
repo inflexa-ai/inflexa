@@ -11,6 +11,7 @@ import {
     type ChatMessage,
     type ChatPartFrame,
     type MessagePart,
+    type PausePart,
     type TokenUsageRollup,
     type ToolCallPart,
 } from "@inflexa-ai/harness/contracts/index.js";
@@ -33,6 +34,7 @@ import { getLogger } from "../../lib/log.ts";
 import { isKnownPart, isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
+import { clearTurnPause, notePausePart, pausePartOf } from "./pauses.ts";
 import { refreshReportChildren } from "./report_children.ts";
 import { bootState } from "./boot.ts";
 import { notify } from "./notice.ts";
@@ -437,6 +439,8 @@ export function noteAskFeedback(askId: string, feedback: string): void {
  *   - a data frame is checked with `checkChatPart` at receipt: an invalid part of a known type is
  *     dropped with a warning, and a part of a type that this build does not know passes unchanged;
  *   - a `data-ask` docks or settles its prompt, and a report spawn pokes the report-children listing;
+ *   - a `data-pause` docks or removes the pause prompt of the turn. A sub-agent pause does too, before the
+ *     sub-agent routing drops it: the resume of the turn also resumes the sub-agent;
  *   - `finish`/`error` end the stream, and the driver of the turn reads them, thus they apply nothing.
  *     Only a sub-agent gives an `iteration`, thus the routing above takes each one.
  *
@@ -452,7 +456,9 @@ export function applyServerFrame(frame: ChatFrame): void {
     // call indistinguishable from a wedged one. It becomes one activity line on the tool block it is
     // running inside, and never reaches the translation below.
     if (isSubAgentEvent(frame)) {
-        applySubAgentActivity(frame);
+        const pause = pausePartOf(frame);
+        if (pause !== null) notePauseOfTurn(pause);
+        else applySubAgentActivity(frame);
         return;
     }
 
@@ -512,12 +518,20 @@ function applyDataFrame(frame: ChatPartFrame): void {
         } else {
             settleAsk(frame.id);
         }
+    } else if (frame.type === "data-pause") {
+        notePauseOfTurn(frame);
     } else if (frame.type === "data-child-session-started" && frame.threadType === "report") {
         // The spawn wrote its thread row BEFORE it emitted this part, thus a read now finds the
         // row and the entry paints inside the turn. The settle-edge read of `watchReportChildren`
         // stays the authority for the title, which pg seeds after the child's first message.
         if (currentAnalysisId !== null && currentSessionId !== null) void refreshReportChildren(currentAnalysisId, currentSessionId);
     }
+}
+
+/** Dock or remove the pause prompt of the turn that this client sends. The part names its turn in `workId`. */
+function notePauseOfTurn(part: PausePart): void {
+    if (currentAnalysisId === null || currentSessionId === null) return;
+    notePausePart({ analysisId: currentAnalysisId, threadId: currentSessionId }, part);
 }
 
 /** Push the user's turn as its own message, with its text part, re-enforcing the mount cap. */
@@ -565,6 +579,7 @@ function restartAssistantTurn(): void {
     openTools.clear();
     deepestSubAgentDepth = 0;
     clearAsks();
+    clearTurnPause();
     setStreamPartId(null);
     setStreamText("");
     setMessages(
@@ -740,8 +755,9 @@ type TurnResult =
 function finishTurn(result: TurnResult, assistantId: string, startedAt: number): void {
     // The turn is settling: drop any still-pending asks so the docked prompt can never outlive its
     // turn. Each terminal re-emit already settled its own entry during the turn; this is the final
-    // sweep for the abort/failure path where a terminal re-emission may never arrive.
+    // sweep for the abort/failure path where a terminal re-emission may never arrive. A pause ends with its turn too.
     clearAsks();
+    clearTurnPause();
     // The turn is ending — clear any armed interrupt window so it never carries into idle or the next turn.
     disarmInterrupt();
     switch (result.kind) {
@@ -1060,6 +1076,10 @@ const pendingRetract = new Set<string>();
 // already-answered tail after the first press removed the orphan. Guarding entry closes that path.
 let retractInFlight = false;
 
+// The read of a paused turn of the open thread that this client did not send, for example a turn that a recovery
+// runs after a restart of the server (see `watchPausedTurn`). One at a time: one turn holds a thread.
+let watchedTurn: { readonly turnId: string; readonly stop: () => void } | null = null;
+
 /**
  * Clear all hot state for an in-place session swap: cancel any in-flight turn, drop the streamed
  * buffer, the error, the messages, and the per-turn adapter state, and return the status to idle.
@@ -1090,8 +1110,12 @@ export function resetHotState(): void {
     // its own local promise, so a retract already awaiting it is never stranded by this null.
     turnSettled = null;
     turnStartedAt = 0;
-    // Drop any pending asks so a swap/abort mid-decision never leaves a stale docked prompt.
+    // Drop any pending asks so a swap/abort mid-decision never leaves a stale docked prompt. The same holds for a
+    // pause, and the read of a paused turn of the swapped-away thread stops.
     clearAsks();
+    watchedTurn?.stop();
+    watchedTurn = null;
+    clearTurnPause();
     // Clear any armed interrupt window — a swap ends the turn it belonged to.
     disarmInterrupt();
     setStreamPartId(null);
@@ -1395,6 +1419,76 @@ export function abort(): void {
     // accented through the turn's unwind. `finishTurn` disarms on settlement as a backstop; disarming
     // here on ctrl+c's abort path is equally correct for the same reason. Idempotent, so the two never clash.
     disarmInterrupt();
+}
+
+/** How {@link watchPausedTurn} and {@link stopPausedTurn} reach the server. Tests replace each call. */
+export type PausedTurnOpts = {
+    /** The frames of the turn from its start, live until the turn ends: `GET {T}/turns/:turnId/stream`. Real: {@link readChatTurn}. */
+    readonly readTurn: (
+        analysisId: string,
+        threadId: string,
+        turnId: string,
+        signal: AbortSignal,
+    ) => ResultAsync<AsyncGenerator<Result<ChatFrame, ClientError>>, ClientError>;
+    /** Stop the turn: `POST {T}/turns/:turnId/abort`. Real: the client `abortTurn`. */
+    readonly abortTurn: (analysisId: string, threadId: string, turnId: string) => ResultAsync<unknown, ClientError>;
+};
+
+/** The production {@link PausedTurnOpts}. */
+export const DEFAULT_PAUSED_TURN_OPTS: PausedTurnOpts = {
+    readTurn: (analysisId, threadId, turnId, signal) => readChatTurn(analysisId, threadId, turnId, signal),
+    abortTurn: (analysisId, threadId, turnId) => abortTurn(analysisId, threadId, turnId),
+};
+
+/**
+ * Read again a paused turn of the open thread that this client does not stream, and dock its pause prompt. The poll
+ * calls it when the paused work of the analysis holds a turn of the open thread, for example a turn that a recovery
+ * runs after a restart of the server.
+ *
+ * The read takes the `data-pause` frames of the turn alone, of the root agent and of each sub-agent. The transcript
+ * stays the one that the server stores: the poll mounts it again when the thread changes, the same as for the turn
+ * of a different client. When the turn ends, its stream ends, and the prompt goes.
+ *
+ * It does nothing while this client sends a turn, because the frames of that turn dock the prompt already, and
+ * nothing for the turn that it reads already. It never rejects.
+ */
+export async function watchPausedTurn(analysisId: string, threadId: string, turnId: string, opts: PausedTurnOpts = DEFAULT_PAUSED_TURN_OPTS): Promise<void> {
+    if (sendsInFlight > 0 || watchedTurn?.turnId === turnId) return;
+    watchedTurn?.stop();
+    const controller = new AbortController();
+    const mine = { turnId, stop: () => controller.abort() };
+    watchedTurn = mine;
+    const reading = await opts.readTurn(analysisId, threadId, turnId, controller.signal);
+    if (reading.isErr()) {
+        getLogger("chat").debug({ turnId, err: describeClientError(reading.error) }, "a paused turn could not be read again");
+        if (watchedTurn === mine) watchedTurn = null;
+        return;
+    }
+    for await (const item of reading.value) {
+        if (controller.signal.aborted) break;
+        if (item.isErr()) continue;
+        const pause = pausePartOf(item.value);
+        if (pause !== null && pause.workId === turnId) notePausePart({ analysisId, threadId }, pause);
+    }
+    // A stop that a session swap made already cleared the cell, and the cell can hold a newer turn by now.
+    if (watchedTurn !== mine) return;
+    watchedTurn = null;
+    clearTurnPause(turnId);
+}
+
+/**
+ * Stop the turn of the pause prompt. The turn that this client sends stops through its own abort, thus its stream
+ * ends as aborted. A turn that this client only reads stops through the abort route of the server.
+ */
+export function stopPausedTurn(scope: { analysisId: string; threadId: string; turnId: string }, opts: PausedTurnOpts = DEFAULT_PAUSED_TURN_OPTS): void {
+    if (watchedTurn?.turnId !== scope.turnId) {
+        abort();
+        return;
+    }
+    void opts.abortTurn(scope.analysisId, scope.threadId, scope.turnId).match(
+        () => undefined,
+        (e) => notify({ kind: "error", text: `Could not stop the turn: ${describeClientError(e)}` }),
+    );
 }
 
 /**

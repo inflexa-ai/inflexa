@@ -22,6 +22,8 @@ import {
     RUN_STATUS_TERMINAL,
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
+import { pausedProfileOf, pausedRunOf, pauseWordOf } from "../hooks/pauses.ts";
+import type { PausedWork } from "../../api/paused_work.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
 import { chatStatus } from "../hooks/status.ts";
 import type { ChatStatus } from "../hooks/status.ts";
@@ -273,8 +275,12 @@ function packageLinesOf(pending: readonly PendingAddLine[], flights: readonly St
     return lines;
 }
 
-/** Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error one-liner. */
-function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
+/**
+ * Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error
+ * one-liner. A running profile that waits in a pause reads `paused` or `retrying…` instead, because its row still
+ * reads `running` and "profiling…" would claim work that does not go on. The details view gives the cause.
+ */
+function profileLineOf(snap: ReturnType<typeof profileSnapshot>, paused: PausedWork | undefined): LiveLine {
     switch (snap.kind) {
         case "not_ready":
             return { glyph: null, role: "fgMuted", text: "runtime not ready" };
@@ -287,6 +293,10 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
             switch (p.status) {
                 case "pending":
                 case "running":
+                    if (paused !== undefined) {
+                        const word = pauseWordOf(paused);
+                        return { glyph: GLYPHS.warning, role: "warning", text: word === "paused" ? "paused" : `retrying${GLYPHS.ellipsis}` };
+                    }
                     return { glyph: GLYPHS.warning, role: "warning", text: `profiling${GLYPHS.ellipsis}` };
                 case "completed": {
                     const n = p.result?.partition?.keptFiles ?? p.result?.files?.length ?? 0;
@@ -743,7 +753,7 @@ export function Sidebar(props: SidebarProps) {
 
     // DATA PROFILE / RUNS live data comes from the module store (see `hooks/sidebar_live.ts`), which
     // `App` refreshes on lifecycle edges + a bounded poll. The sidebar only reads the snapshots.
-    const profileLine = createMemo(() => profileLineOf(profileSnapshot()));
+    const profileLine = createMemo(() => profileLineOf(profileSnapshot(), pausedProfileOf(ws.analysis?.id)));
     const recentRuns = createMemo((): RunSummary[] => {
         const s = runsSnapshot();
         if (s.kind !== "loaded") return [];
@@ -922,6 +932,9 @@ export function Sidebar(props: SidebarProps) {
                                         // every row — and a terminal run has no progress entry to carry a title, so its
                                         // row keeps the id tail that at least distinguishes it.
                                         const label = (): string => progress()?.name ?? idTail(run.runId);
+                                        // A run whose step waits in a pause keeps the status `running`, thus the row
+                                        // carries the word of the pause. The run detail gives the cause.
+                                        const paused = (): PausedWork | undefined => pausedRunOf(ws.analysis?.id, run.runId);
                                         return (
                                             <>
                                                 {/* Name, age, spend — one middot-separated sequence. The spend is the
@@ -930,6 +943,14 @@ export function Sidebar(props: SidebarProps) {
                                                 <text>
                                                     <Fg role={m.role}>{`${m.glyph} `}</Fg>
                                                     <Fg role="fgMuted">{label()}</Fg>
+                                                    <Show when={paused()}>
+                                                        {(p: Accessor<PausedWork>) => (
+                                                            <>
+                                                                <Sep />
+                                                                <Fg role="warning">{pauseWordOf(p())}</Fg>
+                                                            </>
+                                                        )}
+                                                    </Show>
                                                     <Sep />
                                                     <Fg role="fgMuted">{when}</Fg>
                                                     {/* The figure rides the row itself, from the same read, so the two can never disagree. */}

@@ -30,12 +30,16 @@ import {
     resetHotState,
     send,
     sessionOpenables,
+    stopPausedTurn,
     streamPartId,
     streamText,
+    type PausedTurnOpts,
     type SendOpts,
     type ThreadPollOpts,
+    watchPausedTurn,
     watchServerStateErrors,
 } from "./conversation.ts";
+import { dockedPause } from "./pauses.ts";
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boot.ts";
 import { activeAsk, queuedCount } from "./asks.ts";
 import { __resetNoticesForTest, currentNotice } from "./notice.ts";
@@ -823,6 +827,161 @@ describe("send() reads the end of a turn from its stream when the summary is gon
         expect(part?.type === "text" ? part.text : undefined).toBe("Hello world.");
         expect(errorMsg()).toBeNull();
         expect(chatStatus()).toBe("idle");
+    });
+});
+
+describe("send() docks the pause prompt from the data-pause frames of the turn", () => {
+    /** The pause of the turn as the prompt reads it: the turn, the state and cause of the shown wait, and the others. */
+    function docked(): { turnId: string; state: string; cause: string; others: number } | null {
+        const pause = dockedPause();
+        return pause === null ? null : { turnId: pause.turnId, state: pause.wait.state, cause: pause.wait.cause.kind, others: pause.others };
+    }
+
+    test("a paused root wait docks the prompt, and the frame `running` removes it", async () => {
+        const seen: ReturnType<typeof docked>[] = [];
+        const server = fakeServer(done(), async (emit) => {
+            await emit({
+                type: "data-pause",
+                source: ROOT,
+                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0 },
+            });
+            seen.push(docked());
+            await emit({ type: "data-pause", source: ROOT, data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "running" } });
+            seen.push(docked());
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(seen).toEqual([{ turnId: "turn-1", state: "paused", cause: "host", others: 0 }, null]);
+    });
+
+    test("a paused sub-agent docks the prompt of its turn, and the transcript holds no part of it", async () => {
+        const seen: ReturnType<typeof docked>[] = [];
+        const reviewer = { agentId: "reviewer", callPath: ["tui-chat", "reviewer"] };
+        const server = fakeServer(done(), async (emit) => {
+            await emit({
+                type: "data-pause",
+                source: reviewer,
+                data: {
+                    id: "turn-1-sub",
+                    workId: "turn-1",
+                    workKind: "turn",
+                    state: "retrying",
+                    cause: { kind: "outage" },
+                    attempt: 1,
+                    retryAt: "2026-10-27T10:00:00.000Z",
+                },
+            });
+            seen.push(docked());
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(seen).toEqual([{ turnId: "turn-1", state: "retrying", cause: "outage", others: 0 }]);
+        expect(messages[1]?.parts.some((part) => part.type === "data-pause") ?? false).toBe(false);
+    });
+
+    test("the end of the turn removes a prompt that no frame `running` removed", async () => {
+        const server = fakeServer({ status: "aborted", opened: true }, async (emit) => {
+            await emit({
+                type: "data-pause",
+                source: ROOT,
+                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "credential" }, attempt: 0 },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(dockedPause()).toBeNull();
+    });
+
+    test("the stop of the prompt of a turn that this client sends is the abort of the turn", async () => {
+        const server = fakeServer({ status: "aborted", opened: true }, async (emit) => {
+            await emit({
+                type: "data-pause",
+                source: ROOT,
+                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "credential" }, attempt: 0 },
+            });
+            const pause = dockedPause();
+            if (pause !== null) stopPausedTurn(pause);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(server.aborted).toEqual(["turn-1"]);
+    });
+});
+
+describe("watchPausedTurn reads a paused turn that this client does not stream", () => {
+    const PAUSED: ChatFrame = {
+        type: "data-pause",
+        id: "turn-9",
+        workId: "turn-9",
+        workKind: "turn",
+        state: "paused",
+        cause: { kind: "host", reason: "account_frozen" },
+        attempt: 0,
+        source: ROOT,
+    };
+
+    test("its pause frames dock the prompt, and the end of its stream removes it", async () => {
+        const channel = frameChannel();
+        const reads: string[] = [];
+        const opts: PausedTurnOpts = {
+            readTurn: (analysisId, threadId, turnId) => {
+                reads.push(`${analysisId}/${threadId}/${turnId}`);
+                return okAsync(channel.frames);
+            },
+            abortTurn: () => okAsync(undefined),
+        };
+        const watching = watchPausedTurn(AID, SID, "turn-9", opts);
+        await channel.send({ type: "text-delta", text: "kept out of the transcript", source: ROOT });
+        await channel.send(PAUSED);
+
+        expect(dockedPause()).toMatchObject({ analysisId: AID, threadId: SID, turnId: "turn-9", wait: { state: "paused" } });
+        expect(messages).toHaveLength(0);
+        // A second poll that finds the same turn reads it no second time.
+        await watchPausedTurn(AID, SID, "turn-9", opts);
+        expect(reads).toEqual([`${AID}/${SID}/turn-9`]);
+
+        channel.close();
+        await watching;
+        expect(dockedPause()).toBeNull();
+    });
+
+    test("the stop of its prompt is the abort route of the server, not the abort of a turn of this client", async () => {
+        const channel = frameChannel();
+        const aborted: string[] = [];
+        const opts: PausedTurnOpts = {
+            readTurn: () => okAsync(channel.frames),
+            abortTurn: (_analysisId, _threadId, turnId) => {
+                aborted.push(turnId);
+                return okAsync(undefined);
+            },
+        };
+        const watching = watchPausedTurn(AID, SID, "turn-9", opts);
+        await channel.send(PAUSED);
+
+        stopPausedTurn({ analysisId: AID, threadId: SID, turnId: "turn-9" }, opts);
+        expect(aborted).toEqual(["turn-9"]);
+
+        channel.close();
+        await watching;
+    });
+
+    test("a session swap stops the read and removes the prompt", async () => {
+        const channel = frameChannel();
+        let signal: AbortSignal | null = null;
+        const watching = watchPausedTurn(AID, SID, "turn-9", {
+            readTurn: (_analysisId, _threadId, _turnId, abortSignal) => {
+                signal = abortSignal;
+                return okAsync(channel.frames);
+            },
+            abortTurn: () => okAsync(undefined),
+        });
+        await channel.send(PAUSED);
+
+        resetHotState();
+        expect(dockedPause()).toBeNull();
+        expect((signal as AbortSignal | null)?.aborted).toBe(true);
+        channel.close();
+        await watching;
     });
 });
 

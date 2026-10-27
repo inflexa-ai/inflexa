@@ -81,6 +81,12 @@ export type ConversationRouteOpts = {
     readonly retract: (pool: Pool, threadId: string, ifOrphan: boolean) => ResultAsync<RetractResponse, DbError>;
     /** The analysis of a thread, archived or live, or `null` when no row has the id. Real: one primary-key read. */
     readonly threadAnalysisId: (pool: Pool, threadId: string) => ResultAsync<string | null, DbError>;
+    /**
+     * The turn that holds the thread of the analysis, or `null` when no turn holds it. The open of a turn claims its
+     * thread, and the end of the turn releases it. Thus the holder is a turn of the thread that runs or waits in a
+     * pause, also a turn that a recovery runs and the registry does not hold. Real: one primary-key read.
+     */
+    readonly activeTurnId: (pool: Pool, analysisId: string, threadId: string) => ResultAsync<string | null, DbError>;
     /** One chat turn. Real: `runChatTurn` of `modules/harness/turn.ts`. */
     readonly runTurn: (args: RunChatTurnArgs) => Promise<TurnOutcome>;
     /** The model connection, for the remedy of a failed turn. Real: `resolveModelConnection`. */
@@ -102,6 +108,7 @@ export const DEFAULT_CONVERSATION_ROUTE_OPTS: ConversationRouteOpts = {
     loadPage: (pool, threadId, options) => createThreadHistory(pool).loadPage(threadId, options),
     retract: (pool, threadId, ifOrphan) => (ifOrphan ? healTailOrphan(pool, threadId) : retractTailTurn(pool, threadId)),
     threadAnalysisId,
+    activeTurnId,
     runTurn: (args) => runChatTurn(args),
     connection: resolveModelConnection,
     readCredentialVerdict,
@@ -152,7 +159,9 @@ const askReplyBody = z.discriminatedUnion("kind", [
 /**
  * The routes of draft 2.3 under `/api/v1/analyses`: the threads, the chat turn and the turn registry, and
  * the asks. The thread, chat, and ask routes read Postgres through the runtime, thus they wait for the boot.
- * The turn routes read the registry of this process only.
+ * The list and the summary of the turns read the registry of this process only. The stream and the abort of a turn
+ * that the registry does not hold read the claim of the thread in Postgres, thus they reach a turn that a recovery
+ * runs after a restart.
  */
 export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts = DEFAULT_CONVERSATION_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
@@ -331,12 +340,18 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         return c.json(turn);
     });
 
-    routes.get("/:analysisId/threads/:threadId/turns/:turnId/stream", runtime, (c) => {
+    routes.get("/:analysisId/threads/:threadId/turns/:turnId/stream", runtime, async (c) => {
         const { analysisId, threadId, turnId } = c.req.param();
         const turn = findTurn(turnId);
-        if (turn === null || turn.analysisId !== analysisId || turn.threadId !== threadId) return turnNotFound(c);
+        if (turn !== null && (turn.analysisId !== analysisId || turn.threadId !== threadId)) return turnNotFound(c);
+        if (turn === null) {
+            const holder = await opts.activeTurnId(c.get("runtime").pool, analysisId, threadId);
+            if (holder.isErr()) return internalError(c, holder.error, "read the turn of a thread");
+            if (holder.value !== turnId) return turnNotFound(c);
+        }
         const chatTurns = c.get("runtime").chatTurns;
         // The harness keeps the frames of the turn, thus this read gives each frame again from the start of the turn.
+        // The read is live until the turn ends, thus the stream of a turn that waits in a pause stays open.
         return sseResponse(async (writer) => {
             for await (const frame of chatTurns.read(turnId)) {
                 if (writer.signal.aborted) return;
@@ -345,13 +360,25 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         }, opts.sse);
     });
 
-    routes.post("/:analysisId/threads/:threadId/turns/:turnId/abort", (c) => {
+    routes.post("/:analysisId/threads/:threadId/turns/:turnId/abort", async (c) => {
         const { analysisId, threadId, turnId } = c.req.param();
         const turn = findTurn(turnId);
-        if (turn === null || turn.analysisId !== analysisId || turn.threadId !== threadId) return turnNotFound(c);
-        const outcome = abortTurn(turnId);
-        // The registry dropped the turn between the read and the abort, thus the turn ended.
-        return c.json<AbortTurnResponse>({ turnId, outcome: outcome ?? "already_ended" });
+        if (turn !== null) {
+            if (turn.analysisId !== analysisId || turn.threadId !== threadId) return turnNotFound(c);
+            const outcome = abortTurn(turnId);
+            // The registry dropped the turn between the read and the abort, thus the turn ended.
+            return c.json<AbortTurnResponse>({ turnId, outcome: outcome ?? "already_ended" });
+        }
+        // A turn that the registry does not hold, for example a paused turn that a recovery runs after a restart. Only
+        // the harness can stop it, thus this branch needs the runtime, and a server with none knows no such turn.
+        const harness = boot.runtime();
+        if (harness === null) return turnNotFound(c);
+        const holder = await opts.activeTurnId(harness.pool, analysisId, threadId);
+        if (holder.isErr()) return internalError(c, holder.error, "read the turn of a thread");
+        if (holder.value !== turnId) return turnNotFound(c);
+        const stopped = await ResultAsync.fromPromise(harness.chatTurns.stop(turnId), (cause) => cause);
+        if (stopped.isErr()) return internalError(c, stopped.error, "stop a chat turn");
+        return c.json<AbortTurnResponse>({ turnId, outcome: "aborting" });
     });
 
     routes.post("/:analysisId/chat", runtime, async (c) => {
@@ -605,17 +632,7 @@ async function failureOf(failed: { readonly reason: string; readonly code?: stri
     const connection = opts.connection();
     // The turn workflow gives the scrubbed text of the failure and its code, and keeps the cause in its own log.
     const detailLines = [failed.reason];
-    if (failed.code === "credential") {
-        if (connection.mode === "direct") {
-            return {
-                // The server reads the key from its own environment at its boot, thus only a new server sees a new key.
-                message: `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then run \`inflexa server stop\`. The next \`inflexa\` command starts the server with the new key.`,
-                detailLines,
-                auth: { provider: connection.provider, envVar: MODEL_API_KEY_VAR },
-            };
-        }
-        return { message: deadLoginMessage(connection.provider), detailLines, auth: { provider: connection.provider } };
-    }
+    if (failed.code === "credential") return { ...credentialRemedy(connection), detailLines };
     const generic: TurnFailure = { message: `The turn failed: ${failed.reason}`, detailLines };
     if (connection.mode !== "cliproxy") return generic;
     const verdict = await opts.readCredentialVerdict();
@@ -641,6 +658,21 @@ async function failureOf(failed: { readonly reason: string; readonly code?: stri
             throw new Error(`unhandled CredentialVerdict: ${JSON.stringify(exhaustive)}`);
         }
     }
+}
+
+/**
+ * The remedy of a credential that the model endpoint refused, or that a turn did not have: the line for a person,
+ * and the provider. A failed turn and a paused turn with the cause `credential` give the same remedy.
+ */
+export function credentialRemedy(connection: ModelConnectionIdentity): Pick<TurnFailure, "message" | "auth"> {
+    if (connection.mode === "direct") {
+        return {
+            // The server reads the key from its own environment at its boot, thus only a new server sees a new key.
+            message: `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then run \`inflexa server stop\`. The next \`inflexa\` command starts the server with the new key.`,
+            auth: { provider: connection.provider, envVar: MODEL_API_KEY_VAR },
+        };
+    }
+    return { message: deadLoginMessage(connection.provider), auth: { provider: connection.provider } };
 }
 
 /** The `cliproxy` remedy for a dead login: `inflexa up` signs in again and restarts the proxy, thus the server needs no restart. */
@@ -754,6 +786,17 @@ function threadAnalysisId(pool: Pool, threadId: string): ResultAsync<string | nu
         pool.query<{ analysis_id: string }>("SELECT analysis_id FROM cortex_analysis_threads WHERE thread_id = $1", [threadId]),
         (cause): DbError => ({ type: "query_failed", op: "conversation.threadAnalysisId", cause }),
     ).map(({ rows }) => rows[0]?.analysis_id ?? null);
+}
+
+/** The turn that holds a thread of the analysis, by the primary key of the thread. */
+function activeTurnId(pool: Pool, analysisId: string, threadId: string): ResultAsync<string | null, DbError> {
+    return ResultAsync.fromPromise(
+        pool.query<{ active_turn_id: string | null }>("SELECT active_turn_id FROM cortex_analysis_threads WHERE thread_id = $1 AND analysis_id = $2", [
+            threadId,
+            analysisId,
+        ]),
+        (cause): DbError => ({ type: "query_failed", op: "conversation.activeTurnId", cause }),
+    ).map(({ rows }) => rows[0]?.active_turn_id ?? null);
 }
 
 /** The workspace root of the analysis on disk. A missing analysis row or a failed read cannot name the tree. */

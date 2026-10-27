@@ -31,6 +31,8 @@ import { ReportSessionBlock } from "../components/report_session_block.tsx";
 import { CompactionBlock } from "../components/compaction_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
+import { PausePrompt } from "../components/pause_prompt.tsx";
+import { describePauseCause, nextRetryOf } from "../../lib/pause_words.ts";
 import { MessageBlock } from "./message_block.tsx";
 import { ChatBar } from "./chat_bar.tsx";
 import { ActivityPanel } from "./activity_panel.tsx";
@@ -71,6 +73,7 @@ import {
     galleryRun,
     mockAskPrompts,
     mockAskCards,
+    mockPausedWaits,
     mockCortexRuns,
     mockRunDetail,
     mockDataProfile,
@@ -1161,6 +1164,42 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <CompactionBlock status="failed" tokensBefore={170_000} tokensAfter={90_000} durationMs={3_000} />
                     <text fg={theme().fgMuted}>failed with no drop — the turn failed, and the next turn compacts again:</text>
                     <CompactionBlock status="failed" tokensBefore={170_000} durationMs={3_000} />
+                </State>
+                <State n="28" label="pause prompt — a paused turn docks above the chat bar (paused / retrying)">
+                    {/* The docked PausePrompt in the slot and the form of the ask prompt, rendered inert: no
+                        onFocusReady handle, thus no host focuses the box and its focus-gated r/s layer never wins
+                        the keymap, and `inert` makes a click on an action a no-op. The words come from the same
+                        helpers as the live dock. A frame with the state `running` removes the prompt, thus that
+                        state has no exhibit. */}
+                    <text fg={theme().fgMuted}>paused by the host — the reason of the host, and a sub-agent that waits beside the turn:</text>
+                    <PausePrompt
+                        state={mockPausedWaits.hostRefusal.state}
+                        cause={describePauseCause(mockPausedWaits.hostRefusal.cause)}
+                        othersWaiting={mockPausedWaits.hostRefusal.othersWaiting}
+                        inert
+                        onResume={noop}
+                        onStop={noop}
+                    />
+                    <text fg={theme().fgMuted}>paused for a credential — the remedy of the server under the cause:</text>
+                    <PausePrompt
+                        state={mockPausedWaits.credential.state}
+                        cause={describePauseCause(mockPausedWaits.credential.cause)}
+                        remedy={mockPausedWaits.credential.remedy}
+                        othersWaiting={mockPausedWaits.credential.othersWaiting}
+                        inert
+                        onResume={noop}
+                        onStop={noop}
+                    />
+                    <text fg={theme().fgMuted}>retrying after an outage — the next retry of the timer, and "retry now" in place of resume:</text>
+                    <PausePrompt
+                        state={mockPausedWaits.outage.state}
+                        cause={describePauseCause(mockPausedWaits.outage.cause)}
+                        nextRetry={nextRetryOf(mockPausedWaits.outage) ?? undefined}
+                        othersWaiting={mockPausedWaits.outage.othersWaiting}
+                        inert
+                        onResume={noop}
+                        onStop={noop}
+                    />
                 </State>
             </ScrollPane>
         </DialogPanel>

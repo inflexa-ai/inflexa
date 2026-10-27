@@ -1564,6 +1564,7 @@ describe("Sidebar USAGE section", () => {
                     },
                     checkServer: async () => true,
                     pollThread: async () => {},
+                    pollPaused: async () => {},
                 },
             );
         });

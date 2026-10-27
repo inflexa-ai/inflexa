@@ -285,7 +285,7 @@ describe("GET /api/v1/analyses: the summary of each analysis", () => {
             latestRuns: () => okAsync([runOf(live.id)]),
             profiles: () =>
                 okAsync<DataProfileSummary[]>([{ analysisId: live.id, status: "completed", completedAt: "2026-10-04T10:00:00.000Z", profiledFiles: 12 }]),
-            liveWork: () => okAsync(new Map([[live.id, { runs: 1, profiles: 0 }]])),
+            liveWork: () => okAsync(new Map([[live.id, { runs: 1, profiles: 0, turns: 0 }]])),
             pendingAsks: async () => [{ analysisId: live.id }, { analysisId: live.id }, { analysisId: "someone-else" }],
         });
 
@@ -562,7 +562,7 @@ describe("PATCH {A}", () => {
         expect(response.status).toBe(409);
         expect((await response.json()) as ApiError).toEqual({
             error: "busy",
-            message: "Cannot rename while a chat turn is running.",
+            message: "Cannot rename while a chat turn is running or paused.",
             details: { reasons: ["chat_turn", "run"] },
         });
         expect(getAnalysis(a.id)._unsafeUnwrap()?.name).toBe(asStr256("Alpha"));

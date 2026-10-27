@@ -28,10 +28,8 @@ function noticeKindFor(status: RunStatus): Notice["kind"] {
         case "failed":
         case "canceled":
             return "error";
-        // Finished with gaps, and suspended-for-funds is actionable rather than broken. Neither is a
-        // success, and announcing either in the success tone would be worse than silence.
+        // Finished with gaps: not a success, and announcing it in the success tone would be worse than silence.
         case "partial":
-        case "suspended_insufficient_funds":
             return "warn";
         case "running":
             return "info";
@@ -53,8 +51,6 @@ function outcomeWord(status: RunStatus): string {
             return "was canceled";
         case "partial":
             return "finished partially";
-        case "suspended_insufficient_funds":
-            return "was suspended (insufficient funds)";
         case "running":
             return "is running";
         default: {

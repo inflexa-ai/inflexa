@@ -7,8 +7,10 @@ import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts"
 import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
 import {
     commands,
+    commitResumePausedWork,
     commitSessionRename,
     commitSessionRestore,
+    pausedWorkLabel,
     confirmSessionDelete,
     confirmSessionPurge,
     deleteAnalysisWith,
@@ -28,6 +30,7 @@ import {
     type SessionOpts,
 } from "./commands.tsx";
 import type { ThreadList, ThreadSummary } from "../api/conversation.ts";
+import type { PausedWork, ResumedWork } from "../api/paused_work.ts";
 import { conversationSummary, threadListOf } from "../test_support/threads.ts";
 import { DEFAULT_CLIENT_OPTS, type ClientOpts } from "../client/api.ts";
 import type { Workspace } from "./contexts/workspace.ts";
@@ -1523,4 +1526,54 @@ describe("the busy read before a rename or a delete", () => {
             __resetNoticesForTest();
         });
     }
+});
+
+describe("the palette command that resumes paused work", () => {
+    const run: PausedWork = {
+        workId: "run-1",
+        kind: "run",
+        analysisId: "A",
+        waiting: [
+            { workflowId: "run-1-0", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, pausedAt: "2026-10-27T10:00:00.000Z" },
+        ],
+    };
+
+    test("each kind of paused work reads by the name that the rail gives it", () => {
+        const runs = { kind: "loaded" as const, analysisId: "A", runs: [] };
+        expect(pausedWorkLabel({ ...run, kind: "turn", workId: "turn-1" }, runs)).toBe("Chat turn");
+        expect(pausedWorkLabel({ ...run, kind: "profile", workId: "wf-p" }, runs)).toBe("Data profile");
+        expect(pausedWorkLabel(run, runs)).toBe("Run run1");
+    });
+
+    test("a resume names the count of the resumed workflows, and the list is read again", async () => {
+        const notices: Notice[] = [];
+        const refreshed: string[] = [];
+        await commitResumePausedWork("A", run, "Run DE", {
+            refresh: async (analysisId) => {
+                refreshed.push(analysisId);
+                return [];
+            },
+            resume: (_analysisId, workId) => okAsync({ workId, workflows: 1 }),
+            notify: (n) => notices.push(n),
+        });
+        expect(notices).toEqual([{ kind: "info", text: "Run DE resumed (1 waiting workflow)." }]);
+        expect(refreshed).toEqual(["A"]);
+    });
+
+    test("a work that resumed or stopped already reads as no longer paused, and a different failure as an error", async () => {
+        const notices: Notice[] = [];
+        const opts = { refresh: async () => [], notify: (n: Notice) => notices.push(n) };
+        await commitResumePausedWork("A", run, "Run DE", {
+            ...opts,
+            resume: () => errAsync<ResumedWork, ClientError>({ type: "http", status: 404, body: { error: "not_found", message: "gone" } }),
+        });
+        await commitResumePausedWork("A", run, "Run DE", {
+            ...opts,
+            resume: () => errAsync<ResumedWork, ClientError>({ type: "http", status: 500, body: { error: "internal_error", message: "down" } }),
+        });
+        expect(notices.map((n) => [n.kind, n.text.split(":")[0]])).toEqual([
+            ["info", "Run DE is no longer paused."],
+            ["error", "Could not resume Run DE"],
+        ]);
+    });
 });

@@ -697,7 +697,7 @@ spec is the contract.
 - **The other clients.** The server pushes nothing. The TUI sees the work of a
   different client through its poll (`watchSidebarData`, `src/tui/hooks/sidebar_live.ts`):
   each 5 s with active work, and each 15 s when idle. A tick probes the server, and
-  it reads the runs, the analysis, the usage, and the open thread.
+  it reads the runs, the analysis, the usage, the open thread, and the paused work.
 - **The Host and Origin check.** The server answers only a request whose `Host`
   header is `127.0.0.1:<port>` or `localhost:<port>`. An `Origin` header must name
   the same address. Each other request gets 403 `forbidden`. The one exception is

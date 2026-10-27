@@ -149,16 +149,24 @@ export function abortTurn(
 }
 
 /**
- * `GET {T}/turns/:turnId/stream`: the frames of a turn again, from its start, live until the turn ends. 404
- * `not_found` for a turn that the server forgot. A client reads a turn again after a lost connection.
+ * `GET {T}/turns/:turnId/stream`: the frames of a turn again, from its start, live until the turn ends. The stream of
+ * a turn that waits in a pause stays open. 404 `not_found` for a turn that is not of the thread, or that the server
+ * forgot. A client reads a turn again after a lost connection, or to see a paused turn that a recovery runs. Aborting
+ * `signal` closes the stream.
  */
 export function readChatTurn(
     analysisId: string,
     threadId: string,
     turnId: string,
+    signal?: AbortSignal,
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): ResultAsync<AsyncGenerator<Result<ChatFrame, ClientError>>, ClientError> {
-    return streamRequest<ChatFrame>("GET", `${threadPath(analysisId, threadId)}/turns/${encodeURIComponent(turnId)}/stream`, {}, opts);
+    return streamRequest<ChatFrame>(
+        "GET",
+        `${threadPath(analysisId, threadId)}/turns/${encodeURIComponent(turnId)}/stream`,
+        signal === undefined ? {} : { signal },
+        opts,
+    );
 }
 
 /** A chat turn that the server started: its id, and its frames as they arrive. */
