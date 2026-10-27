@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { createRoot } from "solid-js";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
@@ -120,23 +120,29 @@ describe("notice queue — the unsolicited discipline run completions use", () =
         expect(__pendingNoticeCountForTest()).toBe(1);
     });
 
-    test("notices are shown in arrival order, and none is skipped", async () => {
-        // Short windows so the queue drains inside the test, but long enough that one sleep advances
-        // exactly one step — a window shorter than the sleep would drain several and hide the order.
-        const WINDOW = 40;
-        notify({ kind: "info", text: "one" }, WINDOW, { queue: true });
-        notify({ kind: "info", text: "two" }, WINDOW, { queue: true });
-        notify({ kind: "info", text: "three" }, WINDOW, { queue: true });
-        expect(currentNotice()?.text).toBe("one");
-        expect(__pendingNoticeCountForTest()).toBe(2);
+    test("notices are shown in arrival order, and none is skipped", () => {
+        // A fake clock, because a real sleep under load can cross zero or two windows and hide the order.
+        jest.useFakeTimers();
+        try {
+            const WINDOW = 4000;
+            notify({ kind: "info", text: "one" }, WINDOW, { queue: true });
+            notify({ kind: "info", text: "two" }, WINDOW, { queue: true });
+            notify({ kind: "info", text: "three" }, WINDOW, { queue: true });
+            expect(currentNotice()?.text).toBe("one");
+            expect(__pendingNoticeCountForTest()).toBe(2);
 
-        await Bun.sleep(WINDOW + 15);
-        expect(currentNotice()?.text).toBe("two");
-        await Bun.sleep(WINDOW + 15);
-        expect(currentNotice()?.text).toBe("three");
-        await Bun.sleep(WINDOW + 15);
-        expect(currentNotice()).toBeNull();
-        expect(__pendingNoticeCountForTest()).toBe(0);
+            jest.advanceTimersByTime(WINDOW - 1);
+            expect(currentNotice()?.text).toBe("one");
+            jest.advanceTimersByTime(1);
+            expect(currentNotice()?.text).toBe("two");
+            jest.advanceTimersByTime(WINDOW);
+            expect(currentNotice()?.text).toBe("three");
+            jest.advanceTimersByTime(WINDOW);
+            expect(currentNotice()).toBeNull();
+            expect(__pendingNoticeCountForTest()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });
 
