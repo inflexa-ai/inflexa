@@ -108,3 +108,33 @@ export function listLiveRunIds(pool: Pool, limit: number): ResultAsync<string[],
         (cause) => cause,
     ).map((result) => result.rows.map((row) => row.run_id));
 }
+
+/** A chat turn whose durable workflow is live, by the claim of its thread. `startedAt` is the start of the workflow. */
+export type LiveTurn = { turnId: string; threadId: string; analysisId: string; startedAt: string };
+
+/**
+ * The turn of each thread of `threadIds` whose durable workflow is live, by {@link TURN_IS_LIVE}: a turn that runs or
+ * waits in a pause, also a turn that a recovery runs and the turn registry does not hold. `$1` is the thread ids. An
+ * empty list sends no query.
+ */
+export function listLiveTurns(pool: Pool, threadIds: readonly string[]): ResultAsync<LiveTurn[], unknown> {
+    if (threadIds.length === 0) return okAsync([]);
+    return ResultAsync.fromPromise(
+        pool.query<{ thread_id: string; analysis_id: string; active_turn_id: string; created_at: string }>({
+            text: `SELECT t.thread_id, t.analysis_id, t.active_turn_id,
+                          (SELECT ws.created_at FROM dbos.workflow_status ws WHERE ws.workflow_uuid = t.active_turn_id) AS created_at
+                     FROM cortex_analysis_threads t
+                    WHERE t.thread_id = ANY($1::text[])
+                      AND ${TURN_IS_LIVE}`,
+            values: [threadIds, LIVE_WORKFLOW_STATUSES],
+        }),
+        (cause) => cause,
+    ).map((result) =>
+        result.rows.map((row) => ({
+            turnId: row.active_turn_id,
+            threadId: row.thread_id,
+            analysisId: row.analysis_id,
+            startedAt: new Date(Number(row.created_at)).toISOString(),
+        })),
+    );
+}

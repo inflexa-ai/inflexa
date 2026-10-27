@@ -20,10 +20,9 @@ import { getRunSeenBaseline, listAnalysisNames, listSeenRunIds } from "../../db/
 import { getLogger } from "../../lib/log.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
-import { listLiveRunIds } from "../durable_work.ts";
+import { listLiveRunIds, listLiveTurns, type LiveTurn } from "../durable_work.ts";
 import { internalError, parseCount, requireRuntime, type ServerEnv } from "../http.ts";
-import { runningTurnsByThread } from "../turns.ts";
-import { threadActivityOf, toThreadSummary } from "./conversation.ts";
+import { runningTurnsOf, threadActivityOf, toThreadSummary } from "./conversation.ts";
 import { isTerminalRunStatus } from "./runs.ts";
 
 /** The count of `recentThreads` when the request names none. */
@@ -47,8 +46,8 @@ export type AttentionRouteOpts = {
     readonly seenRunIds: (runIds: readonly string[]) => Result<Set<string>, DbError>;
     /** The name of each analysis of the list that has a row. */
     readonly analysisNames: (ids: readonly string[]) => Result<Map<string, string>, DbError>;
-    /** The newest running turn of each thread that has one. */
-    readonly runningTurns: () => ReadonlyMap<string, string>;
+    /** The turn of each thread of the list whose durable workflow is live. */
+    readonly liveTurns: (pool: Pool, threadIds: readonly string[]) => ResultAsync<LiveTurn[], unknown>;
 };
 
 /** The production {@link AttentionRouteOpts}. */
@@ -61,7 +60,7 @@ export const DEFAULT_ATTENTION_ROUTE_OPTS: AttentionRouteOpts = {
     seenBaseline: getRunSeenBaseline,
     seenRunIds: listSeenRunIds,
     analysisNames: listAnalysisNames,
-    runningTurns: runningTurnsByThread,
+    liveTurns: listLiveTurns,
 };
 
 /**
@@ -110,8 +109,12 @@ export function attentionRoutes(boot: ServerBoot, opts: AttentionRouteOpts = DEF
         ]);
         if (names.isErr()) return internalError(c, names.error, "read the analysis names");
 
+        const threadIds = new Set([...recent.map((thread) => thread.threadId), ...pending.flatMap((ask) => (ask.threadId === null ? [] : [ask.threadId]))]);
+        const turns = await opts.liveTurns(pool, [...threadIds]);
+        if (turns.isErr()) return internalError(c, turns.error, "read the live turns");
+        const runningTurns = runningTurnsOf(turns.value);
+
         // An analysis with no SQLite row has no name, and no `{A}` route opens it, thus its items drop.
-        const runningTurns = opts.runningTurns();
         const activityOf = threadActivityOf(pending, runningTurns);
         const body: Attention = {
             asks: pending.flatMap((ask): AttentionAsk[] => {

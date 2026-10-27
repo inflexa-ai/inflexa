@@ -191,6 +191,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
         retract: () => okAsync({ kind: "retracted", messages: 2 }),
         threadAnalysisId: (_pool, id) => okAsync(id === T ? A : null),
         activeTurnId: () => okAsync(null),
+        liveTurns: () => okAsync([]),
         runTurn: () => Promise.resolve({ kind: "ok", opened: true, fallbackText: "" }),
         connection: () => ({ provider: "anthropic", mode: "direct" }),
         readCredentialVerdict: () => Promise.resolve(err({ type: "no_key" })),
@@ -309,6 +310,58 @@ describe("the thread routes", () => {
 
             const single = (await (await routes.request(`/${A}/threads/${T}`)).json()) as ThreadSummary;
             expect(single).toMatchObject({ runningTurnId: "turn-new", pendingAsks: 2 });
+        });
+
+        test("a thread whose turn a recovery runs carries that turn, and the registry turn of a thread wins", async () => {
+            startTurn({ turnId: "turn-registry", threadId: "thread-both", analysisId: A }, new Date("2026-10-02T10:00:00.000Z"), new AbortController());
+            const store = memoryStore([conversationThread(), conversationThread({ threadId: "thread-both" }), conversationThread({ threadId: "thread-idle" })]);
+            const reads: string[][] = [];
+            const routes = routesWith({
+                store,
+                liveTurns: (_pool, threadIds) => {
+                    reads.push([...threadIds]);
+                    return okAsync(
+                        [
+                            { turnId: "turn-recovered", threadId: T, analysisId: A, startedAt: "2026-10-02T09:00:00.000Z" },
+                            { turnId: "turn-registry", threadId: "thread-both", analysisId: A, startedAt: "2026-10-02T09:00:00.000Z" },
+                        ].filter((turn) => threadIds.includes(turn.threadId)),
+                    );
+                },
+            });
+
+            const list = (await (await routes.request(`/${A}/threads`)).json()) as ThreadList;
+            const byId = new Map(list.threads.map((thread) => [thread.id, thread.runningTurnId]));
+            expect(byId).toEqual(
+                new Map([
+                    [T, "turn-recovered"],
+                    ["thread-both", "turn-registry"],
+                    ["thread-idle", null],
+                ]),
+            );
+            expect(reads).toEqual([[T, "thread-both", "thread-idle"]]);
+
+            const single = (await (await routes.request(`/${A}/threads/${T}`)).json()) as ThreadSummary;
+            expect(single.runningTurnId).toBe("turn-recovered");
+            const renamed = (await (await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" }))).json()) as ThreadSummary;
+            expect(renamed.runningTurnId).toBe("turn-recovered");
+            await routes.request(`/${A}/threads/${T}`, { method: "DELETE" });
+            const restored = (await (await routes.request(`/${A}/threads/${T}/restore`, { method: "POST" })).json()) as ThreadSummary;
+            expect(restored.runningTurnId).toBe("turn-recovered");
+        });
+
+        test("a failed read of the live turns gives 500 `internal_error` and does not rename", async () => {
+            const store = memoryStore([conversationThread()]);
+            const routes = routesWith({ store, liveTurns: () => errAsync(new Error("workflow table down")) });
+
+            for (const response of [
+                await routes.request(`/${A}/threads`),
+                await routes.request(`/${A}/threads/${T}`),
+                await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" })),
+            ]) {
+                expect(response.status).toBe(500);
+                expect(await response.json()).toMatchObject({ error: "internal_error" });
+            }
+            expect((await store.getThread(T))._unsafeUnwrap()?.title).toBe("Cohort survival questions");
         });
 
         test("PATCH {T} and POST {T}/restore carry the fields too", async () => {
@@ -859,6 +912,39 @@ describe("the turn registry routes", () => {
         expect(stopped).toEqual(["turn-recovered"]);
         expect((await routes.request(`/${A}/threads/${T}/turns/turn-other/abort`, { method: "POST" })).status).toBe(404);
         expect(stopped).toEqual(["turn-recovered"]);
+    });
+
+    test("GET {T}/turns gives a running turn that a recovery runs: it holds the thread with a live workflow, and the registry does not hold it", async () => {
+        const reads: string[][] = [];
+        const routes = routesWith({
+            liveTurns: (_pool, threadIds) => {
+                reads.push([...threadIds]);
+                return okAsync([{ turnId: "turn-recovered", threadId: T, analysisId: A, startedAt: "2026-10-02T09:00:00.000Z" }]);
+            },
+        });
+
+        const list = (await (await routes.request(`/${A}/threads/${T}/turns`)).json()) as TurnList;
+        expect(list.turns).toEqual([{ turnId: "turn-recovered", threadId: T, analysisId: A, status: "running", startedAt: "2026-10-02T09:00:00.000Z" }]);
+        expect(list.total).toBe(1);
+        expect(reads).toEqual([[T]]);
+        // The live turn of the thread is not a turn of a different analysis.
+        expect(((await (await routes.request(`/other/threads/${T}/turns`)).json()) as TurnList).turns).toEqual([]);
+    });
+
+    test("GET {T}/turns gives a turn that the registry holds one time, as the registry holds it", async () => {
+        startTurn({ turnId: "turn-1", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"), new AbortController());
+        const routes = routesWith({
+            liveTurns: () => okAsync([{ turnId: "turn-1", threadId: T, analysisId: A, startedAt: "2026-10-02T09:59:59.000Z" }]),
+        });
+
+        const list = (await (await routes.request(`/${A}/threads/${T}/turns`)).json()) as TurnList;
+        expect(list.turns).toEqual([{ turnId: "turn-1", threadId: T, analysisId: A, status: "running", startedAt: "2026-10-02T10:00:00.000Z" }]);
+    });
+
+    test("GET {T}/turns gives 500 `internal_error` when the read of the live turns fails", async () => {
+        const response = await routesWith({ liveTurns: () => errAsync(new Error("workflow table down")) }).request(`/${A}/threads/${T}/turns`);
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
     });
 
     test("the turn routes need no runtime: they read the registry of the process", async () => {
