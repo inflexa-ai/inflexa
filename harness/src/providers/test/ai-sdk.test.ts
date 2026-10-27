@@ -2,6 +2,7 @@
 const BASE64URL_DIGEST_43 = /^[A-Za-z0-9_-]{43}$/;
 
 import { errorMessageOf } from "../../lib/thrown.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -630,7 +631,84 @@ describe("createConfiguredAiSdkProvider", () => {
         expect(declared.capabilities.imageToolResults).toBe(true);
         expect(refused.capabilities.imageToolResults).toBe(false);
     });
+
+    it("asserts the picture capability for an openai-compatible endpoint that takes multipart tool content", () => {
+        const config = { kind: "openai-compatible", name: "gateway", baseURL: "http://models.local/v1", model: "local-tool-model" } as const;
+
+        const multipart = createConfiguredAiSdkProvider({ config: { ...config, supportsMultiPartToolContent: true } });
+        const plain = createConfiguredAiSdkProvider({ config });
+        const refused = createConfiguredAiSdkProvider({ config: { ...config, supportsMultiPartToolContent: true, capabilities: { imageToolResults: false } } });
+
+        expect(multipart.capabilities.imageToolResults).toBe(true);
+        expect(plain.capabilities.imageToolResults).toBeUndefined();
+        expect(refused.capabilities.imageToolResults).toBe(false);
+    });
+
+    it("sends a tool picture as an image part of the tool message to an endpoint that takes multipart tool content", async () => {
+        const bodies: ChatCompletionsBody[] = [];
+        const wire = Object.assign(
+            (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+                bodies.push(ChatCompletionsBodySchema.parse(parseJsonAs(typeof init?.body === "string" ? init.body : "{}", z.json())));
+                return Promise.resolve(new Response(COMPLETIONS_SSE, { headers: { "content-type": "text/event-stream" } }));
+            },
+            { preconnect: fetch.preconnect },
+        );
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "gateway",
+                baseURL: "http://models.local/v1",
+                model: "local-tool-model",
+                fetch: wire,
+                supportsMultiPartToolContent: true,
+            },
+        });
+        const bound = provider.bind({ session: makeSession(), live: false });
+
+        await streamText({ model: bound.model, ...bound.settings, maxRetries: 0, messages: PICTURE_MESSAGES }).consumeStream();
+
+        const tool = bodies[0]?.messages.find((message) => message.role === "tool");
+        expect(tool?.content).toEqual([
+            { type: "text", text: "the page" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+        ]);
+    });
 });
+
+/** The fields of a chat completions request body that the picture test reads. */
+const ChatCompletionsBodySchema = z.looseObject({ messages: z.array(z.looseObject({ role: z.string(), content: z.union([z.string(), z.null(), z.array(z.looseObject({ type: z.string() }))]).optional() })) });
+type ChatCompletionsBody = z.infer<typeof ChatCompletionsBodySchema>;
+
+/** A chat completions event stream with one text delta. */
+const COMPLETIONS_SSE = [
+    `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "local-tool-model", choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }] })}`,
+    `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, model: "local-tool-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}`,
+    "data: [DONE]",
+    "",
+].join("\n\n");
+
+/** A history whose tool result carries a text part and a picture. */
+const PICTURE_MESSAGES: ModelMessage[] = [
+    { role: "user", content: "look at the page" },
+    { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-1", toolName: "examine_page", input: {} }] },
+    {
+        role: "tool",
+        content: [
+            {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "examine_page",
+                output: {
+                    type: "content",
+                    value: [
+                        { type: "text", text: "the page" },
+                        { type: "file", mediaType: "image/png", data: { type: "data", data: "iVBORw0KGgo=" } },
+                    ],
+                },
+            },
+        ],
+    },
+];
 
 describe("computeRetryDelayMs", () => {
     it("scales the exponential input with full jitter and caps it at the ceiling", () => {

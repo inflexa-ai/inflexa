@@ -254,6 +254,13 @@ export type AiSdkProviderConfig =
           readonly model: string;
           readonly fetch?: typeof fetch;
           readonly capabilities?: Partial<ProviderCapabilities>;
+          /**
+           * The endpoint takes a tool message whose content is a list of parts, for example a text part and an
+           * image part. The standard wire takes a string only, thus the package then sends a tool result as
+           * JSON text. Set the flag only for a backend that takes the parts. It also asserts `imageToolResults`,
+           * which `capabilities` can override.
+           */
+          readonly supportsMultiPartToolContent?: boolean;
           /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
           readonly maxOutputTokens?: number;
           /**
@@ -1043,7 +1050,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // Each call of the provider streams. Without this flag the package asks for
         // no usage on a stream, and the call reports none.
         includeUsage: true,
+        supportsMultiPartToolContent: config.supportsMultiPartToolContent,
     });
+    const pictureDefault: Partial<ProviderCapabilities> = config.supportsMultiPartToolContent === true ? { imageToolResults: true } : {};
     // The compatible wire has no standard field for a session key, thus this arm
     // gives no provider options of its own.
     return createAiSdkProvider({
@@ -1051,7 +1060,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // the seam needs no middleware to carry the depth into its namespace.
         model: provider.chatModel(config.model),
         ...hostPolicyOf(deps),
-        capabilities: config.capabilities,
+        capabilities: { ...pictureDefault, ...config.capabilities },
         logger: deps.logger,
         maxOutputTokens: config.maxOutputTokens,
         maxRetries: config.maxRetries,
