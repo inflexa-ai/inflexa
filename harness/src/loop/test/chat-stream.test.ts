@@ -63,6 +63,22 @@ const streamWorkflow = DBOS.registerWorkflow(
     { name: "chat-stream-turn" },
 );
 
+const STARTED_IDS = ["c1", "c2", "c3"];
+
+/** Three body writes that start in one tick, and a step after them that takes the next function id. */
+const concurrentWritesWorkflow = DBOS.registerWorkflow(
+    async (): Promise<void> => {
+        const writer = createTurnStreamWriter(ROOT, () => undefined);
+        const writes = STARTED_IDS.map((toolUseId) => writer.write({ type: "tool-started", source: ROOT, toolUseId, name: "lookup" }));
+        const stepped = DBOS.runStep(() => Promise.resolve("done"), { name: "after-writes" });
+        await Promise.all([...writes, stepped]);
+        await writer.write({ type: "finish", source: ROOT });
+        await writer.settle();
+        await closeDurableStream(CHAT_STREAM_KEY, "stop");
+    },
+    { name: "chat-stream-concurrent-writes" },
+);
+
 let parked = false;
 let attempts = 0;
 
@@ -173,6 +189,17 @@ describe("the durable stream of a chat turn", () => {
         await handle.getResult();
 
         expect(await readAll(turnId)).toEqual(await readAll(turnId));
+    });
+
+    it("writes the concurrent body writes in the order of the calls, with no retry of a stream offset", async () => {
+        const turnId = rig.nextWorkflowId("chat-stream-concurrent-");
+        await (await DBOS.startWorkflow(concurrentWritesWorkflow, { workflowID: turnId })()).getResult();
+
+        // A write that loses the offset tries again after a sleep, thus it lands after the writes that follow it.
+        const frames = await readAll(turnId);
+        expect(frames.map((frame) => (frame.type === "tool-started" ? frame.toolUseId : frame.type))).toEqual([...STARTED_IDS, "finish"]);
+        const steps = (await DBOS.listWorkflowSteps(turnId)) ?? [];
+        expect(steps.slice(0, 4).map((step) => step.name)).toEqual(["DBOS.writeStream", "DBOS.writeStream", "DBOS.writeStream", "after-writes"]);
     });
 
     it("shows the text of the second attempt only, after a crash during a reply", async () => {

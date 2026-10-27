@@ -12,6 +12,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import { functionIDGetIncrement, getCurrentContextStore } from "@dbos-inc/dbos-sdk/internal/context";
 import { readDurableStream, toolWriter, writeDurableStream, type DurableStreamSource } from "@dbos-inc/vercel-ai";
 import type { UIMessageChunk, UIMessageStreamWriter } from "ai";
 import { z } from "zod";
@@ -68,6 +69,41 @@ export type TurnStreamWriter = {
 };
 
 /**
+ * Run each body write of one workflow after the body write before it ends.
+ *
+ * DBOS gives a stream write its offset inside the insert, thus two writes in flight take the same offset, and the
+ * write that loses sleeps 100 ms before it tries again. A body write must still take its function id at the call,
+ * because a replay finds each checkpoint by the order of the calls. Thus the call reserves its id now, and the
+ * chained write takes the reserved id from the context of the workflow when it starts.
+ */
+function chainBodyWrites(): (start: () => Promise<void>) => Promise<void> {
+    let tail: Promise<void> = Promise.resolve();
+    return (start) => {
+        const ctx = getCurrentContextStore();
+        if (ctx === undefined || !DBOS.isInWorkflow() || DBOS.isInStep()) return start();
+        const reserved = functionIDGetIncrement();
+        const run = (): Promise<void> => {
+            // A continuation keeps the async context of its call, thus DBOS reads the id from this same context.
+            if (getCurrentContextStore() !== ctx) throw new Error("A chained stream write lost the context of its workflow.");
+            const next = ctx.curWFFunctionId;
+            ctx.curWFFunctionId = reserved;
+            try {
+                // DBOS takes the function id before its first await, thus the swap ends before any other call can read it.
+                return start();
+            } finally {
+                ctx.curWFFunctionId = next;
+            }
+        };
+        const write = tail.then(run, run);
+        tail = write.then(
+            () => undefined,
+            () => undefined,
+        );
+        return write;
+    };
+}
+
+/**
  * The writer of the stream of a turn workflow. `observe` gets each frame of the turn that goes to the stream: the
  * frames of the body, and the frames of each tool step, the frames that a replay of a step gives again included.
  *
@@ -76,6 +112,7 @@ export type TurnStreamWriter = {
  */
 export function createTurnStreamWriter(rootSource: EventSource, observe: (frame: ChatFrame) => void): TurnStreamWriter {
     const pending: Promise<void>[] = [];
+    const chained = chainBodyWrites();
     const track = (write: Promise<void>): void => {
         // Observed now, thus a failure before the settle is not an unhandled rejection. The settle still sees it.
         write.catch(() => undefined);
@@ -86,8 +123,7 @@ export function createTurnStreamWriter(rootSource: EventSource, observe: (frame:
         write(chunk) {
             const frame = harnessFrameOf(chunk);
             if (frame !== undefined) observe(frame);
-            // The write starts now: in the body, the call takes its function id in the order of the calls.
-            track(writeDurableStream(CHAT_STREAM_KEY, [chunk]));
+            track(chained(() => writeDurableStream(CHAT_STREAM_KEY, [chunk])));
         },
         merge(stream) {
             track(
@@ -101,7 +137,7 @@ export function createTurnStreamWriter(rootSource: EventSource, observe: (frame:
 
     const write = async (frame: ChatFrame): Promise<void> => {
         observe(frame);
-        await writeDurableStream(CHAT_STREAM_KEY, [chunkOfFrame(frame)]);
+        await chained(() => writeDurableStream(CHAT_STREAM_KEY, [chunkOfFrame(frame)]));
     };
 
     const emit: EmitFn = async (event) => {
