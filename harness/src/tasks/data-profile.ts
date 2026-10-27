@@ -31,6 +31,7 @@ import { collapseWhitespace } from "../lib/text.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import type { RunLauncher } from "../execution/run-launcher.js";
 import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
@@ -464,7 +465,7 @@ function logProfileMonitoring(
 
 /**
  * Register the data-profile workflow with DBOS. Returns the registered
- * callable so `triggerDataProfile` can dispatch via `DBOS.startWorkflow`.
+ * callable so `triggerDataProfile` can dispatch it through the run launcher.
  */
 /**
  * Project the workflow deps onto the profiler agent bag. The farm-extension
@@ -981,6 +982,11 @@ export type DataProfileTriggerDeps = {
     readonly logger?: Logger;
     readonly pool: Querier;
     readonly runAuthorizer: RunAuthorizer;
+    /**
+     * Starts the profile workflow. A tool call of a chat turn runs in a step, and DBOS refuses a workflow start
+     * inside a step, thus the start goes through the launcher, which enqueues there.
+     */
+    readonly runLauncher: RunLauncher;
     readonly workflow: (input: DataProfileWorkflowInput) => Promise<void>;
 };
 
@@ -1041,14 +1047,16 @@ export function dataProfileWorkflowId(analysisId: string, nonce: string): string
 async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, authorization: RunAuthorization): Promise<void> {
     const { runSession, ownsMandate } = authorization; // oss-core-managed-ok
     const attemptNonce = randomUUID();
-    await DBOS.startWorkflow(deps.workflow, {
-        workflowID: dataProfileWorkflowId(params.analysisId, attemptNonce),
-    })({
-        analysisId: params.analysisId,
-        runSession,
-        ownsMandate, // oss-core-managed-ok
-        stagedInputs: params.stagedInputs,
-    });
+    await deps.runLauncher.launch(
+        deps.workflow,
+        { workflowId: dataProfileWorkflowId(params.analysisId, attemptNonce) },
+        {
+            analysisId: params.analysisId,
+            runSession,
+            ownsMandate, // oss-core-managed-ok
+            stagedInputs: params.stagedInputs,
+        },
+    );
 }
 
 /**

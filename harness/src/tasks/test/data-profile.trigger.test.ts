@@ -11,6 +11,7 @@ import { withSchema } from "../../__tests__/setup/postgres.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { StagedInput } from "../../execution/staged-input.js";
+import type { RunLauncher } from "../../execution/run-launcher.js";
 import type { SignableInput } from "../../execution/input-signature.js";
 import { loadDataProfileStatus, tryRetryDataProfile } from "../../state/data-profile.js";
 import { computeInputSignature } from "../../execution/input-signature.js";
@@ -44,6 +45,9 @@ function legacyStagedInput(fileId: string): SignableInput {
     return legacy;
 }
 
+/** No DBOS engine runs in this file, thus each start of the launcher rejects, as a start of the engine would. */
+const noEngineLauncher: RunLauncher = { launch: () => Promise.reject(new Error("no DBOS engine runs in this file")) };
+
 /**
  * Seed a `cortex_analysis_state` row at the given `data_profile_status` (pass `null`
  * for the cleared/never-profiled state). Mirrors the helper in
@@ -71,7 +75,7 @@ async function setSeed(pool: Querier, analysisId: string, seed: string[] | null)
 
 /**
  * Deps whose `authorize` never settles. The trigger dispatches the workflow
- * fire-and-forget through `DBOS.startWorkflow`; with no DBOS engine that dispatch
+ * fire-and-forget through the launcher; with no DBOS engine that dispatch
  * rejects and the trigger's compensation flips the freshly-claimed `running` row back
  * to `failed`. Parking `authorize` — the first await on the fire-and-forget path —
  * holds the dispatch open so compensation can never race our read of the committed CAS
@@ -85,13 +89,14 @@ function parkedDispatchDeps(pool: Querier): DataProfileTriggerDeps {
             revoke: () => okAsync(undefined),
             revokeByJti: () => okAsync(undefined),
         },
+        runLauncher: noEngineLauncher,
         workflow: async () => {},
     };
 }
 
 /**
  * Deps whose `workflow` throws if it is ever invoked. Note the throw cannot
- * actually fire in these tests: the trigger dispatches through `DBOS.startWorkflow`,
+ * actually fire in these tests: the trigger dispatches through the launcher,
  * which — with no DBOS engine launched — rejects before `deps.workflow` is reached,
  * and that rejection is swallowed by the fire-and-forget `.catch(compensateStartFailure)`.
  * So a regression that let an unseeded or empty-manifest row through would NOT surface
@@ -104,6 +109,7 @@ function tripwireDeps(pool: Querier): DataProfileTriggerDeps {
     return {
         pool,
         runAuthorizer: createLocalRunAuthorizer(),
+        runLauncher: noEngineLauncher,
         workflow: () => {
             throw new Error("workflow must not be launched for an unseeded trigger");
         },
@@ -395,6 +401,7 @@ describe("triggerDataProfile — a refused authorization", () => {
                 revoke: () => okAsync(undefined),
                 revokeByJti: () => okAsync(undefined),
             },
+            runLauncher: noEngineLauncher,
             workflow: () => {
                 throw new Error("workflow must not be launched after a refused authorization");
             },
@@ -498,6 +505,7 @@ describe("runDataProfile — the outcome of the dispatch", () => {
                 revoke: () => okAsync(undefined),
                 revokeByJti: () => okAsync(undefined),
             },
+            runLauncher: noEngineLauncher,
             workflow: () => {
                 throw new Error("workflow must not be launched after a refused authorization");
             },
@@ -513,7 +521,7 @@ describe("runDataProfile — the outcome of the dispatch", () => {
     });
 
     it("gives a failed start as its err, after it compensates the row", async () => {
-        // No DBOS engine runs in this file, thus `DBOS.startWorkflow` rejects.
+        // No DBOS engine runs in this file, thus the start of the launcher rejects.
         await claimFailedRow("a-run-start-failed");
 
         const failure = (
