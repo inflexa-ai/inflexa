@@ -1,11 +1,16 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 
 import { __pendingNoticeCountForTest, __resetNoticesForTest, currentNotice, notify } from "./notice.ts";
 
 // The store is the non-trivial part (two delivery disciplines, one timer, auto-advance); the overlay
 // JSX in app.tsx is presentation. These assert the queue/timer contract a TUI run can't easily check.
 
-afterEach(() => __resetNoticesForTest());
+// A fake clock, because a real sleep under load can cross zero or two dismiss windows.
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => {
+    __resetNoticesForTest();
+    jest.useRealTimers();
+});
 
 test("notify sets the current notice", () => {
     notify({ kind: "info", text: "hello" }, 10_000);
@@ -31,7 +36,7 @@ test("an unsolicited notice QUEUES behind the showing one rather than replacing 
     expect(__pendingNoticeCountForTest()).toBe(1);
 });
 
-test("a solicited notice takes the slot but does NOT discard what is queued behind it", async () => {
+test("a solicited notice takes the slot but does NOT discard what is queued behind it", () => {
     // The two disciplines meet here: keystroke feedback must not wait behind background chatter, but
     // the run outcomes queued behind it are unsolicited and must still be delivered.
     notify({ kind: "info", text: "run A done" }, 15, { queue: true });
@@ -41,21 +46,22 @@ test("a solicited notice takes the slot but does NOT discard what is queued behi
     expect(currentNotice()).toEqual({ kind: "info", text: "Copied to clipboard" });
     expect(__pendingNoticeCountForTest()).toBe(1);
 
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    jest.advanceTimersByTime(15);
     expect(currentNotice()).toEqual({ kind: "info", text: "run B done" });
 });
 
-test("the notice auto-clears after its duration", async () => {
+test("the notice auto-clears after its duration", () => {
     notify({ kind: "warn", text: "transient" }, 15);
+    jest.advanceTimersByTime(14);
     expect(currentNotice()).not.toBeNull();
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    jest.advanceTimersByTime(1);
     expect(currentNotice()).toBeNull();
 });
 
-test("a queued notice is promoted when the showing one's window ends", async () => {
+test("a queued notice is promoted when the showing one's window ends", () => {
     notify({ kind: "info", text: "first" }, 15, { queue: true });
     notify({ kind: "error", text: "second" }, 10_000, { queue: true });
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    jest.advanceTimersByTime(15);
     expect(currentNotice()).toEqual({ kind: "error", text: "second" });
     expect(__pendingNoticeCountForTest()).toBe(0);
 });
