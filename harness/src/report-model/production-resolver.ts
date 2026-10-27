@@ -35,6 +35,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
+import { isWorkflowCancellation } from "../runtime/dbos.js";
 import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
@@ -595,9 +596,11 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
     let answered: Result<ReadonlyMap<string, ExtractionArtifact>, SuspendingRefusal>;
     try {
         answered = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash, format: request.format })));
-    } catch {
+    } catch (cause) {
         // The arm speaks the throw protocol for a genuine infrastructure fault. This boundary turns the
-        // throw into a value, thus each reference on the batch reads a failure as data.
+        // throw into a value, thus each reference on the batch reads a failure as data. A cancel of the
+        // workflow is not a fault of the read, thus it leaves to DBOS with no change.
+        if (isWorkflowCancellation(cause)) throw cause;
         for (const request of requests) {
             out.set(request.path, { kind: "unreadable", detail: `the extraction arm did not read the file at ${request.path}` });
         }
