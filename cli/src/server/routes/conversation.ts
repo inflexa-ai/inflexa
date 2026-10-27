@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { Hono, type Context } from "hono";
-import { Result, ResultAsync } from "neverthrow";
+import { ok, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
     createThreadHistory,
@@ -37,6 +37,7 @@ import {
     type ThreadSummary,
     type TurnFailure,
     type TurnList,
+    type TurnSummary,
 } from "../../api/conversation.ts";
 import { findAnalysesByRef } from "../../db/primary_query.ts";
 import { causeDetailLines, describeCause } from "../../lib/cause.ts";
@@ -50,6 +51,7 @@ import { readCredentialVerdict, type CredentialStateError, type CredentialVerdic
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { startPendingFlushChild } from "../../modules/libs/store.ts";
 import type { ServerBoot } from "../boot.ts";
+import { listLiveTurns, type LiveTurn } from "../durable_work.ts";
 import {
     apiError,
     DEFAULT_SSE_OPTS,
@@ -87,6 +89,8 @@ export type ConversationRouteOpts = {
      * pause, also a turn that a recovery runs and the registry does not hold. Real: one primary-key read.
      */
     readonly activeTurnId: (pool: Pool, analysisId: string, threadId: string) => ResultAsync<string | null, DbError>;
+    /** The turn of each thread of the list whose durable workflow is live. Real: `listLiveTurns`. */
+    readonly liveTurns: (pool: Pool, threadIds: readonly string[]) => ResultAsync<LiveTurn[], unknown>;
     /** One chat turn. Real: `runChatTurn` of `modules/harness/turn.ts`. */
     readonly runTurn: (args: RunChatTurnArgs) => Promise<TurnOutcome>;
     /** The model connection, for the remedy of a failed turn. Real: `resolveModelConnection`. */
@@ -109,6 +113,7 @@ export const DEFAULT_CONVERSATION_ROUTE_OPTS: ConversationRouteOpts = {
     retract: (pool, threadId, ifOrphan) => (ifOrphan ? healTailOrphan(pool, threadId) : retractTailTurn(pool, threadId)),
     threadAnalysisId,
     activeTurnId,
+    liveTurns: listLiveTurns,
     runTurn: (args) => runChatTurn(args),
     connection: resolveModelConnection,
     readCredentialVerdict,
@@ -159,9 +164,9 @@ const askReplyBody = z.discriminatedUnion("kind", [
 /**
  * The routes of draft 2.3 under `/api/v1/analyses`: the threads, the chat turn and the turn registry, and
  * the asks. The thread, chat, and ask routes read Postgres through the runtime, thus they wait for the boot.
- * The list and the summary of the turns read the registry of this process only. The stream and the abort of a turn
- * that the registry does not hold read the claim of the thread in Postgres, thus they reach a turn that a recovery
- * runs after a restart.
+ * The summary of one turn reads the registry of this process only. The running turn of a thread, the list of the
+ * turns, and the stream and the abort of a turn also read the claim of the thread in Postgres, thus they reach a
+ * turn that a recovery runs after a restart.
  */
 export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts = DEFAULT_CONVERSATION_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
@@ -185,9 +190,17 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
             ...(type === undefined ? {} : { type }),
             ...(parentThreadId === undefined ? {} : { parentThreadId }),
         });
-        return Result.combine(await Promise.all([askRead, threadRead])).match(
-            ([pending, result]) => {
-                const activity = threadActivityOf(pending, runningTurnsByThread());
+        const listed = threadRead.andThen((result) =>
+            opts
+                .liveTurns(
+                    c.get("runtime").pool,
+                    result.threads.map((thread) => thread.threadId),
+                )
+                .map((live) => ({ result, live })),
+        );
+        return Result.combine(await Promise.all([askRead, listed])).match(
+            ([pending, { result, live }]) => {
+                const activity = threadActivityOf(pending, runningTurnsOf(live));
                 return c.json<ThreadList>(
                     listEnvelope(
                         "threads",
@@ -206,9 +219,10 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         // The two reads start together.
         const askRead = readPendingAsks(c.get("runtime").askGateway);
         const threadRead = liveThreadOf(opts.threads(c.get("runtime").pool), analysisId, threadId);
-        return Result.combine(await Promise.all([askRead, threadRead])).match(
-            ([pending, thread]) =>
-                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(pending, runningTurnsByThread())(thread.threadId))),
+        const turnRead = opts.liveTurns(c.get("runtime").pool, [threadId]);
+        return Result.combine(await Promise.all([askRead, threadRead, turnRead])).match(
+            ([pending, thread, live]) =>
+                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(pending, runningTurnsOf(live))(thread.threadId))),
             (e) => internalError(c, e, "read a thread"),
         );
     });
@@ -220,15 +234,19 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         const title = body.value.title.trim();
         if (title === "") return apiError(c, "validation_error", "The title must not be blank.", { fieldErrors: { title: ["must not be blank"] } });
         const store = opts.threads(c.get("runtime").pool);
-        // The ask read comes first: a failed read gives 500 before the write, and the title stays.
+        // The ask read and the turn read come first: a failed read gives 500 before the write, and the title stays.
         const asks = await readPendingAsks(c.get("runtime").askGateway);
         if (asks.isErr()) return internalError(c, asks.error, "rename a thread");
+        const live = await opts.liveTurns(c.get("runtime").pool, [threadId]);
+        if (live.isErr()) return internalError(c, live.error, "rename a thread");
         const renamed = await liveThreadOf(store, analysisId, threadId).andThen((thread) =>
             thread === null ? ResultAsync.fromSafePromise<Thread | null, DbError>(Promise.resolve(null)) : store.updateTitle(threadId, title),
         );
         return renamed.match(
             (thread) =>
-                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(asks.value, runningTurnsByThread())(thread.threadId))),
+                thread === null
+                    ? threadNotFound(c)
+                    : c.json(toThreadSummary(thread, threadActivityOf(asks.value, runningTurnsOf(live.value))(thread.threadId))),
             (e) => internalError(c, e, "rename a thread"),
         );
     });
@@ -249,9 +267,11 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         const { analysisId, threadId } = c.req.param();
         const pool = c.get("runtime").pool;
         const store = opts.threads(pool);
-        // The ask read comes first: a failed read gives 500 before the write, and the thread stays archived.
+        // The ask read and the turn read come first: a failed read gives 500 before the write, and the thread stays archived.
         const asks = await readPendingAsks(c.get("runtime").askGateway);
         if (asks.isErr()) return internalError(c, asks.error, "restore a thread");
+        const live = await opts.liveTurns(pool, [threadId]);
+        if (live.isErr()) return internalError(c, live.error, "restore a thread");
         // The live read cannot see an archived row, thus the scope comes from a read that can.
         const restored = await opts
             .threadAnalysisId(pool, threadId)
@@ -262,7 +282,9 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
             );
         return restored.match(
             (thread) =>
-                thread === null ? threadNotFound(c) : c.json(toThreadSummary(thread, threadActivityOf(asks.value, runningTurnsByThread())(thread.threadId))),
+                thread === null
+                    ? threadNotFound(c)
+                    : c.json(toThreadSummary(thread, threadActivityOf(asks.value, runningTurnsOf(live.value))(thread.threadId))),
             (e) => internalError(c, e, "restore a thread"),
         );
     });
@@ -325,10 +347,18 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
         );
     });
 
-    routes.get("/:analysisId/threads/:threadId/turns", (c) => {
+    routes.get("/:analysisId/threads/:threadId/turns", async (c) => {
         const { analysisId, threadId } = c.req.param();
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
-        const turns = listThreadTurns(analysisId, threadId);
+        const held = listThreadTurns(analysisId, threadId);
+        // The read of the claim needs the pool of the runtime. Before the boot, the registry is the whole list.
+        const harness = boot.runtime();
+        const live = harness === null ? ok<LiveTurn[], unknown>([]) : await opts.liveTurns(harness.pool, [threadId]);
+        if (live.isErr()) return internalError(c, live.error, "list the turns");
+        const recovered = live.value
+            .filter((turn) => turn.analysisId === analysisId && !held.some((summary) => summary.turnId === turn.turnId))
+            .map((turn): TurnSummary => ({ ...turn, status: "running" }));
+        const turns = [...recovered, ...held];
         const start = page.page * page.perPage;
         return c.json<TurnList>(listEnvelope("turns", turns.slice(start, start + page.perPage), turns.length, page));
     });
@@ -746,6 +776,16 @@ function turnNotFound(c: Context<ServerEnv>): Response {
 /** The pending asks of the ledger, in one gateway call. The gateway rejects when the read fails. */
 function readPendingAsks(gateway: AskGateway): ResultAsync<PendingAsk[], unknown> {
     return ResultAsync.fromPromise(gateway.pending(), (cause) => cause);
+}
+
+/**
+ * The running turn of each thread: the turn of the registry, else the turn whose live workflow holds the thread. A
+ * turn that a recovery runs after a restart is in the second source only.
+ */
+export function runningTurnsOf(live: readonly LiveTurn[]): Map<string, string> {
+    const turns = new Map(live.map((turn) => [turn.threadId, turn.turnId]));
+    for (const [threadId, turnId] of runningTurnsByThread()) turns.set(threadId, turnId);
+    return turns;
 }
 
 /** The turn and ask fields that a thread on the wire carries. */

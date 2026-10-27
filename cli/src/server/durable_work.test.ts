@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Pool } from "@inflexa-ai/harness";
 
-import { countLiveDurableWork, countLiveDurableWorkByAnalysis, listLiveRunIds } from "./durable_work.ts";
+import { countLiveDurableWork, countLiveDurableWorkByAnalysis, listLiveRunIds, listLiveTurns } from "./durable_work.ts";
 
 // No cli test reaches Postgres. The pool below records the query and answers with one row, thus the tests
 // pin the scope, the live status set, and the mapping of the counts.
@@ -152,5 +152,36 @@ describe("listLiveRunIds", () => {
         const { pool } = recordingPool({ failure });
 
         expect((await listLiveRunIds(pool, 200))._unsafeUnwrapErr()).toBe(failure);
+    });
+});
+
+describe("listLiveTurns", () => {
+    test("gives the turn that a live workflow holds on each thread, with the start of the workflow", async () => {
+        const { pool, queries } = recordingPool({ row: { thread_id: "t1", analysis_id: "a1", active_turn_id: "turn-1", created_at: "1790935200000" } });
+
+        const turns = (await listLiveTurns(pool, ["t1", "t2"]))._unsafeUnwrap();
+
+        expect(turns).toEqual([{ turnId: "turn-1", threadId: "t1", analysisId: "a1", startedAt: new Date(1790935200000).toISOString() }]);
+        expect(queries).toHaveLength(1);
+        expect(queries[0]?.text).toContain("t.active_turn_id IS NOT NULL");
+        expect(queries[0]?.text).toContain("ws.workflow_uuid = t.active_turn_id");
+        expect(queries[0]?.values).toEqual([
+            ["t1", "t2"],
+            ["PENDING", "ENQUEUED", "DELAYED"],
+        ]);
+    });
+
+    test("an empty list sends no query", async () => {
+        const { pool, queries } = recordingPool({ row: {} });
+
+        expect((await listLiveTurns(pool, []))._unsafeUnwrap()).toEqual([]);
+        expect(queries).toHaveLength(0);
+    });
+
+    test("a failed read is the error, with its cause", async () => {
+        const failure = new Error("relation dbos.workflow_status does not exist");
+        const { pool } = recordingPool({ failure });
+
+        expect((await listLiveTurns(pool, ["t1"]))._unsafeUnwrapErr()).toBe(failure);
     });
 });

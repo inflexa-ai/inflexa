@@ -129,6 +129,7 @@ function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOp
             calls.threads.push(input);
             return okAsync(fixture.threads.slice(0, input.limit));
         },
+        liveTurns: () => okAsync([]),
         ...over,
     };
     const boot = readyBoot(gateway);
@@ -232,6 +233,27 @@ describe("GET /api/v1/attention", () => {
             ["orphan", true],
         ]);
         expect(body.asks[2]?.threadId).toBeNull();
+    });
+
+    test("an ask on a thread whose turn a recovery runs is not stale", async () => {
+        const a1 = seedAnalysis("trial");
+        const fixture = emptyFixture();
+        fixture.pending = [ask("recovered", a1, "t-recovered"), ask("idle", a1, "t-idle")];
+        const reads: string[][] = [];
+        const { app } = appOver(fixture, {
+            liveTurns: (_pool, threadIds) => {
+                reads.push([...threadIds]);
+                return okAsync([{ turnId: "turn-recovered", threadId: "t-recovered", analysisId: a1, startedAt: "2026-10-06T08:00:00.000Z" }]);
+            },
+        });
+
+        const body = await attentionOf(app);
+
+        expect(body.asks.map((item) => [item.askId, item.stale])).toEqual([
+            ["recovered", false],
+            ["idle", true],
+        ]);
+        expect(reads).toEqual([["t-recovered", "t-idle"]]);
     });
 
     test("a seen run and a run that ended before the baseline are absent from unseenRuns", async () => {
