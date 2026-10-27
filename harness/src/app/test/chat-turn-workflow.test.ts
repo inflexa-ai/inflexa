@@ -370,6 +370,29 @@ describe("the approval of a chat turn workflow", () => {
         expect(frames.find((frame) => frame.type === "tool-finished")).toMatchObject({ outcome: "denied" });
     });
 
+    it("runs the call with no wait when the user holds a grant for its command", async () => {
+        guardedRuns = 0;
+        const gateway = createAskGateway({ pool: rig.pool });
+        const earlier = `ask-${rig.nextWorkflowId()}`;
+        await gateway.raise(earlier, { title: "Run the script", command: "Rscript go.R" }, { analysisId: ANALYSIS, userId: "user-1" });
+        expect(await gateway.answer(earlier, { kind: "always" })).toBe("applied");
+        provider = scriptedModel([callTools(toolCall("g1", "guarded", {})), reply([text("It ran.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        try {
+            const turnId = await startTurn(threadId);
+            await DBOS.retrieveWorkflow(turnId).getResult();
+
+            expect(guardedRuns).toBe(1);
+            expect(await askOf(threadId)).toMatchObject({ status: "resolved" });
+            const frames = await readAll(turnId);
+            expect(frames.find((frame) => frame.type === "data-ask")).toMatchObject({ status: "resolved", reply: "always" });
+        } finally {
+            // The grant lasts for the analysis, thus the later cases of this file must not meet it.
+            await rig.pool.query("DELETE FROM cortex_ask_grants WHERE analysis_id = $1", [ANALYSIS]);
+        }
+    });
+
     it("expires an ask that nobody answers, and denies the call", async () => {
         guardedRuns = 0;
         askWaitSeconds = 1;
