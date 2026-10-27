@@ -1,21 +1,34 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import type { Database } from "bun:sqlite";
 
 import { freshDb } from "../test_support/db.ts";
 import { db } from "./primary.ts";
 import {
+    addPin,
     createProject,
     deleteAnalysis,
     deleteProject,
     insertAnalysis,
     insertAnchor,
     recordAnalysisActivity,
+    recordRecentFile,
     recordRunSeen,
+    removePin,
     renameAnalysis,
     updateAnalysisProject,
 } from "./primary_mutation.ts";
-import { findProjectByRef, getAnchor, getProjectWithCount, getRunSeenBaseline, listAnalysisNames, listAnalysisPage, listSeenRunIds } from "./primary_query.ts";
+import {
+    findProjectByRef,
+    getAnchor,
+    getProjectWithCount,
+    getRunSeenBaseline,
+    listAnalysisNames,
+    listAnalysisPage,
+    listPins,
+    listRecentFiles,
+    listSeenRunIds,
+} from "./primary_query.ts";
 import { asStr256 } from "../lib/types.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -350,5 +363,149 @@ describe("the names of a list of analyses", () => {
         listAnalysisNames(["a1", "a2", "gone"])._unsafeUnwrap();
 
         expect(query).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("the pins of the picker", () => {
+    test("the pins come oldest first, and a page counts all of them", () => {
+        addPin({ path: "/b", label: null, isDir: true })._unsafeUnwrap();
+        addPin({ path: "/a", label: null, isDir: true })._unsafeUnwrap();
+
+        const page = listPins({ limit: 1, offset: 0 })._unsafeUnwrap();
+
+        expect(page.items.map((p) => p.path)).toEqual(["/b"]);
+        expect(page.total).toBe(2);
+        expect(
+            listPins({ limit: 1, offset: 1 })
+                ._unsafeUnwrap()
+                .items.map((p) => p.path),
+        ).toEqual(["/a"]);
+    });
+
+    test("a pin round-trips with its label and its kind", () => {
+        const { pin, created } = addPin({ path: "/data/study", label: "Study", isDir: true })._unsafeUnwrap();
+
+        expect(created).toBe(true);
+        expect(listPins({ limit: 10, offset: 0 })._unsafeUnwrap().items).toEqual([pin]);
+        expect(pin).toMatchObject({ path: "/data/study", label: "Study", isDir: true });
+    });
+
+    test("a second add of a path keeps the first pin", () => {
+        const first = addPin({ path: "/data/study", label: "Study", isDir: true })._unsafeUnwrap();
+
+        const second = addPin({ path: "/data/study", label: "Other", isDir: true })._unsafeUnwrap();
+
+        expect(second.created).toBe(false);
+        expect(second.pin).toEqual(first.pin);
+        expect(listPins({ limit: 10, offset: 0 })._unsafeUnwrap().total).toBe(1);
+    });
+
+    test("a removal returns 1 for a pin and 0 for an unknown id", () => {
+        const { pin } = addPin({ path: "/d", label: null, isDir: true })._unsafeUnwrap();
+
+        expect(removePin(pin.id)._unsafeUnwrap()).toBe(1);
+        expect(removePin(pin.id)._unsafeUnwrap()).toBe(0);
+        expect(listPins({ limit: 10, offset: 0 })._unsafeUnwrap().total).toBe(0);
+    });
+});
+
+describe("the recent files of the picker", () => {
+    let now = 1_000;
+    let clock: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+        now = 1_000;
+        clock = spyOn(Date, "now").mockImplementation(() => now++);
+        insertAnchor(anchor("anc"))._unsafeUnwrap();
+        insertAnalysis(analysis("a1", 1_000))._unsafeUnwrap();
+        insertAnalysis(analysis("a2", 1_000))._unsafeUnwrap();
+    });
+
+    afterEach(() => {
+        clock.mockRestore();
+    });
+
+    function record(path: string, analysisId: string | null, cap = 100): void {
+        recordRecentFile({ path, isDir: false, analysisId, cap })._unsafeUnwrap();
+    }
+
+    function pathsOf(analysisId: string | null): string[] {
+        return listRecentFiles({ analysisId, limit: 100 })
+            ._unsafeUnwrap()
+            .map((r) => r.path);
+    }
+
+    test("a second record moves updated_at and adds no row", () => {
+        record("/a.csv", null);
+        record("/b.csv", null);
+        const before = listRecentFiles({ analysisId: null, limit: 10 })._unsafeUnwrap();
+        const firstA = before.find((r) => r.path === "/a.csv")!;
+
+        record("/a.csv", null);
+
+        const after = listRecentFiles({ analysisId: null, limit: 10 })._unsafeUnwrap();
+        expect(after.map((r) => r.path)).toEqual(["/a.csv", "/b.csv"]);
+        expect(after[0]!.id).toBe(firstA.id);
+        expect(after[0]!.createdAt).toBe(firstA.createdAt);
+        expect(after[0]!.updatedAt).toBeGreaterThan(firstA.updatedAt);
+    });
+
+    test("a read has an exact scope", () => {
+        record("/a.csv", "a1");
+        record("/b.csv", null);
+        record("/c.csv", "a2");
+
+        expect(pathsOf("a1")).toEqual(["/a.csv"]);
+        expect(pathsOf(null)).toEqual(["/b.csv"]);
+    });
+
+    test("one path has one row in each scope", () => {
+        record("/a.csv", null);
+        record("/a.csv", "a1");
+        record("/a.csv", "a1");
+
+        expect(pathsOf(null)).toEqual(["/a.csv"]);
+        expect(pathsOf("a1")).toEqual(["/a.csv"]);
+    });
+
+    test("the limit keeps the newest rows", () => {
+        for (const p of ["/1", "/2", "/3"]) record(p, null);
+
+        expect(
+            listRecentFiles({ analysisId: null, limit: 2 })
+                ._unsafeUnwrap()
+                .map((r) => r.path),
+        ).toEqual(["/3", "/2"]);
+    });
+
+    test("the cap of one scope removes its oldest row and keeps the other scope", () => {
+        record("/m.csv", null);
+        for (const p of ["/1", "/2", "/3"]) record(p, "a1", 3);
+
+        record("/4", "a1", 3);
+
+        expect(pathsOf("a1")).toEqual(["/4", "/3", "/2"]);
+        expect(pathsOf(null)).toEqual(["/m.csv"]);
+    });
+
+    test("the cap of the machine scope leaves the analysis scope", () => {
+        record("/a.csv", "a1");
+        for (const p of ["/1", "/2", "/3"]) record(p, null, 2);
+
+        expect(pathsOf(null)).toEqual(["/3", "/2"]);
+        expect(pathsOf("a1")).toEqual(["/a.csv"]);
+    });
+
+    test("a record of an analysis with no row is a foreign_key violation and leaves no row", () => {
+        recordRecentFile({ path: "/a.csv", isDir: false, analysisId: "ghost", cap: 100 }).match(
+            () => {
+                throw new Error("expected a foreign_key violation");
+            },
+            (e) => {
+                expect(e.type).toBe("constraint_violation");
+                if (e.type === "constraint_violation") expect(e.constraint).toBe("foreign_key");
+            },
+        );
+        expect(sharedConn().query("SELECT COUNT(*) AS n FROM recent_files").get()).toEqual({ n: 0 });
     });
 });

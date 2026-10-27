@@ -17,6 +17,7 @@ import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
+import type { PickerPin, RecentFile } from "../types/picker.ts";
 import { asStr256, type IdOrName } from "../lib/types.ts";
 import { tryQuery } from "./util.ts";
 
@@ -1100,4 +1101,70 @@ export function listAnalysisNames(ids: readonly string[]): Result<Map<string, st
 function jsonIdsParam(ids: readonly string[]): string | null {
     const distinct = [...new Set(ids)];
     return distinct.length === 0 ? null : JSON.stringify(distinct);
+}
+
+// --- Data model: the pins and the recent files of the picker ---
+
+/** A row of the columnar `picker_pins` table. */
+type PickerPinRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    path: string;
+    label: string | null;
+    is_dir: number;
+};
+
+function pickerPinFromRow(r: PickerPinRow): PickerPin {
+    return { id: r.id, createdAt: r.created_at, updatedAt: r.updated_at, path: r.path, label: r.label, isDir: r.is_dir === 1 };
+}
+
+const PICKER_PIN_COLS = "id, created_at, updated_at, path, label, is_dir";
+
+/**
+ * One page of the pins, oldest first by `created_at`, plus the count of all pins. A pin is a fact of the machine,
+ * thus the read has no scope. `id` breaks a tie, so the pages do not overlap.
+ */
+export function listPins(page: { limit: number; offset: number }): Result<{ items: PickerPin[]; total: number }, DbError> {
+    return tryQuery("listPins", (conn) => {
+        const rows = conn
+            .query(`SELECT ${PICKER_PIN_COLS} FROM picker_pins ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`)
+            .all(page.limit, page.offset) as PickerPinRow[];
+        const total = (conn.query("SELECT COUNT(*) AS n FROM picker_pins").get() as { n: number }).n;
+        return { items: rows.map(pickerPinFromRow), total };
+    });
+}
+
+/** A row of the columnar `recent_files` table. */
+type RecentFileRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    path: string;
+    is_dir: number;
+    analysis_id: string | null;
+};
+
+/**
+ * The newest `limit` recent files of one scope, by `updated_at` with `id` to break a tie. A `null` `analysisId` is
+ * the machine scope, and it does not hold the files of an analysis. The statement uses `IS`, thus one shape serves
+ * both scopes through `idx_recent_files_scope`.
+ */
+export function listRecentFiles(opts: { analysisId: string | null; limit: number }): Result<RecentFile[], DbError> {
+    return tryQuery("listRecentFiles", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT id, created_at, updated_at, path, is_dir, analysis_id FROM recent_files
+                 WHERE analysis_id IS ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
+            )
+            .all(opts.analysisId, opts.limit) as RecentFileRow[];
+        return rows.map((r) => ({
+            id: r.id,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+            path: r.path,
+            isDir: r.is_dir === 1,
+            analysisId: r.analysis_id,
+        }));
+    });
 }

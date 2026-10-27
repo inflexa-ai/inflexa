@@ -147,3 +147,108 @@ export type CardPreview = {
 
 /** The body of `GET /api/v1/fs/preview`: one member, told by `kind`. */
 export type FilePreview = TablePreview | TextPreview | FigurePreview | FolderPreview | CardPreview;
+
+/** One pin of the file picker. A pin is a fact of the machine, thus it does not depend on an analysis. */
+export type PinView = {
+    /** The id of the pin. */
+    id: string;
+    /** The time of the pin, as an ISO 8601 string. */
+    createdAt: string;
+    /** The time of the last change of the pin, as an ISO 8601 string. */
+    updatedAt: string;
+    /** The real path that the server stored at the time of the pin. */
+    path: string;
+    /** The label that the person gave, or `null` when the person gave none. */
+    label: string | null;
+    /** True when the path was a folder at the time of the pin. */
+    isDir: boolean;
+    /** The real path of `path` now, or `null` when the server cannot resolve it. A pin with `null` is lost, and it stays in the list. */
+    absolutePath: string | null;
+};
+
+/** The body of `GET /api/v1/fs/pins`: the pins, oldest first. */
+export type PinList = ListEnvelope<"pins", PinView>;
+
+/** The body of `POST /api/v1/fs/pins`. */
+export type AddPinRequest = {
+    /** An absolute path. The server stores its real path. */
+    path: string;
+    /** The label of the pin. A blank label is no label. At most 256 characters after the trim. */
+    label?: string;
+};
+
+/** The body of `DELETE /api/v1/fs/pins/:id`. */
+export type DeletePinResponse = {
+    deleted: true;
+};
+
+/** The body of `POST /api/v1/fs/recents`. */
+export type RecordRecentRequest = {
+    /** An absolute path. The server stores its real path. */
+    path: string;
+    /** The analysis of the scope. Without it the scope is the machine. */
+    analysisId?: string;
+};
+
+/** The body of the response to `POST /api/v1/fs/recents`. */
+export type RecordRecentResponse = {
+    recorded: true;
+};
+
+/** The body of `GET /api/v1/fs/recents`: the recent files of one scope as list entries, newest first. It has no paging fields. */
+export type RecentFiles = {
+    entries: FolderEntryView[];
+};
+
+/** The id of a section of the sidebar of the picker. The response lists the sections in this order. */
+export type PlaceSectionId = "analysis" | "favorites" | "locations" | "otherAnalyses" | "drives";
+
+/** The kind of a place that is a folder: the client takes its words and its icon from the kind. */
+export type FolderPlaceKind = "workspace" | "run" | "step" | "home" | "desktop" | "documents" | "downloads" | "analysis" | "drive";
+
+/** A place that is one folder. */
+export type FolderPlace = {
+    kind: FolderPlaceKind;
+    /** The data of the place: the name of an analysis, a run id, or the name of a folder. */
+    label: string;
+    /** The absolute canonical path of the folder. */
+    path: string;
+};
+
+/** A pin of the machine as a place. */
+export type PinPlace = {
+    kind: "pin";
+    /** The label of the pin, or the name of its path. */
+    label: string;
+    /** The real path of the pin, or the stored path when `lost` is true. */
+    path: string;
+    /** The id of the pin, for `DELETE /api/v1/fs/pins/:id`. */
+    pinId: string;
+    /** True when the server cannot resolve the stored path. */
+    lost: boolean;
+};
+
+/** The declared inputs of the analysis as one place. It has no path, because the inputs are not in one folder. */
+export type InputsPlace = {
+    kind: "inputs";
+    /** The word `Inputs`. The client takes its own words from `kind`. */
+    label: string;
+    /** The count of all declared inputs, also the inputs past the cap of `entries`. */
+    count: number;
+    /** The entry of each of the first declared inputs that the server can locate and that exists, with `isInput` true. */
+    entries: FolderEntryView[];
+};
+
+/** One item of a section: told by `kind`. */
+export type PlaceItem = FolderPlace | PinPlace | InputsPlace;
+
+/** One section of the sidebar. A section with no item stays, with an empty `items`. */
+export type PlaceSection = {
+    id: PlaceSectionId;
+    items: PlaceItem[];
+};
+
+/** The body of `GET /api/v1/fs/places`: the sections of the sidebar, in order. */
+export type Places = {
+    sections: PlaceSection[];
+};

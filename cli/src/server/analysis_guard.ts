@@ -42,7 +42,11 @@ export function analysisQueryGuard(opts: AnalysisGuardOpts = DEFAULT_ANALYSIS_GU
     };
 }
 
-async function guardAnalysis(c: Context<ServerEnv>, next: Next, analysisId: string, opts: AnalysisGuardOpts): Promise<Response | void> {
+/**
+ * The 404 and lock steps of {@link analysisGuard} for one analysis id: the response to send, or `null` when the
+ * request can go on. The route of a body `analysisId` calls it, and the middlewares call it through `guardAnalysis`.
+ */
+export function guardAnalysisId(c: Context<ServerEnv>, analysisId: string, opts: AnalysisGuardOpts): Response | null {
     const found = getAnalysis(analysisId);
     if (found.isErr()) return internalError(c, found.error, "read the analysis");
     if (found.value === null) return apiError(c, "not_found", `No analysis has the id ${analysisId}.`);
@@ -55,5 +59,11 @@ async function guardAnalysis(c: Context<ServerEnv>, next: Next, analysisId: stri
             holderPid: lock.holderPid,
         });
     }
+    return null;
+}
+
+async function guardAnalysis(c: Context<ServerEnv>, next: Next, analysisId: string, opts: AnalysisGuardOpts): Promise<Response | void> {
+    const blocked = guardAnalysisId(c, analysisId, opts);
+    if (blocked !== null) return blocked;
     await next();
 }

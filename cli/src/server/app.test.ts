@@ -87,6 +87,14 @@ describe("the file system routes", () => {
         expect(await response.json()).toMatchObject({ folder: { path: "/" }, entries: expect.any(Array) });
         expect((await app.request("/api/v1/fs/home", { headers: AUTH })).status).toBe(200);
     });
+
+    test("the pins, the recent files, and the places of the picker are in the group and need the credential", async () => {
+        freshDb();
+        for (const path of ["/api/v1/fs/pins", "/api/v1/fs/recents", "/api/v1/fs/places"]) {
+            expect((await app.request(path)).status).toBe(401);
+            expect((await app.request(path, { headers: AUTH })).status).toBe(200);
+        }
+    });
 });
 
 describe("the read route", () => {

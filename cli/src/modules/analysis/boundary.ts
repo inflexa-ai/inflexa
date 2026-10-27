@@ -91,7 +91,7 @@ export type ReadRoot = {
 export type RealPathVerdict = { type: "in"; realPath: string } | { type: "outside" } | { type: "absent"; insideAsText: boolean };
 
 /** The `realpath` codes that mean the path leads to nothing: it is absent, a part of it is not a folder, or the links loop. */
-const ABSENT_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
+export const ABSENT_CODES: ReadonlySet<string> = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
 
 /** The roots of a read, or `"unlimited"` for a read that no root limits. An empty list means that no root admits a path. */
 export type ReadRoots = readonly ReadRoot[] | "unlimited";

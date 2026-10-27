@@ -1,12 +1,13 @@
-import { queryArtifactOrigins, type ArtifactOrigin, type DbError, type Pool } from "@inflexa-ai/harness";
+import { queryArtifactOrigins, queryRunsByAnalysis, type ArtifactOrigin, type CortexRunRow, type DbError, type Pool } from "@inflexa-ai/harness";
 import type { BigIntStats } from "node:fs";
-import { lstat, realpath, type FileHandle } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { lstat, realpath, stat, type FileHandle } from "node:fs/promises";
+import { homedir, userInfo } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { Hono, type Context } from "hono";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import PQueue from "p-queue";
+import { z } from "zod";
 
 import {
     FILE_KINDS,
@@ -20,11 +21,24 @@ import {
     type FolderPreview,
     type FsSearch,
     type FsSearchHit,
+    type AddPinRequest,
+    type DeletePinResponse,
+    type FolderPlace,
     type HomeFolder,
+    type PinList,
+    type PinPlace,
+    type PinView,
+    type PlaceItem,
+    type Places,
+    type PlaceSection,
+    type RecentFiles,
+    type RecordRecentRequest,
+    type RecordRecentResponse,
     type TablePreview,
     type TextPreview,
 } from "../../api/fs.ts";
-import { listAnalysisInputs } from "../../db/primary_query.ts";
+import { addPin, recordRecentFile, removePin } from "../../db/primary_mutation.ts";
+import { getAnalysis, listAnalysisInputPage, listAnalysisInputs, listAnalysisPage, listPins, listRecentFiles } from "../../db/primary_query.ts";
 import {
     compareEntries,
     countFolderEntries,
@@ -38,8 +52,9 @@ import {
 import { errnoCode, isReadableBy, processIdentity, statResultAsync, type ProcessIdentity } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
-import { contains, locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
+import { ABSENT_CODES, contains, locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { inputAbsolutePaths } from "../../modules/analysis/input.ts";
+import { defaultOutputSubdir } from "../../modules/analysis/output.ts";
 import { extensionOf, fileKindOf } from "../../modules/fs/file_kind.ts";
 import {
     createSearchIndexCache,
@@ -49,10 +64,18 @@ import {
     type SearchLimits,
     type WalkSpawner,
 } from "../../modules/fs/search_index.ts";
-import { analysisQueryGuard, DEFAULT_ANALYSIS_GUARD_OPTS, type AnalysisGuardOpts } from "../analysis_guard.ts";
+import { str256 } from "../../lib/types.ts";
+import type { PickerPin } from "../../types/picker.ts";
+import { analysisQueryGuard, DEFAULT_ANALYSIS_GUARD_OPTS, guardAnalysisId, type AnalysisGuardOpts } from "../analysis_guard.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, filterValue, holdConnection, internalError, listEnvelope, parseCount, parsePage, type ServerEnv } from "../http.ts";
+import { apiError, filterValue, holdConnection, internalError, listEnvelope, parseCount, parsePage, readBody, type ServerEnv } from "../http.ts";
 import { closeHandle, DEFAULT_FILE_ROUTE_OPTS, openRealPath, serveFile, unreadable, type FileResponseOpts, type FileRouteOpts } from "./files.ts";
+
+/**
+ * A place from which the server finds mounted volumes. A `parent` root is a folder whose entries are the candidates, for
+ * example `/Volumes`. A `volume` root is one candidate itself, for example the drive root `C:\`.
+ */
+export type VolumeRoot = { path: string; kind: "parent" | "volume" };
 
 /** The reads and the lock of the file system routes. A test replaces one to count the calls or to make a read fail. */
 export type FsRouteOpts = FileRouteOpts &
@@ -72,7 +95,37 @@ export type FsRouteOpts = FileRouteOpts &
         readonly spawnWalk: WalkSpawner;
         /** Gets the search cache of the routes once at their creation, so that a test can stop its walks and its timer. */
         readonly onSearchCache?: (cache: SearchIndexCache) => void;
+        /** The harness read of the newest runs of an analysis. A test replaces it, because the real read needs Postgres. */
+        readonly listRuns: (pool: Pool, analysisId: string, page: { limit: number }) => ResultAsync<CortexRunRow[], DbError>;
+        /** The places in which the places read looks for mounted volumes. A test gives temporary folders. */
+        readonly volumeRoots: () => readonly VolumeRoot[];
     };
+
+/** The mounted-volume roots of the platform that runs the server. A platform with no known roots gives none. */
+function platformVolumeRoots(): readonly VolumeRoot[] {
+    switch (process.platform) {
+        case "darwin":
+            return [{ path: "/Volumes", kind: "parent" }];
+        case "linux": {
+            // The call throws when the OS user has no password entry. The per-user mount folders are then unknown.
+            const user = Result.fromThrowable(
+                () => userInfo().username,
+                (cause) => cause,
+            )();
+            const perUser = user.isOk()
+                ? [
+                      { path: join("/media", user.value), kind: "parent" as const },
+                      { path: join("/run/media", user.value), kind: "parent" as const },
+                  ]
+                : [];
+            return [...perUser, { path: "/mnt", kind: "parent" }];
+        }
+        case "win32":
+            return Array.from({ length: 26 }, (_, i): VolumeRoot => ({ path: `${String.fromCharCode(65 + i)}:\\`, kind: "volume" }));
+        default:
+            return [];
+    }
+}
 
 /** The production {@link FsRouteOpts}. */
 export const DEFAULT_FS_ROUTE_OPTS: FsRouteOpts = {
@@ -85,6 +138,8 @@ export const DEFAULT_FS_ROUTE_OPTS: FsRouteOpts = {
     search: DEFAULT_SEARCH_LIMITS,
     now: Date.now,
     spawnWalk: spawnWalkChild,
+    listRuns: queryRunsByAnalysis,
+    volumeRoots: platformVolumeRoots,
 };
 
 /** How many entries of one page read their facts at one time. A slow mount holds one slot and not the page. */
@@ -95,6 +150,37 @@ const SEARCH_DEFAULT_LIMIT = 50;
 
 /** The most hits of one search. */
 const SEARCH_MAX_LIMIT = 200;
+
+/** The most recent files that one scope keeps, and the most that one read of a scope looks at. */
+const RECENT_FILES_CAP = 100;
+
+/** The most declared inputs that the places read looks at. `count` still holds all of them. */
+const PLACE_INPUTS_CAP = 200;
+
+/** The most runs of the analysis section. */
+const PLACE_RUNS_CAP = 10;
+
+/** The most step folders that the places read gives for one run. */
+const PLACE_STEPS_CAP = 50;
+
+/** The most pins of the favorites section. */
+const PLACE_PINS_CAP = 50;
+
+/** The most other analyses of the places read. */
+const PLACE_ANALYSES_CAP = 20;
+
+/** The most mounted volumes of the places read. */
+const PLACE_DRIVES_CAP = 20;
+
+/** The folders of the home folder that are places, in the order of the section. */
+const HOME_PLACES = [
+    { kind: "desktop", name: "Desktop" },
+    { kind: "documents", name: "Documents" },
+    { kind: "downloads", name: "Downloads" },
+] as const;
+
+/** The `limit` of the recent-file read when the request sends none. */
+const RECENT_FILES_DEFAULT_LIMIT = 20;
 
 /** The facts of one request that do not depend on the entry. */
 type ListContext = {
@@ -242,11 +328,10 @@ function notAFile(c: Context<ServerEnv>): Response {
 }
 
 /**
- * The `path` query value as an absolute path with each `.` and `..` segment removed as text. The error channel holds
- * the 400 response to send. Each route of this file reads its path here, thus the rule has one home.
+ * `path` as an absolute path with each `.` and `..` segment removed as text. The error channel holds the 400 response to
+ * send. Each route of this file reads its path here, thus the rule has one home.
  */
-function absolutePathOf(c: Context<ServerEnv>): Result<string, Response> {
-    const path = c.req.query("path");
+function absolutePathFrom(c: Context<ServerEnv>, path: string | undefined): Result<string, Response> {
     // `node:fs` refuses a NUL byte with `ERR_INVALID_ARG_VALUE`, a fault of the request and not a read failure.
     if (path === undefined || !isAbsolute(path) || path.includes("\0")) {
         return err(
@@ -258,6 +343,29 @@ function absolutePathOf(c: Context<ServerEnv>): Result<string, Response> {
     }
     // `resolve` removes each `..` segment as text, before `realpath` sees the path.
     return ok(resolve(path));
+}
+
+/** The `path` query value, read by {@link absolutePathFrom}. */
+function absolutePathOf(c: Context<ServerEnv>): Result<string, Response> {
+    return absolutePathFrom(c, c.req.query("path"));
+}
+
+/**
+ * The real path and the kind of the entry that a body `path` names, for a pin or a recent file. The error channel holds
+ * the response to send: 400 for a path that is not absolute, 404 `not_found` when no entry exists, and 403 `forbidden`
+ * with the code of the operating system for each other failure. Two spellings of one folder give one real path.
+ */
+async function locatePath(c: Context<ServerEnv>, path: string): Promise<Result<{ realPath: string; isDir: boolean }, Response>> {
+    const absolute = absolutePathFrom(c, path);
+    if (absolute.isErr()) return err(absolute.error);
+    const located = await ResultAsync.fromPromise(
+        realpath(absolute.value).then(async (realPath) => ({ realPath, isDir: (await stat(realPath)).isDirectory() })),
+        (cause) => cause,
+    );
+    if (located.isErr()) {
+        return err(ABSENT_CODES.has(errnoCode(located.error) ?? "") ? apiError(c, "not_found", "No entry at the path.") : unreadable(c, located.error));
+    }
+    return ok(located.value);
 }
 
 /** How many entries of a folder the folder preview names. */
@@ -473,11 +581,248 @@ function readErrorResponse(c: Parameters<typeof apiError>[0], error: FolderReadE
     }
 }
 
+const addPinBody = z.object({ path: z.string(), label: z.string().optional() }) satisfies z.ZodType<AddPinRequest>;
+
+const recordRecentBody = z.object({ path: z.string(), analysisId: z.string().optional() }) satisfies z.ZodType<RecordRecentRequest>;
+
+function pinView(pin: PickerPin, absolutePath: string | null): PinView {
+    return {
+        id: pin.id,
+        createdAt: new Date(pin.createdAt).toISOString(),
+        updatedAt: new Date(pin.updatedAt).toISOString(),
+        path: pin.path,
+        label: pin.label,
+        isDir: pin.isDir,
+        absolutePath,
+    };
+}
+
+/**
+ * The entry at a stored path from one `lstat`, or `null` when no entry exists at the path now. An `lstat` that fails for a
+ * different reason keeps the entry, with the type of the stored `isDir`, because the person can still open the file.
+ */
+async function entryAt(path: string, isDir: boolean): Promise<FolderEntry | null> {
+    const name = basename(path);
+    const stats = await ResultAsync.fromPromise(lstat(path), (cause) => cause);
+    if (stats.isErr()) {
+        if (ABSENT_CODES.has(errnoCode(stats.error) ?? "")) return null;
+        return { name, path, kind: isDir ? "folder" : "file", hidden: name.startsWith(".") };
+    }
+    const kind = stats.value.isDirectory() ? "folder" : stats.value.isSymbolicLink() ? "symlink" : "file";
+    return { name, path, kind, hidden: name.startsWith(".") };
+}
+
+/** The real path of `path` when it leads to a folder, and `null` for each other outcome. */
+async function folderRealPath(path: string): Promise<string | null> {
+    return ResultAsync.fromPromise(
+        realpath(path).then(async (real) => ((await stat(real)).isDirectory() ? real : null)),
+        (cause) => cause,
+    ).unwrapOr(null);
+}
+
+/** The label of a place from its path: the name of the last segment, or the path itself for a root. */
+function placeLabel(path: string): string {
+    return basename(path) || path;
+}
+
+/**
+ * The first `limit` distinct non-null results of `probe` over `items`, in the order of `items`. It probes one fixed-width
+ * chunk at a time and stops at the first chunk that fills `limit`, thus a long list costs only what the answer needs. The
+ * probes of a chunk settle in any order, but the fold reads them in the order of `items`. As a result, when two items give
+ * the same `keyOf` value, the first item wins, and a duplicate does not count against `limit`.
+ */
+async function firstProbed<T, R>(items: readonly T[], limit: number, probe: (item: T) => Promise<R | null>, keyOf: (result: R) => string): Promise<R[]> {
+    const found: R[] = [];
+    const keys = new Set<string>();
+    for (let at = 0; at < items.length && found.length < limit; at += ENTRY_READ_WIDTH) {
+        const probed = await Promise.all(items.slice(at, at + ENTRY_READ_WIDTH).map(probe));
+        for (const result of probed) {
+            if (result === null || found.length >= limit) continue;
+            const key = keyOf(result);
+            if (keys.has(key)) continue;
+            keys.add(key);
+            found.push(result);
+        }
+    }
+    return found;
+}
+
+/** The `analysis` section: the workspace, the inputs, and the runs with their steps. The error channel holds the 500 response. */
+async function analysisPlaces(
+    c: Context<ServerEnv>,
+    boot: ServerBoot,
+    opts: FsRouteOpts,
+    identity: ProcessIdentity | null,
+    analysisId: string,
+): Promise<Result<PlaceItem[], Response>> {
+    const analysis = getAnalysis(analysisId);
+    if (analysis.isErr()) return err(internalError(c, analysis.error, "read the analysis"));
+    const root = await locateWorkspaceReadRoot(analysisId);
+    if (root.isErr()) return err(internalError(c, root.error, "locate the workspace folder"));
+    const inputPage = listAnalysisInputPage(analysisId, { limit: PLACE_INPUTS_CAP, offset: 0 });
+    if (inputPage.isErr()) return err(internalError(c, inputPage.error, "read the inputs of the analysis"));
+
+    const items: PlaceItem[] = [];
+    const workspace = root.value;
+    if (workspace !== null && analysis.value !== null && (await folderRealPath(workspace.canonical)) !== null) {
+        items.push({ kind: "workspace", label: analysis.value.name, path: workspace.canonical });
+    }
+
+    const located = await inputAbsolutePaths(inputPage.value.items);
+    const queue = new PQueue({ concurrency: ENTRY_READ_WIDTH });
+    const entries: FolderEntry[] = [];
+    const inputFiles = new Set<string>();
+    const inputFolders = new Set<string>();
+    const probed = await Promise.all(
+        inputPage.value.items.map((input) =>
+            queue.add(async () => {
+                const path = located.get(input) ?? null;
+                return path === null ? null : { input, path, entry: await entryAt(path, input.isDir) };
+            }),
+        ),
+    );
+    for (const probe of probed) {
+        if (probe === null || probe.entry === null) continue;
+        entries.push(probe.entry);
+        (probe.input.isDir ? inputFolders : inputFiles).add(probe.path);
+    }
+
+    const runtime = boot.runtime();
+    // One ledger read for the runs, started with the origins read, and one origins read for all entries.
+    const origins =
+        runtime !== null && workspace !== null
+            ? readOrigins(entries, workspace.canonical, runtime.pool, analysisId, opts)
+            : Promise.resolve(new Map<string, FileOrigin>());
+    const runs =
+        runtime !== null && workspace !== null
+            ? await opts.listRuns(runtime.pool, analysisId, { limit: PLACE_RUNS_CAP }).match(
+                  (rows) => rows,
+                  (cause) => {
+                      getLogger("server").warn({ err: cause }, "could not read the runs for the places of the picker");
+                      return [];
+                  },
+              )
+            : [];
+
+    const list: ListContext = { identity, hidden: false, inputFiles, inputFolders };
+    const [views, originOf, runPlaces] = await Promise.all([
+        Promise.all(entries.map((entry) => queue.add(() => entryView(entry, list, opts)))),
+        origins,
+        workspace === null ? [] : runPlacesOf(workspace.canonical, runs, queue),
+    ]);
+    items.push({
+        kind: "inputs",
+        label: "Inputs",
+        count: inputPage.value.total,
+        entries: views.map((view): FolderEntryView => ({ ...view, origin: originOf.get(view.path) ?? null })),
+    });
+    items.push(...runPlaces);
+    return ok(items);
+}
+
+/** A `run` item for each run whose folder exists, each followed by the `step` items of its folders. The queue bounds the folder reads. */
+async function runPlacesOf(root: string, runs: readonly CortexRunRow[], queue: PQueue): Promise<PlaceItem[]> {
+    const read = await Promise.all(runs.map((run) => queue.add(() => readFolder(join(root, "runs", run.runId), false).unwrapOr(null))));
+    const items: PlaceItem[] = [];
+    for (const [index, folder] of read.entries()) {
+        const run = runs[index];
+        if (run === undefined || folder === null) continue;
+        items.push({ kind: "run", label: run.runId, path: folder.path });
+        for (const step of folder.entries.filter((entry) => entry.kind === "folder").slice(0, PLACE_STEPS_CAP)) {
+            items.push({ kind: "step", label: step.name, path: step.path });
+        }
+    }
+    return items;
+}
+
+/** The `favorites` section: the first pins, each resolved in a queue of fixed width. */
+async function favoritePlaces(c: Context<ServerEnv>): Promise<Result<PlaceItem[], Response>> {
+    const read = listPins({ limit: PLACE_PINS_CAP, offset: 0 });
+    if (read.isErr()) return err(internalError(c, read.error, "list the pins"));
+    const queue = new PQueue({ concurrency: ENTRY_READ_WIDTH });
+    const items = await Promise.all(
+        read.value.items.map((pin) =>
+            queue.add(async (): Promise<PinPlace> => {
+                const resolved = await ResultAsync.fromPromise(realpath(pin.path), (cause) => cause).unwrapOr(null);
+                return { kind: "pin", label: pin.label ?? placeLabel(pin.path), path: resolved ?? pin.path, pinId: pin.id, lost: resolved === null };
+            }),
+        ),
+    );
+    return ok(items);
+}
+
+/** The `locations` section: the home folder, and each of its standard folders that exists. */
+async function locationPlaces(opts: FsRouteOpts): Promise<PlaceItem[]> {
+    const home = await canonicalPathAsync(opts.homedir());
+    const standard = await Promise.all(
+        HOME_PLACES.map(async ({ kind, name }): Promise<PlaceItem | null> => {
+            const real = await folderRealPath(join(home, name));
+            return real === null ? null : { kind, label: name, path: real };
+        }),
+    );
+    return [{ kind: "home", label: placeLabel(home), path: home }, ...standard.filter((item) => item !== null)];
+}
+
+/** The `otherAnalyses` section, from one page read. The cached anchor path gives each workspace path, thus no query runs for each analysis. */
+async function otherAnalysisPlaces(c: Context<ServerEnv>, analysisId: string | undefined): Promise<Result<PlaceItem[], Response>> {
+    const page = listAnalysisPage({ projectId: null, sort: "activity", limit: PLACE_ANALYSES_CAP + 1, offset: 0 });
+    if (page.isErr()) return err(internalError(c, page.error, "list the analyses"));
+    const others = page.value.items.filter(({ analysis }) => analysis.id !== analysisId).slice(0, PLACE_ANALYSES_CAP);
+    const queue = new PQueue({ concurrency: ENTRY_READ_WIDTH });
+    const items = await Promise.all(
+        others.map(({ analysis, anchorPath }) =>
+            queue.add(async (): Promise<PlaceItem | null> => {
+                if (anchorPath === null) return null;
+                const real = await folderRealPath(join(anchorPath, defaultOutputSubdir(analysis.slug)));
+                return real === null ? null : { kind: "analysis", label: analysis.name, path: real };
+            }),
+        ),
+    );
+    return ok(items.filter((item) => item !== null));
+}
+
+/** The label of a drive: the drive letter with its colon, or the name of the volume folder. */
+function driveLabel(path: string): string {
+    const stripped = path.replace(/[\\/]+$/, "");
+    return /^[A-Za-z]:$/.test(stripped) ? stripped : placeLabel(stripped);
+}
+
+/**
+ * The `drives` section: the mounted volumes of the roots, in name order, at most {@link PLACE_DRIVES_CAP}. A candidate gives
+ * an item when its real path is a folder and is not `/`, which drops the link of a volume to the system root.
+ */
+async function drivePlaces(opts: FsRouteOpts): Promise<PlaceItem[]> {
+    const candidates: string[] = [];
+    for (const root of opts.volumeRoots()) {
+        if (root.kind === "volume") {
+            candidates.push(root.path);
+            continue;
+        }
+        // An absent root gives no candidate.
+        const folder = await readFolder(root.path, false).unwrapOr(null);
+        if (folder !== null) candidates.push(...folder.entries.map((entry) => entry.path));
+    }
+    const byName = candidates.map((path) => ({ path, label: driveLabel(path) })).sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+    // Two roots can lead to one volume. The fold of `firstProbed` drops the later candidate by real path, in name order.
+    return firstProbed(
+        byName,
+        PLACE_DRIVES_CAP,
+        async (candidate): Promise<FolderPlace | null> => {
+            const real = await folderRealPath(candidate.path);
+            return real === null || real === "/" ? null : { kind: "drive", label: candidate.label, path: real };
+        },
+        (item) => item.path,
+    );
+}
+
 /**
  * The file system routes under `/api/v1/fs`: the home folder, the entries of one folder, a name search under one folder, the
- * bytes of one file, and the preview of one file or folder.
- * They read each path of the machine with no root limit. The list reads the harness runtime for the `origin` of its
- * entries only, and only when the boot is ready. Before that each `origin` is `null` and each route still answers.
+ * bytes of one file, the preview of one file or folder, and the pins (`/pins`), the recent files (`/recents`), and the
+ * places (`/places`) of the picker.
+ * They read each path of the machine with no root limit. The only writes are the rows of the pins and of the recent
+ * files. The list, the recent-file read, and the places read use the harness runtime for the `origin` of their entries, and
+ * the places read also for the runs, only when the boot is ready. Before that each `origin` is `null`, the places give no
+ * run, and each route still answers.
  */
 export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
@@ -586,6 +931,124 @@ export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_
         } finally {
             await closeHandle(opened.value.handle);
         }
+    });
+
+    routes.get("/places", async (c) => {
+        // The reads of the places can wait on a slow mount for longer than 10 s.
+        holdConnection(c);
+        const analysisId = filterValue(c.req.query("analysisId"));
+        const [analysis, favorites, locations, others, drives] = await Promise.all([
+            analysisId === undefined ? Promise.resolve(null) : analysisPlaces(c, boot, opts, identity, analysisId),
+            favoritePlaces(c),
+            locationPlaces(opts),
+            otherAnalysisPlaces(c, analysisId),
+            drivePlaces(opts),
+        ]);
+        if (analysis !== null && analysis.isErr()) return analysis.error;
+        if (favorites.isErr()) return favorites.error;
+        if (others.isErr()) return others.error;
+        const sections: PlaceSection[] = [
+            ...(analysis === null || analysis.isErr() ? [] : [{ id: "analysis" as const, items: analysis.value }]),
+            { id: "favorites", items: favorites.value },
+            { id: "locations", items: locations },
+            { id: "otherAnalyses", items: others.value },
+            { id: "drives", items: drives },
+        ];
+        return c.json({ sections } satisfies Places);
+    });
+
+    routes.get("/pins", async (c) => {
+        // The real path of a pin on a hung mount can take more than 10 s.
+        holdConnection(c);
+        const page = parsePage(c.req.query("page"), c.req.query("perPage"));
+        const read = listPins({ limit: page.perPage, offset: page.page * page.perPage });
+        if (read.isErr()) return internalError(c, read.error, "list the pins");
+
+        // A failure of any kind means that the server cannot locate the path, and the pin stays in the list as lost.
+        const queue = new PQueue({ concurrency: ENTRY_READ_WIDTH });
+        const pins = await Promise.all(
+            read.value.items.map((pin) =>
+                queue.add(async () => pinView(pin, await ResultAsync.fromPromise(realpath(pin.path), (cause) => cause).unwrapOr(null))),
+            ),
+        );
+        const body: PinList = listEnvelope("pins", pins, read.value.total, page);
+        return c.json(body);
+    });
+
+    routes.post("/pins", async (c) => {
+        const body = await readBody(c, addPinBody);
+        if (body.isErr()) return body.error;
+        let label: string | null = null;
+        if (body.value.label !== undefined) {
+            const trimmed = str256(body.value.label);
+            if (trimmed.isOk()) label = trimmed.value;
+            else if (trimmed.error === "too_long") {
+                return apiError(c, "validation_error", "`label` must be at most 256 characters.", {
+                    formErrors: [],
+                    fieldErrors: { label: ["must be at most 256 characters"] },
+                });
+            }
+        }
+        const located = await locatePath(c, body.value.path);
+        if (located.isErr()) return located.error;
+        return addPin({ path: located.value.realPath, label, isDir: located.value.isDir }).match(
+            ({ pin, created }) => c.json(pinView(pin, pin.path), created ? 201 : 200),
+            (e) => internalError(c, e, "add the pin"),
+        );
+    });
+
+    routes.delete("/pins/:id", (c) =>
+        removePin(c.req.param("id")).match(
+            (changed) => (changed === 0 ? apiError(c, "not_found", "Pin not found.") : c.json({ deleted: true } satisfies DeletePinResponse)),
+            (e) => internalError(c, e, "remove the pin"),
+        ),
+    );
+
+    routes.post("/recents", async (c) => {
+        const body = await readBody(c, recordRecentBody);
+        if (body.isErr()) return body.error;
+        const located = await locatePath(c, body.value.path);
+        if (located.isErr()) return located.error;
+        // The query guard does not see a body value, thus the same steps run here, before the write.
+        const analysisId = filterValue(body.value.analysisId);
+        if (analysisId !== undefined) {
+            const blocked = guardAnalysisId(c, analysisId, opts);
+            if (blocked !== null) return blocked;
+        }
+        return recordRecentFile({ path: located.value.realPath, isDir: located.value.isDir, analysisId: analysisId ?? null, cap: RECENT_FILES_CAP }).match(
+            () => c.json({ recorded: true } satisfies RecordRecentResponse),
+            // The analysis can go between the guard and the write. The foreign key then refuses the row.
+            (e) =>
+                e.type === "constraint_violation" && e.constraint === "foreign_key"
+                    ? apiError(c, "not_found", `No analysis has the id ${analysisId ?? ""}.`)
+                    : internalError(c, e, "record the recent file"),
+        );
+    });
+
+    routes.get("/recents", async (c) => {
+        // An `lstat` on a hung mount can take more than 10 s.
+        holdConnection(c);
+        const analysisId = filterValue(c.req.query("analysisId"));
+        const limit = parseCount(c.req.query("limit"), RECENT_FILES_DEFAULT_LIMIT, RECENT_FILES_CAP);
+        const rows = listRecentFiles({ analysisId: analysisId ?? null, limit: RECENT_FILES_CAP });
+        if (rows.isErr()) return internalError(c, rows.error, "list the recent files");
+
+        // Each chunk is one fixed-width read of the disk. The loop stops at the first chunk that fills `limit`.
+        const entries: FolderEntry[] = [];
+        for (let at = 0; at < rows.value.length && entries.length < limit; at += ENTRY_READ_WIDTH) {
+            const chunk = rows.value.slice(at, at + ENTRY_READ_WIDTH);
+            const probed = await Promise.all(chunk.map((row) => entryAt(row.path, row.isDir)));
+            for (const entry of probed) {
+                if (entries.length >= limit) break;
+                // A missing path keeps its row: an unmounted volume comes back, and only the cap of a post removes a row.
+                if (entry !== null) entries.push(entry);
+            }
+        }
+
+        const views = await enrichEntries(c, boot, opts, identity, entries, false);
+        if (views.isErr()) return views.error;
+        const body: RecentFiles = { entries: views.value };
+        return c.json(body);
     });
 
     return routes;
