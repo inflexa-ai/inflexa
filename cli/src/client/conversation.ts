@@ -24,7 +24,7 @@ import {
     type TurnSummary,
     type UpdateThreadRequest,
 } from "../api/conversation.ts";
-import { DEFAULT_CLIENT_OPTS, openStream, request, type ClientError, type ClientOpts } from "./api.ts";
+import { DEFAULT_CLIENT_OPTS, openStream, request, streamRequest, type ClientError, type ClientOpts } from "./api.ts";
 
 function analysisPath(analysisId: string): string {
     return `/api/v1/analyses/${encodeURIComponent(analysisId)}`;
@@ -146,6 +146,19 @@ export function abortTurn(
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): ResultAsync<AbortTurnResponse, ClientError> {
     return request<AbortTurnResponse>("POST", `${threadPath(analysisId, threadId)}/turns/${encodeURIComponent(turnId)}/abort`, {}, opts);
+}
+
+/**
+ * `GET {T}/turns/:turnId/stream`: the frames of a turn again, from its start, live until the turn ends. 404
+ * `not_found` for a turn that the server forgot. A client reads a turn again after a lost connection.
+ */
+export function readChatTurn(
+    analysisId: string,
+    threadId: string,
+    turnId: string,
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<AsyncGenerator<Result<ChatFrame, ClientError>>, ClientError> {
+    return streamRequest<ChatFrame>("GET", `${threadPath(analysisId, threadId)}/turns/${encodeURIComponent(turnId)}/stream`, {}, opts);
 }
 
 /** A chat turn that the server started: its id, and its frames as they arrive. */

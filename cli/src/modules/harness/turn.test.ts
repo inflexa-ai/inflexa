@@ -1,50 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { ok, okAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
 import {
     syntheticUserMessage,
     type AgentDefinition,
-    type AgentFinish,
-    type ChatTurnOutcome,
-    type ChatTurnResult,
-    type DbError,
-    type EmitFn,
+    type ChatFrame,
+    type ChatTurnEnd,
+    type ChatTurns,
+    type ChatTurnSession,
+    type ChatTurnStart,
     type ModelMessage,
+    type OpenChatTurnRequest,
     type Pool,
-    type RunChatTurnDeps,
-    type RunChatTurnParams,
-    type ThreadAgentResolver,
     type ThreadHistory,
 } from "@inflexa-ai/harness";
-import { scriptedModel } from "@inflexa-ai/harness/testing";
 
 import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
 
-// The engine is exercised offline: the whole harness turn is one injected fake, thus no Postgres, no
+// The engine is exercised offline: the chat turns of the harness are one injected fake, thus no Postgres, no
 // model, and no credits. The harness suite pins what the turn itself stores.
 
 const ANALYSIS_ID = "an-1";
 const THREAD_ID = "t-1";
+const TURN_ID = "turn-1";
 const USER_INPUT = "hello";
 const userMessage: ModelMessage = { role: "user", content: USER_INPUT };
 const assistantMessage: ModelMessage = { role: "assistant", content: "the answer" };
 const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model: "m", tools: [], maxIterations: 1 };
-const resolver: ThreadAgentResolver = { forThread: () => ok(conversationAgent) };
 const session = buildChatSession(ANALYSIS_ID, THREAD_ID);
-const noopEmit: EmitFn = () => {};
-const DB_ERROR: DbError = { type: "mutation_failed", op: "thread-history.writeTurn", cause: new Error("db down") };
+const ROOT = { agentId: "conv", callPath: ["conv"] };
 
-// The fake turn never reads the pool or calls the model, thus a bare pool and an empty script stand in for them.
+// The heal tests never read the pool, thus a bare pool stands in for it.
 const pool = {} as unknown as Pool;
-const chatTurns: RunChatTurnDeps = {
-    pool,
-    agents: resolver,
-    provider: scriptedModel([]).provider,
-    usageRecorder: { record: () => okAsync(undefined) },
-};
-
-const STOP: AgentFinish = { reason: "stop", cappedOut: false };
-const FILTERED: AgentFinish = { reason: "content-filter", rawFinishReason: "refusal", cappedOut: false };
-const ABORTED: AgentFinish = { reason: "aborted", cappedOut: false };
 
 /**
  * A whole-turn rollup as a provider reports one. It carries the cache and reasoning breakdowns beside
@@ -52,43 +38,71 @@ const ABORTED: AgentFinish = { reason: "aborted", cappedOut: false };
  */
 const TURN_USAGE = { inputTokens: 12_400, outputTokens: 3100, cacheReadInputTokens: 9800, reasoningTokens: 900 } as const;
 
-/** The harness result of a turn that ran. */
-function ran(outcome: ChatTurnOutcome, extra: Partial<Extract<ChatTurnResult, { kind: "ran" }>> = {}): ChatTurnResult {
-    return { kind: "ran", outcome, opened: true, durationMs: 5, ...extra };
+/** The end of a turn that ran. */
+function ended(end: Partial<ChatTurnEnd> & Pick<ChatTurnEnd, "status">): ChatTurnEnd {
+    return { durationMs: 5, opened: true, ...end };
 }
 
-/** A `turn` seam that gives `result`, and keeps what the engine handed it. */
-function fakeTurn(
-    result: ChatTurnResult,
-    onCall: (params: RunChatTurnParams) => void = () => {},
-): {
-    turn: ChatTurnSeams["turn"];
-    calls: { deps: RunChatTurnDeps; params: RunChatTurnParams }[];
-} {
-    const calls: { deps: RunChatTurnDeps; params: RunChatTurnParams }[] = [];
+type FakeChatTurns = ChatTurns & {
+    readonly opens: { readonly session: ChatTurnSession; readonly request: OpenChatTurnRequest }[];
+    readonly stops: string[];
+};
+
+/** Chat turns whose open gives `start`, whose read gives `frames` and then waits for `hold`, and whose outcome gives `end`. */
+function fakeChatTurns(
+    opts: {
+        readonly start?: ChatTurnStart;
+        readonly frames?: readonly ChatFrame[];
+        readonly hold?: Promise<void>;
+        readonly end?: ChatTurnEnd | null;
+        readonly onOpen?: () => void;
+    } = {},
+): FakeChatTurns {
+    const opens: FakeChatTurns["opens"] = [];
+    const stops: string[] = [];
     return {
-        calls,
-        turn: (deps, params) => {
-            calls.push({ deps, params });
-            onCall(params);
-            return Promise.resolve(result);
+        opens,
+        stops,
+        open: (openSession, request) => {
+            opens.push({ session: openSession, request });
+            opts.onOpen?.();
+            return Promise.resolve(opts.start ?? { kind: "started", turnId: TURN_ID, agent: conversationAgent });
         },
+        async *read() {
+            for (const frame of opts.frames ?? []) yield frame;
+            await opts.hold;
+        },
+        stop: (turnId) => {
+            stops.push(turnId);
+            return Promise.resolve();
+        },
+        answer: () => Promise.resolve("not_found"),
+        outcome: () => Promise.resolve(opts.end === undefined ? ended({ status: "done", finishReason: "stop" }) : opts.end),
     };
 }
 
-/** Drive one turn over `turn`, filling the fixed primitives. */
-function runWith(turn: ChatTurnSeams["turn"], opts: { readonly readAuthor?: ChatTurnSeams["readAuthor"] } = {}): Promise<TurnOutcome> {
+/** Drive one turn over `chatTurns`, filling the fixed primitives. */
+function runWith(
+    chatTurns: ChatTurns,
+    opts: {
+        readonly readAuthor?: ChatTurnSeams["readAuthor"];
+        readonly emit?: (frame: ChatFrame) => void;
+        readonly signal?: AbortSignal;
+        readonly onOpened?: (turnId: string) => void;
+    } = {},
+): Promise<TurnOutcome> {
     return runChatTurn(
         {
             chatTurns,
             session,
-            emit: noopEmit,
-            signal: new AbortController().signal,
+            emit: opts.emit ?? (() => {}),
+            signal: opts.signal ?? new AbortController().signal,
             analysisId: ANALYSIS_ID,
             threadId: THREAD_ID,
             userInput: USER_INPUT,
+            ...(opts.onOpened === undefined ? {} : { onOpened: opts.onOpened }),
         },
-        { turn, readAuthor: opts.readAuthor ?? (() => null) },
+        { readAuthor: opts.readAuthor ?? (() => null) },
     );
 }
 
@@ -101,60 +115,46 @@ describe("buildChatSession", () => {
     });
 });
 
-describe("runChatTurn maps the result of the harness turn", () => {
-    test("a done turn is ok, with its final text and no append error", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "done", finish: STOP }, { fallbackText: "the answer" })).turn);
+describe("runChatTurn maps the outcome of the turn workflow", () => {
+    test("a done turn is ok, with its final text and no store fault", async () => {
+        const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", fallbackText: "the answer" }) }));
 
-        expect(outcome).toMatchObject({ kind: "ok", opened: true, fallbackText: "the answer" });
-        expect(outcome.kind === "ok" ? outcome.appendError : "wrong kind").toBeUndefined();
+        expect(outcome).toEqual({ kind: "ok", opened: true, fallbackText: "the answer" });
     });
 
     test("a content-filter finish is filtered, with the endpoint's own word", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "done", finish: FILTERED }, { fallbackText: "the answer" })).turn);
+        const outcome = await runWith(
+            fakeChatTurns({ end: ended({ status: "done", finishReason: "content-filter", rawFinishReason: "refusal", fallbackText: "the answer" }) }),
+        );
 
         expect(outcome).toMatchObject({ kind: "filtered", opened: true, fallbackText: "the answer", rawFinishReason: "refusal" });
     });
 
     test("an aborted outcome is aborted", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "aborted", finish: ABORTED })).turn);
-
-        expect(outcome).toMatchObject({ kind: "aborted", opened: true });
+        expect(await runWith(fakeChatTurns({ end: ended({ status: "aborted" }) }))).toEqual({ kind: "aborted", opened: true });
     });
 
-    test("a failed outcome is failed and carries the cause", async () => {
-        const cause = new Error("provider 401");
+    test("a failed outcome is failed and carries the text and the code of the failure", async () => {
+        const outcome = await runWith(
+            fakeChatTurns({ end: ended({ status: "failed", reason: "The model endpoint refused the credential.", code: "credential" }) }),
+        );
 
-        const outcome = await runWith(fakeTurn(ran({ status: "failed", reason: "The model endpoint refused the credential.", cause })).turn);
-
-        expect(outcome.kind).toBe("failed");
-        expect(outcome.kind === "failed" ? outcome.cause : undefined).toBe(cause);
+        expect(outcome).toEqual({ kind: "failed", opened: true, reason: "The model endpoint refused the credential.", code: "credential" });
     });
 
-    test("a failed preparation is prepare_failed with its cause", async () => {
-        const cause = new Error("pg unreachable");
-
-        const outcome = await runWith(fakeTurn({ kind: "prepare_failed", cause }).turn);
-
-        expect(outcome).toEqual({ kind: "prepare_failed", cause });
-    });
-
-    test("a thread of a different analysis is thread_gone", async () => {
-        expect(await runWith(fakeTurn({ kind: "not_found" }).turn)).toEqual({ kind: "thread_gone" });
-    });
-
-    test("an unregistered thread type is agent_unresolved with the type", async () => {
-        const outcome = await runWith(fakeTurn({ kind: "agent_unresolved", threadType: "report" }).turn);
-
-        expect(outcome).toEqual({ kind: "agent_unresolved", threadType: "report" });
+    test("a workflow that ended with no outcome is a failure", async () => {
+        expect(await runWith(fakeChatTurns({ end: null }))).toMatchObject({ kind: "failed", reason: "The turn ended with no outcome." });
     });
 
     test("each kind that ran carries opened as the harness gave it", async () => {
-        const outcomes = await Promise.all([
-            runWith(fakeTurn(ran({ status: "done", finish: STOP }, { opened: false })).turn),
-            runWith(fakeTurn(ran({ status: "done", finish: FILTERED }, { opened: false })).turn),
-            runWith(fakeTurn(ran({ status: "aborted" }, { opened: false })).turn),
-            runWith(fakeTurn(ran({ status: "failed", reason: "The model request failed.", cause: new Error("x") }, { opened: false })).turn),
-        ]);
+        const outcomes = await Promise.all(
+            [
+                ended({ status: "done", finishReason: "stop", opened: false }),
+                ended({ status: "done", finishReason: "content-filter", opened: false }),
+                ended({ status: "aborted", opened: false }),
+                ended({ status: "failed", reason: "The model request failed.", opened: false }),
+            ].map((end) => runWith(fakeChatTurns({ end }))),
+        );
 
         expect(outcomes.map((outcome) => [outcome.kind, "opened" in outcome ? outcome.opened : undefined])).toEqual([
             ["ok", false],
@@ -164,64 +164,116 @@ describe("runChatTurn maps the result of the harness turn", () => {
         ]);
     });
 
-    test("a store fault rides as appendError, orthogonal to the outcome", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "done", finish: STOP }, { storeError: DB_ERROR, fallbackText: "the answer" })).turn);
+    test("a store fault rides as storeFailed, orthogonal to the outcome", async () => {
+        const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", storeFailed: true, fallbackText: "the answer" }) }));
 
-        expect(outcome).toMatchObject({ kind: "ok", fallbackText: "the answer", appendError: DB_ERROR });
+        expect(outcome).toEqual({ kind: "ok", opened: true, fallbackText: "the answer", storeFailed: true });
+    });
+});
+
+describe("runChatTurn gives each refusal of the open", () => {
+    test("a failed preparation is prepare_failed with its cause", async () => {
+        const cause = new Error("pg unreachable");
+
+        expect(await runWith(fakeChatTurns({ start: { kind: "prepare_failed", cause } }))).toEqual({ kind: "prepare_failed", cause });
+    });
+
+    test("a thread of a different analysis is thread_gone", async () => {
+        expect(await runWith(fakeChatTurns({ start: { kind: "not_found" } }))).toEqual({ kind: "thread_gone" });
+    });
+
+    test("an unregistered thread type is agent_unresolved with the type", async () => {
+        expect(await runWith(fakeChatTurns({ start: { kind: "agent_unresolved", threadType: "report" } }))).toEqual({
+            kind: "agent_unresolved",
+            threadType: "report",
+        });
+    });
+
+    test("a thread with a turn that runs is turn_in_progress, and the engine opens no turn of its own", async () => {
+        const opened: string[] = [];
+
+        const outcome = await runWith(fakeChatTurns({ start: { kind: "turn_in_progress" } }), { onOpened: (turnId) => opened.push(turnId) });
+
+        expect(outcome).toEqual({ kind: "turn_in_progress" });
+        expect(opened).toEqual([]);
     });
 });
 
 describe("runChatTurn carries the turn's usage rollup", () => {
     test("a turn carries the rollup of the harness whole, per quantity", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "done", finish: STOP }, { turnUsage: { ...TURN_USAGE } })).turn);
+        const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", turnUsage: { ...TURN_USAGE } }) }));
 
         expect(outcome.kind === "ok" ? outcome.turnUsage : undefined).toEqual(TURN_USAGE);
     });
 
     test("an interrupted turn carries what it spent before the abort", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "aborted", finish: ABORTED }, { turnUsage: { inputTokens: 800, outputTokens: 120 } })).turn);
+        const outcome = await runWith(fakeChatTurns({ end: ended({ status: "aborted", turnUsage: { inputTokens: 800, outputTokens: 120 } }) }));
 
         expect(outcome.kind === "aborted" ? outcome.turnUsage : undefined).toEqual({ inputTokens: 800, outputTokens: 120 });
     });
 
     test("a turn whose calls reported nothing carries NO rollup key", async () => {
-        const outcome = await runWith(fakeTurn(ran({ status: "done", finish: STOP })).turn);
-
-        expect("turnUsage" in outcome).toBe(false);
+        expect("turnUsage" in (await runWith(fakeChatTurns()))).toBe(false);
     });
 
     test("the carried rollup is a copy, thus a later change of the value of the harness cannot reach it", async () => {
         const live = { inputTokens: 100, outputTokens: 10 };
 
-        const outcome = await runWith(fakeTurn(ran({ status: "done", finish: STOP }, { turnUsage: live })).turn);
+        const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", turnUsage: live }) }));
         live.inputTokens = 999_999;
 
         expect(outcome.kind === "ok" ? outcome.turnUsage?.inputTokens : undefined).toBe(100);
     });
 });
 
-describe("runChatTurn gives the harness the values of the surface", () => {
-    test("the deps are the chat-turn deps of the caller, unchanged", async () => {
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }));
+describe("runChatTurn streams the turn to the surface", () => {
+    test("the surface gets each frame of the turn but its end frame, and the open names the turn", async () => {
+        const frames: ChatFrame[] = [
+            { type: "message-start", messageId: "0198f0a0-0000-7000-8000-000000000001", role: "assistant", source: ROOT },
+            { type: "text-delta", text: "Hi", source: ROOT },
+            { type: "finish", source: ROOT },
+        ];
+        const seen: ChatFrame[] = [];
+        const opened: string[] = [];
 
-        await runWith(fake.turn);
+        await runWith(fakeChatTurns({ frames }), { emit: (frame) => seen.push(frame), onOpened: (turnId) => opened.push(turnId) });
 
-        // Identity, not shape: a bag built here would carry a recorder and a gateway other than the runtime's,
-        // and the calls and the asks of the turn would miss the ledger and the surface.
-        expect(fake.calls[0]!.deps).toBe(chatTurns);
+        expect(seen.map((frame) => frame.type)).toEqual(["message-start", "text-delta"]);
+        expect(opened).toEqual([TURN_ID]);
     });
 
-    test("the params carry the session and the start time, and no cache policy", async () => {
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }));
+    test("an abort of the surface stops the turn by its id", async () => {
+        const controller = new AbortController();
+        let release: () => void = () => undefined;
+        const hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const chatTurns = fakeChatTurns({ hold, end: ended({ status: "aborted" }) });
+
+        const running = runWith(chatTurns, {
+            signal: controller.signal,
+            onOpened: () => {
+                controller.abort();
+                release();
+            },
+        });
+
+        expect(await running).toEqual({ kind: "aborted", opened: true });
+        expect(chatTurns.stops).toEqual([TURN_ID]);
+    });
+
+    test("the open carries the session, the user input, and the start time, and no cache policy", async () => {
+        const chatTurns = fakeChatTurns();
         const before = Date.now();
 
-        await runWith(fake.turn);
+        await runWith(chatTurns);
 
-        const params = fake.calls[0]!.params;
-        expect(params).toMatchObject({ analysisId: ANALYSIS_ID, threadId: THREAD_ID, userInput: USER_INPUT, session });
-        expect(params.startedAtMs).toBeGreaterThanOrEqual(before);
+        const { session: openSession, request } = chatTurns.opens[0]!;
+        expect(openSession).toBe(session);
+        expect(request).toMatchObject({ analysisId: ANALYSIS_ID, threadId: THREAD_ID, userInput: USER_INPUT });
+        expect(request.startedAtMs).toBeGreaterThanOrEqual(before);
         // With no policy, the root loop uses the 1-hour default of the harness.
-        expect("promptCache" in params).toBe(false);
+        expect("promptCache" in request).toBe(false);
     });
 });
 
@@ -229,50 +281,52 @@ describe("the author of a chat turn", () => {
     const AUTHOR = "ada@example.com";
 
     test("a signed-in identity rides to the harness as the author of the opening", async () => {
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }));
+        const chatTurns = fakeChatTurns();
 
-        await runWith(fake.turn, { readAuthor: () => AUTHOR });
+        await runWith(chatTurns, { readAuthor: () => AUTHOR });
 
-        expect(fake.calls[0]!.params.author).toBe(AUTHOR);
+        expect(chatTurns.opens[0]!.request.author).toBe(AUTHOR);
     });
 
     test("a signed-out identity carries NO author key — an absent sender is absent, never empty", async () => {
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }));
+        const chatTurns = fakeChatTurns();
 
-        await runWith(fake.turn, { readAuthor: () => null });
+        await runWith(chatTurns, { readAuthor: () => null });
 
-        expect("author" in fake.calls[0]!.params).toBe(false);
+        expect("author" in chatTurns.opens[0]!.request).toBe(false);
     });
 
     test("an empty email carries no author key", async () => {
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }));
+        const chatTurns = fakeChatTurns();
 
-        await runWith(fake.turn, { readAuthor: () => "" });
+        await runWith(chatTurns, { readAuthor: () => "" });
 
-        expect("author" in fake.calls[0]!.params).toBe(false);
+        expect("author" in chatTurns.opens[0]!.request).toBe(false);
     });
 
     test("each turn reads the identity again, so a sign-in between two turns reaches the second", async () => {
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }));
+        const chatTurns = fakeChatTurns();
         const authors = ["first@example.com", "second@example.com"];
         let call = 0;
         const readAuthor = (): string | null => authors[call++] ?? null;
 
-        await runWith(fake.turn, { readAuthor });
-        await runWith(fake.turn, { readAuthor });
+        await runWith(chatTurns, { readAuthor });
+        await runWith(chatTurns, { readAuthor });
 
-        expect(fake.calls.map((c) => c.params.author)).toEqual(authors);
+        expect(chatTurns.opens.map((open) => open.request.author)).toEqual(authors);
     });
 
     test("a sign-out DURING the turn does not erase the author of that turn", async () => {
         let signedIn = true;
-        const fake = fakeTurn(ran({ status: "done", finish: STOP }), () => {
-            signedIn = false;
+        const chatTurns = fakeChatTurns({
+            onOpen: () => {
+                signedIn = false;
+            },
         });
 
-        await runWith(fake.turn, { readAuthor: () => (signedIn ? AUTHOR : null) });
+        await runWith(chatTurns, { readAuthor: () => (signedIn ? AUTHOR : null) });
 
-        expect(fake.calls[0]!.params.author).toBe(AUTHOR);
+        expect(chatTurns.opens[0]!.request.author).toBe(AUTHOR);
     });
 });
 

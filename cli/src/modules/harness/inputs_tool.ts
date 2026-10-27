@@ -13,7 +13,7 @@
  * subcommands are the TERMINAL surface and are agent-blocked; the agent uses this.
  */
 
-import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AskRequest, type ToolError } from "@inflexa-ai/harness";
+import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AgentSession, type AskRequest, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -59,6 +59,37 @@ function askRequest(action: "add" | "remove", analysisId: string, paths: readonl
     };
 }
 
+/**
+ * The paths that an add or a remove would change now, for the approval of the call. A call that changes nothing,
+ * or that `execute` refuses, needs no approval. `execute` checks the input again before it changes anything.
+ */
+async function changedPaths(
+    input: { readonly action: "add" | "remove" | "list"; readonly paths?: readonly string[] },
+    session: AgentSession,
+): Promise<{ readonly analysisId: string; readonly paths: readonly string[] } | undefined> {
+    if (input.action === "list") return undefined;
+    const scoped = scopeResource(session.scope);
+    if (scoped.resourceType !== "analysis") return undefined;
+    const analysisId = scoped.resourceId;
+    const paths = input.paths ?? [];
+    if (paths.length === 0 || !holdsInstanceLock(analysisId)) return undefined;
+    const found = findAnalysis(analysisId);
+    if (found.isErr() || !found.value) return undefined;
+    const cwd = await anchorFolder(found.value.anchorId);
+    if (cwd === null) return undefined;
+    if (input.action === "add") {
+        const exists = await pathsExistAsync(
+            paths.map((p) => expandAndResolve(cwd, p)),
+            EXISTS_CHECK_WIDTH,
+        );
+        return exists.every(Boolean) ? { analysisId, paths } : undefined;
+    }
+    const current = listAnalysisInputs(analysisId);
+    if (current.isErr()) return undefined;
+    const { matched } = await matchInputRefs(current.value, paths, cwd);
+    return matched.length === 0 ? undefined : { analysisId, paths: matched.map((i) => i.path) };
+}
+
 /** What the `manage_inputs` tool changes. Tests replace each one. */
 export type ManageInputsToolOpts = {
     /** Remove one input ref and record the removal in the provenance chain. */
@@ -100,6 +131,12 @@ export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANA
             // Code points, which is the unit the harness caps in.
             if ([...listed].length <= DETAIL_MAX_LENGTH) return listed;
             return `${action} ${paths.length} path${paths.length === 1 ? "" : "s"}`;
+        },
+        // The loop asks the user before an add or a remove runs, with the paths that it changes.
+        approval: async (input, ctx): Promise<AskRequest | undefined> => {
+            if (input.action === "list") return undefined;
+            const change = await changedPaths(input, ctx.session);
+            return change === undefined ? undefined : askRequest(input.action, change.analysisId, change.paths);
         },
         execute: async (input, ctx): Promise<Result<ManageInputsResult, ToolError>> => {
             const scoped = scopeResource(ctx.session.scope);
@@ -148,8 +185,6 @@ export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANA
                 const missing = paths.filter((_, i) => !exists[i]);
                 if (missing.length > 0) return ok({ status: "not_found" as const, missing });
 
-                // ctx.ask throws AskRejectedError on denial; deliberately not caught — the loop maps it.
-                await ctx.ask(askRequest("add", analysisId, paths));
                 const added = await addInputs(analysisId, paths, cwd);
                 if (added.isErr()) {
                     const e = added.error;
@@ -165,13 +200,6 @@ export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANA
             const { matched, notInputs } = await matchInputRefs(current.value, paths, cwd);
             if (matched.length === 0) return ok({ status: "removed" as const, removed: [], notInputs });
 
-            await ctx.ask(
-                askRequest(
-                    "remove",
-                    analysisId,
-                    matched.map((i) => i.path),
-                ),
-            );
             const removed: string[] = [];
             const failed: string[] = [];
             const errorTypes = new Set<string>();

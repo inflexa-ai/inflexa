@@ -28,12 +28,8 @@ const BASELINE = "2026-10-05T00:00:00.000Z";
 
 /** An ask gateway over a fixed pending set. Only `pending` is read, and `pendingReads` counts its calls. */
 function gatewayOf(pending: () => Promise<PendingAsk[]>): AskGateway {
-    return {
-        ask: () => Promise.reject(new Error("the routes never ask")),
-        answer: () => Promise.reject(new Error("the routes never answer")),
-        pending,
-        sweepExpired: () => Promise.resolve(0),
-    };
+    const never = (): Promise<never> => Promise.reject(new Error("the routes only read the pending asks"));
+    return { raise: never, expire: never, abort: never, answer: never, pending, sweepExpired: () => Promise.resolve(0) };
 }
 
 function readyBoot(gateway: AskGateway): ServerBoot {
@@ -224,7 +220,7 @@ describe("GET /api/v1/attention", () => {
 
     test("an ask whose thread has no running turn is stale, an ask with a running turn is not, and an ask with no thread is stale", async () => {
         const a1 = seedAnalysis("trial");
-        startTurn({ turnId: "turn-1", threadId: "t-running", analysisId: a1 }, new Date());
+        startTurn({ turnId: "turn-1", threadId: "t-running", analysisId: a1 }, new Date(), new AbortController());
         const fixture = emptyFixture();
         fixture.pending = [ask("idle", a1, "t-idle"), ask("running", a1, "t-running"), ask("orphan", a1, null)];
 
@@ -322,7 +318,7 @@ describe("GET /api/v1/attention", () => {
 
     test("recentThreads asks for the conversation threads, and its items carry the turn, the asks, and the analysis name", async () => {
         const a1 = seedAnalysis("trial");
-        startTurn({ turnId: "turn-1", threadId: "t1", analysisId: a1 }, new Date());
+        startTurn({ turnId: "turn-1", threadId: "t1", analysisId: a1 }, new Date(), new AbortController());
         const fixture = emptyFixture();
         fixture.pending = [ask("k1", a1, "t1"), ask("k2", a1, "t1")];
         fixture.threads = [conversationThread({ threadId: "t1", analysisId: a1 }), conversationThread({ threadId: "t2", analysisId: a1 })];

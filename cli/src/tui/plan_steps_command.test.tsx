@@ -81,6 +81,7 @@ describe("plan.explore-steps", () => {
         const opts: SendOpts = {
             startTurn: () => okAsync({ turnId: "turn-1", frames: framesOf([plan, { type: "finish", source }]) }),
             abortTurn: unexpected("abortTurn"),
+            rereadTurn: unexpected("rereadTurn"),
             fetchTurn: () =>
                 okAsync({
                     turnId: "turn-1",

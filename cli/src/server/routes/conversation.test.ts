@@ -8,6 +8,7 @@ import {
     type AskGateway,
     type AskReply,
     type ChatFrame,
+    type ChatTurns,
     type DbError,
     type LoadPageOptions,
     type PendingAsk,
@@ -98,7 +99,9 @@ function fakeGateway(pending: PendingAsk[], outcome: AnswerOutcome = "applied"):
     const answers: { id: string; reply: AskReply }[] = [];
     return {
         answers,
-        ask: () => Promise.reject(new Error("the routes never ask")),
+        raise: () => Promise.reject(new Error("the routes never raise")),
+        expire: () => Promise.reject(new Error("the routes never expire")),
+        abort: () => Promise.reject(new Error("the routes never abort")),
         answer: (id, reply) => {
             answers.push({ id, reply });
             return Promise.resolve(outcome);
@@ -108,12 +111,21 @@ function fakeGateway(pending: PendingAsk[], outcome: AnswerOutcome = "applied"):
     };
 }
 
-/** A boot whose runtime is ready. The routes read the pool, the chat-turn deps, and the gateway of the runtime, and each fake below ignores the pool and the deps. */
-function readyBoot(gateway: AskGateway = fakeGateway([])): ServerBoot {
+/**
+ * A boot whose runtime is ready. The routes read the pool, the chat turns, and the gateway of the runtime, and each
+ * fake below ignores the pool. The chat turns answer through the gateway, and a read gives `frames`.
+ */
+function readyBoot(gateway: AskGateway = fakeGateway([]), frames: readonly ChatFrame[] = []): ServerBoot {
+    const chatTurns: Pick<ChatTurns, "answer" | "read"> = {
+        answer: (id, reply) => gateway.answer(id, reply),
+        async *read() {
+            for (const frame of frames) yield frame;
+        },
+    };
     // The cast is sound for the reason above: no route under test reads another field of the runtime.
     const runtime = {
         pool: {},
-        chatTurns: {},
+        chatTurns,
         askGateway: gateway,
     } as unknown as HarnessRuntime;
     const state: ServerBootState = {
@@ -283,8 +295,8 @@ describe("the thread routes", () => {
         const ledgerDown = (): AskGateway => ({ ...fakeGateway([]), pending: () => Promise.reject(new Error("ledger down")) });
 
         test("a thread with a running turn and open asks carries the turn id and the count, and an idle thread carries none", async () => {
-            startTurn({ turnId: "turn-old", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"));
-            startTurn({ turnId: "turn-new", threadId: T, analysisId: A }, new Date("2026-10-02T10:05:00.000Z"));
+            startTurn({ turnId: "turn-old", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"), new AbortController());
+            startTurn({ turnId: "turn-new", threadId: T, analysisId: A }, new Date("2026-10-02T10:05:00.000Z"), new AbortController());
             const store = memoryStore([conversationThread(), conversationThread({ threadId: "thread-idle" })]);
             const asks = [openAsk("k1", T), openAsk("k2", T), openAsk("k3", "thread-idle-other"), openAsk("k4", null)];
             const routes = routesWith({ store, boot: readyBoot(fakeGateway(asks)) });
@@ -299,7 +311,7 @@ describe("the thread routes", () => {
         });
 
         test("PATCH {T} and POST {T}/restore carry the fields too", async () => {
-            startTurn({ turnId: "turn-1", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"));
+            startTurn({ turnId: "turn-1", threadId: T, analysisId: A }, new Date("2026-10-02T10:00:00.000Z"), new AbortController());
             const store = memoryStore([conversationThread()]);
             const routes = routesWith({ store, boot: readyBoot(fakeGateway([openAsk("k1", T)])) });
 
@@ -557,12 +569,9 @@ describe("POST {A}/chat", () => {
         const routes = routesWith({
             flushPendingAdds: () => void flushed++,
             runTurn: async (args) => {
-                args.onOpened?.();
-                await args.emit({ type: "text-delta", text: "Hello" });
-                await args.emit({ type: "iteration", source: { agentId: "chat", callPath: ["chat"] }, index: 0, final: true } as Parameters<
-                    RunChatTurnArgs["emit"]
-                >[0]);
-                await args.emit({ type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] }, index: 0, final: false });
+                args.onOpened?.(crypto.randomUUID());
+                args.emit({ type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } });
+                args.emit({ type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } });
                 return { kind: "ok", opened: true, fallbackText: "Hello", turnUsage: { inputTokens: 10, outputTokens: 2 } };
             },
         });
@@ -572,8 +581,7 @@ describe("POST {A}/chat", () => {
         const turnId = response.headers.get(TURN_ID_HEADER);
         expect(turnId).not.toBeNull();
 
-        // An `iteration` of the root agent gives no frame, as `toChatFrame` decides. The TUI draws the thinking
-        // line of a sub-agent from the frame of its `iteration`.
+        // The TUI draws the thinking line of a sub-agent from the frame of its `iteration`.
         expect(await framesOf(response)).toEqual([
             { type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } },
             { type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } },
@@ -586,19 +594,19 @@ describe("POST {A}/chat", () => {
         expect(hasRunningTurn(A)).toBe(false);
     });
 
-    test("gives the turn the chat-turn deps of the runtime and the session of the thread", async () => {
+    test("gives the turn the chat turns of the runtime and the session of the thread", async () => {
         let seen: RunChatTurnArgs | null = null;
         const boot = readyBoot();
         const routes = routesWith({
             boot,
             runTurn: (args) => {
                 seen = args;
-                args.onOpened?.();
+                args.onOpened?.(crypto.randomUUID());
                 return Promise.resolve({ kind: "ok", opened: true, fallbackText: "" });
             },
         });
         await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hello" })));
-        // The deps of the runtime carry its recorder and its gateway. Without them, the calls of the
+        // The chat turns of the runtime carry its recorder and its gateway. Without them, the calls of the
         // conversation agent never reach the ledger, and its asks never reach the surface.
         const args = seen as RunChatTurnArgs | null;
         expect(args?.chatTurns).toBe(boot.runtime()!.chatTurns);
@@ -609,14 +617,8 @@ describe("POST {A}/chat", () => {
     test("keeps the frames of a sub-agent, with their source", async () => {
         const routes = routesWith({
             runTurn: async (args) => {
-                args.onOpened?.();
-                await args.emit({
-                    type: "tool-started",
-                    source: { agentId: "planner", callPath: ["chat", "planner"] },
-                    toolUseId: "u1",
-                    name: "bash",
-                    input: {},
-                });
+                args.onOpened?.(crypto.randomUUID());
+                args.emit({ type: "tool-started", source: { agentId: "planner", callPath: ["chat", "planner"] }, toolUseId: "u1", name: "bash" });
                 return { kind: "ok", opened: true, fallbackText: "" };
             },
         });
@@ -649,6 +651,17 @@ describe("POST {A}/chat", () => {
         expect(await prepare.json()).toEqual({ error: "internal_error", message: "The server failed to handle the request." });
     });
 
+    test("409 `conflict` for a thread with a turn that runs, and the registry holds no turn", async () => {
+        const response = await routesWith({ runTurn: () => Promise.resolve({ kind: "turn_in_progress" }) }).request(
+            `/${A}/chat`,
+            json("POST", { threadId: T, message: "hi" }),
+        );
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ error: "conflict" });
+        expect(hasRunningTurn(A)).toBe(false);
+    });
+
     test("400 `validation_error` for an empty message", async () => {
         const response = await routesWith().request(`/${A}/chat`, json("POST", { threadId: T, message: "" }));
         expect(response.status).toBe(400);
@@ -656,11 +669,10 @@ describe("POST {A}/chat", () => {
     });
 
     test("a failed turn ends with one `error` frame, and its summary carries the remedy and the detail lines", async () => {
-        const authFailure = { type: "auth", retryable: false, message: "invalid x-api-key" };
         const routes = routesWith({
             runTurn: (args) => {
-                args.onOpened?.();
-                return Promise.resolve({ kind: "failed", opened: true, cause: authFailure });
+                args.onOpened?.(crypto.randomUUID());
+                return Promise.resolve({ kind: "failed", opened: true, reason: "The model endpoint refused the credential.", code: "credential" });
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
@@ -680,8 +692,8 @@ describe("POST {A}/chat", () => {
         const routes = routesWith({
             connection: () => ({ provider: "anthropic", mode: "cliproxy" }),
             runTurn: (args) => {
-                args.onOpened?.();
-                return Promise.resolve({ kind: "failed", opened: true, cause: { type: "auth", retryable: false, message: "invalid x-api-key" } });
+                args.onOpened?.(crypto.randomUUID());
+                return Promise.resolve({ kind: "failed", opened: true, reason: "The model endpoint refused the credential.", code: "credential" });
             },
         });
         const frames = await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" })));
@@ -696,8 +708,8 @@ describe("POST {A}/chat", () => {
             connection: () => ({ provider: "anthropic", mode: "cliproxy" }),
             readCredentialVerdict: () => Promise.resolve(ok({ kind: "rate_limited", retryAt: new Date("2026-10-02T12:00:00.000Z") })),
             runTurn: (args) => {
-                args.onOpened?.();
-                return Promise.resolve({ kind: "failed", opened: true, cause: new Error("overloaded") });
+                args.onOpened?.(crypto.randomUUID());
+                return Promise.resolve({ kind: "failed", opened: true, reason: "The model request failed.", code: "outage" });
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
@@ -714,7 +726,7 @@ describe("the turn registry routes", () => {
         let sawAbort = false;
         const routes = routesWith({
             runTurn: async (args) => {
-                args.onOpened?.();
+                args.onOpened?.(crypto.randomUUID());
                 await new Promise<void>((resolve) => args.signal.addEventListener("abort", () => resolve(), { once: true }));
                 sawAbort = args.signal.aborted;
                 return { kind: "aborted", opened: true };
@@ -755,11 +767,11 @@ describe("the turn registry routes", () => {
         const routes = routesWith({
             flushPendingAdds: () => finished.open(),
             runTurn: async (args) => {
-                args.onOpened?.();
-                await args.emit({ type: "text-delta", text: "first" });
+                args.onOpened?.(crypto.randomUUID());
+                args.emit({ type: "text-delta", text: "first", source: { agentId: "chat", callPath: ["chat"] } });
                 await proceed.wait;
                 aborted = args.signal.aborted;
-                await args.emit({ type: "text-delta", text: "second" });
+                args.emit({ type: "text-delta", text: "second", source: { agentId: "chat", callPath: ["chat"] } });
                 return { kind: "ok", opened: true, fallbackText: "first second" };
             },
         });
@@ -776,6 +788,22 @@ describe("the turn registry routes", () => {
         const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
         expect(summary).toMatchObject({ status: "done", fallbackText: "first second" });
         expect(hasRunningTurn(A)).toBe(false);
+    });
+
+    test("GET {T}/turns/:turnId/stream reads the frames of a turn again, and a turn of a different thread gives 404", async () => {
+        const source = { agentId: "chat", callPath: ["chat"] };
+        const stored: ChatFrame[] = [
+            { type: "text-delta", text: "Hello", source },
+            { type: "finish", source },
+        ];
+        const routes = routesWith({ boot: readyBoot(fakeGateway([]), stored) });
+        startTurn({ turnId: "turn-1", threadId: T, analysisId: A }, new Date(), new AbortController());
+
+        const again = await routes.request(`/${A}/threads/${T}/turns/turn-1/stream`);
+
+        expect(again.status).toBe(200);
+        expect(await framesOf(again)).toEqual(stored);
+        expect((await routes.request(`/${A}/threads/other/turns/turn-1/stream`)).status).toBe(404);
     });
 
     test("the turn routes need no runtime: they read the registry of the process", async () => {
@@ -863,7 +891,7 @@ describe("the activity time of the analysis", () => {
         const release = gate();
         const routes = routesWith({
             runTurn: async (args) => {
-                args.onOpened?.();
+                args.onOpened?.(crypto.randomUUID());
                 await release.wait;
                 return { kind: "ok", opened: true, fallbackText: "" };
             },

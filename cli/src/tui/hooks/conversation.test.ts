@@ -178,6 +178,8 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
             return okAsync({ turnId, outcome: "aborting" });
         },
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
+        // The server forgot the turn, thus a broken stream reads nothing again unless a case replaces it.
+        rereadTurn: () => errAsync({ type: "http", status: 404, body: { error: "not_found", message: "Turn not found." } }),
         reloadTranscript: async () => undefined,
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
         transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList([])) },
@@ -785,6 +787,42 @@ describe("send() reads the end of a turn from its stream when the summary is gon
         // What streamed before the break stays on screen.
         const part = messages[1]?.parts[0];
         expect(part?.type === "text" ? part.text : undefined).toBe("partial");
+    });
+
+    test("a stream that breaks reads the turn again from its start, and each frame applies one time", async () => {
+        const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
+        async function* first(): AsyncGenerator<Result<ChatFrame, ClientError>> {
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE });
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield err(broken);
+        }
+        async function* again(): AsyncGenerator<Result<ChatFrame, ClientError>> {
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE });
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield ok({ type: "text-delta", text: "world.", source: ROUTE_SOURCE });
+            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
+            yield ok({ type: "finish", source: ROUTE_SOURCE });
+        }
+        const rereads: string[] = [];
+        const server: SendOpts = {
+            ...fakeServer(done()),
+            startTurn: () => okAsync({ turnId: "turn-x", frames: first() }),
+            rereadTurn: (_analysisId, _threadId, turnId) => {
+                rereads.push(turnId);
+                return okAsync(again());
+            },
+        };
+
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(rereads).toEqual(["turn-x"]);
+        expect(messages[1]?.parts).toHaveLength(1);
+        const part = messages[1]?.parts[0];
+        expect(part?.type === "text" ? part.text : undefined).toBe("Hello world.");
+        expect(errorMsg()).toBeNull();
+        expect(chatStatus()).toBe("idle");
     });
 });
 

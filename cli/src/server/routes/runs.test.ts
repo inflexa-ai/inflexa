@@ -1366,7 +1366,7 @@ describe("POST {A}/plans/:planId/approve", () => {
 
     test("a running turn on the thread gives 409 `busy` with the reason, and the approval does not run", async () => {
         const analysisId = seedAnalysis();
-        startTurn({ turnId: "turn-1", threadId: "t1", analysisId }, new Date());
+        startTurn({ turnId: "turn-1", threadId: "t1", analysisId }, new Date(), new AbortController());
         const { app, inputs } = approvalApp(() => okAsync(startedApproval));
 
         const response = await approve(app, analysisId);
@@ -1382,7 +1382,7 @@ describe("POST {A}/plans/:planId/approve", () => {
 
     test("a running turn on a different thread does not hold the approval", async () => {
         const analysisId = seedAnalysis();
-        startTurn({ turnId: "turn-1", threadId: "t-other", analysisId }, new Date());
+        startTurn({ turnId: "turn-1", threadId: "t-other", analysisId }, new Date(), new AbortController());
 
         expect((await approve(approvalApp(() => okAsync(startedApproval)).app, analysisId)).status).toBe(201);
     });

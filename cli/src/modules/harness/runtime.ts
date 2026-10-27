@@ -39,7 +39,7 @@ import {
     type RegisterReaperDeps,
     type ResolvePageAsset,
     type RunAuthorizer,
-    type RunChatTurnDeps,
+    type ChatTurns,
     type RunLauncher,
     type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
@@ -177,12 +177,11 @@ export type HarnessRuntime = {
      */
     readonly approvePlan: CoreRuntime["approvePlan"];
     /**
-     * The runtime values of a chat turn, as `assembleCoreRuntime` built them: the pool, the agent
-     * resolver, the conversation provider handle, the usage recorder that this boot supplied on `core`,
-     * and the ask gateway. The turn engine passes them whole, thus a turn records to the same ledger as
-     * each workflow.
+     * The chat turns of the runtime, as `assembleCoreRuntime` registered them: `open` starts the workflow
+     * of a turn, `read` gives its frames, `stop` ends it, `answer` answers one of its asks, and `outcome`
+     * gives how it ended. The turn records to the same ledger as each workflow.
      */
-    readonly chatTurns: RunChatTurnDeps;
+    readonly chatTurns: ChatTurns;
     /**
      * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
      * status surface renders beside the per-agent models. Stamped once
@@ -1006,7 +1005,7 @@ async function bootHarnessRuntimeOnce(
         // tool (wired through the conversation bundle) and the file-replay run
         // trigger (`runTriggerDeps`) — same reasoning as the shared authorizer: a
         // single seam realization drives every durable-run launch on this analysis.
-        const runLauncher = createDbosRunLauncher();
+        const runLauncher = createDbosRunLauncher({ pool, logger });
         // The ask-expiry sweep runs in `beforeLaunch` below, once state init has created the ledger.
         // The core runtime and its gateway do not exist before the boot returns, thus the sweep takes a
         // gateway of its own. The gateway keeps no state outside the ledger, thus the rows that this
@@ -1016,13 +1015,6 @@ async function bootHarnessRuntimeOnce(
         // it onto the conversation agent, every workflow deps bag it registers, and the chat-turn deps
         // (`CoreRuntime.chatTurns`). There is no per-turn or per-call construction: a second instance
         // would be a second writer of the same table with nothing to gain from the split.
-        //
-        // A loop reads its recorder from the options that it runs with, and falls back to the no-op of
-        // the harness when the field is absent. The chat turn reads its options from `chatTurns`, thus
-        // the turn engine (`runChatTurn` in `turn.ts`) takes that bag whole from
-        // {@link HarnessRuntime.chatTurns} and never builds its own. A bag built anywhere else would be
-        // silent by construction: the turn succeeds, the live figure still renders from the finish
-        // rollup, and nothing is written.
         const usageRecorder = createUsageRecorder();
 
         // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
@@ -1282,6 +1274,9 @@ async function bootHarnessRuntimeOnce(
                 // above published, because the chat turn reads that object for the creation of a
                 // conversation thread and this bag does not reach that call.
                 provenance,
+                // One person owns a local install, and the local credential holds no secret, thus a turn
+                // that a recovery runs after a restart gets the same credential as a new turn.
+                credentialFor: () => makeLocalAuth(),
             },
             pool: composition.pool,
             skillsDir: cfg.skillsDir,

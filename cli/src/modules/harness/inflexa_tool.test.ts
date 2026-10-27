@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { AskRejectedError, UnavailableAsk, normalizeDetail, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
+import { normalizeDetail, type AgentSession, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, test } from "bun:test";
 
 import type { AgentPolicy } from "../../cli/agent_policy.ts";
@@ -39,18 +39,21 @@ function recordingSubprocess(result: SubprocessResult = OK_RESULT): {
     return { fn, calls, cwds, bounds };
 }
 
-/** An `ask` seam that records its requests and resolves with a fixed approval. */
-function recordingAsk(reply: AskApproval): { fn: (request: AskRequest) => Promise<AskApproval>; calls: AskRequest[] } {
+/** The decision of a user that approves each request, and keeps the requests. */
+function recordingAsk(): { fn: (request: AskRequest) => Promise<void>; calls: AskRequest[] } {
     const calls: AskRequest[] = [];
-    const fn = (request: AskRequest): Promise<AskApproval> => {
+    const fn = (request: AskRequest): Promise<void> => {
         calls.push(request);
-        return Promise.resolve(reply);
+        return Promise.resolve();
     };
     return { fn, calls };
 }
 
-/** A minimal `ToolContext`; the tool reads `signal`, `ask`, and `session.scope` (to pick the child's working directory). */
-function makeCtx(ask: (request: AskRequest) => Promise<AskApproval>, analysisId: string | null = "an-test"): ToolContext {
+/** The denial of a user, which the loop turns into a denied call. */
+class DeniedError extends Error {}
+
+/** A minimal `ToolContext`; the tool reads `signal` and `session.scope` (to pick the child's working directory). */
+function makeCtx(analysisId: string | null = "an-test"): ToolContext {
     const scope = analysisId === null ? { kind: "target-assessment" } : { kind: "analysis", analysisId };
     return {
         // Only `scope` is read; a cast avoids constructing the full session value object.
@@ -58,8 +61,26 @@ function makeCtx(ask: (request: AskRequest) => Promise<AskApproval>, analysisId:
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
-        ask,
     };
+}
+
+/**
+ * Run one call the way the loop runs it: the approval hook gives a request or nothing, the user decides on a
+ * request, and `execute` runs only after an approval. A denial rejects, because the loop ends the call there.
+ */
+async function runCall(
+    tool: ReturnType<typeof makeTool>,
+    input: { argv: string[] },
+    approve?: (request: AskRequest) => Promise<void>,
+    analysisId: string | null = "an-test",
+): ReturnType<ReturnType<typeof makeTool>["execute"]> {
+    const ctx = makeCtx(analysisId);
+    const request = await tool.approval?.(input, { invocationId: ctx.invocationId, session: ctx.session });
+    if (request !== undefined) {
+        if (approve === undefined) throw new DeniedError("no approver");
+        await approve(request);
+    }
+    return tool.execute(input, ctx);
 }
 
 /** Build the tool with the injected subprocess seam and fixed dev/path deps so no real host state leaks in. */
@@ -89,10 +110,10 @@ describe("resolveInvocation", () => {
 describe("run_inflexa — execute", () => {
     test("introspection runs immediately without asking", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["--help"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -102,10 +123,10 @@ describe("run_inflexa — execute", () => {
 
     test("an action asks with the exact command and subcommand grantKey, then runs on approval", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(1);
         // The displayed command is the EXACT argv; the grant keys on the bare subcommand path.
@@ -117,10 +138,10 @@ describe("run_inflexa — execute", () => {
 
     test("a transfer command runs under neither bound, and its approval states that", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(ask.fn));
+        await runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, ask.fn);
 
         // Neither key is present: a download outlives any ceiling worth setting, and it is silent for the
         // whole of one large file, so either bound could only ever cut an honest transfer short.
@@ -131,10 +152,10 @@ describe("run_inflexa — execute", () => {
 
     test("a command that is not a transfer keeps both of the tool's bounds and says nothing about them", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await tool.execute({ argv: ["status"] }, makeCtx(ask.fn));
+        await runCall(tool, { argv: ["status"] }, ask.fn);
 
         expect(sub.bounds[0]?.timeoutMs).toBeGreaterThan(0);
         expect(sub.bounds[0]?.idleTimeoutMs).toBeGreaterThan(0);
@@ -143,10 +164,10 @@ describe("run_inflexa — execute", () => {
 
     test("a packed single-string argv displays and spawns the SAME tokenized argv", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["refs download x --yes"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["refs download x --yes"] }, ask.fn))._unsafeUnwrap();
 
         // The classifier's verdict argv is the single normalization source: what the
         // user approves is what spawns — never the still-packed input element.
@@ -157,10 +178,10 @@ describe("run_inflexa — execute", () => {
 
     test("an argv element carrying whitespace displays quoted and spawns verbatim", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["refs", "download", "my file"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["refs", "download", "my file"] }, ask.fn))._unsafeUnwrap();
 
         // Quoted for reading: the word boundaries the user approves are the ones that spawn.
         expect(ask.calls[0]?.command).toBe('inflexa refs download "my file"');
@@ -168,21 +189,21 @@ describe("run_inflexa — execute", () => {
         expect(result.status).toBe("ran");
     });
 
-    test("a rejected approval propagates and never spawns", async () => {
+    test("a rejected approval never spawns", async () => {
         const sub = recordingSubprocess();
-        const reject = (_request: AskRequest): Promise<AskApproval> => Promise.reject(new AskRejectedError("no"));
+        const reject = (_request: AskRequest): Promise<void> => Promise.reject(new DeniedError("no"));
         const tool = makeTool(sub.fn);
 
-        await expect(tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(reject))).rejects.toBeInstanceOf(AskRejectedError);
+        await expect(runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, reject)).rejects.toBeInstanceOf(DeniedError);
         expect(sub.calls.length).toBe(0);
     });
 
     test("malformed argv is invalid — no ask, no spawn", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["bogus-cmd"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["bogus-cmd"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(0);
@@ -191,17 +212,11 @@ describe("run_inflexa — execute", () => {
         expect(result.message.length).toBeGreaterThan(0);
     });
 
-    test("deny-by-default (unwired ask) rejects an action without spawning", async () => {
+    test("an action with no approver is denied without spawning", async () => {
         const sub = recordingSubprocess();
-        const deny = new UnavailableAsk();
         const tool = makeTool(sub.fn);
 
-        await expect(
-            tool.execute(
-                { argv: ["refs", "download", "x", "--yes"] },
-                makeCtx((request) => deny.ask(request)),
-            ),
-        ).rejects.toBeInstanceOf(AskRejectedError);
+        await expect(runCall(tool, { argv: ["refs", "download", "x", "--yes"] })).rejects.toBeInstanceOf(DeniedError);
         expect(sub.calls.length).toBe(0);
     });
 
@@ -210,7 +225,7 @@ describe("run_inflexa — execute", () => {
         const sub = recordingSubprocess({ exitCode: 0, stdout: huge, stderr: "", endedBy: "exit" });
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["--help"] }, recordingAsk().fn))._unsafeUnwrap();
 
         expect(result.status).toBe("ran");
         if (result.status !== "ran") throw new Error("expected ran");
@@ -222,7 +237,7 @@ describe("run_inflexa — execute", () => {
         const sub = recordingSubprocess({ exitCode: 143, stdout: "downloaded 3 of 7 files", stderr: "", endedBy: "timeout" });
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["--help"] }, recordingAsk().fn))._unsafeUnwrap();
 
         expect(result.status).toBe("timed_out");
         if (result.status !== "timed_out") throw new Error("expected timed_out");
@@ -233,7 +248,7 @@ describe("run_inflexa — execute", () => {
         const sub = recordingSubprocess({ exitCode: 143, stdout: "partial", stderr: "", endedBy: "cancel" });
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["--help"] }, recordingAsk().fn))._unsafeUnwrap();
 
         expect(result.status).toBe("cancelled");
     });
@@ -260,10 +275,10 @@ describe("run_inflexa — execute", () => {
         ["inflexa server walk", ["server", "walk", "/"]],
     ])("%s is blocked — never asks, never spawns", async (_label, argv) => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(0);
@@ -280,10 +295,10 @@ describe("run_inflexa — execute", () => {
         ["sandbox pull --run-transfer", ["sandbox", "pull", "--run-transfer", "runtime_image"], "--run-transfer"],
     ])("%s is blocked — never asks, never spawns", async (_label, argv, flag) => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(0);
@@ -294,10 +309,10 @@ describe("run_inflexa — execute", () => {
 
     test("a blocked command's --help is still introspection and runs", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["config", "--help"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["config", "--help"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -309,10 +324,10 @@ describe("run_inflexa — execute", () => {
     test("an auto command with a safe flag runs prompt-free", async () => {
         const sub = recordingSubprocess();
         // A spy that fails the test if the tool ever tries to ask — an auto run must not touch the gateway.
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: ["refs", "list", "--json"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["refs", "list", "--json"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -321,11 +336,11 @@ describe("run_inflexa — execute", () => {
 
     test("an auto command's positional operand does not escalate", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
         // `refs verify` is auto with safeFlags [json]; the dataset id is a positional, which plays no part.
-        const result = (await tool.execute({ argv: ["refs", "verify", "reactome-pathways", "--json"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["refs", "verify", "reactome-pathways", "--json"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -334,12 +349,12 @@ describe("run_inflexa — execute", () => {
 
     test("an auto command with only a defaulted option runs prompt-free", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
         // `prov lineage --format` defaults to "tree" (unmentioned → source "default" → not "set"), so even
         // though it is safe-listed anyway, the run stays prompt-free with only positionals supplied.
-        const result = (await tool.execute({ argv: ["prov", "lineage", "ana", "somefile"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["prov", "lineage", "ana", "somefile"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -348,14 +363,14 @@ describe("run_inflexa — execute", () => {
 
     test("an auto command carrying an inherited flag outside safeFlags escalates to the ask path", async () => {
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
         // `ls` is auto with safeFlags ["project"]; `--analysis` is declared only on the root, never on `ls`,
         // yet the classifier's chain walk counts it as explicitly set. Outside safeFlags, so the auto tier
         // escalates through ctx.ask rather than free-running — proving the shadowed/inherited detection feeds
         // the decision. (There is no free spawn: the only spawn here is the tail of the APPROVED ask.)
-        const result = (await tool.execute({ argv: ["ls", "--analysis", "a"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["ls", "--analysis", "a"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(1);
         expect(ask.calls[0]?.grantKey).toBe("inflexa ls");
@@ -679,7 +694,7 @@ describe("run_inflexa — the child's working directory", () => {
         const sub = recordingSubprocess();
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a" });
 
-        await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc"));
+        await runCall(tool, { argv: ["--help"] }, recordingAsk().fn, "an-abc");
 
         expect(sub.cwds[0]).toBe("/data/study-a");
     });
@@ -689,7 +704,7 @@ describe("run_inflexa — the child's working directory", () => {
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a", "an-other": "/data/study-b" });
 
         // The argv names a different analysis; the spawn directory must still be the session's.
-        await tool.execute({ argv: ["refs", "download", "x", "--yes", "--analysis", "an-other"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc"));
+        await runCall(tool, { argv: ["refs", "download", "x", "--yes", "--analysis", "an-other"] }, recordingAsk().fn, "an-abc");
 
         expect(sub.cwds[0]).toBe("/data/study-a");
     });
@@ -698,7 +713,7 @@ describe("run_inflexa — the child's working directory", () => {
         const sub = recordingSubprocess();
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a" });
 
-        await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, null));
+        await runCall(tool, { argv: ["--help"] }, recordingAsk().fn, null);
 
         expect(sub.cwds[0]).toBeUndefined();
     });
@@ -708,7 +723,7 @@ describe("run_inflexa — the child's working directory", () => {
         // The analysis row or its anchor is gone — a routine desync, never a reason to refuse.
         const tool = toolWithFolder(sub.fn, {});
 
-        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc")))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["--help"] }, recordingAsk().fn, "an-abc"))._unsafeUnwrap();
 
         expect(sub.cwds[0]).toBeUndefined();
         expect(result.status).toBe("ran");
@@ -760,10 +775,10 @@ describe("run_inflexa — describeCall", () => {
         // read a different argv, thus this compares them against each other.
         const argv = ["refs", "download", "my file"];
         const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
+        const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await tool.execute({ argv }, makeCtx(ask.fn));
+        await runCall(tool, { argv }, ask.fn);
 
         const prompt = ask.calls[0]!.command;
         expect(prompt.startsWith("inflexa ")).toBe(true);

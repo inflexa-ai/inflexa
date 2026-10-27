@@ -124,6 +124,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
             return okAsync({ turnId, outcome: "aborting" });
         },
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
+        rereadTurn: () => errAsync({ type: "http", status: 404, body: { error: "not_found", message: "Turn not found." } }),
         reloadTranscript: async () => undefined,
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
         transcript: {

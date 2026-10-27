@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { ok, okAsync } from "neverthrow";
-import type { AgentDefinition, AgentSession, ChatProvider, EmitFn, Pool, RunProvenanceEvent } from "@inflexa-ai/harness";
+import type { AgentDefinition, AgentSession, ChatProvider, ChatTurns, RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
-import { buildChatSession, runChatTurn, type ChatTurnSeams } from "./turn.ts";
+import { buildChatSession, runChatTurn } from "./turn.ts";
 import {
     __resetGaugeForTest,
     clearAgentSwitch,
@@ -320,49 +319,42 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         // (not a `let … | null`) so control-flow narrowing doesn't collapse the closure-written value to null.
         const midStream: { status: string; idle: boolean; innerModel: string }[] = [];
 
-        // A `turn` seam standing in for the harness turn: it streams several text deltas with an await
+        // Chat turns standing in for the harness: the read streams several text deltas with an await
         // between each (a real network stream yields to the loop), and at the third delta requests the
         // chat-model switch — the reported gesture. The awaits ensure the switch is requested while the
         // turn is genuinely mid-flight, inside `runChatTurn`'s gauge bracket.
         const chunks = ["Each ", "analysis ", "row ", "carries ", "a slug."];
-        const streamingTurn: ChatTurnSeams["turn"] = async (_deps, params) => {
-            for (let i = 0; i < chunks.length; i++) {
-                await Promise.resolve();
-                void params.emit({ type: "text-delta", text: chunks[i]! });
-                emitted.push(chunks[i]!);
-                if (i === 2) {
-                    const result = requestAgentModelChange("conversation", sel("claude-mid-stream"));
-                    midStream.push({ status: result.status, idle: isAgentWorkIdle(), innerModel: agentModel(h.swappable.conversation) });
+        const source = { agentId: "conv", callPath: ["conv"] };
+        const chatTurns: ChatTurns = {
+            open: () => Promise.resolve({ kind: "started", turnId: "turn-1", agent: { id: "conv" } as unknown as AgentDefinition }),
+            async *read() {
+                for (let i = 0; i < chunks.length; i++) {
+                    await Promise.resolve();
+                    yield { type: "text-delta", text: chunks[i]!, source };
+                    emitted.push(chunks[i]!);
+                    if (i === 2) {
+                        const result = requestAgentModelChange("conversation", sel("claude-mid-stream"));
+                        midStream.push({ status: result.status, idle: isAgentWorkIdle(), innerModel: agentModel(h.swappable.conversation) });
+                    }
                 }
-            }
-            return {
-                kind: "ran",
-                outcome: { status: "done", finish: { reason: "stop", cappedOut: false } },
-                opened: true,
-                durationMs: 0,
-                fallbackText: chunks.join(""),
-            };
+            },
+            stop: () => Promise.resolve(),
+            answer: () => Promise.resolve("not_found"),
+            outcome: () => Promise.resolve({ status: "done", finishReason: "stop", opened: true, durationMs: 0, fallbackText: chunks.join("") }),
         };
 
         const outcome = await runChatTurn(
             {
-                // The `turn` seam never completes a model call, thus nothing here records, and the turn
-                // reads the conversation handle that the switch re-points.
-                chatTurns: {
-                    pool: {} as unknown as Pool,
-                    agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
-                    provider: h.swappable.conversation,
-                    usageRecorder: { record: () => okAsync(undefined) },
-                },
+                chatTurns,
                 session: buildChatSession("an-1", "t-1"),
-                emit: (() => {}) as EmitFn,
+                emit: () => {},
                 signal: new AbortController().signal,
                 analysisId: "an-1",
                 threadId: "t-1",
                 userInput: "?",
             },
             // No identity: this case is about the model switch, thus the turn stamps no author.
-            { turn: streamingTurn, readAuthor: () => null },
+            { readAuthor: () => null },
         );
 
         // The stream ran to completion — every chunk delivered, none dropped.

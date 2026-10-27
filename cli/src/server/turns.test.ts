@@ -7,8 +7,8 @@ import {
     ENDED_TURN_LIMIT,
     endTurn,
     findTurn,
-    forgetTurn,
     hasRunningTurn,
+    holdOpening,
     listThreadTurns,
     newTurnsRefused,
     refuseNewTurns,
@@ -21,7 +21,9 @@ import {
 const T0 = new Date("2026-10-02T10:00:00.000Z");
 
 function start(turnId: string, threadId = "t1", analysisId = "a1", at = T0): AbortSignal {
-    return startTurn({ turnId, threadId, analysisId }, at);
+    const controller = new AbortController();
+    startTurn({ turnId, threadId, analysisId }, at, controller);
+    return controller.signal;
 }
 
 beforeEach(() => {
@@ -49,11 +51,12 @@ describe("the turn registry", () => {
         expect(abortTurn("nope")).toBeNull();
     });
 
-    test("a refused turn is forgotten with no summary", () => {
-        start("k1");
-        forgetTurn("k1");
-        expect(findTurn("k1")).toBeNull();
-        expect(hasRunningTurn("a1")).toBe(false);
+    test("a turn that opens counts as running work until its hold is released, and a second release changes nothing", () => {
+        const release = holdOpening();
+        expect(runningTurnCount()).toBe(1);
+        release();
+        release();
+        expect(runningTurnCount()).toBe(0);
     });
 
     test("the thread list gives the running turns first, then the ended ones, each newest first, of that thread alone", () => {
@@ -135,7 +138,20 @@ describe("the stop of the server", () => {
         endTurn("k1", { status: "aborted", opened: true }, T0);
         await Promise.resolve();
         expect(settled).toBe(false);
-        forgetTurn("k2");
+        endTurn("k2", { status: "aborted", opened: true }, T0);
+        await idle;
+        expect(settled).toBe(true);
+    });
+
+    test("the idle wait also waits for a turn that still opens", async () => {
+        const release = holdOpening();
+        let settled = false;
+        const idle = whenNoRunningTurns().then(() => {
+            settled = true;
+        });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+        release();
         await idle;
         expect(settled).toBe(true);
     });
