@@ -181,8 +181,22 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
     return defaultsWith(undefined, { issues });
 }
 
-/** The harness provider kinds a direct endpoint can speak — the two the harness's AI SDK path covers. */
-export type ModelWireProtocol = "anthropic" | "openai-compatible";
+/** The harness provider kinds a direct endpoint can speak. `openai` is the Responses wire of the OpenAI API. */
+export type ModelWireProtocol = "anthropic" | "openai" | "openai-compatible";
+
+/** The host of the OpenAI API. Its endpoint speaks the Responses wire, which carries a picture inside a tool result. */
+const OPENAI_API_HOST = "api.openai.com";
+
+/**
+ * The wire protocol of a direct endpoint whose config names none. The provider `openai` speaks the Responses wire
+ * only at the OpenAI API, because a different host under that provider is often a gateway that serves chat
+ * completions alone.
+ */
+export function impliedWireProtocol(provider: string, baseURL: string): ModelWireProtocol {
+    if (provider === "anthropic") return "anthropic";
+    if (provider === "openai" && URL.canParse(baseURL) && new URL(baseURL).hostname === OPENAI_API_HOST) return "openai";
+    return "openai-compatible";
+}
 
 /**
  * The three model roles: `conversation` (chat and its sub-agents), `sandbox`
@@ -296,6 +310,8 @@ export type ResolvedModelConnection =
           readonly auth?: ModelAuthConfig;
           /** The configured context window of the models of this endpoint, in tokens. */
           readonly contextWindow?: number;
+          /** The openai-compatible endpoint takes a tool message of parts, thus a tool picture reaches the model. */
+          readonly supportsMultiPartToolContent?: boolean;
           readonly agents: AgentModelOverrides;
           /** The per-attempt idle bound (ms) the harness provider enforces and advertises. Absent means no guard. */
           readonly requestTimeoutMs?: number;
@@ -343,8 +359,9 @@ export function pickRequestBounds(connection: { requestTimeoutMs?: number; maxRe
  * an absent block — or a present block with no `connection` — resolves to {@link DEFAULT_MODEL_CONNECTION};
  * a present-but-invalid block resolves to that default carrying a `configError` naming the offending
  * fields, so boot reports the real problem instead of a misleading downstream error. The protocol for a
- * direct endpoint is implied from the provider when unset: `anthropic` ⇒ the Anthropic wire kind,
- * every other provider ⇒ OpenAI-compatible; an explicit `protocol` overrides (e.g. an Anthropic-fronting
+ * direct endpoint is implied when unset ({@link impliedWireProtocol}): `anthropic` ⇒ the Anthropic wire kind,
+ * `openai` at the OpenAI API ⇒ the Responses wire, every other endpoint ⇒ OpenAI-compatible; an explicit
+ * `protocol` overrides (e.g. an Anthropic-fronting
  * gateway that speaks OpenAI-compatible). cliproxy has no protocol choice — the proxy always exposes the
  * Anthropic Messages route the chat path targets. The `models.agents` overrides ride through verbatim on
  * every non-error branch — including an `agents`-only block (no `connection`), which resolves to the
@@ -368,7 +385,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
     if (connection.mode === "cliproxy") {
         return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents, ...requestBounds };
     }
-    const protocol: ModelWireProtocol = connection.protocol ?? (connection.provider === "anthropic" ? "anthropic" : "openai-compatible");
+    const protocol: ModelWireProtocol = connection.protocol ?? impliedWireProtocol(connection.provider, connection.baseURL);
     // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
     return {
         mode: "direct",
@@ -378,6 +395,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
         agents,
         ...(connection.auth !== undefined && { auth: connection.auth }),
         ...(connection.contextWindow !== undefined && { contextWindow: connection.contextWindow }),
+        ...(connection.supportsMultiPartToolContent !== undefined && { supportsMultiPartToolContent: connection.supportsMultiPartToolContent }),
         ...requestBounds,
     };
 }

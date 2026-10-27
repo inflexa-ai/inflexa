@@ -106,6 +106,21 @@ describe("resolveModelConnection — direct protocol implication", () => {
         });
     });
 
+    test("provider openai at the OpenAI API implies the Responses wire, and at a different host openai-compatible", () => {
+        writeConfigWithModels({ connection: { mode: "direct", provider: "openai", baseURL: "https://api.openai.com/v1" } });
+        expect(resolveModelConnection()).toMatchObject({ mode: "direct", protocol: "openai" });
+
+        writeConfigWithModels({ connection: { mode: "direct", provider: "openai", baseURL: "https://gw.corp/v1" } });
+        expect(resolveModelConnection()).toMatchObject({ mode: "direct", protocol: "openai-compatible" });
+    });
+
+    test("the multipart tool content flag of a direct connection rides through", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "gateway", baseURL: "https://gw.corp/v1", supportsMultiPartToolContent: true },
+        });
+        expect(resolveModelConnection()).toMatchObject({ mode: "direct", protocol: "openai-compatible", supportsMultiPartToolContent: true });
+    });
+
     test("an explicit protocol overrides the provider implication (an anthropic-fronting gateway that speaks openai)", () => {
         writeConfigWithModels({ connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example/v1", protocol: "openai-compatible" } });
         expect(resolveModelConnection()).toEqual({

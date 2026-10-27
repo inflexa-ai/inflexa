@@ -41,6 +41,7 @@ import {
     type AgentName,
     type ResolvedModelConnection,
 } from "../harness/config.ts";
+import { impliedWireProtocol, type ModelWireProtocol } from "../harness/config.ts";
 import { contextWarning, readContextWindow } from "../harness/model_listing.ts";
 import {
     checkModelAccess,
@@ -1484,8 +1485,9 @@ async function chooseConnectionMode(answered: ConnectionMode | undefined, canAsk
 //
 // The two ecosystems setup can adopt from the conventional provider env vars, each mapping to fixed
 // wire facts: ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL ⇒ provider `anthropic`, protocol `anthropic`;
-// OPENAI_API_KEY/OPENAI_BASE_URL ⇒ provider `openai`, protocol `openai-compatible` (the OpenAI path
-// also covers the Groq/Ollama/vLLM/LiteLLM long tail via a custom OPENAI_BASE_URL).
+// OPENAI_API_KEY/OPENAI_BASE_URL ⇒ provider `openai`, protocol `openai` at the OpenAI API and
+// `openai-compatible` elsewhere (the OpenAI path also covers the Groq/Ollama/vLLM/LiteLLM long tail via a
+// custom OPENAI_BASE_URL).
 
 /** A provider ecosystem setup can adopt from the environment. */
 export type AdoptableProvider = "anthropic" | "openai";
@@ -1541,9 +1543,11 @@ function hasVersionSegment(url: string): boolean {
  * stays an environment read via {@link resolveModelApiKey}, never copied.
  */
 export function adoptedConnection(which: AdoptableProvider, snap: ProviderEnvSnapshot): DirectConnectionInput {
-    return which === "anthropic"
-        ? { provider: "anthropic", baseURL: normalizeAdoptedBaseURL("anthropic", snap.anthropicBaseURL), protocol: "anthropic" }
-        : { provider: "openai", baseURL: normalizeAdoptedBaseURL("openai", snap.openaiBaseURL), protocol: "openai-compatible" };
+    if (which === "anthropic") {
+        return { provider: "anthropic", baseURL: normalizeAdoptedBaseURL("anthropic", snap.anthropicBaseURL), protocol: "anthropic" };
+    }
+    const baseURL = normalizeAdoptedBaseURL("openai", snap.openaiBaseURL);
+    return { provider: "openai", baseURL, protocol: impliedWireProtocol("openai", baseURL) };
 }
 
 /** The connection facts an answer can supply — the `connection` block of the resolved answers. */
@@ -1708,15 +1712,16 @@ async function promptManualDirectConnection(answered: ConnectionAnswers): Promis
     const protocol =
         answered.protocol ??
         // `select` is typed to the widened `string` its option values collapse to, so the assertion
-        // re-states the three literals declared one line below it — sound because clack can only return a
+        // re-states the four literals declared one line below it — sound because clack can only return a
         // value it was offered, and the offered set is right here rather than assembled elsewhere. It is
         // narrowed rather than left wide because the sentinel has to be distinguishable: "infer" leaves
         // protocol unset, and the two explicit values are exactly the schema's wire kinds.
         ((await select("Wire protocol", [
             { value: "infer", label: "Infer from provider (default)" },
             { value: "anthropic", label: "Anthropic" },
+            { value: "openai", label: "OpenAI Responses" },
             { value: "openai-compatible", label: "OpenAI-compatible" },
-        ])) as "infer" | "anthropic" | "openai-compatible");
+        ])) as "infer" | ModelWireProtocol);
     return {
         provider,
         baseURL,
@@ -1728,7 +1733,7 @@ async function promptManualDirectConnection(answered: ConnectionAnswers): Promis
 type DirectConnectionInput = {
     provider: string;
     baseURL: string;
-    protocol?: "anthropic" | "openai-compatible";
+    protocol?: ModelWireProtocol;
     /** An optional REFRESHING credential source (name/command + scheme, never a token) — {@link offerCredentialSource}. */
     auth?: ModelAuthConfig;
 };
@@ -1890,8 +1895,8 @@ function detectCredentialHelper(): CredentialHelperDetection {
 }
 
 /** The wire protocol a direct connection speaks, resolving the "infer from provider" default the way `resolveModelConnection` does — the probe needs it to add the anthropic version header. */
-function effectiveProtocol(direct: DirectConnectionInput): "anthropic" | "openai-compatible" {
-    return direct.protocol ?? (direct.provider === "anthropic" ? "anthropic" : "openai-compatible");
+function effectiveProtocol(direct: DirectConnectionInput): ModelWireProtocol {
+    return direct.protocol ?? impliedWireProtocol(direct.provider, direct.baseURL);
 }
 
 /** Why the setup credential probe failed — a single actionable message naming the likely cause (command, scheme, or endpoint). */
@@ -1912,7 +1917,7 @@ export type CredentialProbeResult =
     | { readonly outcome: "ambiguous"; readonly status: number; readonly excerpt: string; readonly cred: Credential };
 
 /** The wire headers a direct request sends under a resolved credential: the scheme's auth header, plus the version header the anthropic wire requires. */
-function wireHeaders(cred: Credential, protocol: "anthropic" | "openai-compatible"): Headers {
+function wireHeaders(cred: Credential, protocol: ModelWireProtocol): Headers {
     const headers = new Headers();
     if (cred.scheme === "bearer") headers.set("authorization", `Bearer ${cred.token}`);
     else headers.set("x-api-key", cred.token);
@@ -1971,7 +1976,7 @@ function isModelNotFoundBody(text: string): boolean {
  */
 export async function pingMessagesEndpoint(
     baseURL: string,
-    protocol: "anthropic" | "openai-compatible",
+    protocol: ModelWireProtocol,
     cred: Credential,
     model: string,
     doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
@@ -2014,7 +2019,7 @@ export async function pingMessagesEndpoint(
  */
 export async function probeCredentialSource(
     baseURL: string,
-    protocol: "anthropic" | "openai-compatible",
+    protocol: ModelWireProtocol,
     auth: ModelAuthConfig,
     pingModel: string,
     doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
@@ -2289,7 +2294,7 @@ export function directModelPrefill(listed: ModelCandidate[] | null, provider: st
 }
 
 /** One `/models` listing attempt for the static-key pre-fill; any failure (non-2xx, parse, network) degrades to null — never an error. */
-async function fetchDirectListing(baseURL: string, protocol: "anthropic" | "openai-compatible", cred: Credential): Promise<ModelCandidate[] | null> {
+async function fetchDirectListing(baseURL: string, protocol: ModelWireProtocol, cred: Credential): Promise<ModelCandidate[] | null> {
     try {
         const response = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { method: "GET", headers: wireHeaders(cred, protocol) });
         if (!response.ok) return null;

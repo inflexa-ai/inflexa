@@ -829,7 +829,7 @@ export function buildProgram(): Command {
             .option("--base-url <url>", "Direct connections only: the endpoint inflexa sends model requests to, `/v1`-terminated")
             .option(
                 "--protocol <wire>",
-                "Direct connections only: the endpoint's wire protocol — anthropic|openai-compatible (inferred from the provider when omitted)",
+                "Direct connections only: the endpoint's wire protocol — anthropic|openai|openai-compatible (inferred from the provider when omitted)",
             )
             .option(
                 "--model <id>",
