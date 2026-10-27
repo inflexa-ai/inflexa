@@ -10,15 +10,16 @@
  * This is the whole of sub-agent delegation in the harness. There is no
  * `agents: {}` config, no `messageFilter`, no `stripParentToolParts`: the
  * child cannot see the parent's tool history because it is simply handed
- * none — only the brief. Inside a workflow the whole tool call is one step
- * of the parent loop, thus the calls of the child run directly inside that
- * step, and a replay returns the report of the step.
+ * none — only the brief. Inside the body of a workflow the call starts a
+ * child workflow (`loop/sub-agent.ts`), thus each call of the child is a step
+ * of its own.
  */
 
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { finalText, runLoop } from "../../loop/run-loop.js";
+import type { SubAgentRegistrar } from "../../loop/sub-agent.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import { literatureReviewerPrompt } from "../../prompts/literature-reviewer.js";
@@ -62,7 +63,7 @@ export type LiteratureReviewerDeps = {
 };
 
 /** Build the `literature_reviewer` delegation tool bound to its provider. */
-export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool {
+export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger });
     const reviewerTools: readonly Tool[] = [
@@ -84,6 +85,21 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
         tools: reviewerTools,
         maxIterations: REVIEWER_MAX_ITERATIONS,
     };
+
+    // A review ends with a report, or with the finish reason of a run that gave none.
+    const review = registerSubAgent<{ readonly brief: string }, { readonly report: string } | { readonly finishReason: string }>(
+        AGENT_ID,
+        async ({ payload, ctx, loop }) => {
+            const { messages: transcript, finish } = await runLoop(agent, [{ role: "user", content: payload.brief }], forSubAgent(ctx.session, AGENT_ID), {
+                ...loop,
+                provider: deps.provider,
+                usageRecorder: deps.usageRecorder,
+                toolOutputStore: deps.toolOutputStore,
+            });
+            const report = finalText(transcript);
+            return report.trim() === "" ? { finishReason: finish.reason } : { report };
+        },
+    );
 
     return defineTool({
         id: "literature_reviewer",
@@ -110,28 +126,20 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
                 ),
         }),
         describeCall: "none",
+        startsWorkflow: true,
         execute: async ({ brief }, ctx) => {
-            const { messages: transcript, finish } = await runLoop(agent, [{ role: "user", content: brief }], forSubAgent(ctx.session, AGENT_ID), {
-                provider: deps.provider,
-                signal: ctx.signal,
-                emit: ctx.emit,
-                usageRecorder: deps.usageRecorder,
-                toolOutputStore: deps.toolOutputStore,
-                // Fold the child's calls into the turn total the root loop reports.
-                turnUsage: ctx.turnUsage,
-                // Keeps the usage record keys of two parallel reviews disjoint —
-                // same frame, same call path.
-                invocationId: ctx.invocationId,
-            });
-            const report = finalText(transcript);
+            const reviewed = await review({ brief }, ctx);
             // A child run can end with no final text. Examples are a terminal
             // reply with no text block, and a run that reached its step cap. An
             // ok result with an empty report hides that failure, so the tool
             // returns an error that names the finish reason.
-            if (report.trim() === "") {
-                return err({ error: `The literature reviewer gave no report (finish reason: ${finish.reason}). Retry, or narrow the brief.`, retryable: true });
+            if ("finishReason" in reviewed) {
+                return err({
+                    error: `The literature reviewer gave no report (finish reason: ${reviewed.finishReason}). Retry, or narrow the brief.`,
+                    retryable: true,
+                });
             }
-            return ok({ report });
+            return ok({ report: reviewed.report });
         },
     });
 }

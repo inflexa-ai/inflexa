@@ -29,11 +29,8 @@ describe("mutate surface invariants", () => {
             },
             signal: new AbortController().signal,
             emit: () => {},
-            ask: () => {
-                return Promise.reject(new Error("ask should not be reached"));
-            },
         };
-        expect(Object.keys(ctx).sort()).toEqual(["ask", "emit", "invocationId", "session", "signal"]);
+        expect(Object.keys(ctx).sort()).toEqual(["emit", "invocationId", "session", "signal"]);
     });
 
     it("the SandboxClient dependency is confined to execute_command", () => {

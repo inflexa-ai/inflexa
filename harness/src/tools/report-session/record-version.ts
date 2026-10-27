@@ -21,7 +21,9 @@
  * the thread row. A record on a thread that holds a version replaces that version whole, under the same
  * version id. Thus the loop is unbounded: the agent amends, looks again, and records again, and the stored
  * version equals the page that the last look accepted. A refused record leaves the stored version as it was.
- * The outcome of a pass carries the version id, and it names a replacement.
+ * The outcome of a pass carries the version id, and it names a replacement. Inside a durable step, the id
+ * of a new version is the UUIDv5 of the key of the step. Thus a rerun of the step gives the same version, and
+ * it does not read as a replacement.
  *
  * The prune runs after the version lands. It removes the output file of each derivation that the recorded
  * document does not reference, under the `derived/` directory of the session alone. The records stay
@@ -34,7 +36,7 @@ import { rm } from "node:fs/promises";
 import { resolve as resolvePath, sep } from "node:path";
 import { z } from "zod";
 
-import type { AuthContext } from "../../auth/types.js";
+import type { AuthContext, Identity } from "../../auth/types.js";
 import type { ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeDbError } from "../../lib/db-result.js";
@@ -49,6 +51,7 @@ import { validateReport, type ResolutionFailure, type SchemaIssue } from "../../
 import type { RecordVersionError, ReportVersionStore } from "../../state/report-versions.js";
 import { reportSessionDerivedDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { durableStepKey, stepUuid } from "../workspace/edit-file.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
 
@@ -96,10 +99,12 @@ export type RecordVersionToolDeps = {
     readonly store: ReportVersionStore;
     readonly threads: Pick<ThreadStore, "getThread">;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
+    readonly makeResolver?: (scope: { analysisId: string; identity: Identity; auth: AuthContext }) => Promise<ReferenceResolver>;
     /** The provenance seam; an unbound session emit emits nothing and the record runs the same. */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
+    /** The key of the durable step that runs the call, `undefined` outside one. Defaults to {@link durableStepKey}. */
+    readonly stepKey?: () => string | undefined;
 };
 
 /** A short account of a record refusal, for the detail of a transient failure. */
@@ -191,6 +196,7 @@ async function pruneUnusedDerivations(args: {
 export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<RecordVersionInput, RecordVersionResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("record-report-version");
     const observe = bindSessionEmit(deps.provenance, logger);
+    const stepKey = deps.stepKey ?? durableStepKey;
 
     return defineTool({
         id: "record_report_version",
@@ -244,7 +250,7 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
             // control-flow exception propagates and the unresolvable root does not.
             let resolver: ReferenceResolver;
             try {
-                resolver = await deps.makeResolver({ analysisId, auth: ctx.session.auth });
+                resolver = await deps.makeResolver({ analysisId, identity: ctx.session.identity, auth: ctx.session.auth });
             } catch (cause) {
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...logger.errorFields(cause) });
                 return ok({ outcome: "root-unresolvable", detail: "the workspace root did not resolve" });
@@ -276,6 +282,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 threadId,
                 parentThreadId: thread.value.parentThreadId,
                 parentSeq: thread.value.parentSeq,
+                // A rerun of the step gives the same id, thus the version that its first run made reads as created.
+                versionId: stepUuid(stepKey()),
             });
             if (recorded.isOk()) {
                 // The version stands from here, thus the event states a version that a reader can open.

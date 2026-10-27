@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { inProcessSubAgent } from "../../../loop/sub-agent.js";
 import { PLAN_ID_RE } from "../../../contracts/schemas/chat-parts.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { okAsync } from "neverthrow";
@@ -43,9 +44,6 @@ function toolContext(analysisId = "analysis-001", options: { readonly emitted?: 
         signal: new AbortController().signal,
         emit: (event) => {
             options.emitted?.push(event);
-        },
-        ask: () => {
-            return Promise.reject(new Error("ask should not be reached"));
         },
     };
 }
@@ -263,7 +261,7 @@ describe("generatePlan loop-driving tool", () => {
 
     /** Rebuild the tool per test — the model and the optional deps are what vary. */
     function toolFor(provider: ChatProvider, extra: Partial<GeneratePlanDeps> = {}): Tool {
-        return createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, ...extra });
+        return createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, ...extra }, inProcessSubAgent);
     }
 
     // ── Outcome shaping ──────────────────────────────────────────────

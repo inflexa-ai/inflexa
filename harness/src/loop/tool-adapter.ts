@@ -16,7 +16,7 @@
  */
 
 import { durableTools } from "@dbos-inc/vercel-ai";
-import { jsonSchema, tool as aiTool, type ToolSet } from "ai";
+import { jsonSchema, tool as aiTool, type ToolSet, type UIMessageStreamWriter } from "ai";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
@@ -31,7 +31,6 @@ import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { classifyProviderError } from "../providers/errors.js";
 import type { ProviderCapabilities } from "../providers/types.js";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
-import { AskRejectedError, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import {
     isToolError,
     readToolCallRecord,
@@ -82,7 +81,6 @@ export type ToolRunContext = {
     readonly session: AgentSession;
     readonly source: EventSource;
     readonly emit: EmitFn;
-    readonly ask: (request: AskRequest) => Promise<AskApproval>;
     readonly turnUsage: AgentRunUsage;
     readonly capabilities: ProviderCapabilities;
     /** Keeps the text of each cut result. Absent: the run cuts, and it keeps nothing. */
@@ -91,6 +89,11 @@ export type ToolRunContext = {
     readonly log: Logger;
     /** Ends the run with a fatal error of a tool call. */
     readonly fail: (err: unknown) => void;
+    /**
+     * Receives the chunks that a tool step writes through `toolWriter()` of the library. A chunk that is not
+     * transient is checkpointed with the step, and a replay of the step gives it again.
+     */
+    readonly writer?: UIMessageStreamWriter;
 };
 
 /**
@@ -128,7 +131,9 @@ export function adaptTools(tools: readonly Tool[], run: ToolRunContext): ToolSet
             toModelOutput: ({ output }: { readonly output: ToolCallOutput }): ToolResultOutput => modelViewOf(output),
         });
     }
-    const durable = durableTools(set);
+    // A call that starts a child workflow runs in the body, because a step cannot start a workflow.
+    const inBody = Object.fromEntries(tools.filter((tool) => tool.startsWorkflow === true).map((tool) => [tool.id, false as const]));
+    const durable = durableTools(set, { tools: inBody, writer: run.writer });
     const guarded: ToolSet = {};
     for (const [name, definition] of Object.entries(durable)) {
         const execute = definition.execute;
@@ -208,16 +213,18 @@ async function runToolCall(
     const startedAt = performance.now();
     const { toolCallId } = options;
     const detail = computeDetail(tool, input, run.log);
-    await run.emit({ type: "tool-started", source: run.source, toolUseId: toolCallId, name: tool.id, input, ...detailField(detail) });
+    // The emit and the call start before the first await: a call that runs in the body of a workflow takes its
+    // function ids in the order of the calls, thus a replay gives each call its own child.
+    const started = run.emit({ type: "tool-started", source: run.source, toolUseId: toolCallId, name: tool.id, input, ...detailField(detail) });
     const ctx: ToolContext = {
         invocationId: toolCallId,
         session: run.session,
         signal: options.abortSignal ?? new AbortController().signal,
         emit: run.emit,
-        ask: run.ask,
         turnUsage: run.turnUsage,
     };
-    const settled = await settleCall(tool, input, ctx, run);
+    // One wait reads the two, thus a failed emit leaves no rejection of the call unread.
+    const [, settled] = await Promise.all([started, settleCall(tool, input, ctx, run)]);
     const output = await cutLongOutput(settled.output, tool.id, toolCallId, run);
     await run.emit({
         type: "tool-finished",
@@ -268,8 +275,6 @@ async function settleCall(tool: Tool, input: unknown, ctx: ToolContext, run: Too
         return { output: okOutput(tool.id, result.value, run), detail: computeResultDetail(tool, data, result.value, run.log) };
     } catch (err) {
         if (isFatalToolError(err)) throw err;
-        const rejection = askRejectionOf(err);
-        if (rejection !== undefined) return { output: { outcome: "denied", reason: deniedReason(rejection.feedback) } };
         logToolFailure(tool, ctx.invocationId, err, run.log);
         return { output: errorOutput(toolErrorContent(err)) };
     }
@@ -393,18 +398,8 @@ function toolErrorContent(value: unknown): string {
     return JSON.stringify({ error, retryable });
 }
 
-const AskRejectionSchema = z.object({ name: z.literal("AskRejectedError"), feedback: z.string().optional() });
-
-function askRejectionOf(err: unknown): { readonly feedback?: string } | undefined {
-    if (err instanceof AskRejectedError) return { feedback: err.feedback };
-    // The parse recognizes a rejection thrown from a different module realm, where
-    // `instanceof` against this file's class reference would miss it.
-    const parsed = AskRejectionSchema.safeParse(err);
-    return parsed.success ? parsed.data : undefined;
-}
-
 /** The prose of a rejected approval is the only account that the model gets of the denial. */
-function deniedReason(feedback: string | undefined): string {
+export function deniedReason(feedback: string | undefined): string {
     return feedback === undefined || feedback.length === 0
         ? "The user rejected this action."
         : `The user rejected this action with the following feedback: ${feedback}`;

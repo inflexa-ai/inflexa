@@ -19,7 +19,6 @@ import { z } from "zod";
 import { createCapturingLogger, type CapturedLog } from "../../__tests__/setup/logger.js";
 import { presentFind, presentFirst } from "../../lib/present.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { AskRejectedError } from "../../tools/approval/contract.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { runLoop, runWithSalvage, type LoopOptions, type LoopStep } from "../run-loop.js";
@@ -175,12 +174,16 @@ describe("runLoop — level follows the outcome class", () => {
             description: "Needs approval.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: () => {
-                return Promise.reject(new AskRejectedError("nope"));
-            },
+            approval: () => ({ title: "Risky", command: "risky" }),
+            execute: () => Promise.resolve(ok({ ran: true })),
         });
 
-        const { finish } = await runLoop(agentDef([denyingTool]), GO, makeSession(), baseOpts([callTools(toolCall("t1", "risky", {}))], { logger }));
+        const { finish } = await runLoop(
+            agentDef([denyingTool]),
+            GO,
+            makeSession(),
+            baseOpts([callTools(toolCall("t1", "risky", {}))], { logger, approve: () => Promise.resolve({ kind: "denied", feedback: "nope" }) }),
+        );
 
         expect(finish.reason).toBe("denied");
         const record = presentFirst(finishRecords(logger.records));

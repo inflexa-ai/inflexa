@@ -9,11 +9,11 @@
  * The owner of the result of a workflow selects the mechanism. A durable owner
  * (`executeAnalysis`, `sandbox-step`, `data-profile`) records the reason in its
  * stored state and ends in the DBOS state `CANCELLED`, which `resumeWorkflow`
- * reads. A workflow with a live caller (`derive-table-exec`, `extract-values`)
- * returns the suspension as the `err` of its result. A suspension of an
- * analysis run or of a data profile marks the analysis through
- * `suspendAnalysis` (`state/analyses.ts`). A workflow with a live caller does
- * not mark it: the conversation agent reads the suspension as a tool result.
+ * reads. A pass inside a tool call (the derivation and the extraction of a
+ * report session) returns the suspension as the `err` of its result. A
+ * suspension of an analysis run or of a data profile marks the analysis through
+ * `suspendAnalysis` (`state/analyses.ts`). A pass inside a tool call does not
+ * mark it: the agent reads the suspension as a tool result.
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";

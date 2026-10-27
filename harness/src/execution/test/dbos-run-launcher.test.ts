@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { context, propagation, trace, type Context } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { Pool } from "pg";
 
 import { ATTR_INFLEXA_RUN_ID, createDbosRunLauncher } from "../dbos-run-launcher.js";
 import { presentFind } from "../../lib/present.js";
@@ -51,7 +52,7 @@ const workflow = (_input: { readonly planId: string }): Promise<unknown> => Prom
 
 describe("createDbosRunLauncher", () => {
     it("starts the workflow in a new trace, linked to the originating span", async () => {
-        const launcher = createDbosRunLauncher();
+        const launcher = createDbosRunLauncher({ pool: new Pool() });
         const tracer = trace.getTracer("test");
         const chat = tracer.startSpan("POST /chat");
 
@@ -76,7 +77,7 @@ describe("createDbosRunLauncher", () => {
     });
 
     it("starts the workflow in a new trace with no link when nothing is active", async () => {
-        const launcher = createDbosRunLauncher();
+        const launcher = createDbosRunLauncher({ pool: new Pool() });
 
         await launcher.launch(workflow, { workflowId: "run-2" }, { planId: "p" });
 
@@ -94,7 +95,7 @@ describe("createDbosRunLauncher", () => {
         Reflect.set(dbos.DBOS, "startWorkflow", () => () => {
             return Promise.reject(new Error("system database down"));
         });
-        const launcher = createDbosRunLauncher();
+        const launcher = createDbosRunLauncher({ pool: new Pool() });
 
         await expect(launcher.launch(workflow, { workflowId: "run-3" }, { planId: "p" })).rejects.toThrow("system database down");
         expect(exporter.getFinishedSpans().map((s) => s.name)).toEqual(["launch run"]);

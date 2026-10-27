@@ -6,6 +6,7 @@
  * deps it needs — the hook is pure and never touches them, which is the point.
  */
 
+import { inProcessSubAgent } from "../../loop/sub-agent.js";
 import { describe, expect, it } from "bun:test";
 
 import { normalizeDetail } from "../../loop/tool-detail.js";
@@ -205,11 +206,14 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("generate_plan names the research question", () => {
-        const tool = createGeneratePlanTool({
-            conversation: { provider: makeFakeChatProvider(), model: "test-model" },
-            pool: new Pool(),
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        });
+        const tool = createGeneratePlanTool(
+            {
+                conversation: { provider: makeFakeChatProvider(), model: "test-model" },
+                pool: new Pool(),
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            },
+            inProcessSubAgent,
+        );
 
         expect(describeCall(tool, { researchQuestion: "which genes drive resistance in cluster 3" })).toBe("which genes drive resistance in cluster 3");
     });

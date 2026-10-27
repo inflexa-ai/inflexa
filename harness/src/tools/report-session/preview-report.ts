@@ -39,14 +39,13 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { relative as relativePosix } from "node:path/posix";
 import { z } from "zod";
 
 import { reportSessionDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
-import type { AuthContext } from "../../auth/types.js";
+import type { AuthContext, Identity } from "../../auth/types.js";
 import { buildReportSessionUrl } from "../../contracts/content-url.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -127,7 +126,7 @@ export type ResolvePageAsset = (specifier: string) => string;
  */
 export type PreviewReportToolDeps = {
     readonly gateway: ReportSessionStateGateway;
-    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
+    readonly makeResolver?: (scope: { analysisId: string; identity: Identity; auth: AuthContext }) => Promise<ReferenceResolver>;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly resolvePageAsset?: ResolvePageAsset;
     readonly makeSessionPages?: MakeSessionPagePublisher;
@@ -537,7 +536,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             // control-flow exception propagates and the unresolvable root does not.
             let resolver: ReferenceResolver;
             try {
-                resolver = await deps.makeResolver({ analysisId, auth: ctx.session.auth });
+                resolver = await deps.makeResolver({ analysisId, identity: ctx.session.identity, auth: ctx.session.auth });
             } catch (cause) {
                 logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
                 return ok({ outcome: "root-unresolvable", detail: "the workspace root did not resolve" });
@@ -620,10 +619,11 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             }
 
             // The part rides the rendered arm only. Each degraded arm shows no
-            // fresh page, thus it emits nothing.
+            // fresh page, thus it emits nothing. The part id is the id of the call,
+            // thus a rerun of the call gives the same part again.
             await ctx.emit({
                 type: "data-report-rendered",
-                data: { id: randomUUID(), renderedAt: new Date().toISOString(), title: document.title },
+                data: { id: ctx.invocationId, renderedAt: new Date().toISOString(), title: document.title },
             });
 
             // The event rides the rendered arm alone, the same as the part above. The hash is the hash of

@@ -176,9 +176,6 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
 
             return Promise.resolve();
         },
-        ask: () => {
-            return Promise.reject(new Error("ask should not be reached"));
-        },
     };
 }
 
@@ -341,7 +338,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
         setEnv();
         const { pool, queries } = fakePool({
             "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
-            "FROM cortex_runs": [
+            // Only the read of the active run finds a row: the call holds no run of its own.
+            "AND status = 'running'": [
                 {
                     run_id: "r-existing",
                     analysis_id: ANALYSIS_ID,
@@ -394,8 +392,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
             expect(result).toMatchObject({ runId: "r-existing", status: "in_progress" });
             expect(mintCalls).toBe(0);
             expect(dispatched).toBe(false);
-            // The dedup pre-check is the only query that touched cortex_runs.
+            // The dedup pre-check read cortex_runs, and nothing reserved a run.
             expect(queries.some((q) => q.text.includes("FROM cortex_runs"))).toBe(true);
+            expect(queries.some((q) => q.text.includes("INSERT INTO cortex_runs"))).toBe(false);
         } finally {
             globalThis.fetch = realFetch;
         }
@@ -540,7 +539,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
 });
 
 describe("createExecuteAnalysisTool ad hoc mode", () => {
-    it("persists one routed step, disables synthesis, and reuses the same terminal-capable reservation on redelivery", async () => {
+    it("persists one routed step, disables synthesis, and launches the same reservation again on redelivery", async () => {
         const { pool, plans, runs } = statefulAdHocPool();
         const routing = routeProvider();
         const { authorizer } = recordingAuthorizer();
@@ -561,7 +560,8 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
         )._unsafeUnwrap();
         // Simulate a terminal DBOS outcome. A duplicate tool delivery must still
-        // return this exact run instead of launching it again.
+        // return this exact run. Its launch names the same run id, and the
+        // launcher starts one workflow for one run id.
         presentGet(runs, first.runId, "the launched run").status = "completed";
         const replay = (
             await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
@@ -569,7 +569,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
         expect(replay.runId).toBe(first.runId);
         expect(routing.calls).toHaveLength(1);
-        expect(launches).toHaveLength(1);
+        expect(launches).toEqual([{ workflowId: first.runId }, { workflowId: first.runId }]);
         expect(launchedInput(inputs[0]).steps).toEqual([{ id: "T1S1", depends_on: [] }]);
         expect(launchedInput(inputs[0]).agentByStepId).toEqual({ T1S1: "single-cell-agent" });
         expect(launchedInput(inputs[0]).synthesisEnabled).toBe(false);
@@ -1237,6 +1237,37 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(launch.started).toBe(true);
             expect(launches).toEqual([{ workflowId: launch.runId }]);
             expect(await runRows()).toEqual([{ run_id: launch.runId, plan_id: PLAN_ID, thread_id: "thread-1", status: "running", error: null }]);
+        });
+
+        it("launches the run of a given id again when its row exists, and reserves no second row", async () => {
+            await seedPlan(validPlan);
+            const { launcher, launches } = fakeLauncher();
+
+            const first = (await launchPlanRun(deps({ runLauncher: launcher }), { session: session(), planId: PLAN_ID, runId: "r-call" }))._unsafeUnwrap();
+            const again = (await launchPlanRun(deps({ runLauncher: launcher }), { session: session(), planId: PLAN_ID, runId: "r-call" }))._unsafeUnwrap();
+
+            expect(first).toEqual({ runId: "r-call", started: true });
+            expect(again).toEqual({ runId: "r-call", started: true });
+            expect(launches).toEqual([{ workflowId: "r-call" }, { workflowId: "r-call" }]);
+            expect((await runRows()).map((row) => row.run_id)).toEqual(["r-call"]);
+        });
+
+        it("keeps the run of a given id after it ended, also when a later run holds the slot", async () => {
+            await seedPlan(validPlan);
+            (
+                await insertRun(pool, { runId: "r-call", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID })
+            )._unsafeUnwrap();
+            (await updateRunStatus(pool, "r-call", "completed"))._unsafeUnwrap();
+            (
+                await insertRun(pool, { runId: "r-later", analysisId: ANALYSIS_ID, threadId: null, workflowName: "executeAnalysis", planId: PLAN_ID })
+            )._unsafeUnwrap();
+            const { launcher, launches } = fakeLauncher();
+
+            const launch = (await launchPlanRun(deps({ runLauncher: launcher }), { session: session(), planId: PLAN_ID, runId: "r-call" }))._unsafeUnwrap();
+
+            expect(launch).toEqual({ runId: "r-call", started: true });
+            expect(launches).toEqual([{ workflowId: "r-call" }]);
+            expect((await runRows()).map((row) => row.run_id).sort()).toEqual(["r-call", "r-later"]);
         });
 
         it("gives the active run with started false, and links, reserves, and authorizes nothing", async () => {

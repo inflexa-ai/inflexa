@@ -4,7 +4,6 @@
  */
 
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { UnavailableAsk } from "../approval/contract.js";
 import type { ToolContext } from "../define-tool.js";
 
 /** A `ToolContext` plus the list of events its `emit` recorded. */
@@ -17,7 +16,6 @@ export type TestToolContext = {
 /** Build a `ToolContext` for tests; `emit` records into `emitted`. */
 export function makeToolContext(signal?: AbortSignal): TestToolContext {
     const emitted: unknown[] = [];
-    const deny = new UnavailableAsk();
     const ctx: ToolContext = {
         invocationId: "test-tool-call",
         session: makeSession(),
@@ -25,7 +23,6 @@ export function makeToolContext(signal?: AbortSignal): TestToolContext {
         emit: (event) => {
             emitted.push(event);
         },
-        ask: (request) => deny.ask(request),
     };
     return { ctx, emitted };
 }

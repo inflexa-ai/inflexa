@@ -6,6 +6,7 @@
  * reached them.
  */
 
+import { inProcessSubAgent } from "../sub-agent.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe, expect, it } from "bun:test";
@@ -464,13 +465,16 @@ describe("runLoop usage — sub-agent runs", () => {
         // and `ctx.invocationId`.
         const { recorder, records } = recordingRecorder();
         const childProvider = scriptedModel([reply([text("evidence report")], "stop", usage(100, 20))]).provider;
-        const reviewer = createLiteratureReviewerTool({
-            provider: childProvider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            usageRecorder: recorder,
-        });
+        const reviewer = createLiteratureReviewerTool(
+            {
+                provider: childProvider,
+                model: "claude-test",
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
+                usageRecorder: recorder,
+            },
+            inProcessSubAgent,
+        );
         const parent = scriptedModel([
             reply([toolCall("tu-lit", "literature_reviewer", { brief: "profile these genes" })], "tool-calls", usage(10, 2)),
             reply([text("done")], "stop", usage(5, 1)),

@@ -91,6 +91,8 @@ const ANALYSIS_KEYED_DELETES: readonly { readonly op: string; readonly sql: stri
     // By its own analysis id, not through the thread rows: a kept text of a run names no thread.
     { op: "purgeAnalysis.toolOutputs", sql: "DELETE FROM cortex_tool_outputs WHERE analysis_id = $1" },
     { op: "purgeAnalysis.editIntents", sql: "DELETE FROM cortex_edit_intents WHERE analysis_id = $1" },
+    { op: "purgeAnalysis.appliedMemoryEdits", sql: "DELETE FROM cortex_applied_memory_edits WHERE analysis_id = $1" },
+    { op: "purgeAnalysis.authoringResults", sql: "DELETE FROM cortex_authoring_results WHERE analysis_id = $1" },
     { op: "purgeAnalysis.plans", sql: "DELETE FROM cortex_plans WHERE analysis_id = $1" },
     { op: "purgeAnalysis.reportVersions", sql: "DELETE FROM cortex_report_versions WHERE analysis_id = $1" },
     { op: "purgeAnalysis.reportSessionState", sql: "DELETE FROM cortex_report_session_state WHERE analysis_id = $1" },

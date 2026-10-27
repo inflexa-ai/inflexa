@@ -92,7 +92,8 @@ export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<voi
         await querier.query({
             text: `INSERT INTO cortex_asks
               (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, status, created_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)`,
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
+              ON CONFLICT (id) DO NOTHING`,
             values: [row.id, row.analysisId, row.userId, row.threadId, row.title, row.command, row.detail, row.grantKey ?? row.command, row.createdAt],
         });
     });
@@ -108,7 +109,8 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
         await querier.query({
             text: `INSERT INTO cortex_asks
               (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, status, reply, created_at, resolved_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'resolved', $9::jsonb, $10, $11)`,
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'resolved', $9::jsonb, $10, $11)
+              ON CONFLICT (id) DO NOTHING`,
             values: [
                 row.id,
                 row.analysisId,
@@ -147,6 +149,16 @@ export function selectAskResolution(querier: Querier, id: string): ResultAsync<A
         const row = mapAskResolutionRow(result.rows[0]);
         if (!row) return null;
         return row;
+    });
+}
+
+/** Mark a still-`pending` row `expired`. A row that an answer settled does not change. */
+export function markExpired(querier: Querier, id: string, resolvedAt: string): ResultAsync<void, DbError> {
+    return tryMutation("asks.markExpired", async () => {
+        await querier.query({
+            text: `UPDATE cortex_asks SET status = 'expired', resolved_at = $2 WHERE id = $1 AND status = 'pending'`,
+            values: [id, resolvedAt],
+        });
     });
 }
 

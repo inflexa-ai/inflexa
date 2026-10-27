@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { inProcessSubAgent } from "../../loop/sub-agent.js";
 import { z } from "zod";
 import { okAsync } from "neverthrow";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -389,6 +390,7 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
     const reportRuntime = createReportSessionRuntime({ pool });
     return createConversationAgent({
         provider: unusedChatProvider(),
+        registerSubAgent: inProcessSubAgent,
         utilityProvider: unusedChatProvider(),
         pool,
         embedding: refuseEmbedding(),

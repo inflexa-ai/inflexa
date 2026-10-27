@@ -131,6 +131,11 @@ export type ConversationTurn = {
      * envelope, because a `text` parameter carrying 0x00 fails the statement.
      */
     readonly author?: string;
+    /**
+     * The key of the group in its turn, stored on its first row. A turn workflow gives each group a key, thus a
+     * write that runs again after its commit finds the key and stores nothing.
+     */
+    readonly key?: string;
 };
 
 /**
@@ -213,6 +218,11 @@ export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "
 export type LoadRecentOptions = {
     /** Keep the first turn of the thread, the seed of a report thread, in front of the latest summary. */
     readonly keepFirstTurn?: boolean;
+    /**
+     * Read the rows up to this `seq` only. A row never changes after its write, thus a turn workflow that reads up
+     * to the last row before its turn reads the same view on a replay.
+     */
+    readonly throughSeq?: number;
 };
 
 /** The options of {@link ThreadHistory.loadPage}. */
@@ -417,7 +427,7 @@ function nextSeq(client: TransactionQuerier, threadId: string, op: string): Resu
 
 /** Insert the rows of one group, from `startSeq` on. */
 function insertGroup(client: TransactionQuerier, threadId: string, startSeq: number, group: ConversationTurn, op: string): ResultAsync<void, DbError> {
-    const { modelMessages: messages, displayMessages, author } = group;
+    const { modelMessages: messages, displayMessages, author, key } = group;
     // The display projection rides the group's FIRST row, so one SELECT of a
     // thread's rows yields every envelope in order with no join and no grouping.
     // Whichever row that is — a genuine user message opening a turn, or the lone
@@ -442,13 +452,14 @@ function insertGroup(client: TransactionQuerier, threadId: string, startSeq: num
                     client.query(
                         // `message_envelope::json`, never `::jsonb`; `display_envelope::jsonb`,
                         // never `::json` — see the column comments in the state-init DDL.
-                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, author)
-                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6)
+                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, author, round_key)
+                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6, $7)
                      ON CONFLICT (thread_id, seq) DO UPDATE
                        SET message_envelope = EXCLUDED.message_envelope,
                            display_envelope = EXCLUDED.display_envelope,
                            tokens = EXCLUDED.tokens,
-                           author = EXCLUDED.author`,
+                           author = EXCLUDED.author,
+                           round_key = EXCLUDED.round_key`,
                         [
                             threadId,
                             startSeq + i,
@@ -456,6 +467,7 @@ function insertGroup(client: TransactionQuerier, threadId: string, startSeq: num
                             i === 0 ? displayEnvelope : null,
                             countTokens(message.content),
                             i === authorRow ? turnAuthor : null,
+                            i === 0 ? (key ?? null) : null,
                         ],
                     ),
                 ).map(() => undefined),
@@ -511,6 +523,16 @@ function touchThread(client: TransactionQuerier, threadId: string, op: string): 
                 .map(() => undefined)
                 .orElse(() => okVoid()),
         );
+}
+
+/** The `seq` of the first row of a group that a write stored before, by the key of the group. */
+function storedGroupSeq(client: TransactionQuerier, threadId: string, key: string | undefined, op: string): ResultAsync<number | undefined, DbError> {
+    if (key === undefined) return okAsync(undefined);
+    return tryQuery(`${op}.storedKey`, async () => {
+        const { rows } = await client.query<{ seq: string }>("SELECT seq::text AS seq FROM messages WHERE thread_id = $1 AND round_key = $2", [threadId, key]);
+        const row = rows[0];
+        return row === undefined ? undefined : Number(row.seq);
+    });
 }
 
 /** Add the `open` record of a turn. The upsert replaces a record whose rows are gone, because the opening row holds its key now. */
@@ -677,15 +699,19 @@ function pageLimit(limit: number): number {
 /** What this module reads of the pool: the direct `query` plus the transactional `connect`. */
 type ThreadHistoryPool = Querier & Connectable;
 
+/** `appendTurn` inside the transaction of the caller, thus another write of the caller commits with the turn or not at all. */
+export function appendTurnIn(client: TransactionQuerier, threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
+    if (turn.modelMessages.length === 0) return okVoid();
+    return lockThread(client, threadId, "thread-history.appendTurn")
+        .andThen(() => nextSeq(client, threadId, "thread-history.appendTurn"))
+        .andThen((startSeq) => insertGroup(client, threadId, startSeq, turn, "thread-history.appendTurn"))
+        .andThen(() => touchThread(client, threadId, "thread-history.appendTurn"));
+}
+
 export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): ThreadHistory {
     function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
         if (turn.modelMessages.length === 0) return okVoid();
-        return withTransaction(pool, "thread-history.appendTurn", (client) =>
-            lockThread(client, threadId, "thread-history.appendTurn")
-                .andThen(() => nextSeq(client, threadId, "thread-history.appendTurn"))
-                .andThen((startSeq) => insertGroup(client, threadId, startSeq, turn, "thread-history.appendTurn"))
-                .andThen(() => touchThread(client, threadId, "thread-history.appendTurn")),
-        );
+        return withTransaction(pool, "thread-history.appendTurn", (client) => appendTurnIn(client, threadId, turn));
     }
 
     function writeTurn(threadId: string, write: TurnWrite): ResultAsync<TurnWriteResult, DbError> {
@@ -693,22 +719,30 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
         const groups = [...(write.opening === undefined ? [] : [write.opening]), ...write.rounds, ...(close?.note === undefined ? [] : [close.note])];
         return withTransaction(pool, "thread-history.writeTurn", (client) =>
             lockThread(client, threadId, "thread-history.writeTurn")
-                .andThen(() => nextSeq(client, threadId, "thread-history.writeTurn"))
-                .andThen((firstSeq) => {
-                    const startSeq = write.opening === undefined ? write.startSeq : firstSeq;
-                    const steps: (() => ResultAsync<void, DbError>)[] = [];
-                    let seq = firstSeq;
-                    for (const [index, group] of groups.entries()) {
-                        const groupSeq = seq;
-                        seq += group.modelMessages.length;
-                        steps.push(() => insertGroup(client, threadId, groupSeq, group, "thread-history.writeTurn"));
-                        if (index === 0 && write.opening !== undefined) steps.push(() => openTurnRecord(client, threadId, startSeq));
-                    }
-                    if (close !== undefined) steps.push(() => closeTurnRecord(client, threadId, startSeq, close));
-                    steps.push(() => touchThread(client, threadId, "thread-history.writeTurn"));
-                    return steps.reduce((chain, step) => chain.andThen(step), okVoid()).map(() => ({ startSeq }));
+                // One transaction stores each group of a write, thus a stored first group means a stored write.
+                .andThen(() => storedGroupSeq(client, threadId, groups[0]?.key, "thread-history.writeTurn"))
+                .andThen((storedSeq) => {
+                    if (storedSeq === undefined) return writeGroups(client);
+                    return okAsync({ startSeq: write.opening === undefined ? write.startSeq : storedSeq });
                 }),
         );
+
+        function writeGroups(client: TransactionQuerier): ResultAsync<TurnWriteResult, DbError> {
+            return nextSeq(client, threadId, "thread-history.writeTurn").andThen((firstSeq) => {
+                const startSeq = write.opening === undefined ? write.startSeq : firstSeq;
+                const steps: (() => ResultAsync<void, DbError>)[] = [];
+                let seq = firstSeq;
+                for (const [index, group] of groups.entries()) {
+                    const groupSeq = seq;
+                    seq += group.modelMessages.length;
+                    steps.push(() => insertGroup(client, threadId, groupSeq, group, "thread-history.writeTurn"));
+                    if (index === 0 && write.opening !== undefined) steps.push(() => openTurnRecord(client, threadId, startSeq));
+                }
+                if (close !== undefined) steps.push(() => closeTurnRecord(client, threadId, startSeq, close));
+                steps.push(() => touchThread(client, threadId, "thread-history.writeTurn"));
+                return steps.reduce((chain, step) => chain.andThen(step), okVoid()).map(() => ({ startSeq }));
+            });
+        }
     }
 
     function loadRecent(threadId: string, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError> {
@@ -725,8 +759,8 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
                 // nothing has no rollup at all. The two are different measurements
                 // sharing a unit; see the column comments.
                 `SELECT seq::text AS seq, message_envelope, tokens
-         FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC`,
-                [threadId],
+         FROM messages WHERE thread_id = $1 AND ($2::bigint IS NULL OR messages.seq <= $2::bigint) ORDER BY messages.seq ASC`,
+                [threadId, options?.throughSeq ?? null],
             );
             const parsed = rows.map((row, index) => ({
                 index,

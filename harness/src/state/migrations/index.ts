@@ -16,6 +16,10 @@ import { indexTheEndedRunsAndTheRecentThreads } from "./20261013120000_index_the
 import { narrowTheActiveRunIndex } from "./20261013180000_narrow_the_active_run_index.js";
 import { indexThePlansByParentAndTheRunsByPlan } from "./20261014120000_index_the_plans_by_parent_and_the_runs_by_plan.js";
 import { addTheEditIntents } from "./20261026120000_add_the_edit_intents.js";
+import { recordTheAppliedMemoryEdits } from "./20261027120000_record_the_applied_memory_edits.js";
+import { storeTheAuthoringResults } from "./20261027120100_store_the_authoring_results.js";
+import { keyTheGroupsOfATurn } from "./20261027120200_key_the_groups_of_a_turn.js";
+import { markTheActiveTurnOfAThread } from "./20261027120300_mark_the_active_turn_of_a_thread.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -27,5 +31,9 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261013180000_narrow_the_active_run_index": narrowTheActiveRunIndex,
         "20261014120000_index_the_plans_by_parent_and_the_runs_by_plan": indexThePlansByParentAndTheRunsByPlan,
         "20261026120000_add_the_edit_intents": addTheEditIntents,
+        "20261027120000_record_the_applied_memory_edits": recordTheAppliedMemoryEdits,
+        "20261027120100_store_the_authoring_results": storeTheAuthoringResults,
+        "20261027120200_key_the_groups_of_a_turn": keyTheGroupsOfATurn,
+        "20261027120300_mark_the_active_turn_of_a_thread": markTheActiveTurnOfAThread,
     };
 }

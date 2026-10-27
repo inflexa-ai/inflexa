@@ -23,6 +23,10 @@
  * exists AND belongs to this analysis (`cortex_runs.analysis_id`) before it is
  * stored: an unknown runId is an `err(ToolError)` the model can correct from,
  * not a silent reference to a run that never existed.
+ *
+ * Inside a durable step, the store records the key of the step in the
+ * transaction of the edit. A rerun of the step after the edit, before its
+ * checkpoint, then changes nothing and gives ok.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -35,6 +39,7 @@ import { toThrowable, unwrapOrThrow } from "../../lib/result.js";
 import { isWorkingMemoryRejection, WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { queryRun } from "../../state/index.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { durableStepKey } from "../workspace/edit-file.js";
 
 const { goalChars, entryChars, constraints, hypotheses, findings } = WORKING_MEMORY_LIMITS;
 
@@ -136,10 +141,21 @@ type UpdateOutput = {
     readonly section: Input["section"];
 };
 
-export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore, pool: Pool): Tool<z.infer<typeof inputSchema>, UpdateOutput> {
+export type UpdateWorkingMemoryOpts = {
+    /** The key of the durable step that runs the call, `undefined` outside one. */
+    readonly stepKey: () => string | undefined;
+};
+
+export const DEFAULT_UPDATE_WORKING_MEMORY_OPTS: UpdateWorkingMemoryOpts = { stepKey: durableStepKey };
+
+export function createUpdateWorkingMemoryTool(
+    workingMemory: WorkingMemoryStore,
+    pool: Pool,
+    opts: UpdateWorkingMemoryOpts = DEFAULT_UPDATE_WORKING_MEMORY_OPTS,
+): Tool<z.infer<typeof inputSchema>, UpdateOutput> {
     /** Write one amendment, mapping a refused write to a model-visible error. */
     async function apply<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): Promise<Result<UpdateOutput, ToolError>> {
-        const written = await workingMemory.updateSection(analysisId, section, value);
+        const written = await workingMemory.updateSection(analysisId, section, value, opts.stepKey());
         if (written.isErr()) {
             // A refused write (cap hit, unknown id) is an expected outcome the model
             // can act on — its message carries the remedy. A DbError is not: it throws,

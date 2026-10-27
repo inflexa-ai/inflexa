@@ -1,0 +1,189 @@
+/**
+ * The durable stream of a chat turn: a workflow runs a loop that writes its text and its frames to the stream, and
+ * the reader gives the frames of the turn, with no tool input and no tool output. A crash during a reply runs the
+ * model call again, and a read after the recovery shows the text of the second attempt only.
+ */
+
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { DBOS } from "@dbos-inc/dbos-sdk";
+import { closeDurableStream } from "@dbos-inc/vercel-ai";
+import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
+import { ok } from "neverthrow";
+import { z } from "zod";
+
+import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
+import { recoverAtCrashPoint } from "../../__tests__/setup/dbos-crash.js";
+import type { ChatFrame, EventSource } from "../../contracts/chat-events.js";
+import { runLoop } from "../run-loop.js";
+import { createAiSdkProvider } from "../../providers/ai-sdk.js";
+import { makeSession } from "../../providers/__fixtures__/session.js";
+import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
+import { defineTool } from "../../tools/define-tool.js";
+import { CHAT_STREAM_KEY, createTurnStreamWriter, readChatTurn } from "../chat-stream.js";
+
+if (DBOS.isInitialized()) {
+    await DBOS.shutdown();
+}
+
+const ROOT: EventSource = { agentId: "stream-agent", callPath: ["stream-agent"] };
+const SECRET_INPUT = "the-secret-input";
+const SECRET_OUTPUT = "the-secret-output";
+
+const lookup = defineTool({
+    id: "lookup",
+    description: "Look a value up.",
+    inputSchema: z.object({ query: z.string() }),
+    describeCall: (input) => `lookup ${input.query.length}`,
+    execute: () => Promise.resolve(ok({ found: SECRET_OUTPUT })),
+});
+
+const agent = { id: "stream-agent", systemPrompt: "Test.", model: "scripted-model", tools: [lookup], maxIterations: 5 };
+
+const freshModel = () => scriptedModel([callTools(toolCall("c1", "lookup", { query: SECRET_INPUT })), reply([text("The answer is 42.")])]);
+
+/** Each turn of the test gets its own script, because a script answers each request one time. */
+let scripted = freshModel();
+
+const streamWorkflow = DBOS.registerWorkflow(
+    async (): Promise<string> => {
+        const writer = createTurnStreamWriter(ROOT, () => undefined);
+        const result = await runLoop(agent, [{ role: "user", content: "go" }], makeSession({ agentId: ROOT.agentId, callPath: ROOT.callPath }), {
+            provider: scripted.provider,
+            emit: writer.emit,
+            toolWriter: writer.toolWriter,
+            signal: new AbortController().signal,
+            chatStream: CHAT_STREAM_KEY,
+        });
+        await writer.write({ type: "finish", source: ROOT });
+        await writer.settle();
+        await closeDurableStream(CHAT_STREAM_KEY, result.finish.reason);
+        return result.finish.reason;
+    },
+    { name: "chat-stream-turn" },
+);
+
+let parked = false;
+let attempts = 0;
+
+/** The first attempt streams half of its text and then hangs, and the second attempt gives the whole reply. */
+const halting = new MockLanguageModelV4({
+    provider: "scripted",
+    modelId: "scripted-model",
+    doStream: (call) => {
+        attempts += 1;
+        if (attempts > 1) {
+            return Promise.resolve({
+                stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([
+                    { type: "stream-start", warnings: [] },
+                    { type: "text-start", id: "t" },
+                    { type: "text-delta", id: "t", delta: "The whole answer." },
+                    { type: "text-end", id: "t" },
+                    {
+                        type: "finish",
+                        finishReason: { unified: "stop", raw: "stop" },
+                        usage: {
+                            inputTokens: { total: 1, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+                            outputTokens: { total: 1, text: undefined, reasoning: undefined },
+                        },
+                    },
+                ]),
+            });
+        }
+        return Promise.resolve({
+            stream: new ReadableStream<LanguageModelV4StreamPart>({
+                start(controller) {
+                    controller.enqueue({ type: "stream-start", warnings: [] });
+                    controller.enqueue({ type: "text-start", id: "t" });
+                    controller.enqueue({ type: "text-delta", id: "t", delta: "Half of the" });
+                    parked = true;
+                    call.abortSignal?.addEventListener("abort", () => controller.error(call.abortSignal?.reason), { once: true });
+                },
+            }),
+        });
+    },
+});
+
+const haltingWorkflow = DBOS.registerWorkflow(
+    async (): Promise<string> => {
+        const writer = createTurnStreamWriter(ROOT, () => undefined);
+        const result = await runLoop(
+            { ...agent, tools: [] },
+            [{ role: "user", content: "go" }],
+            makeSession({ agentId: ROOT.agentId, callPath: ROOT.callPath }),
+            {
+                provider: createAiSdkProvider({ model: halting, maxRetries: 0 }),
+                emit: writer.emit,
+                toolWriter: writer.toolWriter,
+                signal: new AbortController().signal,
+                chatStream: CHAT_STREAM_KEY,
+            },
+        );
+        await writer.write({ type: "finish", source: ROOT });
+        await writer.settle();
+        await closeDurableStream(CHAT_STREAM_KEY, result.finish.reason);
+        return result.finish.reason;
+    },
+    { name: "chat-stream-halting-turn" },
+);
+
+async function readAll(turnId: string): Promise<ChatFrame[]> {
+    const frames: ChatFrame[] = [];
+    for await (const frame of readChatTurn(turnId, { rootSource: ROOT })) frames.push(frame);
+    return frames;
+}
+
+const textOf = (frames: readonly ChatFrame[]): string => frames.map((frame) => (frame.type === "text-delta" ? frame.text : "")).join("");
+
+let rig: DbosTestRig;
+
+beforeAll(async () => {
+    rig = await setupDbosForTests("chat_turn_stream");
+    if (!DBOS.isInitialized()) await DBOS.launch();
+});
+
+afterAll(async () => {
+    await rig.drop();
+});
+
+describe("the durable stream of a chat turn", () => {
+    it("gives the text, the tool frames, and the end, with no tool input and no tool output", async () => {
+        const turnId = rig.nextWorkflowId("chat-stream-");
+        const handle = await DBOS.startWorkflow(streamWorkflow, { workflowID: turnId })();
+        await handle.getResult();
+
+        const frames = await readAll(turnId);
+
+        expect(textOf(frames)).toBe("The answer is 42.");
+        expect(frames.filter((frame) => frame.type === "tool-started" || frame.type === "tool-finished").map((frame) => frame.type)).toEqual([
+            "tool-started",
+            "tool-finished",
+        ]);
+        expect(frames.find((frame) => frame.type === "tool-finished")).toMatchObject({ outcome: "ok", detail: `lookup ${SECRET_INPUT.length}` });
+        expect(frames.at(-1)?.type).toBe("finish");
+        const serialized = JSON.stringify(frames);
+        expect(serialized).not.toContain(SECRET_INPUT);
+        expect(serialized).not.toContain(SECRET_OUTPUT);
+    });
+
+    it("gives the same frames on a second read", async () => {
+        const turnId = rig.nextWorkflowId("chat-stream-again-");
+        scripted = freshModel();
+        const handle = await DBOS.startWorkflow(streamWorkflow, { workflowID: turnId })();
+        await handle.getResult();
+
+        expect(await readAll(turnId)).toEqual(await readAll(turnId));
+    });
+
+    it("shows the text of the second attempt only, after a crash during a reply", async () => {
+        const turnId = rig.nextWorkflowId("chat-stream-crash-");
+        const first = await DBOS.startWorkflow(haltingWorkflow, { workflowID: turnId })();
+        const ended = first.getResult().catch(() => undefined);
+
+        const handle = await recoverAtCrashPoint<string>(turnId, () => parked, { ended });
+        await handle.getResult();
+
+        expect(attempts).toBe(2);
+        expect(textOf(await readAll(turnId))).toBe("The whole answer.");
+    });
+});

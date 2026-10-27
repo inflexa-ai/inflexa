@@ -165,8 +165,12 @@ export type WorkingMemoryStore = {
      * left byte-identical; the row is upserted if absent. A write that breaks a
      * cap or addresses an unknown id is refused — `err(WorkingMemoryRejection)`,
      * and the row is left exactly as it was.
+     *
+     * `callKey` names the durable step of the call. The edit records it in its
+     * own transaction, and an edit whose key is recorded already changes nothing
+     * and gives ok. Thus a rerun of the step applies the edit one time.
      */
-    updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): ResultAsync<void, WorkingMemoryError>;
+    updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S], callKey?: string): ResultAsync<void, WorkingMemoryError>;
     /** Serialize working memory to a Markdown document for injection. */
     render(analysisId: string): ResultAsync<string, DbError>;
 };
@@ -408,43 +412,62 @@ export function createWorkingMemory(pool: Querier & Connectable): WorkingMemoryS
         });
     }
 
-    function updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S]): ResultAsync<void, WorkingMemoryError> {
-        return withTransaction(pool, "working-memory.updateSection", (client) =>
+    function updateSection<S extends Section>(analysisId: string, section: S, value: SectionValue[S], callKey?: string): ResultAsync<void, WorkingMemoryError> {
+        type Written = Result<undefined, WorkingMemoryRejection>;
+        const written: Written = ok(undefined);
+        return withTransaction(pool, "working-memory.updateSection", (client) => {
+            // The key is read under the analysis lock, thus a second run of one call
+            // waits for the first and then finds its key.
+            const alreadyApplied = (): ResultAsync<boolean, DbError> =>
+                callKey === undefined
+                    ? okAsync(false)
+                    : tryQuery("working-memory.updateSection.appliedKey", () =>
+                          client.query("SELECT 1 FROM cortex_applied_memory_edits WHERE call_key = $1", [callKey]),
+                      ).map(({ rows }) => rows.length > 0);
+            const recordKey = (): ResultAsync<void, DbError> =>
+                callKey === undefined
+                    ? okAsync(undefined)
+                    : tryMutation("working-memory.updateSection.recordKey", () =>
+                          client.query("INSERT INTO cortex_applied_memory_edits (call_key, analysis_id) VALUES ($1, $2)", [callKey, analysisId]),
+                      ).map(() => undefined);
+            const amend = (): ResultAsync<Written, DbError> =>
+                tryQuery("working-memory.updateSection.read", () =>
+                    client.query<{ data: unknown }>("SELECT data FROM cortex_working_memory WHERE analysis_id = $1", [analysisId]),
+                )
+                    .map(({ rows }) => {
+                        // Schema parse stays outside the driver wrapper — a validation throw
+                        // propagates verbatim (and `withTransaction` still rolls back).
+                        const [stored] = rows;
+                        const current = stored === undefined ? emptyWorkingMemory() : workingMemorySchema.parse(stored.data);
+                        return applySectionUpdate(current, section, value);
+                    })
+                    .andThen((amended) =>
+                        // A rejection rides the transaction's ok channel: it is a decision, not a
+                        // storage failure. The transaction commits having written nothing, and the
+                        // rejection is lifted back into the error channel below.
+                        amended.isErr()
+                            ? okAsync<Written, DbError>(err(amended.error))
+                            : tryMutation("working-memory.updateSection.upsert", () =>
+                                  client.query(
+                                      `INSERT INTO cortex_working_memory (analysis_id, data, updated_at)
+               VALUES ($1, $2::jsonb, NOW())
+               ON CONFLICT (analysis_id)
+               DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+                                      [analysisId, JSON.stringify(amended.value)],
+                                  ),
+                              )
+                                  .andThen(recordKey)
+                                  .map(() => written),
+                    );
             // Serialize concurrent read-modify-write on this analysis — the lock
             // covers the not-yet-existing-row case an `SELECT ... FOR UPDATE`
             // would miss. Released automatically at COMMIT/ROLLBACK. The cap check
             // runs under it too, so two racing adds cannot both slip past a full
             // section.
-            tryQuery("working-memory.updateSection.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [analysisId]))
-                .andThen(() =>
-                    tryQuery("working-memory.updateSection.read", () =>
-                        client.query<{ data: unknown }>("SELECT data FROM cortex_working_memory WHERE analysis_id = $1", [analysisId]),
-                    ),
-                )
-                .map(({ rows }) => {
-                    // Schema parse stays outside the driver wrapper — a validation throw
-                    // propagates verbatim (and `withTransaction` still rolls back).
-                    const [stored] = rows;
-                    const current = stored === undefined ? emptyWorkingMemory() : workingMemorySchema.parse(stored.data);
-                    return applySectionUpdate(current, section, value);
-                })
-                .andThen((amended) =>
-                    // A rejection rides the transaction's ok channel: it is a decision, not a
-                    // storage failure. The transaction commits having written nothing, and the
-                    // rejection is lifted back into the error channel below.
-                    amended.isErr()
-                        ? okAsync<Result<undefined, WorkingMemoryRejection>, DbError>(err(amended.error))
-                        : tryMutation("working-memory.updateSection.upsert", () =>
-                              client.query(
-                                  `INSERT INTO cortex_working_memory (analysis_id, data, updated_at)
-               VALUES ($1, $2::jsonb, NOW())
-               ON CONFLICT (analysis_id)
-               DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-                                  [analysisId, JSON.stringify(amended.value)],
-                              ),
-                          ).map(() => ok<undefined, WorkingMemoryRejection>(undefined)),
-                ),
-        ).andThen((written) => written);
+            return tryQuery("working-memory.updateSection.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [analysisId]))
+                .andThen(alreadyApplied)
+                .andThen((done) => (done ? okAsync<Written, DbError>(written) : amend()));
+        }).andThen((result) => result);
     }
 
     function render(analysisId: string): ResultAsync<string, DbError> {

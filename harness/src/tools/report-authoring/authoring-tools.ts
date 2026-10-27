@@ -15,6 +15,11 @@
  *
  * The primitive admits a flat object input only. Thus a destination is four optional fields, and not a
  * nested union. A conflict between the flat fields refuses before the core runs.
+ *
+ * Inside a durable step, a mutation stores its result for the thread and the step, in the transaction of
+ * the document and under the lock of the row. A rerun of the step after the landing, before its
+ * checkpoint, gives the stored result. Thus a rerun of `add_block` does not refuse its own block id, and a
+ * rerun of `remove_block` does not refuse its own removed target.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -49,6 +54,7 @@ import type { DraftBlock, DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
+import { durableStepKey } from "../workspace/edit-file.js";
 
 /**
  * The block payload.
@@ -183,7 +189,39 @@ export type SessionRefusal = {
  *
  * A move across two containers reports both. An operation that changes no child order reports none.
  */
-export type MutationResult = { applied: true; changed: ChangedContainer[] } | { applied: false; refusal: DraftRefusal | SessionRefusal };
+export type MutationResult = LandedResult | { applied: false; refusal: DraftRefusal | SessionRefusal };
+
+/** The result of a mutation that landed its document. A durable step stores it, and a rerun of the step gives it again. */
+export type LandedResult = { applied: true; changed: ChangedContainer[] };
+
+/** Each kind of a draft block. The record type names each kind, thus a new kind fails the build here. */
+const DRAFT_BLOCK_KINDS: Record<DraftBlock["kind"], true> = {
+    section: true,
+    text: true,
+    claim: true,
+    metric: true,
+    table: true,
+    chart: true,
+    figure: true,
+    citation: true,
+};
+
+const LandedResultSchema: z.ZodType<LandedResult> = z.object({
+    applied: z.literal(true),
+    changed: z.array(
+        z.object({
+            parentId: z.string().optional(),
+            children: z.array(
+                z.object({
+                    id: z.string(),
+                    kind: z.custom<DraftBlock["kind"]>((value) => typeof value === "string" && Object.hasOwn(DRAFT_BLOCK_KINDS, value)),
+                    depth: z.number(),
+                    label: z.string(),
+                }),
+            ),
+        }),
+    ),
+});
 
 /** The result of `read_outline`. A load that gives no state refuses instead of an outline. */
 export type OutlineResult = { outline: OutlineEntry[] } | { refused: SessionRefusal };
@@ -236,13 +274,25 @@ export type SessionStateLoad =
           token: SessionStateToken;
           seenDocumentHash: string | null;
           derivations: readonly DerivationRecord[];
+          /** The stored result of the call that the load names, when an earlier run of that call landed. */
+          landed?: unknown;
       }
     | { outcome: "absent" }
     | { outcome: "wrong-type"; detail: string }
     | { outcome: "failed"; detail: string };
 
-/** The outcome of a gateway persist. `conflict` means that a concurrent turn landed first. */
-export type SessionStatePersist = { outcome: "persisted" } | { outcome: "conflict" } | { outcome: "failed"; detail: string };
+/**
+ * The outcome of a gateway persist. `conflict` means that a concurrent turn landed first. `replayed` means
+ * that an earlier run of the call landed, and it carries the stored result of that run.
+ */
+export type SessionStatePersist =
+    { outcome: "persisted" } | { outcome: "conflict" } | { outcome: "replayed"; landed: unknown } | { outcome: "failed"; detail: string };
+
+/** The authoring call of a persist: the key of its durable step, and the result that it gives when the document lands. */
+export type LandingCall = {
+    readonly key: string;
+    readonly result: LandedResult;
+};
 
 /**
  * The outcome of a gateway stamp. `stamped` wrote the marker. `absent` means that no row holds the thread.
@@ -268,8 +318,10 @@ export type SeenStampResult = { outcome: "stamped" } | { outcome: "no-rendered" 
  * persist gives success, or a typed failure.
  */
 export type ReportSessionStateGateway = {
-    load(threadId: string): Promise<SessionStateLoad>;
-    persist(threadId: string, document: DraftDocument, expected: SessionStateToken): Promise<SessionStatePersist>;
+    /** `callKey` names the durable step of a mutation, and the found load then carries the stored result of an earlier run. */
+    load(threadId: string, callKey?: string): Promise<SessionStateLoad>;
+    /** A persist with a `call` stores the result of the call in the transaction of the document. */
+    persist(threadId: string, document: DraftDocument, expected: SessionStateToken, call?: LandingCall): Promise<SessionStatePersist>;
     /**
      * Stamp the hash of the rendered draft on the session state. The preview calls it when the page lands,
      * thus the runtime knows which draft the page shows.
@@ -296,6 +348,8 @@ export type OpenedThread = {
     readonly seenDocumentHash: string | null;
     /** The derivations of the session, in the order that the records landed. */
     readonly derivations: readonly DerivationRecord[];
+    /** The stored result of an earlier run of the call that the open names. */
+    readonly landed?: unknown;
 };
 
 /**
@@ -313,12 +367,12 @@ export type OpenedThread = {
  * The authoring tools and the preview tool share this one resolution, thus the two surfaces accept the
  * same thread id and map a load outcome onto a refusal the same way.
  */
-export async function openReportThread(gateway: ReportSessionStateGateway, scope: Scope): Promise<Result<OpenedThread, SessionRefusal>> {
+export async function openReportThread(gateway: ReportSessionStateGateway, scope: Scope, callKey?: string): Promise<Result<OpenedThread, SessionRefusal>> {
     if (scope.threadId === undefined || !isSafeId(scope.threadId)) {
         return err({ reason: "no-thread-scope", detail: "the scope of the call names no usable report thread id" });
     }
     const { threadId, analysisId } = scope;
-    const loaded = await gateway.load(threadId);
+    const loaded = await gateway.load(threadId, callKey);
     if (loaded.outcome === "absent") {
         return err({ reason: "absent-state", detail: `no report session exists for the thread ${threadId}, and this condition is permanent` });
     }
@@ -341,6 +395,7 @@ export async function openReportThread(gateway: ReportSessionStateGateway, scope
         token: loaded.token,
         seenDocumentHash: loaded.seenDocumentHash,
         derivations: loaded.derivations,
+        landed: loaded.landed,
     });
 }
 
@@ -604,7 +659,12 @@ export type ReportAuthoringToolDeps = {
     readonly provenance?: ProvenanceSeam;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /** The key of the durable step that runs the call, `undefined` outside one. Defaults to {@link durableStepKey}. */
+    readonly stepKey?: () => string | undefined;
 };
+
+/** The thread of a mutation, and the key of the durable step that runs the call. */
+type OpenedMutation = OpenedThread & { readonly callKey: string | undefined };
 
 /**
  * Make the eight authoring tools over a session-state gateway.
@@ -618,6 +678,7 @@ export type ReportAuthoringToolDeps = {
  */
 export function createReportAuthoringTools(gateway: ReportSessionStateGateway, deps: ReportAuthoringToolDeps = {}): ReportAuthoringTools {
     const observe = bindSessionEmit(deps.provenance, (deps.logger ?? createNoopLogger()).named("report-authoring"));
+    const stepKey = deps.stepKey ?? durableStepKey;
 
     /**
      * Resolve the thread of the call, and load its state.
@@ -628,6 +689,29 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
      */
     const openThread = (ctx: ToolContext): Promise<Result<OpenedThread, SessionRefusal>> => openReportThread(gateway, ctx.session.scope);
 
+    const refuse = (refusal: DraftRefusal | SessionRefusal): MutationResult => ({ applied: false, refusal });
+
+    /** The stored result of an earlier run of the call. The row holds what `land` stored, and a row that does not parse refuses. */
+    const replayed = (landed: unknown): MutationResult => {
+        const parsed = LandedResultSchema.safeParse(landed);
+        return parsed.success
+            ? parsed.data
+            : refuse({ reason: "state-unavailable", detail: "the stored result of an earlier run of this call does not parse" });
+    };
+
+    /**
+     * Resolve the thread of a mutation, and load its state with the stored result of an earlier run of the
+     * call. A rerun of a landed call gives that result, and it never reaches the core, which would refuse
+     * the landing of its own earlier run.
+     */
+    const openMutation = async (ctx: ToolContext): Promise<{ readonly done: MutationResult } | { readonly opened: OpenedMutation }> => {
+        const callKey = stepKey();
+        const opened = await openReportThread(gateway, ctx.session.scope, callKey);
+        if (opened.isErr()) return { done: refuse(opened.error) };
+        if (opened.value.landed !== undefined) return { done: replayed(opened.value.landed) };
+        return { opened: { ...opened.value, callKey } };
+    };
+
     /**
      * Persist a landing, and report the containers that the operation changed.
      *
@@ -637,7 +721,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
      * tool reports `applied: true` only after the row holds the new document.
      *
      * The persist is a compare-and-swap against the token that the load read. A concurrent turn that landed
-     * first turns the persist into a conflict, and the tool refuses with `stale-state`.
+     * first turns the persist into a conflict, and the tool refuses with `stale-state`. Inside a durable
+     * step, the result lands in the transaction of the document, thus a rerun of the step gives it again.
      *
      * `events` gives the observations of the operation, and they emit after the persist landed. Thus one
      * site owns the rule, and a refusal, a conflict, and a persist fault each emit nothing. It reads the two
@@ -646,9 +731,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
      * no event.
      */
     const land = async (
-        threadId: string,
-        token: SessionStateToken,
-        previous: DraftDocument,
+        opened: OpenedMutation,
         result: Result<DraftDocument, DraftRefusal>,
         holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
         events: (previous: DraftDocument, next: DraftDocument) => readonly SessionProvenanceEvent[],
@@ -656,8 +739,13 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         if (result.isErr()) {
             return { applied: false, refusal: result.error };
         }
+        const previous = opened.state.document;
         const next = result.value;
-        const persisted = await gateway.persist(threadId, next, token);
+        // A move inside one container names the same holder two times.
+        const unique = [...new Set(holders(previous, next))];
+        const landed: LandedResult = { applied: true, changed: unique.map((parentId) => containerIn(next, parentId)) };
+        const call = opened.callKey === undefined ? undefined : { key: opened.callKey, result: landed };
+        const persisted = await gateway.persist(opened.threadId, next, opened.token, call);
         if (persisted.outcome === "conflict") {
             return {
                 applied: false,
@@ -667,15 +755,14 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         if (persisted.outcome === "failed") {
             return { applied: false, refusal: { reason: "state-unavailable", detail: persisted.detail } };
         }
+        if (persisted.outcome === "replayed") {
+            return replayed(persisted.landed);
+        }
         for (const observed of events(previous, next)) {
             observe(observed);
         }
-        // A move inside one container names the same holder two times.
-        const unique = [...new Set(holders(previous, next))];
-        return { applied: true, changed: unique.map((parentId) => containerIn(next, parentId)) };
+        return landed;
     };
-
-    const refuse = (refusal: DraftRefusal | SessionRefusal): MutationResult => ({ applied: false, refusal });
 
     const add_block = defineTool({
         id: "add_block",
@@ -698,11 +785,12 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             return subject === undefined ? `add ${kind}` : `add ${kind} ${subject}`;
         },
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
-            const opened = await openThread(ctx);
-            if (opened.isErr()) {
-                return ok(refuse(opened.error));
+            const opening = await openMutation(ctx);
+            if ("done" in opening) {
+                return ok(opening.done);
             }
-            const { threadId, analysisId, state, token } = opened.value;
+            const { opened } = opening;
+            const { threadId, analysisId, state } = opened;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
@@ -711,9 +799,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             const addedId = readId(block);
             return ok(
                 await land(
-                    threadId,
-                    token,
-                    state.document,
+                    opened,
                     addBlock(state.document, { block, destination: destination.value }, state.snapshot),
                     (_previous, next) => [addedId === undefined ? undefined : holderIdOf(next, addedId)],
                     // The grammar requires an id on the payload, thus a landed add always names one. A
@@ -733,20 +819,19 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         inputSchema: changeBlockInput,
         describeCall: (input): string => `change ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
-            const opened = await openThread(ctx);
-            if (opened.isErr()) {
-                return ok(refuse(opened.error));
+            const opening = await openMutation(ctx);
+            if ("done" in opening) {
+                return ok(opening.done);
             }
-            const { threadId, analysisId, state, token } = opened.value;
+            const { opened } = opening;
+            const { threadId, analysisId, state } = opened;
             const operation = toChangeOperation(input);
             if (operation.isErr()) {
                 return ok(refuse(operation.error));
             }
             return ok(
                 await land(
-                    threadId,
-                    token,
-                    state.document,
+                    opened,
                     changeBlock(state.document, operation.value, state.snapshot),
                     (_previous, next) => [holderIdOf(next, input.targetId)],
                     // A change is permitted to change the kind, thus the event states the kind that the
@@ -763,16 +848,15 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         inputSchema: removeBlockInput,
         describeCall: (input): string => `remove ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
-            const opened = await openThread(ctx);
-            if (opened.isErr()) {
-                return ok(refuse(opened.error));
+            const opening = await openMutation(ctx);
+            if ("done" in opening) {
+                return ok(opening.done);
             }
-            const { threadId, analysisId, state, token } = opened.value;
+            const { opened } = opening;
+            const { threadId, analysisId, state } = opened;
             return ok(
                 await land(
-                    threadId,
-                    token,
-                    state.document,
+                    opened,
                     removeBlock(state.document, { targetId: input.targetId }, state.snapshot),
                     (previous) => [holderIdOf(previous, input.targetId)],
                     // The next document holds no removed block, thus the event states the kind that the
@@ -791,20 +875,19 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         inputSchema: moveBlockInput,
         describeCall: (input): string => `move ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
-            const opened = await openThread(ctx);
-            if (opened.isErr()) {
-                return ok(refuse(opened.error));
+            const opening = await openMutation(ctx);
+            if ("done" in opening) {
+                return ok(opening.done);
             }
-            const { threadId, analysisId, state, token } = opened.value;
+            const { opened } = opening;
+            const { threadId, analysisId, state } = opened;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
             }
             return ok(
                 await land(
-                    threadId,
-                    token,
-                    state.document,
+                    opened,
                     moveBlock(state.document, { targetId: input.targetId, destination: destination.value }, state.snapshot),
                     (previous, next) => [holderIdOf(previous, input.targetId), holderIdOf(next, input.targetId)],
                     (_previous, next) => blockActOf("move-block", { analysisId, threadId }, next, input.targetId),
@@ -822,16 +905,15 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         describeCall: (input): string => `title the report ${input.title}`,
         // The title sits on the document, thus no container changes its child order.
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
-            const opened = await openThread(ctx);
-            if (opened.isErr()) {
-                return ok(refuse(opened.error));
+            const opening = await openMutation(ctx);
+            if ("done" in opening) {
+                return ok(opening.done);
             }
-            const { threadId, analysisId, state, token } = opened.value;
+            const { opened } = opening;
+            const { threadId, analysisId, state } = opened;
             return ok(
                 await land(
-                    threadId,
-                    token,
-                    state.document,
+                    opened,
                     ok(setTitle(state.document, input.title)),
                     () => [],
                     () => [

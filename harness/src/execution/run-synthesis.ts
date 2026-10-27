@@ -7,10 +7,10 @@
  *                            submission is the synthesis.
  *   - `report_blocker`    — the run produced nothing synthesizable. An
  *                            accepted synthesis wins over a blocker.
- *   - `literature_reviewer` — research sub-agent exposed as a tool. The tool
- *                            re-uses `createLiteratureReviewerTool`; the
- *                            sub-agent loop's brief is the only context handed
- *                            across the boundary (forSubAgent semantics).
+ *   - `literature_reviewer` — research sub-agent exposed as a tool. The
+ *                            runtime registers it one time and gives it here;
+ *                            the sub-agent loop's brief is the only context
+ *                            handed across the boundary (forSubAgent semantics).
  *
  * Two deliverables on a happy path: `synthesis.json` written to the run dir
  * and a `data-run-synthesis` chat data part emitted via the `emit` callback
@@ -57,9 +57,6 @@ import type { RunSession } from "../auth/types.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from "../tools/sandbox/report-blocker.js";
-import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
-import type { BioToolKeys } from "../tools/bio/keys.js";
-import type { CitationResolver } from "../citations/types.js";
 
 // ── Agent identity / budgets ────────────────────────────────────────
 
@@ -267,11 +264,9 @@ export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
-    /** API keys for the bio/chem tools the embedded literature reviewer uses. */
-    readonly bioKeys: BioToolKeys;
-    /** Shared resolver used by the embedded literature reviewer. */
-    readonly citationResolver: CitationResolver;
-    /** LLM usage-accounting seam for the synthesizer + reviewer loops; omitted falls back to the no-op recorder. */
+    /** The `literature_reviewer` tool of the synthesizer (`createLiteratureReviewerTool`). */
+    readonly literatureReviewer: Tool;
+    /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer and reviewer loops and of their read tools. */
     readonly toolOutputStore?: ToolOutputStore;
@@ -301,14 +296,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
     const innerCtx: InnerToolContext = { knownStepIds };
-    const reviewer = createLiteratureReviewerTool({
-        provider: input.provider,
-        model: input.model,
-        bioKeys: input.bioKeys,
-        citationResolver: input.citationResolver,
-        usageRecorder: input.usageRecorder,
-        toolOutputStore: input.toolOutputStore,
-    });
+    const reviewer = input.literatureReviewer;
 
     const submitTool = buildSubmitTool(innerCtx);
     const blockerTool = buildBlockerTool();

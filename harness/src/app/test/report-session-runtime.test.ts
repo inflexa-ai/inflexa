@@ -323,6 +323,68 @@ describe("createReportSessionRuntime", () => {
         expect(table).toMatchObject({ kind: "table", id: "t1", binding: { path: record.outputPath, hash: record.outputHash } });
     });
 
+    it("gives a rerun of an authoring call in a durable step the stored result, and lands the call one time", async () => {
+        const analysisId = "analysis-authoring-rerun";
+        const threadId = "thread-authoring-rerun";
+        await seedAnalysis(analysisId);
+        await seedThread(threadId, analysisId);
+        const runtime = createReportSessionRuntime({ pool });
+        let key = "wf-authoring:3";
+        const tools = createReportAuthoringTools(runtime.gateway, { stepKey: () => key });
+        const { ctx } = makeToolContext();
+        const call = { ...ctx, session: { ...ctx.session, scope: { kind: "analysis", analysisId, threadId } satisfies Scope } };
+        const storedResults = async (): Promise<number> => {
+            const { rows } = await pool.query<{ n: number }>({
+                text: "SELECT COUNT(*)::int AS n FROM cortex_authoring_results WHERE thread_id = $1",
+                values: [threadId],
+            });
+            return presentFirst(rows).n;
+        };
+        const sections = async (): Promise<string[]> => {
+            const loaded = await runtime.gateway.load(threadId);
+            if (loaded.outcome !== "found") throw new Error("expected found");
+            return loaded.state.document.sections.map((section) => section.id);
+        };
+        const section = { block: { kind: "section", id: "s1", title: "Findings", blocks: [] } };
+
+        const added = (await tools.add_block.execute(section, call))._unsafeUnwrap();
+        const addedAgain = (await tools.add_block.execute(section, call))._unsafeUnwrap();
+
+        expect(added.applied).toBe(true);
+        expect(addedAgain).toEqual(added);
+        expect(await sections()).toEqual(["s1"]);
+        expect(await storedResults()).toBe(1);
+
+        key = "wf-authoring:4";
+        const removed = (await tools.remove_block.execute({ targetId: "s1" }, call))._unsafeUnwrap();
+        const removedAgain = (await tools.remove_block.execute({ targetId: "s1" }, call))._unsafeUnwrap();
+
+        expect(removed.applied).toBe(true);
+        expect(removedAgain).toEqual(removed);
+        expect(await sections()).toEqual([]);
+        expect(await storedResults()).toBe(2);
+    });
+
+    it("gives a second persist of one call the stored result under the row lock, and writes nothing", async () => {
+        const analysisId = "analysis-persist-replay";
+        const threadId = "thread-persist-replay";
+        await seedAnalysis(analysisId);
+        await seedThread(threadId, analysisId);
+        const runtime = createReportSessionRuntime({ pool });
+        await runtime.gateway.load(threadId);
+        const landed = { applied: true as const, changed: [] };
+
+        const first = await runtime.gateway.persist(threadId, DOC_ONE, null, { key: "wf-persist:5", result: landed });
+        // The second run read the state before the first run landed, thus it carries the stale token.
+        const second = await runtime.gateway.persist(threadId, DOC_TWO, null, { key: "wf-persist:5", result: landed });
+
+        expect(first).toEqual({ outcome: "persisted" });
+        expect(second).toEqual({ outcome: "replayed", landed });
+        const loaded = await runtime.gateway.load(threadId);
+        if (loaded.outcome !== "found") throw new Error("expected found");
+        expect(loaded.state.document).toEqual(DOC_ONE);
+    });
+
     it("lands the pin with no citation when the deps bind no workspace root", async () => {
         const analysisId = "analysis-no-seam";
         const threadId = "thread-no-seam";

@@ -25,6 +25,8 @@
  * 10.12 synthesis) need a real DBOS context and live outside this file.
  */
 
+import { inProcessSubAgent } from "../../loop/sub-agent.js";
+import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { collapseWhitespace } from "../../lib/text.js";
 import { errorOf } from "../../lib/thrown.js";
@@ -62,6 +64,7 @@ import type { RunProvenanceEvent } from "../../provenance/seam.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "../sandbox-step.js";
 import { __resetWorkflowMetricsForTest } from "../metrics.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
+import type { ChatProvider } from "../../providers/types.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
@@ -124,9 +127,30 @@ type FakeDbosState = {
     setEventError: Error | null;
     /** Order of the acts that a test marks, with the `setEvent` calls: a test pushes its own marks. */
     timeline: string[];
+    /** The model of the synthesizer that `scriptSynthesis` gives. Absent, a synthesis request fails the test. */
+    synthesizer: ChatProvider | undefined;
 };
 
 let dbosState: FakeDbosState;
+
+type SynthesisScript = { readonly kind: "produced" } | { readonly kind: "blocker"; readonly reason: string } | { readonly kind: "no-summaries" };
+
+/**
+ * End the synthesis of the body with one outcome. The reads and the writes of the synthesis are stubbed, and a
+ * scripted synthesizer submits the synthesis of the step A or reports a blocker. The real synthesizer classifies it.
+ */
+function scriptSynthesis(script: SynthesisScript): void {
+    const summaries = script.kind === "no-summaries" ? [] : [{ stepId: "A", agentId: "scientific-executor", markdown: "## results" }];
+    dbosState.resultOnStep.set("synthesis.read-summaries", { workspaceRoot: "/unused", summaries });
+    dbosState.resultOnStep.set("synthesis.read-plan", "");
+    dbosState.resultOnStep.set("synthesis.index", undefined);
+    dbosState.resultOnStep.set("synthesis.persist", undefined);
+    const ending =
+        script.kind === "blocker"
+            ? callTools(toolCall("tu-1", "report_blocker", { reason: script.reason }))
+            : callTools(toolCall("tu-1", "submit_synthesis", { synthesis: synthesisOfStepA() }));
+    dbosState.synthesizer = scriptedModel([ending, reply([text("done")])]).provider;
+}
 
 /** A dag-state part as the body emits it; the parse fails the test on a drifted shape. */
 const DagStateSchema = z.looseObject({
@@ -181,7 +205,7 @@ async function mockDbos(): Promise<void> {
 
     // `DBOS.runStep` — execute the wrapped fn immediately, unless the step name
     // is registered to throw (the synthesis-failure path injects a throw at the
-    // "synthesize-findings" step without driving the real synthesizer). A step with
+    // first read of the synthesis, "synthesis.read-summaries"). A step with
     // `retriesAllowed` runs up to `maxAttempts` times with no wait, and `DBOS.stepStatus`
     // gives the attempt, as DBOS does. A cancel is never retried, and the last attempt
     // throws its own error.
@@ -337,6 +361,7 @@ beforeEach(async () => {
         events: [],
         setEventError: null,
         timeline: [],
+        synthesizer: undefined,
     };
     await mockDbos();
 });
@@ -465,10 +490,11 @@ function makeDeps(opts: {
         threadWrites: [],
     };
 
+    const unused = unusedChatProvider();
     const deps: ExecuteAnalysisDeps = {
-        citationResolver: unusedCitationResolver,
         pool: opts.pool.pool,
-        provider: unusedChatProvider(),
+        // The synthesis runs in the body, thus its model is the one that the test scripts.
+        provider: { capabilities: unused.capabilities, bind: (binding) => (dbosState.synthesizer ?? unused).bind(binding) },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
         sandboxStepCallable: () => {
             return Promise.reject(new Error("sandboxStepCallable should not be invoked directly"));
@@ -481,7 +507,15 @@ function makeDeps(opts: {
             },
         }),
         synthesisModel: "test-synthesis-model",
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        literatureReviewer: createLiteratureReviewerTool(
+            {
+                provider: unusedChatProvider(),
+                model: "test-model",
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
+            },
+            inProcessSubAgent,
+        ),
         runCharge: {
             open: () => okAsync(undefined),
             close: ({ outcome }) => {
@@ -1154,7 +1188,7 @@ describe("executeAnalysis body", () => {
                 ["B", suspendChild("B", 1, "payment_required")],
             ]),
         });
-        dbosState.throwOnStep.set("synthesize-findings", "synth boom");
+        dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toThrow("synth boom");
 
@@ -1200,8 +1234,8 @@ describe("executeAnalysis body", () => {
     // The parent captures the synthesizer's classified outcome and records it on
     // `cortex_runs` via `setRunSynthesisOutcome` — a focused
     // `UPDATE cortex_runs SET synthesis_status = $1, synthesis_reason = $2`. The
-    // synthesize-findings step is stubbed at the DBOS boundary (the real
-    // synthesizer is exercised in synthesize-run.test.ts), so these assert the
+    // reads and writes of the synthesis are stubbed at the DBOS boundary, and a
+    // scripted synthesizer gives the outcome (`scriptSynthesis`), so these assert the
     // workflow's persistence wiring: the recorded query text + values, and that
     // the write is absent when synthesis never ran.
 
@@ -1214,11 +1248,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.resultOnStep.set("synthesize-findings", {
-            findings: [{ title: "Upregulation of FOXP3", confidence: "high" }],
-            synthesisStatus: "produced",
-            synthesisReason: null,
-        });
+        scriptSynthesis({ kind: "produced" });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
@@ -1235,11 +1265,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.resultOnStep.set("synthesize-findings", {
-            findings: [],
-            synthesisStatus: "skipped_blocker",
-            synthesisReason: BLOCKER_REASON,
-        });
+        scriptSynthesis({ kind: "blocker", reason: BLOCKER_REASON });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
@@ -1256,7 +1282,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.throwOnStep.set("synthesize-findings", "synth boom");
+        dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("synth boom");
 
@@ -1284,7 +1310,7 @@ describe("executeAnalysis body", () => {
     // ── The run-phase `synthesis` ledger row ───────────────────────────
     //
     // The parent seeds a reserved `synthesis` row with the DAG, marks it running
-    // around the synthesize-findings step, and stamps its terminal status from
+    // around the synthesis, and stamps its terminal status from
     // the classified outcome BEFORE the run row's own terminal write (the
     // step-execution-tracking spec). The fake pool records every query in
     // order, so "the run row was still `running` when the step row's terminal
@@ -1319,7 +1345,7 @@ describe("executeAnalysis body", () => {
                 ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
             ]),
         });
-        dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
+        scriptSynthesis({ kind: "produced" });
 
         await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
 
@@ -1357,7 +1383,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
+        scriptSynthesis({ kind: "produced" });
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
@@ -1370,9 +1396,9 @@ describe("executeAnalysis body", () => {
         const [status, completedAt, durationMs, error, runId, stepId] = presentAt(updates, 0).values ?? [];
         expect(status).toBe("completed");
         expect(typeof completedAt).toBe("string");
-        // Exactly one fake-clock tick elapses between the two bracketing DBOS.now()
-        // reads (the synthesize step itself is stubbed), so the duration is exact.
-        expect(durationMs).toBe(FAKE_CLOCK_STEP_MS);
+        // The synthesis reads the fake clock once for each of its four progress
+        // phases, thus five ticks elapse between the two bracketing DBOS.now() reads.
+        expect(durationMs).toBe(5 * FAKE_CLOCK_STEP_MS);
         expect(error).toBeNull();
         expect(runId).toBe("run-test");
         expect(stepId).toBe("synthesis");
@@ -1395,7 +1421,7 @@ describe("executeAnalysis body", () => {
                 pool,
                 childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
             });
-            dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: outcome, synthesisReason: reason });
+            scriptSynthesis(reason === null ? { kind: "no-summaries" } : { kind: "blocker", reason });
 
             await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
 
@@ -1414,7 +1440,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.throwOnStep.set("synthesize-findings", "synth boom");
+        dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("synth boom");
 
@@ -1434,7 +1460,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.throwErrorOnStep.set("synthesize-findings", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
+        dbosState.throwErrorOnStep.set("synthesis.read-summaries", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("has been cancelled");
 
@@ -1472,7 +1498,7 @@ describe("executeAnalysis body", () => {
                 ["B", suspendChild("B", 1, "payment_required")],
             ]),
         });
-        dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
+        scriptSynthesis({ kind: "produced" });
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toBeInstanceOf(
             DBOSErrors.DBOSWorkflowCancelledError,
@@ -1492,7 +1518,7 @@ describe("executeAnalysis body", () => {
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
-        dbosState.throwErrorOnStep.set("synthesize-findings", synthesisSuspendError("payment_required"));
+        dbosState.throwErrorOnStep.set("synthesis.read-summaries", synthesisSuspendError("payment_required"));
         dbosState.throwErrorOnStep.set("self-cancel-suspended", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
@@ -1521,7 +1547,7 @@ describe("executeAnalysis body", () => {
                 ["B", suspendChild("B", 1, "quota_exhausted")],
             ]),
         });
-        dbosState.throwErrorOnStep.set("synthesize-findings", synthesisSuspendError("payment_required"));
+        dbosState.throwErrorOnStep.set("synthesis.read-summaries", synthesisSuspendError("payment_required"));
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toBeInstanceOf(
             DBOSErrors.DBOSWorkflowCancelledError,
@@ -2165,7 +2191,7 @@ describe("executeAnalysis run end ownership", () => {
         it("a failed status write does not mask the synthesis error, and the record carries the failed status and its error", async () => {
             const pool = makeFakePool(alwaysFails);
             const { deps } = makeDeps({ pool, childResults: completeA() });
-            dbosState.throwOnStep.set("synthesize-findings", "synth boom");
+            dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
 
             await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("synth boom");
 
@@ -2536,6 +2562,28 @@ describe("run and step outcome metrics", () => {
     });
 });
 
+/** A synthesis of the step A that the checks of `submit_synthesis` accept. */
+function synthesisOfStepA() {
+    return {
+        overview: "A test run analyzed gene expression.",
+        conclusions: "The analysis establishes a signature.",
+        findings: [
+            {
+                stepId: "A",
+                title: "Upregulation of FOXP3",
+                description: "FOXP3 is upregulated.",
+                confidence: "high",
+                noveltyStatus: "confirmed",
+                literatureInterpretation: "Consistent with prior reports.",
+                references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" }],
+            },
+        ],
+        themes: [{ name: "Regulatory program", findings: [{ stepId: "A", title: "Upregulation of FOXP3" }], narrative: "FOXP3 marks the program." }],
+        limitations: ["Single cohort."],
+        keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
+    };
+}
+
 describe("synthesizeFindings run stream", () => {
     it("writes data-run-synthesis flat, and the part passes RunSynthesisPartSchema", async () => {
         const base = await mkdtemp(join(tmpdir(), "cortex-synthesis-stream-"));
@@ -2543,24 +2591,7 @@ describe("synthesizeFindings run stream", () => {
             const outDir = join(base, "a1", "runs", "run-test", "A", "output");
             await mkdir(outDir, { recursive: true });
             await writeFile(join(outDir, "summary.md"), "## results\n\nFOXP3 up.");
-            const synthesis = {
-                overview: "A test run analyzed gene expression.",
-                conclusions: "The analysis establishes a signature.",
-                findings: [
-                    {
-                        stepId: "A",
-                        title: "Upregulation of FOXP3",
-                        description: "FOXP3 is upregulated.",
-                        confidence: "high",
-                        noveltyStatus: "confirmed",
-                        literatureInterpretation: "Consistent with prior reports.",
-                        references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" }],
-                    },
-                ],
-                themes: [{ name: "Regulatory program", findings: [{ stepId: "A", title: "Upregulation of FOXP3" }], narrative: "FOXP3 marks the program." }],
-                limitations: ["Single cohort."],
-                keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
-            };
+            const synthesis = synthesisOfStepA();
             const { provider } = scriptedModel([callTools(toolCall("tu-1", "submit_synthesis", { synthesis })), reply([text("done")])]);
             const { deps } = makeDeps({ pool: makeFakePool(), childResults: new Map() });
 

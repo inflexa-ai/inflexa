@@ -380,10 +380,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         // recovered step reaches this line again. `capExecStreams` cuts the
         // streams and keeps every other field, thus the kernel accounting the
         // sandbox reported reaches the record intact.
-        exec: (ref, request, emit, deadline) =>
+        exec: (ref, request, emit, deadline, givenExecId) =>
             DBOS.runStep(
                 async () => {
-                    const execId = stepExecId();
+                    const execId = givenExecId ?? stepExecId();
                     stableSpan("sandbox.exec", "sandbox.exec", { [ATTR_INFLEXA_EXEC_ID]: execId });
                     const result = capExecStreams(await runExec(ref, execId, request, emit, deadline, execDeps), streamCap);
                     recordSandboxExec({

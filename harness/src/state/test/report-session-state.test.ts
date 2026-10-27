@@ -9,9 +9,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
+import type { Connectable } from "../../lib/db-result.js";
+import type { Querier } from "../db.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
@@ -379,9 +381,14 @@ describe("createReportSessionStateStore", () => {
         const first = await pool.connect();
         const second = await pool.connect();
         try {
-            // The store calls `query` alone, thus a pooled client stands in for the pool here.
-            const firstStore = createReportSessionStateStore({ pool: first });
-            const secondStore = createReportSessionStateStore({ pool: second });
+            // The append calls `query` alone, thus a pooled client answers each statement here.
+            const onClient = (client: PoolClient): Querier & Connectable => {
+                const forward = client.query.bind(client);
+                const query: Querier["query"] = (textOrConfig, values) => forward(textOrConfig, values);
+                return { query, connect: () => pool.connect() };
+            };
+            const firstStore = createReportSessionStateStore({ pool: onClient(first) });
+            const secondStore = createReportSessionStateStore({ pool: onClient(second) });
             const record = derivation("race.csv");
 
             await first.query("BEGIN");

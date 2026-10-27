@@ -22,6 +22,8 @@
  *     host, then self-cancels to CANCELLED.
  */
 
+import { inProcessSubAgent } from "../../../../loop/sub-agent.js";
+import { createLiteratureReviewerTool } from "../../../../tools/research/literature-reviewer.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -212,7 +214,6 @@ describe("the suspension cascade — parent self-cancel", () => {
 
         const order: string[] = [];
         const deps: ExecuteAnalysisDeps = {
-            citationResolver: unusedCitationResolver,
             pool: rig.pool,
             provider: unusedChatProvider(),
             embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
@@ -220,7 +221,15 @@ describe("the suspension cascade — parent self-cancel", () => {
             resolveWorkspaceRoot: (id: string) => Promise.resolve(join(SUSPENSION_TEST_SESSIONS_DIR, id)),
             workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            literatureReviewer: createLiteratureReviewerTool(
+                {
+                    provider: unusedChatProvider(),
+                    model: "test-model",
+                    bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                    citationResolver: unusedCitationResolver,
+                },
+                inProcessSubAgent,
+            ),
             runCharge: {
                 open: () => {
                     order.push("openRunningCharge");
@@ -280,7 +289,6 @@ describe("the suspension cascade — parent self-cancel", () => {
 
         const order: string[] = [];
         const deps: ExecuteAnalysisDeps = {
-            citationResolver: unusedCitationResolver,
             pool: rig.pool,
             provider: unusedChatProvider(),
             embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
@@ -288,7 +296,15 @@ describe("the suspension cascade — parent self-cancel", () => {
             resolveWorkspaceRoot: (id: string) => Promise.resolve(join(SUSPENSION_TEST_SESSIONS_DIR, id)),
             workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            literatureReviewer: createLiteratureReviewerTool(
+                {
+                    provider: unusedChatProvider(),
+                    model: "test-model",
+                    bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                    citationResolver: unusedCitationResolver,
+                },
+                inProcessSubAgent,
+            ),
             runCharge: {
                 open: () => {
                     order.push("openRunningCharge");

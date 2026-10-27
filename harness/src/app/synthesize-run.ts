@@ -27,7 +27,6 @@ import { forSubAgent } from "../auth/types.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { EmitFn } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { RunFinding } from "../workflows/execute-analysis.js";
 import {
     buildRunSynthesisPart,
@@ -45,7 +44,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { CitationResolver } from "../citations/types.js";
+import type { Tool } from "../tools/define-tool.js";
 
 export type SynthesizeRunDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
@@ -58,10 +57,8 @@ export type SynthesizeRunDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
-    /** API keys for the bio/chem tools the embedded literature reviewer uses. */
-    readonly bioKeys: BioToolKeys;
-    /** Shared resolver used by the embedded literature reviewer. */
-    readonly citationResolver: CitationResolver;
+    /** The `literature_reviewer` tool of the synthesizer. */
+    readonly literatureReviewer: Tool;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer and reviewer loops and of their read tools. */
@@ -84,6 +81,12 @@ export type SynthesizeRunParams = {
     readonly emit: EmitFn;
     /** Domain progress callback — the phases the run-completed UI renders. */
     readonly onProgress: (phase: SynthesisPhase, activity: string, extra?: SynthesisProgressExtra) => void | Promise<void>;
+    /**
+     * Run a read or a write of the synthesis once: a step in the body of a workflow, a plain call in a process. The
+     * loop of the synthesizer runs outside it, thus each of its model calls is a step of its own, and each reviewer
+     * call starts a child workflow.
+     */
+    readonly durably: <T>(name: string, run: () => Promise<T>) => Promise<T>;
 };
 
 export type SynthesizeRunResult = {
@@ -96,17 +99,15 @@ export type SynthesizeRunResult = {
 };
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
-    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, bioKeys, citationResolver, usageRecorder } = deps;
-    const { analysisId, runId, completedSteps, session, emit, onProgress } = params;
+    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, literatureReviewer, usageRecorder } = deps;
+    const { analysisId, runId, completedSteps, session, emit, onProgress, durably } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
 
     try {
-        const workspaceRoot = await resolveWorkspaceRoot(analysisId);
-        const summaries = await loadStepSummariesFromDisk({
-            workspaceRoot,
-            runId,
-            completedSteps,
+        const { workspaceRoot, summaries } = await durably("synthesis.read-summaries", async () => {
+            const root = await resolveWorkspaceRoot(analysisId);
+            return { workspaceRoot: root, summaries: await loadStepSummariesFromDisk({ workspaceRoot: root, runId, completedSteps }) };
         });
         if (summaries.length === 0) {
             const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
@@ -117,15 +118,14 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             return { findings: [], synthesisStatus: "skipped_no_summaries", synthesisReason: "no-summaries" };
         }
 
-        const planNarrative = await loadPlanNarrative(pool, runId, analysisId);
+        const planNarrative = await durably("synthesis.read-plan", () => loadPlanNarrative(pool, runId, analysisId));
         const synthesizerSession = forSubAgent(session, "run-synthesizer");
 
         const result = await generateRunSynthesis({
             provider,
             session: synthesizerSession,
             model: synthesisModel,
-            bioKeys,
-            citationResolver,
+            literatureReviewer,
             usageRecorder,
             toolOutputStore: deps.toolOutputStore,
             summaries,
@@ -149,28 +149,30 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
         const synthesis = result.synthesis;
 
         await onProgress("indexing", "Indexing synthesis for search");
-        try {
-            await ensureSearchIndex(pool, analysisId, embedding.dimensions);
-            const vectorStore = createVectorStore(pool);
-            const indexName = searchIndexName(analysisId);
-            const synthesisText = formatSynthesisEmbeddingText(synthesis);
-            const [vector] = unwrapOrThrow(await embedding.embed([synthesisText], synthesizerSession));
-            if (!vector) throw new Error("synthesize-run: empty embedding response");
-            unwrapOrThrow(
-                await vectorStore.upsert({
-                    indexName,
-                    vectors: [vector],
-                    metadata: [{ text: synthesisText, type: "synthesis", runId, path: `runs/${runId}/synthesis.json` }],
-                    ids: [`/${analysisId}/runs/${runId}/synthesis.json`],
-                }),
-            );
-        } catch (indexErr) {
-            const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
-            logger.warn("vector indexing failed", { runId, ...logger.errorFields(indexErr) });
-        }
+        await durably("synthesis.index", async () => {
+            try {
+                await ensureSearchIndex(pool, analysisId, embedding.dimensions);
+                const vectorStore = createVectorStore(pool);
+                const indexName = searchIndexName(analysisId);
+                const synthesisText = formatSynthesisEmbeddingText(synthesis);
+                const [vector] = unwrapOrThrow(await embedding.embed([synthesisText], synthesizerSession));
+                if (!vector) throw new Error("synthesize-run: empty embedding response");
+                unwrapOrThrow(
+                    await vectorStore.upsert({
+                        indexName,
+                        vectors: [vector],
+                        metadata: [{ text: synthesisText, type: "synthesis", runId, path: `runs/${runId}/synthesis.json` }],
+                        ids: [`/${analysisId}/runs/${runId}/synthesis.json`],
+                    }),
+                );
+            } catch (indexErr) {
+                const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
+                logger.warn("vector indexing failed", { runId, ...logger.errorFields(indexErr) });
+            }
+        });
 
         await onProgress("persisting", "Persisting synthesis");
-        await persistSynthesis({ workspaceRoot, runId, synthesis });
+        await durably("synthesis.persist", () => persistSynthesis({ workspaceRoot, runId, synthesis }));
 
         await emit(buildRunSynthesisPart(runId, synthesis));
         await onProgress("complete", "Literature-grounded synthesis ready");
@@ -186,8 +188,8 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
         const msg = errorMessageOf(err) ?? textOf(err);
         await onProgress("failed", "Synthesis could not be completed — step summaries are still available", { error: msg });
         // A genuine synthesis failure must fail the run loudly (D10): re-throw so
-        // the synthesis step errors and the parent workflow goes to ERROR. The
-        // honest non-fatal outcomes (no-summaries / blocker) early-return above.
+        // the parent workflow goes to ERROR. The honest non-fatal outcomes
+        // (no-summaries / blocker) early-return above.
         throw err;
     }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { inProcessSubAgent } from "../../../loop/sub-agent.js";
 import { okAsync } from "neverthrow";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { z } from "zod";
@@ -24,12 +25,15 @@ const toolNamesOf = (call: LanguageModelV4CallOptions): string[] => (call.tools 
 describe("literatureReviewer sub-agent tool", () => {
     it("runs the child loop on a derived child Session and surfaces the report", async () => {
         const { provider, calls } = scriptedModel([reply([text("Evidence report: BRCA1 is a tumour suppressor.")])]);
-        const tool = createLiteratureReviewerTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-        });
+        const tool = createLiteratureReviewerTool(
+            {
+                provider,
+                model: "claude-test",
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
+            },
+            inProcessSubAgent,
+        );
 
         const parentSession = makeSession({
             agentId: "conversation-agent",
@@ -42,9 +46,6 @@ describe("literatureReviewer sub-agent tool", () => {
             signal: new AbortController().signal,
             emit: (event) => {
                 emitted.push(event);
-            },
-            ask: () => {
-                return Promise.reject(new Error("ask should not be reached"));
             },
         };
 
@@ -91,13 +92,16 @@ describe("literatureReviewer sub-agent tool", () => {
     it("declares read_tool_output after the lookup tools when it has a tool output store", async () => {
         const { provider, calls } = scriptedModel([reply([text("Evidence report.")])]);
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
-        const tool = createLiteratureReviewerTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-            toolOutputStore,
-        });
+        const tool = createLiteratureReviewerTool(
+            {
+                provider,
+                model: "claude-test",
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
+                toolOutputStore,
+            },
+            inProcessSubAgent,
+        );
 
         (await tool.execute({ brief: "Investigate BRCA1." }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -119,12 +123,15 @@ describe("literatureReviewer sub-agent tool", () => {
         // transcript then holds no report. The tool must surface that as an
         // error that names the finish reason, not as `ok({ report: "" })`.
         const { provider } = scriptedModel([reply([])]);
-        const tool = createLiteratureReviewerTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            citationResolver: unusedCitationResolver,
-        });
+        const tool = createLiteratureReviewerTool(
+            {
+                provider,
+                model: "claude-test",
+                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
+            },
+            inProcessSubAgent,
+        );
 
         const { ctx } = makeToolContext();
         const outcome = await tool.execute({ brief: "Investigate BRCA1." }, ctx);

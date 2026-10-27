@@ -8,6 +8,8 @@
  * tested in `execution/test/run-synthesis.test.ts`; here we assert the wiring.
  */
 
+import { inProcessSubAgent } from "../../loop/sub-agent.js";
+import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -151,8 +153,10 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             embedding,
             resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
             synthesisModel: "claude-test",
-            bioKeys: BIO_KEYS,
-            citationResolver: unusedCitationResolver,
+            literatureReviewer: createLiteratureReviewerTool(
+                { provider, model: "claude-test", bioKeys: BIO_KEYS, citationResolver: unusedCitationResolver },
+                inProcessSubAgent,
+            ),
         },
         get embedderCalls() {
             return embedderCalls;
@@ -161,6 +165,9 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
         cleanup: () => rm(base, { recursive: true, force: true }),
     };
 }
+
+/** A read or a write of the synthesis, run once in the process. */
+const runNow = <T>(_name: string, run: () => Promise<T>): Promise<T> => run();
 
 function captureProgress(): {
     phases: string[];
@@ -188,6 +195,7 @@ describe("synthesizeRun", () => {
                 session: makeRunSession(),
                 emit: () => {},
                 onProgress,
+                durably: runNow,
             });
             expect(result.findings).toEqual([]);
             expect(result.synthesisStatus).toBe("skipped_no_summaries");
@@ -220,6 +228,7 @@ describe("synthesizeRun", () => {
                 session: makeRunSession(),
                 emit,
                 onProgress,
+                durably: runNow,
             });
 
             expect(result.findings).toEqual([{ title: "Upregulation of FOXP3", confidence: "high" }]);
@@ -252,6 +261,7 @@ describe("synthesizeRun", () => {
                 session: makeRunSession(),
                 emit: () => {},
                 onProgress,
+                durably: runNow,
             });
 
             expect(result.findings).toEqual([]);
@@ -286,6 +296,7 @@ describe("synthesizeRun", () => {
                 completedSteps: [STEP_ID],
                 session: makeRunSession(),
                 emit: () => {},
+                durably: runNow,
                 onProgress: (phase, _activity, extra = {}) => {
                     records.push({ phase, extra });
                 },
@@ -317,6 +328,7 @@ describe("synthesizeRun", () => {
                     session: makeRunSession(),
                     emit: () => {},
                     onProgress,
+                    durably: runNow,
                 }),
             ).rejects.toThrow("terminal tool call");
             expect(phases.at(0)).toBe("starting");

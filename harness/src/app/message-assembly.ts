@@ -39,6 +39,8 @@ export type AssembleMessagesArgs = {
     readonly workingMemory: WorkingMemoryStore;
     /** Diagnostic seam for the history repair record; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /** Read the thread up to this `seq` only (see `LoadRecentOptions.throughSeq`). */
+    readonly throughSeq?: number;
 };
 
 export type AssembledMessages = {
@@ -55,7 +57,22 @@ export type AssembledMessages = {
  * the thread and renders working memory.
  */
 export async function assembleMessages(args: AssembleMessagesArgs): Promise<AssembledMessages> {
-    const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, { keepFirstTurn: args.threadType === "report" }));
+    const history = await loadHistoryView(args);
+    const userMessage = sanitizedUserMessage(args.userInput);
+    const contextRecords = await contextRecordsFor(args, history);
+    return { history, userMessage, contextRecords };
+}
+
+/** The user input as the message of the turn. Sanitization applies one time, here, to the new user input only. */
+export function sanitizedUserMessage(userInput: string): ModelMessage {
+    return { role: "user", content: normalizeUnicode(redactSecrets(userInput)) };
+}
+
+/** The view of the thread before the turn, with a not-run result for each stored call that has no result. */
+export async function loadHistoryView(
+    args: Pick<AssembleMessagesArgs, "threadId" | "threadType" | "history" | "logger" | "throughSeq">,
+): Promise<LoopMessage[]> {
+    const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, { keepFirstTurn: args.threadType === "report", throughSeq: args.throughSeq }));
 
     // Read-side safety net for the wire contract: every tool call carries a
     // result. The loop upholds it at every exit, but the store outlives any one
@@ -73,15 +90,7 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
             tools: repaired.map((d) => d.toolName),
         });
     }
-
-    // Sanitization — applied once, here, to the new user input only.
-    const userMessage: ModelMessage = {
-        role: "user",
-        content: normalizeUnicode(redactSecrets(args.userInput)),
-    };
-
-    const contextRecords = await contextRecordsFor(args, history);
-    return { history, userMessage, contextRecords };
+    return history;
 }
 
 /** The context records of one turn, in the order analysis context, run activity, working memory. */

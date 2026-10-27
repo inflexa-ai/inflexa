@@ -10,7 +10,6 @@ import { forSubAgent } from "../../auth/types.js";
 import { isInterruptedMessage } from "../../memory/ai-sdk-message-storage.js";
 import { modelFailureOf } from "../../providers/errors.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { AskRejectedError } from "../../tools/approval/contract.js";
 import { defineTool, withToolCallRecord, withToolResultImages, type Tool } from "../../tools/define-tool.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
@@ -261,13 +260,19 @@ describe("runLoop — a denial of the user", () => {
             description: "Asks for approval.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: () => Promise.reject(new AskRejectedError("not this file")),
+            approval: () => ({ title: "Edit a file", command: "edit notes.md" }),
+            execute: () => Promise.resolve(ok({ ran: true })),
         });
         // A second request fails the test: the script holds one reply.
         const { provider, calls } = scriptedModel([callTools(toolCall("c1", "echo", {}), toolCall("c2", "asking", {}))]);
         const { emit, events } = recordingEmit();
 
-        const result = await runLoop(agentWith([namedTool("echo", runs), asking]), [user("go")], makeSession(), options(provider, emit));
+        const result = await runLoop(
+            agentWith([namedTool("echo", runs), asking]),
+            [user("go")],
+            makeSession(),
+            options(provider, emit, { approve: () => Promise.resolve({ kind: "denied", feedback: "not this file" }) }),
+        );
 
         expect(calls).toHaveLength(1);
         expect(runs).toEqual(["echo"]);

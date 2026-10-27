@@ -25,13 +25,12 @@
 
 import type { Pool } from "pg";
 
-import type { AuthContext } from "../auth/types.js";
-import type { RunAuthorizer } from "../execution/run-authorizer.js";
+import type { AuthContext, Identity } from "../auth/types.js";
 import type { CompactionRules } from "../loop/compaction.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
+import type { SandboxClient } from "../sandbox/client.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
-import type { DeriveTableRunner } from "../tools/report-session/derive-table.js";
 import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider, ProviderOptions } from "../providers/types.js";
@@ -107,16 +106,11 @@ export type ReportSessionAgentDeps = {
     /** Derivation ledger -- the derivation tool appends one record for each derived table. */
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     /**
-     * Derivation-exec seam -- the derivation tool runs one ephemeral container for each derived table, and
-     * the composition realizes this seam over a registered workflow. Omitted, the tool reports that the
-     * composition gives no sandbox, and it derives nothing.
+     * Sandbox client -- the derivation tool runs one ephemeral container for each derived table, inside the
+     * step of its call. Omitted, the tool reports that the composition gives no sandbox, and it derives
+     * nothing.
      */
-    readonly runDerivation?: DeriveTableRunner;
-    /**
-     * Run-authorization seam -- the derivation tool authorizes the exec and revokes on every terminal path.
-     * Omitted, the tool derives nothing, the same as an absent sandbox client.
-     */
-    readonly runAuthorizer?: RunAuthorizer;
+    readonly sandboxClient?: SandboxClient;
     /** Thread store -- the record tool reads the anchor of the report thread, and the preview tool names it. */
     readonly threads: Pick<ThreadStore, "getThread" | "setAutoTitle">;
     /** Headless-Chrome config -- the eyes tool opens the rendered page. */
@@ -131,7 +125,7 @@ export type ReportSessionAgentDeps = {
      * Reference-resolution factory -- absent until a realization lands; the preview tool and the record tool
      * degrade as data. The factory binds one analysis, thus a tool makes the resolver over the scope of the call.
      */
-    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => Promise<ReferenceResolver>;
+    readonly makeResolver?: (scope: { analysisId: string; identity: Identity; auth: AuthContext }) => Promise<ReferenceResolver>;
     /**
      * Page-asset lookup -- the preview tool maps the module specifier of a manifest
      * entry onto a file on disk. Omitted falls back to the module resolution of the
@@ -170,7 +164,7 @@ export type ReportSessionAgentDeps = {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, runDerivation, runAuthorizer, makeSessionPages, resolvePageUrl, provenance } = deps;
+    const { derivations, sandboxClient, makeSessionPages, resolvePageUrl, provenance } = deps;
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
     const observation = provenance ? { provenance } : {};
@@ -209,8 +203,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             gateway,
             resolveWorkspaceRoot,
             derivations,
-            runDerivation,
-            runAuthorizer,
+            sandboxClient,
             ...observation,
             logger,
         }),

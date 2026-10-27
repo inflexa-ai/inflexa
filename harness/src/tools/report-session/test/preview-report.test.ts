@@ -8,7 +8,6 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { isLowerHexOfLength } from "../../../lib/test/text-shapes.js";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { existsSync } from "node:fs";
@@ -367,10 +366,27 @@ describe("the pass path", () => {
         const part = z.object({ type: z.string(), data: z.object({ id: z.string(), renderedAt: z.string(), title: z.string() }) }).parse(emitted[0]);
         expect(part.type).toBe("data-report-rendered");
         expect(part.data.title).toBe("Report");
-        // The id is one UUID per emission, and the timestamp is a valid ISO instant.
-        const idSegments = part.data.id.split("-");
-        expect(idSegments.length === 5 && [8, 4, 4, 4, 12].every((n, i) => isLowerHexOfLength(idSegments[i] ?? "", n))).toBe(true);
+        // The id is the id of the call, and the timestamp is a valid ISO instant.
+        expect(part.data.id).toBe(ctx.invocationId);
         expect(new Date(part.data.renderedAt).toISOString()).toBe(part.data.renderedAt);
+    });
+
+    it("gives a rerun of the call the same part id", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => Promise.resolve(createFixtureResolver()),
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+        });
+        const { ctx, emitted } = ctxWithEmitted("t1");
+
+        (await tool.execute({}, ctx))._unsafeUnwrap();
+        (await tool.execute({}, ctx))._unsafeUnwrap();
+
+        const ids = emitted.map((event) => z.object({ data: z.object({ id: z.string() }) }).parse(event).data.id);
+        expect(ids).toEqual([ctx.invocationId, ctx.invocationId]);
     });
 
     it("emits nothing on the gap arm", async () => {

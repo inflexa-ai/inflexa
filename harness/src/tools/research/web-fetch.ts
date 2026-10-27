@@ -4,7 +4,7 @@
  * One URL in, extracted text out: HTML becomes Markdown (Readability over a
  * `linkedom` DOM, then Turndown, with the body text as the fallback), a PDF
  * becomes the text of its first 100 pages through `pdf-parse`, and a text or
- * JSON body passes through. A bad scheme, a denied approval, an HTTP error, an
+ * JSON body passes through. A bad scheme, an internal address, an HTTP error, an
  * oversized body, a redirect chain past the limit, and a body the tool cannot
  * extract are all normal results on the ok channel — never a failure of the
  * turn.
@@ -15,8 +15,8 @@
  * runs no name lookup for a literal — and a name classifies inside the `lookup`
  * hook of `node:http`/`node:https`, over every address of the resolution,
  * because the connect layer falls back to a later address after an earlier one
- * fails. A guarded hop is destroyed before the user is asked, and an approval
- * re-sends the hop.
+ * fails. A guarded hop is destroyed before it connects, and the call gives a
+ * refusal that names the origin. The tool asks nothing.
  */
 
 import { errorMessageOf } from "../../lib/thrown.js";
@@ -35,7 +35,6 @@ import { presentLast } from "../../lib/present.js";
 import { hasWhitespace } from "../../lib/text.js";
 
 import { keptTextOf, pairSafeIndex, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "../../loop/tool-output.js";
-import { AskRejectedError, type AskRequest } from "../approval/contract.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
 import { HARNESS_USER_AGENT } from "../lib/api-utils.js";
 import { isGuardedAddress } from "./guarded-address.js";
@@ -119,7 +118,7 @@ export type WebFetchOutput =
     | WebFetchOk
     | { readonly status: "invalid_url"; readonly text: string }
     | { readonly status: "unsupported_scheme"; readonly scheme: string; readonly text: string }
-    | { readonly status: "refused"; readonly text: string; readonly feedback?: string }
+    | { readonly status: "refused"; readonly text: string }
     | { readonly status: "http_error"; readonly httpStatus: number; readonly text: string }
     | { readonly status: "redirect_limit"; readonly text: string }
     | { readonly status: "body_too_large"; readonly limitBytes: number; readonly contentType: string; readonly text: string }
@@ -160,7 +159,7 @@ function isAbort(error: Error, ctx: ToolContext): boolean {
     return error.name === "AbortError" || ctx.signal.aborted;
 }
 
-/** The origin of an `always` approval: scheme, host, and the port the connection uses, with the default filled in. */
+/** The origin of a URL: scheme, host, and the port the connection uses, with the default filled in. */
 function originOf(url: URL): string {
     const port = url.port !== "" ? url.port : url.protocol === "https:" ? "443" : "80";
     return `${url.protocol}//${url.hostname}:${port}`;
@@ -200,31 +199,13 @@ function withoutCredentials(url: URL): URL {
     return clean;
 }
 
-async function askForOrigin(url: URL, origin: string, ctx: ToolContext): Promise<{ kind: "approved" } | { kind: "denied"; output: WebFetchOutput }> {
-    const request: AskRequest = {
-        title: "web_fetch: read a page from a guarded address",
-        command: url.toString(),
-        grantKey: `web_fetch:${origin}`,
-        detail:
-            `The address of ${url.hostname} is in a guarded range (loopback, private, link-local, or reserved). ` +
-            `An "always" answer approves every later web_fetch of the origin ${origin}; a "once" answer approves this call only.`,
+function refusedGuarded(url: URL): WebFetchOutput {
+    return {
+        status: "refused",
+        text:
+            `web_fetch did not read ${url.toString()}: the origin ${originOf(url)} has an internal address ` +
+            `(loopback, private, link-local, or reserved), and web_fetch reads no internal address.`,
     };
-    try {
-        await ctx.ask(request);
-        return { kind: "approved" };
-    } catch (error) {
-        if (error instanceof AskRejectedError) {
-            return {
-                kind: "denied",
-                output: {
-                    status: "refused",
-                    text: `web_fetch did not read ${url.toString()}: the guarded address ${url.hostname} was not approved.`,
-                    feedback: error.feedback,
-                },
-            };
-        }
-        throw error;
-    }
 }
 
 type HopOutcome = { kind: "response"; response: WebFetchHopResponse; dispose: () => void } | { kind: "guarded" } | { kind: "failed"; output: WebFetchOutput };
@@ -232,15 +213,13 @@ type HopOutcome = { kind: "response"; response: WebFetchHopResponse; dispose: ()
 type HopState = {
     readonly lookup: WebFetchLookup;
     readonly hopRequest: WebFetchHopRequest;
-    readonly approvedOrigins: ReadonlySet<string>;
     readonly ctx: ToolContext;
 };
 
 /**
  * Send one hop. The `lookup` hook classifies every address of each resolution
- * before the connect can use any of it: when a guarded address appears and the
- * origin is not approved, the hook answers nothing and destroys the request, so
- * no socket opens while the user reads the prompt.
+ * before the connect can use any of it: when a guarded address appears, the hook
+ * answers nothing and destroys the request, so no socket opens.
  */
 function sendHop(url: URL, state: HopState): Promise<HopOutcome> {
     return new Promise((resolve, reject) => {
@@ -278,8 +257,7 @@ function sendHop(url: URL, state: HopState): Promise<HopOutcome> {
                         callback(error, "");
                         return;
                     }
-                    const guarded = addresses.some((entry) => isGuardedAddress(entry.address));
-                    if (guarded && !state.approvedOrigins.has(originOf(url))) {
+                    if (addresses.some((entry) => isGuardedAddress(entry.address))) {
                         // With no callback the connect never starts, and the destroy
                         // carries the signal out through the error event.
                         request.destroy(new GuardedHopSignal());
@@ -600,11 +578,9 @@ async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolCont
         return { status: "invalid_url", text: `web_fetch cannot read ${rawUrl}: it is not a valid URL.` };
     }
 
-    const approvedOrigins = new Set<string>();
     const state: HopState = {
         lookup: deps.lookup ?? dnsLookup,
         hopRequest: deps.hopRequest ?? defaultHopRequest,
-        approvedOrigins,
         ctx,
     };
 
@@ -615,22 +591,12 @@ async function fetchOneUrl(rawUrl: string, deps: WebFetchToolDeps, ctx: ToolCont
         }
         if (current.username !== "" || current.password !== "") current = withoutCredentials(current);
 
-        const origin = originOf(current);
         const literal = stripAddressBrackets(current.hostname);
-        if (isIP(literal) !== 0 && isGuardedAddress(literal) && !approvedOrigins.has(origin)) {
-            const asked = await askForOrigin(current, origin, ctx);
-            if (asked.kind === "denied") return asked.output;
-            approvedOrigins.add(origin);
-        }
+        if (isIP(literal) !== 0 && isGuardedAddress(literal)) return refusedGuarded(current);
 
         const hop = await sendHop(current, state);
         if (hop.kind === "failed") return hop.output;
-        if (hop.kind === "guarded") {
-            const asked = await askForOrigin(current, origin, ctx);
-            if (asked.kind === "denied") return asked.output;
-            approvedOrigins.add(origin);
-            continue;
-        }
+        if (hop.kind === "guarded") return refusedGuarded(current);
 
         const response = hop.response;
         try {
@@ -759,8 +725,8 @@ export function createWebFetchTool(deps: WebFetchToolDeps = {}): Tool<z.infer<ty
             "The tool returns at most 30,000 characters; a longer text is cut, and the result carries a reference " +
             "through which `read_tool_output` reads the remainder when the harness kept it.\n" +
             "ABSENCE AND FAILURE ARE NORMAL: the statuses invalid_url (a URL the tool cannot parse), " +
-            "unsupported_scheme (a scheme that is not http or https), refused (a guarded address the user did not " +
-            "approve), http_error, redirect_limit, body_too_large, unextractable, and request_failed each name what " +
+            "unsupported_scheme (a scheme that is not http or https), refused (an internal address: loopback, " +
+            "private, link-local, or reserved), http_error, redirect_limit, body_too_large, unextractable, and request_failed each name what " +
             "happened. Report the status and continue, do not retry unchanged.",
         inputSchema: WebFetchInputSchema,
         describeCall: ({ url }) => url,
