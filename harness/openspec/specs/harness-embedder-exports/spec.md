@@ -3,7 +3,9 @@
 ## Purpose
 
 Define the curated root barrel of `@inflexa-ai/harness` — which names it carries, and the one rule that decides whether a new name belongs there. The harness is a library with two embedders, the CLI and the bench, and each one wires its own composition root. A name that an embedder cannot write without a deep import is a hole in that front door, not a matter of taste. This capability holds the rule and the families of names that it admits. Every deep subpath stays importable: the barrel is additive, and it is not a wall.
+
 ## Requirements
+
 ### Requirement: The root barrel carries each name that an embedder cannot otherwise write
 
 `src/index.ts` is the curated front door of `@inflexa-ai/harness`. A name MUST
@@ -71,3 +73,20 @@ removal is a breaking change of the public surface, and the release notes MUST n
 - **WHEN** an embedder imports `createAnthropicProvider` or `AnthropicProviderDeps` from `@inflexa-ai/harness`
 - **THEN** the import fails to compile
 
+### Requirement: The loop internals are not on the root barrel
+
+The root barrel MUST NOT carry `runAgent`, `RunStep`, `passthroughStep`, `durableStep`, `createStreamingChat`, or `AgentChat`. No embedder drives the loop. An embedder opens and runs a chat turn, renders the frames of the wire contract, and defines host tools. The release notes MUST name each removed name.
+
+#### Scenario: A removed name does not resolve
+
+- **WHEN** an embedder imports `runAgent` from `@inflexa-ai/harness`
+- **THEN** the import fails to compile
+
+### Requirement: The root barrel carries the surface of an embedder
+
+The root barrel MUST carry the opening and the run of a chat turn, and the wire contracts of the chat frames. It MUST also carry `defineTool`, `ToolContext`, and the model factory of the composition root. A host tool that `defineTool` makes MUST NOT import a type of the AI SDK.
+
+#### Scenario: A host tool needs no AI SDK type
+
+- **WHEN** an embedder defines a host tool with `defineTool` from `@inflexa-ai/harness`
+- **THEN** its code imports no name from `ai`

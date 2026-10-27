@@ -1,10 +1,9 @@
-# Spec Delta
+# analogy-report Specification
 
 ## Purpose
-
 The `generate_analogy_report` tool finds structural analogies for an open scientific problem. Its `analogical-reasoner` sub-agent extracts the problem, finds cited solutions from other fields, and gives the report through a submit tool.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: The reasoner gives its report through submit tools
 

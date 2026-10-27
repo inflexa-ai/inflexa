@@ -1,10 +1,9 @@
-# Spec Delta
+# harness-agent-loop Specification
 
 ## Purpose
-
 The agent loop of the harness runs one conversation of one agent with a model and its tools. It is durable inside a DBOS workflow. It has the same behavior in a chat turn, a workflow step, and a sub-agent.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: A loop inside a workflow replays its completed calls
 
