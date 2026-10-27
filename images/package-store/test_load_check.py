@@ -175,5 +175,32 @@ class LinkRuleTests(LinkRuleTestCase):
             self.assertEqual(load_check.main(), 1)
 
 
+class FarmLockTrackTests(unittest.TestCase):
+    """The farm-lock reader loads every R track the lock writer emits."""
+
+    def test_the_r_filter_carries_the_source_track_beside_the_named_tracks(self):
+        lock = {"packages": [
+            {"track": "cran", "name": "SeedCran", "store_dir": "seedcran-1.0-aaaaaaaaaaaaaaaa"},
+            {"track": "github", "name": "SeedGit", "store_dir": "seedgit-1.0-bbbbbbbbbbbbbbbb"},
+            {"track": "source", "name": "SeedSrc", "store_dir": "seedsrc-1.0-cccccccccccccccc"},
+            {"track": "python", "name": "seedpy", "store_dir": "seedpy-1.0-dddddddddddddddd"},
+        ]}
+        seen = {}
+
+        def record_r(pairs, _lib_paths):
+            seen["r"] = [name for name, _store in pairs]
+            return []
+
+        root = Path(tempfile.mkdtemp())
+        try:
+            with unittest.mock.patch.object(load_check, "check_r", side_effect=record_r), \
+                    unittest.mock.patch.object(load_check, "check_python", side_effect=lambda *_a, **_k: []):
+                load_check.from_farm_lock(root, root / "farm", lock)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+        self.assertEqual(seen["r"], ["SeedCran", "SeedGit", "SeedSrc"])
+
+
 if __name__ == "__main__":
     unittest.main()

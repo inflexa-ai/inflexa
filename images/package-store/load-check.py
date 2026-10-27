@@ -239,7 +239,7 @@ def from_farm_lock(store_root: Path, farm: Path, lock: dict) -> list[dict]:
     store = store_root / "store"
     site = farm / "python" / "site-packages"
     python_pkgs = [p for p in lock.get("packages", []) if p.get("track") == "python"]
-    r_pkgs = [p for p in lock.get("packages", []) if p.get("track") in ("cran", "bioconductor", "github")]
+    r_pkgs = [p for p in lock.get("packages", []) if p.get("track") in ("cran", "bioconductor", "github", "source")]
     # The farm links every Python distribution into one site-packages, thus
     # the farm path alone resolves each import. The import names come from the
     # graph when it is present, and from the package name otherwise.

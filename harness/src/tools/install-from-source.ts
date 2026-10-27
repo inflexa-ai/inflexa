@@ -314,7 +314,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
             "When a command fails at the egress wall for a host the plan did not name, add the host to `hosts` and send the amended plan with the next command — the user approves the wider list and the session restarts under it. " +
             "Each exec is a FRESH shell: a `cd` or an `export` of one call never persists into the next. " +
             "Use absolute paths or `cd <dir> && <command>`; the default working directory is the working-copy root of the session (the `workingDir` of the start result). " +
-            "TRY THE STANDARD PATH FIRST: for R, a pak lockfile resolve of the local source tree, which pulls the CRAN and Bioconductor dependencies; " +
+            "TRY THE STANDARD PATH FIRST: for R — the tree ROOT must hold the DESCRIPTION, so a package under a subdirectory needs a custom script that builds from there — a pak lockfile resolve of the local source tree, which pulls the CRAN and Bioconductor dependencies; " +
             "for Python, a wheel build of the tree, then a hash-pinned resolve of the wheel's requirements. Custom steps are for when the standard path fails, and the plan names the strategy you propose. " +
             "THE IDENTITY AND VERSION COME FROM THE PACKAGE METADATA — the `Package` and `Version` fields of the DESCRIPTION for R, the `.dist-info` of the built wheel for Python — " +
             "never from the repository name, and never ask the user for a version. " +

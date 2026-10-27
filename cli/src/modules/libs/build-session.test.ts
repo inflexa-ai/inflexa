@@ -55,6 +55,8 @@ class Engine {
     baseLabel: string = BASE_LABEL;
     /** When true, each exec of a session command runs its command for real under the recorded `timeout` args, the way the container would. */
     execForReal: boolean = false;
+    /** When true, the next held-container create fails once, the way an engine hiccup breaks a plan restart. */
+    failNextDetach: boolean = false;
 
     constructor(private readonly execOutput: { readonly code: number; readonly stdout: string } = { code: 0, stdout: "ran\n" }) {}
 
@@ -64,7 +66,13 @@ class Engine {
         if (command[0] === "logs") return { code: 0, stdout: "[egress-allowlist] active: github.com (1 host(s) resolve)\n", stderr: "" };
         if (command[0] === "inspect") return { code: 0, stdout: "true\n", stderr: "" };
         if (command[0] === "rm") return { code: 0, stdout: "", stderr: "" };
-        if (command[0] === "run" && command[1] === "-d") return { code: 0, stdout: "container-id\n", stderr: "" };
+        if (command[0] === "run" && command[1] === "-d") {
+            if (this.failNextDetach) {
+                this.failNextDetach = false;
+                return { code: 1, stdout: "", stderr: "engine hiccup\n" };
+            }
+            return { code: 0, stdout: "container-id\n", stderr: "" };
+        }
         if (command[0] === "image" && command[1] === "inspect") {
             const format = command[3] ?? "";
             if (format === "{{.Id}}") return { code: 0, stdout: "sha256:provisioner\n", stderr: "" };
@@ -262,7 +270,10 @@ describe("the held container", () => {
         expect(pin).not.toContain("--user");
         expect(pin[pin.length - 1]).toContain(`https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/`);
         expect(pin[pin.length - 1]).toContain("Suites: %s %s-updates %s-backports %s-security");
-        expect(pin[pin.length - 1]).toContain("rm -f /etc/apt/sources.list");
+        expect(pin.some((line) => line.includes("rm -f /etc/apt/sources.list"))).toBe(true);
+        // Every other sources.list.d entry dies beside the pin file, the rule
+        // the clean run's pin applies.
+        expect(pin.some((line) => line.includes(`! -name 'inflexa-snapshot.sources' -exec rm -rf`))).toBe(true);
     });
 
     test("reads the creation time of both engines — docker's RFC3339 and podman's Go layout — as one snapshot stamp", async () => {
@@ -334,6 +345,41 @@ describe("the held container", () => {
         await session.exec(handle.sessionId, { command: "ls", execId: `${handle.sessionId}-2` });
 
         expect(engine.of("run").filter((call) => call[1] === "-d")).toHaveLength(startsBefore);
+    });
+
+    test("a failed plan restart keeps the approved plan, and the next exec restarts the session", async () => {
+        const engine = new Engine();
+        const session = createBuildSession("/store/root", hostOf(engine));
+        const handle = await session.start(SOURCE, ANALYSIS_ID);
+
+        engine.failNextDetach = true;
+        await expect(
+            session.exec(handle.sessionId, { command: "R CMD build .", execId: `${handle.sessionId}-1`, plan: PLAN }),
+        ).rejects.toThrow();
+
+        // The tool binds the plan at ask time, thus the resend of the unchanged
+        // plan carries no plan fields. The session restarts under the plan the
+        // user approved, and no command ran against the removed container.
+        await session.exec(handle.sessionId, { command: "ls", execId: `${handle.sessionId}-2` });
+        expect(engine.of("run").filter((call) => call[1] === "-d")).toHaveLength(3);
+        expect(engine.of("exec").filter((call) => (call[call.length - 1] ?? "").startsWith("set -e && codename="))).toHaveLength(2);
+        expect(engine.execOf("R CMD build .")).toEqual([]);
+        expect(engine.execOf("ls")).not.toEqual([]);
+    });
+
+    test("a recovery restart that fails again names the remedy", async () => {
+        const engine = new Engine();
+        const session = createBuildSession("/store/root", hostOf(engine));
+        const handle = await session.start(SOURCE, ANALYSIS_ID);
+
+        engine.failNextDetach = true;
+        await expect(
+            session.exec(handle.sessionId, { command: "R CMD build .", execId: `${handle.sessionId}-1`, plan: PLAN }),
+        ).rejects.toThrow();
+        engine.failNextDetach = true;
+        await expect(session.exec(handle.sessionId, { command: "ls", execId: `${handle.sessionId}-2` })).rejects.toThrow(
+            /Stop the session and start a new one/,
+        );
     });
 
     test("stop removes the container and the scratch tree", async () => {

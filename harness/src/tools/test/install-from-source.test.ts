@@ -163,6 +163,7 @@ describe("install_from_source — the description", () => {
         expect(description).toContain("FRESH shell");
         expect(description).toContain("absolute paths");
         expect(description).toContain("`cd <dir> && <command>`");
+        expect(description).toContain("the tree ROOT must hold the DESCRIPTION");
         expect(description).toContain("the default working directory is the working-copy root");
     });
 
