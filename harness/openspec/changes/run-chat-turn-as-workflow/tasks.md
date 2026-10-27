@@ -1,9 +1,8 @@
 # Tasks
 
-## 1. Keys and the model reference
+## 1. Keys
 
 - [x] 1.1 Take the key of a usage record, of a cut tool output, and of a compaction from the workflow id when the session has no run frame (D2). Do a DBOS test: a rerun of a long tool result in a workflow gives the same reference and one store row.
-- [ ] 1.2 Add a model reference to the input of a turn, a run, and the data profile, and resolve the provider from it in the runtime (D12). Do a test: a recovered run uses the model of its input after the configured model changed.
 
 ## 2. The stream of a turn
 
