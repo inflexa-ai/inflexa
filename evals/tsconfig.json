@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": [
+      "bun"
+    ],
+    "paths": {
+      "@inflexa-ai/harness": [
+        "../harness/src/index.ts"
+      ],
+      "@inflexa-ai/harness/*": [
+        "../harness/src/*"
+      ],
+      "@/*": [
+        "../cli/src/*"
+      ]
+    },
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "lib": [
+      "ESNext",
+      "DOM"
+    ]
+  },
+  "include": [
+    "*.ts",
+    "lib",
+    "cases",
+    "test",
+    "../cli/src/**/*.d.ts"
+  ]
+}
