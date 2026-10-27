@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * The reference markup: the one evidence marker, and the one appendix list under it.
  *

@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * The value markup: the metric card, the data table, the figure, and the citation card.
  *

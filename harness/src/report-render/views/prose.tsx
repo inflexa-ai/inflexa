@@ -1,3 +1,4 @@
+/** @jsxImportSource hono/jsx */
 /**
  * The prose markup: the text block, the claim block, the section wrapper, and the page navigation.
  *
