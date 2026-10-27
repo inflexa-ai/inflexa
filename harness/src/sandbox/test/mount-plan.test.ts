@@ -68,11 +68,18 @@ describe("buildMountPlan", () => {
         expect(plan.env).toEqual({
             PROVENANCE_WATCH_DIRS: "/an-1",
             EXEC_RECORD_DIR: "/mnt/exec-records",
-            R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
+            R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran:/mnt/libs/current/r/source",
             NODE_PATH: "/mnt/libs/current/node/node_modules",
             PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
         });
         expect(plan.farmPath).toBe("/mnt/libs/current");
+    });
+
+    test("R_LIBS_SITE covers the source subtree under both toolchain sources", () => {
+        const store = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "store" });
+        const image = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "image" });
+        expect(String(store.env.R_LIBS_SITE).split(":")).toContain(`${store.farmPath ?? ""}/r/source`);
+        expect(String(image.env.R_LIBS_SITE).split(":")).toContain(`${image.farmPath ?? ""}/r/source`);
     });
 
     test("toolchainSource store equals the absent field", () => {
@@ -85,7 +92,7 @@ describe("buildMountPlan", () => {
         const plan = buildMountPlan(COORDS, { libs: true, refs: false, toolchainSource: "image" });
         expect(plan.farmPath).toBe("/mnt/libs/farm");
         expect(plan.env.NODE_PATH).toBe("/opt/node/node_modules");
-        expect(plan.env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
+        expect(plan.env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran:/mnt/libs/farm/r/source");
         // /opt/conda/bin comes before the farm python/bin at the end, thus a
         // farm script never shadows an image tool.
         expect(plan.env.PATH?.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);

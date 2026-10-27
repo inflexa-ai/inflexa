@@ -64,9 +64,13 @@ fields:
 - `packages` — one entry per linked distribution: `name`, `version`,
   `track` (the subtree of its links), `store_dir`, `hash` (the full tree
   sha256), and `requested`. `requested` obeys the PEP 376 meaning: true for
-  a direct ask, false for a transitive dependency.
-- `languages` — the per-language provenance. `python` carries `version` and
-  `index`. `r` carries `version`, `bioc_releases`, and the embedded
+  a direct ask, false for a transitive dependency. An entry of a
+  source-built distribution MUST also carry `source`: the URL and the
+  commit of a git source, or the tree hash of a local folder, together
+  with the qualified pin of the store directory. An index entry carries no
+  `source`, because the pinned index is its provenance.
+- `languages` — the per-language provenance. `python` carries `version`
+  and `index`. `r` carries `version`, `bioc_releases`, and the embedded
   `pak_lock`. Each language object owns its own fields, and the JSON schema
   validates each shape.
 - `warm` — the replay record, in the catalog farm only: per package, the
@@ -80,7 +84,8 @@ harness is that definition — a second copy in another format can drift,
 and nothing would read it. The mount gate MUST accept a farm
 only when `inflexa.lock` parses and its schema version is known. The legacy
 markers `packages.txt`, `meta.json`, and `lock.json` MUST NOT be part of the
-farm contract.
+farm contract. The `source` field is additive, thus the schema number stays
+1.
 
 The gate belongs to the party that can read the farm. A backend with a
 host-readable farm path MUST prove the lock itself, before the mount. A
@@ -100,8 +105,8 @@ the `farm_unusable` error, which carries the farm path, the lock path, the
 lock error type, and the cause, and no container and no Job is made.
 Without the fact, a gate failure degrades. The sandbox client factory MUST
 refuse at composition when the fact is set and no gate can run: no store
-configured, or a K8s `fixed` farm source without the host mountpoint of the
-libs volume.
+configured, or a K8s `fixed` farm source without the host mountpoint of
+the libs volume.
 
 #### Scenario: The gate reads the lock
 
@@ -144,6 +149,18 @@ libs volume.
 - **GIVEN** a config with `packageStore: "required"` and no `libStorePath` on Docker, or a `fixed` farm source and no `libStorePvcRoot` on K8s
 - **WHEN** `createSandboxClient` runs
 - **THEN** it throws, and the message names the missing field
+
+#### Scenario: A source-built entry carries its source
+
+- **GIVEN** a farm that links the source-built `SeedMatchR==2.0.0@git:2fc0c4f`
+- **WHEN** the lock is read
+- **THEN** its entry carries `source` with the URL, the commit `2fc0c4f`, and the qualified pin, and the lock still parses at schema 1
+
+#### Scenario: An index entry carries no source
+
+- **GIVEN** a farm that links the CRAN `Seurat`
+- **WHEN** the lock is read
+- **THEN** its entry carries no `source` field
 
 ### Requirement: The per-analysis cache mounts read-write
 
@@ -261,9 +278,9 @@ entry under the title `Node (npm)`.
 
 A package section MUST carry its `track` as data, `python` or `r`. One
 mapping turns a lock subtree into a track: `python` gives `python`, and
-`cran`, `bioconductor`, and `github` give `r`. A title is display only,
-and no reader MUST derive a track from a title. A section of system tools
-or of node packages carries no track.
+`cran`, `bioconductor`, `github`, and `source` give `r`. A title is display
+only, and no reader MUST derive a track from a title. A section of system
+tools or of node packages carries no track.
 
 Each answer MUST render the version beside the name, as `name==version`.
 The targeted `names` path MUST also carry the store directory and the full
@@ -382,11 +399,17 @@ the two forms that a plan writes, `python:<name>` and `r:<name>`.
 - **WHEN** the tool lists
 - **THEN** each `igraph` row carries a mark that names `python:igraph` and `r:igraph`, and no other row carries a mark
 
+#### Scenario: A source-built package lists under the R track
+
+- **GIVEN** a farm lock with a `source`-subtree entry `SeedMatchR==2.0.0`
+- **WHEN** the tool lists with `language: "r"`
+- **THEN** the section lists, because the mapping reads the `source` subtree as the `r` track
 ### Requirement: The lib-store resolver env is injected only when the store is mounted
 
 When the lib store is mounted, the mount plan MUST emit the package-resolver
 env so language runtimes resolve imports against the mounted farm.
-`R_LIBS_SITE` MUST cover the github/bioconductor/cran subtrees of the farm.
+`R_LIBS_SITE` MUST cover the github/bioconductor/cran/source subtrees of
+the farm, thus a source-built R package loads beside the catalog tracks.
 With `toolchainSource: "store"` (or absent), `NODE_PATH` MUST be
 `/mnt/libs/current/node/node_modules`, and `PATH` MUST include
 `/mnt/libs/current/conda/bin`. With `toolchainSource: "image"`, `NODE_PATH`
@@ -407,6 +430,12 @@ these vars MUST be emitted.
 - **GIVEN** the lib store is mounted and `toolchainSource: "image"` is declared
 - **WHEN** the mount plan is built
 - **THEN** the `PATH` ends with the farm `python/bin`, after every image path
+
+#### Scenario: A source-built R package loads through the resolver env
+
+- **GIVEN** a farm that links a source-built R package under `r/source`
+- **WHEN** the mount plan is built
+- **THEN** `R_LIBS_SITE` covers the `r/source` subtree of the farm
 
 ### Requirement: No runtime package installation
 

@@ -13,11 +13,11 @@ that is why it never runs inside the provisioner. Two callers:
   (`--farm-lock`), and the check loads each advertised package. The workflow
   applies the per-track floor to the result.
 
-The check is one import per Python distribution and one namespace load per R
-package. The result is one JSON object on stdout: per package, ok or the
-error text. The exit code is 0 when every load passed, and 1 otherwise —
-the CALLER decides what a failure gates, because the build floor and the
-flight gate differ.
+The check is one import per Python distribution, one namespace load per R
+package, and one link rule over the staged source-built directories. The
+result is one JSON object on stdout: per package, ok or the error text. The
+exit code is 0 when every load passed, and 1 otherwise — the CALLER decides
+what a failure gates, because the build floor and the flight gate differ.
 """
 
 from __future__ import annotations
@@ -32,6 +32,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PYTHON = "/usr/bin/python3"
+
+# The marker of a source-built store directory, written beside its pin by the
+# provisioner. The presence of the marker selects a directory for the link
+# rule: an index package keeps its pinned-index provenance and its artifacts
+# pass the import check alone.
+BUILD_MARKER = ".inflexa-build.json"
+
+# Every ELF file starts with these four bytes. A cheaper probe (the .so
+# suffix) misses a binary that a build named its own way, and the rule owns
+# each ELF file of the artifact, not each shared object it declares.
+ELF_MAGIC = b"\x7fELF"
 
 # A testable top-level import is one Python identifier. The graph's import
 # lists carry what the wheels shipped, and a wheel can ship junk beside its
@@ -158,7 +169,69 @@ def from_nodes(store_root: Path, report: dict) -> list[dict]:
     # directory of its store directory carries that same name.
     r_pkgs = [(key, node.get("name"))
               for key, node in sorted(nodes.items()) if node.get("track") == "r"]
-    return check_python(imports_by_pkg, python_paths) + check_r(r_pkgs, r_paths)
+    return (check_python(imports_by_pkg, python_paths) + check_r(r_pkgs, r_paths)
+            + check_link_rule(nodes, store))
+
+
+def build_record_of(store_dir: Path) -> bool:
+    """Whether a store directory carries a source-build record.
+
+    The record sits beside the pin marker: at the top of a Python store
+    directory, one level down inside an R one.
+    """
+    if (store_dir / BUILD_MARKER).is_file():
+        return True
+    return any((p / BUILD_MARKER).is_file() for p in store_dir.iterdir() if p.is_dir())
+
+
+def missing_libraries(cmd: list[str], path: Path) -> list[str]:
+    """Each library that `ldd` reports as not found for one ELF file."""
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    found = []
+    for line in (proc.stdout or "").splitlines():
+        if "not found" not in line:
+            continue
+        lib, _arrow, _rest = line.partition("=>")
+        name = lib.strip() or line.strip()
+        found.append(name)
+    return found
+
+
+def check_link_rule(nodes: dict, store: Path) -> list[dict]:
+    """The link rule over the staged source-built directories.
+
+    The load check alone cannot gate a source build: an import that loads a
+    missing shared library reports the loader's message, which names no
+    library. The rule reads each ELF file of a staged directory that carries
+    a build record, and it names each library the image does not hold. An R
+    artifact reads `R CMD ldd`, because R's own installation holds libraries
+    the loader finds only through R's path; each other artifact reads plain
+    `ldd`.
+    """
+    results = []
+    for key, node in sorted(nodes.items()):
+        store_dir = store / key
+        if not build_record_of(store_dir):
+            continue
+        track = node.get("track")
+        missing: dict[str, str] = {}
+        for path in sorted(store_dir.rglob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            with path.open("rb") as f:
+                if f.read(4) != ELF_MAGIC:
+                    continue
+            cmd = (["R", "CMD", "ldd", str(path)] if track == "r"
+                   else ["ldd", str(path)])
+            for lib in missing_libraries(cmd, path):
+                missing.setdefault(lib, str(path))
+        if not missing:
+            results.append({"package": key, "track": track, "ok": True})
+            continue
+        detail = "; ".join(f"{lib} (linked by {file})" for lib, file in sorted(missing.items()))
+        results.append({"package": key, "track": track, "ok": False,
+                        "error": f"links a library the image does not carry: {detail}"})
+    return results
 
 
 def from_farm_lock(store_root: Path, farm: Path, lock: dict) -> list[dict]:
