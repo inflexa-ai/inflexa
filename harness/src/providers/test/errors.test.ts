@@ -87,6 +87,23 @@ describe("classifyProviderError", () => {
         });
     });
 
+    // The field failure: the proxy stopped while it streamed a reply. The status of the response was 200, and the
+    // body broke with a reset connection.
+    it("classifies a stream that broke after a 200 as a retryable provider error", () => {
+        const broken = Object.assign(new Error("Failed to process successful response"), {
+            status: 200,
+            cause: Object.assign(new Error("ECONNRESET: The socket connection was closed unexpectedly."), { code: "ECONNRESET" }),
+        });
+        expect(classifyProviderError(broken)).toEqual({ kind: "provider", retryable: true });
+    });
+
+    it("classifies a 200 with no connection failure as a non-retryable provider error", () => {
+        expect(classifyProviderError(Object.assign(new Error("Failed to process successful response"), { status: 200 }))).toEqual({
+            kind: "provider",
+            retryable: false,
+        });
+    });
+
     it("classifies a connection-refused error as a retryable provider error", () => {
         const connErr = new TypeError("fetch failed", {
             cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8181"), {
