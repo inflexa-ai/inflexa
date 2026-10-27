@@ -53,6 +53,7 @@ import {
 import type {
     ReportSessionStateGateway,
     SeenStampResult,
+    LandingCall,
     SessionStateLoad,
     SessionStatePersist,
     SessionStateToken,
@@ -240,7 +241,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
     }
 
     const gateway: ReportSessionStateGateway = {
-        async load(threadId: string): Promise<SessionStateLoad> {
+        async load(threadId: string, callKey?: string): Promise<SessionStateLoad> {
             const ensured = await ensureSessionState(threadId);
             if (ensured.outcome === "failed") {
                 switch (ensured.kind) {
@@ -252,30 +253,39 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
                         return { outcome: "failed", detail: ensured.detail };
                 }
             }
-            return toLoad(ensured.state);
+            const loaded = toLoad(ensured.state);
+            if (callKey === undefined || loaded.outcome !== "found") return loaded;
+            const stored = await store.readCallResult(threadId, callKey);
+            if (stored.isErr()) return { outcome: "failed", detail: describeDbError(stored.error) };
+            return stored.value === null ? loaded : { ...loaded, landed: stored.value.result };
         },
-        async persist(threadId: string, document: DraftDocument, expected: SessionStateToken): Promise<SessionStatePersist> {
-            const result = await store.persistDocument({ threadId, document, expected });
-            return result.match(
-                (outcome): SessionStatePersist => {
-                    switch (outcome) {
-                        case "persisted":
-                            return { outcome: "persisted" };
-                        case "conflict":
-                            // A concurrent turn landed first. The turn refuses and reads the state again.
-                            return { outcome: "conflict" };
-                        case "absent":
-                            // The pin writes the row first. A persist that finds no row means the
-                            // pin-first invariant broke.
-                            log.error("the session-state persist matched no row", { threadId });
-                            return { outcome: "failed", detail: "no report session state row exists to persist the document" };
+        async persist(threadId: string, document: DraftDocument, expected: SessionStateToken, call?: LandingCall): Promise<SessionStatePersist> {
+            const result = await store.persistDocument({ threadId, document, expected, call });
+            if (result.isErr()) {
+                log.error("the session-state persist failed", { threadId, ...log.errorFields(result.error.cause) });
+                return { outcome: "failed", detail: describeDbError(result.error) };
+            }
+            switch (result.value) {
+                case "persisted":
+                    return { outcome: "persisted" };
+                case "conflict":
+                    // A concurrent turn landed first. The turn refuses and reads the state again.
+                    return { outcome: "conflict" };
+                case "replayed": {
+                    // An earlier run of the call landed while this run waited on the row lock.
+                    const stored = call === undefined ? null : (await store.readCallResult(threadId, call.key)).unwrapOr(null);
+                    if (stored === null) {
+                        log.error("the stored result of an authoring call did not read back", { threadId });
+                        return { outcome: "failed", detail: "the stored result of an earlier run of this call did not read back" };
                     }
-                },
-                (error): SessionStatePersist => {
-                    log.error("the session-state persist failed", { threadId, ...log.errorFields(error.cause) });
-                    return { outcome: "failed", detail: describeDbError(error) };
-                },
-            );
+                    return { outcome: "replayed", landed: stored.result };
+                }
+                case "absent":
+                    // The pin writes the row first. A persist that finds no row means the
+                    // pin-first invariant broke.
+                    log.error("the session-state persist matched no row", { threadId });
+                    return { outcome: "failed", detail: "no report session state row exists to persist the document" };
+            }
         },
         async stampRendered(threadId: string, hash: string): Promise<StampResult> {
             const result = await store.stampRendered(threadId, hash);

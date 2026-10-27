@@ -13,6 +13,8 @@
  *      `buildRunSynthesisPart` emits the chat data part shape.
  */
 
+import { inProcessSubAgent } from "../../loop/sub-agent.js";
+import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
@@ -71,9 +73,6 @@ function makeToolCtx(): ToolContext {
         session: makeRunSession(),
         signal: new AbortController().signal,
         emit: () => {},
-        ask: () => {
-            return Promise.reject(new Error("ask should not be reached"));
-        },
     };
 }
 
@@ -143,8 +142,17 @@ function synthesize(script: readonly ScriptStep[], extra: Partial<GenerateRunSyn
         provider: model.provider,
         session: makeRunSession(),
         model: "claude-test",
-        bioKeys: BIO_KEYS,
-        citationResolver: unusedCitationResolver,
+        literatureReviewer: createLiteratureReviewerTool(
+            {
+                provider: model.provider,
+                model: "claude-test",
+                bioKeys: BIO_KEYS,
+                citationResolver: unusedCitationResolver,
+                usageRecorder: extra.usageRecorder,
+                toolOutputStore: extra.toolOutputStore,
+            },
+            inProcessSubAgent,
+        ),
         summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
         planNarrative: "Compare stimulated vs resting T-cells.",
         runId: RUN_ID,

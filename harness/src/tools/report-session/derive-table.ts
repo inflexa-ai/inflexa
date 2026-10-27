@@ -5,10 +5,12 @@
  * table that a block can bind: a join, a pivot, or an aggregate. The agent writes the script, and the record
  * chains the derived table back to the evidence that made it.
  *
- * A session derivation is not an analysis run. It mints no run id, it registers no artifact, and it writes
+ * A session derivation is not an analysis run. It mints no run id, no mandate, and no artifact, and it writes
  * under the session directory alone. The rails are the rails of the value tier (`tasks/extract-values.ts`):
- * the injected exec runner, the identity mint, and the authorizer on every terminal path. The container is
- * ephemeral, and it goes away with the work.
+ * one ephemeral container inside the step of the call (`sandbox/step-sandbox.ts`), which goes away with the
+ * work. The container stays until the record lands, thus a rerun of the step before the record adopts the
+ * container and the exec record of the first attempt, and the script does not run again. A rerun after the
+ * record finds the record of its call, and it gives that table back.
  *
  * The container mounts the analysis tree read-only, and one write mount covers the `derived/` directory of
  * the session alone. The script writes its table into that mount directly, thus a large table makes no
@@ -25,31 +27,25 @@
  * The tool refuses an output name that the membership already holds. A record is immutable, and a second
  * derivation of one table takes a new name.
  *
- * A composition with no sandbox client and no run authorizer cannot derive at all. The tool reports that
- * condition one time, up front, the same discipline as the eyes. A per-attempt failure would instead read as
- * a transient fault, and it would invite a repeat of a call that can never pass.
- *
- * The container runs behind a seam, and never in the turn. An exec is a durable step of a workflow, and a
- * report turn is not a workflow. Thus the tool takes an injected runner, and a registered workflow owns the
- * container. The tool holds no sandbox client, and it imports no DBOS.
+ * A composition with no sandbox client cannot derive at all. The tool reports that condition one time, up
+ * front, the same discipline as the eyes. A per-attempt failure would instead read as a transient fault, and
+ * it would invite a repeat of a call that can never pass.
  */
 
 import { ok, type Result } from "neverthrow";
-import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-import type { RunSession } from "../../auth/types.js";
-import { errnoOf } from "../../lib/fs-result.js";
+import type { SpawnSession } from "../../auth/types.js";
 import type { Suspension } from "../../workflows/suspension.js";
-import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
-import { deliverNotice, passGate } from "../../lib/hooks.js";
 import { classifyWithinRoot, computeSha256, computeSha256File } from "../../lib/fs-helpers.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ResourceSpec } from "../../config/resource-limits.js";
 import { snapshotEntry } from "../../report-model/reference-resolver.js";
-import { generateExecutionId } from "../../sandbox/execution-id.js";
+import { isWorkflowCancellation } from "../../runtime/dbos.js";
+import type { SandboxClient } from "../../sandbox/client.js";
+import { passSpawnSession, withStepSandbox } from "../../sandbox/step-sandbox.js";
 import type { ExecRequest, ExecResult } from "../../sandbox/types.js";
 import type { DerivationRecord, DerivationSource, ReportSessionStateStore } from "../../state/report-session-state.js";
 import { isSafeId, reportSessionDerivedDir, toSandboxPath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
@@ -94,36 +90,35 @@ export type DeriveTableResult =
  * The construction deps of the derivation tool.
  *
  * `derivations` is the append side of the durable session state, thus the record lands beside the document
- * and the pin. `sandboxClient` and `runAuthorizer` are the two rails of the exec, and a composition that
- * binds neither leaves the session with no derivation at all. `resolveWorkspaceRoot` maps the analysis of
- * the call onto its workspace root, thus one singleton tool serves every analysis.
+ * and the pin. `sandboxClient` is the rail of the exec, and a composition that binds none leaves the session
+ * with no derivation at all. `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root,
+ * thus one singleton tool serves every analysis.
  */
 export type DeriveTableToolDeps = {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
-    readonly runDerivation?: DeriveTableRunner;
-    readonly runAuthorizer?: RunAuthorizer;
+    readonly sandboxClient?: SandboxClient;
     /** The provenance seam; an unbound session emit emits nothing and the derivation runs the same. */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
 };
 
 /** The synthetic run id and step id of one derivation. Both are constants, and neither names a run row. */
-export const DERIVE_RUN_LITERAL = "derive-table" as const;
-export const DERIVE_STEP_LITERAL = "derive" as const;
+const DERIVE_RUN_LITERAL = "derive-table" as const;
+const DERIVE_STEP_LITERAL = "derive" as const;
 
 /** The provenance agent id. No agent loop runs in the container, thus this names the derivation pass. */
 const DERIVE_AGENT_ID = "table-deriver" as const;
 
 /** The exec budget of one derivation. It matches the budget of the value tier. */
-export const DERIVATION_DEADLINE_MS = 300_000;
+const DERIVATION_DEADLINE_MS = 300_000;
 
 /**
  * The container size of one derivation. A join or a pivot loads each declared input into pandas at one
  * time, thus the container needs the headroom of the value tier.
  */
-export const DERIVATION_RESOURCES: ResourceSpec = { cpu: 2, memoryGb: 8 };
+const DERIVATION_RESOURCES: ResourceSpec = { cpu: 2, memoryGb: 8 };
 
 /** The cap of the script, in bytes. A reshaping script sits far under it, and the command line carries it. */
 const SCRIPT_CAP_BYTES = 64 * 1024;
@@ -136,6 +131,17 @@ export const DERIVE_INPUT_ENV = "DERIVE_INPUTS";
 
 /** The environment variable that carries the container path of the output file into the container. */
 export const DERIVE_OUTPUT_ENV = "DERIVE_OUTPUT";
+
+/**
+ * The shell of the exec: clear the output path, then run the script. The script rides as the first
+ * positional argument, thus `python3 -c` gets it byte for byte.
+ *
+ * The clearance belongs to the exec, and not to the host. A failed derivation can leave a file at the name
+ * that this one declares, and a script that writes nothing must not adopt those bytes as its table.
+ * sandbox-server runs one exec id one time, thus a rerun that attaches to the exec of an earlier attempt
+ * keeps the table of that exec. A clearance on the host would remove it.
+ */
+const CLEAR_THEN_RUN = `rm -f -- "$${DERIVE_OUTPUT_ENV}" && exec python3 -c "$1"`;
 
 /** The cap of the failure detail that the tool copies out of the standard error of the script. */
 const STDERR_TAIL_CAP = 2_000;
@@ -150,7 +156,8 @@ export type DerivationInputMount = {
 };
 
 /**
- * Build the sandbox exec of one derivation. The command runs the script of the agent through `python3 -c`.
+ * Build the sandbox exec of one derivation. The command clears the output path, and then it runs the script
+ * of the agent through `python3 -c`.
  *
  * The working directory is the write mount, thus the script writes its table beside where it stands. Each
  * declared input rides as its mounted path, thus the script opens the file wherever it works from. The
@@ -165,7 +172,7 @@ export function buildDerivationExec(args: {
     readonly output: string;
 }): ExecRequest {
     return {
-        command: ["python3", "-c", args.script],
+        command: ["sh", "-c", CLEAR_THEN_RUN, "derive_table", args.script],
         cwd: args.workingDir,
         env: {
             [DERIVE_INPUT_ENV]: JSON.stringify(args.inputs.map((input) => ({ path: input.path, hash: input.hash }))),
@@ -200,32 +207,6 @@ export function describeExecFailure(result: ExecResult): string | undefined {
 }
 
 /**
- * The exec of one derivation, as a registered workflow reads it.
- *
- * Each field is plain data, thus the value crosses the workflow boundary and it survives a replay. The
- * paths are container paths already: the host maps them one time, before the start.
- */
-export type DeriveTableExecInput = {
-    readonly analysisId: string;
-    readonly runSession: RunSession;
-    readonly executionId: string;
-    readonly script: string;
-    readonly writableTail: string;
-    readonly workingDir: string;
-    readonly inputs: readonly DerivationInputMount[];
-    readonly output: string;
-};
-
-/**
- * Run one derivation exec and give the terminal result back.
- *
- * The composition realizes it over a registered workflow, thus the container and its exec live inside a
- * workflow. A fault of the sandbox rejects the promise, and the tool turns that rejection into one short
- * detail.
- */
-export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
-
-/**
  * Make the derivation tool over the session-state gateway, the derivation ledger, and the sandbox rails.
  *
  * The tool reads the thread id from the scope of the call, and it loads the membership through the gateway.
@@ -234,7 +215,7 @@ export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<Result<
 export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTableInput, DeriveTableResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table");
     const observe = bindSessionEmit(deps.provenance, logger);
-    const { runDerivation, runAuthorizer } = deps;
+    const { sandboxClient } = deps;
 
     return defineTool({
         id: "derive_table",
@@ -261,8 +242,8 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
         describeResult: (_input, result): string => (result.outcome === "derived" ? result.path : result.outcome),
         execute: async (input, ctx): Promise<Result<DeriveTableResult, ToolError>> => {
             // The check runs before every read, thus one clear signal replaces a failure for each attempt.
-            // It also narrows the two rails below, thus the exec needs no assertion.
-            if (runDerivation === undefined || runAuthorizer === undefined) {
+            // It also narrows the rail below, thus the exec needs no assertion.
+            if (sandboxClient === undefined) {
                 logger.warn("the composition gives no sandbox, thus no derivation can run");
                 return ok({ outcome: "unavailable", detail: NO_SANDBOX_DETAIL });
             }
@@ -271,7 +252,7 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             if (opened.isErr()) {
                 return ok({ outcome: "refused", refusal: opened.error });
             }
-            const { threadId, analysisId, state } = opened.value;
+            const { threadId, analysisId, state, derivations } = opened.value;
 
             const bytes = Buffer.byteLength(input.script, "utf8");
             if (bytes > SCRIPT_CAP_BYTES) {
@@ -319,6 +300,29 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             // compose from the session-directory builder, thus the layout has one owner.
             const writableTail = reportSessionDerivedDir(threadId);
             const outputPath = `${writableTail}/${input.output}`;
+
+            let root: string;
+            try {
+                root = await deps.resolveWorkspaceRoot(analysisId);
+            } catch (cause) {
+                logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
+                return ok({ outcome: "unavailable", detail: "the workspace root did not resolve, thus the derived table has no place to land" });
+            }
+
+            // A rerun of a call whose record landed gives that record back. The membership holds the output of
+            // the record by now, thus the name test below would refuse the call its own table.
+            const recorded = derivations.find((record) => record.toolCallId === ctx.invocationId);
+            if (recorded !== undefined) {
+                return ok({
+                    outcome: "derived",
+                    path: recorded.outputPath,
+                    hash: recorded.outputHash,
+                    scriptHash: recorded.scriptHash,
+                    sources: [...recorded.sources],
+                    columns: await readColumnsQuietly(outputPath, join(root, outputPath), logger),
+                });
+            }
+
             // The served membership carries each derivation of the session, thus this one test refuses a
             // repeated name and a collision with a pinned artifact alike.
             if (snapshotEntry(state.snapshot, outputPath) !== undefined) {
@@ -329,74 +333,40 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                 });
             }
 
-            let root: string;
-            try {
-                root = await deps.resolveWorkspaceRoot(analysisId);
-            } catch (cause) {
-                logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
-                return ok({ outcome: "unavailable", detail: "the workspace root did not resolve, thus the derived table has no place to land" });
-            }
-
-            const authorized = await passGate(
-                "RunAuthorizer.authorize",
-                runAuthorizer.authorize({
-                    auth: ctx.session.auth,
-                    scope: { kind: "analysis", analysisId },
-                    provenance: { agentId: DERIVE_AGENT_ID, callPath: [DERIVE_AGENT_ID] },
-                    frame: { runId: DERIVE_RUN_LITERAL, stepId: DERIVE_STEP_LITERAL },
-                }),
-            );
-            if (authorized.isErr()) {
-                const { kind, reason } = authorized.error;
-                logger.error("the derivation was not authorized", { threadId, analysisId, reason, suspend: kind === "suspended" });
-                if (kind === "suspended")
-                    return ok({ outcome: "suspended", reason, detail: `the analysis is suspended (${reason}), thus the derivation did not run` });
-                return ok({ outcome: "unavailable", detail: `the derivation was not authorized: ${reason}` });
-            }
-            const authorization = authorized.value;
-
-            // The work sits inside the `try`, and the revoke sits in the `finally`. Thus the authorization
-            // revokes on every terminal path, the thrown one included: a path builder refuses a hostile
-            // stored path with a throw, and that throw must not leave an authorization standing.
-            let result: DeriveTableResult | undefined;
-            try {
-                result = await derive({
-                    runDerivation,
-                    derivations: deps.derivations,
-                    root,
-                    threadId,
+            const result = await derive({
+                sandboxClient,
+                session: passSpawnSession(ctx.session, {
                     analysisId,
-                    runSession: authorization.runSession,
-                    script: input.script,
-                    sources,
-                    writableTail,
-                    outputPath,
-                    outputName: input.output,
-                    logger,
+                    runId: DERIVE_RUN_LITERAL,
+                    stepId: DERIVE_STEP_LITERAL,
+                    agentId: DERIVE_AGENT_ID,
+                }),
+                derivations: deps.derivations,
+                root,
+                threadId,
+                analysisId,
+                toolCallId: ctx.invocationId,
+                script: input.script,
+                sources,
+                writableTail,
+                outputPath,
+                outputName: input.output,
+                logger,
+            });
+            // The record of the derivation lands before this point, thus the event states a table that the
+            // session already holds as evidence. Each other arm derived nothing.
+            if (result.outcome === "derived") {
+                observe({
+                    type: "run-derivation",
+                    analysisId,
+                    threadId,
+                    outputPath: result.path,
+                    outputHash: result.hash,
+                    scriptHash: result.scriptHash,
+                    sources: result.sources,
                 });
-                // The record of the derivation lands before this point, thus the event states a table that
-                // the session already holds as evidence. Each other arm derived nothing.
-                if (result.outcome === "derived") {
-                    observe({
-                        type: "run-derivation",
-                        analysisId,
-                        threadId,
-                        outputPath: result.path,
-                        outputHash: result.hash,
-                        scriptHash: result.scriptHash,
-                        sources: result.sources,
-                    });
-                }
-                return ok(result);
-            } finally {
-                // The revoke is a notice: its failure changes no outcome of the call, thus it reaches the log
-                // alone. An absent result means that the work threw, and a throw is a failed derivation.
-                await deliverNotice(
-                    logger.with({ threadId, analysisId }),
-                    "RunAuthorizer.revoke",
-                    runAuthorizer.revoke(authorization, result?.outcome === "derived" ? "derive-table-completed" : "derive-table-failed"),
-                );
             }
+            return ok(result);
         },
     });
 }
@@ -406,23 +376,19 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
  *
  * The order is the order of the evidence. The script writes into the write mount, the host classifies the
  * file, the hash comes off the disk, and the record lands last. Thus the recorded hash is the hash of the
- * file that a verifier reads.
+ * file that a verifier reads. The container goes away after the record.
  *
  * The classification is the guard of the read. A script can leave a symbolic link at the output name, and a
  * link that resolves outside the tree would otherwise carry a host file into the evidence of the session.
- *
- * The output path clears before the exec. The host owns the `derived/` directory, and a failed attempt can
- * leave a file at the name that this attempt declares. Without the clearance a script that writes nothing
- * would adopt those bytes as its own table, and the record would chain a script to a file that it never
- * wrote. A clearance fault refuses the derivation, because the same doubt stands.
  */
 async function derive(args: {
-    readonly runDerivation: DeriveTableRunner;
+    readonly sandboxClient: SandboxClient;
+    readonly session: SpawnSession;
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     readonly root: string;
     readonly threadId: string;
     readonly analysisId: string;
-    readonly runSession: RunSession;
+    readonly toolCallId: string;
     readonly script: string;
     readonly sources: readonly DerivationSource[];
     readonly writableTail: string;
@@ -430,53 +396,57 @@ async function derive(args: {
     readonly outputName: string;
     readonly logger: Logger;
 }): Promise<DeriveTableResult> {
-    const executionId = generateExecutionId(DERIVE_AGENT_ID);
     const absolute = join(args.root, args.outputPath);
     // The container sees the tree at its own mount point, thus each path that the script reads maps through
-    // the one host-to-container mapper and never through a formula here.
-    const workingDir = toSandboxPath(args.root, args.analysisId, join(args.root, args.writableTail));
-
-    // `unlink` removes a symbolic link as the link, and never the file that it names. An absent path is the
-    // normal condition, thus it is not a fault.
-    try {
-        await unlink(absolute);
-    } catch (cause) {
-        if (errnoOf(cause) !== "ENOENT") {
-            args.logger.error("the output path did not clear before the derivation", { threadId: args.threadId, ...defaultErrorFields(cause) });
-            return { outcome: "exec-failed", detail: `${args.outputName} already holds a file that did not clear, thus this derivation takes a new name` };
-        }
-    }
-
-    // The path mapper refuses a stored path that escapes the root, with a throw. It runs before the try,
-    // thus that refusal stays a throw and it never reads as a fault of the container.
-    const execInput: DeriveTableExecInput = {
-        analysisId: args.analysisId,
-        runSession: args.runSession,
-        executionId,
+    // the one host-to-container mapper and never through a formula here. The mapper refuses a stored path
+    // that escapes the root with a throw. It runs before the try, thus that refusal stays a throw and it never
+    // reads as a fault of the container.
+    const request = buildDerivationExec({
         script: args.script,
-        writableTail: args.writableTail,
-        workingDir,
+        workingDir: toSandboxPath(args.root, args.analysisId, join(args.root, args.writableTail)),
         inputs: args.sources.map((source) => ({ path: toSandboxPath(args.root, args.analysisId, join(args.root, source.path)), hash: source.hash })),
         output: toSandboxPath(args.root, args.analysisId, absolute),
-    };
+    });
 
-    let ran: Result<ExecResult, Suspension>;
+    let ran: Result<DeriveTableResult, Suspension>;
     try {
-        ran = await args.runDerivation(execInput);
+        ran = await withStepSandbox(
+            args.sandboxClient,
+            { session: args.session, spec: { resources: DERIVATION_RESOURCES, writableTail: args.writableTail } },
+            args.logger,
+            async (exec) => {
+                const failure = describeExecFailure(await exec(request, DERIVATION_DEADLINE_MS));
+                if (failure !== undefined) {
+                    return { outcome: "exec-failed", detail: failure };
+                }
+                return recordDerivedTable({ ...args, absolute });
+            },
+        );
     } catch (cause) {
+        if (isWorkflowCancellation(cause)) throw cause;
         args.logger.error("the derivation exec did not complete", { threadId: args.threadId, ...defaultErrorFields(cause) });
         return { outcome: "exec-failed", detail: "the derivation exec did not complete" };
     }
     if (ran.isErr()) {
         return { outcome: "suspended", reason: ran.error.reason, detail: `the analysis is suspended (${ran.error.reason}), thus the derivation did not run` };
     }
-    const executed = ran.value;
-    const failure = describeExecFailure(executed);
-    if (failure !== undefined) {
-        return { outcome: "exec-failed", detail: failure };
-    }
+    return ran.value;
+}
 
-    const verdict = await classifyWithinRoot(args.root, absolute).catch((cause: unknown) => {
+/** Classify, hash, and record the table that a green script wrote. */
+async function recordDerivedTable(args: {
+    readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
+    readonly root: string;
+    readonly absolute: string;
+    readonly threadId: string;
+    readonly toolCallId: string;
+    readonly script: string;
+    readonly sources: readonly DerivationSource[];
+    readonly outputPath: string;
+    readonly outputName: string;
+    readonly logger: Logger;
+}): Promise<DeriveTableResult> {
+    const verdict = await classifyWithinRoot(args.root, args.absolute).catch((cause: unknown) => {
         args.logger.error("the derived table did not classify", { threadId: args.threadId, ...defaultErrorFields(cause) });
         return "escaped" as const;
     });
@@ -495,7 +465,7 @@ async function derive(args: {
 
     let outputHash: string;
     try {
-        outputHash = await computeSha256File(absolute);
+        outputHash = await computeSha256File(args.absolute);
     } catch (cause) {
         args.logger.error("the derived table did not hash", { threadId: args.threadId, ...defaultErrorFields(cause) });
         return { outcome: "exec-failed", detail: "the derived table did not hash" };
@@ -507,6 +477,7 @@ async function derive(args: {
         sources: [...args.sources],
         scriptHash: computeSha256(Buffer.from(args.script, "utf8")),
         script: args.script,
+        toolCallId: args.toolCallId,
     };
     const appended = await args.derivations.appendDerivation(args.threadId, record);
     if (appended.isErr()) {
@@ -529,7 +500,7 @@ async function derive(args: {
 
     // The columns describe the derived table the same way as the listing describes a pinned one. A file that
     // gives no header gives no columns, and absence is a normal condition here.
-    const columns = await readColumnsQuietly(args.outputPath, absolute, args.logger);
+    const columns = await readColumnsQuietly(args.outputPath, args.absolute, args.logger);
     return {
         outcome: "derived",
         path: args.outputPath,

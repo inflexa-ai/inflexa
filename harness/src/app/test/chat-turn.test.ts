@@ -937,7 +937,8 @@ describe("runChatTurn", () => {
             description: "Run a script after the user approves it.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async (_input, ctx) => ok(await ctx.ask({ title: "Run a script", command: "Rscript de.R" })),
+            approval: () => ({ title: "Run a script", command: "Rscript de.R" }),
+            execute: () => Promise.resolve(ok({ ran: "Rscript de.R" })),
         });
     }
 
@@ -961,7 +962,7 @@ describe("runChatTurn", () => {
         expect(asks).toEqual([{ analysis_id: ANALYSIS_A, user_id: "user-001", thread_id: THREAD, status: "resolved" }]);
         const rows = await storedRows();
         const answer = toolResultParts(presentFind(rows, (row) => row.message.role === "tool").message);
-        expect(presentFirst(answer).output).toEqual({ type: "json", value: { kind: "once" } });
+        expect(presentFirst(answer).output).toEqual({ type: "json", value: { ran: "Rscript de.R" } });
         const replayed = presentAt(storedMessagesToChat(rows), 1).parts.find((part) => part.type === "data-ask");
         expect(replayed).toMatchObject({ type: "data-ask", title: "Run a script", command: "Rscript de.R", status: "resolved" });
     });

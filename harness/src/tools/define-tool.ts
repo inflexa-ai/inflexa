@@ -26,7 +26,7 @@ import { z } from "zod";
 import type { AgentSession } from "../auth/types.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn } from "../loop/types.js";
-import type { AskApproval, AskRequest } from "./approval/contract.js";
+import type { AskRequest } from "./approval/contract.js";
 
 export type { EmitFn } from "../loop/types.js";
 
@@ -150,8 +150,8 @@ export function readToolCallRecord(value: unknown): unknown {
 /**
  * The request-scoped values passed to every tool's `execute`. No injected
  * dependencies (see the harness-durable-runtime spec) — invocation identity,
- * `session`, `signal`, `emit`, the `ask` user-approval seam, and the turn's
- * usage accumulator a sub-agent-running tool hands to its child loop.
+ * `session`, `signal`, `emit`, and the turn's usage accumulator a
+ * sub-agent-running tool hands to its child loop.
  */
 export type ToolContext = {
     /** Stable identity of this AI SDK tool call. Redelivery preserves it; a new
@@ -161,14 +161,6 @@ export type ToolContext = {
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
     /**
-     * Pause for an explicit user decision on a concrete action. Resolves with the
-     * approval (`once`/`always`) or throws `AskRejectedError` on denial. Resolves
-     * to a deny-by-default realization when the embedder wires none, so a tool
-     * that calls it in a non-interactive context is denied rather than left
-     * waiting on a surface that cannot answer.
-     */
-    readonly ask: (request: AskRequest) => Promise<AskApproval>;
-    /**
      * The turn's usage accumulator — the mutable total every loop under this
      * turn folds its LLM calls into. A tool that drives a child loop
      * passes it straight into that run's options, which is what puts the
@@ -176,6 +168,12 @@ export type ToolContext = {
      * no child agent ignores it.
      */
     readonly turnUsage?: AgentRunUsage;
+};
+
+/** What the approval hook of a tool reads of its call. */
+export type ToolApprovalContext = {
+    readonly invocationId: string;
+    readonly session: AgentSession;
 };
 
 /**
@@ -196,6 +194,10 @@ export type Tool<Input = unknown, Output = unknown> = {
      * loop passes back only what the `execute` of the same tool attached.
      */
     foldCallRecord?(record: unknown): void;
+    /** See {@link ToolDefinition.approval}. Absent when the call of the tool never needs the decision of a user. */
+    approval?(input: Input, ctx: ToolApprovalContext): AskRequest | undefined | Promise<AskRequest | undefined>;
+    /** See {@link ToolDefinition.startsWorkflow}. */
+    readonly startsWorkflow?: boolean;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
@@ -279,6 +281,19 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> =
      * and its result may already be cached. The loop logs a throw and goes on.
      */
     readonly foldCallRecord?: (record: ToolCallRecordOf<Output>) => void;
+    /**
+     * The approval that a call needs, decided from its input before `execute` runs. The hook gives the request that
+     * a surface shows the user, or nothing when the call runs with no question. It can read the disk and the
+     * database, and it changes nothing. `execute` checks its input again, because a file can change while the user
+     * decides. A loop where no surface can answer denies each request.
+     */
+    readonly approval?: (input: z.infer<Schema>, ctx: ToolApprovalContext) => AskRequest | undefined | Promise<AskRequest | undefined>;
+    /**
+     * The call starts a child workflow, for example a sub-agent. A step cannot start a workflow, thus such a call
+     * runs in the body of the workflow, and its child holds the checkpoints of its work. `execute` must start the
+     * child before its first `await`, thus the parallel calls of one reply keep their order on a replay.
+     */
+    readonly startsWorkflow?: boolean;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
@@ -311,6 +326,7 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(d
         execute: def.execute.bind(def),
     };
     if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord.bind(def);
+    if (typeof def.approval === "function") packaged.approval = def.approval.bind(def);
     // A tool that declines carries no `describeCall` key at all, so "has a
     // hook" is one property check. The test is equality with the `"none"`
     // sentinel: a function never equals it, so a hook that returns the string
@@ -320,5 +336,6 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(d
     // declares no result hook carries no key, thus "has a hook" is one
     // property check on either side.
     if (def.describeResult !== undefined) packaged.describeResult = def.describeResult;
+    if (def.startsWorkflow === true) return { ...packaged, startsWorkflow: true };
     return packaged;
 }

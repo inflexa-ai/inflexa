@@ -290,3 +290,49 @@ describe("finding runId must name a real run of this analysis", () => {
         expect(md).not.toContain("the typo'd finding");
     });
 });
+
+describe("a rerun of a call in a durable step", () => {
+    /** The rows of the applied keys, each one a key that an edit recorded. */
+    async function appliedKeys(): Promise<string[]> {
+        const { rows } = await pool.query<{ call_key: string }>("SELECT call_key FROM cortex_applied_memory_edits ORDER BY call_key");
+        return rows.map((row) => row.call_key);
+    }
+
+    it("a rerun of an add changes nothing and gives ok", async () => {
+        const inStep = createUpdateWorkingMemoryTool(wm, pool, { stepKey: () => "wf-1:4" });
+        const { ctx } = makeToolContext();
+
+        const first = await inStep.execute({ section: "hypothesis", text: "EGFR amplification drives resistance" }, ctx);
+        const afterFirst = (await wm.load(ANALYSIS))._unsafeUnwrap();
+        const second = await inStep.execute({ section: "hypothesis", text: "EGFR amplification drives resistance" }, ctx);
+
+        expect(second._unsafeUnwrap()).toEqual(first._unsafeUnwrap());
+        expect((await wm.load(ANALYSIS))._unsafeUnwrap()).toEqual(afterFirst);
+        expect(afterFirst.hypotheses).toHaveLength(1);
+        expect(await appliedKeys()).toEqual(["wf-1:4"]);
+    });
+
+    it("a rerun of a retire gives ok, and it does not refuse the id that the first run retired", async () => {
+        const { ctx } = makeToolContext();
+        await awaitOk(tool.execute({ section: "constraint", text: "FDR 0.05", origin: "agent" }, ctx));
+        const id = presentAt((await wm.load(ANALYSIS))._unsafeUnwrap().constraints, 0).id;
+        const inStep = createUpdateWorkingMemoryTool(wm, pool, { stepKey: () => "wf-1:7" });
+
+        await awaitOk(inStep.execute({ section: "constraint", operation: "retire", id }, ctx));
+        const second = await inStep.execute({ section: "constraint", operation: "retire", id }, ctx);
+
+        expect(second._unsafeUnwrap()).toEqual({ ok: true, section: "constraint" });
+        expect((await wm.load(ANALYSIS))._unsafeUnwrap().constraints).toEqual([]);
+        expect(await appliedKeys()).toEqual(["wf-1:7"]);
+    });
+
+    it("a refused write records no key", async () => {
+        const { ctx } = makeToolContext();
+        const inStep = createUpdateWorkingMemoryTool(wm, pool, { stepKey: () => "wf-1:9" });
+
+        const refused = await inStep.execute({ section: "constraint", operation: "retire", id: "absent" }, ctx);
+
+        expect(refused.isErr()).toBe(true);
+        expect(await appliedKeys()).toEqual([]);
+    });
+});

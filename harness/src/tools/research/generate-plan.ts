@@ -34,6 +34,7 @@ import { z } from "zod";
 import { formatAgentCatalog } from "../../agents/sandbox-catalog.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { DEFAULT_SALVAGE_REQUESTS, runWithSalvage, type LoopStep, type SalvagedResult } from "../../loop/run-loop.js";
+import type { SubAgentRegistrar } from "../../loop/sub-agent.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
@@ -1114,81 +1115,79 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
     ];
 }
 
+const generatePlanInputSchema = z.object({
+    researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),
+    analystNotes: z
+        .string()
+        .optional()
+        .describe(
+            "Facts about the data that ONLY the user could have told you and the data profile cannot know — " +
+                'e.g. "samples 3 and 7 were re-sequenced", "treat batch B as the reference", ' +
+                '"the tumor/normal labels in column 4 are swapped". ' +
+                "This is NOT a place to restate the data profile: organism, omics type, experimental design, " +
+                "condition names, file names and dimensions are already loaded server-side and given to the " +
+                "planner — repeating them here only risks contradicting the record. Omit entirely unless the " +
+                "user has told you something the profile does not already hold.",
+        ),
+    priorRuns: z
+        .string()
+        .optional()
+        .describe("Summary of prior run results if any exist: which steps ran, " + "what succeeded/failed, key findings. Omit if no prior runs."),
+    userConstraints: z
+        .string()
+        .optional()
+        .describe("User-specified constraints: preferred methods, steps to " + "include/exclude, resource limits, modifications to a prior plan."),
+    parentPlanId: z
+        .string()
+        .regex(PLAN_ID_RE, "parentPlanId must be a pln-<8hex> value")
+        .optional()
+        .describe("The planId of the prior plan being iterated on. Set only when " + "the user is asking for modifications to an existing plan."),
+});
+
+type GeneratePlanInput = z.infer<typeof generatePlanInputSchema>;
+
+/** What the planner reads before its loop: the seed, or the outcome of a call that cannot plan. */
+type PlannerSeed =
+    | { readonly early: ShapedOutcome }
+    | {
+          readonly prompt: string;
+          readonly grounding: DataGrounding["kind"];
+          readonly chars: { readonly priorPlan: number; readonly dataContext: number; readonly referenceData: number; readonly packages: number };
+      };
+
 /** Build the `generate_plan` tool bound to its provider and pool. */
-export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
+export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
-    return defineTool({
-        id: "generate_plan",
-        description:
-            "Generate an analysis plan (DAG of steps) for this analysis's data and the user's research question. " +
-            "The dataset's own facts — domain, organism, experimental design, condition names, quality concerns, " +
-            "per-file data types and dimensions — are read server-side from the persisted data profile and handed " +
-            "to the planner directly. Do NOT summarize or re-type them into this call; you cannot restate that " +
-            "record more faithfully than the record itself. Pass only what the profile cannot hold: the research " +
-            "question, facts the user told you (analystNotes), prior run results, and their constraints. " +
-            "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
-            "The result carries an `event`: `plan_complete` with {planId, plan} — the plan is saved and ready for show_plan and " +
-            "execute_analysis plan mode, and this call neither shows nor runs it; `clarification_needed` with {question, questionContext?} " +
-            "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
-            "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
-        inputSchema: z.object({
-            researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),
-            analystNotes: z
-                .string()
-                .optional()
-                .describe(
-                    "Facts about the data that ONLY the user could have told you and the data profile cannot know — " +
-                        'e.g. "samples 3 and 7 were re-sequenced", "treat batch B as the reference", ' +
-                        '"the tumor/normal labels in column 4 are swapped". ' +
-                        "This is NOT a place to restate the data profile: organism, omics type, experimental design, " +
-                        "condition names, file names and dimensions are already loaded server-side and given to the " +
-                        "planner — repeating them here only risks contradicting the record. Omit entirely unless the " +
-                        "user has told you something the profile does not already hold.",
-                ),
-            priorRuns: z
-                .string()
-                .optional()
-                .describe("Summary of prior run results if any exist: which steps ran, " + "what succeeded/failed, key findings. Omit if no prior runs."),
-            userConstraints: z
-                .string()
-                .optional()
-                .describe("User-specified constraints: preferred methods, steps to " + "include/exclude, resource limits, modifications to a prior plan."),
-            parentPlanId: z
-                .string()
-                .regex(PLAN_ID_RE, "parentPlanId must be a pln-<8hex> value")
-                .optional()
-                .describe("The planId of the prior plan being iterated on. Set only when " + "the user is asking for modifications to an existing plan."),
-        }),
-        describeCall: ({ researchQuestion }) => researchQuestion,
-        execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
-            const analysisId = scopeResource(ctx.session.scope).resourceId;
-            // Bound per invocation: `analysisId` comes from the call-time session, not from
-            // the construction-time deps the factory closes over.
-            const logger = baseLogger.with({ analysisId });
-            const startedAt = Date.now();
-            let trace: PlannerTrace = { submitAttempts: 0, rejectedAttempts: 0, rejections: [] };
+    const plan = registerSubAgent<GeneratePlanInput, PlanningAgentOutput>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably }) => {
+        const analysisId = scopeResource(ctx.session.scope).resourceId;
+        // Bound per invocation: `analysisId` comes from the call-time session, not from
+        // the construction-time deps the factory closes over.
+        const logger = baseLogger.with({ analysisId });
+        const startedAt = Date.now();
+        let trace: PlannerTrace = { submitAttempts: 0, rejectedAttempts: 0, rejections: [] };
 
-            // Every exit routes through here, so "recorded exactly once per invocation" holds
-            // by construction rather than by remembering. `elapsedMs` is what separates a
-            // planner that gave up early from one still working when the guard cut it — the
-            // fixed budget above makes the number readable without any other context.
-            //
-            // `extra` carries the loop account on the paths that reached the loop. The two
-            // parent-plan early returns never do, and a record claiming `loop.finishReason`
-            // for a run that never started would be worse than one that omits the field.
-            const finish = (shaped: ShapedOutcome, extra: LogFields = {}): Result<PlanningAgentOutput, ToolError> => {
-                logger[OUTCOME_LEVEL[shaped.kind]]("plan generation finished", {
-                    outcome: shaped.kind,
-                    elapsedMs: Date.now() - startedAt,
-                    submitAttempts: trace.submitAttempts,
-                    rejectedAttempts: trace.rejectedAttempts,
-                    rejections: trace.rejections,
-                    rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
-                    ...extra,
-                });
-                return ok(shaped.output);
-            };
+        // Every exit routes through here, so "recorded exactly once per invocation" holds
+        // by construction rather than by remembering. `elapsedMs` is what separates a
+        // planner that gave up early from one still working when the guard cut it — the
+        // fixed budget above makes the number readable without any other context.
+        //
+        // `extra` carries the loop account on the paths that reached the loop. The two
+        // parent-plan early returns never do, and a record claiming `loop.finishReason`
+        // for a run that never started would be worse than one that omits the field.
+        const finish = (shaped: ShapedOutcome, extra: LogFields = {}): PlanningAgentOutput => {
+            logger[OUTCOME_LEVEL[shaped.kind]]("plan generation finished", {
+                outcome: shaped.kind,
+                elapsedMs: Date.now() - startedAt,
+                submitAttempts: trace.submitAttempts,
+                rejectedAttempts: trace.rejectedAttempts,
+                rejections: trace.rejections,
+                rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
+                ...extra,
+            });
+            return shaped.output;
+        };
 
+        const seed = await durably("planner.seed", async (): Promise<PlannerSeed> => {
             // If iterating, load the parent plan so the planner sees what it is
             // revising. Fails fast with the sanitized message submit_plan would
             // have surfaced — saves a wasted planner run.
@@ -1201,10 +1200,12 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         }),
                     );
                     if (!priorPlan) {
-                        return finish({
-                            output: { event: "error", error: "parentPlanId is not a valid plan for this analysis" },
-                            kind: "invalid_parent_plan",
-                        });
+                        return {
+                            early: {
+                                output: { event: "error", error: "parentPlanId is not a valid plan for this analysis" },
+                                kind: "invalid_parent_plan",
+                            },
+                        };
                     }
                     priorPlanBlock = formatPriorPlan(input.parentPlanId, priorPlan);
                     // `formatPriorPlan` returns null on a stored plan that no longer parses as an
@@ -1215,10 +1216,12 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     }
                 } catch (err) {
                     logger.error("parent plan could not be loaded", { parentPlanId: input.parentPlanId, ...logger.errorFields(err) });
-                    return finish({
-                        output: { event: "error", error: "Plan iteration failed — parent plan could not be loaded." },
-                        kind: "parent_plan_load_failed",
-                    });
+                    return {
+                        early: {
+                            output: { event: "error", error: "Plan iteration failed — parent plan could not be loaded." },
+                            kind: "parent_plan_load_failed",
+                        },
+                    };
                 }
             }
 
@@ -1273,161 +1276,184 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 ...(input.priorRuns ? ["", "## Prior Run Results", input.priorRuns] : []),
                 ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
             ].join("\n");
-
-            const planTimeoutMs = effectiveDeadlineMs(deps.conversation.provider, PLAN_TIMEOUT_MS);
-
-            // Opens the invocation. Two things are only knowable here and both are
-            // first-order suspects when a planner runs long and returns nothing: the size
-            // of the seed it was handed, and which of its blocks made it that size. The
-            // reference inventory in particular is a recursive leaf scan of whatever this
-            // install has staged — a quantity the harness does not control and no other
-            // record reports. The census is sizes only: the seed carries the user's
-            // research question and dataset facts, which belong in the model's context and
-            // not in a log file.
-            logger.info("plan generation started", {
-                model: deps.conversation.model,
-                maxIterations: PLANNER_MAX_ITERATIONS,
-                salvageRequests: DEFAULT_SALVAGE_REQUESTS,
-                timeoutMs: planTimeoutMs,
+            return {
+                prompt,
                 grounding: grounding.kind,
-                parentPlanId: input.parentPlanId,
-                seedChars: {
-                    total: prompt.length,
+                chars: {
                     priorPlan: priorPlanBlock?.length ?? 0,
                     dataContext: dataContextBlock.length,
                     referenceData: refsBlock.length,
                     packages: packagesBlock.length,
-                    researchQuestion: input.researchQuestion.length,
-                    analystNotes: input.analystNotes?.length ?? 0,
-                    priorRuns: input.priorRuns?.length ?? 0,
-                    userConstraints: input.userConstraints?.length ?? 0,
                 },
-            });
-
-            const persistCtx: PersistContext = {
-                analysisId,
-                parentPlanId: input.parentPlanId ?? null,
-                invocationId: ctx.invocationId,
             };
-            // The last recommend answer of this invocation, thus `submit_plan`
-            // stamps the snapshot digest, restores a template the model dropped,
-            // and repairs or refuses a claim id the answer did not return. The loop
-            // folds each answer after its round, on the first run and on a replay.
-            const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
-            const innerTools = buildInnerTools(deps.resourcePolicy, logger, memory);
-            // Built here rather than at construction: a `describeCall` hook reads no
-            // dep, thus the tool must stay constructible from an empty bag. The tool
-            // definitions are identical across invocations, thus the request prefix
-            // that the cache keys on does not move.
-            const searchTools = buildPlannerSearchTools(deps, {
-                onRecommend: (answer) => rememberAnswer(memory, answer),
-            });
-            const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
-            const planner: AgentDefinition = {
-                id: PLANNER_AGENT_ID,
-                systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
-                model: deps.conversation.model,
-                // The search tools come first, and the terminal tools come last.
-                // The order is the order of the prompt, and it is stable across
-                // every invocation, thus the cached request prefix holds.
-                tools: [...searchTools, ...readTools, ...innerTools.terminal],
-                maxIterations: PLANNER_MAX_ITERATIONS,
-            };
+        });
+        if ("early" in seed) return finish(seed.early);
+        const { prompt } = seed;
 
-            // Merge the outer abort signal with a wall-clock timeout — either
-            // cancels the planner promptly.
-            const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(planTimeoutMs)]);
+        const planTimeoutMs = effectiveDeadlineMs(deps.conversation.provider, PLAN_TIMEOUT_MS);
 
-            // The guard bounds the repeated calls of one plan: the third call with
-            // an input the plan already sent, or the call past the budget of one
-            // tool, answers a refusal that says to continue. The terminal tools
-            // stay outside it, because a refused submit would strand the plan.
-            let refusals = 0;
-            let runError: unknown = null;
-            let run: SalvagedResult | null = null;
-            try {
-                run = await runWithSalvage(
-                    planner,
-                    [{ role: "user", content: prompt }],
-                    forSubAgent(ctx.session, PLANNER_AGENT_ID),
-                    {
-                        provider: deps.conversation.provider,
-                        signal,
-                        emit: ctx.emit,
-                        policy: {
-                            guard: {
-                                tools: searchTools.map((tool) => tool.id),
-                                onRefusal: (refusal) => {
-                                    refusals += 1;
-                                    logger.warn("planner call refused by the guard", { ...refusal, refusals });
-                                },
+        // Opens the invocation. Two things are only knowable here and both are
+        // first-order suspects when a planner runs long and returns nothing: the size
+        // of the seed it was handed, and which of its blocks made it that size. The
+        // reference inventory in particular is a recursive leaf scan of whatever this
+        // install has staged — a quantity the harness does not control and no other
+        // record reports. The census is sizes only: the seed carries the user's
+        // research question and dataset facts, which belong in the model's context and
+        // not in a log file.
+        logger.info("plan generation started", {
+            model: deps.conversation.model,
+            maxIterations: PLANNER_MAX_ITERATIONS,
+            salvageRequests: DEFAULT_SALVAGE_REQUESTS,
+            timeoutMs: planTimeoutMs,
+            grounding: seed.grounding,
+            parentPlanId: input.parentPlanId,
+            seedChars: {
+                total: prompt.length,
+                ...seed.chars,
+                researchQuestion: input.researchQuestion.length,
+                analystNotes: input.analystNotes?.length ?? 0,
+                priorRuns: input.priorRuns?.length ?? 0,
+                userConstraints: input.userConstraints?.length ?? 0,
+            },
+        });
+
+        const persistCtx: PersistContext = {
+            analysisId,
+            parentPlanId: input.parentPlanId ?? null,
+            invocationId: ctx.invocationId,
+        };
+        // The last recommend answer of this invocation, thus `submit_plan`
+        // stamps the snapshot digest, restores a template the model dropped,
+        // and repairs or refuses a claim id the answer did not return. The loop
+        // folds each answer after its round, on the first run and on a replay.
+        const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
+        const innerTools = buildInnerTools(deps.resourcePolicy, logger, memory);
+        // Built here rather than at construction: a `describeCall` hook reads no
+        // dep, thus the tool must stay constructible from an empty bag. The tool
+        // definitions are identical across invocations, thus the request prefix
+        // that the cache keys on does not move.
+        const searchTools = buildPlannerSearchTools(deps, {
+            onRecommend: (answer) => rememberAnswer(memory, answer),
+        });
+        const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
+        const planner: AgentDefinition = {
+            id: PLANNER_AGENT_ID,
+            systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
+            model: deps.conversation.model,
+            // The search tools come first, and the terminal tools come last.
+            // The order is the order of the prompt, and it is stable across
+            // every invocation, thus the cached request prefix holds.
+            tools: [...searchTools, ...readTools, ...innerTools.terminal],
+            maxIterations: PLANNER_MAX_ITERATIONS,
+        };
+
+        // Merge the outer abort signal with a wall-clock timeout — either
+        // cancels the planner promptly.
+        const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(planTimeoutMs)]);
+
+        // The guard bounds the repeated calls of one plan: the third call with
+        // an input the plan already sent, or the call past the budget of one
+        // tool, answers a refusal that says to continue. The terminal tools
+        // stay outside it, because a refused submit would strand the plan.
+        let refusals = 0;
+        let runError: unknown = null;
+        let run: SalvagedResult | null = null;
+        try {
+            run = await runWithSalvage(
+                planner,
+                [{ role: "user", content: prompt }],
+                forSubAgent(ctx.session, PLANNER_AGENT_ID),
+                {
+                    ...loop,
+                    provider: deps.conversation.provider,
+                    signal,
+                    policy: {
+                        guard: {
+                            tools: searchTools.map((tool) => tool.id),
+                            onRefusal: (refusal) => {
+                                refusals += 1;
+                                logger.warn("planner call refused by the guard", { ...refusal, refusals });
                             },
                         },
-                        // A planner the guard refused too many times is looping:
-                        // the early cap ends the search, and the salvage request
-                        // submits the plan it has.
-                        capWhen: () => refusals >= PLANNER_REFUSAL_LIMIT,
-                        // No forced tool choice: some Claude models reject it with a
-                        // 400. The prompt names the terminal tools, and the salvage
-                        // request below recovers a run that ends on prose.
-                        logger,
-                        usageRecorder: deps.usageRecorder,
-                        toolOutputStore: deps.toolOutputStore,
-                        // Fold the planner's calls into the turn total the root loop reports.
-                        turnUsage: ctx.turnUsage,
-                        // Keeps the usage record keys of two parallel dispatches disjoint —
-                        // same frame, same call path.
-                        invocationId: ctx.invocationId,
                     },
-                    {
-                        tools: innerTools.terminal.map((tool) => tool.id),
-                        nudge:
-                            "You ended without a terminal outcome. Call submit_plan with " +
-                            "your final plan now, or request_clarification / report_blocker " +
-                            "if you cannot. Do not reply with prose.",
-                        hasOutcome: (steps) => selectedOutcomeOf(steps) !== null,
-                    },
-                );
-            } catch (err) {
-                runError = err;
-            }
+                    // A planner the guard refused too many times is looping:
+                    // the early cap ends the search, and the salvage request
+                    // submits the plan it has.
+                    capWhen: () => refusals >= PLANNER_REFUSAL_LIMIT,
+                    // No forced tool choice: some Claude models reject it with a
+                    // 400. The prompt names the terminal tools, and the salvage
+                    // request below recovers a run that ends on prose.
+                    logger,
+                    usageRecorder: deps.usageRecorder,
+                    toolOutputStore: deps.toolOutputStore,
+                },
+                {
+                    tools: innerTools.terminal.map((tool) => tool.id),
+                    nudge:
+                        "You ended without a terminal outcome. Call submit_plan with " +
+                        "your final plan now, or request_clarification / report_blocker " +
+                        "if you cannot. Do not reply with prose.",
+                    hasOutcome: (steps) => selectedOutcomeOf(steps) !== null,
+                },
+            );
+        } catch (err) {
+            runError = err;
+        }
 
-            let outcome: PlannerOutcome | null = null;
-            if (run !== null) {
-                trace = traceOf(run.steps);
-                const selected = selectedOutcomeOf(run.steps);
-                if (selected?.kind === "plan") {
-                    const persisted = await persistPlan(selected.plan, persistCtx, deps.pool, logger);
-                    outcome = persisted.ok
-                        ? { kind: "plan_submitted", planId: persisted.planId, plan: selected.plan }
-                        : { kind: "persist_error", message: persisted.message };
-                } else {
-                    outcome = selected;
-                }
-                if (selected?.kind === "blocker") {
-                    // A blocker after several rejected submits is a planner giving up on a plan it
-                    // could not make valid — a validation problem wearing a blocker's clothes. The
-                    // attempt count is what tells those apart, and only this record carries both.
-                    logger.warn("planner reported a blocker", {
-                        submitAttempts: trace.submitAttempts,
-                        ...modelAuthored({ blockerReason: bounded(selected.reason, MAX_LOGGED_PROSE_CHARS) }),
-                    });
-                }
+        let outcome: PlannerOutcome | null = null;
+        if (run !== null) {
+            trace = traceOf(run.steps);
+            const selected = selectedOutcomeOf(run.steps);
+            if (selected?.kind === "plan") {
+                const persisted = await durably("planner.persist", () => persistPlan(selected.plan, persistCtx, deps.pool, logger));
+                outcome = persisted.ok
+                    ? { kind: "plan_submitted", planId: persisted.planId, plan: selected.plan }
+                    : { kind: "persist_error", message: persisted.message };
+            } else {
+                outcome = selected;
             }
+            if (selected?.kind === "blocker") {
+                // A blocker after several rejected submits is a planner giving up on a plan it
+                // could not make valid — a validation problem wearing a blocker's clothes. The
+                // attempt count is what tells those apart, and only this record carries both.
+                logger.warn("planner reported a blocker", {
+                    submitAttempts: trace.submitAttempts,
+                    ...modelAuthored({ blockerReason: bounded(selected.reason, MAX_LOGGED_PROSE_CHARS) }),
+                });
+            }
+        }
 
-            const shaped = shapeOutcome({
-                outcome,
-                runError,
-                timedOut: signal.aborted && !ctx.signal.aborted,
-                outerAborted: ctx.signal.aborted,
-            });
-            const extra: LogFields = {};
-            if (run) Object.assign(extra, loopFields(run, shaped.kind));
-            // A throw leaves no result to read the transcript off, so the cause takes its
-            // place — `shapeOutcome` folds it into one prose sentence for the model, and
-            // this is the only place its type and stack survive.
-            if (runError) Object.assign(extra, logger.errorFields(runError));
-            return finish(shaped, extra);
-        },
+        const shaped = shapeOutcome({
+            outcome,
+            runError,
+            timedOut: signal.aborted && !ctx.signal.aborted,
+            outerAborted: ctx.signal.aborted,
+        });
+        const extra: LogFields = {};
+        if (run) Object.assign(extra, loopFields(run, shaped.kind));
+        // A throw leaves no result to read the transcript off, so the cause takes its
+        // place — `shapeOutcome` folds it into one prose sentence for the model, and
+        // this is the only place its type and stack survive.
+        if (runError) Object.assign(extra, logger.errorFields(runError));
+        return finish(shaped, extra);
+    });
+    return defineTool({
+        id: "generate_plan",
+        description:
+            "Generate an analysis plan (DAG of steps) for this analysis's data and the user's research question. " +
+            "The dataset's own facts — domain, organism, experimental design, condition names, quality concerns, " +
+            "per-file data types and dimensions — are read server-side from the persisted data profile and handed " +
+            "to the planner directly. Do NOT summarize or re-type them into this call; you cannot restate that " +
+            "record more faithfully than the record itself. Pass only what the profile cannot hold: the research " +
+            "question, facts the user told you (analystNotes), prior run results, and their constraints. " +
+            "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
+            "The result carries an `event`: `plan_complete` with {planId, plan} — the plan is saved and ready for show_plan and " +
+            "execute_analysis plan mode, and this call neither shows nor runs it; `clarification_needed` with {question, questionContext?} " +
+            "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
+            "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
+        inputSchema: generatePlanInputSchema,
+        describeCall: ({ researchQuestion }) => researchQuestion,
+        startsWorkflow: true,
+        execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => ok(await plan(input, ctx)),
     });
 }

@@ -5,11 +5,10 @@
  * The operation owns no table. It composes the reads and the writes that the
  * store, the thread history, and the working memory already give. `getThread`
  * finds the parent, and `latestSeq` gives the anchor. `listThreads` counts the
- * report children, and `createThread` writes the insert. `render` and
- * `appendTurn` make the seed, and `purgeThread` removes a child that holds no
- * seed. The two storage reads that this capability adds, `latestSeq` and
- * `countUserTurnsAfter`, live on the thread history, because that module owns
- * the `messages` table.
+ * report children, and `render` makes the seed. `createThread` writes the row
+ * and the seed in one transaction. The two storage reads that this capability
+ * adds, `latestSeq` and `countUserTurnsAfter`, live on the thread history,
+ * because that module owns the `messages` table.
  *
  * The reads and the insert take no lock and no transaction. A concurrent turn
  * can append between the anchor read and the insert, and a retract can cut the
@@ -18,8 +17,10 @@
  * past the parent's current end is a normal state a reader expects.
  *
  * A conversation thread id comes from the host UI. But the spawn is a harness
- * operation with no UI in front of it. Thus it mints a `randomUUID` and returns
- * the full row. A managed deployment gets the same behavior with no host code.
+ * operation with no UI in front of it. Thus the caller gives the child id, or
+ * the spawn mints a `randomUUID`, and the spawn returns the full row. A managed
+ * deployment gets the same behavior with no host code. A second spawn with the
+ * id of a child gives that child, and it writes nothing.
  *
  * The spawn also gates on the eyes of the composition. A report session records
  * a version only after a look at the rendered page, and only a browser can look.
@@ -32,9 +33,9 @@
  * The spawn seeds the context of the child at the anchor. It writes one message
  * that holds the brief and a copy of the working-memory render. The transcript
  * is append-only, thus the copy stays frozen at the anchor by construction, and
- * a later change to the working memory leaves it as it is. When the seed write
- * fails, the spawn purges the child, because a report thread with no context is
- * a dead end.
+ * a later change to the working memory leaves it as it is. The row and the seed
+ * commit in one transaction, because a report thread with no context is a dead
+ * end.
  *
  * The seed takes no redaction pass, and that is deliberate. The two parts are
  * agent-authored, the same trust tier as the working-memory render of a
@@ -259,10 +260,14 @@ export type ReportSessionSpawn = {
      * Refused with a `SpawnRefusal`, no row written: a composition with no
      * eyes, an absent or archived parent, and a parent that is not a
      * conversation. A store refusal (`DbError`,
-     * `ThreadInputError`) passes through unchanged. A failed seed write purges
-     * the child and returns the fault, thus no context-less thread survives.
+     * `ThreadInputError`) passes through unchanged. The row and the seed
+     * commit in one transaction, thus a failed seed leaves no child.
+     *
+     * `childThreadId` names the child, and a spawn with no id mints a random
+     * one. A child with that id already stands after a first spawn, thus a
+     * second spawn gives it back and writes no second seed.
      */
-    spawnReportSession(parentThreadId: string, brief: ReportBrief): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
+    spawnReportSession(parentThreadId: string, brief: ReportBrief, childThreadId?: string): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
     /**
      * The report sessions of one analysis, through the thread listing narrowed
      * to the type `report`. It adds no predicate of its own, so its answer and
@@ -374,35 +379,13 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
     const observe = bindSessionEmit(deps.provenance, log);
 
     /**
-     * Write the one seed message of the child and give the child back. The
-     * message rides as a record, not as user input: nobody typed it in the child
-     * thread, and a record is displayed but it never opens a turn.
-     */
-    function seedChildContext(child: Thread, brief: ReportBrief): ResultAsync<Thread, DbError> {
-        return workingMemory
-            .render(child.analysisId)
-            .andThen((memory) => history.appendTurn(child.threadId, conversationRecordTurn(composeSeed(brief, memory))))
-            .map(() => child)
-            .orElse((fault) =>
-                // A report thread with no context is a dead end, thus the purge
-                // removes the child. The seed fault is the cause, thus it returns
-                // from each route. A failed purge leaves the child, and the caller
-                // still reads why the seed stopped.
-                store
-                    .purgeThread(child.threadId)
-                    .andThen((): ResultAsync<Thread, DbError> => errAsync(fault))
-                    .orElse((): ResultAsync<Thread, DbError> => errAsync(fault)),
-            );
-    }
-
-    /**
      * Pin the data snapshot of the child, through the injected anchor operation.
      * The spawn mints one moment, and the transcript anchor and this snapshot are
      * the two pins of that moment.
      *
-     * The pin runs after the seed. A failed seed purges the child, and
+     * The pin runs after the row and the seed commit.
      * `cortex_report_session_state` carries no foreign key to the thread table,
-     * thus a pin before a purged seed would leave an orphan row.
+     * thus a pin before a failed create would leave an orphan row.
      *
      * A failed pin keeps the child. The operation is idempotent, thus the first
      * session tool call pins again, and a purge on a transient store fault would
@@ -457,7 +440,11 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
             });
     }
 
-    function spawnReportSession(parentThreadId: string, brief: ReportBrief): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> {
+    function spawnReportSession(
+        parentThreadId: string,
+        brief: ReportBrief,
+        childThreadId: string = randomUUID(),
+    ): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> {
         // The gate runs before the parent read. A session with no route to a look
         // reaches the record gate and refuses there forever, thus the spawn is the
         // one honest place to say so.
@@ -485,18 +472,23 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
                 return store
                     .listThreads({ analysisId: parent.analysisId, type: "report", parentThreadId })
                     .andThen((children): ResultAsync<Thread, DbError | ThreadInputError> =>
-                        store
-                            .createThread({
-                                threadId: randomUUID(),
-                                analysisId: parent.analysisId,
-                                title: composeTitle(parent.title, children.total + 1),
-                                type: "report",
-                                parentThreadId,
-                                parentSeq: anchor,
-                            })
-                            // The seed follows the insert, thus the copy of the working
-                            // memory is the state at the anchor.
-                            .andThen((child) => seedChildContext(child, brief))
+                        // The render follows the anchor read, thus the copy of the
+                        // working memory is the state at the anchor.
+                        workingMemory
+                            .render(parent.analysisId)
+                            .andThen((memory) =>
+                                store.createThread({
+                                    threadId: childThreadId,
+                                    analysisId: parent.analysisId,
+                                    title: composeTitle(parent.title, children.total + 1),
+                                    type: "report",
+                                    parentThreadId,
+                                    parentSeq: anchor,
+                                    // The seed rides as a record, not as user input: nobody typed it in
+                                    // the child thread, and a record is displayed but it never opens a turn.
+                                    firstTurn: conversationRecordTurn(composeSeed(brief, memory)),
+                                }),
+                            )
                             // The pin follows the seed. `pinSessionSnapshot` never
                             // rejects, thus the safe bridge adds no error variant.
                             .andThen((child) => ResultAsync.fromSafePromise(pinSessionSnapshot(child))),

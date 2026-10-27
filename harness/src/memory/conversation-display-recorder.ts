@@ -13,6 +13,15 @@ import { conversationDisplayPart, isStoredSourcePart, type ConversationUIData, t
 
 export type ConversationDisplayRecorder = {
     readonly emit: EmitFn;
+    /**
+     * Record one frame that reached the stream of the turn by another path, and forward nothing. A turn workflow
+     * records each frame of its stream with it, the frames that a replay of a tool step gives again included.
+     */
+    observe(frame: ChatFrame): void;
+    /** The id of the assistant message that the next parts go to. A marker of a round gives the next message a new id. */
+    assistantMessageId(): string;
+    /** The id of the user message of the turn. */
+    userMessageId(): string;
     /** The user message of the turn. */
     takeOpening(): ConversationUIMessage[];
     /** The assistant message of one round, when the recorder got parts after the last take, and the divider of a marker of the round. */
@@ -28,6 +37,11 @@ export type ConversationDisplayRecorderOptions = {
     readonly sink: EmitFn;
     /** The clock for the times of the sub-agent activity, in milliseconds. The default is the wall clock. */
     readonly now?: () => number;
+    /**
+     * The ids of the messages of the turn: the user message, and the assistant message after each marker, from 0 on.
+     * A turn workflow gives ids from its turn id, thus a replay gives the same ids. The default is a random id.
+     */
+    readonly messageIds?: { readonly user: string; readonly assistant: (index: number) => string };
 };
 
 type DisplayPart = UIMessagePart<ConversationUIData, Record<string, never>>;
@@ -107,8 +121,10 @@ function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
  */
 export function createConversationDisplayRecorder(options: ConversationDisplayRecorderOptions): ConversationDisplayRecorder {
     // One id for each message of the turn, thus the rounds of a turn replay as one assistant message.
-    const userMessageId = randomUUID();
-    let assistantMessageId = randomUUID();
+    const userMessageId = options.messageIds?.user ?? randomUUID();
+    let assistantIndex = 0;
+    const assistantIdAt = (index: number): string => options.messageIds?.assistant(index) ?? randomUUID();
+    let assistantMessageId = assistantIdAt(assistantIndex);
     let userAnnounced = false;
     let announcedAssistantId: string | undefined;
     const rootSource: EventSource = { agentId: options.agentId, callPath: [options.agentId] };
@@ -136,7 +152,11 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
 
     function record(event: Parameters<EmitFn>[0]): void {
         const frame = toChatFrame(event, rootSource);
-        if (frame === null) return;
+        if (frame !== null) observe(frame);
+    }
+
+    function observe(frame: ChatFrame): void {
+        if (finished) return;
         // The tracker reads the frames of the sub-agents, and `applyChatFrame` ignores them.
         const activity = subAgentActivity.track(frame, now());
         if (activity !== null && durableConversationType(activity.type)) apply(recordedPart(activity));
@@ -190,7 +210,8 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         if (marker !== undefined) {
             taken.push(compactionDivider(marker));
             // The divider splits the turn into two assistant messages of the replay, and two messages must not share an id.
-            assistantMessageId = randomUUID();
+            assistantIndex += 1;
+            assistantMessageId = assistantIdAt(assistantIndex);
         }
         return taken;
     }
@@ -215,5 +236,5 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         return messages;
     }
 
-    return { emit, takeOpening, takeRound, finish };
+    return { emit, observe, assistantMessageId: () => assistantMessageId, userMessageId: () => userMessageId, takeOpening, takeRound, finish };
 }

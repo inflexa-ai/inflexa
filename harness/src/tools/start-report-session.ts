@@ -12,6 +12,11 @@
  * past the anchor of the newest report child, the tool starts nothing and it
  * names that child. The spawn runs last.
  *
+ * Inside a durable step, the child id is the UUIDv5 of the key of the step. A
+ * rerun of the call after the spawn, before the checkpoint of the step, finds
+ * that child. It skips the advice, and it gives the same session and the same
+ * part.
+ *
  * Each degraded condition is a typed outcome in the ok channel: a scope with no
  * thread id, a composition with no eyes, the advice, each refusal of the spawn,
  * and a store fault. The tool never throws for one of them.
@@ -28,8 +33,9 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError, type Connectable, type DbError } from "../lib/db-result.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
-import type { ThreadInputError, ThreadType } from "../memory/thread-store.js";
+import { createThreadStore, type ThreadInputError, type ThreadType } from "../memory/thread-store.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
+import { durableStepKey, stepUuid } from "./workspace/edit-file.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
 
 /**
@@ -131,6 +137,8 @@ export type StartReportSessionToolDeps = {
      */
     readonly provenance?: ProvenanceSeam;
     readonly logger?: Logger;
+    /** The key of the durable step that runs the call, `undefined` outside one. Defaults to {@link durableStepKey}. */
+    readonly stepKey?: () => string | undefined;
 };
 
 /** The line that a call reads when the scope names no conversation thread. */
@@ -188,6 +196,8 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
         logger: deps.logger,
     };
     const spawn = createReportSessionSpawn(spawnDeps);
+    const threads = createThreadStore(deps.pool);
+    const stepKey = deps.stepKey ?? durableStepKey;
     // The gate reads the routes of the very spawn below, thus the two answers
     // come from one value. The routes are fixed at construction, thus the gate
     // reads one boolean and never a live probe of the sidecar.
@@ -225,12 +235,32 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             }
             const parentThreadId = scope.threadId;
 
+            // Inside a durable step the child id comes from the step, thus a rerun of
+            // the call finds the child of its first run. The advice would name that
+            // child as an existing session, thus a found child skips the advice, and
+            // the spawn gives the child back with no second write.
+            const key = stepKey();
+            const childThreadId = key === undefined ? undefined : stepUuid(key);
+            let rerun = false;
+            if (childThreadId !== undefined) {
+                const earlier = await threads.getThread(childThreadId);
+                if (earlier.isErr()) {
+                    logger.warn("the child of an earlier run did not read", {
+                        parentThreadId,
+                        reason: earlier.error.type,
+                        ...logger.errorFields(earlier.error.cause),
+                    });
+                    return ok(toOutcome(earlier.error));
+                }
+                rerun = earlier.value !== null;
+            }
+
             // The eyes gate has priority over the advice, and the advice costs two
             // reads. The spawn holds the same gate before each read of its own,
             // thus a blind composition reaches the `no_browser` refusal of the
             // spawn with no read and no write. As a result the tool copies no
             // detail line of the spawn.
-            if (eyesAvailable) {
+            if (eyesAvailable && !rerun) {
                 const delta = await spawn.reportSessionDelta(parentThreadId);
                 if (delta.isErr()) {
                     logger.warn("the report session delta did not read", {
@@ -251,7 +281,7 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
                 }
             }
 
-            const spawned = await spawn.spawnReportSession(parentThreadId, brief);
+            const spawned = await spawn.spawnReportSession(parentThreadId, brief, childThreadId);
             if (spawned.isOk()) {
                 const child = spawned.value;
                 // The part rides the started arm only. The existing-session arm

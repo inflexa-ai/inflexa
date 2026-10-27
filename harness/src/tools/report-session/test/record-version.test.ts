@@ -390,6 +390,31 @@ describe("createRecordVersionTool", () => {
         expect(stored?.document.title).toBe("Report");
     });
 
+    it("gives a rerun of the call in a durable step the same version, and the rerun does not read as a replacement", async () => {
+        const threadId = "thread-record-rerun";
+        await anchorThread(threadId, "parent-record-rerun");
+        const doc = metricDoc();
+        const tool = createRecordVersionTool({
+            gateway: gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc)),
+            store,
+            threads,
+            resolveWorkspaceRoot: () => Promise.resolve(suiteRoot),
+            makeResolver: () => Promise.resolve(createFixtureResolver()),
+            stepKey: () => "wf-record:8",
+        });
+
+        const first = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+        const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(first).toMatchObject({ outcome: "recorded", replaced: false });
+        expect(second).toEqual(first);
+        const { rows } = await pool.query<{ n: number }>({
+            text: "SELECT COUNT(*)::int AS n FROM cortex_report_versions WHERE thread_id = $1",
+            values: [threadId],
+        });
+        expect(rows).toEqual([{ n: 1 }]);
+    });
+
     describe("the record loop", () => {
         /** The draft of `metricDoc`, under a title that a test tells from the first one. */
         function amendedDoc(title: string, assertValue?: number): DraftDocument {

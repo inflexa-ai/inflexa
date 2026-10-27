@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { inProcessSubAgent } from "../../../loop/sub-agent.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { okAsync } from "neverthrow";
 import { z } from "zod";
@@ -63,9 +64,6 @@ function ctxFor(emitted: unknown[] = []): ToolContext {
         emit: (event) => {
             emitted.push(event);
         },
-        ask: () => {
-            return Promise.reject(new Error("ask should not be reached"));
-        },
     };
 }
 
@@ -89,7 +87,7 @@ function toolResultIn(call: LanguageModelV4CallOptions, toolCallId: string): unk
 describe("generateAnalogyReport sub-agent tool", () => {
     it("returns the submitted report, and the child loop runs on a derived session", async () => {
         const { provider, calls } = scriptedModel([submitReport("t1", VALID_ENVELOPE), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const emitted: unknown[] = [];
         const ctx = ctxFor(emitted);
@@ -121,7 +119,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     it("declares read_tool_output after the search tools and before the terminal tools when it has a tool output store", async () => {
         const { provider, calls } = scriptedModel([submitReport("t1", VALID_ENVELOPE), done]);
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, toolOutputStore });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, toolOutputStore }, inProcessSubAgent);
 
         (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctxFor()))._unsafeUnwrap();
 
@@ -138,7 +136,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
     it("gives the extraction-failed envelope with the reason of a blocker as its message", async () => {
         const { provider, calls } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: "The problem statement is empty." })), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "?" }, ctxFor()))._unsafeUnwrap();
 
@@ -156,7 +154,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
             [report, blocker],
         ]) {
             const { provider } = scriptedModel([callTools(...round), done]);
-            const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+            const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
             const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -170,7 +168,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
             submitReport("t1", VALID_ENVELOPE),
             done,
         ]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -180,7 +178,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     it("gives the last accepted report when the reasoner submits two", async () => {
         const revised = { ...VALID_ENVELOPE, problemSummary: "The revised summary of the problem." };
         const { provider } = scriptedModel([submitReport("t1", VALID_ENVELOPE), submitReport("t2", revised), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -195,7 +193,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
             done,
         ]);
         const logger = createCapturingLogger();
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, logger });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, logger }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -221,7 +219,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     it("gives the extraction-failed envelope when the salvage also records no outcome, and makes no conversion call", async () => {
         const prose = reply([text("Still prose, no report.")]);
         const { provider, calls } = scriptedModel([prose, prose]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = ExtractionFailedSchema.parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap());
 
@@ -232,7 +230,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
     it("gives the extraction-failed envelope when the loop throws", async () => {
         const { provider } = scriptedModel([{ fail: new Error("the endpoint is down") }]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = ExtractionFailedSchema.parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap());
 
@@ -243,7 +241,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     it("gives an invalid report its issues, and accepts a second submit", async () => {
         const { analogies: _dropped, ...withoutAnalogies } = VALID_ENVELOPE;
         const { provider, calls } = scriptedModel([submitReport("t1", withoutAnalogies), submitReport("t2", VALID_ENVELOPE), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -257,7 +255,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     it("gives the report whose analogies arrive as a JSON-encoded string", async () => {
         const stringified = { ...VALID_ENVELOPE, analogies: JSON.stringify(VALID_ENVELOPE.analogies) };
         const { provider } = scriptedModel([submitReport("t1", stringified), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -266,7 +264,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
     it("refuses a placeholder blocker reason, and the run continues to the report", async () => {
         const { provider, calls } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: "TBD" })), submitReport("t1", VALID_ENVELOPE), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
@@ -277,7 +275,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
     it("rejects empty problem at the input-schema boundary", () => {
         const { provider } = scriptedModel([]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
         const parse = tool.inputSchema.safeParse({ problem: "" });
         expect(parse.success).toBe(false);
     });

@@ -23,6 +23,7 @@ import { forSubAgent } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { runWithSalvage, type LoopStep } from "../../loop/run-loop.js";
+import type { SubAgentRegistrar } from "../../loop/sub-agent.js";
 import { recordedInputOf } from "../../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -172,7 +173,7 @@ export type GenerateAnalogyReportDeps = {
 };
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
-export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {
+export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
     const ncbi = createNcbiTools(deps.bioKeys);
     const searchTools: readonly Tool[] = [
@@ -183,6 +184,59 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
         ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
     ];
     const systemPrompt = composeSystemPrompt(analogicalReasonerPrompt);
+
+    const research = registerSubAgent<GenerateAnalogyReportInput, AnalogicalReasonerOutput>(AGENT_ID, async ({ payload: input, ctx, loop }) => {
+        const childSession = forSubAgent(ctx.session, AGENT_ID);
+
+        // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
+        const submitReportTool = createSubmitAnalogyReportTool();
+        const blockerTool = createAnalogyBlockerTool();
+        const agent: AgentDefinition = {
+            id: AGENT_ID,
+            systemPrompt,
+            model: deps.model,
+            tools: [...searchTools, submitReportTool, blockerTool],
+            maxIterations: RESEARCH_MAX_ITERATIONS,
+        };
+
+        let steps: readonly LoopStep[];
+        try {
+            const run = await runWithSalvage(
+                agent,
+                [{ role: "user", content: buildResearchPrompt(input) }],
+                childSession,
+                {
+                    ...loop,
+                    provider: deps.provider,
+                    logger,
+                    usageRecorder: deps.usageRecorder,
+                    toolOutputStore: deps.toolOutputStore,
+                },
+                {
+                    tools: [SUBMIT_ANALOGY_REPORT_TOOL_ID, REPORT_BLOCKER_TOOL_ID],
+                    nudge: ANALOGY_SALVAGE_NUDGE,
+                    hasOutcome: (done) => acceptedReportOf(done) !== undefined || blockerOf(done) !== null,
+                },
+            );
+            steps = run.steps;
+        } catch (err) {
+            const message = errorMessageOf(err) ?? textOf(err);
+            return {
+                schemaVersion: "1",
+                error: {
+                    kind: "extraction-failed",
+                    message: `Analogy research failed: ${message}`.slice(0, 240),
+                },
+            };
+        }
+
+        // A report wins over a blocker.
+        const report = acceptedReportOf(steps);
+        if (report !== undefined) return report;
+        const blocker = blockerOf(steps);
+        if (blocker !== null) return { schemaVersion: "1", error: { kind: "extraction-failed", message: blocker.reason } };
+        return buildExtractionFailedEnvelope();
+    });
 
     return defineTool({
         id: "generate_analogy_report",
@@ -211,66 +265,8 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             "failure, thus surface the message and ask the user to narrow the problem.",
         inputSchema: generateAnalogyReportInputSchema,
         describeCall: "none",
-        execute: async (input, ctx) => {
-            const childSession = forSubAgent(ctx.session, AGENT_ID);
-
-            // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
-            const submitReportTool = createSubmitAnalogyReportTool();
-            const blockerTool = createAnalogyBlockerTool();
-            const agent: AgentDefinition = {
-                id: AGENT_ID,
-                systemPrompt,
-                model: deps.model,
-                tools: [...searchTools, submitReportTool, blockerTool],
-                maxIterations: RESEARCH_MAX_ITERATIONS,
-            };
-
-            let steps: readonly LoopStep[];
-            try {
-                const run = await runWithSalvage(
-                    agent,
-                    [{ role: "user", content: buildResearchPrompt(input) }],
-                    childSession,
-                    {
-                        provider: deps.provider,
-                        signal: ctx.signal,
-                        emit: ctx.emit,
-                        logger,
-                        usageRecorder: deps.usageRecorder,
-                        toolOutputStore: deps.toolOutputStore,
-                        // Fold the child's calls into the turn total the root loop reports.
-                        turnUsage: ctx.turnUsage,
-                        // Keeps the usage record keys of two parallel dispatches disjoint —
-                        // same frame, same call path.
-                        invocationId: ctx.invocationId,
-                    },
-                    {
-                        tools: [SUBMIT_ANALOGY_REPORT_TOOL_ID, REPORT_BLOCKER_TOOL_ID],
-                        nudge: ANALOGY_SALVAGE_NUDGE,
-                        hasOutcome: (done) => acceptedReportOf(done) !== undefined || blockerOf(done) !== null,
-                    },
-                );
-                steps = run.steps;
-            } catch (err) {
-                const message = errorMessageOf(err) ?? textOf(err);
-                return ok({
-                    schemaVersion: "1",
-                    error: {
-                        kind: "extraction-failed",
-                        message: `Analogy research failed: ${message}`.slice(0, 240),
-                    },
-                } satisfies AnalogicalReasonerOutput);
-            }
-
-            // A report wins over a blocker.
-            const report = acceptedReportOf(steps);
-            if (report !== undefined) return ok(report satisfies AnalogicalReasonerOutput);
-            const blocker = blockerOf(steps);
-            if (blocker !== null) {
-                return ok({ schemaVersion: "1", error: { kind: "extraction-failed", message: blocker.reason } } satisfies AnalogicalReasonerOutput);
-            }
-            return ok(buildExtractionFailedEnvelope());
-        },
+        startsWorkflow: true,
+        execute: async (input, ctx) => ok(await research(input, ctx)),
     });
 }
 

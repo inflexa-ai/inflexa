@@ -33,6 +33,7 @@ import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
+import type { SubAgentRegistrar } from "../loop/sub-agent.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
@@ -135,6 +136,11 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
     readonly citationResolver: CitationResolver;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
     readonly provider: ChatProvider;
+    /**
+     * Makes the function of each sub-agent of the agent: the planner and the analogy reporter. The assembly gives
+     * `registerSubAgent`, thus a sub-agent of a turn workflow runs as a child workflow. A test gives `inProcessSubAgent`.
+     */
+    readonly registerSubAgent: SubAgentRegistrar;
     /** Postgres pool — plan persistence, run inspection, workspace index, working memory. */
     readonly pool: Pool;
     /** Embedding seam — workspace semantic search. */
@@ -334,20 +340,23 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
         createInspectDataProfileTool(pool),
-        createGeneratePlanTool({
-            conversation: { provider, model },
-            pool,
-            resourcePolicy,
-            usageRecorder,
-            toolOutputStore,
-            bioKeys,
-            knowledge: deps.knowledge,
-            refStorePath,
-            farmLockFile,
-            imagePackagesFile,
-            readPoolInventory,
-            logger: deps.logger,
-        }),
+        createGeneratePlanTool(
+            {
+                conversation: { provider, model },
+                pool,
+                resourcePolicy,
+                usageRecorder,
+                toolOutputStore,
+                bioKeys,
+                knowledge: deps.knowledge,
+                refStorePath,
+                farmLockFile,
+                imagePackagesFile,
+                readPoolInventory,
+                logger: deps.logger,
+            },
+            deps.registerSubAgent,
+        ),
         createExecuteAnalysisTool({
             pool,
             executeAnalysisWorkflow,
@@ -383,14 +392,17 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createShowPlanTool(pool),
         showFileTool,
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool({
-            provider,
-            model,
-            bioKeys,
-            usageRecorder,
-            toolOutputStore,
-            logger: deps.logger,
-        }),
+        createGenerateAnalogyReportTool(
+            {
+                provider,
+                model,
+                bioKeys,
+                usageRecorder,
+                toolOutputStore,
+                logger: deps.logger,
+            },
+            deps.registerSubAgent,
+        ),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),
         createReadFileTool(workspaceFs),

@@ -64,11 +64,15 @@ export type SandboxClient = {
      * same step gets the same id, and the sandbox gives it the result of the
      * first. Outside a workflow it throws.
      *
+     * `execId` replaces that id. A caller that runs more than one exec in one
+     * step, or an exec outside a workflow, gives its own id
+     * (`sandbox/step-sandbox.ts`).
+     *
      * A recovered step submits again under the same id. The sandbox dedups the
      * submit on the id, thus the poll attaches to the exec that already ran or
      * runs, and `emit` sees its events again from the start.
      */
-    exec(ref: SandboxRef, request: ExecRequest, emit: ExecEmit, deadline: number): Promise<ExecResult>;
+    exec(ref: SandboxRef, request: ExecRequest, emit: ExecEmit, deadline: number, execId?: string): Promise<ExecResult>;
 
     /**
      * Per-sandbox-machine liveness. `alive: false` only when observably dead

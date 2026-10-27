@@ -21,6 +21,7 @@ import {
     insertGrantedAsk,
     insertPendingAsk,
     markAborted,
+    markExpired,
     selectAskResolution,
     selectGrant,
     selectPending,
@@ -53,9 +54,21 @@ export type AskContext = {
     readonly emit: EmitFn;
 };
 
+/** Who an ask goes to and where it belongs. */
+export type AskScope = Pick<AskContext, "analysisId" | "userId" | "threadId">;
+
 /** The gateway surface: the per-turn seam plus the outward embedder-driven API. */
 export type AskGateway = {
     ask(request: AskRequest, ctx: AskContext): Promise<AskApproval>;
+    /**
+     * Raise an ask under a known id, for a turn workflow that waits for the answer itself. A standing grant settles
+     * it at once as `resolved`. Else the row waits as `pending`. A second raise of the same id changes nothing.
+     */
+    raise(id: string, request: AskRequest, scope: AskScope): Promise<"granted" | "pending">;
+    /** Mark a pending ask `expired`. */
+    expire(id: string): Promise<void>;
+    /** Mark a pending ask `aborted`. */
+    abort(id: string): Promise<void>;
     answer(id: string, reply: AskReply): Promise<AnswerOutcome>;
     pending(): Promise<PendingAsk[]>;
     /** Expire pending asks older than `maxAgeMs` (default {@link DEFAULT_SWEEP_MAX_AGE_MS}). */
@@ -136,6 +149,35 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         }
     }
 
+    async function raise(id: string, request: AskRequest, scope: AskScope): Promise<"granted" | "pending"> {
+        const now = new Date().toISOString();
+        const row: AskRow = {
+            id,
+            analysisId: scope.analysisId,
+            userId: scope.userId,
+            threadId: scope.threadId ?? null,
+            title: request.title,
+            command: request.command,
+            detail: request.detail ?? null,
+            grantKey: request.grantKey ?? null,
+            createdAt: now,
+        };
+        if (unwrapOrThrow(await selectGrant(pool, scope.analysisId, scope.userId, request.grantKey ?? request.command))) {
+            unwrapOrThrow(await insertGrantedAsk(pool, row, now));
+            return "granted";
+        }
+        unwrapOrThrow(await insertPendingAsk(pool, row));
+        return "pending";
+    }
+
+    async function expire(id: string): Promise<void> {
+        unwrapOrThrow(await markExpired(pool, id, new Date().toISOString()));
+    }
+
+    async function abort(id: string): Promise<void> {
+        unwrapOrThrow(await markAborted(pool, id, new Date().toISOString()));
+    }
+
     async function answer(id: string, reply: AskReply): Promise<AnswerOutcome> {
         return unwrapOrThrow(await answerAsk(pool, id, reply, new Date().toISOString()));
     }
@@ -149,11 +191,16 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         return unwrapOrThrow(await sweepExpiredRows(pool, new Date(now).toISOString(), new Date(now - maxAgeMs).toISOString()));
     }
 
-    return { ask, answer, pending, sweepExpired };
+    return { ask, raise, expire, abort, answer, pending, sweepExpired };
 }
 
 /** Emit (or reconcile, under the same id) the ask's `data-ask` chat part. */
 function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): void | Promise<void> {
+    return emit({ type: "data-ask", data: askPartOf(id, request, status, reply) });
+}
+
+/** The `data-ask` part of an ask in one status. Each status of one ask reconciles under the same id. */
+export function askPartOf(id: string, request: AskRequest, status: AskStatus, reply?: AskReply["kind"]): AskPart {
     const part: AskPart = {
         type: "data-ask",
         id,
@@ -163,7 +210,7 @@ function emitAskPart(emit: EmitFn, id: string, request: AskRequest, status: AskS
     };
     if (request.detail !== undefined) part.detail = request.detail;
     if (reply !== undefined) part.reply = reply;
-    return emit({ type: "data-ask", data: part });
+    return part;
 }
 
 /**

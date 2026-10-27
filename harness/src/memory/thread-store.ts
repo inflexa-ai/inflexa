@@ -50,6 +50,7 @@ import { type DbError, type Connectable, tryMutation, tryQuery, withTransaction 
 import { presentFirst } from "../lib/present.js";
 import type { DomainError } from "../lib/result.js";
 import type { Querier } from "../state/db.js";
+import { appendTurnIn, type ConversationTurn } from "./thread-history.js";
 
 /**
  * The kind of session a thread holds. `conversation` is the analysis
@@ -124,6 +125,12 @@ export type CreateThreadInput = {
      * and either half alone describes no place.
      */
     readonly parentSeq?: number;
+    /**
+     * The first turn of the new thread. The row and the turn commit in one
+     * transaction. A create that finds the row already there writes no turn,
+     * thus a second create with the same id gives the thread with one turn.
+     */
+    readonly firstTurn?: ConversationTurn;
 };
 
 /**
@@ -396,8 +403,18 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
      * returned row.
      */
     function insertThread(input: CreateThreadInput): ResultAsync<Thread, DbError> {
+        const { firstTurn } = input;
+        if (firstTurn === undefined) return insertRow(pool, input).map(({ thread }) => thread);
+        return withTransaction(pool, "thread-store.createThread", (client) =>
+            insertRow(client, input).andThen(({ thread, inserted }) =>
+                inserted ? appendTurnIn(client, thread.threadId, firstTurn).map(() => thread) : okAsync<Thread, DbError>(thread),
+            ),
+        );
+    }
+
+    function insertRow(querier: Querier, input: CreateThreadInput): ResultAsync<{ thread: Thread; inserted: boolean }, DbError> {
         return tryMutation("thread-store.createThread.insert", () =>
-            pool.query<ThreadRow>(
+            querier.query<ThreadRow>(
                 `INSERT INTO cortex_analysis_threads (thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (thread_id) DO NOTHING
@@ -405,13 +422,13 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
                 [input.threadId, input.analysisId, input.title ?? null, input.type ?? "conversation", input.parentThreadId ?? null, input.parentSeq ?? null],
             ),
         ).andThen(({ rows }) => {
-            if (rows[0]) return okAsync<Thread, DbError>(toThread(rows[0]));
+            if (rows[0]) return okAsync<{ thread: Thread; inserted: boolean }, DbError>({ thread: toThread(rows[0]), inserted: true });
             // Row already existed — ON CONFLICT DO NOTHING returns nothing. Read it
             // back (it may be archived; return it regardless so the caller sees
             // the existing row's identity).
             return tryQuery("thread-store.createThread.readback", () =>
-                pool.query<ThreadRow>(`SELECT ${THREAD_COLUMNS} FROM cortex_analysis_threads WHERE thread_id = $1`, [input.threadId]),
-            ).map(({ rows: existing }) => toThread(presentFirst(existing, "the thread row read back")));
+                querier.query<ThreadRow>(`SELECT ${THREAD_COLUMNS} FROM cortex_analysis_threads WHERE thread_id = $1`, [input.threadId]),
+            ).map(({ rows: existing }) => ({ thread: toThread(presentFirst(existing, "the thread row read back")), inserted: false }));
         });
     }
 
@@ -581,6 +598,7 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
         // `cortex_analysis_threads` either, so the cascade cannot reach it. Its row
         // holds a whole draft document, and a purged thread can never be composed
         // again, so a row left behind is dead weight until the analysis purge runs.
+        // The stored results of its authoring calls go with it, for the same reason.
         //
         // Messages go first, and the thread rows go last: the walk every statement
         // shares reads the very rows the last one removes. Thus a thread delete before
@@ -613,6 +631,15 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
                         client.query(
                             `${SUBTREE_CTE}
          DELETE FROM cortex_report_session_state WHERE thread_id IN (SELECT thread_id FROM subtree)`,
+                            [threadId],
+                        ),
+                    ),
+                )
+                .andThen(() =>
+                    tryMutation("thread-store.purgeThread.authoringResults", () =>
+                        client.query(
+                            `${SUBTREE_CTE}
+         DELETE FROM cortex_authoring_results WHERE thread_id IN (SELECT thread_id FROM subtree)`,
                             [threadId],
                         ),
                     ),

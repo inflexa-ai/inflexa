@@ -25,6 +25,7 @@ import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/re
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
+import { registerSubAgent } from "../loop/sub-agent.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import { createStaticEyes, type AcquireEyes } from "../lib/eyes.js";
@@ -32,21 +33,11 @@ import type { DomainError } from "../lib/result.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
-import type { Suspension } from "../workflows/suspension.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
-import {
-    bindExtractionTrigger,
-    createExtractionArm,
-    registerExtractValuesWorkflow,
-    type ExtractValuesResult,
-    type ExtractValuesWorkflowInput,
-} from "../tasks/extract-values.js";
-import { registerDeriveTableExecWorkflow, triggerDeriveTableExec } from "../tasks/derive-table-exec.js";
-import type { DeriveTableExecInput } from "../tools/report-session/derive-table.js";
-import type { ExecResult } from "../sandbox/types.js";
+import { createExtractionArm, runExtraction } from "../tasks/extract-values.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
-import type { AuthContext } from "../auth/types.js";
+import type { AuthContext, Identity } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
@@ -56,6 +47,8 @@ import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
 import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
+import type { BioToolKeys } from "../tools/bio/keys.js";
+import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -78,9 +71,13 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  */
 export type CoreWorkflowDeps = {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
-    readonly buildExecuteAnalysis: (
-        sandboxStep: SandboxStepCallable,
-    ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "workingMemory">;
+    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<
+        ExecuteAnalysisDeps,
+        "usageRecorder" | "literatureReviewer" | "toolOutputStore" | "workingMemory"
+    > & {
+        /** API keys for the bio/chem tools of the literature reviewer of the synthesis. */
+        readonly bioKeys: BioToolKeys;
+    };
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
 };
 
@@ -89,8 +86,6 @@ export type RegisteredWorkflows = {
     readonly executeAnalysis: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     readonly sandboxStep: SandboxStepCallable;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
-    readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>>;
-    readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
 };
 
 /**
@@ -112,15 +107,24 @@ export type RegisteredWorkflows = {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes" | "toolOutputStore"
+    | "executeAnalysisWorkflow"
+    | "resourcePolicy"
+    | "usageRecorder"
+    | "citationResolver"
+    | "anchorReportSession"
+    | "eyes"
+    | "toolOutputStore"
+    | "registerSubAgent"
 >;
 
 /**
- * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the auth of the tool
- * call that reads them. A resolver serves one analysis, thus the report tools build one for each call.
+ * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the identity and the
+ * auth of the tool call that reads them. A resolver serves one analysis, thus the report tools build one for
+ * each call.
  */
 export type ReportResolverScope = {
     readonly analysisId: string;
+    readonly identity: Identity;
     readonly auth: AuthContext;
 };
 
@@ -336,28 +340,27 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const toolOutputStore = createToolOutputStore(conversation.pool);
 
     const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, toolOutputStore });
+    const { bioKeys: synthesisBioKeys, ...executeAnalysisDeps } = wf.buildExecuteAnalysis(sandboxStep);
+    const literatureReviewer = createLiteratureReviewerTool(
+        {
+            provider: executeAnalysisDeps.provider,
+            model: executeAnalysisDeps.synthesisModel,
+            bioKeys: synthesisBioKeys,
+            citationResolver,
+            usageRecorder,
+            toolOutputStore,
+            logger: executeAnalysisDeps.logger,
+        },
+        registerSubAgent,
+    );
     const executeAnalysis = registerExecuteAnalysis({
-        ...wf.buildExecuteAnalysis(sandboxStep),
-        citationResolver,
+        ...executeAnalysisDeps,
+        literatureReviewer,
         usageRecorder,
         toolOutputStore,
         workingMemory: createWorkingMemory(conversation.pool),
     });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, toolOutputStore });
-    // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
-    // three seams from the profile deps. The report resolver factory binds the extraction arm over this
-    // callable, thus a fall-through report reference reads its file out of process on the profile rails.
-    const extractValues = registerExtractValuesWorkflow({
-        sandboxClient: wf.dataProfile.sandboxClient,
-        runAuthorizer: wf.dataProfile.runAuthorizer,
-        logger: wf.dataProfile.logger,
-    });
-    // A session derivation runs its container here and not in the turn. An exec is a durable step of a
-    // workflow, thus the tool starts this workflow and awaits it.
-    const deriveTableExec = registerDeriveTableExecWorkflow({
-        sandboxClient: wf.dataProfile.sandboxClient,
-        logger: wf.dataProfile.logger,
-    });
 
     // The session runtime binds the per-session state to the thread behind the
     // tool boundary, thus one instance serves every report thread. It comes before
@@ -387,6 +390,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         // The start tool passes it to the spawn, which emits the creation of a
         // report session. The same seam reaches the report agent below.
         provenance: deps.provenance,
+        registerSubAgent,
     });
 
     // The report agent is a singleton over the conversation deps, the same way the
@@ -403,13 +407,13 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const reportArtifactReads = createArtifactReadStore();
 
     // The reference resolver of the report path, and its production wiring. A resolver reads
-    // the pinned artifacts of one analysis, thus the factory binds one analysis and one auth
-    // for each tool call. The extraction arm falls through to the registered extract-values
-    // callable for an over-cap file or a host parse fault. The cap gates the host read, and
-    // the resolver defaults it to 16 MiB.
+    // the pinned artifacts of one analysis, thus the factory binds one analysis and one caller
+    // for each tool call. The extraction arm falls through to an extraction pass on the sandbox
+    // rail of the profile for an over-cap file or a host parse fault. The pass runs inside the
+    // step of the tool call. The cap gates the host read, and the resolver defaults it to 16 MiB.
     const makeProductionReportResolver = async (scope: ReportResolverScope): Promise<ReferenceResolver> => {
-        const arm = createExtractionArm(
-            bindExtractionTrigger({ runAuthorizer: conversation.runAuthorizer, workflow: extractValues }, { auth: scope.auth, analysisId: scope.analysisId }),
+        const arm = createExtractionArm((requests) =>
+            runExtraction({ sandboxClient: wf.dataProfile.sandboxClient, logger: wf.dataProfile.logger }, scope, requests),
         );
         return createProductionResolver({
             workspaceRoot: await conversation.resolveWorkspaceRoot(scope.analysisId),
@@ -431,12 +435,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         store: reportVersionStore,
         threads: reportThreads,
         chrome: conversation.chrome,
-        // The derivation tool draws the rails of the value tier: the same sandbox client
-        // and the same run authorizer. Thus a session derivation and an extraction run on
-        // one substrate, and neither one mints a run of the analysis.
+        // The derivation tool draws the rail of the value tier: the same sandbox client. Thus a
+        // session derivation and an extraction run on one substrate, and neither one mints a run
+        // of the analysis.
         derivations: reportSession.derivations,
-        runDerivation: (input) => triggerDeriveTableExec(deriveTableExec, input),
-        runAuthorizer: conversation.runAuthorizer,
+        sandboxClient: wf.dataProfile.sandboxClient,
         makeResolver: makeReportResolver,
         eyes,
         resolvePageAsset: deps.resolveReportPageAsset,
@@ -478,8 +481,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             executeAnalysis,
             sandboxStep,
             dataProfile,
-            extractValues,
-            deriveTableExec,
         },
         citationResolver,
         approvePlan: (input) =>

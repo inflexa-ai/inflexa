@@ -22,6 +22,7 @@
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
+import { createHash, randomUUID } from "node:crypto";
 import { errorMessageOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
@@ -147,6 +148,21 @@ export type EditFileDeps = {
 /** The key of the DBOS step that runs the call, or `undefined` outside a workflow, where nothing reruns. */
 export function durableStepKey(): string | undefined {
     return DBOS.isInStep() ? stepExecId() : undefined;
+}
+
+const STEP_UUID_NAMESPACE = "1208d858-ffdc-4f80-acec-32131dad545d";
+
+/** An id that each run of one durable step gives again: the UUIDv5 of the step key. With no step key, nothing reruns, thus the id is random. */
+export function stepUuid(stepKey: string | undefined): string {
+    if (stepKey === undefined) return randomUUID();
+    const hash = createHash("sha1")
+        .update(Buffer.from(STEP_UUID_NAMESPACE.replaceAll("-", ""), "hex"))
+        .update(stepKey, "utf8")
+        .digest();
+    hash.writeUInt8((hash.readUInt8(6) & 0x0f) | 0x50, 6);
+    hash.writeUInt8((hash.readUInt8(8) & 0x3f) | 0x80, 8);
+    const hex = hash.subarray(0, 16).toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function replaceString(

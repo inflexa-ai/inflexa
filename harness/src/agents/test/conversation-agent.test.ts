@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { inProcessSubAgent } from "../../loop/sub-agent.js";
 import { collapseWhitespace } from "../../lib/text.js";
 import { join } from "node:path";
 import { ok, okAsync } from "neverthrow";
@@ -10,7 +11,6 @@ import { createConversationAgent, CONVERSATION_AGENT_ID } from "../conversation-
 import { conversationPrompt } from "../../prompts/conversation.js";
 import { createRegistry } from "../../tools/registry.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
-import { AskRejectedError } from "../../tools/approval/contract.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
@@ -54,6 +54,7 @@ const unusedEmbedding: EmbeddingProvider = {
 function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore, webSearch?: WebSearchEngine) {
     return createConversationAgent({
         provider: unusedChatProvider(),
+        registerSubAgent: inProcessSubAgent,
         utilityProvider: unusedChatProvider(),
         pool: new Pool(),
         embedding: unusedEmbedding,
@@ -266,22 +267,19 @@ describe("createConversationAgent", () => {
         expect(withEmpty.tools.map((t) => t.id)).toEqual(withNone.tools.map((t) => t.id));
     });
 
-    test("a host tool receives the shared ToolContext and its ask is denied by default", async () => {
+    test("a host tool keeps its approval hook on the roster", async () => {
         const hostAskTool = defineTool({
             id: "host_needs_approval",
-            description: "A host tool that pauses for user approval.",
+            description: "A host tool that needs the approval of the user.",
             inputSchema: z.object({}),
             describeCall: "none",
-            execute: async (_input, ctx) => {
-                await ctx.ask({ title: "Host action", command: "do the thing" });
-                return ok({ approved: true });
-            },
+            approval: () => ({ title: "Host action", command: "do the thing" }),
+            execute: () => Promise.resolve(ok({ approved: true })),
         });
         const agent = buildAgent([hostAskTool]);
         const wired = presentFind(agent.tools, (t) => t.id === "host_needs_approval");
-        // The fixture wires `UnavailableAsk` — no interactive surface — so the ask
-        // resolves to a denial rather than waiting on a surface that cannot answer.
         const { ctx } = makeToolContext();
-        await expect(wired.execute({}, ctx)).rejects.toBeInstanceOf(AskRejectedError);
+
+        expect(await wired.approval?.({}, { invocationId: "c1", session: ctx.session })).toEqual({ title: "Host action", command: "do the thing" });
     });
 });

@@ -37,6 +37,7 @@ import {
     loadPlan,
     queryActiveRun,
     queryNewestPlanRun,
+    queryRun,
     reserveRunById,
     suspendAnalysis,
     updateRunStatus,
@@ -44,7 +45,7 @@ import {
 } from "../state/index.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-hoc-router.js";
-import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
+import { adHocPlanId, adHocRunId, callRunId, durableCallKey } from "./analysis-invocation.js";
 import { defineTool, type Tool, type ToolContext } from "./define-tool.js";
 import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
 import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
@@ -524,13 +525,22 @@ type LaunchTailArgs = {
     planId: string;
     plan: AnalysisPlan;
     mode: "plan" | "adhoc";
-    /** Reserves the run row. `started: false` names the run that already holds the slot. */
+    /** The run of this launch. A rerun of one tool call gives the same id. */
+    runId: string;
+    /**
+     * Reserves the row of `runId`, or finds the row that a first attempt of the same call reserved. A
+     * different run id names the run that holds the slot of the plan.
+     */
     reserve: (frame: { analysisId: string; threadId: string | null }) => Promise<Result<PlanLaunch, LaunchPlanRunRefusal>>;
 };
 
 /**
  * The half of a launch that the plan mode and the ad hoc mode share: the link pass, the reservation,
  * the authorization, and the workflow start. It gives each outcome as a `Result`.
+ *
+ * A launch of the run of this call always authorizes and starts, also when its row exists. A rerun of
+ * the call can come after the reservation and before the start, and the launcher starts one workflow for
+ * each run id. A rerun after the start mints a second mandate that no run uses.
  */
 async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
     const logger = (deps.logger ?? createNoopLogger()).named("execute-analysis-tool");
@@ -555,8 +565,9 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
 
     const reservation = await args.reserve({ analysisId, threadId });
     if (reservation.isErr()) return err(reservation.error);
-    if (!reservation.value.started) return reservation;
-    const runId = reservation.value.runId;
+    // A different run holds the slot of the plan, or the view of the caller is stale: this call starts nothing.
+    if (reservation.value.runId !== args.runId) return reservation;
+    const runId = args.runId;
 
     const authorized = await passGate(
         "RunAuthorizer.authorize",
@@ -626,7 +637,7 @@ function refuseStaleView(view: StaleView): Result<PlanLaunch, LaunchPlanRunRefus
     return view.type === "newer" ? ok({ runId: view.runId, started: false }) : err({ type: "run_not_found", runId: view.runId });
 }
 
-type PlanSlot = { type: "inserted" } | { type: "stale"; view: StaleView };
+type PlanSlot = { type: "reserved" } | { type: "stale"; view: StaleView };
 
 function lockPlanLaunch(client: TransactionQuerier, planId: string): ResultAsync<void, DbError> {
     return tryQuery("execute-analysis.lockPlanLaunch", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`plan-launch:${planId}`])).map(
@@ -635,32 +646,38 @@ function lockPlanLaunch(client: TransactionQuerier, planId: string): ResultAsync
 }
 
 /**
- * Reserve a fresh run for a plan under the lock of the plan, thus the reservations of one plan occur one
- * after the other. A caller with a `newestRunId` reserves nothing when the newest run of the plan is a
- * different run. The new row starts after the newest start, thus it is the newest run of the plan. A
- * concurrent launch of the same plan can hold the active-plan slot, and its run is the answer.
+ * Reserve the run `runId` for a plan under the lock of the plan, thus the reservations of one plan occur
+ * one after the other. A row of `runId` that exists is the reservation of a first attempt of the same
+ * call. A caller with a `newestRunId` reserves nothing when the newest run of the plan is a different run.
+ * The new row starts after the newest start, thus it is the newest run of the plan. A concurrent launch of
+ * the same plan can hold the active-plan slot, and its run is the answer.
  */
 async function reservePlanRun(
     deps: LaunchPlanRunDeps,
-    args: { analysisId: string; threadId: string | null; planId: string; newestRunId?: string | null },
+    args: { analysisId: string; threadId: string | null; planId: string; runId: string; newestRunId?: string | null },
 ): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
-    const runId = randomUUID();
+    const { runId } = args;
     try {
         const reserved = await withTransaction(deps.pool, "execute-analysis.reservePlanRun", (client) =>
             lockPlanLaunch(client, args.planId)
-                .andThen(() => queryNewestPlanRun(client, { analysisId: args.analysisId, planId: args.planId }))
-                .andThen((newest): ResultAsync<PlanSlot, DbError> => {
-                    const stale = args.newestRunId === undefined ? null : staleViewOf(newest?.runId ?? null, args.newestRunId);
-                    if (stale) return okAsync({ type: "stale", view: stale });
-                    const startedAt = newest === null ? undefined : new Date(Math.max(Date.now(), Date.parse(newest.startedAt) + 1)).toISOString();
-                    return insertRun(client, {
-                        runId,
-                        analysisId: args.analysisId,
-                        threadId: args.threadId,
-                        workflowName: "executeAnalysis",
-                        planId: args.planId,
-                        startedAt,
-                    }).map((): PlanSlot => ({ type: "inserted" }));
+                .andThen(() => queryRun(client, runId))
+                .andThen((own): ResultAsync<PlanSlot, DbError> => {
+                    if (own !== null) return okAsync({ type: "reserved" });
+                    return queryNewestPlanRun(client, { analysisId: args.analysisId, planId: args.planId }).andThen(
+                        (newest): ResultAsync<PlanSlot, DbError> => {
+                            const stale = args.newestRunId === undefined ? null : staleViewOf(newest?.runId ?? null, args.newestRunId);
+                            if (stale) return okAsync({ type: "stale", view: stale });
+                            const startedAt = newest === null ? undefined : new Date(Math.max(Date.now(), Date.parse(newest.startedAt) + 1)).toISOString();
+                            return insertRun(client, {
+                                runId,
+                                analysisId: args.analysisId,
+                                threadId: args.threadId,
+                                workflowName: "executeAnalysis",
+                                planId: args.planId,
+                                startedAt,
+                            }).map((): PlanSlot => ({ type: "reserved" }));
+                        },
+                    );
                 }),
         );
         if (reserved.isErr()) return err({ type: "store_failed", cause: reserved.error });
@@ -705,6 +722,7 @@ async function reserveAdHocRun(
 async function launchStoredPlan(deps: LaunchPlanRunDeps, input: LaunchPlanRunInput): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
     const { session, planId, newestRunId } = input;
     const analysisId = session.scope.analysisId;
+    const runId = input.runId ?? randomUUID();
 
     const raw = await loadPlan(deps.pool, planId, { analysisId });
     if (raw.isErr()) return err({ type: "store_failed", cause: raw.error });
@@ -721,22 +739,29 @@ async function launchStoredPlan(deps: LaunchPlanRunDeps, input: LaunchPlanRunInp
 
     const active = await queryActiveRun(deps.pool, analysisId, planId);
     if (active.isErr()) return err({ type: "store_failed", cause: active.error });
-    if (active.value) return ok({ runId: active.value.runId, started: false });
+    if (active.value && active.value.runId !== runId) {
+        // A rerun of a call whose run ended keeps its run, also when a later launch holds the slot.
+        const own = await queryRun(deps.pool, runId);
+        if (own.isErr()) return err({ type: "store_failed", cause: own.error });
+        if (own.value === null) return ok({ runId: active.value.runId, started: false });
+    }
 
     return launchReservedRun(deps, {
         session,
         planId,
         plan: plan.value,
         mode: "plan",
-        reserve: (frame) => reservePlanRun(deps, { ...frame, planId, newestRunId }),
+        runId,
+        reserve: (frame) => reservePlanRun(deps, { ...frame, planId, runId, newestRunId }),
     });
 }
 
 /**
  * `newestRunId` is the newest run of the plan that the caller saw, or `null` when the caller saw no run.
- * Without it, the launch compares no run.
+ * Without it, the launch compares no run. `runId` is the id of the run that this launch starts, and a
+ * second launch with the same id starts nothing new. Without it, the launch takes a random id.
  */
-export type LaunchPlanRunInput = { session: AgentSession; planId: string; newestRunId?: string | null };
+export type LaunchPlanRunInput = { session: AgentSession; planId: string; newestRunId?: string | null; runId?: string };
 
 /**
  * Start the run of a stored plan. It reads the plan under the analysis of the session, validates it,
@@ -806,7 +831,10 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
             };
 
             const launch = async (): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> => {
-                if (input.mode === "plan") return launchPlanRun(deps, { session: ctx.session, planId });
+                if (input.mode === "plan") {
+                    const callKey = durableCallKey(ctx.invocationId);
+                    return launchPlanRun(deps, { session: ctx.session, planId, runId: callKey === undefined ? undefined : callRunId(callKey) });
+                }
                 if (input.request === undefined) throw new Error("adhoc mode requires request");
                 const plan = await persistedAdHocPlan(deps, { analysisId, request: input.request, ctx, planId });
                 const runId = adHocRunId(analysisId, ctx.invocationId);
@@ -815,6 +843,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
                     planId,
                     plan,
                     mode: "adhoc",
+                    runId,
                     reserve: (frame) => reserveAdHocRun(deps, { ...frame, planId, runId }),
                 });
             };

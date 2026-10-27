@@ -16,6 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { durableCalls } from "@dbos-inc/vercel-ai";
 import {
     streamText,
@@ -25,7 +26,9 @@ import {
     type StepResult,
     type ToolCallPart,
     type ToolResultPart,
+    type LanguageModelMiddleware,
     type ToolSet,
+    type UIMessageStreamWriter,
 } from "ai";
 
 import { forSubAgent, type AgentSession } from "../auth/types.js";
@@ -52,12 +55,21 @@ import { fallbackModelOf } from "../providers/ai-sdk.js";
 import { extractStatus, findProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
 import type { ChatProvider, PromptCachePolicy, ProviderOptions, ReasoningPolicy } from "../providers/types.js";
-import { UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
+import type { AskRequest } from "../tools/approval/contract.js";
 import { accountingMiddleware, rollupMiddleware } from "./accounting.js";
 import { createCallPolicy, type CallPolicy, type CallPolicyState, type ToolMask } from "./call-policy.js";
 import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "./compaction.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
-import { adaptTools, foldCallRecords, isFatalToolError, modelViewOf, ToolCallOutputSchema, type ToolCallOutput } from "./tool-adapter.js";
+import {
+    adaptTools,
+    deniedReason,
+    foldCallRecords,
+    isFatalToolError,
+    modelViewOf,
+    recordedInputOf,
+    ToolCallOutputSchema,
+    type ToolCallOutput,
+} from "./tool-adapter.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "./tool-output.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage } from "./types.js";
 
@@ -118,6 +130,12 @@ export type AgentRound = {
     readonly messages: readonly LoopMessage[];
 };
 
+/** The decision of the user on the approval of one call. */
+export type ApprovalDecision = { readonly kind: "approved" } | { readonly kind: "denied"; readonly feedback?: string };
+
+/** The reason of a call that asks for approval in a loop where no surface can answer. */
+const NO_APPROVER_REASON = "This action needs the approval of the user, and no one can answer here. Thus it did not run.";
+
 export type LoopOptions = {
     readonly provider: ChatProvider;
     readonly signal: AbortSignal;
@@ -142,10 +160,10 @@ export type LoopOptions = {
      */
     readonly turnInput?: readonly LoopMessage[];
     /**
-     * The approval of the user, threaded into the `ToolContext` of each tool as `ctx.ask`. Absent, approval
-     * resolves to the deny-by-default `UnavailableAsk`, thus a tool that asks where nothing can answer is denied.
+     * The decision of the user on a call whose tool asks for approval. The loop asks before the call runs, after the
+     * call policy. Absent: no surface can answer, and the loop denies each such call.
      */
-    readonly ask?: (request: AskRequest) => Promise<AskApproval>;
+    readonly approve?: (request: AskRequest, call: { readonly toolCallId: string; readonly toolName: string }) => Promise<ApprovalDecision>;
     /** The mask of the task, the budget, and the guard of the run. A refused call does not run. */
     readonly policy?: CallPolicy;
     /** Ends the run when its outcome is final, for example a blocker of a step agent. The finish reason is `stop`. */
@@ -174,6 +192,15 @@ export type LoopOptions = {
      * therefore the turn's root: it alone reports `turnUsage` on its finish.
      */
     readonly turnUsage?: AgentRunUsage;
+    /**
+     * The durable stream that each model call of the run writes its text to, from inside its step. A loop
+     * outside a workflow writes nothing, and `onText` gives its text.
+     */
+    readonly chatStream?: string;
+    /** Receives the chunks that each tool step writes through the tool writer of the library, on a replay too. */
+    readonly toolWriter?: UIMessageStreamWriter;
+    /** Model middleware inside the step of each model call, thus a replay of a recorded call does not run it. */
+    readonly modelMiddleware?: readonly LanguageModelMiddleware[];
     /**
      * The id of the tool call this loop runs inside, supplied by a sub-agent-running tool from its
      * `ctx.invocationId`. It separates two dispatches of the same sub-agent in one round in the usage record
@@ -380,6 +407,8 @@ type SeriesTarget = {
     readonly beforeRequest?: () => Promise<void>;
     /** Receives each text delta of the reply. */
     readonly onText?: (text: string) => void | Promise<void>;
+    /** The durable stream that the text of the reply goes to. A compaction exchange streams no text. */
+    readonly textStream?: string;
     /** Each step of the run so far, which a stop condition reads. */
     readonly steps: LoopStep[];
     readonly stopWhen?: (steps: readonly LoopStep[]) => boolean;
@@ -487,6 +516,7 @@ function openConversation(
         viewOf,
         beforeRequest,
         onText: opts.onText,
+        textStream: opts.chatStream,
         steps,
         stopWhen: opts.stopWhen,
         capWhen: opts.capWhen,
@@ -494,7 +524,8 @@ function openConversation(
 
     /** The result of the run when an abort ends the exchange, or `undefined` when the run continues. */
     const compact = async (active: CompactionPolicy, tokensBefore: number, trigger: CompactionTrigger): Promise<"aborted" | undefined> => {
-        const id = randomUUID();
+        // The body of a workflow records the id, thus a replay of the exchange gives the same id.
+        const id = DBOS.isInWorkflow() ? await DBOS.randomUUID() : randomUUID();
         const startedAt = performance.now();
         const source = sourceOf(session, opts.invocationId);
         const emitPart = (data: Omit<CompactionPart, "type" | "trigger">): void | Promise<void> =>
@@ -678,7 +709,7 @@ async function runSeries(
         model: bound.model,
         middleware: [
             rollupMiddleware(target.rollups),
-            durableCalls({ name: modelStepName(agent.id), retriesAllowed: false }),
+            durableCalls({ name: modelStepName(agent.id), retriesAllowed: false, durableStream: target.textStream }),
             accountingMiddleware({
                 session,
                 agentId: target.metricAgentId,
@@ -686,30 +717,49 @@ async function runSeries(
                 usageRecorder: opts.usageRecorder ?? createNoopUsageRecorder(),
                 logger: log,
             }),
+            ...(opts.modelMiddleware ?? []),
         ],
     });
 
-    // The first fatal error of a tool call ends the series, and the series throws it.
+    // The first fatal error of a tool call or of an approval ends the series, and the series throws it.
     let fatal: unknown;
     const fatalController = new AbortController();
-    const unavailableAsk = new UnavailableAsk();
+    const failRun = (err: unknown): void => {
+        if (fatal !== undefined) return;
+        fatal = err;
+        fatalController.abort(err);
+    };
     const tools = adaptTools(agent.tools, {
         session,
         source,
         emit: opts.emit,
-        ask: opts.ask ?? ((request: AskRequest) => unavailableAsk.ask(request)),
         turnUsage: target.rollups.at(-1) ?? {},
         capabilities: opts.provider.capabilities,
         // Only the read tool of the agent can read a kept text, thus an agent without it keeps nothing.
         store: agent.tools.some((tool) => tool.id === READ_TOOL_OUTPUT_TOOL_ID) ? opts.toolOutputStore : undefined,
         invocationId: opts.invocationId,
         log,
-        fail: (err) => {
-            if (fatal !== undefined) return;
-            fatal = err;
-            fatalController.abort(err);
-        },
+        writer: opts.toolWriter,
+        fail: failRun,
     });
+
+    const toolsById = new Map(agent.tools.map((tool) => [tool.id, tool]));
+    // The calls that the user denied, with the reason that the model reads. A replay asks again, and the same answer
+    // comes back from the checkpoints of the turn.
+    const deniedByTheUser = new Map<string, string>();
+    /** The reason of a denial of the user, or `undefined` for a call that runs. */
+    const userDenialOf = async (toolCall: { readonly toolCallId: string; readonly toolName: string; readonly input: unknown }): Promise<string | undefined> => {
+        const tool = toolsById.get(toolCall.toolName);
+        if (tool?.approval === undefined) return undefined;
+        // An input that does not parse needs no approval: `execute` gives the model its error.
+        const input = recordedInputOf(tool.inputSchema, toolCall.input);
+        if (input === undefined) return undefined;
+        const request = await tool.approval(input, { invocationId: toolCall.toolCallId, session });
+        if (request === undefined) return undefined;
+        if (opts.approve === undefined) return NO_APPROVER_REASON;
+        const decision = await opts.approve(request, { toolCallId: toolCall.toolCallId, toolName: toolCall.toolName });
+        return decision.kind === "approved" ? undefined : deniedReason(decision.feedback);
+    };
 
     const seriesSteps: LoopStep[] = [];
     let open = openStep();
@@ -736,11 +786,25 @@ async function runSeries(
         telemetry: bound.telemetry,
         toolApproval: async ({ toolCall }) => {
             const refusal = calls.refusalOf({ toolName: toolCall.toolName, input: toolCall.input }, spec.mask);
-            if (refusal === undefined) return undefined;
-            // A refused call does not run, thus its two events come from here.
+            if (refusal !== undefined) {
+                // A refused call does not run, thus its two events come from here.
+                await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
+                await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "error" });
+                return { type: "denied", reason: refusal };
+            }
+            let denial: string | undefined;
+            try {
+                denial = await userDenialOf(toolCall);
+            } catch (err) {
+                // The SDK keeps a failed approval to itself, thus a cancel or an abort reaches the series here.
+                if (isFatalToolError(err)) failRun(err);
+                throw err;
+            }
+            if (denial === undefined) return undefined;
+            deniedByTheUser.set(toolCall.toolCallId, denial);
             await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-            await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "error" });
-            return { type: "denied", reason: refusal };
+            await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "denied" });
+            return { type: "denied", reason: denial };
         },
         stopWhen: () => stops(),
         prepareStep: async () => {
@@ -773,7 +837,7 @@ async function runSeries(
         },
         onStepEnd: async (step) => {
             open = openStep();
-            const loopStep = loopStepOf(step);
+            const loopStep = loopStepOf(step, deniedByTheUser);
             messages.push(...recordedMessagesOf(step, loopStep));
             foldCallRecords(agent.tools, loopStep.calls, log);
             seriesSteps.push(loopStep);
@@ -843,7 +907,7 @@ function openStepMessages(open: OpenStep): LoopMessage[] {
 }
 
 /** The harness view of one completed step: each tool call of the reply, with its output when it ran. */
-function loopStepOf(step: StepResult<ToolSet>): LoopStep {
+function loopStepOf(step: StepResult<ToolSet>, deniedByTheUser: ReadonlyMap<string, string>): LoopStep {
     const outputs = new Map<string, unknown>();
     for (const result of step.toolResults) outputs.set(result.toolCallId, result.output);
     const answered = new Set<string>(outputs.keys());
@@ -852,18 +916,19 @@ function loopStepOf(step: StepResult<ToolSet>): LoopStep {
         if (part.type === "tool-error") answered.add(part.toolCallId);
         if (part.type === "tool-approval-response" && !part.approved) {
             answered.add(part.toolCall.toolCallId);
-            refused.add(part.toolCall.toolCallId);
+            if (!deniedByTheUser.has(part.toolCall.toolCallId)) refused.add(part.toolCall.toolCallId);
         }
     }
     const calls = step.toolCalls
         .filter((call) => call.providerExecuted !== true)
         .map((call): LoopToolCall => {
             const parsed = outputs.has(call.toolCallId) ? ToolCallOutputSchema.safeParse(outputs.get(call.toolCallId)) : undefined;
+            const denial = deniedByTheUser.get(call.toolCallId);
             return {
                 toolCallId: call.toolCallId,
                 toolName: call.toolName,
                 input: call.input,
-                output: parsed?.success === true ? parsed.data : undefined,
+                output: denial === undefined ? (parsed?.success === true ? parsed.data : undefined) : { outcome: "denied", reason: denial },
                 refused: refused.has(call.toolCallId),
                 answered: answered.has(call.toolCallId),
             };

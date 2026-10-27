@@ -1,17 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import { err, ok } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
+import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import type { SpawnSession } from "../../auth/types.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import type { ExtractionRequest } from "../../report-model/production-resolver.js";
-import type { ExecResult } from "../../sandbox/types.js";
+import type { SandboxClient } from "../../sandbox/client.js";
+import type { ExecRequest, ExecResult, SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT } from "../extract-values-script.js";
-import { buildExtractionExec, createExtractionArm, extractionArtifactsFromResult, parseExtractionOutput } from "../extract-values.js";
+import { buildExtractionExec, createExtractionArm, extractionArtifactsFromResult, parseExtractionOutput, runExtraction } from "../extract-values.js";
 
-// The workflow body needs a launched durability engine and a sandbox, thus a unit test does not reach it.
 // The decidable parts are lifted out: the exec command, the output parse, and the arm mapping. These tests
-// pin each part without a container and without DBOS.
+// pin each part without a container and without DBOS. The pass runs over a stubbed sandbox client.
 
 /** A complete exec result. Each test overrides only the fields that it asserts. */
 function execResult(over: Partial<ExecResult>): ExecResult {
@@ -184,5 +186,73 @@ describe("createExtractionArm", () => {
             return Promise.reject(new Error("the workflow faulted"));
         });
         await expect(arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }])).rejects.toThrow("the workflow faulted");
+    });
+});
+
+describe("runExtraction", () => {
+    const caller = { analysisId: "an-1", identity: { user: "u-1" }, auth: makeLocalAuth() };
+    const requests: ExtractionRequest[] = [{ path: "data/a.csv", hash: "h1", format: "csv" }];
+
+    /** A stubbed sandbox client. It records the spawn and the exec, and it answers with one script output. */
+    function stubClient(args: { readonly stdout?: string; readonly refuse?: boolean }) {
+        const spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = [];
+        const execs: ExecRequest[] = [];
+        const teardowns: string[] = [];
+        const ref: SandboxRef = { sandboxId: "sbx-extract-1", host: "127.0.0.1", port: 8765, backend: "docker" };
+        const client = {
+            toolchainSource: "store" as const,
+            createSandbox(session: SpawnSession, spec: SandboxSpec) {
+                if (args.refuse === true) return errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "quota_exhausted", suspend: true });
+                spawns.push({ session, spec });
+                return okAsync(ref);
+            },
+            exec(_ref: SandboxRef, request: ExecRequest): Promise<ExecResult> {
+                execs.push(request);
+                return Promise.resolve(execResult({ stdout: args.stdout ?? "{}" }));
+            },
+            teardown(handle: SandboxRef): Promise<void> {
+                teardowns.push(handle.sandboxId);
+                return Promise.resolve();
+            },
+            isAlive: () => Promise.resolve({ alive: true, oomKilled: false }),
+            isAliveById: () => Promise.resolve({ alive: true, oomKilled: false }),
+            teardownById: () => Promise.resolve(),
+            listManagedSandboxes: () => Promise.resolve([]),
+        } satisfies SandboxClient;
+        return { client, spawns, execs, teardowns };
+    }
+
+    it("reads every request in one read-only container under the caller, and removes the container", async () => {
+        const stub = stubClient({ stdout: JSON.stringify({ "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] } }) });
+
+        const result = (await runExtraction({ sandboxClient: stub.client }, caller, requests))._unsafeUnwrap();
+
+        expect(result).toEqual({ "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] } });
+        expect(stub.execs).toEqual([buildExtractionExec("an-1", requests)]);
+        expect(stub.teardowns).toEqual(["sbx-extract-1"]);
+        const spawn = stub.spawns[0];
+        if (spawn === undefined) throw new Error("the pass made no container");
+        expect(spawn.spec).toMatchObject({ readOnly: true, resources: { cpu: 2, memoryGb: 8 } });
+        // The pass mints no mandate: the container runs under the identity and the auth of the caller, with
+        // a frame that names no run of the analysis.
+        expect(spawn.session.identity).toEqual({ user: "u-1" });
+        expect(spawn.session.auth).toEqual(caller.auth);
+        expect(spawn.session.runFrame).toEqual({ runId: "extract-values", stepId: "extract" });
+    });
+
+    it("gives a suspending refusal of the spawn as its err, and it runs no exec", async () => {
+        const stub = stubClient({ refuse: true });
+
+        const result = await runExtraction({ sandboxClient: stub.client }, caller, requests);
+
+        expect(result._unsafeUnwrapErr()).toEqual({ kind: "suspended", reason: "quota_exhausted" });
+        expect(stub.execs).toEqual([]);
+    });
+
+    it("rejects when the script fails, and it still removes the container", async () => {
+        const stub = stubClient({ stdout: "not json" });
+
+        await expect(runExtraction({ sandboxClient: stub.client }, caller, requests)).rejects.toThrow("did not emit valid JSON");
+        expect(stub.teardowns).toEqual(["sbx-extract-1"]);
     });
 });

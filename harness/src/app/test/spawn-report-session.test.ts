@@ -89,8 +89,7 @@ async function transcriptOf(threadId: string): Promise<string[]> {
 
 /**
  * Make each later insert into `messages` fail. The trigger is real database
- * state, thus the seed write fails the same way that a driver fault fails it. A
- * delete stays permitted, thus the purge of the child still runs.
+ * state, thus the seed write fails the same way that a driver fault fails it.
  */
 async function refuseMessageInserts(): Promise<void> {
     await pool.query("CREATE FUNCTION refuse_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'seed write refused'; END; $$");
@@ -413,16 +412,29 @@ describe("spawnReportSession seed", () => {
         expect(transcript[0]).not.toContain("The goal after the spawn");
     });
 
-    it("purges the child when the seed write fails, and returns the fault", async () => {
+    it("writes no child when the seed write fails, and returns the fault", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
         // The parent transcript is complete before the refusal, thus only the seed
-        // write fails, and it fails after the thread insert.
+        // write fails, and it fails after the thread insert of the same transaction.
         await refuseMessageInserts();
 
         const failed = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
 
         expect(failed.type).toBe("mutation_failed");
         expect(await reportThreadCount()).toBe(0);
+    });
+
+    it("gives the same child to a second spawn with the same id, with one row and one seed", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+
+        const first = (await spawn.spawnReportSession("p1", BRIEF, "child-of-step"))._unsafeUnwrap();
+        const second = (await spawn.spawnReportSession("p1", BRIEF, "child-of-step"))._unsafeUnwrap();
+
+        // The seed moves `updated_at` forward after the insert returns its row, thus the two rows differ there alone.
+        expect({ ...second, updatedAt: first.updatedAt }).toEqual(first);
+        expect(first.threadId).toBe("child-of-step");
+        expect(await reportThreadCount()).toBe(1);
+        expect(await transcriptOf("child-of-step")).toHaveLength(1);
     });
 });
 

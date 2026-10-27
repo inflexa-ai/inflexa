@@ -1,13 +1,14 @@
 /**
  * The recorded-response suite of `web_fetch`.
  *
- * The guard tests run two ways. A real local server answers the hops whose
- * address the tool may really reach (`127.0.0.1`, `localhost`, `[::1]`), so
- * the literal path and the lookup path cross the real `node:http` client. Every
- * other address a test machine owns is guarded, thus the unguarded paths, the
- * redirects, the rebinding case, and the whole body suite run through an
- * injected hop that serves recorded bodies, with an injected lookup where a
- * test needs a controlled address set. No test reaches the network.
+ * The guard tests run two ways. A real local server listens on a guarded
+ * address (`127.0.0.1`, `localhost`, `[::1]`), so the literal path and the
+ * lookup path cross the real `node:http` client, and the server counts that no
+ * request reached it. Every address a test machine owns is guarded, thus the
+ * unguarded paths, the redirects, the rebinding case, and the whole body suite
+ * run through an injected hop that serves recorded bodies, with an injected
+ * lookup where a test needs a controlled address set. No test reaches the
+ * network.
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
@@ -20,7 +21,6 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 
 import { makeSession } from "../../../providers/__fixtures__/session.js";
-import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../../approval/contract.js";
 import type { ToolContext } from "../../define-tool.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { HARNESS_USER_AGENT } from "../../lib/api-utils.js";
@@ -142,51 +142,8 @@ function lookupAnswering(perCall: ReadonlyArray<readonly { address: string; fami
 const PUBLIC = [{ address: "93.184.216.34", family: 4 }] as const;
 const PRIVATE = [{ address: "10.0.0.7", family: 4 }] as const;
 
-type AskLog = {
-    readonly requests: AskRequest[];
-    readonly events: string[];
-};
-
-function askApproving(log: AskLog, reply: "once" | "always" = "once") {
-    return (request: AskRequest): Promise<AskApproval> => {
-        log.requests.push(request);
-        log.events.push("ask");
-        return Promise.resolve({ kind: reply });
-    };
-}
-
-function askDenying(log: AskLog, feedback?: string) {
-    return (request: AskRequest): Promise<AskApproval> => {
-        log.requests.push(request);
-        log.events.push("ask");
-        return Promise.reject(new AskRejectedError(feedback));
-    };
-}
-
-/** An ask that records standing grants by `grantKey`, the contract a surface implements. */
-function askWithStandingGrants(): { ask: (request: AskRequest) => Promise<AskApproval>; prompts: AskRequest[] } {
-    const grants = new Set<string>();
-    const prompts: AskRequest[] = [];
-    return {
-        ask: (request) => {
-            if (request.grantKey !== undefined && grants.has(request.grantKey)) return Promise.resolve({ kind: "once" });
-            grants.add(request.grantKey ?? "");
-            prompts.push(request);
-            return Promise.resolve({ kind: "always" });
-        },
-        prompts,
-    };
-}
-
-function makeCtx(ask?: (request: AskRequest) => Promise<AskApproval>, signal?: AbortSignal): ToolContext {
-    const deny = new UnavailableAsk();
-    return {
-        invocationId: "invoke-1",
-        session: makeSession(),
-        signal: signal ?? new AbortController().signal,
-        emit: () => {},
-        ask: ask ?? ((request) => deny.ask(request)),
-    };
+function makeCtx(signal?: AbortSignal): ToolContext {
+    return { ...makeToolContext(signal).ctx, invocationId: "invoke-1" };
 }
 
 async function fetchUrl(url: string, deps: WebFetchToolDeps = {}, ctx: ToolContext = makeCtx()): Promise<WebFetchOutput> {
@@ -213,16 +170,15 @@ function buildPdf(pageCount: number): Buffer {
 type LocalServer = {
     readonly server: Server;
     readonly port: number;
+    /** The count of the requests that reached the server. */
+    readonly requests: number;
     close(): Promise<void>;
 };
 
 async function startLocalServer(host: "127.0.0.1" | "localhost" | "::1"): Promise<LocalServer> {
-    const server = createServer((request, response) => {
-        if (request.url === "/gz") {
-            response.writeHead(200, { "content-type": "text/plain", "content-encoding": "gzip" });
-            response.end(gzipSync(Buffer.from("gzipped local body", "utf8")));
-            return;
-        }
+    let requests = 0;
+    const server = createServer((_request, response) => {
+        requests += 1;
         response.writeHead(200, { "content-type": "text/plain" });
         response.end("local server body");
     });
@@ -236,26 +192,9 @@ async function startLocalServer(host: "127.0.0.1" | "localhost" | "::1"): Promis
     return {
         server,
         port,
-        close: () => new Promise<void>((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error)))),
-    };
-}
-
-/** Echoes whether the hop carried an Authorization header, which node derives from a user:pass URL. */
-async function startAuthEchoServer(): Promise<LocalServer> {
-    const server = createServer((request, response) => {
-        response.writeHead(200, { "content-type": "text/plain" });
-        response.end(request.headers.authorization === undefined ? "no authorization header" : `authorization:${request.headers.authorization}`);
-    });
-    await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => resolve());
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string") throw new Error("expected a local address");
-    const { port } = address;
-    return {
-        server,
-        port,
+        get requests() {
+            return requests;
+        },
         close: () => new Promise<void>((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error)))),
     };
 }
@@ -276,23 +215,17 @@ describe("web_fetch — the tool shape", () => {
 });
 
 describe("web_fetch — the guard", () => {
-    it("fetches a public URL with no prompt", async () => {
+    it("fetches a public URL", async () => {
         const hop = emptyHopLog();
-        const ask: AskLog = { requests: [], events: hop.events };
-        const output = await fetchUrl(
-            "http://example.test/page",
-            {
-                hopRequest: recordedHopRequest(
-                    { "http://example.test/page": { status: 200, headers: { "content-type": "text/plain" }, body: "public body" } },
-                    hop,
-                ),
-                lookup: lookupAnswering([PUBLIC]),
-            },
-            makeCtx(askApproving(ask)),
-        );
+        const output = await fetchUrl("http://example.test/page", {
+            hopRequest: recordedHopRequest(
+                { "http://example.test/page": { status: 200, headers: { "content-type": "text/plain" }, body: "public body" } },
+                hop,
+            ),
+            lookup: lookupAnswering([PUBLIC]),
+        });
 
         expect(output).toMatchObject({ status: "ok", text: "public body", finalUrl: "http://example.test/page" });
-        expect(ask.requests).toHaveLength(0);
         const headers = hop.options[0]?.headers ?? {};
         expect(headers).toMatchObject({ "user-agent": HARNESS_USER_AGENT, "Accept-Encoding": "identity" });
         expect(headers.Accept).toContain("text/html");
@@ -301,202 +234,121 @@ describe("web_fetch — the guard", () => {
     it("asks the name resolution for every address and answers the address shape the options request", async () => {
         const askedForAll: boolean[] = [];
         const hop = emptyHopLog();
-        const output = await fetchUrl(
-            "http://shape.test/a",
-            {
-                hopRequest: recordedHopRequest({ "http://shape.test/a": { status: 200, headers: { "content-type": "text/plain" }, body: "shaped" } }, hop),
-                lookup: (_hostname, options, callback) => {
-                    askedForAll.push(options.all);
-                    setImmediate(() => callback(null, [...PUBLIC]));
-                },
+        const output = await fetchUrl("http://shape.test/a", {
+            hopRequest: recordedHopRequest({ "http://shape.test/a": { status: 200, headers: { "content-type": "text/plain" }, body: "shaped" } }, hop),
+            lookup: (_hostname, options, callback) => {
+                askedForAll.push(options.all);
+                setImmediate(() => callback(null, [...PUBLIC]));
             },
-            makeCtx(askApproving({ requests: [], events: hop.events })),
-        );
+        });
 
         expect(output).toMatchObject({ status: "ok", text: "shaped" });
         expect(askedForAll).toEqual([true]);
     });
 
-    it("asks before a guarded literal through a real local server, and fetches after an approval", async () => {
+    it("refuses a guarded literal through the real client, and the local server gets no request", async () => {
         const local = await startLocalServer("127.0.0.1");
         try {
-            const ask: AskLog = { requests: [], events: [] };
-            const url = `http://127.0.0.1:${local.port}/page`;
-            const output = await fetchUrl(url, {}, makeCtx(askApproving(ask)));
-
-            expect(output).toMatchObject({ status: "ok", text: "local server body", finalUrl: url });
-            expect(ask.requests).toHaveLength(1);
-            expect(ask.requests[0]).toMatchObject({ command: url, grantKey: `web_fetch:http://127.0.0.1:${local.port}` });
-        } finally {
-            await local.close();
-        }
-    });
-
-    it("asks before a name that resolves to a guarded address, through the real lookup and a real local server", async () => {
-        const local = await startLocalServer("127.0.0.1");
-        try {
-            const ask: AskLog = { requests: [], events: [] };
-            const url = `http://localhost:${local.port}/page`;
-            const output = await fetchUrl(url, {}, makeCtx(askApproving(ask)));
-
-            expect(output).toMatchObject({ status: "ok", text: "local server body", finalUrl: url });
-            expect(ask.requests).toHaveLength(1);
-        } finally {
-            await local.close();
-        }
-    });
-
-    it("decodes a gzip body of a real local server through the real client", async () => {
-        const local = await startLocalServer("127.0.0.1");
-        try {
-            const ask: AskLog = { requests: [], events: [] };
-            const output = await fetchUrl(`http://127.0.0.1:${local.port}/gz`, {}, makeCtx(askApproving(ask)));
-
-            expect(output).toMatchObject({ status: "ok", text: "gzipped local body" });
-        } finally {
-            await local.close();
-        }
-    });
-
-    it("asks before the [::1] literal through a real local server", async () => {
-        const local = await startLocalServer("::1");
-        try {
-            const ask: AskLog = { requests: [], events: [] };
-            const url = `http://[::1]:${local.port}/page`;
-            const output = await fetchUrl(url, {}, makeCtx(askApproving(ask)));
-
-            expect(output).toMatchObject({ status: "ok", text: "local server body", finalUrl: url });
-            expect(ask.requests).toHaveLength(1);
-        } finally {
-            await local.close();
-        }
-    });
-
-    it("asks again on the next call after a once answer: no hop reuses a socket of an earlier call", async () => {
-        const local = await startLocalServer("127.0.0.1");
-        try {
-            const ask: AskLog = { requests: [], events: [] };
-            const url = `http://localhost:${local.port}/page`;
-            const first = await fetchUrl(url, {}, makeCtx(askApproving(ask, "once")));
-            const second = await fetchUrl(url, {}, makeCtx(askApproving(ask, "once")));
-
-            expect(first).toMatchObject({ status: "ok", text: "local server body" });
-            expect(second).toMatchObject({ status: "ok", text: "local server body" });
-            expect(ask.requests).toHaveLength(2);
-        } finally {
-            await local.close();
-        }
-    });
-
-    it("asks before a link-local, a private, and an IPv4-mapped literal, and a denial refuses each", async () => {
-        const urls = ["http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/x", "http://[::ffff:169.254.169.254]/x"];
-        for (const url of urls) {
-            const ask: AskLog = { requests: [], events: [] };
-            const output = await fetchUrl(url, { hopRequest: recordedHopRequest({}, emptyHopLog()) }, makeCtx(askDenying(ask, "not this host")));
+            const output = await fetchUrl(`http://127.0.0.1:${local.port}/page`);
 
             expect(output.status).toBe("refused");
-            expect(ask.requests).toHaveLength(1);
-            expect(output).toMatchObject({ feedback: "not this host" });
+            expect(output.text).toContain(`http://127.0.0.1:${local.port}`);
+            expect(local.requests).toBe(0);
+        } finally {
+            await local.close();
         }
     });
 
-    it("returns a denied approval as a normal result with the user feedback", async () => {
-        const ask: AskLog = { requests: [], events: [] };
-        const output = await fetchUrl("http://127.0.0.1:9/x", {}, makeCtx(askDenying(ask, "use the mirror instead")));
+    it("refuses a name that resolves to a guarded address, through the real lookup, and the local server gets no request", async () => {
+        const local = await startLocalServer("127.0.0.1");
+        try {
+            const output = await fetchUrl(`http://localhost:${local.port}/page`);
 
-        expect(output).toMatchObject({ status: "refused", feedback: "use the mirror instead" });
-        expect(output.text).toContain("127.0.0.1");
+            expect(output.status).toBe("refused");
+            expect(output.text).toContain(`http://localhost:${local.port}`);
+            expect(local.requests).toBe(0);
+        } finally {
+            await local.close();
+        }
     });
 
-    it("refuses each guarded literal of the issue under UnavailableAsk, the deny-by-default ask", async () => {
+    it("refuses the [::1] literal through the real client, and the local server gets no request", async () => {
+        const local = await startLocalServer("::1");
+        try {
+            const output = await fetchUrl(`http://[::1]:${local.port}/page`);
+
+            expect(output.status).toBe("refused");
+            expect(local.requests).toBe(0);
+        } finally {
+            await local.close();
+        }
+    });
+
+    it("refuses a link-local, a private, and an IPv4-mapped literal before any hop", async () => {
+        const urls = ["http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/x", "http://[::ffff:169.254.169.254]/x"];
+        for (const url of urls) {
+            const hop = emptyHopLog();
+            const output = await fetchUrl(url, { hopRequest: recordedHopRequest({}, hop) });
+
+            expect(output.status).toBe("refused");
+            expect(hop.urls).toEqual([]);
+        }
+    });
+
+    it("refuses each guarded literal of the issue, and asks nothing", async () => {
         for (const url of ["http://127.0.0.1:9/x", "http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/x", "http://[::1]:9/x"]) {
             const output = await fetchUrl(url);
 
+            expect(Object.keys(output)).toEqual(["status", "text"]);
             expect(output.status).toBe("refused");
-            expect(output).toMatchObject({ feedback: "approval is unavailable in this environment" });
+            expect(output.text).toContain("internal address");
         }
     });
 
-    it("refuses a guarded name through the lookup path under UnavailableAsk", async () => {
-        const output = await fetchUrl(
-            "http://guarded-name.test/x",
-            { hopRequest: recordedHopRequest({}, emptyHopLog()), lookup: lookupAnswering([PRIVATE]) },
-            makeCtx(),
-        );
+    it("refuses a guarded name through the lookup path", async () => {
+        const output = await fetchUrl("http://guarded-name.test/x", { hopRequest: recordedHopRequest({}, emptyHopLog()), lookup: lookupAnswering([PRIVATE]) });
 
         expect(output.status).toBe("refused");
+        expect(output.text).toContain("http://guarded-name.test:80");
     });
 
-    it("asks on a rebinding name: a public first resolution passes, a private second resolution asks", async () => {
+    it("refuses a rebinding name: a public first resolution passes, a private second resolution refuses", async () => {
         const hop = emptyHopLog();
-        const ask: AskLog = { requests: [], events: hop.events };
         const deps = {
             hopRequest: recordedHopRequest({ "http://rebind.test/a": { status: 200, headers: { "content-type": "text/plain" }, body: "first" } }, hop),
             lookup: lookupAnswering([PUBLIC, PRIVATE]),
         };
 
-        const first = await fetchUrl("http://rebind.test/a", deps, makeCtx(askApproving(ask)));
+        const first = await fetchUrl("http://rebind.test/a", deps);
         expect(first).toMatchObject({ status: "ok", text: "first" });
-        expect(ask.requests).toHaveLength(0);
 
-        const second = await fetchUrl("http://rebind.test/a", deps, makeCtx(askDenying(ask)));
+        const second = await fetchUrl("http://rebind.test/a", deps);
         expect(second.status).toBe("refused");
-        expect(ask.requests).toHaveLength(1);
     });
 
-    it("asks before any connect of a resolution whose second address is guarded, then re-sends the hop", async () => {
+    it("refuses a resolution whose second address is guarded before any connect", async () => {
         const hop = emptyHopLog();
-        const ask: AskLog = { requests: [], events: hop.events };
-        const output = await fetchUrl(
-            "http://twofaces.test/a",
-            {
-                hopRequest: recordedHopRequest(
-                    { "http://twofaces.test/a": { status: 200, headers: { "content-type": "text/plain" }, body: "after approval" } },
-                    hop,
-                ),
-                lookup: lookupAnswering([[...PUBLIC, { address: "192.168.5.5", family: 4 }]]),
-            },
-            makeCtx(askApproving(ask)),
-        );
+        const output = await fetchUrl("http://twofaces.test/a", {
+            hopRequest: recordedHopRequest({ "http://twofaces.test/a": { status: 200, headers: { "content-type": "text/plain" }, body: "never read" } }, hop),
+            lookup: lookupAnswering([[...PUBLIC, { address: "192.168.5.5", family: 4 }]]),
+        });
 
-        expect(output).toMatchObject({ status: "ok", text: "after approval" });
-        expect(ask.requests).toHaveLength(1);
-        expect(hop.urls).toEqual(["http://twofaces.test/a", "http://twofaces.test/a"]);
-        expect(hop.events).toEqual(["hop:twofaces.test/a", "ask", "hop:twofaces.test/a"]);
+        expect(output.status).toBe("refused");
+        expect(hop.urls).toEqual(["http://twofaces.test/a"]);
     });
 
-    it("scopes an always answer to the origin: the same origin asks nothing, a different origin asks again", async () => {
-        const hop = emptyHopLog();
-        const { ask, prompts } = askWithStandingGrants();
-        const deps = { hopRequest: recordedHopRequest({ "*": { status: 200, body: "ok" } }, hop) };
-        const ctx = () => makeCtx(ask);
+    it("names the origin with its port in the refusal", async () => {
+        const output = await fetchUrl("http://10.0.0.1:81/a", { hopRequest: recordedHopRequest({}, emptyHopLog()) });
 
-        await fetchUrl("http://10.0.0.1:81/a", deps, ctx());
-        await fetchUrl("http://10.0.0.1:81/b", deps, ctx());
-        await fetchUrl("http://10.0.0.2:81/a", deps, ctx());
-
-        expect(prompts).toHaveLength(2);
-        expect(prompts.map((request) => request.grantKey)).toEqual(["web_fetch:http://10.0.0.1:81", "web_fetch:http://10.0.0.2:81"]);
+        expect(output.status).toBe("refused");
+        expect(output.text).toContain("http://10.0.0.1:81");
     });
 
-    it("names the origin an always answer approves in the detail of the ask", async () => {
-        const ask: AskLog = { requests: [], events: [] };
-        await fetchUrl("http://10.0.0.1:81/a", { hopRequest: recordedHopRequest({}, emptyHopLog()) }, makeCtx(askDenying(ask)));
+    it("names no password in the refusal of a user:pass URL", async () => {
+        const output = await fetchUrl("http://user:secret@127.0.0.1:9/page");
 
-        expect(ask.requests[0]?.detail).toContain("http://10.0.0.1:81");
-    });
-
-    it("sends no Authorization header for a user:pass URL, and the ask names no password", async () => {
-        const local = await startAuthEchoServer();
-        try {
-            const ask: AskLog = { requests: [], events: [] };
-            const output = await fetchUrl(`http://user:secret@127.0.0.1:${local.port}/page`, {}, makeCtx(askApproving(ask)));
-
-            expect(output).toMatchObject({ status: "ok", text: "no authorization header", finalUrl: `http://127.0.0.1:${local.port}/page` });
-            expect(ask.requests[0]?.command).not.toContain("secret");
-        } finally {
-            await local.close();
-        }
+        expect(output.status).toBe("refused");
+        expect(output.text).not.toContain("secret");
     });
 
     it("hops with a URL that holds no credentials", async () => {
@@ -510,47 +362,22 @@ describe("web_fetch — the guard", () => {
         expect(hop.urls).toEqual(["http://example.test/page"]);
     });
 
-    it("re-asks for a redirect to the same host on a different port, because the origin key holds the port", async () => {
+    it("refuses a redirect to a guarded address, and sends no hop to it", async () => {
         const hop = emptyHopLog();
-        const ask: AskLog = { requests: [], events: hop.events };
-        const output = await fetchUrl(
-            "http://10.0.0.1:81/a",
-            {
-                hopRequest: recordedHopRequest(
-                    {
-                        "http://10.0.0.1:81/a": { status: 302, headers: { location: "http://10.0.0.1:82/b" } },
-                        "http://10.0.0.1:82/b": { status: 200, headers: { "content-type": "text/plain" }, body: "other port" },
-                    },
-                    hop,
-                ),
-            },
-            makeCtx(askApproving(ask)),
-        );
+        const output = await fetchUrl("http://public.test/start", {
+            hopRequest: recordedHopRequest(
+                {
+                    "http://public.test/start": { status: 302, headers: { location: "http://169.254.169.254/target" } },
+                    "http://169.254.169.254/target": { status: 200, headers: { "content-type": "text/plain" }, body: "redirect target body" },
+                },
+                hop,
+            ),
+            lookup: lookupAnswering([PUBLIC]),
+        });
 
-        expect(output).toMatchObject({ status: "ok", text: "other port", finalUrl: "http://10.0.0.1:82/b" });
-        expect(ask.requests.map((request) => request.grantKey)).toEqual(["web_fetch:http://10.0.0.1:81", "web_fetch:http://10.0.0.1:82"]);
-    });
-
-    it("asks before a redirect to a guarded address, and follows only after an approval", async () => {
-        const hop = emptyHopLog();
-        const ask: AskLog = { requests: [], events: hop.events };
-        const output = await fetchUrl(
-            "http://public.test/start",
-            {
-                hopRequest: recordedHopRequest(
-                    {
-                        "http://public.test/start": { status: 302, headers: { location: "http://169.254.169.254/target" } },
-                        "http://169.254.169.254/target": { status: 200, headers: { "content-type": "text/plain" }, body: "redirect target body" },
-                    },
-                    hop,
-                ),
-                lookup: lookupAnswering([PUBLIC]),
-            },
-            makeCtx(askApproving(ask)),
-        );
-
-        expect(output).toMatchObject({ status: "ok", text: "redirect target body", finalUrl: "http://169.254.169.254/target" });
-        expect(ask.requests).toHaveLength(1);
+        expect(output.status).toBe("refused");
+        expect(output.text).toContain("http://169.254.169.254:80");
+        expect(hop.urls).toEqual(["http://public.test/start"]);
     });
 
     it("refuses a scheme that is not http or https, and an invalid URL", async () => {
@@ -605,7 +432,7 @@ describe("web_fetch — the guard", () => {
         const promise = fetchUrl(
             "http://silent.test/x",
             { hopRequest: recordedHopRequest({ "http://silent.test/x": { status: 200, silent: true } }, emptyHopLog()), lookup: lookupAnswering([PUBLIC]) },
-            makeCtx(undefined, controller.signal),
+            makeCtx(controller.signal),
         );
         await sleep(10);
         controller.abort();

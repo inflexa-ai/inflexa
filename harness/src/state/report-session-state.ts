@@ -31,14 +31,18 @@
  * lands only when the row still holds it. Thus two concurrent turns cannot both land,
  * and the loser reads the state again.
  *
+ * A persist that names an authoring call stores the result of the call in
+ * `cortex_authoring_results`, in the transaction of the document and under the lock
+ * of the row. A second persist of the same call finds that result and writes nothing.
+ *
  * A purge of the analysis removes the row through the analysis-id cascade.
  */
 
-import { type Result, type ResultAsync, err, ok } from "neverthrow";
+import { type Result, type ResultAsync, err, ok, okAsync } from "neverthrow";
 import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
-import { type DbError, tryMutation, tryQuery } from "../lib/db-result.js";
+import { type Connectable, type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import type { DomainError } from "../lib/result.js";
 import { DraftDocumentSchema, type DraftDocument } from "../report-model/draft.js";
@@ -60,6 +64,9 @@ export type DerivationSource = {
  *
  * `outputPath` is the workspace-root-relative path of the derived file, and it is the key that the served
  * membership holds. A record is immutable, thus a new derivation takes a new output path.
+ *
+ * `toolCallId` names the call that made the record, thus a rerun of that call finds its own table. A stored
+ * record can lack it, and such a record matches no call.
  */
 export type DerivationRecord = {
     readonly outputPath: string;
@@ -67,6 +74,7 @@ export type DerivationRecord = {
     readonly sources: readonly DerivationSource[];
     readonly scriptHash: string;
     readonly script: string;
+    readonly toolCallId?: string;
 };
 
 const DerivationSourceSchema = z.object({ path: z.string(), hash: z.string() });
@@ -77,6 +85,7 @@ const DerivationRecordSchema = z.object({
     sources: z.array(DerivationSourceSchema),
     scriptHash: z.string(),
     script: z.string(),
+    toolCallId: z.string().optional(),
 });
 
 const DerivationListSchema = z.array(DerivationRecordSchema);
@@ -123,14 +132,28 @@ export type PersistDocumentInput = {
      * landed first turns this persist into a conflict.
      */
     readonly expected: DraftDocument | null;
+    /**
+     * The authoring call that lands the document, keyed by its durable step. Its result
+     * lands in the transaction of the document, under the lock of the row.
+     */
+    readonly call?: AuthoringCall;
+};
+
+/** One authoring call that a durable step runs, and the result that it gives when its document lands. */
+export type AuthoringCall = {
+    readonly key: string;
+    /** The result, stored as given. */
+    readonly result: unknown;
 };
 
 /**
  * The outcome of a persist. `persisted` landed the document. `conflict` means the row
  * no longer holds the expected prior document, thus a concurrent turn landed first and
  * this turn must read the state again. `absent` means no row holds the thread.
+ * `replayed` means that the row already holds a result for the call, thus an earlier
+ * run of the call landed, and the persist wrote nothing.
  */
-export type PersistOutcome = "persisted" | "conflict" | "absent";
+export type PersistOutcome = "persisted" | "conflict" | "absent" | "replayed";
 
 /**
  * The outcome of a stamp. `stamped` wrote the hash on the row. `absent` means that no row holds the
@@ -182,6 +205,8 @@ export type ReportSessionStateStore = {
      * concurrent turn landed first, and `absent` means no row holds the thread.
      */
     persistDocument(input: PersistDocumentInput): ResultAsync<PersistOutcome, DbError>;
+    /** The stored result of one authoring call of a thread, or `null` when that call landed no document. */
+    readCallResult(threadId: string, callKey: string): ResultAsync<{ readonly result: unknown } | null, DbError>;
     /**
      * Stamp the rendered-document hash on the row. The preview calls it when the page lands, thus the row
      * holds the hash of the draft that the page shows. `absent` means that no row holds the thread.
@@ -203,7 +228,7 @@ export type ReportSessionStateStore = {
 };
 
 export type ReportSessionStateStoreDeps = {
-    readonly pool: Querier;
+    readonly pool: Querier & Connectable;
     readonly logger?: Logger;
 };
 
@@ -332,6 +357,48 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
     }
 
     function persistDocument(input: PersistDocumentInput): ResultAsync<PersistOutcome, DbError> {
+        const { call } = input;
+        if (call === undefined) return swapDocument(pool, input);
+        return withTransaction(pool, "report-session-state.persistDocument", (client) =>
+            // The row lock serializes each persist of the thread, thus a second run of one
+            // call waits for the first and then finds its result.
+            tryQuery("report-session-state.persistDocument.lock", () =>
+                client.query<{ held: number; analysis_id: string }>({
+                    text: `SELECT (SELECT COUNT(*) FROM cortex_authoring_results WHERE thread_id = $1 AND call_key = $2)::int AS held, analysis_id
+  FROM cortex_report_session_state WHERE thread_id = $1 FOR UPDATE`,
+                    values: [input.threadId, call.key],
+                }),
+            ).andThen(({ rows }): ResultAsync<PersistOutcome, DbError> => {
+                const row = rows[0];
+                if (row === undefined) return okAsync("absent");
+                if (row.held > 0) return okAsync("replayed");
+                return swapDocument(client, input).andThen((outcome) =>
+                    outcome !== "persisted"
+                        ? okAsync(outcome)
+                        : tryMutation("report-session-state.persistDocument.result", () =>
+                              client.query({
+                                  text: "INSERT INTO cortex_authoring_results (thread_id, call_key, analysis_id, result) VALUES ($1, $2, $3, $4::jsonb)",
+                                  values: [input.threadId, call.key, row.analysis_id, JSON.stringify(call.result)],
+                              }),
+                          ).map((): PersistOutcome => "persisted"),
+                );
+            }),
+        );
+    }
+
+    function readCallResult(threadId: string, callKey: string): ResultAsync<{ readonly result: unknown } | null, DbError> {
+        return tryQuery("report-session-state.readCallResult", () =>
+            pool.query<{ result: unknown }>({
+                text: "SELECT result FROM cortex_authoring_results WHERE thread_id = $1 AND call_key = $2",
+                values: [threadId, callKey],
+            }),
+        ).map(({ rows }) => {
+            const row = rows[0];
+            return row === undefined ? null : { result: row.result };
+        });
+    }
+
+    function swapDocument(querier: Querier, input: PersistDocumentInput): ResultAsync<PersistOutcome, DbError> {
         return tryMutation("report-session-state.persistDocument", async () => {
             // The prior document rides as SQL NULL when absent, thus the compare-and-swap
             // matches a fresh row whose document column is null. A JSON `null` would be a
@@ -340,7 +407,7 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
             // One statement tells a conflict from an absence. `existed` counts the row, and
             // `updated` counts the compare-and-swap. A row that exists but did not update
             // holds a different prior document, thus a concurrent turn landed first.
-            const { rows } = await pool.query<{ existed: number; updated: number }>({
+            const { rows } = await querier.query<{ existed: number; updated: number }>({
                 text: `WITH target AS (
     SELECT 1 FROM cortex_report_session_state WHERE thread_id = $1
   ), updated AS (
@@ -419,5 +486,5 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
         });
     }
 
-    return { readState, writeSnapshot, persistDocument, stampRendered, stampSeen, appendDerivation };
+    return { readState, writeSnapshot, persistDocument, readCallResult, stampRendered, stampSeen, appendDerivation };
 }

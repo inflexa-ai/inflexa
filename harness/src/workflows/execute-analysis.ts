@@ -94,7 +94,6 @@ import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
 import { recordRunCompleted, recordStepCompleted, stepOutcomeOf } from "../lib/metrics.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { CitationResolver } from "../citations/types.js";
 import { describeDbError, withTransaction, type Connectable, type DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
@@ -128,11 +127,11 @@ import {
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import type { AnalysisStep, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
+import type { Tool } from "../tools/define-tool.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -302,10 +301,8 @@ export type ExecuteAnalysisDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
-    /** API keys for the bio/chem tools the embedded literature reviewer uses. */
-    readonly bioKeys: BioToolKeys;
-    /** Shared resolver for the literature reviewer used during synthesis. */
-    readonly citationResolver: CitationResolver;
+    /** The `literature_reviewer` tool of the synthesis. The runtime registers its sub-agent one time. */
+    readonly literatureReviewer: Tool;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
     readonly runCharge: RunCharge;
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
@@ -880,9 +877,11 @@ export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: s
 /**
  * Run-level literature-grounded synthesis (no sandbox). Returns the
  * quick-display findings for the run-completed card; empty when synthesis is
- * skipped or produced no synthesizable content. A genuine failure re-throws
- * inside the caller's `DBOS.runStep`, failing the run (D10). Exported so
- * integration tests can drive the wired synthesis without a full parent body.
+ * skipped or produced no synthesizable content. A genuine failure re-throws,
+ * failing the run (D10). It runs in the body of the run workflow: each read and
+ * write is a step, each model call is a step, and each reviewer call starts a
+ * child workflow. Exported so integration tests can drive the wired synthesis
+ * without a full parent body.
  */
 export function synthesizeFindings(args: {
     analysisId: string;
@@ -919,8 +918,7 @@ export function synthesizeFindings(args: {
             embedding: deps.embedding,
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             synthesisModel: deps.synthesisModel,
-            bioKeys: deps.bioKeys,
-            citationResolver: deps.citationResolver,
+            literatureReviewer: deps.literatureReviewer,
             usageRecorder: deps.usageRecorder,
             toolOutputStore: deps.toolOutputStore,
         },
@@ -940,9 +938,9 @@ export function synthesizeFindings(args: {
             // call path.
             session: forStep(session, SYNTHESIS_STEP_ID),
             emit,
+            durably: (name, run) => DBOS.runStep(run, { name }),
             onProgress: async (phase, activity, extra = {}) => {
-                // Synthesis runs inside one `DBOS.runStep`, thus `DBOS.now()` reads the wall clock here, and a rerun of
-                // the step after a crash writes its entries again under the same ids. A reader dedups an entry by id.
+                // The body checkpoints the clock and each write, thus a replay writes no entry again.
                 const seq = progressSeq++;
                 const at = new Date(await DBOS.now()).toISOString();
                 const parts = synthesisEmission(runId, SYNTHESIS_STEP_ID, seq, phase, activity, at, extra);
@@ -1129,17 +1127,13 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         );
         let rowOutcome: { status: SynthesisStatus; reason: string | null } | Suspension;
         try {
-            const synthOut = await DBOS.runStep(
-                () =>
-                    synthesizeFindings({
-                        analysisId: input.analysisId,
-                        runId,
-                        completedSteps: [...final.completed],
-                        session: input.runSession,
-                        deps,
-                    }),
-                { name: "synthesize-findings" },
-            );
+            const synthOut = await synthesizeFindings({
+                analysisId: input.analysisId,
+                runId,
+                completedSteps: [...final.completed],
+                session: input.runSession,
+                deps,
+            });
             synthesisFindings = synthOut.findings;
             synthesisOutcome = { status: synthOut.synthesisStatus, reason: synthOut.synthesisReason };
             rowOutcome = synthesisOutcome;

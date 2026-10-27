@@ -87,7 +87,7 @@ async function reportThreadCount(): Promise<number> {
 /**
  * Make each later insert into `messages` fail. The trigger is real database
  * state, thus the seed write of the spawn fails the same way that a driver fault
- * fails it. A delete stays permitted, thus the purge of the child still runs.
+ * fails it.
  */
 async function refuseMessageInserts(): Promise<void> {
     await pool.query("CREATE FUNCTION refuse_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'seed write refused'; END; $$");
@@ -186,6 +186,50 @@ describe("the started part", () => {
 
         expect(result.outcome).toBe("parent_not_found");
         expect(emitted).toEqual([]);
+    });
+});
+
+describe("a rerun of the call in a durable step", () => {
+    /** A tool context for one conversation thread, plus the record of its emitted events. */
+    function watchedCtxForThread(threadId: string): { ctx: ToolContext; emitted: unknown[] } {
+        const { ctx, emitted } = makeToolContext();
+        const scope: Scope = { kind: "analysis", analysisId: ANALYSIS, threadId };
+        return { ctx: { ...ctx, session: { ...ctx.session, scope } }, emitted };
+    }
+
+    /** The count of the rows of one thread. */
+    async function messageCount(threadId: string): Promise<number> {
+        const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", [threadId]);
+        return Number(presentAt(rows, 0).count);
+    }
+
+    it("gives the same session and the same part, and writes no second row and no second seed", async () => {
+        await seedConversation("p1", "Parent");
+        const inStep = createStartReportSessionTool({ pool, chrome: WITH_BROWSER, stepKey: () => "wf-1:6" });
+        const firstRun = watchedCtxForThread("p1");
+        const secondRun = watchedCtxForThread("p1");
+
+        const first = (await inStep.execute(INPUT, firstRun.ctx))._unsafeUnwrap();
+        const second = (await inStep.execute(INPUT, secondRun.ctx))._unsafeUnwrap();
+
+        expect(first.outcome).toBe("started");
+        expect(second).toEqual(first);
+        expect(secondRun.emitted).toEqual(firstRun.emitted);
+        expect(await reportThreadCount()).toBe(1);
+        if (first.outcome !== "started") return;
+        expect(await messageCount(first.threadId)).toBe(1);
+    });
+
+    it("keeps the advice for a new call after the spawn", async () => {
+        await seedConversation("p1", "Parent");
+        const first = await createStartReportSessionTool({ pool, chrome: WITH_BROWSER, stepKey: () => "wf-1:6" }).execute(INPUT, ctxForThread("p1"));
+        const next = await createStartReportSessionTool({ pool, chrome: WITH_BROWSER, stepKey: () => "wf-2:6" }).execute(INPUT, ctxForThread("p1"));
+
+        const started = first._unsafeUnwrap();
+        expect(started.outcome).toBe("started");
+        if (started.outcome !== "started") return;
+        expect(next._unsafeUnwrap()).toEqual({ outcome: "existing-session", threadId: started.threadId, title: started.title });
+        expect(await reportThreadCount()).toBe(1);
     });
 });
 

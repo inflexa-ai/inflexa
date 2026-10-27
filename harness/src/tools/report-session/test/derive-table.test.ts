@@ -3,34 +3,32 @@
  *
  * Each test drives the tool through `execute` with a temp directory as the workspace root, an in-memory
  * gateway, an in-memory derivation ledger, and a stubbed sandbox client. The stub gives back the exec result
- * that the case names, and it writes into the host side of the write mount the way a script would. Thus no
- * container runs and each arm of the tool is decidable here.
+ * that the case names, and it writes into the host side of the write mount the way a script would. Like
+ * sandbox-server, the stub runs one exec id one time. Thus no container runs and each arm of the tool is
+ * decidable here.
  *
  * The cases cover the happy path, the declared write tail, the undeclared input, the repeated name, the
  * over-cap script, the input cap, the unsafe name, the failed exec, the green exec that wrote no file, the
- * output that resolves outside the tree, and the composition that binds no sandbox.
+ * output that resolves outside the tree, the rerun of a call, and the composition that binds no sandbox.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { Scope } from "../../../auth/types.js";
-import { createLocalRunAuthorizer } from "../../../auth/local-run-authorizer.js";
-import type { RunAuthorizer } from "../../../execution/run-authorizer.js";
 import type { DbError } from "../../../lib/db-result.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
-import type { ExecRequest, ExecResult, SandboxRef, SandboxSpec } from "../../../sandbox/types.js";
+import type { ExecRequest, ExecResult, SandboxIdentity, SandboxRef, SandboxSpec } from "../../../sandbox/types.js";
 import type { SpawnSession } from "../../../auth/types.js";
 import type { TestSpawn } from "../../../sandbox/__fixtures__/spawn.js";
-import { runDeriveTableExecBody } from "../../../tasks/derive-table-exec.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../../state/report-session-state.js";
 import { reportSessionDir } from "../../../workspace/paths.js";
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
@@ -85,12 +83,15 @@ const TABLE = "group,yield\na,3\nb,5\n";
 
 const emptyDraft = { title: "", sections: [] };
 
-/** An in-memory gateway. It holds one state and one analysis for each thread. */
+/**
+ * An in-memory gateway. It holds one state and one analysis for each thread. It serves the records of the
+ * ledger, and it merges their outputs onto the pin, the same as the runtime gateway.
+ */
 type FakeGateway = ReportSessionStateGateway & {
     seed(threadId: string, snapshot: ReportSnapshot): void;
 };
 
-function makeFakeGateway(): FakeGateway {
+function makeFakeGateway(records: readonly DerivationRecord[] = []): FakeGateway {
     const rows = new Map<string, ReportSessionState>();
     return {
         seed(threadId, snapshot): void {
@@ -102,13 +103,15 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const copy = structuredClone(state);
+            const artifacts = { ...copy.snapshot.artifacts };
+            for (const record of records) artifacts[record.outputPath] = { hash: record.outputHash };
             return Promise.resolve({
                 outcome: "found",
-                state: copy,
+                state: { ...copy, snapshot: { ...copy.snapshot, artifacts } },
                 analysisId: DEFAULT_ANALYSIS_ID,
                 token: copy.document,
                 seenDocumentHash: null,
-                derivations: [],
+                derivations: structuredClone([...records]),
             });
         },
         persist(): Promise<SessionStatePersist> {
@@ -153,7 +156,12 @@ function makeLedger(outcome?: AppendDerivationOutcome, fault?: DbError): FakeLed
 type FakeSandbox = {
     readonly client: SandboxClient;
     readonly creates: TestSpawn[];
+    readonly sessions: SpawnSession[];
+    readonly identities: SandboxIdentity[];
     readonly submits: ExecRequest[];
+    readonly execIds: string[];
+    /** How many times a script ran. A repeated exec id runs nothing. */
+    readonly runs: () => number;
     readonly teardowns: string[];
 };
 
@@ -171,36 +179,57 @@ function hostSideOf(root: string, containerPath: string): string {
  *
  * `write` stands for the script: it runs at the moment the exec settles, and it gets the host side of the
  * output path that the submit body declared. A case that gives none models a script that wrote no file.
+ * `run` replaces the whole script with a command of the case.
  */
 function makeSandbox(args: {
     readonly root: string;
     readonly reply?: ExecResult;
     readonly throws?: boolean;
     readonly write?: (outputHostPath: string) => Promise<void>;
+    readonly run?: (request: ExecRequest) => Promise<ExecResult>;
     readonly refuse?: { readonly reason: string; readonly suspend: boolean };
 }): FakeSandbox {
     const creates: TestSpawn[] = [];
+    const sessions: SpawnSession[] = [];
+    const identities: SandboxIdentity[] = [];
     const submits: ExecRequest[] = [];
+    const execIds: string[] = [];
     const teardowns: string[] = [];
+    const held = new Map<string, ExecResult>();
+    let runs = 0;
     const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker" };
     const client = {
         toolchainSource: "store" as const,
-        createSandbox(session: SpawnSession, spec: SandboxSpec) {
+        createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity) {
             if (args.refuse !== undefined) return errAsync({ type: "labels_refused" as const, op: "createSandbox", ...args.refuse });
             creates.push({ analysisId: session.scope.analysisId, runId: session.runFrame.runId, stepId: session.runFrame.stepId, ...spec });
+            sessions.push(session);
+            identities.push(identity);
             return okAsync(ref);
         },
-        async exec(_ref: SandboxRef, request: ExecRequest): Promise<ExecResult> {
+        async exec(_ref: SandboxRef, request: ExecRequest, _emit: unknown, _deadline: number, execId?: string): Promise<ExecResult> {
             submits.push(request);
+            if (execId === undefined) throw new Error("the step sandbox gives each exec its id");
+            execIds.push(execId);
+            const known = held.get(execId);
+            if (known !== undefined) return known;
             if (args.throws === true) {
                 throw new Error("the poll loop broke");
+            }
+            runs += 1;
+            if (args.run !== undefined) {
+                const ran = await args.run(request);
+                held.set(execId, ran);
+                return ran;
             }
             if (args.write !== undefined) {
                 const outputEnv = request.env?.[DERIVE_OUTPUT_ENV];
                 if (outputEnv === undefined) throw new Error("the derive output env is absent");
                 await args.write(hostSideOf(args.root, outputEnv));
             }
-            return args.reply ?? execResult({});
+            const result = args.reply ?? execResult({});
+            held.set(execId, result);
+            return result;
         },
         teardown(handle: SandboxRef): Promise<void> {
             teardowns.push(handle.sandboxId);
@@ -211,7 +240,39 @@ function makeSandbox(args: {
         teardownById: () => Promise.resolve(),
         listManagedSandboxes: () => Promise.resolve([]),
     } satisfies SandboxClient;
-    return { client, creates, submits, teardowns };
+    return { client, creates, sessions, identities, submits, execIds, runs: () => runs, teardowns };
+}
+
+/**
+ * A sandbox whose exec runs the command in a real shell on the host, with the container paths mapped onto
+ * the root. A `python3` on the path of the shell writes its arguments to a file and exits clean, thus a
+ * case reads what the script got and the script writes nothing.
+ */
+function makeShellSandbox(root: string): FakeSandbox & { readonly pythonArgs: () => Promise<string> } {
+    const bin = join(root, ".bin");
+    const argsFile = join(root, ".python-args");
+    return {
+        ...makeSandbox({
+            root,
+            run: async (request) => {
+                await mkdir(bin, { recursive: true });
+                await writeFile(join(bin, "python3"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\n`, "utf8");
+                await chmod(join(bin, "python3"), 0o755);
+                const outputEnv = request.env?.[DERIVE_OUTPUT_ENV];
+                const cwd = request.cwd;
+                if (outputEnv === undefined || cwd === undefined) throw new Error("the derive exec names no output and no working directory");
+                const child = Bun.spawn([...request.command], {
+                    cwd: hostSideOf(root, cwd),
+                    env: { ...request.env, [DERIVE_OUTPUT_ENV]: hostSideOf(root, outputEnv), PATH: `${bin}:/usr/bin:/bin` },
+                    stdout: "pipe",
+                    stderr: "pipe",
+                });
+                const exitCode = await child.exited;
+                return execResult({ exitCode, stdout: await new Response(child.stdout).text(), stderr: await new Response(child.stderr).text() });
+            },
+        }),
+        pythonArgs: () => readFile(argsFile, "utf8"),
+    };
 }
 
 /** The write of a script that lands the table at the declared output path. */
@@ -220,31 +281,6 @@ function writesTable(table = TABLE): (outputHostPath: string) => Promise<void> {
         await mkdir(dirname(outputHostPath), { recursive: true });
         await writeFile(outputHostPath, table, "utf8");
     };
-}
-
-/** A run authorizer over the local realization, with the revoke reasons recorded. */
-type FakeAuthorizer = {
-    readonly authorizer: RunAuthorizer;
-    readonly frames: string[];
-    readonly revoked: string[];
-};
-
-function makeAuthorizer(): FakeAuthorizer {
-    const local = createLocalRunAuthorizer();
-    const frames: string[] = [];
-    const revoked: string[] = [];
-    const authorizer: RunAuthorizer = {
-        authorize(input) {
-            frames.push(`${input.frame.runId}/${String(input.frame.stepId)}/${input.provenance.agentId}`);
-            return local.authorize(input);
-        },
-        revoke(_authorization, reason) {
-            revoked.push(reason);
-            return okAsync(undefined);
-        },
-        revokeByJti: () => okAsync(undefined),
-    };
-    return { authorizer, frames, revoked };
 }
 
 /** A complete exec result. Each case overrides only the fields that it asserts. */
@@ -274,24 +310,20 @@ function makeTool(args: {
     provenance?: ProvenanceSeam;
     logger?: Logger;
 }) {
-    const gateway = makeFakeGateway();
+    const ledger = args.ledger ?? makeLedger();
+    const gateway = makeFakeGateway(ledger.records);
     gateway.seed("t1", args.snapshot ?? pinnedSnapshot());
     // The default stub is a script that lands the table where the submit body declared it.
     const sandbox = args.sandbox ?? makeSandbox({ root: args.root, reply: args.result, write: writesTable() });
-    const ledger = args.ledger ?? makeLedger();
-    const auth = makeAuthorizer();
     const tool = createDeriveTableTool({
         gateway,
         resolveWorkspaceRoot: () => Promise.resolve(args.root),
         derivations: ledger,
-        // The composition realizes the runner over a registered workflow. The test drives the same body,
-        // with a fixed clock, thus the seam calls under test are the seam calls in production.
-        runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
-        runAuthorizer: auth.authorizer,
+        sandboxClient: sandbox.client,
         provenance: args.provenance,
         logger: args.logger,
     });
-    return { tool, gateway, sandbox, ledger, auth };
+    return { tool, gateway, sandbox, ledger };
 }
 
 /** Run the tool over one thread, and give back the ok value. */
@@ -302,50 +334,23 @@ async function derive(tool: ReturnType<typeof makeTool>["tool"], input: { script
 }
 
 describe("a suspended derivation", () => {
-    it("returns the suspension as the value of the workflow, and reports the reason", async () => {
+    it("reports the reason of a spawn that the host refused with the suspend flag", async () => {
         const root = await makeRoot();
         const sandbox = makeSandbox({ root, refuse: { reason: "account_frozen", suspend: true } });
-        const { tool, auth } = makeTool({ root, sandbox });
+        const { tool, ledger } = makeTool({ root, sandbox });
 
         const result = await derive(tool, {});
 
         expect(result).toMatchObject({ outcome: "suspended", reason: "account_frozen" });
         expect(result.outcome === "suspended" ? result.detail : "").toContain("account_frozen");
-        expect(auth.revoked).toEqual(["derive-table-failed"]);
-    });
-
-    it("reports the reason of an authorization that the host refused with the suspend flag", async () => {
-        const root = await makeRoot();
-        const sandbox = makeSandbox({ root, write: writesTable() });
-        const tool = createDeriveTableTool({
-            gateway: (() => {
-                const gateway = makeFakeGateway();
-                gateway.seed("t1", pinnedSnapshot());
-                return gateway;
-            })(),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-            derivations: makeLedger(),
-            runDerivation: () => {
-                throw new Error("a refused authorization starts no derivation");
-            },
-            runAuthorizer: {
-                authorize: () => errAsync({ reason: "no_funds", suspend: true }),
-                revoke: () => okAsync(undefined),
-                revokeByJti: () => okAsync(undefined),
-            },
-        });
-
-        const result = await derive(tool, {});
-
-        expect(result).toMatchObject({ outcome: "suspended", reason: "no_funds" });
-        expect(sandbox.creates).toEqual([]);
+        expect(ledger.records).toHaveLength(0);
     });
 });
 
 describe("the derived table", () => {
     it("lands under the derived directory of the session, and the record pins the chain", async () => {
         const root = await makeRoot();
-        const { tool, sandbox, ledger, auth } = makeTool({ root });
+        const { tool, sandbox, ledger } = makeTool({ root });
 
         const result = await derive(tool, {});
 
@@ -365,7 +370,8 @@ describe("the derived table", () => {
         // The source carries the hash of the served membership, and never a hash of the call.
         expect(result.sources).toEqual([{ path: PINNED_PATH, hash: PINNED_HASH }]);
 
-        // The record holds what a second run needs: the script, the sources, and the output hash.
+        // The record holds what a second run needs: the script, the sources, and the output hash. It names
+        // the call that made it, thus a rerun of that call finds it.
         expect(ledger.records).toHaveLength(1);
         expect(ledger.records[0]).toEqual({
             outputPath: result.path,
@@ -373,17 +379,16 @@ describe("the derived table", () => {
             sources: [{ path: PINNED_PATH, hash: PINNED_HASH }],
             scriptHash: result.scriptHash,
             script: SCRIPT,
+            toolCallId: "test-tool-call",
         });
 
         // The container is ephemeral, thus it goes away with the work.
         expect(sandbox.teardowns).toEqual(["sbx-derive-1"]);
-        // The authorization revokes on the terminal path.
-        expect(auth.revoked).toEqual(["derive-table-completed"]);
     });
 
     it("declares the derived directory as the one write mount of the container", async () => {
         const root = await makeRoot();
-        const { tool, sandbox, auth } = makeTool({ root });
+        const { tool, sandbox } = makeTool({ root });
 
         await derive(tool, {});
 
@@ -400,8 +405,12 @@ describe("the derived table", () => {
         expect(meta.runId).toBe("derive-table");
         expect(meta.stepId).toBe("derive");
         expect(meta.resources).toEqual({ cpu: 2, memoryGb: 8 });
-        // The frame of the authorization names the same synthetic run.
-        expect(auth.frames).toEqual(["derive-table/derive/table-deriver"]);
+        // The pass mints no mandate: the container runs under the identity and the auth of the call.
+        const session = presentAt(sandbox.sessions, 0);
+        const { ctx } = makeToolContext();
+        expect(session.identity).toEqual(ctx.session.identity);
+        expect(session.auth).toEqual(ctx.session.auth);
+        expect(session.provenance).toEqual({ agentId: "table-deriver", callPath: ["table-deriver"] });
     });
 
     it("submits the script with the mounted inputs and the mounted output path", async () => {
@@ -412,7 +421,7 @@ describe("the derived table", () => {
 
         expect(sandbox.submits).toHaveLength(1);
         const body = presentAt(sandbox.submits, 0);
-        expect(body.command).toEqual(["python3", "-c", SCRIPT]);
+        expect(body.command).toEqual(["sh", "-c", 'rm -f -- "$DERIVE_OUTPUT" && exec python3 -c "$1"', "derive_table", SCRIPT]);
         // The working directory is the write mount, thus the script writes beside where it stands.
         expect(body.cwd).toBe(`/${DEFAULT_ANALYSIS_ID}/${reportSessionDir("t1")}/derived`);
         // Each declared input rides as the path that the container reads, with the hash of the membership.
@@ -521,9 +530,9 @@ describe("the bounds of a derivation", () => {
 });
 
 describe("a derivation that gives no table", () => {
-    it("gives the sandbox detail of a failed script, and it revokes", async () => {
+    it("gives the sandbox detail of a failed script", async () => {
         const root = await makeRoot();
-        const { tool, sandbox, ledger, auth } = makeTool({
+        const { tool, sandbox, ledger } = makeTool({
             root,
             result: execResult({ exitCode: 1, stdout: "", stderr: "Traceback: KeyError: 'gene'" }),
         });
@@ -537,7 +546,6 @@ describe("a derivation that gives no table", () => {
         // No table means no record, and the container still goes away.
         expect(ledger.records).toHaveLength(0);
         expect(sandbox.teardowns).toEqual(["sbx-derive-1"]);
-        expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 
     it("gives a timeout and a dead sandbox as a failed exec", () => {
@@ -550,7 +558,7 @@ describe("a derivation that gives no table", () => {
         const root = await makeRoot();
         // The script exits clean and it writes nothing into the mount, thus the output path holds no file.
         const sandbox = makeSandbox({ root, reply: execResult({ stdout: "a log line\n" }) });
-        const { tool, ledger, auth } = makeTool({ root, sandbox });
+        const { tool, ledger } = makeTool({ root, sandbox });
 
         const result = await derive(tool, {});
 
@@ -559,7 +567,6 @@ describe("a derivation that gives no table", () => {
             expect(result.detail).toContain("yield.csv");
         }
         expect(ledger.records).toHaveLength(0);
-        expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 
     it("clears the output path first, thus a stale file is never adopted as the new table", async () => {
@@ -568,8 +575,8 @@ describe("a derivation that gives no table", () => {
         await mkdir(dirname(stale), { recursive: true });
         await writeFile(stale, "stale,bytes\n1,2\n", "utf8");
         // The script exits clean and it writes no file. The bytes of the failed attempt before it must not
-        // become the table of this one.
-        const sandbox = makeSandbox({ root, reply: execResult({ stdout: "a log line\n" }) });
+        // become the table of this one. The command runs in a real shell, and the shell clears the path.
+        const sandbox = makeShellSandbox(root);
         const { tool, ledger } = makeTool({ root, sandbox });
 
         const result = await derive(tool, {});
@@ -577,6 +584,8 @@ describe("a derivation that gives no table", () => {
         expect(result.outcome).toBe("no-output");
         expect(ledger.records).toHaveLength(0);
         expect(existsSync(stale)).toBe(false);
+        // The shell hands the script to python byte for byte.
+        expect(await sandbox.pythonArgs()).toBe(`-c\n${SCRIPT}\n`);
     });
 
     it("refuses an output that resolves outside the workspace tree", async () => {
@@ -606,40 +615,67 @@ describe("a derivation that gives no table", () => {
     it("tears the container down when the exec throws", async () => {
         const root = await makeRoot();
         const sandbox = makeSandbox({ root, throws: true });
-        const { tool, auth } = makeTool({ root, sandbox });
+        const { tool } = makeTool({ root, sandbox });
 
         const result = await derive(tool, {});
 
         expect(result.outcome).toBe("exec-failed");
         expect(sandbox.teardowns).toEqual(["sbx-derive-1"]);
-        expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 
-    it("revokes the authorization when the work throws", async () => {
+    it("throws for a stored path that escapes the tree, and it starts no container", async () => {
         const root = await makeRoot();
         // A stored path is untrusted text. One that escapes the tree makes the host-to-container mapper
-        // throw, and the authorization must not stand behind that throw.
+        // throw before any container exists.
         const hostile = "../../etc/passwd";
-        const { tool, auth, sandbox } = makeTool({ root, snapshot: { artifacts: { [hostile]: { hash: PINNED_HASH } } } });
+        const { tool, sandbox } = makeTool({ root, snapshot: { artifacts: { [hostile]: { hash: PINNED_HASH } } } });
 
         const attempt = async (): Promise<void> => {
             (await tool.execute({ script: SCRIPT, inputs: [hostile], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
         };
 
         await expect(attempt()).rejects.toThrow("escapes the workspace root");
-        expect(auth.revoked).toEqual(["derive-table-failed"]);
         expect(sandbox.creates).toHaveLength(0);
     });
 
     it("reports a ledger fault as a failed derivation", async () => {
         const root = await makeRoot();
         const fault: DbError = { type: "mutation_failed", op: "append", cause: new Error("the pool is down") };
-        const { tool, auth } = makeTool({ root, ledger: makeLedger(undefined, fault) });
+        const { tool, sandbox } = makeTool({ root, ledger: makeLedger(undefined, fault) });
 
         const result = await derive(tool, {});
 
         expect(result.outcome).toBe("exec-failed");
-        expect(auth.revoked).toEqual(["derive-table-failed"]);
+        expect(sandbox.teardowns).toEqual(["sbx-derive-1"]);
+    });
+});
+
+describe("a rerun of a derivation call", () => {
+    it("gives the table of a completed call again, and the script does not run again", async () => {
+        const root = await makeRoot();
+        const { tool, sandbox, ledger } = makeTool({ root });
+
+        const first = await derive(tool, {});
+        // The second run of the same call meets its own output in the served membership.
+        const second = await derive(tool, {});
+
+        expect(first.outcome).toBe("derived");
+        expect(second).toEqual(first);
+        expect(sandbox.runs()).toBe(1);
+        expect(sandbox.creates).toHaveLength(1);
+        expect(ledger.records).toHaveLength(1);
+    });
+
+    it("refuses the name to a different call", async () => {
+        const root = await makeRoot();
+        const { tool, sandbox } = makeTool({ root });
+
+        expect((await derive(tool, {})).outcome).toBe("derived");
+        const other = { ...ctxForThread("t1"), invocationId: "another-tool-call" };
+        const result = (await tool.execute({ script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" }, other))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("repeated-name");
+        expect(sandbox.runs()).toBe(1);
     });
 });
 
@@ -655,7 +691,7 @@ describe("a composition with no sandbox", () => {
         expect(result.outcome).toBe("unavailable");
     });
 
-    it("derives in a container that the derivation workflow owns", async () => {
+    it("derives in a container of its own, which goes away with the work", async () => {
         const root = await makeRoot();
         const { tool, sandbox, ledger } = makeTool({ root });
 
@@ -759,7 +795,7 @@ describe("the report observation", () => {
 });
 
 describe("buildDerivationExec", () => {
-    it("runs the script through python -c inside the write mount", () => {
+    it("clears the output path and runs the script through python -c inside the write mount", () => {
         const body = buildDerivationExec({
             script: "print(1)",
             workingDir: "/an-1/report-sessions/t1/derived",
@@ -767,7 +803,7 @@ describe("buildDerivationExec", () => {
             output: "/an-1/report-sessions/t1/derived/y.csv",
         });
 
-        expect(body.command).toEqual(["python3", "-c", "print(1)"]);
+        expect(body.command).toEqual(["sh", "-c", 'rm -f -- "$DERIVE_OUTPUT" && exec python3 -c "$1"', "derive_table", "print(1)"]);
         expect(body.cwd).toBe("/an-1/report-sessions/t1/derived");
         expect(body.timeoutSeconds).toBe(300);
         const inputEnv = body.env?.[DERIVE_INPUT_ENV];

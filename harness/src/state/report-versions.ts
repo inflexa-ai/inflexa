@@ -57,6 +57,11 @@ export type RecordVersionInput = {
     readonly parentSeq: number | null;
     /** The earlier version that this one reuses. The parent must belong to the same analysis. */
     readonly parentVersionId?: string;
+    /**
+     * The id of the version when the record makes the row. A record that replaces the
+     * version of the thread keeps the stored id. Omitted, the record mints a random id.
+     */
+    readonly versionId?: string;
 };
 
 /** The stable reference of a recorded version, and how the record landed. */
@@ -188,8 +193,10 @@ type VersionRow = {
  * It writes neither `version_id` nor `created_at`: the version keeps its name, and
  * the row keeps the time of its first record.
  *
- * The returned id names the row that stands. It equals the minted id on the insert
- * arm alone, thus the caller reads which arm ran.
+ * The returned id names the row that stands. It equals the given id on the insert
+ * arm, and the stored id on the replace arm, thus the caller reads which arm ran. A
+ * second record with the id of the stored version reads as the record that made it,
+ * thus a rerun of one durable step does not read as a replacement.
  */
 const RECORD_SQL = `INSERT INTO cortex_report_versions
     (version_id, analysis_id, thread_id, parent_thread_id, parent_seq,
@@ -260,7 +267,7 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
         }
 
         const write = (): ResultAsync<RecordedVersionRef, RecordVersionError> => {
-            const minted = randomUUID();
+            const minted = input.versionId ?? randomUUID();
             return tryMutation("report-versions.record.write", async (): Promise<RecordedVersionRef> => {
                 const { rows } = await pool.query<{ version_id: string }>({
                     text: RECORD_SQL,

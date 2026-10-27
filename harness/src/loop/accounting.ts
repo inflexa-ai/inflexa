@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { LanguageModelMiddleware } from "ai";
 import type { LanguageModelV4StreamPart, LanguageModelV4Usage } from "@ai-sdk/provider";
 
@@ -43,7 +44,9 @@ const CALL_PATH_DELIMITER = ">";
 
 /**
  * Idempotency key for one call's usage record, and for the kept text of one cut
- * tool result: `{runId}[:{stepId}]:{callPath}[:{invocationId}]:{callKey}`.
+ * tool result: `{runId}[:{stepId}]:{callPath}[:{invocationId}]:{callKey}`. A
+ * workflow with no `RunFrame`, a chat turn, puts its own workflow id in place of
+ * the run and the step.
  *
  * Each component is a fact the same call carries again on every rerun:
  *
@@ -58,19 +61,15 @@ const CALL_PATH_DELIMITER = ">";
  * - `callKey` — the id of the model response, or the id of the tool call. A
  *   recorded step gives the same id on a replay.
  *
- * Outside a `RunFrame` there is no replay to be safe against, so a fresh id is
+ * Outside a workflow there is no replay to be safe against, so a fresh id is
  * enough and is what keeps two calls in one turn distinct.
  */
 export function recordKeyFor(session: AgentSession, invocationId: string | undefined, callKey: string): string {
     const frame = session.runFrame;
-    if (frame === undefined) return randomUUID();
-    return [
-        frame.runId,
-        ...(frame.stepId === undefined ? [] : [frame.stepId]),
-        session.provenance.callPath.join(CALL_PATH_DELIMITER),
-        ...(invocationId === undefined ? [] : [invocationId]),
-        callKey,
-    ].join(":");
+    const workflowId = DBOS.workflowID;
+    if (frame === undefined && workflowId === undefined) return randomUUID();
+    const scope = frame === undefined ? [workflowId] : [frame.runId, ...(frame.stepId === undefined ? [] : [frame.stepId])];
+    return [...scope, session.provenance.callPath.join(CALL_PATH_DELIMITER), ...(invocationId === undefined ? [] : [invocationId]), callKey].join(":");
 }
 
 /** The usage of one call in the names of the harness. An unreported figure stays absent. */
