@@ -33,6 +33,33 @@ export function subsequenceScore(query: string, target: string): number {
     return qi === q.length ? score : -1;
 }
 
+/**
+ * {@link subsequenceScore} over the UTF-8 bytes `bytes[start..end)`, for a name inside a shared byte pool. `query` holds the
+ * lower-case ASCII bytes of the query, which the caller encodes one time for each search. The name folds only `A` to `Z`,
+ * thus the score equals the string score for an ASCII name, and the scan allocates nothing. A caller scores a name or a
+ * query that holds a byte outside ASCII with {@link subsequenceScore}, because a Unicode case fold needs a table.
+ */
+export function subsequenceScoreBytes(query: Uint8Array, bytes: Uint8Array, start: number, end: number): number {
+    const queryLength = query.length;
+    if (queryLength === 0) return 0;
+    let qi = 0;
+    let score = 0;
+    let streak = 0;
+    let last = -2;
+    for (let ti = start; ti < end && qi < queryLength; ti++) {
+        // Both indexes are inside their arrays: `ti` is below `end`, which the caller bounds by the array, and `qi` is below `queryLength`.
+        let byte = bytes[ti]!;
+        if (byte >= 0x41 && byte <= 0x5a) byte |= 0x20;
+        if (byte === query[qi]!) {
+            streak = ti === last + 1 ? streak + 1 : 1;
+            score += streak + (ti === start ? 5 : 0);
+            last = ti;
+            qi++;
+        }
+    }
+    return qi === queryLength ? score : -1;
+}
+
 /** A weighted field to fuzzy-match against in {@link rankBy}. */
 export type RankField<T> = {
     /** Extracts the string to match for this field from an item (e.g. `(i) => i.title`). */

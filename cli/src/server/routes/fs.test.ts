@@ -7,14 +7,16 @@ import type { ArtifactOrigin, Pool } from "@inflexa-ai/harness";
 import { errAsync, okAsync } from "neverthrow";
 
 import type { ApiError } from "../../api/common.ts";
-import type { FilePreview, FolderList, HomeFolder } from "../../api/fs.ts";
+import type { FilePreview, FolderList, FsSearch, HomeFolder } from "../../api/fs.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../db/primary_mutation.ts";
 import { db } from "../../db/primary.ts";
 import { entryDetails } from "../../lib/folder_listing.ts";
+import { subsequenceScore } from "../../lib/fuzzy.ts";
 import type { LockOutcome } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
+import { DEFAULT_SEARCH_LIMITS, readFolderEntries, type SearchIndexCache, type SearchLimits } from "../../modules/fs/search_index.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { idleBoot } from "../../test_support/server.ts";
@@ -26,6 +28,22 @@ import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "./fs.ts";
 const routes = fsRoutes(idleBoot());
 
 let root = "";
+const searchCaches: SearchIndexCache[] = [];
+
+/** Routes whose search cache the cleanup stops, thus no walk and no TTL timer outlives its test. */
+function searchRoutes(boot: ServerBoot, opts: Partial<FsRouteOpts> = {}): ReturnType<typeof fsRoutes> {
+    return fsRoutes(boot, { ...DEFAULT_FS_ROUTE_OPTS, ...opts, onSearchCache: (cache) => searchCaches.push(cache) });
+}
+
+function searchLimits(limits: Partial<SearchLimits>): SearchLimits {
+    return { ...DEFAULT_SEARCH_LIMITS, ...limits };
+}
+
+async function searchBody(app: ReturnType<typeof fsRoutes>, path: string, query: string): Promise<FsSearch> {
+    const response = await app.request(`/search?path=${encodeURIComponent(path)}${query}`);
+    expect(response.status).toBe(200);
+    return (await response.json()) as FsSearch;
+}
 
 beforeEach(() => {
     // realpath so path assertions match the canonical paths of the listing (macOS /var -> /private/var).
@@ -33,6 +51,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    for (const cache of searchCaches.splice(0)) cache.stop();
     rmSync(root, { recursive: true, force: true });
 });
 
@@ -139,6 +158,33 @@ describe("the analysis guard of the fs routes", () => {
         const response = await guardedList("a1");
         expect(response.status).toBe(200);
         expect(acquired).toEqual(["a1"]);
+    });
+
+    test("404 `not_found` for an unknown analysis on /search, with no lock call and no folder read", async () => {
+        const read: string[] = [];
+        // The cache reads the clock at each search, thus a clock with no read shows that no search, and no walk, started.
+        let clockReads = 0;
+        const counted = searchRoutes(idleBoot(), {
+            now: () => {
+                clockReads += 1;
+                return Date.now();
+            },
+            acquireLock: (analysisId) => {
+                acquired.push(analysisId);
+                return outcome;
+            },
+            entryDetails: (entry, identity) => {
+                read.push(entry.path);
+                return entryDetails(entry, identity);
+            },
+        });
+        writeFileSync(join(root, "a.csv"), "x");
+        const response = await counted.request(`/search?path=${encodeURIComponent(root)}&q=a&analysisId=nope`);
+        expect(response.status).toBe(404);
+        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(acquired).toEqual([]);
+        expect(read).toEqual([]);
+        expect(clockReads).toBe(0);
     });
 
     test("404 `not_found` for an unknown analysis on /preview, with no lock call", async () => {
@@ -619,6 +665,32 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
         expect(calls[0]?.paths).toEqual(Array.from({ length: 100 }, (_, i) => `big/f${String(i).padStart(3, "0")}.txt`));
     });
 
+    test("sends one ledger read for the hits of a search, and gives the origin of each hit", async () => {
+        mkdirSync(join(workspace, "out"), { recursive: true });
+        for (let i = 0; i < 5; i += 1) writeFileSync(join(workspace, "out", `hit${i}.csv`), "x");
+        for (let i = 0; i < 20; i += 1) writeFileSync(join(workspace, `other${i}.txt`), "x");
+        rows = [{ path: "out/hit0.csv", runId: "r1", stepId: "s1" }];
+        const app = searchRoutes(readyBoot, {
+            acquireLock: () => ({ acquired: true }),
+            artifactOrigins: (_pool, analysisId, paths): ReturnType<FsRouteOpts["artifactOrigins"]> => {
+                calls.push({ analysisId, paths });
+                return okAsync(rows);
+            },
+        });
+        const body = await searchBody(app, workspace, "&q=hit.csv&analysisId=a1");
+        expect(body.hits).toHaveLength(5);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.analysisId).toBe("a1");
+        expect([...(calls[0]?.paths ?? [])].sort()).toEqual(Array.from({ length: 5 }, (_, i) => `out/hit${i}.csv`));
+        expect(body.hits.map((hit) => [hit.entry.name, hit.entry.origin])).toEqual([
+            ["hit0.csv", { runId: "r1", stepId: "s1" }],
+            ["hit1.csv", null],
+            ["hit2.csv", null],
+            ["hit3.csv", null],
+            ["hit4.csv", null],
+        ]);
+    });
+
     test("sends no ledger read for a folder outside the workspace, and gives null origins", async () => {
         writeFileSync(join(outside, "f.csv"), "x");
         const body = await listAs(readyBoot, outside, "&analysisId=a1");
@@ -1031,5 +1103,265 @@ describe("GET /api/v1/fs/preview", () => {
                 chmodSync(locked, 0o755);
             }
         });
+    });
+});
+
+describe("GET /api/v1/fs/search", () => {
+    let clock = 0;
+
+    beforeEach(() => {
+        clock = 0;
+    });
+
+    function seedData(): void {
+        mkdirSync(join(root, "raw"));
+        mkdirSync(join(root, "figures"));
+        writeFileSync(join(root, "raw", "counts.csv"), "x");
+        writeFileSync(join(root, "figures", "volcano.png"), "x");
+    }
+
+    test("gives a nested hit with its path, its subpath, and its kind", async () => {
+        seedData();
+        const body = await searchBody(searchRoutes(idleBoot()), root, "&q=volc");
+        expect(body.truncated).toBe(false);
+        expect(body.hits).toHaveLength(1);
+        expect(body.hits[0]).toMatchObject({
+            entry: { name: "volcano.png", path: join(root, "figures", "volcano.png"), type: "file", kind: "figure", isInput: false, origin: null },
+            subpath: "figures",
+        });
+    });
+
+    test("gives a folder as a hit, with its item count and an empty subpath", async () => {
+        seedData();
+        const body = await searchBody(searchRoutes(idleBoot()), root, "&q=fig");
+        const figures = body.hits.find((hit) => hit.entry.name === "figures");
+        expect(figures).toMatchObject({ entry: { type: "folder", kind: null, itemCount: 1 }, subpath: "" });
+    });
+
+    test("keeps a hidden entry out of the hits without `hidden`, and gives it with `hidden=true`", async () => {
+        mkdirSync(join(root, ".cache"));
+        mkdirSync(join(root, "figures"));
+        writeFileSync(join(root, ".cache", "volcano.png"), "x");
+        writeFileSync(join(root, "figures", "volcano.png"), "x");
+        const app = searchRoutes(idleBoot());
+        const shown = await searchBody(app, root, "&q=volcano");
+        expect(shown.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`)).toEqual(["figures/volcano.png"]);
+        const withHidden = await searchBody(app, root, "&q=volcano&hidden=true");
+        expect(withHidden.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`).sort()).toEqual([".cache/volcano.png", "figures/volcano.png"]);
+    });
+
+    test("gives the best `limit` hits in the order of the score", async () => {
+        const names = Array.from({ length: 30 }, (_, k) => `${"x".repeat(k % 7)}a${k}.txt`);
+        for (const name of names) writeFileSync(join(root, name), "x");
+        const body = await searchBody(searchRoutes(idleBoot()), root, "&q=a&limit=10");
+        const best = names
+            .map((name) => ({ name, score: subsequenceScore("a", name) }))
+            .sort((p, q) => q.score - p.score || (p.name < q.name ? -1 : p.name > q.name ? 1 : 0))
+            .slice(0, 10)
+            .map((hit) => hit.name);
+        expect(body.hits.map((hit) => hit.entry.name)).toEqual(best);
+    });
+
+    test("gives 50 hits by default and for a bad `limit`, and at most 200", async () => {
+        for (let i = 0; i < 250; i += 1) writeFileSync(join(root, `f${String(i).padStart(3, "0")}.txt`), "x");
+        const app = searchRoutes(idleBoot());
+        expect((await searchBody(app, root, "&q=f")).hits).toHaveLength(50);
+        expect((await searchBody(app, root, "&q=f&limit=abc")).hits).toHaveLength(50);
+        expect((await searchBody(app, root, "&q=f&limit=0")).hits).toHaveLength(50);
+        expect((await searchBody(app, root, "&q=f&limit=7")).hits).toHaveLength(7);
+        expect((await searchBody(app, root, "&q=f&limit=500")).hits).toHaveLength(200);
+    });
+
+    test("matches each entry for an absent or an empty query", async () => {
+        seedData();
+        const app = searchRoutes(idleBoot());
+        expect((await searchBody(app, root, "")).hits).toHaveLength(4);
+        expect((await searchBody(app, root, "&q=")).hits).toHaveLength(4);
+    });
+
+    test("reads the facts of the hits only", async () => {
+        for (let i = 0; i < 997; i += 1) writeFileSync(join(root, `f${String(i).padStart(4, "0")}.txt`), "x");
+        for (let i = 0; i < 3; i += 1) writeFileSync(join(root, `volcano-${i}.png`), "x");
+        const read: string[] = [];
+        const app = searchRoutes(idleBoot(), {
+            entryDetails: (entry, identity) => {
+                read.push(entry.name);
+                return entryDetails(entry, identity);
+            },
+        });
+        const body = await searchBody(app, root, "&q=volcano");
+        expect(body.hits.map((hit) => hit.entry.name)).toEqual(["volcano-0.png", "volcano-1.png", "volcano-2.png"]);
+        expect(read.sort()).toEqual(["volcano-0.png", "volcano-1.png", "volcano-2.png"]);
+    });
+
+    test("sets `truncated` at the entry cap of one index", async () => {
+        for (let i = 0; i < 25; i += 1) writeFileSync(join(root, `f${i}.csv`), "x");
+        const body = await searchBody(searchRoutes(idleBoot(), { search: searchLimits({ maxEntries: 10 }) }), root, "");
+        expect(body.truncated).toBe(true);
+        // The cap counts the scope, which is no hit.
+        expect(body.hits.length).toBeLessThanOrEqual(9);
+    });
+
+    test("sets `truncated` at the depth cap, and gives no hit below it", async () => {
+        mkdirSync(join(root, "a", "b", "c"), { recursive: true });
+        writeFileSync(join(root, "a", "b", "c", "deep.csv"), "x");
+        const body = await searchBody(searchRoutes(idleBoot(), { search: searchLimits({ maxDepth: 2 }) }), root, "&q=deep");
+        expect(body).toEqual({ hits: [], truncated: true });
+    });
+
+    test("walks a scope again after its TTL, and answers from the index before it", async () => {
+        writeFileSync(join(root, "a.csv"), "x");
+        const app = searchRoutes(idleBoot(), { search: searchLimits({ ttlMs: 1000 }), now: () => clock });
+        expect((await searchBody(app, root, "&q=csv")).hits.map((hit) => hit.entry.name)).toEqual(["a.csv"]);
+        writeFileSync(join(root, "b.csv"), "x");
+        clock = 500;
+        expect((await searchBody(app, root, "&q=csv")).hits.map((hit) => hit.entry.name)).toEqual(["a.csv"]);
+        clock = 2000;
+        expect((await searchBody(app, root, "&q=csv")).hits.map((hit) => hit.entry.name)).toEqual(["a.csv", "b.csv"]);
+    });
+
+    test.skipIf(process.getuid?.() === 0)("skips a folder that it cannot read, and stays complete", async () => {
+        const locked = join(root, "locked");
+        mkdirSync(locked);
+        writeFileSync(join(locked, "inner.csv"), "x");
+        writeFileSync(join(root, "open.csv"), "x");
+        chmodSync(locked, 0o000);
+        try {
+            const app = searchRoutes(idleBoot());
+            const body = await searchBody(app, root, "&q=open");
+            expect(body.hits.map((hit) => hit.entry.name)).toEqual(["open.csv"]);
+            expect(body.truncated).toBe(false);
+            expect((await searchBody(app, root, "&q=locked")).hits.map((hit) => [hit.entry.name, hit.entry.type])).toEqual([["locked", "folder"]]);
+        } finally {
+            chmodSync(locked, 0o755);
+        }
+    });
+
+    test("does not enter a symbolic link, and gives the link as an entry", async () => {
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-fs-search-outside-")));
+        try {
+            writeFileSync(join(outside, "deep.csv"), "x");
+            symlinkSync(outside, join(root, "ext"));
+            const app = searchRoutes(idleBoot());
+            expect((await searchBody(app, root, "&q=deep")).hits).toEqual([]);
+            const link = (await searchBody(app, root, "&q=ext")).hits;
+            expect(link).toHaveLength(1);
+            expect(link[0]?.entry).toMatchObject({ name: "ext", type: "symlink", link: { targetKind: "folder" }, itemCount: 1 });
+        } finally {
+            rmSync(outside, { recursive: true, force: true });
+        }
+    });
+
+    test("over a real listener, a client disconnect does not stop the walk", async () => {
+        mkdirSync(join(root, "slow"));
+        writeFileSync(join(root, "slow", "inside.csv"), "x");
+        writeFileSync(join(root, "top.csv"), "x");
+        const slow = join(root, "slow");
+        const reads: string[] = [];
+        const slowStarted = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        const app = searchRoutes(idleBoot(), {
+            readEntries: async (path) => {
+                reads.push(path);
+                if (path === slow) {
+                    slowStarted.resolve();
+                    await gate.promise;
+                }
+                return readFolderEntries(path);
+            },
+        });
+        const serverAborted = Promise.withResolvers<void>();
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: (request, bun) => {
+                request.signal.addEventListener("abort", () => serverAborted.resolve());
+                return app.fetch(request, bun);
+            },
+        });
+        const url = (query: string): string => `http://127.0.0.1:${server.port}/search?path=${encodeURIComponent(root)}${query}`;
+        try {
+            const client = new AbortController();
+            const first = fetch(url("&q=inside"), { signal: client.signal }).then(
+                () => "answered",
+                () => "aborted",
+            );
+            await slowStarted.promise;
+            client.abort();
+            expect(await first).toBe("aborted");
+            await serverAborted.promise;
+            gate.resolve();
+            await Bun.sleep(20);
+
+            const response = await fetch(url("&q=inside"));
+            expect(response.status).toBe(200);
+            // The body is the `FsSearch` that the route builds.
+            const body = (await response.json()) as FsSearch;
+            expect(body.truncated).toBe(false);
+            expect(body.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`)).toEqual(["slow/inside.csv"]);
+            expect(reads.sort()).toEqual([root, slow]);
+        } finally {
+            gate.resolve();
+            await server.stop(true);
+        }
+    });
+
+    test("searches the canonical scope of a path through a link", async () => {
+        seedData();
+        const linked = `${root}-link`;
+        symlinkSync(root, linked);
+        try {
+            const body = await searchBody(searchRoutes(idleBoot()), linked, "&q=volc");
+            expect(body.hits[0]?.entry.path).toBe(join(root, "figures", "volcano.png"));
+        } finally {
+            rmSync(linked, { force: true });
+        }
+    });
+});
+
+describe("GET /api/v1/fs/search errors", () => {
+    async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
+        expect(response.status).toBe(status);
+        const body = (await response.json()) as ApiError;
+        expect(body.error).toBe(code);
+        return body;
+    }
+
+    function search(path: string, query = "&q=a"): Promise<Response> {
+        return Promise.resolve(searchRoutes(idleBoot()).request(`/search?path=${encodeURIComponent(path)}${query}`));
+    }
+
+    test("400 `validation_error` for no path, a relative path, and a path with a NUL byte", async () => {
+        const absent = await expectError(await searchRoutes(idleBoot()).request("/search?q=a"), 400, "validation_error");
+        expect(absent.details).toEqual({ formErrors: [], fieldErrors: { path: ["The path must be absolute."] } });
+        await expectError(await search("data"), 400, "validation_error");
+        await expectError(await search(`${root}/a\0b`), 400, "validation_error");
+    });
+
+    test("400 `validation_error` for a `hidden` value that is not `true` or `false`", async () => {
+        const body = await expectError(await search(root, "&q=a&hidden=yes"), 400, "validation_error");
+        expect(body.details).toEqual({ formErrors: [], fieldErrors: { hidden: ["must be true or false"] } });
+    });
+
+    test("404 `not_found` for a scope that does not exist", async () => {
+        await expectError(await search(join(root, "missing")), 404, "not_found");
+    });
+
+    test("400 `validation_error` for the path of a file", async () => {
+        writeFileSync(join(root, "f.txt"), "x");
+        const body = await expectError(await search(join(root, "f.txt")), 400, "validation_error");
+        expect(body.details).toEqual({ formErrors: [], fieldErrors: { path: ["The path is not a folder."] } });
+    });
+
+    test.skipIf(process.getuid?.() === 0)("403 `forbidden` with the code EACCES for a scope with mode 000", async () => {
+        const locked = join(root, "locked");
+        mkdirSync(locked);
+        chmodSync(locked, 0o000);
+        try {
+            const body = await expectError(await search(locked), 403, "forbidden");
+            expect(body.details).toEqual({ code: "EACCES" });
+        } finally {
+            chmodSync(locked, 0o755);
+        }
     });
 });

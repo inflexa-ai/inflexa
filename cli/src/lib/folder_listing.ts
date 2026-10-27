@@ -84,7 +84,8 @@ export function compareEntries(a: FolderEntry, b: FolderEntry): number {
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
-function readError(path: string, cause: unknown): FolderReadError {
+/** The {@link FolderReadError} of a failed read of the folder `path`, from the errno code of `cause`. */
+export function readError(path: string, cause: unknown): FolderReadError {
     const code = errnoCode(cause);
     return { type: code === "ENOENT" ? "absent" : code === "ENOTDIR" ? "not_folder" : "unreadable", path, cause };
 }
