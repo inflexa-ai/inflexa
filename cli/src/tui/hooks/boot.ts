@@ -15,6 +15,7 @@ import {
     startDetachedServer,
 } from "../../client/server.ts";
 import { describeCause } from "../../lib/cause.ts";
+import { env } from "../../lib/env.ts";
 import { selfInvocation } from "../../lib/self_invocation.ts";
 import { notify } from "./notice.ts";
 import { chatStatus } from "./status.ts";
@@ -47,9 +48,10 @@ export type BootState =
 
 /**
  * What the chat offers for a failed boot: `sign_in` runs `inflexa up` in the terminal, `boot_again` asks the
- * server for a new boot, and `start_server` starts a server when none answers.
+ * server for a new boot, and `start_server` starts a server when none answers. `restart_server` starts a server
+ * that stopped answering while the chat had it ready and its discovery file stayed, which is the trace of a crash.
  */
-export type BootRecovery = "sign_in" | "boot_again" | "start_server";
+export type BootRecovery = "sign_in" | "boot_again" | "start_server" | "restart_server";
 
 const [state, setState] = createSignal<BootState>({ phase: "idle" });
 
@@ -148,6 +150,15 @@ function noServerState(e: ClientError): BootState {
         : { phase: "failed", message: describeClientError(e) };
 }
 
+/** The store state of a server that stopped answering while the chat had it ready. */
+function crashedServerState(baseUrl: string): BootState {
+    return {
+        phase: "failed",
+        message: `The Inflexa server at ${baseUrl} stopped answering while this chat was open. It probably crashed. Its log is ${env.serverLogPath}.`,
+        recovery: "restart_server",
+    };
+}
+
 /**
  * Probe the server one time, at a tick of the chat poll, and keep the store true to it. Gives `true` when the
  * server that the store settled as ready still answers.
@@ -165,7 +176,10 @@ export async function checkServer(opts: ServerCheckOpts = DEFAULT_SERVER_CHECK_O
     // Read after the await: the boot can change while the probe waits for its answer.
     const boot = state();
     if (read.isErr()) {
-        if (boot.phase === "ready" && read.error.type === "unreachable") setState(noServerState(read.error));
+        if (boot.phase === "ready" && read.error.type === "unreachable") {
+            // A clean stop removes the discovery file. A file whose server does not answer stayed after a crash.
+            setState(read.error.reason === "connection_failed" ? crashedServerState(read.error.baseUrl) : noServerState(read.error));
+        }
         return false;
     }
     const server = read.value;
@@ -175,7 +189,7 @@ export async function checkServer(opts: ServerCheckOpts = DEFAULT_SERVER_CHECK_O
             followServer(server, opts);
             return false;
         case "failed":
-            if (boot.recovery === "start_server" || server.phase !== "failed") followServer(server, opts);
+            if (boot.recovery === "start_server" || boot.recovery === "restart_server" || server.phase !== "failed") followServer(server, opts);
             return false;
         case "idle":
         case "booting":
@@ -257,13 +271,14 @@ export async function recoverServerBoot(recovery: BootRecovery, opts: BootRecove
             }
             break;
         }
-        case "start_server": {
+        case "start_server":
+        case "restart_server": {
             // `booting` before the start: the start can wait up to 30 s for the answer of the new server, and a
             // probe of the poll in that time must not follow a second boot.
             setState({ phase: "booting" });
             const started = await opts.startServer();
             if (started.isErr()) {
-                setState({ phase: "failed", message: started.error, recovery: "start_server" });
+                setState({ phase: "failed", message: started.error, recovery });
                 return;
             }
             await followBoot(opts);

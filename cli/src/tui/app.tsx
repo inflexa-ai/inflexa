@@ -468,7 +468,8 @@ export function headerStatusOf(
     retry: ModelRetryStatus | null = null,
 ): { text: string; tone: StatusTone } {
     if (boot.phase === "failed") {
-        return { text: boot.recovery === "start_server" ? `${GLYPHS.cross} server not running` : `${GLYPHS.cross} boot failed`, tone: "error" };
+        const text = boot.recovery === "start_server" ? "server not running" : boot.recovery === "restart_server" ? "server stopped" : "boot failed";
+        return { text: `${GLYPHS.cross} ${text}`, tone: "error" };
     }
     // Until the runtime is ready (idle before the boot fires, or booting), no turn can run — show
     // the boot state rather than a misleading "ready". Once ready, the turn-scoped status wins.
@@ -535,8 +536,11 @@ function confirmRunAbort(run: RunAbortTarget, onAnswer: (confirmed: boolean) => 
     ));
 }
 
-/** The title, the question, and the button that Enter presses, of the dialog that offers the recovery of a failed boot. */
-function bootRecoveryOffer(recovery: BootRecovery, message: string): { title: string; message: string; defaultActive: "confirm" | "cancel" } {
+/** The title, the question, the label of the confirm button, and the button that Enter presses, of the dialog that offers the recovery of a failed boot. */
+function bootRecoveryOffer(
+    recovery: BootRecovery,
+    message: string,
+): { title: string; message: string; confirmLabel?: string; defaultActive: "confirm" | "cancel" } {
     switch (recovery) {
         case "sign_in":
             return {
@@ -552,7 +556,16 @@ function bootRecoveryOffer(recovery: BootRecovery, message: string): { title: st
             return {
                 title: "Server not running",
                 message: `${message}\n\nStart the server now? It runs in the background, and the chat continues when it is ready.`,
+                confirmLabel: "start server",
                 defaultActive: "cancel",
+            };
+        case "restart_server":
+            // A crash is no deliberate stop, thus Enter starts the server.
+            return {
+                title: "Server stopped",
+                message: `${message}\n\nStart it again? The chat and its running work continue when it is ready.`,
+                confirmLabel: "start server",
+                defaultActive: "confirm",
             };
         default: {
             const exhaustive: never = recovery;
@@ -660,6 +673,7 @@ export function App(props: AppProps) {
                 title={offer.title}
                 message={offer.message}
                 defaultActive={offer.defaultActive}
+                confirmLabel={offer.confirmLabel}
                 cancelLabel="not now"
                 onConfirm={() => {
                     dialogClose();

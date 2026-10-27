@@ -18,12 +18,13 @@ A failed boot, and a server that does not answer, MUST render one actionable mes
 - `sign_in`, for the boot reason `sign_in_required`: the TUI suspends its renderer and runs `inflexa up` in its terminal. A Ctrl+C there ends only the sign-in. A failed run waits for Enter before the renderer comes back. `inflexa up` asks the server to boot again, and the TUI follows that boot.
 - `boot_again`, for each other boot error: the TUI sends `POST /api/v1/server/boot` and follows the boot. A refused request settles at `failed` with no recovery.
 - `start_server`, for a server that does not answer: the TUI starts a server through the spawn path of an instance command. It shows `booting` while the start runs, and then it follows the boot. A failed start offers the start again with its reason.
+- `restart_server`, for a server that stopped answering while the store was `ready`, and whose discovery file stayed: the trace of a crash. The message names the address, says that the server probably crashed, and names the log of the server. The start is the same as for `start_server`.
 
-Enter MUST answer "not now" in the `start_server` dialog, and the TUI MUST NOT start a server with no answer of the person. The person possibly stopped the server on purpose. A server that refuses the read gets no recovery, because a start cannot change a refusal. The header MUST show `server not running` for the `start_server` recovery, and `boot failed` for each other failure.
+The confirm button of the two start dialogs MUST read `start server`. Enter MUST answer "not now" in the `start_server` dialog, and the TUI MUST NOT start a server with no answer of the person. The person possibly stopped the server on purpose. Enter MUST press `start server` in the `restart_server` dialog, because a crash is no deliberate stop. A server that refuses the read gets no recovery, because a start cannot change a refusal. The header MUST show `server not running` for the `start_server` recovery, `server stopped` for the `restart_server` recovery, and `boot failed` for each other failure.
 
 At each tick of the poll, the TUI MUST probe the server and keep the boot store true to it:
 
-- No answer while the store is `ready`: the store settles at `failed` with the `start_server` recovery, one time.
+- No answer while the store is `ready`: the store settles at `failed` one time. The recovery is `restart_server` when the discovery file names the server that does not answer, and `start_server` when no discovery file names a server.
 - An answer while the store shows no server, or a boot failure that the server no longer has: the store follows that boot again.
 - An answer of a different server, with a new start time, while the store is `ready`: the store follows that boot again. Thus the header, the sidebar, and the transcript read again at its `ready` edge.
 - A server of a different API version: the store settles at `failed` with the message of the mismatch, one time, and it follows nothing.
@@ -51,6 +52,13 @@ Ctrl+C at each boot stage MUST quit the TUI through the graceful shutdown path, 
 
 - **WHEN** the boot store reaches `ready` for an analysis with no live threads
 - **THEN** a fresh thread id is minted, the chat renders empty, and no thread row exists until the first message's turn creates it
+
+#### Scenario: A server that crashed while the chat was open
+
+- **GIVEN** a chat whose boot store is `ready`
+- **WHEN** the server process dies and leaves its discovery file
+- **THEN** the header shows `server stopped`, and the dialog says that the server probably crashed and names its log
+- **AND** Enter starts the server, and the chat follows its boot
 
 #### Scenario: Boot failure is actionable, not fatal to the terminal
 

@@ -6,6 +6,7 @@ import type { AgentList, AgentSelection } from "../../api/machine.ts";
 import type { BootProgress, ServerDiscovery, ServerState } from "../../api/server.ts";
 import type { ClientError } from "../../client/api.ts";
 import { describeServerError } from "../../client/server.ts";
+import { env } from "../../lib/env.ts";
 import {
     bootState,
     agentModels,
@@ -231,6 +232,16 @@ describe("the start of a server from the chat", () => {
         return { opts, calls };
     }
 
+    test("the start after a crash runs the spawn path, then the store reads the server until it is ready", async () => {
+        await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
+        const { opts, calls } = startOpts([() => okAsync(ready("claude-after"))], async () => ok(undefined));
+
+        await recoverServerBoot("restart_server", opts);
+
+        expect(calls).toEqual(["start", "read"]);
+        expect(bootState().phase).toBe("ready");
+    });
+
     test("the start runs the spawn path of an instance command, then the store reads the server until it is ready", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
         const { opts, calls } = startOpts([() => okAsync(starting), () => okAsync(ready("claude-after"))], async () => ok(undefined));
@@ -280,15 +291,33 @@ describe("the probe of the server at each poll tick", () => {
         expect(bootState().phase).toBe("ready");
     });
 
-    test("a server that stopped turns the store from ready to failed, and the recovery is the start of a server", async () => {
+    // A crash leaves the discovery file, thus the probe finds a server that does not answer.
+    test("a server that stopped answering turns the store from ready to failed, and the recovery is a start after a crash", async () => {
         await watchServerBoot(scripted([() => okAsync(ready("m"))]).opts);
 
         expect(await checkServer(scripted([() => errAsync(unreachable)]).opts)).toBe(false);
 
         const settled = bootState();
         expect(settled.phase).toBe("failed");
-        if (settled.phase === "failed") expect(settled.recovery).toBe("start_server");
-        if (settled.phase === "failed") expect(settled.message).toContain("`inflexa server status`");
+        if (settled.phase !== "failed") return;
+        expect(settled.recovery).toBe("restart_server");
+        expect(settled.message).toBe(
+            `The Inflexa server at http://127.0.0.1:8436 stopped answering while this chat was open. It probably crashed. Its log is ${env.serverLogPath}.`,
+        );
+    });
+
+    // A clean stop removes the discovery file, thus no server runs.
+    test("a server that stopped cleanly turns the store from ready to failed, and the recovery is the start of a server", async () => {
+        await watchServerBoot(scripted([() => okAsync(ready("m"))]).opts);
+        const stopped: ClientError = { type: "unreachable", reason: "not_running", baseUrl: "http://127.0.0.1:8436", cause: null };
+
+        expect(await checkServer(scripted([() => errAsync(stopped)]).opts)).toBe(false);
+
+        const settled = bootState();
+        expect(settled.phase).toBe("failed");
+        if (settled.phase !== "failed") return;
+        expect(settled.recovery).toBe("start_server");
+        expect(settled.message).toContain("`inflexa server status`");
     });
 
     test("the next probe that gets no answer leaves the store as it is, thus the dialog opens one time", async () => {
