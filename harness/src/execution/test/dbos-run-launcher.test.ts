@@ -16,6 +16,7 @@ import { presentFind } from "../../lib/present.js";
 let exporter: InMemorySpanExporter;
 let provider: NodeTracerProvider;
 let originalStartWorkflow: unknown;
+let originalGetWorkflow: unknown;
 let contextAtStart: Context | undefined;
 let inputAtStart: unknown;
 
@@ -43,10 +44,19 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-    if (originalStartWorkflow === undefined) return;
     const dbos = await import("@dbos-inc/dbos-sdk");
+    if (originalGetWorkflow !== undefined) Reflect.set(dbos.DBOSClient.prototype, "getWorkflow", originalGetWorkflow);
+    if (originalStartWorkflow === undefined) return;
     Reflect.set(dbos.DBOS, "startWorkflow", originalStartWorkflow);
 });
+
+/** Make each start reject with `fault`, and make the read of a workflow give `read()`. */
+async function failStart(fault: Error, read: () => Promise<unknown>): Promise<void> {
+    const dbos = await import("@dbos-inc/dbos-sdk");
+    originalGetWorkflow ??= Reflect.get(dbos.DBOSClient.prototype, "getWorkflow");
+    Reflect.set(dbos.DBOS, "startWorkflow", () => () => Promise.reject(fault));
+    Reflect.set(dbos.DBOSClient.prototype, "getWorkflow", read);
+}
 
 const workflow = (_input: { readonly planId: string }): Promise<unknown> => Promise.resolve(undefined);
 
@@ -91,13 +101,33 @@ describe("createDbosRunLauncher", () => {
     });
 
     it("ends the root span and rethrows when the start fails", async () => {
-        const dbos = await import("@dbos-inc/dbos-sdk");
-        Reflect.set(dbos.DBOS, "startWorkflow", () => () => {
-            return Promise.reject(new Error("system database down"));
-        });
+        await failStart(new Error("system database down"), () => Promise.resolve(undefined));
         const launcher = createDbosRunLauncher({ pool: new Pool() });
 
         await expect(launcher.launch(workflow, { workflowId: "run-3" }, { planId: "p" })).rejects.toThrow("system database down");
         expect(exporter.getFinishedSpans().map((s) => s.name)).toEqual(["launch run"]);
+    });
+
+    it("resolves when the start fails and a workflow of the run id exists", async () => {
+        // A first launch of a rerun can start the run, and then the second launch can fail for a transient
+        // reason. The run is durably started, thus the launch is a success.
+        await failStart(new Error("connection reset"), () => Promise.resolve({ workflowID: "run-4", status: "PENDING" }));
+        const launcher = createDbosRunLauncher({ pool: new Pool() });
+
+        await launcher.launch(workflow, { workflowId: "run-4" }, { planId: "p" });
+    });
+
+    it("rethrows the fault of the start when no workflow of the run id exists", async () => {
+        await failStart(new Error("connection reset"), () => Promise.resolve(undefined));
+        const launcher = createDbosRunLauncher({ pool: new Pool() });
+
+        await expect(launcher.launch(workflow, { workflowId: "run-5" }, { planId: "p" })).rejects.toThrow("connection reset");
+    });
+
+    it("rethrows the fault of the start when the read of the workflow fails too", async () => {
+        await failStart(new Error("connection reset"), () => Promise.reject(new Error("system database down")));
+        const launcher = createDbosRunLauncher({ pool: new Pool() });
+
+        await expect(launcher.launch(workflow, { workflowId: "run-6" }, { planId: "p" })).rejects.toThrow("connection reset");
     });
 });
