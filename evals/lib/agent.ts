@@ -1,0 +1,132 @@
+/**
+ * The agent under test: the conversation agent as the CLI composes it, with the
+ * host tools of the CLI, over deps that no tool reaches, and with each tool
+ * swapped for a scripted one.
+ *
+ * A scripted tool keeps the id, the description, the JSON schema, and the
+ * approval hook of the real tool, thus the model sees the same request as in
+ * production, and the same calls ask the user. Only `execute` changes: it gives
+ * the result that the case scripts, and it never touches a database, a sandbox,
+ * or the network.
+ */
+
+import { join } from "node:path";
+
+import { err, ok, okAsync } from "neverthrow";
+
+import { createConversationAgent } from "@inflexa-ai/harness/agents/conversation-agent.js";
+import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
+import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
+import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
+import type { ExecuteAnalysisResult } from "@inflexa-ai/harness/workflows/execute-analysis.js";
+import type { EnsureSessionStateResult } from "@inflexa-ai/harness/app/report-session-runtime.js";
+import type { RunLauncher } from "@inflexa-ai/harness/execution/run-launcher.js";
+import { createPool } from "@inflexa-ai/harness/lib/storage.js";
+import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
+import { inProcessSubAgent } from "@inflexa-ai/harness/loop/sub-agent.js";
+import type { ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
+import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
+import { unusedChatProvider } from "@inflexa-ai/harness/providers/__fixtures__/chat-provider.js";
+import type { EmbeddingProvider } from "@inflexa-ai/harness/providers/types.js";
+import type { AskRequest } from "@inflexa-ai/harness/tools/approval/contract.js";
+import type { Tool } from "@inflexa-ai/harness/tools/define-tool.js";
+import type { WebSearchEngine } from "@inflexa-ai/harness/tools/research/web-search.js";
+
+import { createRunInflexaTool } from "../../cli/src/modules/harness/inflexa_tool.ts";
+import { createManageInputsTool } from "../../cli/src/modules/harness/inputs_tool.ts";
+import { createLaunchDirTool } from "../../cli/src/modules/harness/launch_dir_tool.ts";
+
+/** What a scripted tool gives: an ok value, or an error that the model reads. */
+export type ScriptedResult = { readonly ok: unknown } | { readonly error: string };
+
+/** The scripted result of a call, from its input. A tool with no script gives {@link UNSCRIPTED_ERROR}. */
+export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult);
+
+export const UNSCRIPTED_ERROR = "This tool is not available now.";
+
+function refuse(): never {
+    throw new Error("an eval agent never reaches this dependency");
+}
+
+const unusedEmbedding: EmbeddingProvider = { dimensions: 1536, embed: refuse };
+const unusedRunLauncher: RunLauncher = { launch: refuse };
+const unusedWebSearch: WebSearchEngine = { search: refuse };
+const unusedToolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+
+/**
+ * The host tools of the CLI (`cli/src/modules/harness/runtime.ts`, `hostTools`), minus
+ * `knowledge_recommend`, which the CLI attaches only when a knowledge endpoint is configured.
+ */
+function cliHostTools(): Tool[] {
+    // Each factory gives a `Tool` of its own input type. The loop reads a tool through the erased
+    // `Tool` shape only, the same as the `hostTools` list of the CLI.
+    return [createRunInflexaTool(), createLaunchDirTool(), createManageInputsTool()] as unknown as Tool[];
+}
+
+/** The pool of the agent. It never connects, because no tool of the agent runs. */
+function unconnectedPool(): ReturnType<typeof createPool> {
+    return createPool({ host: "eval.invalid", port: "5432", database: "eval", user: "eval", password: "eval", sslMode: "disable" });
+}
+
+/** The conversation agent as the CLI composes it. */
+export function conversationAgent(): AgentDefinition {
+    return createConversationAgent({
+        provider: unusedChatProvider(),
+        registerSubAgent: inProcessSubAgent,
+        utilityProvider: unusedChatProvider(),
+        pool: unconnectedPool(),
+        embedding: unusedEmbedding,
+        workspaceFs: makeFakeWorkspaceFs(),
+        model: "eval",
+        utilityModel: "eval",
+        executeAnalysisWorkflow: (): Promise<ExecuteAnalysisResult> => refuse(),
+        anchorReportSession: (): Promise<EnsureSessionStateResult> => refuse(),
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/eval", id)),
+        runAuthorizer: createLocalRunAuthorizer(),
+        runLauncher: unusedRunLauncher,
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        skillsDir: "/eval/skills",
+        chrome: {},
+        citationResolver: unusedCitationResolver,
+        toolOutputStore: unusedToolOutputStore,
+        webSearch: unusedWebSearch,
+        hostTools: cliHostTools(),
+    });
+}
+
+/**
+ * The approval of a tool whose real hook reads the state of the CLI. The hook of `manage_inputs` reads
+ * the inputs of the analysis from the database of the user, thus the eval asks for each add and each
+ * remove, which is what the real hook does for a change.
+ */
+const SCRIPTED_APPROVALS: Readonly<Record<string, (input: unknown) => AskRequest | undefined>> = {
+    manage_inputs: (input) => {
+        const record = parseUnknownRecord(input);
+        if (record === undefined || record.action === "list") return undefined;
+        return { title: "Change the inputs", command: JSON.stringify(record) };
+    },
+};
+
+function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
+    const scriptedApproval = SCRIPTED_APPROVALS[tool.id];
+    const approval = scriptedApproval === undefined ? tool.approval : (input: unknown) => scriptedApproval(input);
+    return {
+        id: tool.id,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        jsonSchema: tool.jsonSchema,
+        ...(approval === undefined ? {} : { approval }),
+        execute: (input) => {
+            const result = script === undefined ? { error: UNSCRIPTED_ERROR } : typeof script === "function" ? script(input) : script;
+            return Promise.resolve("ok" in result ? ok(result.ok) : err({ error: result.error, retryable: false }));
+        },
+    };
+}
+
+/** The agent with each tool scripted. A script for a tool that the agent does not hold is a fault of the case. */
+export function withScriptedTools(agent: AgentDefinition, scripts: Readonly<Record<string, ToolScript>>): AgentDefinition {
+    const ids = new Set(agent.tools.map((tool) => tool.id));
+    const unknown = Object.keys(scripts).filter((id) => !ids.has(id));
+    if (unknown.length > 0) throw new Error(`the agent ${agent.id} has no tool ${unknown.join(", ")}`);
+    return { ...agent, tools: agent.tools.map((tool) => scriptedTool(tool, scripts[tool.id])) };
+}

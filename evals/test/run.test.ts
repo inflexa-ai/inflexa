@@ -1,0 +1,108 @@
+import { describe, expect, test } from "bun:test";
+
+import { callTools, reply, scriptedModel, text, toolCall } from "@inflexa-ai/harness/testing.js";
+import { conversationAgent, UNSCRIPTED_ERROR } from "../lib/agent.js";
+import { asked, decides, never, type EvalCase } from "../lib/case.js";
+import { allCases } from "../cases/index.js";
+import { promptDigest, runTrial } from "../lib/run.js";
+
+const agent = conversationAgent();
+
+function evalCase(overrides: Partial<EvalCase>): EvalCase {
+    return { id: "case", set: "dev", source: "test", user: "Run a differential expression analysis.", maxSteps: 3, grade: never([]), ...overrides };
+}
+
+describe("runTrial", () => {
+    test("sends the system prompt and each tool of the agent, and grades the calls", async () => {
+        const model = scriptedModel([
+            callTools(toolCall("c1", "execute_analysis", { mode: "adhoc", request: "Run a differential expression analysis." })),
+            reply([text("Started.")]),
+        ]);
+        const result = await runTrial(
+            evalCase({
+                tools: { execute_analysis: { ok: { runId: "r1", started: true } } },
+                grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
+            }),
+            { agent, provider: model.provider, trialTimeoutMs: 10_000 },
+        );
+        expect(result).toMatchObject({ kind: "graded", pass: true, text: "Started.", finishReason: "stop" });
+        const request = model.calls[0];
+        expect(request?.tools?.map((tool) => tool.name).sort()).toEqual(agent.tools.map((tool) => tool.id).sort());
+        expect(request?.prompt[0]).toMatchObject({ role: "system", content: agent.systemPrompt });
+    });
+
+    test("stops at maxSteps, and an unscripted tool gives an error result", async () => {
+        const model = scriptedModel([callTools(toolCall("c1", "inspect_run", {})), callTools(toolCall("c2", "inspect_run", {}))]);
+        const result = await runTrial(evalCase({ maxSteps: 1 }), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
+        expect(model.calls).toHaveLength(1);
+        expect(result).toMatchObject({ kind: "graded", calls: [{ step: 0, tool: "inspect_run" }] });
+        expect(JSON.stringify(model.calls)).not.toContain(UNSCRIPTED_ERROR);
+    });
+
+    test("feeds the error of an unscripted tool to the next request", async () => {
+        const model = scriptedModel([callTools(toolCall("c1", "inspect_run", {})), reply([text("No.")])]);
+        await runTrial(evalCase({ maxSteps: 2 }), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
+        expect(JSON.stringify(model.calls[1]?.prompt)).toContain(UNSCRIPTED_ERROR);
+    });
+
+    test("reports a failed model call as an error, not as a grade", async () => {
+        const model = scriptedModel([{ fail: new Error("the endpoint is down") }]);
+        const result = await runTrial(evalCase({}), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
+        expect(result.kind).toBe("error");
+    });
+});
+
+describe("the CLI host tools", () => {
+    test("the agent holds them", () => {
+        const ids = agent.tools.map((tool) => tool.id);
+        expect(ids).toEqual(expect.arrayContaining(["run_inflexa", "list_launch_dir", "manage_inputs"]));
+    });
+
+    test("a gated run_inflexa command asks through the real approval of the tool, and a read-only one does not", async () => {
+        const model = scriptedModel([
+            callTools(toolCall("c1", "run_inflexa", { argv: ["refs", "list"] }), toolCall("c2", "run_inflexa", { argv: ["refs", "download", "GRCh38"] })),
+            reply([text("Queued.")]),
+        ]);
+        const result = await runTrial(
+            evalCase({
+                tools: { run_inflexa: { ok: { status: "ran", exitCode: 0, stdout: "", stderr: "" } } },
+                grade: asked("run_inflexa", ["refs", "download", "GRCh38"]),
+            }),
+            {
+                agent,
+                provider: model.provider,
+                trialTimeoutMs: 10_000,
+            },
+        );
+        expect(result).toMatchObject({ kind: "graded", pass: true });
+        expect(result.kind === "graded" ? result.asks.map((ask) => ask.command) : []).toEqual(["inflexa refs download GRCh38"]);
+    });
+
+    test("a denied ask reaches the model as a denial", async () => {
+        const model = scriptedModel([callTools(toolCall("c1", "manage_inputs", { action: "add", paths: ["notes.txt"] })), reply([text("Not added.")])]);
+        const result = await runTrial(evalCase({ approve: "deny", tools: { manage_inputs: { ok: { status: "added", added: ["notes.txt"] } } } }), {
+            agent,
+            provider: model.provider,
+            trialTimeoutMs: 10_000,
+        });
+        expect(result).toMatchObject({ kind: "graded", asks: [{ tool: "manage_inputs" }], finishReason: "denied" });
+    });
+});
+
+describe("the cases", () => {
+    test("have unique ids, and each script names a tool of the agent", () => {
+        const ids = allCases.map((c) => c.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        const toolIds = new Set(agent.tools.map((tool) => tool.id));
+        for (const c of allCases) for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
+    });
+
+    test("each held-out case paraphrases a dev case", () => {
+        const dev = new Set(allCases.filter((c) => c.set === "dev").map((c) => c.id));
+        for (const c of allCases.filter((c) => c.set === "held-out")) expect(dev.has(c.id.slice(0, -"-held-out".length))).toBe(true);
+    });
+
+    test("the prompt digest is stable for one composition", () => {
+        expect(promptDigest(conversationAgent())).toBe(promptDigest(agent));
+    });
+});
