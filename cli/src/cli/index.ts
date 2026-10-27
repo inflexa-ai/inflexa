@@ -431,7 +431,7 @@ export function buildProgram(): Command {
         },
     );
 
-    // The commands of the server process itself. Each is `machine`: none starts a server.
+    // The commands of the server process itself. None starts a server.
     const server = cli.command("server").description("Inspect and stop the local Inflexa server");
 
     // Read-only: the discovery file, a probe, and the activity read. `--json` only shapes the output.
@@ -477,6 +477,30 @@ export function buildProgram(): Command {
         async (options: { lines: string; follow?: boolean }) => {
             const { serverLogs } = await import("../client/commands/server.ts");
             await serverLogs({ lines: options.lines, follow: options.follow ?? false });
+        },
+    );
+
+    // The child of a name search of the server: the walk runs in its own process, because a read that hangs in the kernel
+    // holds a thread of the shared file pool of its process. Hidden, because only the server starts it.
+    registerAction(
+        server
+            .command("walk", { hidden: true })
+            .description("Walk a folder and stream its entries to stdout as binary records, for a search of the local server")
+            .argument("<scope>", "The folder to walk")
+            .option("--hidden", "Include the entries whose name starts with a dot")
+            .option("--depth <n>", "Enter a folder only when its level below the scope is below this value")
+            .option("--width <n>", "How many folder reads to keep in flight"),
+        "standalone",
+        {
+            kind: "blocked",
+            reason: "`inflexa server walk` is started only by the local server, and it streams a binary protocol on stdout. " + "It is not available to you.",
+        },
+        async (scope: string, options: { hidden?: boolean; depth?: string; width?: string }) => {
+            const [{ runWalkCommand }, { DEFAULT_SEARCH_LIMITS }] = await Promise.all([
+                import("../modules/fs/walk_child.ts"),
+                import("../modules/fs/search_index.ts"),
+            ]);
+            await runWalkCommand(scope, options, { maxDepth: DEFAULT_SEARCH_LIMITS.maxDepth, width: DEFAULT_SEARCH_LIMITS.width });
         },
     );
 

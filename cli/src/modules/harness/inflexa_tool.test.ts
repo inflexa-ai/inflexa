@@ -257,6 +257,7 @@ describe("run_inflexa — execute", () => {
         ["inflexa up", ["up"]],
         ["inflexa down", ["down"]],
         ["inflexa setup", ["setup"]],
+        ["inflexa server walk", ["server", "walk", "/"]],
     ])("%s is blocked — never asks, never spawns", async (_label, argv) => {
         const sub = recordingSubprocess();
         const ask = recordingAsk({ kind: "once" });

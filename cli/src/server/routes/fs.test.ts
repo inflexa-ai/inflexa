@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ArtifactOrigin, Pool } from "@inflexa-ai/harness";
-import { errAsync, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import type { ApiError } from "../../api/common.ts";
 import type { FilePreview, FolderList, FsSearch, HomeFolder } from "../../api/fs.ts";
@@ -16,10 +16,12 @@ import type { LockOutcome } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
-import { DEFAULT_SEARCH_LIMITS, readFolderEntries, type SearchIndexCache, type SearchLimits } from "../../modules/fs/search_index.ts";
+import { DEFAULT_SEARCH_LIMITS, spawnWalkChildWith, type SearchIndexCache, type SearchLimits, type WalkSpawner } from "../../modules/fs/search_index.ts";
+import { readFolderEntries } from "../../modules/fs/walk_child.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { idleBoot } from "../../test_support/server.ts";
+import { inProcessSpawner } from "../../test_support/walk_spawner.ts";
 import type { ServerBoot } from "../boot.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "./fs.ts";
 
@@ -30,9 +32,17 @@ const routes = fsRoutes(idleBoot());
 let root = "";
 const searchCaches: SearchIndexCache[] = [];
 
-/** Routes whose search cache the cleanup stops, thus no walk and no TTL timer outlives its test. */
+/**
+ * Routes whose search cache the cleanup stops, thus no walk and no TTL timer outlives its test. The walk runs in the test
+ * process unless the test gives its own spawner.
+ */
 function searchRoutes(boot: ServerBoot, opts: Partial<FsRouteOpts> = {}): ReturnType<typeof fsRoutes> {
-    return fsRoutes(boot, { ...DEFAULT_FS_ROUTE_OPTS, ...opts, onSearchCache: (cache) => searchCaches.push(cache) });
+    return fsRoutes(boot, {
+        ...DEFAULT_FS_ROUTE_OPTS,
+        spawnWalk: inProcessSpawner().spawn,
+        ...opts,
+        onSearchCache: (cache) => searchCaches.push(cache),
+    });
 }
 
 function searchLimits(limits: Partial<SearchLimits>): SearchLimits {
@@ -1261,14 +1271,14 @@ describe("GET /api/v1/fs/search", () => {
         const slowStarted = Promise.withResolvers<void>();
         const gate = Promise.withResolvers<void>();
         const app = searchRoutes(idleBoot(), {
-            readEntries: async (path) => {
+            spawnWalk: inProcessSpawner(async (path) => {
                 reads.push(path);
                 if (path === slow) {
                     slowStarted.resolve();
                     await gate.promise;
                 }
                 return readFolderEntries(path);
-            },
+            }).spawn,
         });
         const serverAborted = Promise.withResolvers<void>();
         const server = Bun.serve({
@@ -1303,6 +1313,84 @@ describe("GET /api/v1/fs/search", () => {
         } finally {
             gate.resolve();
             await server.stop(true);
+        }
+    });
+
+    test("answers `/list` while a walk child never writes, and the budget kills the child", async () => {
+        mkdirSync(join(root, "scope"));
+        mkdirSync(join(root, "other"));
+        writeFileSync(join(root, "other", "a.csv"), "x");
+        let kills = 0;
+        const spawned = Promise.withResolvers<void>();
+        const silent: WalkSpawner = () => {
+            spawned.resolve();
+            return ok({
+                stdout: new ReadableStream<Uint8Array>(),
+                kill: () => {
+                    kills += 1;
+                },
+            });
+        };
+        const app = searchRoutes(idleBoot(), { search: searchLimits({ walkBudgetMs: 300, firstWaitMs: 10 }), spawnWalk: silent });
+        let settled = false;
+        const search = Promise.resolve(app.request(`/search?path=${encodeURIComponent(join(root, "scope"))}&q=a`)).finally(() => {
+            settled = true;
+        });
+        // The route resolves the scope before the spawn, thus `/list` goes only after the child runs.
+        await spawned.promise;
+        const listed = await app.request(`/list?path=${encodeURIComponent(join(root, "other"))}`);
+        expect(listed.status).toBe(200);
+        expect(((await listed.json()) as FolderList).entries.map((entry) => entry.name)).toEqual(["a.csv"]);
+        expect(settled).toBe(false);
+        expect(kills).toBe(0);
+        const response = await search;
+        expect(response.status).toBe(200);
+        expect((await response.json()) as FsSearch).toEqual({ hits: [], truncated: true });
+        expect(kills).toBe(1);
+    });
+
+    test("searches through the real walk child", async () => {
+        mkdirSync(join(root, "figures"));
+        mkdirSync(join(root, "raw"));
+        mkdirSync(join(root, ".cache"));
+        writeFileSync(join(root, "figures", "volcano.png"), "x");
+        writeFileSync(join(root, ".cache", "volcano.png"), "x");
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-fs-search-outside-")));
+        const vanishing = join(root, "vanishing");
+        mkdirSync(vanishing);
+        // The child gets the live environment of the test process, which holds the sandbox of the preload. The folder
+        // `vanishing` goes away after the route resolved it, thus only the read of the child can see it absent.
+        const real = spawnWalkChildWith(Bun.env);
+        const spawnWalk: WalkSpawner = (scope, opts) => {
+            if (scope === vanishing) rmSync(vanishing, { recursive: true });
+            return real(scope, opts);
+        };
+        try {
+            writeFileSync(join(outside, "deep.csv"), "x");
+            symlinkSync(outside, join(root, "ext"));
+            // A first wait long enough for the start of a child of the source build, thus the first answer is complete.
+            const app = searchRoutes(idleBoot(), { search: searchLimits({ firstWaitMs: 30_000 }), spawnWalk });
+            const shown = await searchBody(app, root, "&q=volcano");
+            expect(shown.truncated).toBe(false);
+            expect(shown.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`)).toEqual(["figures/volcano.png"]);
+            const all = await searchBody(app, root, "");
+            expect(all.hits.map((hit) => [`${hit.subpath}/${hit.entry.name}`, hit.entry.type]).sort()).toEqual([
+                ["/ext", "symlink"],
+                ["/figures", "folder"],
+                ["/raw", "folder"],
+                ["/vanishing", "folder"],
+                ["figures/volcano.png", "file"],
+            ]);
+            expect((await searchBody(app, root, "&q=deep")).hits).toEqual([]);
+            const withHidden = await searchBody(app, root, "&q=volcano&hidden=true");
+            expect(withHidden.truncated).toBe(false);
+            expect(withHidden.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`).sort()).toEqual([".cache/volcano.png", "figures/volcano.png"]);
+
+            const absent = await app.request(`/search?path=${encodeURIComponent(vanishing)}&q=a`);
+            expect(absent.status).toBe(404);
+            expect(((await absent.json()) as ApiError).error).toBe("not_found");
+        } finally {
+            rmSync(outside, { recursive: true, force: true });
         }
     });
 
@@ -1341,6 +1429,12 @@ describe("GET /api/v1/fs/search errors", () => {
     test("400 `validation_error` for a `hidden` value that is not `true` or `false`", async () => {
         const body = await expectError(await search(root, "&q=a&hidden=yes"), 400, "validation_error");
         expect(body.details).toEqual({ formErrors: [], fieldErrors: { hidden: ["must be true or false"] } });
+    });
+
+    test("500 `internal_error` for a walk child that cannot start", async () => {
+        const failing: WalkSpawner = () => err({ type: "spawn_failed", cause: new Error("no process") });
+        const response = await searchRoutes(idleBoot(), { spawnWalk: failing }).request(`/search?path=${encodeURIComponent(root)}&q=a`);
+        await expectError(response, 500, "internal_error");
     });
 
     test("404 `not_found` for a scope that does not exist", async () => {
