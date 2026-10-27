@@ -135,6 +135,16 @@ describe("StatusBar carries no interrupt hint", () => {
 describe("StatusBar state segment", () => {
     const READY: BootState = { phase: "ready", model: "m", connection: { provider: "anthropic", mode: "cliproxy" } };
 
+    test("a model request that the provider retries says so while the turn runs, and the boot wins over it", () => {
+        const retry = { attempt: 3, maxRetries: 10, status: 503 };
+        expect(headerStatusOf(READY, "busy", false, retry)).toEqual({
+            text: `${GLYPHS.circleHalf} retrying the model request (3/10, HTTP 503)${GLYPHS.ellipsis}`,
+            tone: "warn",
+        });
+        expect(headerStatusOf(READY, "busy", false, { attempt: 1, maxRetries: 10 }).text).toContain("(1/10, no connection)");
+        expect(headerStatusOf(READY, "idle", false, retry).text).toBe(`${GLYPHS.circle} ready`);
+    });
+
     test("a server that stopped says so, and does not say that the boot failed", async () => {
         const stopped: BootState = { phase: "failed", message: "No Inflexa server answers.", recovery: "start_server" };
         expect(headerStatusOf(stopped, "idle", false)).toEqual({ text: `${GLYPHS.cross} server not running`, tone: "error" });

@@ -5,14 +5,14 @@ import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { AskReply } from "../api/conversation.ts";
 import { describeClientError } from "../client/api.ts";
 import { answerAsk as answerAskOnServer } from "../client/conversation.ts";
-import { resumePausedWork } from "../client/paused_work.ts";
+import { holdPausedWork, resumePausedWork } from "../client/paused_work.ts";
 import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
 import { describePauseCause, nextRetryOf } from "../lib/pause_words.ts";
 import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
-import { chatStatus, type ChatStatus } from "./hooks/status.ts";
+import { chatStatus, modelRetry, modelRetryText, type ChatStatus, type ModelRetryStatus } from "./hooks/status.ts";
 import { bootRecoveryOpts, bootState, recoverServerBoot, watchAgentModels, type BootRecovery, type BootState } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
@@ -461,13 +461,19 @@ export function turnSubmitAction(opts: { busy: boolean; ready: boolean; analysis
  * A server that stopped is a `failed` boot whose recovery is the start of a server, and it says so: "boot
  * failed" would send the person to look for a fault in a server that no longer runs.
  */
-export function headerStatusOf(boot: BootState, chat: ChatStatus, otherTurn: boolean): { text: string; tone: StatusTone } {
+export function headerStatusOf(
+    boot: BootState,
+    chat: ChatStatus,
+    otherTurn: boolean,
+    retry: ModelRetryStatus | null = null,
+): { text: string; tone: StatusTone } {
     if (boot.phase === "failed") {
         return { text: boot.recovery === "start_server" ? `${GLYPHS.cross} server not running` : `${GLYPHS.cross} boot failed`, tone: "error" };
     }
     // Until the runtime is ready (idle before the boot fires, or booting), no turn can run — show
     // the boot state rather than a misleading "ready". Once ready, the turn-scoped status wins.
     if (boot.phase !== "ready") return { text: `${GLYPHS.circleHalf} booting${GLYPHS.ellipsis}`, tone: "warn" };
+    if (chat === "busy" && retry !== null) return { text: `${GLYPHS.circleHalf} ${modelRetryText(retry)}${GLYPHS.ellipsis}`, tone: "warn" };
     if (chat === "busy") return { text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" };
     if (otherTurn) return { text: `${GLYPHS.circleHalf} other client's turn${GLYPHS.ellipsis}`, tone: "warn" };
     return chat === "error" ? { text: `${GLYPHS.cross} error`, tone: "error" } : { text: `${GLYPHS.circle} ready`, tone: "success" };
@@ -956,6 +962,24 @@ export function App(props: AppProps) {
         );
     }
 
+    // Hold the turn through `POST {A}/paused-work/:workId/hold`: its waits in `retrying` move to `paused`. The frame
+    // `paused` of each wait updates the prompt. A 404 means that no wait of the turn is left.
+    function holdPause(scope: TurnScope): void {
+        setPauseBusy(true);
+        void holdPausedWork(scope.analysisId, scope.turnId).match(
+            () => setPauseBusy(false),
+            (e) => {
+                setPauseBusy(false);
+                if (e.type === "http" && e.body.error === "not_found") {
+                    clearTurnPause(scope.turnId);
+                    notify({ kind: "info", text: "The turn is no longer paused." });
+                    return;
+                }
+                notify({ kind: "error", text: `Could not hold the turn: ${describeClientError(e)}` });
+            },
+        );
+    }
+
     // The same focus choreography as the docked ask, gated on the identity of the paused turn.
     let focusedPauseTurn: string | null = null;
     createEffect(() => {
@@ -1274,7 +1298,7 @@ export function App(props: AppProps) {
         return boot.phase === "failed" ? boot.message : undefined;
     };
 
-    const statusState = (): { text: string; tone: StatusTone } => headerStatusOf(bootState(), chatStatus(), conversation.otherClientTurn());
+    const statusState = (): { text: string; tone: StatusTone } => headerStatusOf(bootState(), chatStatus(), conversation.otherClientTurn(), modelRetry());
 
     // The open session's scope, read once here and rendered by two surfaces below (see
     // {@link sessionScopeOf}). Both reads are of this one derivation, so the footer and the header
@@ -1402,6 +1426,7 @@ export function App(props: AppProps) {
                                     othersWaiting={pause().others}
                                     busy={pauseBusy()}
                                     onResume={() => resumePause(pause())}
+                                    onHold={() => holdPause(pause())}
                                     onStop={() => conversation.stopPausedTurn(pause())}
                                     onFocusReady={(r: BoxRenderable) => (pausePromptRef = r)}
                                 />

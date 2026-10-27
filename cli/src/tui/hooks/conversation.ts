@@ -38,7 +38,7 @@ import { clearTurnPause, notePausePart, pausePartOf } from "./pauses.ts";
 import { refreshReportChildren } from "./report_children.ts";
 import { bootState } from "./boot.ts";
 import { notify } from "./notice.ts";
-import { chatStatus, setChatStatus } from "./status.ts";
+import { chatStatus, setChatStatus, setModelRetry } from "./status.ts";
 import { publishThreadRow } from "./thread.ts";
 import type { OpenableEntry, Part, PlanCardStepView } from "../../types/session.ts";
 
@@ -451,6 +451,16 @@ export function applyServerFrame(frame: ChatFrame): void {
     // A frame outside a turn has no message to land in.
     const id = currentAssistantId;
     if (id === null) return;
+    // A retry of a model request shows in the header until a later frame of the turn: the request then gave a part
+    // of its reply, or it failed and the turn moved on. The part is transient, thus it never lands in the message.
+    if (frame.type === "data-model-retry") {
+        const checked = checkChatPart(frame);
+        if (checked.ok && isKnownPartFrame(checked.frame) && checked.frame.type === "data-model-retry") {
+            setModelRetry({ attempt: checked.frame.attempt, maxRetries: checked.frame.maxRetries, status: checked.frame.status });
+        }
+        return;
+    }
+    setModelRetry(null);
     // Sub-agent traffic is ROUTED, not discarded. Its tool calls are far too numerous to become
     // transcript blocks — that would bury the conversation — but dropping it entirely made a long tool
     // call indistinguishable from a wedged one. It becomes one activity line on the tool block it is

@@ -1,7 +1,7 @@
 import type { ResultAsync } from "neverthrow";
 
 import { MAX_PER_PAGE } from "../api/common.ts";
-import type { PausedWorkList, ResumedWork } from "../api/paused_work.ts";
+import type { HeldWork, PausedWorkList, ResumedWork } from "../api/paused_work.ts";
 import { DEFAULT_CLIENT_OPTS, request, type ClientError, type ClientOpts } from "./api.ts";
 
 function pausedWorkPath(analysisId: string): string {
@@ -23,4 +23,12 @@ export function fetchPausedWork(analysisId: string, opts: ClientOpts = DEFAULT_C
  */
 export function resumePausedWork(analysisId: string, workId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ResumedWork, ClientError> {
     return request<ResumedWork>("POST", `${pausedWorkPath(analysisId)}/${encodeURIComponent(workId)}/resume`, {}, opts);
+}
+
+/**
+ * `POST {A}/paused-work/:workId/hold`: move each wait of the work in `retrying` to `paused`, thus its timer stops and
+ * the work waits for a resume. 404 `not_found` when the analysis has no paused work with this id.
+ */
+export function holdPausedWork(analysisId: string, workId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<HeldWork, ClientError> {
+    return request<HeldWork>("POST", `${pausedWorkPath(analysisId)}/${encodeURIComponent(workId)}/hold`, {}, opts);
 }

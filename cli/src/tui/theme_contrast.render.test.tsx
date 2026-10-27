@@ -468,6 +468,7 @@ const BLOCKS: BlockCase[] = [
                 remedy={mockPausedWaits.credential.remedy}
                 nextRetry={nextRetryOf(mockPausedWaits.outage) ?? undefined}
                 othersWaiting={1}
+                onHold={() => {}}
                 inert
                 onResume={noop}
                 onStop={noop}

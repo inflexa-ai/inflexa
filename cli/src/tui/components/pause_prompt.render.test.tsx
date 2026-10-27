@@ -24,7 +24,9 @@ function Harness(props: {
     busy?: boolean;
     onBox?: (r: BoxRenderable) => void;
     onTa?: (r: TextareaRenderable) => void;
+    state?: "retrying" | "paused";
     onResume?: () => void;
+    onHold?: () => void;
     onStop?: () => void;
 }) {
     useKeymapRoot();
@@ -39,11 +41,12 @@ function Harness(props: {
                 />
             </Show>
             <PausePrompt
-                state="paused"
+                state={props.state ?? "paused"}
                 cause="the host paused the work (payment_required)"
                 othersWaiting={0}
                 busy={props.busy}
                 onResume={() => props.onResume?.()}
+                onHold={() => props.onHold?.()}
                 onStop={() => props.onStop?.()}
                 onFocusReady={(r) => props.onBox?.(r)}
             />
@@ -62,6 +65,7 @@ describe("PausePrompt frames", () => {
                     othersWaiting={1}
                     inert
                     onResume={() => {}}
+                    onHold={() => {}}
                     onStop={() => {}}
                 />
             ),
@@ -84,6 +88,7 @@ describe("PausePrompt frames", () => {
                     othersWaiting={0}
                     inert
                     onResume={() => {}}
+                    onHold={() => {}}
                     onStop={() => {}}
                 />
             ),
@@ -91,7 +96,7 @@ describe("PausePrompt frames", () => {
         );
         expect(frame).toContain("The turn waits to retry");
         expect(frame).toContain("next: retry 2 at 10:32:05");
-        expect(frame).toContain("r retry now · s stop");
+        expect(frame).toContain("r retry now · h hold · s stop");
         expect(frame).not.toContain("more waiting");
     });
 });
@@ -132,6 +137,28 @@ describe("PausePrompt keys", () => {
             expect(ta!.editBuffer.getText()).toBe("r");
         } finally {
             setup.renderer.destroy();
+        }
+    });
+
+    test("retrying, h holds the work; paused, h does nothing", async () => {
+        for (const state of ["retrying", "paused"] as const) {
+            let box: BoxRenderable | null = null;
+            const actions: string[] = [];
+            const setup = await testRender(
+                () => <Harness state={state} onBox={(r) => (box = r)} onHold={() => actions.push("hold")} onStop={() => actions.push("stop")} />,
+                { width: 80, height: 12 },
+            );
+            const settle = settleOf(setup);
+            try {
+                await settle();
+                box!.focus();
+                await settle();
+                setup.mockInput.pressKey("h");
+                await settle();
+                expect(actions).toEqual(state === "retrying" ? ["hold"] : []);
+            } finally {
+                setup.renderer.destroy();
+            }
         }
     });
 

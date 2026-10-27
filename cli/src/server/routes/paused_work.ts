@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { ResultAsync } from "neverthrow";
-import type { ChatTurnSession, PausedWork as HarnessPausedWork, PausedWorkResume } from "@inflexa-ai/harness";
+import type { ChatTurnSession, PausedWork as HarnessPausedWork, PausedWorkHold, PausedWorkResume } from "@inflexa-ai/harness";
 
-import type { PausedWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
+import type { HeldWork, PausedWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { resolveModelConnection, type ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { buildChatSession } from "../../modules/harness/turn.ts";
@@ -71,6 +71,27 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
                 }
             },
             (cause) => internalError(c, cause, "resume paused work"),
+        );
+    });
+
+    routes.post("/:workId/hold", runtime, async (c) => {
+        const analysisId = c.req.param("analysisId") ?? "";
+        const workId = c.req.param("workId");
+        const held = await ResultAsync.fromPromise(c.get("runtime").pausedWork.hold(opts.session(analysisId), workId), (cause) => cause);
+        return held.match(
+            (outcome: PausedWorkHold) => {
+                switch (outcome.kind) {
+                    case "held":
+                        return c.json<HeldWork>({ workId, workflows: outcome.workflows });
+                    case "not_found":
+                        return apiError(c, "not_found", "No paused work of this analysis has this id. It can have resumed or stopped already.");
+                    default: {
+                        const exhaustive: never = outcome;
+                        throw new Error(`unhandled hold outcome: ${JSON.stringify(exhaustive)}`);
+                    }
+                }
+            },
+            (cause) => internalError(c, cause, "hold paused work"),
         );
     });
 

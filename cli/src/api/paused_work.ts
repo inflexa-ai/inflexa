@@ -2,7 +2,8 @@ import type { PausedWork as HarnessPausedWork, PausedWorkflow as HarnessPausedWo
 
 import type { ListEnvelope } from "./common.ts";
 
-// The wire types of the paused-work routes: `GET {A}/paused-work` and `POST {A}/paused-work/:workId/resume`. Each
+// The wire types of the paused-work routes: `GET {A}/paused-work`, `POST {A}/paused-work/:workId/resume`, and
+// `POST {A}/paused-work/:workId/hold`. Each
 // harness type here is a type-only import of the file that defines it, because the root barrel of the harness loads
 // its runtime.
 
@@ -26,6 +27,12 @@ export type PausedWorkList = ListEnvelope<"pausedWork", PausedWork>;
 
 /** The body of `POST {A}/paused-work/:workId/resume`: the count of the workflows that got the resume. */
 export type ResumedWork = {
+    workId: string;
+    workflows: number;
+};
+
+/** The body of `POST {A}/paused-work/:workId/hold`: the count of the waits in `retrying` that the hold moved to `paused`. */
+export type HeldWork = {
     workId: string;
     workflows: number;
 };
