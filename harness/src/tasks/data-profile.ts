@@ -46,7 +46,7 @@ import { deliverNotice, passGate, type GateRefusal, type NoticeFailure } from ".
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { defineTool, type ToolError } from "../tools/define-tool.js";
+import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderResources, renderWorkspace } from "../prompts/briefing.js";
@@ -61,6 +61,7 @@ import { generateExecutionId } from "../sandbox/execution-id.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { z } from "zod";
 
+import type { AnalysisStep } from "../schemas/workflow-state.js";
 import { ProfileSubmissionSchema, type ProfileSubmission } from "../schemas/data-profile-schemas.js";
 import { computeInputSignature } from "../execution/input-signature.js";
 import { readHeaders } from "../input-scan/enrich.js";
@@ -72,7 +73,7 @@ import { scanInputTree } from "../input-scan/scan.js";
 import type { HeaderReadout, InputScan } from "../input-scan/types.js";
 import type { DataProfileDimension, DataProfileGroup, DataProfileProbeReport } from "../contracts/data-profile.js";
 import { PROFILE_INDEX_TYPES, buildProfileIndexEntries } from "./data-profile-index.js";
-import { absorbRecipe, renderAbsorbDelta, type AbsorbKind } from "./data-profile-absorb.js";
+import { absorbRecipe, renderAbsorbDelta, type AbsorbKind, type AbsorbOutcome } from "./data-profile-absorb.js";
 import { formatResolutionErrors, resolveProfileSubmission, type ProfileResolution, type ResolvedGroup } from "./data-profile-resolve.js";
 import {
     completeDataProfile,
@@ -115,6 +116,68 @@ const SubmitOutcomeSchema = z.discriminatedUnion("status", [
 ]);
 
 type SubmitOutcome = z.infer<typeof SubmitOutcomeSchema>;
+
+/**
+ * The first message of the profiler. No scheduler composes a briefing for it, thus this message is its briefing: the
+ * system prompt names no paths, because it is static for each agent type. The workspace frame and the resource budget
+ * use the same words as the step briefing.
+ */
+export function composeProfilerSeed(args: {
+    readonly analysisId: string;
+    /** The in-sandbox working directory of the profiler. */
+    readonly workingDir: string;
+    readonly resources: AnalysisStep["resources"];
+    readonly menu: SetMenu;
+    readonly absorb: AbsorbOutcome;
+}): string {
+    return [
+        `Profile the input data for this analysis: say what the dataset IS, so planning can proceed.`,
+        ``,
+        renderWorkspace({ analysisId: args.analysisId, workingDir: args.workingDir }),
+        ``,
+        renderResources(args.resources),
+        ``,
+        renderSetMenu(args.menu, STAGED_INPUT_ROOT),
+        ``,
+        ...(args.absorb.kind === "partial"
+            ? [renderAbsorbDelta(args.absorb), ``]
+            : [
+                  `Author the dataset's groups as operations on this menu: \`use\` a set, \`split\` one by a slot or by a`,
+                  `value mapping, \`merge\` several, or \`group\` explicit paths the scan left over. Membership and counts`,
+                  `are computed from your operations — you do not state them. Inspect ONE example file per group where a`,
+                  `description needs content the scan did not capture, then deliver the groups with \`submit_profile\`.`,
+              ]),
+    ].join("\n");
+}
+
+/** The terminal tool of the profiler: it resolves the operations of a submission against the scan and the menu. */
+export function createSubmitProfileTool(detected: DetectedSets, menu: SetMenu): Tool<ProfileSubmission, SubmitOutcome> {
+    return defineTool({
+        id: SUBMIT_PROFILE_TOOL_ID,
+        description:
+            "Submit the profiling results. Call this tool after completing all profiling work — it resolves your " +
+            "operations against the scan, computes every group's membership and counts, and checks the profile. " +
+            "A submission whose operations do not resolve, or that leaves kept files unclaimed, comes back with " +
+            "the errors; the repair is a FULL resubmit of the whole operation list. The last accepted submission is the profile.",
+        inputSchema: ProfileSubmissionSchema,
+        describeCall: "none",
+        execute: (input): Promise<Result<SubmitOutcome, ToolError>> => {
+            const resolution = resolveProfileSubmission(input, detected, menu, { finalRound: false });
+            if (resolution.errors.length > 0 || resolution.unclaimed.length > 0) {
+                return Promise.resolve(ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) }));
+            }
+            return Promise.resolve(
+                ok({
+                    status: "accepted",
+                    groups: resolution.groups.length,
+                    keptFiles: resolution.partition.keptFiles,
+                    unclassifiedFiles: resolution.partition.unclassifiedFiles,
+                    unresolvedOperations: resolution.errors.length,
+                }),
+            );
+        },
+    });
+}
 
 /** The submissions of a run, in call order, with the outcome that the tool gave each one. */
 function profileSubmissions(steps: readonly LoopStep[]): { readonly submission: ProfileSubmission; readonly accepted: boolean }[] {
@@ -687,27 +750,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // prompt names no paths (it is static per agent type, for the prompt cache).
             // Its workspace frame and its resource budget therefore have to be stated here,
             // in the same words the step briefing uses.
-            const prompt = [
-                `Profile the input data for this analysis: say what the dataset IS, so planning can proceed.`,
-                ``,
-                renderWorkspace({
-                    analysisId,
-                    workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
-                }),
-                ``,
-                renderResources(resources),
-                ``,
-                renderSetMenu(briefingMenu, STAGED_INPUT_ROOT),
-                ``,
-                ...(absorb.kind === "partial"
-                    ? [renderAbsorbDelta(absorb), ``]
-                    : [
-                          `Author the dataset's groups as operations on this menu: \`use\` a set, \`split\` one by a slot or by a`,
-                          `value mapping, \`merge\` several, or \`group\` explicit paths the scan left over. Membership and counts`,
-                          `are computed from your operations — you do not state them. Inspect ONE example file per group where a`,
-                          `description needs content the scan did not capture, then deliver the groups with \`submit_profile\`.`,
-                      ]),
-            ].join("\n");
+            const prompt = composeProfilerSeed({
+                analysisId,
+                workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
+                resources,
+                menu: briefingMenu,
+                absorb,
+            });
 
             const sandboxAgentDeps: SandboxAgentDeps = profilerSandboxAgentDeps(deps, {
                 lease,
@@ -719,31 +768,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 allowedWritePrefix: profileWritePrefix,
             });
 
-            const submitProfileTool = defineTool({
-                id: SUBMIT_PROFILE_TOOL_ID,
-                description:
-                    "Submit the profiling results. Call this tool after completing all profiling work — it resolves your " +
-                    "operations against the scan, computes every group's membership and counts, and checks the profile. " +
-                    "A submission whose operations do not resolve, or that leaves kept files unclaimed, comes back with " +
-                    "the errors; the repair is a FULL resubmit of the whole operation list. The last accepted submission is the profile.",
-                inputSchema: ProfileSubmissionSchema,
-                describeCall: "none",
-                execute: (input): Promise<Result<SubmitOutcome, ToolError>> => {
-                    const resolution = resolveProfileSubmission(input, detected, briefingMenu, { finalRound: false });
-                    if (resolution.errors.length > 0 || resolution.unclaimed.length > 0) {
-                        return Promise.resolve(ok({ status: "needs_repair", detail: formatResolutionErrors(resolution) }));
-                    }
-                    return Promise.resolve(
-                        ok({
-                            status: "accepted",
-                            groups: resolution.groups.length,
-                            keptFiles: resolution.partition.keptFiles,
-                            unclassifiedFiles: resolution.partition.unclassifiedFiles,
-                            unresolvedOperations: resolution.errors.length,
-                        }),
-                    );
-                },
-            });
+            const submitProfileTool = createSubmitProfileTool(detected, briefingMenu);
 
             const baseAgent = createDataProfilerAgent(sandboxAgentDeps);
             const agentDef = { ...baseAgent, tools: [...baseAgent.tools, submitProfileTool] };
