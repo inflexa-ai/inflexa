@@ -41,6 +41,25 @@ type ResolvedIdentifier = {
     symbol: string;
 };
 
+const SearchGeneOutputSchema = z.object({
+    genes: z.array(
+        z.object({
+            symbol: z.string(),
+            id: z.string().describe("The Ensembl gene id (ENSG…), the key of the other gene lookups."),
+            displayName: z.string(),
+            description: z.string(),
+            biotype: z.string(),
+            start: z.number(),
+            end: z.number(),
+            strand: z.number(),
+            assemblyName: z.string(),
+            seqRegionName: z.string(),
+        }),
+    ),
+    resolvedFrom: z.array(z.object({ input: z.string(), symbol: z.string() })),
+    notFound: z.array(z.string()),
+});
+
 export const searchGeneTool = defineTool({
     id: "search_gene",
     description:
@@ -54,6 +73,7 @@ export const searchGeneTool = defineTool({
         "non-human `species` looks the ortholog up by the human approved symbol.\n" +
         "notFound is valid no-data (a deprecated, aliased or mistyped identifier, or one this species has no gene for) — report it and continue, do not " +
         "retry unchanged.",
+    outputSchema: SearchGeneOutputSchema,
     inputSchema: z.object({
         identifiers: z
             .array(z.string())

@@ -9,6 +9,24 @@ import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 export { parseSemanticScholarResponse } from "../../literature/sources/semantic-scholar.js";
 export type SemanticScholarPaper = SemanticScholarSearchPaper;
 
+const SearchSemanticScholarOutputSchema = z.object({
+    success: z.boolean(),
+    error: z.string().optional().describe("Present when success is false: why the search failed."),
+    papers: z.array(
+        z.object({
+            id: z.string(),
+            title: z.string(),
+            abstract: z.string().optional(),
+            year: z.number().optional(),
+            venue: z.string().optional(),
+            citationCount: z.number().optional(),
+            url: z.string().optional(),
+            authors: z.array(z.string()),
+            externalIds: z.record(z.string(), z.string()).optional().describe("For example DOI, ArXiv, PubMed, CorpusId."),
+        }),
+    ),
+});
+
 type SearchSemanticScholarOutput =
     { success: false; error: string; papers: SemanticScholarSearchPaper[] } | { success: true; papers: SemanticScholarSearchPaper[] };
 
@@ -32,6 +50,7 @@ export function createSearchSemanticScholarTool(options: { readonly apiKey?: str
             "back for a citation.\n" +
             "ABSENCE IS NORMAL: an empty papers array means the corpus holds nothing for the query, and `success: false` with an `error` string means the " +
             "service could not be reached (its unkeyed rate limit lands here). Report either one and continue, do not retry unchanged.",
+        outputSchema: SearchSemanticScholarOutputSchema,
         inputSchema: z.object({
             query: z
                 .string()

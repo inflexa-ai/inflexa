@@ -123,6 +123,15 @@ const readTableInput = z.object({
     columns: z.array(z.string()).min(1).optional().describe("Keep only these columns. Absent: each column."),
 });
 
+export const ReadTableOutputSchema = z.object({
+    path: z.string(),
+    columns: z.array(z.string()).readonly(),
+    rowCount: z.number(),
+    rows: z.array(z.record(z.string(), z.union([z.string(), z.number()]))).readonly(),
+});
+
+const WrittenOutputSchema = z.object({ path: z.string().describe("The analysis-rooted path of the written file."), bytes: z.number() });
+
 type ReadTableOutput = WithToolCallRecord<
     { readonly path: string; readonly columns: readonly string[]; readonly rowCount: number; readonly rows: readonly Record<string, string | number>[] },
     ScriptFileEffect
@@ -136,6 +145,7 @@ function createReadTableTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof rea
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +
             "A larger table, or another format such as h5ad, is work for an analysis run.",
         inputSchema: readTableInput,
+        outputSchema: ReadTableOutputSchema,
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
         execute: async ({ path, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
@@ -201,6 +211,7 @@ function createWriteDerivedTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof 
             "The file lands in that directory only, never at a path that the user names: for such a path, return the content and write it with `write_file`. " +
             "A name holds one file: a second write of the name with other content is refused.",
         inputSchema: writeDerivedInput,
+        outputSchema: WrittenOutputSchema,
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, content, rows }, ctx): Promise<Result<WrittenOutput, ToolError>> => {
@@ -241,6 +252,7 @@ function createRenderChartTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof r
             "Render an ECharts option to an SVG file at a journal column width, in the derived directory of this conversation, for a document. " +
             "To show a chart in the chat, use `show_user`.",
         inputSchema: renderChartInput,
+        outputSchema: WrittenOutputSchema,
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, spec, width }, ctx): Promise<Result<WrittenOutput, ToolError>> => {
