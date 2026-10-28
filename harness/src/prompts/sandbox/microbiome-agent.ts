@@ -58,7 +58,9 @@ Your skills: \`microbiome\`, \`shared/omics-general\`.
 - Use biom-format (Python) for BIOM file I/O when interfacing with
   QIIME2 artifacts.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Stacked bar (relative abundance)** — top N taxa at a chosen rank
   (default: top 15 genera), remaining as "Other". Samples ordered by

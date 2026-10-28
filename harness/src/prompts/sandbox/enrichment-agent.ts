@@ -45,7 +45,9 @@ statistical method you need.
   clustering.
 - Save per-sample scores as AnnData; tabular enrichment results as CSV.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Dot plot** — top 20 terms, x = gene ratio or NES, size = gene count,
   color = FDR. Primary summary.

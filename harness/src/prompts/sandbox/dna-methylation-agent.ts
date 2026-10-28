@@ -49,7 +49,9 @@ Your skills: \`dna-methylation\`, \`shared/omics-general\`.
   chromosome, position, and gene annotation in \`.var\` columns. Convert
   from R at the end of the pipeline when downstream needs \`.h5ad\`.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Beta-value density plots** — per-sample density curves, colored by
   group or batch. Bimodal distribution expected.

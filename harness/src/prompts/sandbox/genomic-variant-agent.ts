@@ -40,7 +40,9 @@ Your skills: \`genomic-variants\`, \`shared/omics-general\`.
 - Store derived summary tables as CSV. VCF/BED/BAM are acceptable as
   primary genomic containers (not matrix data).
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Manhattan plot** — -log10(p) vs genomic position, chromosome-colored,
   genome-wide significance at 5e-8, suggestive at 1e-5.

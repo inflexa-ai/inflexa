@@ -43,7 +43,9 @@ Your skills: \`metabolomics\`, \`shared/omics-general\`.
   \`.var\` columns. Convert from R at the end of the XCMS pipeline.
 - Always log2-transform after normalization for downstream statistics.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **TIC chromatograms** — overlaid per sample, colored by group.
 - **PCA score plots** — PC1 vs PC2, colored by group, variance explained

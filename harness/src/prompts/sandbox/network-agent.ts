@@ -51,7 +51,9 @@ igraph.
 - Save processed networks and module assignments as AnnData when
   meaningful.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Network graph** — spring/Fruchterman-Reingold layout for key
   modules. Top 50 genes by kME, colored by module.
