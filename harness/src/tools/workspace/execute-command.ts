@@ -125,6 +125,7 @@ export function createExecuteCommandTool(
 
     return defineTool({
         id: "execute_command",
+        ownStep: true,
         description:
             "Run a command in the sandbox and return its stdout/stderr/exit code. " +
             "Use for scripts, CLI tools, shell pipes, and anything the workspace " +

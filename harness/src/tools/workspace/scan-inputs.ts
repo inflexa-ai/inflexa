@@ -55,6 +55,7 @@ const ScanInputsInputSchema = z.object({
 export function createScanInputsTool(deps: ScanInputsDeps): Tool<z.infer<typeof ScanInputsInputSchema>, ScanInputsOutput> {
     return defineTool({
         id: "scan_inputs",
+        ownStep: true,
         description:
             "Scan a directory of input files and report what is OBSERVABLE about it: per-format counts, " +
             "the shapes its filenames form (sets of files whose names differ only at marked positions), " +

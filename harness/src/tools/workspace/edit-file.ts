@@ -238,6 +238,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
     const stepKey = deps.stepKey ?? durableStepKey;
     return defineTool({
         id: "edit_file",
+        ownStep: true,
         description:
             "Edit a file in your working directory by replacing specific text. " +
             "Read the file first to get the exact text. When replace_all is false " +

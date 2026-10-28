@@ -19,6 +19,7 @@ import {
     loadQuickJSWasm,
     renderToolSample,
     renderToolSignature,
+    schemaToType,
     type CodemodeError,
     type CodemodeSandboxOptions,
     type CodemodeTool,
@@ -79,6 +80,16 @@ export type RunScriptOptions = {
 
 export type ScriptCall = { readonly tool: string; readonly ok: boolean };
 
+/** The call record of one nested call, kept for a tool that folds its records. */
+type NestedRecord = { readonly tool: string; readonly record: unknown };
+
+/**
+ * The call record of a script: the run, for the provenance of the scratch directory, and the record of each nested
+ * call whose tool folds records, in call order. A replay folds the same records in the same order, thus the state
+ * that a fold rebuilds is the same as in a direct call.
+ */
+type RunScriptRecord = { readonly run?: ScriptRunRecord; readonly nested: readonly NestedRecord[] };
+
 export type RunScriptOutput = {
     readonly ok: boolean;
     /** What the script printed, in order. */
@@ -114,7 +125,7 @@ function plainJson(value: unknown): unknown {
 }
 
 function describeTool(tool: Tool): string {
-    return renderToolSample({ name: tool.id, description: tool.description, inputSchema: tool.jsonSchema });
+    return renderToolSample({ name: tool.id, description: tool.description, inputSchema: tool.jsonSchema, outputSchema: tool.outputJsonSchema });
 }
 
 function issuesOf(error: z.ZodError): string {
@@ -127,6 +138,7 @@ type ScriptState = {
     readonly calls: ScriptCall[];
     readonly reads: ScriptRead[];
     readonly writes: ScratchFile[];
+    readonly nested: NestedRecord[];
     readonly nextInvocationId: () => string;
     /** The source of the frames of a nested call: one level below the `run_script` call. */
     readonly source: EventSource;
@@ -151,6 +163,7 @@ function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Log
         name: tool.id,
         description: tool.description,
         inputSchema: tool.jsonSchema,
+        outputSchema: tool.outputJsonSchema,
         execute: async (args, { signal }) => {
             const invocationId = state.nextInvocationId();
             const detail = computeDetail(tool, args, log);
@@ -189,6 +202,10 @@ function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Log
                 throw new Error(`${tool.id}: ${result.error.error}`);
             }
             collectEffect(state, result.value);
+            if (tool.foldCallRecord !== undefined) {
+                const record = readToolCallRecord(result.value);
+                if (record !== undefined) state.nested.push({ tool: tool.id, record });
+            }
             await finish("ok", computeResultDetail(tool, parsed.data, result.value, log) ?? detail);
             return plainJson(result.value);
         },
@@ -208,9 +225,16 @@ function withoutProse(schema: unknown): unknown {
     );
 }
 
-/** One catalog entry: the first sentence of the description, then the input signature with no prose. */
+/** The longest result type that the catalog shows. A longer type shows as `unknown`, and `describe()` gives it whole. */
+const MAX_CATALOG_RESULT_TYPE_CHARS = 800;
+
+/** One catalog entry: the first sentence of the description, then the signature with no prose. */
 function catalogEntry(tool: Tool): string {
-    const signature = renderToolSignature({ name: tool.id, inputSchema: parseUnknownRecord(withoutProse(tool.jsonSchema)) ?? {} });
+    const output = tool.outputJsonSchema === undefined ? undefined : parseUnknownRecord(withoutProse(tool.outputJsonSchema));
+    const resultType = output === undefined ? "unknown" : schemaToType(output, { maxChars: MAX_CATALOG_RESULT_TYPE_CHARS });
+    // pi renders a signature with no result schema as `...: Promise<unknown>;`, thus the catalog puts its capped type there.
+    const untyped = renderToolSignature({ name: tool.id, inputSchema: parseUnknownRecord(withoutProse(tool.jsonSchema)) ?? {} });
+    const signature = `${untyped.slice(0, -"unknown>;".length)}${resultType}>;`;
     return `/** ${firstSentence(tool.description)} */\n${signature}`;
 }
 
@@ -218,7 +242,7 @@ function catalogEntry(tool: Tool): string {
 function descriptionOf(tools: readonly Tool[]): string {
     const catalog = tools.map(catalogEntry).join("\n");
     return (
-        "Run a JavaScript script that calls the tools below as functions, in a sandbox with no files and no network. " +
+        "Run a JavaScript script that calls the tools below as functions, in a JavaScript VM on the host with no files and no network. " +
         "Use it for lookups and for light work on tables: call several tools in parallel with Promise.all, filter, join, and count their results, and print only what you need. " +
         "Only the printed output and the returned value come back to you.\n" +
         "API: `await tools.<name>(args)` returns the JSON result of the tool and throws an Error on a failed call. " +
@@ -254,7 +278,7 @@ function filesCard(
     return buildFileReferenceCardData({ title: description ?? "Derived files", files: shown });
 }
 
-type RunScriptResult = RunScriptOutput | WithToolCallRecord<RunScriptOutput, ScriptRunRecord>;
+type RunScriptResult = RunScriptOutput | WithToolCallRecord<RunScriptOutput, RunScriptRecord>;
 
 /** The `run_script` tool over the script tools of an agent. */
 export function createRunScriptTool(
@@ -275,7 +299,16 @@ export function createRunScriptTool(
             const tools = result.calls.length === 0 ? undefined : result.calls.map((call) => call.tool).join(", ");
             return description === undefined ? tools : tools === undefined ? description : `${description} (${tools})`;
         },
-        foldCallRecord: (record) => scratch?.recordRun(record),
+        foldCallRecord: (record) => {
+            if (record.run !== undefined) scratch?.recordRun(record.run);
+            for (const entry of record.nested) {
+                try {
+                    byId.get(entry.tool)?.foldCallRecord?.(entry.record);
+                } catch (err) {
+                    log.error("the call record of a nested call did not fold", { tool: entry.tool, ...log.errorFields(err) });
+                }
+            }
+        },
         execute: async ({ description, code }, ctx): Promise<Result<RunScriptResult, ToolError>> => {
             const startedAt = performance.now();
             const script = await scratch?.saveScript({ session: ctx.session, invocationId: ctx.invocationId, code });
@@ -299,6 +332,7 @@ export function createRunScriptTool(
                 calls: [],
                 reads: [],
                 writes: [],
+                nested: [],
                 nextInvocationId: () => `${ctx.invocationId}:${++started}`,
                 source: { agentId: RUN_SCRIPT_TOOL_ID, callPath: [...caller.callPath, RUN_SCRIPT_TOOL_ID], invocationId: ctx.invocationId },
                 observe: (frame) => {
@@ -348,7 +382,7 @@ export function createRunScriptTool(
                     if (card !== null) await ctx.emit({ type: "data-file-reference", source: caller, data: card });
                 }
 
-                const record: ScriptRunRecord = {
+                const run: ScriptRunRecord = {
                     analysisId: ctx.session.scope.analysisId,
                     threadId: ctx.session.scope.threadId,
                     invocationId: ctx.invocationId,
@@ -369,8 +403,9 @@ export function createRunScriptTool(
                           files,
                       }
                     : { ok: false, output, error: `${result.error.kind}: ${result.error.message}`, calls: state.calls, script: script?.path, files };
-                // Only a scratch directory folds the record into provenance, thus a script with none carries no record.
-                return ok(scratch === undefined ? outcome : withToolCallRecord(outcome, record));
+                // Only a scratch directory folds the run into provenance, thus a script with none records no run.
+                const record: RunScriptRecord = { run: scratch === undefined ? undefined : run, nested: state.nested };
+                return ok(record.run === undefined && record.nested.length === 0 ? outcome : withToolCallRecord(outcome, record));
             } finally {
                 await sandbox.close();
             }

@@ -28,7 +28,7 @@ import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { isSafeId, reportSessionDerivedDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway } from "../report-authoring/authoring-tools.js";
-import { readTableRows, rowsText, type ScriptFileEffect } from "../script/file-tools.js";
+import { ReadTableOutputSchema, readTableRows, rowsText, type ScriptFileEffect } from "../script/file-tools.js";
 import { DERIVED_FILE_CAP_BYTES } from "../script/scratch.js";
 import { confinedWrite } from "../workspace/mutator.js";
 
@@ -63,6 +63,7 @@ function createReadTableTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeof r
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +
             "A larger table derives with `derive_table`.",
         inputSchema: readTableInput,
+        outputSchema: ReadTableOutputSchema,
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
         execute: async ({ path, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
@@ -97,6 +98,8 @@ const writeDerivedInput = z.object({
     inputs: z.array(z.string()).min(1).describe("The path of each pinned table that the script read for this table. The record pins the hash of each one."),
 });
 
+const DerivedOutputSchema = z.object({ path: z.string(), hash: z.string(), columns: z.array(z.string()).readonly() });
+
 type DerivedOutput = WithToolCallRecord<{ readonly path: string; readonly hash: string; readonly columns: readonly string[] }, ScriptFileEffect>;
 
 function derivedOutput(record: DerivationRecord, size: number, columns: readonly string[]): DerivedOutput {
@@ -127,6 +130,7 @@ function createWriteDerivedTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeo
             "Pin one derived table to this session, and give its path for a block to bind. " +
             "Name each pinned table that the script read in `inputs`. A name that this session already holds is refused, thus a second derivation of one table takes a new name.",
         inputSchema: writeDerivedInput,
+        outputSchema: DerivedOutputSchema,
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, rows, inputs }, ctx): Promise<Result<DerivedOutput, ToolError>> => {

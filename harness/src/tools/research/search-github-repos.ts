@@ -20,6 +20,21 @@ import { isUnknownArray } from "../../lib/unknown-array.js";
 
 const BASE_URL = "https://api.github.com/search/repositories";
 
+const SearchGithubReposOutputSchema = z.object({
+    success: z.boolean(),
+    error: z.string().optional().describe("Present when success is false: why the search failed."),
+    repos: z.array(
+        z.object({
+            url: z.string(),
+            fullName: z.string(),
+            description: z.string().optional(),
+            stars: z.number(),
+            language: z.string().optional(),
+            lastUpdated: z.string().optional(),
+        }),
+    ),
+});
+
 type SearchGithubReposOutput = { success: false; error: string; repos: GithubRepo[] } | { success: true; repos: GithubRepo[] };
 
 export type GithubRepo = {
@@ -92,6 +107,7 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }): Too
             "and `success: false` with an `error` string means GitHub could not be " +
             "reached or refused the request (the low unauthenticated rate limit " +
             "lands here). Report either one and continue, do not retry unchanged.",
+        outputSchema: SearchGithubReposOutputSchema,
         inputSchema: SearchGithubReposInputSchema,
         describeCall: "none",
         execute: async ({ query, language, limit }): Promise<Result<SearchGithubReposOutput, ToolError>> => {

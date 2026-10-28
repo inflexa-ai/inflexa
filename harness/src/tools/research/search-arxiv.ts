@@ -8,6 +8,23 @@ import { defineTool, type ToolError } from "../define-tool.js";
 
 export { parseArxivAtom, type ArxivPaper } from "../../literature/sources/arxiv.js";
 
+const SearchArxivOutputSchema = z.object({
+    success: z.boolean(),
+    error: z.string().optional().describe("Present when success is false: why the search failed."),
+    papers: z.array(
+        z.object({
+            id: z.string(),
+            title: z.string(),
+            abstract: z.string(),
+            authors: z.array(z.string()),
+            published: z.string(),
+            categories: z.array(z.string()),
+            url: z.string(),
+            pdfUrl: z.string().optional(),
+        }),
+    ),
+});
+
 type SearchArxivOutput = { success: false; error: string; papers: ArxivPaper[] } | { success: true; papers: ArxivPaper[] };
 
 const source = createArxivSource({ maxRetries: 3, retryDelayMs: 1_000, timeoutMs: 90_000 });
@@ -23,6 +40,7 @@ export const searchArxivTool = defineTool({
         "('2301.00001') also matches as free text.\n" +
         "ABSENCE IS NORMAL: an empty papers array means arXiv holds nothing for the query, and `success: false` with an `error` string means the service " +
         "could not be reached. Report either one and continue, do not retry unchanged.",
+    outputSchema: SearchArxivOutputSchema,
     inputSchema: z.object({
         query: z.string().describe('Free-text query. Example: "adaptive control feedback stabilization".'),
         categories: z

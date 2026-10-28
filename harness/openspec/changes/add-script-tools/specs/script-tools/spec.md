@@ -37,6 +37,26 @@ A script runs as one tool call. Thus no surface can ask the user about a nested 
 - **WHEN** the loop opens a conversation of the agent
 - **THEN** the loop throws `the script tool write_note of agent a asks an approval or starts a workflow`
 
+### Requirement: A tool that is its own durable step is no script tool
+
+A script is one durable step, and each nested call runs inside it. A tool whose call must be its own step, for example an exec whose id comes from its step, MUST declare it. The loop MUST throw at the open of a conversation when a script tool of the agent declares it. The error MUST name the tool and the agent.
+
+#### Scenario: An exec tool as a script tool
+
+- **GIVEN** an agent `a` with the script tool `execute_command`, which is its own step
+- **WHEN** the loop opens a conversation of the agent
+- **THEN** the loop throws `the script tool execute_command of agent a must run as its own durable step`
+
+### Requirement: The catalog gives the result type of a script tool
+
+A tool MAY declare the schema of its ok value. The value MUST then hold each field of the schema. The catalog of `run_script` MUST show the result type of such a tool in its signature, and `unknown` for a tool with no schema or with a type too long for the catalog. `describe` MUST give the full type.
+
+#### Scenario: A typed tool in the catalog
+
+- **GIVEN** a script tool `count_genes` whose ok value is `{ count: number }`
+- **WHEN** the loop builds `run_script`
+- **THEN** the catalog holds `count_genes(args: { set: string; }): Promise<{ count: number; }>;`
+
 ### Requirement: The description of run_script is the script API and a catalog of the script tools
 
 The description of `run_script` MUST give the script API, and then one catalog line for each script tool: the id of the tool and the first sentence of its description. The rest of the description of a script tool MUST stay out of it. The description MUST be a function of the script tools only. Thus each request of a conversation declares the same `run_script`, and the prompt cache of the provider holds.
@@ -196,7 +216,7 @@ With a scratch directory, `run_script` MUST save the code of each script before 
 
 ### Requirement: The files of a script reach provenance
 
-Each file tool MUST give the files that it read or wrote, with the hash of the exact bytes, as the call record of its nested call. `run_script` MUST collect these records into its own call record. Its fold MUST emit one `run-script` session event with the saved script, the reads, the writes, the tools, and `ok`. A script that read and wrote no file MUST emit nothing. A tool with a fold of its own MUST stay refused as a script tool.
+Each file tool MUST give the files that it read or wrote, with the hash of the exact bytes, as the call record of its nested call. `run_script` MUST collect these records into its own call record. Its fold MUST emit one `run-script` session event with the saved script, the reads, the writes, the tools, and `ok`. A script that read and wrote no file MUST emit nothing. The fold of `run_script` MUST also give the record of each nested call to the fold of its tool, in the order of the calls.
 
 #### Scenario: A derived file chains to the table that it came from
 
