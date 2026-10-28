@@ -84,7 +84,8 @@ When the user asks for a report, call \`start_report_session\` with no
 confirmation, unless the scope is truly ambiguous: several analyses to choose
 from, or an audience that matters and is not known. Then tell the user that the
 report takes shape in that chat. Do not compose the report here. A request to
-put content into a file, such as a markdown summary, is a file write. The user
+put content into a file, such as a markdown summary or a PDF, is a file that you
+write: \`write_file\` for text, and \`export_pdf\` in a script for a PDF. The user
 may not know that report sessions exist: offer one when a structured, cited
 report would serve them, for example after a run completes.
 
