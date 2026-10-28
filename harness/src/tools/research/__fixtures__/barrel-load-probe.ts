@@ -1,8 +1,7 @@
 /**
  * Runs in a pristine child Bun process: loads the public barrel, then reports whether the agent factory arrived and
- * what `os.availableParallelism()` answers. The regression test spawns this file because a barrel that imports
- * `pdf-parse` statically breaks `os` for the whole process, and the test runner shares one process with the PDF
- * extraction tests, which load `pdf-parse` lazily and legitimately.
+ * what `os.availableParallelism()` answers. The regression test spawns this file because a module that breaks `os`
+ * breaks it for the whole process, and the test runner shares one process with the PDF extraction tests.
  */
 
 import { errorMessageOf } from "../../../lib/thrown.js";

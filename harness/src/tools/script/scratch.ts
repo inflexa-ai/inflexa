@@ -71,7 +71,8 @@ export type ScriptScratch = {
         readonly session: AgentSession;
         readonly invocationId: string;
         readonly name: string;
-        readonly content: string;
+        /** Text lands as UTF-8. */
+        readonly content: string | Uint8Array;
     }): Promise<DerivedWrite>;
     /** Record what one script did to files. A script that read and wrote nothing records nothing. */
     recordRun(record: ScriptRunRecord): void;
@@ -126,7 +127,13 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
     const logger = (deps.logger ?? createNoopLogger()).named("script-scratch");
     const observe = bindSessionEmit(deps.provenance, logger);
 
-    async function land(session: AgentSession, dir: string, name: string, content: string, invocationId: string): Promise<ScratchFile | { refused: string }> {
+    async function land(
+        session: AgentSession,
+        dir: string,
+        name: string,
+        content: string | Uint8Array,
+        invocationId: string,
+    ): Promise<ScratchFile | { refused: string }> {
         const { analysisId } = session.scope;
         const workspaceRoot = await deps.resolveWorkspaceRoot(analysisId);
         const landed = await confinedWrite({
@@ -160,7 +167,8 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
                     reason: "a name is one file name of letters, digits, '.', '_', and '-', with no directory, for example de_top50.csv",
                 };
             }
-            const bytes = Buffer.byteLength(content, "utf8");
+            const data = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+            const bytes = data.length;
             if (bytes > DERIVED_FILE_CAP_BYTES) {
                 return {
                     status: "refused",
@@ -169,7 +177,7 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
             }
             const dir = `${deps.sessionDir(threadId)}/derived`;
             const absoluteDir = join(await deps.resolveWorkspaceRoot(analysisId), dir);
-            const hash = computeSha256(Buffer.from(content, "utf8"));
+            const hash = computeSha256(data);
             const existing = await existingAt(join(absoluteDir, name));
             if (existing.kind === "other") return { status: "refused", reason: `${dir}/${name} is not a regular file` };
             if (existing.kind === "file") {

@@ -12,7 +12,7 @@
  * `ich-<code>` with non-word chars sanitized.
  */
 
-import { PDFParse } from "pdf-parse";
+import { readPdfText } from "../pdf-text.js";
 
 import { normalizeWhitespace } from "./normalize-whitespace.js";
 
@@ -175,15 +175,13 @@ export async function fetchAndExtractIchDoc(stub: IchStub): Promise<IchDoc> {
         throw new Error(`fetch ${stub.doc_url}: ${res.status} ${res.statusText}`);
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    const parser = new PDFParse({ data: buf });
-    const result = await parser.getText();
-    await parser.destroy();
+    const result = await readPdfText(buf, { first: 1, last: Number.MAX_SAFE_INTEGER });
 
     return {
         doc_id: stub.doc_id,
         doc_title: stub.doc_title,
         doc_url: stub.doc_url,
-        text: normalizeWhitespace(result.text),
+        text: normalizeWhitespace(result.pages.map((page) => page.text).join("\n\n")),
         metadata: {
             code: stub.code,
             series: stub.series,

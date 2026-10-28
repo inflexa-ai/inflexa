@@ -1,11 +1,10 @@
 /**
- * The module-load guard of the PDF path of `web_fetch`.
+ * The module-load guard of the public barrel.
  *
- * `pdf-parse` makes `os.availableParallelism()` return `undefined` process-wide under Bun when its module loads, and a
- * `Math.max(1, undefined)` machine budget becomes `NaN` in the CLI. The tool therefore imports `pdf-parse` lazily at
- * the first PDF. This suite loads the public barrel, the import every CLI embedder makes, in a pristine child process;
- * a static import fails here deterministically, because the runner's own process cannot stay clean of the PDF
- * extraction tests.
+ * A PDF library made `os.availableParallelism()` return `undefined` process-wide under Bun when its module loaded, and
+ * a `Math.max(1, undefined)` machine budget became `NaN` in the CLI (inflexa-ai/inflexa#701). This suite loads the
+ * public barrel, the import every CLI embedder makes, in a pristine child process, because the runner's own process
+ * cannot stay clean of the PDF extraction tests.
  */
 
 import { join } from "node:path";
@@ -14,7 +13,7 @@ import { z } from "zod";
 
 import { parseJsonAs } from "../../../lib/parse-json.js";
 
-describe("web_fetch pdf-parse module load", () => {
+describe("the module load of the public barrel", () => {
     it("keeps os.availableParallelism() finite after the public barrel loads", () => {
         const child = Bun.spawnSync({ cmd: [process.execPath, join(import.meta.dir, "../__fixtures__/barrel-load-probe.ts")] });
         expect(child.stderr.toString()).toBe("");
