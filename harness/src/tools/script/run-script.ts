@@ -24,6 +24,8 @@ import {
     type CodemodeSandboxOptions,
     type CodemodeTool,
 } from "@earendil-works/pi-codemode";
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -158,58 +160,63 @@ function collectEffect(state: ScriptState, value: unknown): void {
  * tool keys what it stores by its invocation id (`web_fetch` keeps the cut text of a page under it), thus two calls of
  * one script must not share it. The script is one step, thus a replay calls nothing and the ids stay as recorded.
  */
-function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger): CodemodeTool {
+function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger, inCallContext: CallContext): CodemodeTool {
     return {
         name: tool.id,
         description: tool.description,
         inputSchema: tool.jsonSchema,
         outputSchema: tool.outputJsonSchema,
-        execute: async (args, { signal }) => {
-            const invocationId = state.nextInvocationId();
-            const detail = computeDetail(tool, args, log);
-            const started = performance.now();
-            const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, input: args, detail } as const;
-            state.observe(startFrame);
-            await ctx.emit(startFrame);
-            const finish = async (outcome: "ok" | "error", finishedDetail: string | undefined): Promise<void> => {
-                state.calls.push({ tool: tool.id, ok: outcome === "ok" });
-                const endFrame = {
-                    type: "tool-finished",
-                    source: state.source,
-                    toolUseId: invocationId,
-                    name: tool.id,
-                    outcome,
-                    durationMs: Math.round(performance.now() - started),
-                    detail: finishedDetail,
-                } as const;
-                state.observe(endFrame);
-                await ctx.emit(endFrame);
-            };
-
-            const parsed = tool.inputSchema.safeParse(args);
-            if (!parsed.success) {
-                await finish("error", detail);
-                throw new Error(`${tool.id}: ${issuesOf(parsed.error)}`);
-            }
-            const result = await tool.execute(parsed.data, {
-                ...ctx,
-                invocationId,
-                signal: AbortSignal.any([ctx.signal, signal]),
-                script: { code: state.code },
-            });
-            if (result.isErr()) {
-                await finish("error", detail);
-                throw new Error(`${tool.id}: ${result.error.error}`);
-            }
-            collectEffect(state, result.value);
-            if (tool.foldCallRecord !== undefined) {
-                const record = readToolCallRecord(result.value);
-                if (record !== undefined) state.nested.push({ tool: tool.id, record });
-            }
-            await finish("ok", computeResultDetail(tool, parsed.data, result.value, log) ?? detail);
-            return plainJson(result.value);
-        },
+        execute: (args, options) => inCallContext(() => runNestedCall(tool, ctx, state, log, args, options.signal)),
     };
+}
+
+/** Runs a function in the async context of the `run_script` call. See {@link createRunScriptTool}. */
+type CallContext = <R>(fn: () => R) => R;
+
+async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger, args: unknown, signal: AbortSignal): Promise<unknown> {
+    const invocationId = state.nextInvocationId();
+    const detail = computeDetail(tool, args, log);
+    const started = performance.now();
+    const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, input: args, detail } as const;
+    state.observe(startFrame);
+    await ctx.emit(startFrame);
+    const finish = async (outcome: "ok" | "error", finishedDetail: string | undefined): Promise<void> => {
+        state.calls.push({ tool: tool.id, ok: outcome === "ok" });
+        const endFrame = {
+            type: "tool-finished",
+            source: state.source,
+            toolUseId: invocationId,
+            name: tool.id,
+            outcome,
+            durationMs: Math.round(performance.now() - started),
+            detail: finishedDetail,
+        } as const;
+        state.observe(endFrame);
+        await ctx.emit(endFrame);
+    };
+
+    const parsed = tool.inputSchema.safeParse(args);
+    if (!parsed.success) {
+        await finish("error", detail);
+        throw new Error(`${tool.id}: ${issuesOf(parsed.error)}`);
+    }
+    const result = await tool.execute(parsed.data, {
+        ...ctx,
+        invocationId,
+        signal: AbortSignal.any([ctx.signal, signal]),
+        script: { code: state.code },
+    });
+    if (result.isErr()) {
+        await finish("error", detail);
+        throw new Error(`${tool.id}: ${result.error.error}`);
+    }
+    collectEffect(state, result.value);
+    if (tool.foldCallRecord !== undefined) {
+        const record = readToolCallRecord(result.value);
+        if (record !== undefined) state.nested.push({ tool: tool.id, record });
+    }
+    await finish("ok", computeResultDetail(tool, parsed.data, result.value, log) ?? detail);
+    return plainJson(result.value);
 }
 
 /** A JSON schema without its prose: the types and the constraints stay, the descriptions and the examples go. */
@@ -339,8 +346,12 @@ export function createRunScriptTool(
                     tracked.part = tracker.track(frame, Date.now()) ?? tracked.part;
                 },
             };
+            // The VM calls a tool from a message event of its worker, and such an event runs outside the async context
+            // of this call. A nested call runs in the snapshot of this context, thus it sees what the call sees, for
+            // example the durable step of the call, which DBOS keeps in an AsyncLocalStorage.
+            const inCallContext = AsyncLocalStorage.snapshot();
             const sandbox = new CodemodeSandbox({
-                tools: scriptTools.map((tool) => scriptToolOf(tool, ctx, state, log)),
+                tools: scriptTools.map((tool) => scriptToolOf(tool, ctx, state, log, inCallContext)),
                 globals: [
                     {
                         name: "describe",

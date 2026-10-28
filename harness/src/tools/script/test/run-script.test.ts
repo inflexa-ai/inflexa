@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +86,21 @@ describe("run_script", () => {
         tool.foldCallRecord?.(readToolCallRecord(result));
 
         expect(folded).toEqual([{ seen: "a" }, { seen: "b" }]);
+    });
+
+    test("runs each nested call in the async context of the run_script call, as a durable step reads it", async () => {
+        const store = new AsyncLocalStorage<string>();
+        const reader = defineTool({
+            id: "read_context",
+            description: "Read the context of the call.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ context: store.getStore() ?? "lost" })),
+        });
+
+        const result = await store.run("the step of the call", () => run("return (await tools.read_context({})).context;", [reader]));
+
+        expect(result).toMatchObject({ ok: true, value: "the step of the call" });
     });
 
     test("shows the result type of a tool in its signature", () => {
