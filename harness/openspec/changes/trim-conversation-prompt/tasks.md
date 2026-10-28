@@ -13,6 +13,12 @@
 
 - [x] 2.1 Run the decision evals after each step, and compare each step with the step before it with `compare --fail-on-regression`. Make sure that each step passes 85/85 dev trials and 85/85 held-out trials.
 
+## 2b. The plan card
+
+- [x] 2b.1 `generate_plan` emits the `data-plan` card of an accepted plan, built from the result of the planner (`harness/src/tools/research/generate-plan.ts`). `planCardOf` takes only the plan id, the plan, and the parent plan id.
+- [x] 2b.2 The prompt and the description of `show_plan` no longer tell the agent to show a new plan with `show_plan`.
+- [x] 2b.3 Test: a completed plan emits one card, and a blocker emits none (`harness/src/tools/research/test/generate-plan.test.ts`).
+
 ## 3. The specs
 
 - [x] 3.1 Run `openspec validate trim-conversation-prompt --strict` in `harness`, and make sure that it passes.

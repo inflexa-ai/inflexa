@@ -405,6 +405,23 @@ describe("generatePlan loop-driving tool", () => {
         expect(JSON.stringify(refused.value.issues)).toContain("T9S9");
     });
 
+    it("shows the card of a completed plan to the user, and a blocker shows none", async () => {
+        const analysisId = "an-card";
+        await seedAnalysis(pool, analysisId, { dpStatus: null });
+        const emitted: unknown[] = [];
+        const model = scriptedModel([callTools(submitPlan("t1", validCandidate())), submitted]);
+
+        const result = planResultOf((await toolFor(model.provider).execute(INPUT, toolContext(analysisId, { emitted })))._unsafeUnwrap());
+
+        const cards = emitted.filter((event) => parseUnknownRecord(event)?.type === "data-plan");
+        expect(cards).toHaveLength(1);
+        expect(cards[0]).toMatchObject({ type: "data-plan", source: { agentId: "conversation-agent" }, data: { planId: planIdOf(result) } });
+
+        const blockedEvents: unknown[] = [];
+        (await toolFor(blockImmediately().provider).execute(INPUT, toolContext(analysisId, { emitted: blockedEvents })))._unsafeUnwrap();
+        expect(blockedEvents.filter((event) => parseUnknownRecord(event)?.type === "data-plan")).toHaveLength(0);
+    });
+
     it("persists one plan when the persist of the same call runs again, and a new call persists a new plan", async () => {
         const analysisId = "an-rerun";
         await seedAnalysis(pool, analysisId, { dpStatus: null });
