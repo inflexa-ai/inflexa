@@ -108,9 +108,22 @@ export function priorCall(toolName: string, input: unknown, value: unknown, text
     return [reply, result];
 }
 
-/** The calls of a trial, in the order that the model made them. */
+const ScriptCallsSchema = z.object({ calls: z.array(z.object({ tool: z.string() })) });
+
+/**
+ * The calls of a trial, in the order that the model made them. A call of `run_script` is followed by the tool calls of
+ * its script, with no input, thus a grader counts a lookup the same in a script and in a direct call.
+ */
 export function trialOf(steps: readonly LoopStep[], asks: readonly TrialAsk[], text: string, finishReason: string): Trial {
-    const calls = steps.flatMap((step, index) => step.calls.map((call) => ({ step: index, tool: call.toolName, input: call.input, refused: call.refused })));
+    const calls = steps.flatMap((step, index) =>
+        step.calls.flatMap((call) => {
+            const own: TrialCall = { step: index, tool: call.toolName, input: call.input, refused: call.refused };
+            const script = call.toolName === "run_script" && call.output?.outcome === "ok" ? ScriptCallsSchema.safeParse(call.output.value) : undefined;
+            const nested =
+                script?.success === true ? script.data.calls.map((inner) => ({ step: index, tool: inner.tool, input: undefined, refused: false })) : [];
+            return [own, ...nested];
+        }),
+    );
     return { calls, asks, text, finishReason };
 }
 

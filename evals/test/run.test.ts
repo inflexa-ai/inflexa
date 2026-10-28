@@ -4,6 +4,7 @@ import { callTools, reply, scriptedModel, text, toolCall } from "@inflexa-ai/har
 import { conversationAgent, UNSCRIPTED_ERROR } from "../lib/agent.js";
 import { asked, decides, never, type EvalCase } from "../lib/case.js";
 import { allCases } from "../cases/index.js";
+import { withRunScript } from "@inflexa-ai/harness/loop/run-loop.js";
 import { promptDigest, runTrial, turnInputOf } from "../lib/run.js";
 
 const agent = conversationAgent();
@@ -27,7 +28,11 @@ describe("runTrial", () => {
         );
         expect(result).toMatchObject({ kind: "graded", pass: true, text: "Started.", finishReason: "stop" });
         const request = model.calls[0];
-        expect(request?.tools?.map((tool) => tool.name).sort()).toEqual(agent.tools.map((tool) => tool.id).sort());
+        expect(request?.tools?.map((tool) => tool.name).sort()).toEqual(
+            withRunScript(agent)
+                .tools.map((tool) => tool.id)
+                .sort(),
+        );
         expect(request?.prompt[0]).toMatchObject({ role: "system", content: agent.systemPrompt });
     });
 

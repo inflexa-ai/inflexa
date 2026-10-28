@@ -194,7 +194,8 @@ Obey these rules:
 2. **The declared tools stay the same for the whole conversation.** A request
    never changes `tools` or `toolChoice`. `@ai-sdk/anthropic` removes the tools
    from a request with `toolChoice: "none"`, thus that value also changes the
-   prefix.
+   prefix. The description of `run_script` lists the script tools of the agent,
+   thus the script tools also stay the same.
 3. **A call policy limits the tools that can run.** To stop a tool for one
    request, give a mask in the call policy (`loop/call-policy.ts`). Do not remove
    the tool. The policy refuses a call outside the mask, past its budget, or past
@@ -362,12 +363,16 @@ is an embedder concern.
 ### Key Components
 
 - **Conversation Agent** (`agents/conversation-agent.ts`): the single user-facing
-  agent. It has the bio-lookup tools, the workspace search, the two file tools
+  agent. It has the workspace search, the two file tools
   (`write_file`, `edit_file`), `inspectRun`,
   `inspectDataProfile`, `updateWorkingMemory`, `generatePlan`, `executePlan`,
   `runEphemeral`, `startReportSession`, `generateAnalogyReport`, and `showUser`.
-  `createConversationAgent(deps)` is the composition root that wires the deps of
-  each tool.
+  Its bio-lookup tools are script tools (`AgentDefinition.scriptTools`). The
+  agent calls them from one JavaScript script through `run_script`
+  (`tools/script/run-script.ts`), and no request declares them. The loop throws
+  for a script tool that asks an approval or starts a workflow, because a script
+  is one durable step. `createConversationAgent(deps)` is the composition root
+  that wires the deps of each tool.
 - **Sub-agent tools** (`generatePlan`, `generateAnalogyReport`): a sub-agent that
   is a tool. It runs its loop under a child session (`forSubAgent`). Inside the
   body of a workflow, the call starts a child workflow (`loop/sub-agent.ts`). Thus

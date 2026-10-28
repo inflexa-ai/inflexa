@@ -141,7 +141,7 @@ describe("createConversationAgent", () => {
 
     test("exposes the expected leaf and loop-driving tools", () => {
         const agent = buildAgent();
-        const ids = new Set(agent.tools.map((t) => t.id));
+        const ids = new Set([...agent.tools, ...(agent.scriptTools ?? [])].map((t) => t.id));
         for (const expected of [
             "search_gene",
             "chembl",
@@ -190,8 +190,19 @@ describe("createConversationAgent", () => {
         expect(descriptionOf("show_file")).toContain("a `.pdb` or `.cif` structure that a step wrote");
     });
 
+    test("the lookups are script tools, and the agent declares none of them directly", () => {
+        const agent = buildAgent();
+        const scriptIds = (agent.scriptTools ?? []).map((tool) => tool.id);
+        for (const id of ["search_gene", "pubmed", "resolve_citation", "chembl", "web_fetch"]) expect(scriptIds).toContain(id);
+        expect(agent.tools.map((tool) => tool.id).filter((id) => scriptIds.includes(id))).toEqual([]);
+        for (const tool of agent.scriptTools ?? []) {
+            expect(tool.approval === undefined).toBe(true);
+            expect(tool.startsWorkflow === true).toBe(false);
+        }
+    });
+
     test("places citation verification beside literature discovery", () => {
-        const ids = buildAgent().tools.map((tool) => tool.id);
+        const ids = (buildAgent().scriptTools ?? []).map((tool) => tool.id);
         expect(ids.indexOf("resolve_citation")).toBe(ids.indexOf("pubmed") + 1);
     });
 
@@ -243,8 +254,8 @@ describe("createConversationAgent", () => {
     });
 
     test("an injected web-search engine adds web_search after search_arxiv; no engine leaves web_fetch alone", () => {
-        const withEngine = buildAgent(undefined, undefined, unusedWebSearchEngine).tools.map((t) => t.id);
-        const withoutEngine = buildAgent().tools.map((t) => t.id);
+        const withEngine = (buildAgent(undefined, undefined, unusedWebSearchEngine).scriptTools ?? []).map((t) => t.id);
+        const withoutEngine = (buildAgent().scriptTools ?? []).map((t) => t.id);
 
         // The description of an unattached tool never enters a model context, so
         // an embedder that injects no engine must get no `web_search` at all.
