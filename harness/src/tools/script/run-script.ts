@@ -123,6 +123,7 @@ function issuesOf(error: z.ZodError): string {
 
 /** What the nested calls of one script collect: the calls, and the files that the calls read and wrote. */
 type ScriptState = {
+    readonly code: string;
     readonly calls: ScriptCall[];
     readonly reads: ScriptRead[];
     readonly writes: ScratchFile[];
@@ -177,7 +178,12 @@ function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Log
                 await finish("error", detail);
                 throw new Error(`${tool.id}: ${issuesOf(parsed.error)}`);
             }
-            const result = await tool.execute(parsed.data, { ...ctx, invocationId, signal: AbortSignal.any([ctx.signal, signal]) });
+            const result = await tool.execute(parsed.data, {
+                ...ctx,
+                invocationId,
+                signal: AbortSignal.any([ctx.signal, signal]),
+                script: { code: state.code },
+            });
             if (result.isErr()) {
                 await finish("error", detail);
                 throw new Error(`${tool.id}: ${result.error.error}`);
@@ -289,6 +295,7 @@ export function createRunScriptTool(
             const tracked: { part: ChatPartFrame | null } = { part: null };
             let started = 0;
             const state: ScriptState = {
+                code,
                 calls: [],
                 reads: [],
                 writes: [],

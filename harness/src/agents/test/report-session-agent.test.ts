@@ -161,6 +161,13 @@ describe("createReportSessionAgent", () => {
         expect(new Set(ids)).toEqual(new Set([...READ_SURFACE, ...COMPOSITION_SURFACE]));
     });
 
+    test("a derivation of a small table runs in a script: the script tools read the pinned evidence and pin a derived table", () => {
+        const agent = buildAgent();
+
+        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived"]);
+        expect(agent.scriptScratch).toBeDefined();
+    });
+
     test("a tool output store adds read_tool_output after grep, and no store leaves it out", () => {
         const store: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
 
@@ -401,6 +408,8 @@ describe("createReportSessionAgent", () => {
     test("the prompt divides a derivation from a chart knob", () => {
         // The tool name, the three reshaping cases, and the per-row bound are stable
         // substrings, thus the assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("derive the table in `run_script`");
+        expect(reportSessionPrompt).toContain("A table over 16 MiB derives with");
         expect(reportSessionPrompt).toContain("derive_table");
         expect(reportSessionPrompt).toContain("a pivot, and an aggregate are such reshaping");
         // The exclusion is chart-scoped. A table carries no knob, thus its composed

@@ -113,9 +113,11 @@ of the chart block. When a clustering orders an axis of a heatmap, the edge tabl
 that clustering binds as the tree of that axis, and the axis takes its leaf order.
 
 A run writes statistical tables, and not plot-ready ones. When a real reshaping
-stands between the evidence and the block, \`derive_table\` runs your Python script
-over the pinned inputs that you declare, and it pins the result to this session. A
-join of two tables, a pivot, and an aggregate are such reshaping. A per-row
+stands between the evidence and the block, derive the table in \`run_script\`:
+\`read_table\` reads a pinned table, and \`write_derived\` pins the result to this
+session with the inputs that the script read. A table over 16 MiB derives with
+\`derive_table\`, which runs a Python script in a sandbox. A join of two tables,
+a pivot, and an aggregate are such reshaping. A per-row
 transform of a chart is not: a chart block reads the column that it needs, thus a
 knob of the chart serves it. A table carries no such knob, thus a composed display
 column of a table derives. The derived table binds like any pinned artifact, and its

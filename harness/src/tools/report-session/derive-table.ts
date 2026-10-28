@@ -232,8 +232,8 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
     return defineTool({
         id: "derive_table",
         description:
-            "Derive one table from the pinned evidence with a Python script, and pin the result to this session. " +
-            "Reach for it when a real reshaping stands between the evidence and the block: a join of two tables, a pivot, or an aggregate. " +
+            "Derive one table from the pinned evidence with a Python script in a sandbox, and pin the result to this session. " +
+            "Reach for it when a real reshaping stands between the evidence and the block, and an input is over the 16 MiB that `run_script` reads. " +
             "A per-row transform is not a derivation, because a chart block reads the column that it needs. " +
             "Name each pinned path that the script reads in `inputs`: each one must sit in the pinned evidence, and the record pins its hash. " +
             'Give the file name of the result in "output": one name, with no directory and no separator, for example "yield_by_group.csv". ' +

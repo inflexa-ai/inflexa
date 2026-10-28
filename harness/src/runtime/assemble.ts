@@ -473,6 +473,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         provenance: deps.provenance,
         logger: conversation.logger,
         toolOutputStore,
+        scriptRuntime: conversation.scriptRuntime,
     });
 
     // The single registration point for every typed agent. A future thread type's

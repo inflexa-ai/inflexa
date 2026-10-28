@@ -168,6 +168,11 @@ export type ToolContext = {
      * no child agent ignores it.
      */
     readonly turnUsage?: AgentRunUsage;
+    /**
+     * The script that makes this call, when `run_script` makes it. A tool that records how its output was made
+     * keeps the code, for example the derivation record of a report session. Absent for a call of the model.
+     */
+    readonly script?: { readonly code: string };
 };
 
 /** What the approval hook of a tool reads of its call. */
