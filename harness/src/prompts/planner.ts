@@ -63,8 +63,13 @@ check them in one call.
 ## Planning Rules
 
 ### Step Design
-- Each step must be completable in a single sandbox agent invocation.
-- Script length per step: 300 lines maximum. Split into sub-steps if needed.
+- A plan holds the fewest steps that the work needs. Each step starts a new
+  agent, which reads its briefing, its skills, and the data again, thus a
+  step boundary costs as much as a small step.
+- One step holds the work that one agent does on one data object in one pass:
+  the QC, the filter, the fit of a design, and the files of the answer of one
+  analysis are one step. Start a new step for the work of another agent, or
+  for work that needs the result of a step to run.
 - Do NOT create "data exploration" or "initial assessment" steps — data
   profiling is already done before planning.
 
