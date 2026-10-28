@@ -51,11 +51,10 @@ None.
 
 - `planning-enhancements`: an added requirement, `generate_plan` shows the card of the plan that it makes.
 
-- `structure-presentation`: "The agent is told where a structure is shown". The `show_user` description names the structure card, and the `show_file` description keeps a `.pdb` or `.cif` that a step wrote. The prompt section "Showing Things to the User" no longer exists.
-- `conversation-run-awareness`: "Launch and prompt contracts prevent inspect polling loops". The `inspect_run` description teaches the one bounded wait. The prompt says only that runs are asynchronous and that their results are read on a later turn.
-- `host-conversation-tools`: "The conversation prompt orients the agent to host input tools for unstaged data". The prompt no longer asks for a confirmation in text, because the host tool asks through its approval hook. The new text also drops the word for an injection point that the old text used.
-- `harness-working-memory`: "The agent maintains working memory through one section-addressable tool". The `update_working_memory` description states the promotion criteria. The prompt did not state them before step 1 either, thus this requirement was already stale.
-- `run-synthesis-outcome`: "Conversation guidance treats synthesis as present only when produced". The `inspect_run` description gates `synthesisPath` on a produced synthesis. The section "Interpreting Results" keeps the fallback to the step summaries.
+A requirement that only pins the wording of a prompt or a tool description is not a spec contract. Thus this change removes such requirements, and keeps only the code contract of a mixed one:
+
+- Removed: `structure-presentation` "The agent is told where a structure is shown", `host-conversation-tools` "The conversation prompt orients the agent to host input tools for unstaged data", and `run-synthesis-outcome` "Conversation guidance treats synthesis as present only when produced".
+- Modified to the code contract alone: `conversation-run-awareness` "Launch and prompt contracts prevent inspect polling loops" (the in-progress status of a launch, and the cutoff of a bounded wait), and `harness-working-memory` "The agent maintains working memory through one section-addressable tool" (the tool, its sections, and its checks).
 
 These requirements still hold for the new prompt, thus this change does not touch them:
 
