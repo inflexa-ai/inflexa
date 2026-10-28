@@ -3,7 +3,7 @@
  *
  * One URL in, extracted text out: HTML becomes Markdown (Readability over a
  * `linkedom` DOM, then Turndown, with the body text as the fallback), a PDF
- * becomes the text of its first 100 pages through `pdf-parse`, and a text or
+ * becomes the text of its first 100 pages through `unpdf`, and a text or
  * JSON body passes through. A bad scheme, an internal address, an HTTP error, an
  * oversized body, a redirect chain past the limit, and a body the tool cannot
  * extract are all normal results on the ok channel — never a failure of the
@@ -526,25 +526,28 @@ function htmlExtractionOf(body: Buffer): Extracted {
 
 type Extracted = { kind: "text"; text: string; pdfCut?: WebFetchPdfCut } | { kind: "unextractable"; detail?: string };
 
-let pdfParseModule: typeof import("pdf-parse") | undefined;
+let pdfTextModule: typeof import("../../lib/pdf-text.js") | undefined;
 
 async function extractBody(contentType: string, body: Buffer): Promise<Extracted> {
     if (contentType === "text/html" || contentType === "application/xhtml+xml") {
         return htmlExtractionOf(body);
     }
     if (contentType === "application/pdf") {
-        // `pdf-parse` makes `os.availableParallelism()` return `undefined` process-wide under Bun when its module loads,
-        // so the public barrel must never import it statically (inflexa-ai/inflexa#701). The first PDF loads it once.
-        pdfParseModule ??= await import("pdf-parse");
-        const parser = new pdfParseModule.PDFParse({ data: body });
+        // PDF.js is a large module, thus the first PDF loads it, and a host that fetches no PDF never pays for it.
+        pdfTextModule ??= await import("../../lib/pdf-text.js");
         try {
-            const result = await parser.getText({ first: PDF_PAGE_CAP });
-            const pdfCut = result.total > result.pages.length ? { totalPages: result.total, pagesRead: result.pages.length } : undefined;
-            return { kind: "text", text: result.text.trim(), pdfCut };
+            const result = await pdfTextModule.readPdfText(body, { first: 1, last: PDF_PAGE_CAP });
+            const pdfCut = result.totalPages > result.pages.length ? { totalPages: result.totalPages, pagesRead: result.pages.length } : undefined;
+            return {
+                kind: "text",
+                text: result.pages
+                    .map((page) => page.text)
+                    .join("\n\n")
+                    .trim(),
+                pdfCut,
+            };
         } catch (error) {
             return { kind: "unextractable", detail: `the PDF parser failed: ${errorMessageOf(error) ?? textOf(error)}` };
-        } finally {
-            await parser.destroy();
         }
     }
     if (contentType.startsWith("text/") || contentType === "application/json" || contentType.endsWith("+json")) {

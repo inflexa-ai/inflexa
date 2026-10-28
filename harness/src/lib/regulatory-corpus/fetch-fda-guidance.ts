@@ -1,5 +1,5 @@
 import { load } from "cheerio";
-import { PDFParse } from "pdf-parse";
+import { readPdfText } from "../pdf-text.js";
 
 import { normalizeWhitespace } from "./normalize-whitespace.js";
 
@@ -108,10 +108,8 @@ export async function fetchAndExtractFdaDoc(stub: FdaDocStub): Promise<FdaDoc> {
 
     let text: string;
     if (ct.includes("pdf") || stub.doc_url.toLowerCase().endsWith(".pdf")) {
-        const parser = new PDFParse({ data: buf });
-        const result = await parser.getText();
-        await parser.destroy();
-        text = result.text;
+        const result = await readPdfText(buf, { first: 1, last: Number.MAX_SAFE_INTEGER });
+        text = result.pages.map((page) => page.text).join("\n\n");
     } else {
         const $ = load(buf.toString("utf-8"));
         // Prefer <main> when present; fall back to body.

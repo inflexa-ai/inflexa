@@ -35,6 +35,7 @@
     "lib",
     "cases",
     "test",
-    "../cli/src/**/*.d.ts"
+    "../cli/src/**/*.d.ts",
+    "../harness/src/**/*.d.ts"
   ]
 }

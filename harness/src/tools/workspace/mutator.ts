@@ -274,7 +274,8 @@ export async function confinedWrite(args: {
     readonly analysisId: string;
     readonly workingDir: string;
     readonly path: string;
-    readonly content: string;
+    /** Text lands as UTF-8. */
+    readonly content: string | Uint8Array;
     readonly invocationId: string;
     readonly beforeLand: ((staged: ConfinedWriteOk) => Promise<void>) | undefined;
 }): Promise<{ readonly status: Exclude<LandingStatus, "ok"> | "out_of_scope" } | ConfinedWriteOk> {
@@ -292,7 +293,7 @@ export async function confinedWrite(args: {
     // the bare tail (the collector normalizes it step-relative itself).
     const relative = scoped.relative.split("\\").join("/");
     const agentPath = `/${args.analysisId}/${relative}`;
-    const bytes = Buffer.from(args.content, "utf8");
+    const bytes = typeof args.content === "string" ? Buffer.from(args.content, "utf8") : Buffer.from(args.content);
     const prefix = resolvePath(args.workingDir);
 
     const confined: ConfinedWriteOk = { status: "ok", relative, agentPath, bytes };

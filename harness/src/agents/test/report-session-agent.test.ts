@@ -161,10 +161,10 @@ describe("createReportSessionAgent", () => {
         expect(new Set(ids)).toEqual(new Set([...READ_SURFACE, ...COMPOSITION_SURFACE]));
     });
 
-    test("a derivation of a small table runs in a script: the script tools read the pinned evidence and pin a derived table", () => {
+    test("a script derives a small table from the pinned evidence, and builds a chart file and a PDF", () => {
         const agent = buildAgent();
 
-        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived"]);
+        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived", "render_chart", "export_pdf"]);
         expect(agent.scriptScratch).toBeDefined();
     });
 

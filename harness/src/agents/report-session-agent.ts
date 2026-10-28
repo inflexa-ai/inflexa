@@ -37,6 +37,7 @@ import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider, ProviderOptions } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { reportSessionDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { createDocumentTools } from "../tools/script/file-tools.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
@@ -250,8 +251,18 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
 
     // A derivation of a table of up to the read cap runs in a script, thus it starts no container. The scripts
     // of a session stay beside its page.
-    const scriptTools = createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, logger });
     const scriptScratch = createScriptScratch({ resolveWorkspaceRoot, sessionDir: reportSessionDir, provenance, logger });
+    // A PDF of the report is a document that a script builds from the content of the session, not a print of the
+    // page. Its images come from the directory of the session alone, thus no unpinned file reaches it.
+    const scriptTools = [
+        ...createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, logger }),
+        ...createDocumentTools({
+            workspaceFs,
+            resolveWorkspaceRoot,
+            scratch: scriptScratch,
+            imageScope: (session) => (session.scope.threadId === undefined ? undefined : reportSessionDir(session.scope.threadId)),
+        }),
+    ];
 
     return {
         id: REPORT_SESSION_AGENT_ID,

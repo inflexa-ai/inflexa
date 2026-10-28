@@ -205,6 +205,30 @@ Inside a workflow, a `run_script` call MUST be one durable step of the loop, the
 - **WHEN** a script renders a bar chart as `bars`
 - **THEN** `derived/bars.svg` holds an SVG with the width `183mm`
 
+### Requirement: A script reads a PDF with no sandbox
+
+`read_pdf` MUST give the text of the asked pages of a PDF of the workspace, and the page count of the document, through the read path of the workspace. One call MUST read at most 50 pages, and a file over 64 MiB MUST be refused. It MUST run in the process of the host, with no container.
+
+#### Scenario: Pages of a long PDF
+
+- **WHEN** a script reads pages 2 to 3 of a PDF of three pages
+- **THEN** the result holds the text of pages 2 and 3, and the page count 3
+
+### Requirement: A script makes a PDF with no sandbox and no browser
+
+`export_pdf` MUST make a PDF from markdown in the derived directory of the session, in the process of the host, with no container and no browser. An image of the markdown MUST be a file of the workspace that the tool reads, and the PDF MUST read no URL and no other file.
+
+#### Scenario: A chart in a PDF
+
+- **GIVEN** a script that wrote `volcano.svg` with `render_chart`
+- **WHEN** it calls `export_pdf` with markdown that names that path as an image
+- **THEN** the derived directory holds the PDF with the chart, and the record of the call holds the read of the chart and the write of the PDF
+
+#### Scenario: An image that the workspace does not hold
+
+- **WHEN** the markdown names an image that is no readable file of the workspace
+- **THEN** the PDF shows its alt text, and the result names the image in `missingImages`
+
 ### Requirement: A session keeps each script
 
 With a scratch directory, `run_script` MUST save the code of each script before it runs, at `scripts/{invocationId}.js` under the scratch directory of the session. A failed script MUST stay saved. The scratch directory of a conversation is `conversation-sessions/{threadId}/`. A scope with no thread MUST save no script.
