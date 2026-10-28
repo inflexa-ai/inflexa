@@ -41,7 +41,7 @@ const ShowFileInputSchema = z.object({
 export const showFileTool = defineTool({
     id: "show_file",
     description:
-        "Display EXISTING analysis artifacts in chat by path — images, CSVs, PDFs, notebooks, logs. " +
+        "Display EXISTING analysis artifacts in chat by path — images, CSVs, PDFs, notebooks, logs, and a `.pdb` or `.cif` structure that a step wrote. " +
         "The card references the file directly and its content is fetched when the user views it: you never read, " +
         "inline, or paste the bytes. Pick this tool by what you are referencing, not by how the output looks: " +
         "NOT for content you synthesized (a chart, a table, a snippet you invented — use `show_user`), NOT for a stored plan (`show_plan`). " +

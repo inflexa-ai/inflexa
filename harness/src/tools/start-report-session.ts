@@ -78,7 +78,7 @@ const startReportSessionInput = z.object({
         .boolean()
         .optional()
         .describe(
-            "Set it to true to start a new session when the conversation holds no user turn of new work after the last report session. The default is false.",
+            "Set it to true to start a new session when the conversation holds no user turn of new work after the last report session, and only when the user asks for a separate report. The default is false.",
         ),
 });
 

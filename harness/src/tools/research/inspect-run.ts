@@ -190,7 +190,7 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
             "With a runId, returns the run, its steps, and an inspectionState: not_found; in_progress; paused (a step waits until the user resumes or stops the run, and pauses gives each cause); " +
             "or terminal (run.status completed, partial, failed, or canceled). " +
             "Output paths appear only on a terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
-            "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn. " +
+            "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn and tell the user that the run still runs. " +
             "A wait on the run that the caller itself runs inside returns at once with selfWaitPrevented. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
         inputSchema,

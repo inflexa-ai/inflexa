@@ -39,7 +39,8 @@ export function createShowPlanTool(pool: PlanRowQuerier): Tool<z.infer<typeof Sh
             "Pick this tool by what you are referencing, not by how the output looks: " +
             "NOT for a plan you are drafting in conversation (that is `generate_plan`), NOT for other synthesized content " +
             "(`show_user`), NOT for analysis files (`show_file`). Never re-type a plan's steps into a `show_user` markdown " +
-            "card — that renders a second, divergent copy of the same plan.",
+            "card — that renders a second, divergent copy of the same plan. " +
+            "`shown: false` with `plan_not_found` means that the planId is no longer valid: generate a new plan, because a retry of the same planId fails the same way.",
         inputSchema: ShowPlanInputSchema,
         describeCall: ({ planId }) => planId,
         execute: async ({ planId, title }, ctx): Promise<Result<ShowPlanOutput, ToolError>> => {
