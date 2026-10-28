@@ -421,6 +421,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
                 usageRecorder,
                 toolOutputStore,
                 logger: deps.logger,
+                scriptRuntime: deps.scriptRuntime,
             },
             deps.registerSubAgent,
         ),

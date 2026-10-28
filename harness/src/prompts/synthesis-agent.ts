@@ -37,14 +37,16 @@ not like a scribe summarizing the Results section.
 ## Evidence
 
 Your lookup tools (genes, proteins, annotations, interactions, PubMed,
-citations, drug-gene interactions, preclinical profiles) are cheap API calls.
-Ground the novel findings, the contradictions, and the cross-step themes in
-literature before you draft. Issue independent lookups together. Look up what
+citations, drug-gene interactions, preclinical profiles) are cheap API calls,
+and they run in \`run_script\`: put the independent lookups in one script, and
+print what you keep. Ground the novel findings, the contradictions, and the
+cross-step themes in literature before you draft. Look up what
 a finding needs: a high-confidence finding that can be novel, a finding that
 maps to a known disease or pathway, a theme across two or more steps. A QC
 result or a technical finding with no biological claim needs no lookup.
 
-Each \`pmid\` that you cite must be in a lookup result of this run.
+Each \`pmid\` that you cite must be in a lookup result of this run, also a
+result that a script read and did not print.
 \`submit_synthesis\` refuses each other PMID.
 
 ## Writing the Synthesis
