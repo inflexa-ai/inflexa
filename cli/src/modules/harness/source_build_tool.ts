@@ -1,14 +1,18 @@
 /**
- * install_from_source — build a package no index serves, from its source, in a
- * build session the embedder holds.
+ * install_from_source — a CLI host tool that builds a package no index serves,
+ * from its source, in a build session the CLI holds.
  *
- * The tool is the agent face of the `BuildSession` interface. It exists only
- * when the embedder binds the interface: the conversation composition adds it
- * to its roster, and no sandbox roster holds it, because an acquisition is a
- * host action. The tool drives the session call by call — `start`, then `exec`
- * reads in the exploration phase, then the plan ask, then per-command asks in
- * the build phase, then the commit ask — and writes no store state itself: one
- * clean run of the approved script is the only writer.
+ * The tool is the agent face of the `BuildSession` interface of
+ * `modules/libs/build-session.ts`. The CLI adds it to the conversation agent
+ * through `hostTools`, and no sandbox roster holds it, because an acquisition
+ * is a host action. The tool drives the session call by call — `start`, then
+ * `exec` reads in the exploration phase, then the plan ask, then per-command
+ * asks in the build phase, then the commit ask — and writes no store state
+ * itself: one clean run of the approved script is the only writer.
+ *
+ * An exec returns the whole combined output of its command. The harness loop
+ * cuts a result over the tool-result cap and keeps its text for
+ * `read_tool_output`, thus the tool keeps no output itself.
  *
  * A rejection of any ask ends the session and rethrows `AskRejectedError`
  * (deliberately not caught, matching `run_inflexa`): the loop maps the throw to
@@ -17,22 +21,15 @@
  * because the user refused nothing and a later call continues the session.
  */
 
+import { AskRejectedError, defineTool, type Tool, type ToolContext, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { errorMessageOf } from "../lib/thrown.js";
-import { textOf } from "../lib/unknown-text.js";
-import { keptTextOf, pairSafeIndex, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "../loop/tool-output.js";
-import type { BuildCommitRequest, BuildExecResult, BuildPlan, BuildSession, BuildSource } from "../sandbox/types.js";
-import { AskRejectedError } from "./approval/contract.js";
-import { defineTool, type Tool, type ToolContext, type ToolError } from "./define-tool.js";
+import type { BuildCommitRequest, BuildExecResult, BuildPlan, BuildSession, BuildSource } from "../libs/build-session.ts";
 
-/** The room the fixed fields of an exec result leave under the tool-result cap. */
-const RESULT_BUDGET = TOOL_RESULT_CAP - 512;
-
+/** The dependencies of the tool: the session realization that the CLI binds. */
 export type InstallFromSourceDeps = {
     readonly buildSession: BuildSession;
-    readonly toolOutputStore?: ToolOutputStore;
 };
 
 /** One live session of this process. A session ends at its stop, at a completed commit, or at a rejection. */
@@ -45,6 +42,7 @@ type SessionState = {
     plan?: BuildPlan;
 };
 
+/** The result of one call, one member for each outcome the agent reads. */
 export type InstallFromSourceResult =
     | {
           readonly status: "started";
@@ -61,7 +59,6 @@ export type InstallFromSourceResult =
           readonly exitCode: number | null;
           readonly timedOut: boolean;
           readonly output: string;
-          readonly kept?: { readonly ref: string; readonly keptLength: number };
       }
     | { readonly status: "committed"; readonly pin: string; readonly storeDir: string; readonly note: string }
     | { readonly status: "clean_run_failed"; readonly sessionId: string; readonly reason: string; readonly note: string }
@@ -90,10 +87,9 @@ const EXPLORATION_ROOT_NOTE =
     "command with `hosts`, `aptPackages`, and `strategy` — then re-run the command with `root: true`.";
 
 /** Two or more DNS labels of letters, digits, and hyphens, and a last label of letters alone: no IP literal, no top-level domain alone, no `/`, no `,`. */
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- no builtin parses a DNS host name; `URL` accepts single labels and IP literals.
 const HOST_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]+$/;
 
-/** A plan host. The egress wall puts the value into a DNS allow-list, where a listed domain covers its subdomains, thus only a full host name may pass. The schema gives the embedder the lower-case spelling. */
+/** A plan host. The egress wall puts the value into a DNS allow-list, where a listed domain covers its subdomains, thus only a full host name may pass. The schema gives the realization the lower-case spelling. */
 const hostSchema = z
     .string()
     .min(1)
@@ -227,13 +223,40 @@ function renderSource(source: BuildSource, commit?: string): string {
     return `${source.url}${ref} at commit ${commit ?? "unresolved"}`;
 }
 
-const sameLines = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
+function sameLines(a: readonly string[], b: readonly string[]): boolean {
+    return a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
+}
 
 /** The complete host list the session will carry: the hosts the plan adds beside the fixed hosts of the class, because the user approves exactly what the wall will allow. */
-const completeHosts = (state: SessionState, hosts: readonly string[]): readonly string[] => [...new Set([...hosts, ...(state.classHosts ?? [])])];
+function completeHosts(state: SessionState, hosts: readonly string[]): readonly string[] {
+    return [...new Set([...hosts, ...(state.classHosts ?? [])])];
+}
 
 /** A plan the user already approved, resent unchanged, asks nothing and restarts nothing. */
-const samePlan = (a: BuildPlan, b: BuildPlan): boolean => a.strategy === b.strategy && sameLines(a.hosts, b.hosts) && sameLines(a.aptPackages, b.aptPackages);
+function samePlan(a: BuildPlan, b: BuildPlan): boolean {
+    return a.strategy === b.strategy && sameLines(a.hosts, b.hosts) && sameLines(a.aptPackages, b.aptPackages);
+}
+
+/** The own string `message` of a thrown value of any object type, not only of an `Error`. */
+function messageOf(value: unknown): string | undefined {
+    if (typeof value !== "object" || value === null || !("message" in value)) return undefined;
+    const { message } = value;
+    return typeof message === "string" ? message : undefined;
+}
+
+/** The text form of a value typed `unknown`: a string as itself, a primitive through `String`, and an object as JSON so that no message reads `[object Object]`. */
+function textOf(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (typeof value !== "object" || value === null) return String(value);
+    let json: string | undefined;
+    try {
+        json = JSON.stringify(value);
+    } catch {
+        // A cycle or a bigint inside the value makes `JSON.stringify` throw.
+    }
+    // `toJSON` that gives `undefined` makes `JSON.stringify` give `undefined` without a throw.
+    return json ?? Object.prototype.toString.call(value);
+}
 
 /** The two streams of one exec as the one log the model reads. */
 function combinedOutput(stdout: string, stderr: string): string {
@@ -242,11 +265,12 @@ function combinedOutput(stdout: string, stderr: string): string {
     return `${stdout}\n--- stderr ---\n${stderr}`;
 }
 
+/** Make the `install_from_source` tool over the session realization that the CLI binds. Each tool holds its own table of live sessions. */
 export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z.infer<typeof InstallFromSourceInputSchema>, InstallFromSourceResult> {
     const sessions = new Map<string, SessionState>();
     const ended = new Set<string>();
 
-    const failureOf = (cause: unknown): string => errorMessageOf(cause) ?? textOf(cause);
+    const failureOf = (cause: unknown): string => messageOf(cause) ?? textOf(cause);
 
     // The loop runs the calls of one round in parallel and a host can run two turns at once, thus
     // the body of each exec, commit, and stop (its asks included) runs behind the earlier call of
@@ -301,6 +325,8 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
     /** An ask threw: only the denial of the user ends the session. An abort or another throw leaves the session open, and the throw goes to the loop. */
     async function endOnRejection(sessionId: string, cause: unknown): Promise<never> {
         if (cause instanceof AskRejectedError) await stopAfterRejection(sessionId);
+        // The loop maps a throw of `execute` to an execution-denied result that ends the turn. Only that
+        // throw carries the denial, and the session must stop first, thus the same value passes on.
         throw cause;
     }
 
@@ -355,37 +381,16 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
         }
     }
 
-    /** The exec result under the tool-result cap, with the whole log kept for `read_tool_output` when a store is wired. */
-    async function renderExec(ctx: ToolContext, sessionId: string, r: BuildExecResult): Promise<Extract<InstallFromSourceResult, { status: "ran" }>> {
-        const full = combinedOutput(r.stdout, r.stderr);
-        const base = {
-            status: "ran" as const,
+    /** The exec result with the whole combined output: the loop cuts a result over the tool-result cap and keeps its text for `read_tool_output`. */
+    function renderExec(sessionId: string, r: BuildExecResult): Extract<InstallFromSourceResult, { status: "ran" }> {
+        return {
+            status: "ran",
             sessionId,
             execId: r.execId,
             exitCode: r.exitCode,
             timedOut: r.timedOut,
+            output: combinedOutput(r.stdout, r.stderr),
         };
-        let shown = full;
-        let output: Extract<InstallFromSourceResult, { status: "ran" }> = { ...base, output: shown };
-        while (JSON.stringify(output).length > RESULT_BUDGET && shown.length > 0) {
-            shown = shown.slice(0, pairSafeIndex(shown, Math.floor((shown.length * 3) / 4), -1));
-            output = { ...base, output: shown };
-        }
-        if (shown.length >= full.length || deps.toolOutputStore === undefined) return output;
-
-        const content = keptTextOf(full);
-        const ref = toolOutputRef(`${ctx.session.scope.analysisId}:${r.execId}`);
-        const threadId = ctx.session.runFrame === undefined ? ctx.session.scope.threadId : undefined;
-        const put = await deps.toolOutputStore.put({
-            analysisId: ctx.session.scope.analysisId,
-            ref,
-            toolName: "install_from_source",
-            toolCallId: ctx.invocationId,
-            threadId,
-            content,
-            totalLength: full.length,
-        });
-        return put.isOk() ? { ...output, kept: { ref, keptLength: content.length } } : output;
     }
 
     return defineTool({
@@ -489,7 +494,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                                 { command: input.command ?? "", execId, root: input.root, plan: planToAsk },
                                 ctx.signal,
                             );
-                            return ok(await renderExec(ctx, sessionId, r));
+                            return ok(renderExec(sessionId, r));
                         } catch (cause) {
                             return ok({ status: "failed", reason: failureOf(cause) });
                         }

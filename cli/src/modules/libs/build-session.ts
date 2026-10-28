@@ -1,6 +1,6 @@
 /**
- * The build session of a source install — the CLI realization of the harness
- * `BuildSession` interface behind the `install_from_source` conversation tool.
+ * The build session of a source install — the CLI `BuildSession` interface and
+ * its realization, behind the `install_from_source` CLI host tool.
  *
  * A walled session is TWO held provisioner containers. The WALL container
  * (`inflexa-build-<id>-wall`) holds `NET_ADMIN` and has no mount: its
@@ -73,17 +73,6 @@ import { basename, isAbsolute, join } from "node:path";
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
-
-import type {
-    BuildCommitRequest,
-    BuildCommitResult,
-    BuildExecResult,
-    BuildPlan,
-    BuildSession,
-    BuildSessionCommand,
-    BuildSessionHandle,
-    BuildSource,
-} from "@inflexa-ai/harness";
 
 import { ensureRuntime } from "../../lib/config.ts";
 import { capture, type CaptureOpts, type CaptureResult, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
@@ -749,15 +738,99 @@ function registerAtExit(session: LiveSession): void {
 
 // --- The session ----------------------------------------------------------------
 
+/** The source of a build session: a git repository (an optional ref names a commit, a tag, or a branch), or a folder of the host. */
+export type BuildSource = { readonly kind: "git"; readonly url: string; readonly ref?: string } | { readonly kind: "folder"; readonly path: string };
+
+/** The plan of one build: the hosts the session egress must hold in the build phase, the apt packages it installs, and the build strategy. */
+export type BuildPlan = {
+    readonly hosts: readonly string[];
+    readonly aptPackages: readonly string[];
+    readonly strategy: string;
+};
+
+/** A started build session. */
+export type BuildSessionHandle = {
+    readonly sessionId: string;
+    /** The full commit sha the host resolved and cloned. Absent for a folder source. */
+    readonly commit?: string;
+    /** The root of the session's working copy of the source — the default working directory of each exec. */
+    readonly workingDir: string;
+    /** The fixed hosts of the source-build class — the dated Ubuntu snapshot host beside the index and pak hosts — which the session egress holds beside every host the plan names. The plan ask shows them with the plan's own hosts, because the user approves exactly what the wall will allow. */
+    readonly classHosts?: readonly string[];
+};
+
+/** One command of a build session. */
+export type BuildSessionCommand = {
+    readonly command: string;
+    /** Session id plus per-session sequence, minted by the tool: the chat path has no durable step to derive it from. */
+    readonly execId: string;
+    /** Runs as root. The default is the non-root user of the image. */
+    readonly root?: boolean;
+    /** The plan this command runs under. The realization restarts the session container under the plan's host list before the command runs. */
+    readonly plan?: BuildPlan;
+};
+
+/** The outcome of one session exec. `exitCode` is null when the exec produced no exit (a launch failure of the exec channel). */
+export type BuildExecResult = {
+    readonly execId: string;
+    readonly exitCode: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly timedOut: boolean;
+};
+
+/** The outcome of one clean run: `committed` holds the qualified pin and the store directory the run wrote; `failed` keeps the session open. */
+export type BuildCommitResult =
+    { readonly kind: "committed"; readonly pin: string; readonly storeDir: string } | { readonly kind: "failed"; readonly reason: string };
+
+/** The input of one commit: the build script, and the directory of the source tree that holds the R `DESCRIPTION` when it is not the root. */
+export type BuildCommitRequest = {
+    readonly script: string;
+    /** A relative path inside the source tree, with no `..` segment. The clean run resolves the R dependencies from this directory. */
+    readonly packageDir?: string;
+};
+
 /**
- * The CLI realization of the harness `BuildSession`. Its `start` admits a null
+ * The build-session interface behind the `install_from_source` CLI host tool.
+ * The CLI realization owns the container the build runs in, the egress wall
+ * around it, and every store write — the host tool drives the session call by
+ * call and writes none of these itself. `start` carries the analysis id of the
+ * conversation session the tool serves, and the commit extends the farm of that
+ * analysis.
+ *
+ * `start` begins an exploration phase: the source is cloned at the resolved
+ * commit (or the folder is copied in) before the first command, and the egress
+ * of the container holds the host of the git source alone — a folder source
+ * holds no host. A command that carries a plan moves the session to its build
+ * phase: the realization restarts the container under the plan's host list over
+ * the same tree, and a later plan restarts it again under the amended list.
+ * `commit` runs the script in one new container over the pristine snapshot, and
+ * that run alone writes the store. A `stop`, and a `commit` that answers
+ * `committed`, end the session; the realization removes the container.
+ *
+ * `start`, `exec`, and `commit` take the abort signal of the turn. When it
+ * fires, the realization stops the work of the call and the promise rejects:
+ * an aborted `exec` stops its command inside the container, an aborted
+ * `commit` stops the clean-run container, and an aborted `start` removes what
+ * it made. The session of an aborted `exec` or `commit` stays open. `stop`
+ * takes no signal, because it is short and it must finish.
+ */
+export type BuildSession = {
+    start(source: BuildSource, analysisId: string, signal: AbortSignal): Promise<BuildSessionHandle>;
+    exec(handle: string, command: BuildSessionCommand, signal: AbortSignal): Promise<BuildExecResult>;
+    commit(handle: string, request: BuildCommitRequest, signal: AbortSignal): Promise<BuildCommitResult>;
+    stop(handle: string): Promise<void>;
+};
+
+/**
+ * The CLI realization of `BuildSession`. Its `start` admits a null
  * analysis beside the interface's string, and the commit refuses that null as
  * a binding fault — a source build never lands with no farm to extend.
  */
 export type CliBuildSession = BuildSession & { start(source: BuildSource, analysisId: string | null, signal: AbortSignal): Promise<BuildSessionHandle> };
 
 /**
- * Make the CLI realization of the harness `BuildSession` interface. The
+ * Make the CLI realization of the `BuildSession` interface. The
  * analysis id arrives with each `start` call, and the commit extends the farm
  * of that analysis.
  */

@@ -272,15 +272,6 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
     });
 
-    it("the sandbox roster holds no install_from_source — a source build stays a conversation-side host action", () => {
-        // The sandbox composition carries no build session, so the roster cannot
-        // gain the tool; the assertion pins the spec scenario against a future
-        // wiring that reaches a sandbox agent.
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, { ...meta, tools: [...BASE_SANDBOX_TOOLS] }, body);
-
-        expect(def.tools.map((t) => t.id)).not.toContain("install_from_source");
-    });
-
     it("the description names the failed-import trigger, and an unavailable answer is no absence", () => {
         // A false absence sends the agent to report a package that the pool
         // holds, thus `unavailable` must never read as a reason for a missing report.
