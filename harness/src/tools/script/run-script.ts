@@ -37,7 +37,16 @@ import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord, UnknownArraySchema } from "../../lib/unknown-containers.js";
 import { computeDetail, computeResultDetail } from "../../loop/tool-detail.js";
 import { buildFileReferenceCardData, MAX_FILES } from "../../memory/card-builders.js";
-import { defineTool, readToolCallRecord, withToolCallRecord, type Tool, type ToolContext, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import {
+    defineTool,
+    readToolCallRecord,
+    readToolResultImages,
+    withToolCallRecord,
+    type Tool,
+    type ToolContext,
+    type ToolError,
+    type WithToolCallRecord,
+} from "../define-tool.js";
 import { ScriptFileEffectSchema } from "./file-tools.js";
 import { recordScriptRun, type ScriptFailure } from "./metrics.js";
 import type { ScratchFile, ScriptRead, ScriptRunRecord, ScriptScratch } from "./scratch.js";
@@ -159,6 +168,9 @@ function collectEffect(state: ScriptState, value: unknown): void {
  * A script tool as the VM calls it. Each call gets its own invocation id, `<id of run_script>:<n>` in call order: a
  * tool keys what it stores by its invocation id (`web_fetch` keeps the cut text of a page under it), thus two calls of
  * one script must not share it. The script is one step, thus a replay calls nothing and the ids stay as recorded.
+ *
+ * The script gets the JSON of a result, and the JSON has no pictures. Thus a result with pictures is a failed call: the
+ * script would otherwise read the result as complete.
  */
 function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger, inCallContext: CallContext): CodemodeTool {
     return {
@@ -209,6 +221,10 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
     if (result.isErr()) {
         await finish("error", detail);
         throw new Error(`${tool.id}: ${result.error.error}`);
+    }
+    if (readToolResultImages(result.value).length > 0) {
+        await finish("error", detail);
+        throw new Error(`${tool.id}: the result holds pictures, and a script cannot carry pictures. Call ${tool.id} directly, not from a script.`);
     }
     collectEffect(state, result.value);
     if (tool.foldCallRecord !== undefined) {

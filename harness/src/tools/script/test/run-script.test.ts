@@ -12,7 +12,7 @@ import type { AgentDefinition } from "../../../loop/types.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
-import { defineTool, type Tool } from "../../define-tool.js";
+import { defineTool, withToolResultImage, type Tool } from "../../define-tool.js";
 import { createRunScriptTool, RUN_SCRIPT_TOOL_ID, type RunScriptOutput } from "../run-script.js";
 import { readToolCallRecord, withToolCallRecord, type ToolContext } from "../../define-tool.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
@@ -176,6 +176,24 @@ describe("run_script", () => {
 
         expect(result.ok).toBe(false);
         expect(result.error).toContain("/no/such/dir/quickjs.wasm");
+    });
+
+    test("a call whose result carries pictures is an Error that tells to call the tool directly", async () => {
+        const renderFigure = defineTool({
+            id: "render_figure",
+            description: "Render a figure.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: () => Promise.resolve(ok(withToolResultImage({ caption: "volcano" }, { base64: "iVBORw0KGgo=", mediaType: "image/png" }))),
+        });
+
+        const result = await run(`try { await tools.render_figure({}); } catch (e) { text(e.message); }`, [renderFigure]);
+
+        expect(result).toEqual({
+            ok: true,
+            output: "render_figure: the result holds pictures, and a script cannot carry pictures. Call render_figure directly, not from a script.",
+            calls: [{ tool: "render_figure", ok: false }],
+        });
     });
 
     test("an uncaught error ends the script and reports its kind", async () => {
