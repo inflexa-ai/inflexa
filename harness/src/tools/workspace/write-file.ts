@@ -42,7 +42,8 @@ export function createWriteFileTool(deps: WriteFileDeps): Tool<z.infer<typeof Wr
             "missing parent directories. On success it returns `status: ok`, the absolute " +
             "'/<analysisId>/...' path, and `bytesWritten`. A path outside the working directory " +
             "returns an `out_of_prefix` data variant (no I/O), one escaping the analysis tree returns " +
-            "`out_of_scope`, and a symbolic link on the path returns `symlink_denied`.",
+            "`out_of_scope`, and a symbolic link on the path returns `symlink_denied`. A path under the staged " +
+            "inputs returns `read_only` with the reason.",
         inputSchema: WriteFileInputSchema,
         // The path only. `content` is a whole file and must never ride a display
         // channel, which the emit-site length cap enforces regardless.

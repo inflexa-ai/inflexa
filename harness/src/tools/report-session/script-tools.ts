@@ -175,6 +175,7 @@ function createWriteDerivedTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeo
                 content: text,
                 invocationId: ctx.invocationId,
                 beforeLand: undefined,
+                refuseStagedInputs: true,
             });
             if (landed.status !== "ok") return refused(`the write of ${outputPath} was refused (${landed.status})`);
 

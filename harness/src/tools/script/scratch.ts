@@ -144,6 +144,7 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
             content,
             invocationId,
             beforeLand: undefined,
+            refuseStagedInputs: true,
         });
         if (landed.status !== "ok") return { refused: `the write of ${dir}/${name} was refused (${landed.status})` };
         return { path: landed.relative, hash: computeSha256(landed.bytes), size: landed.bytes.length };
