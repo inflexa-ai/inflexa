@@ -14,35 +14,37 @@ import { presentAt } from "../../../lib/present.js";
 import { AnalogyReportSchema } from "../../../contracts/analogy-report.js";
 import { analogicalReasonerPrompt } from "../../../prompts/analogical-reasoner.js";
 
-const VALID_ENVELOPE = {
-    schemaVersion: "1",
+const EXTRACTION = {
     problemSummary: "Source problem summary.",
     problemObjects: [{ name: "X", role: "input" }],
     problemRelations: ["X drives Y"],
     keyTerms: ["term"],
-    analogies: [
+};
+
+const ANALOGY = {
+    targetDomain: "control_theory",
+    analogyTitle: "Adaptive control of an unseen plant",
+    objectMappings: [{ source: "X", target: "plant", rationale: "Same hidden dynamics." }],
+    sharedRelations: "Both involve unknown dynamics under feedback.",
+    coverage: "available" as const,
+    solutions: [
         {
-            targetDomain: "control_theory",
-            analogyTitle: "Adaptive control of an unseen plant",
-            objectMappings: [{ source: "X", target: "plant", rationale: "Same hidden dynamics." }],
-            sharedRelations: "Both involve unknown dynamics under feedback.",
-            coverage: "available" as const,
-            solutions: [
-                {
-                    title: "Adaptive control paper title",
-                    sourceDomain: "control_theory",
-                    description: "A 2-3 sentence description.",
-                    keyConcepts: ["adaptation"],
-                    relevance: "Maps back to the source problem.",
-                    sources: [{ url: "https://example.com/paper", title: "Paper title" }],
-                    githubRepos: [],
-                },
-            ],
+            title: "Adaptive control paper title",
+            sourceDomain: "control_theory",
+            description: "A 2-3 sentence description.",
+            keyConcepts: ["adaptation"],
+            relevance: "Maps back to the source problem.",
+            sources: [{ url: "https://example.com/paper", title: "Paper title" }],
+            githubRepos: [],
         },
     ],
 };
 
-const REASONER_TOOLS = ["search_semantic_scholar", "search_arxiv", "search_github_repos", "pubmed", "submit_analogy_report", "report_blocker"];
+const PROBLEM = { ...EXTRACTION, plannedAnalogies: [{ analogyTitle: ANALOGY.analogyTitle, targetDomain: ANALOGY.targetDomain }] };
+
+const VALID_ENVELOPE = { schemaVersion: "1", ...EXTRACTION, analogies: [ANALOGY] };
+
+const REASONER_TOOLS = ["search_semantic_scholar", "search_arxiv", "search_github_repos", "pubmed", "record_problem", "record_analogy", "report_blocker"];
 
 const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
 
@@ -69,7 +71,8 @@ function ctxFor(emitted: unknown[] = []): ToolContext {
     };
 }
 
-const submitReport = (id: string, report: unknown) => callTools(toolCall(id, "submit_analogy_report", report));
+/** One round that records the problem and its one planned analogy, which ends the run. */
+const recordAll = (id: string) => callTools(toolCall(`${id}p`, "record_problem", PROBLEM), toolCall(`${id}a`, "record_analogy", ANALOGY));
 
 const done = reply([text("Done.")]);
 
@@ -87,8 +90,8 @@ function toolResultIn(call: LanguageModelV4CallOptions, toolCallId: string): unk
 }
 
 describe("generateAnalogyReport sub-agent tool", () => {
-    it("returns the submitted report, and the child loop runs on a derived session", async () => {
-        const { provider, calls } = scriptedModel([submitReport("t1", VALID_ENVELOPE), done]);
+    it("assembles the recorded parts into the report, ends the run when each planned analogy has a record, and runs on a derived session", async () => {
+        const { provider, calls } = scriptedModel([recordAll("t1")]);
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const emitted: unknown[] = [];
@@ -96,8 +99,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         const result = (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctx))._unsafeUnwrap();
 
         expect(result).toEqual(VALID_ENVELOPE);
-        // The submit does not end the run: the model gets the result, and the run ends on its reply.
-        expect(calls).toHaveLength(2);
+        expect(calls).toHaveLength(1);
         expect(toolNamesOf(presentAt(calls, 0))).toEqual(REASONER_TOOLS);
 
         // Child loop ran on a Session derived via forSubAgent — callPath
@@ -106,7 +108,6 @@ describe("generateAnalogyReport sub-agent tool", () => {
             const parsed = IterationEventSchema.safeParse(event);
             return parsed.success ? [parsed.data] : [];
         });
-        expect(iterations).toHaveLength(2);
         expect(presentAt(iterations, 0).source).toEqual({
             agentId: "analogical-reasoner",
             callPath: ["conversation-agent", "analogical-reasoner"],
@@ -119,7 +120,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     });
 
     it("declares read_tool_output after the search tools and before the terminal tools when it has a tool output store", async () => {
-        const { provider, calls } = scriptedModel([submitReport("t1", VALID_ENVELOPE), done]);
+        const { provider, calls } = scriptedModel([recordAll("t1")]);
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, toolOutputStore }, inProcessSubAgent);
 
@@ -131,9 +132,45 @@ describe("generateAnalogyReport sub-agent tool", () => {
             "search_github_repos",
             "pubmed",
             "read_tool_output",
-            "submit_analogy_report",
+            "record_problem",
+            "record_analogy",
             "report_blocker",
         ]);
+    });
+
+    it("gives a planned analogy with no record as not loaded, and keeps the analogies that arrived", async () => {
+        const planned = { ...PROBLEM, plannedAnalogies: [...PROBLEM.plannedAnalogies, { analogyTitle: "Rerouting in a network", targetDomain: "networking" }] };
+        const { provider } = scriptedModel([callTools(toolCall("p", "record_problem", planned), toolCall("a", "record_analogy", ANALOGY)), done]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
+
+        const result = AnalogyReportSchema.parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap());
+
+        expect(result.analogies).toEqual([
+            ANALOGY,
+            {
+                targetDomain: "networking",
+                analogyTitle: "Rerouting in a network",
+                objectMappings: [],
+                sharedRelations: "",
+                coverage: "not_loaded",
+                solutions: [],
+            },
+        ]);
+    });
+
+    it("keeps the last record of an analogy title", async () => {
+        const revised = { ...ANALOGY, sharedRelations: "The revised relation." };
+        const planned = { ...PROBLEM, plannedAnalogies: [...PROBLEM.plannedAnalogies, { analogyTitle: "Later", targetDomain: "ecology" }] };
+        const { provider } = scriptedModel([
+            callTools(toolCall("p", "record_problem", planned), toolCall("a1", "record_analogy", ANALOGY)),
+            callTools(toolCall("a2", "record_analogy", revised)),
+            done,
+        ]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
+
+        const result = AnalogyReportSchema.parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap());
+
+        expect(result.analogies[0]?.sharedRelations).toBe("The revised relation.");
     });
 
     it("gives the extraction-failed envelope with the reason of a blocker as its message", async () => {
@@ -147,13 +184,14 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(calls).toHaveLength(2);
     });
 
-    it("keeps the report when one round records a report and a blocker, in either order", async () => {
+    it("keeps the report when the run also records a blocker, in either order", async () => {
         const blocker = toolCall("b1", "report_blocker", { reason: "cannot extract" });
-        const report = toolCall("t1", "submit_analogy_report", VALID_ENVELOPE);
+        const problem = toolCall("p", "record_problem", PROBLEM);
+        const analogy = toolCall("a", "record_analogy", ANALOGY);
 
         for (const round of [
-            [blocker, report],
-            [report, blocker],
+            [blocker, problem, analogy],
+            [problem, analogy, blocker],
         ]) {
             const { provider } = scriptedModel([callTools(...round), done]);
             const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
@@ -164,34 +202,11 @@ describe("generateAnalogyReport sub-agent tool", () => {
         }
     });
 
-    it("gives the report when a later round submits it after a blocker", async () => {
-        const { provider } = scriptedModel([
-            callTools(toolCall("b1", "report_blocker", { reason: "The relations are unclear at first." })),
-            submitReport("t1", VALID_ENVELOPE),
-            done,
-        ]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
-
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
-
-        expect(result).toEqual(VALID_ENVELOPE);
-    });
-
-    it("gives the last accepted report when the reasoner submits two", async () => {
-        const revised = { ...VALID_ENVELOPE, problemSummary: "The revised summary of the problem." };
-        const { provider } = scriptedModel([submitReport("t1", VALID_ENVELOPE), submitReport("t2", revised), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
-
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
-
-        expect(result).toEqual(revised);
-    });
-
-    it("salvages a run that ends on prose, and the mask of the salvage lets only the two terminal tools run", async () => {
+    it("salvages a run that ends on prose, and the mask of the salvage lets only the terminal tools run", async () => {
         const { provider, calls } = scriptedModel([
             reply([text("## Analogy report\n\nSome free-text prose...")]),
             callTools(toolCall("s1", "search_arxiv", { query: "adaptive control" })),
-            submitReport("t1", VALID_ENVELOPE),
+            recordAll("t1"),
             done,
         ]);
         const logger = createCapturingLogger();
@@ -208,7 +223,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(toolResultIn(presentAt(calls, 2), "s1")).toEqual({
             type: "error-text",
             value: JSON.stringify({
-                error: "The tool search_arxiv is not available for this request, thus it did not run. The tools that can run now: submit_analogy_report, report_blocker.",
+                error: "The tool search_arxiv is not available for this request, thus it did not run. The tools that can run now: record_problem, record_analogy, report_blocker.",
                 retryable: false,
             }),
         });
@@ -230,6 +245,16 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(calls).toHaveLength(2);
     });
 
+    it("names the content filter of the provider when a filter stop leaves no report", async () => {
+        const filtered = reply([text("The analogy of")], "content-filter");
+        const { provider } = scriptedModel([filtered, filtered]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
+
+        const result = ExtractionFailedSchema.parse((await tool.execute({ problem: "Bacteria survive an antibiotic." }, ctxFor()))._unsafeUnwrap());
+
+        expect(result.error.message).toContain("content filter");
+    });
+
     it("gives the extraction-failed envelope when the loop throws", async () => {
         const { provider } = scriptedModel([{ fail: new Error("the endpoint is down") }]);
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
@@ -240,32 +265,25 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(result.error.message).toContain("the endpoint is down");
     });
 
-    it("gives an invalid report its issues, and accepts a second submit", async () => {
-        const { analogies: _dropped, ...withoutAnalogies } = VALID_ENVELOPE;
-        const { provider, calls } = scriptedModel([submitReport("t1", withoutAnalogies), submitReport("t2", VALID_ENVELOPE), done]);
+    it("gives an invalid analogy its issues, and accepts a second record", async () => {
+        const { solutions: _dropped, ...withoutSolutions } = ANALOGY;
+        const { provider, calls } = scriptedModel([
+            callTools(toolCall("p", "record_problem", PROBLEM), toolCall("a1", "record_analogy", withoutSolutions)),
+            callTools(toolCall("a2", "record_analogy", ANALOGY)),
+        ]);
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
 
         expect(result).toEqual(VALID_ENVELOPE);
-        expect(calls).toHaveLength(3);
-        const rejected = ErrorTextSchema.parse(toolResultIn(presentAt(calls, 1), "t1"));
+        expect(calls).toHaveLength(2);
+        const rejected = ErrorTextSchema.parse(toolResultIn(presentAt(calls, 1), "a1"));
         expect(rejected.value).toContain("input validation failed");
-        expect(rejected.value).toContain("analogies");
-    });
-
-    it("gives the report whose analogies arrive as a JSON-encoded string", async () => {
-        const stringified = { ...VALID_ENVELOPE, analogies: JSON.stringify(VALID_ENVELOPE.analogies) };
-        const { provider } = scriptedModel([submitReport("t1", stringified), done]);
-        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
-
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
-
-        expect(result).toEqual(VALID_ENVELOPE);
+        expect(rejected.value).toContain("solutions");
     });
 
     it("refuses a placeholder blocker reason, and the run continues to the report", async () => {
-        const { provider, calls } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: "TBD" })), submitReport("t1", VALID_ENVELOPE), done]);
+        const { provider, calls } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: "TBD" })), recordAll("t1")]);
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
 
         const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
