@@ -449,7 +449,7 @@ export function withRunScript(agent: AgentDefinition): AgentDefinition {
     // The VM gives a script the JSON of a result, thus a call record of the tool would be lost.
     const recording = scriptTools.find((tool) => tool.foldCallRecord !== undefined);
     if (recording !== undefined) throw new Error(`the script tool ${recording.id} of agent ${agent.id} keeps a call record, which a script drops`);
-    return { ...agent, tools: [...agent.tools, createRunScriptTool(scriptTools)] };
+    return { ...agent, tools: [...agent.tools, createRunScriptTool(scriptTools, agent.scriptRuntime)] };
 }
 
 /**

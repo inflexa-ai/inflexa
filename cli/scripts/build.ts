@@ -246,6 +246,13 @@ const buildRoot = process.cwd();
 const workerEntry = Bun.resolveSync("@opentui/core/parser.worker", buildRoot);
 const workerRelToRoot = relative(buildRoot, workerEntry);
 
+// The worker of `run_script`, the script VM of the harness. pi-codemode picks its worker path at runtime, thus Bun
+// cannot detect it, and the build adds the worker entry of the harness the same way as the parser worker above. The
+// QuickJS wasm needs no wiring here: runtime.ts imports it `with { type: "file" }`. Under a link (`harness:local`)
+// the entry sits outside the build root, and its embedded path holds `..`, which the executable still resolves.
+const codemodeWorkerEntry = Bun.resolveSync("@inflexa-ai/harness/tools/script/codemode-worker.js", buildRoot);
+const codemodeWorkerRelToRoot = relative(buildRoot, codemodeWorkerEntry);
+
 // On-disk cache for the build-time embedded artifacts — the per-target llama-server release archives
 // (local-embeddings sidecar runtime) AND the platform-independent embedding-model GGUF — kept OUTSIDE git
 // (see .gitignore) so a rebuild need not re-download them. Each artifact MUST be present here before
@@ -272,7 +279,9 @@ async function ensureLlamaArchiveCached(targetKey: string): Promise<LlamaTargetK
     if (existsSync(cachedPath)) {
         const cachedDigest = new Bun.CryptoHasher("sha256").update(await Bun.file(cachedPath).bytes()).digest("hex");
         if (cachedDigest === pin.sha256) return pin.target;
-        console.error(`error: cached ${pin.artifact} sha256 ${cachedDigest} does not match the vendored pin ${pin.sha256} — delete ${LLAMA_CACHE_DIR} and rebuild`);
+        console.error(
+            `error: cached ${pin.artifact} sha256 ${cachedDigest} does not match the vendored pin ${pin.sha256} — delete ${LLAMA_CACHE_DIR} and rebuild`,
+        );
         process.exit(1);
     }
     const url = llamaArtifactUrl(LLAMA_RUNTIME_TAG, pin);
@@ -285,7 +294,9 @@ async function ensureLlamaArchiveCached(targetKey: string): Promise<LlamaTargetK
     const bytes = new Uint8Array(await response.arrayBuffer());
     const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
     if (digest !== pin.sha256) {
-        console.error(`error: downloaded ${pin.artifact} sha256 ${digest} does not match the vendored pin ${pin.sha256} — upstream may have re-cut the release; refusing to embed it`);
+        console.error(
+            `error: downloaded ${pin.artifact} sha256 ${digest} does not match the vendored pin ${pin.sha256} — upstream may have re-cut the release; refusing to embed it`,
+        );
         process.exit(1);
     }
     await Bun.write(cachedPath, bytes); // Bun.write creates LLAMA_CACHE_DIR if absent
@@ -306,7 +317,9 @@ async function ensureModelCached(): Promise<void> {
     if (existsSync(cachedPath)) {
         const cachedDigest = new Bun.CryptoHasher("sha256").update(await Bun.file(cachedPath).bytes()).digest("hex");
         if (cachedDigest === MODEL_SHA256) return;
-        console.error(`error: cached ${MODEL_ARTIFACT} sha256 ${cachedDigest} does not match the vendored pin ${MODEL_SHA256} — delete ${LLAMA_CACHE_DIR} and rebuild`);
+        console.error(
+            `error: cached ${MODEL_ARTIFACT} sha256 ${cachedDigest} does not match the vendored pin ${MODEL_SHA256} — delete ${LLAMA_CACHE_DIR} and rebuild`,
+        );
         process.exit(1);
     }
     console.log(`fetching embedding model ${MODEL_ARTIFACT} …`);
@@ -318,7 +331,9 @@ async function ensureModelCached(): Promise<void> {
     const bytes = new Uint8Array(await response.arrayBuffer());
     const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
     if (digest !== MODEL_SHA256) {
-        console.error(`error: downloaded ${MODEL_ARTIFACT} sha256 ${digest} does not match the vendored pin ${MODEL_SHA256} — upstream may have re-cut the file; refusing to embed it`);
+        console.error(
+            `error: downloaded ${MODEL_ARTIFACT} sha256 ${digest} does not match the vendored pin ${MODEL_SHA256} — upstream may have re-cut the file; refusing to embed it`,
+        );
         process.exit(1);
     }
     await Bun.write(cachedPath, bytes); // Bun.write creates LLAMA_CACHE_DIR if absent
@@ -471,7 +486,12 @@ function cliSbom(
         purl: `pkg:github/oven-sh/bun@bun-v${Bun.version}`,
         licenses: [
             { license: { id: "MIT" } },
-            { license: { name: "Bun LICENSE.md: the licenses of the libraries that Bun links statically", text: { contentType: "text/plain", content: bunLicense } } },
+            {
+                license: {
+                    name: "Bun LICENSE.md: the licenses of the libraries that Bun links statically",
+                    text: { contentType: "text/plain", content: bunLicense },
+                },
+            },
         ],
         externalReferences: [{ type: "vcs", url: "https://github.com/oven-sh/bun" }],
     });
@@ -607,9 +627,15 @@ for (const target of targets) {
     // aren't smoke-tested), so highlighting may degrade gracefully there (warmGrammars swallows a
     // worker failure) — text still renders, just unstyled.
     const workerBunfsPath = target.os === "windows" ? `B:\\~BUN\\root\\${workerRelToRoot.split("/").join("\\")}` : `/$bunfs/root/${workerRelToRoot}`;
+    const codemodeWorkerBunfsPath =
+        target.os === "windows" ? `B:\\~BUN\\root\\${codemodeWorkerRelToRoot.split("/").join("\\")}` : `/$bunfs/root/${codemodeWorkerRelToRoot}`;
     const targetDefine: Record<string, string> = {
         ...define,
         OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(workerBunfsPath),
+        // The embedded path of the worker of `run_script`. A bare global identifier define, matching the
+        // __INFLEXA_COMPILED__ precedent: runtime.ts reads it under a `typeof` guard, thus a from-source run (no
+        // define) gives the harness no runtime, and the VM loads from node_modules.
+        __INFLEXA_CODEMODE_WORKER__: JSON.stringify(codemodeWorkerBunfsPath),
         // Selects which embedded llama-server archive materializes at first use (llama_runtime.ts), and
         // is the DCE key that drops the other three targets' `import(... with { type: "file" })` so this
         // binary embeds EXACTLY its own ~10 MB runtime. A bare global identifier define (parsed as the
@@ -626,7 +652,7 @@ for (const target of targets) {
     };
 
     const result = await Bun.build({
-        entrypoints: ["src/index.ts", workerEntry],
+        entrypoints: ["src/index.ts", workerEntry, codemodeWorkerEntry],
         root: buildRoot,
         define: targetDefine,
         plugins: [plugin],

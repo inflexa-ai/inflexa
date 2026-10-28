@@ -102,6 +102,7 @@ import type { CitationResolver } from "../citations/types.js";
 import { createResolveCitationTool } from "../tools/research/resolve-citation.js";
 import { createWebFetchTool } from "../tools/research/web-fetch.js";
 import { createWebSearchTool, type WebSearchEngine } from "../tools/research/web-search.js";
+import type { ScriptRuntime } from "../tools/script/run-script.js";
 
 /** Canonical agent id — the single source of truth. */
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
@@ -212,6 +213,8 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
      * built-in tool.
      */
     readonly hostTools?: readonly Tool[];
+    /** Where the VM of `run_script` comes from. A bundled host gives the embedded paths; see `ScriptRuntime`. */
+    readonly scriptRuntime?: ScriptRuntime;
     /**
      * The farm-extension seam of the embedder. When it is bound,
      * `execute_analysis` links the packages of the plan into the farm of the
@@ -423,6 +426,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         model,
         tools,
         scriptTools,
+        scriptRuntime: deps.scriptRuntime,
         maxIterations: CONVERSATION_MAX_ITERATIONS,
         compaction: CONVERSATION_COMPACTION,
     };
