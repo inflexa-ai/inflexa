@@ -445,6 +445,8 @@ export type BootSeams = {
     /** Register the stale-notification sweep scheduled workflow. */
     readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
     readonly probeEmbedding: typeof probeEmbeddingProvider;
+    /** Construct the build-session realization behind `install_from_source`, so a boot test can read the host arguments it receives. Real: {@link createBuildSession}. */
+    readonly createBuildSession: typeof createBuildSession;
 };
 
 const realSeams: BootSeams = {
@@ -461,6 +463,7 @@ const realSeams: BootSeams = {
     sweepAsks: (gateway) => gateway.sweepExpired(),
     registerNotificationSweep,
     probeEmbedding: probeEmbeddingProvider,
+    createBuildSession,
 };
 
 let active: HarnessRuntime | null = null;
@@ -1257,7 +1260,9 @@ async function bootHarnessRuntimeOnce(
             // `hostTools` below, because one tool of one name must not register
             // twice. The analysis arrives per start call, read from the session
             // scope of the tool, and the commit extends the farm of that analysis.
-            buildSession: createBuildSession(env.packageStoreDir),
+            buildSession: seams.createBuildSession(env.packageStoreDir, {
+                limits: { cpu: cfg.resourcePolicy.perStep.maxCpu, memoryGb: cfg.resourcePolicy.perStep.maxMemoryGb },
+            }),
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove

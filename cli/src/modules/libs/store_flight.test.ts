@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,8 +29,16 @@ import {
     storeFlightKey,
 } from "./store_flight.ts";
 import { flushAndPrint } from "./store.ts";
-import { acquireSourceArgs, type LoadCheckRunner, type ProvisionerRunner, type SourceBuildRunner } from "./provisioner.ts";
-import { runtimes } from "../../lib/container.ts";
+import {
+    acquireSourceArgs,
+    runSourceBuild,
+    type LoadCheckRunner,
+    type ProvisionerRunner,
+    type SourceBuildOpts,
+    type SourceBuildRun,
+    type SourceBuildRunner,
+} from "./provisioner.ts";
+import { runtimes, type stream as runtimeStream } from "../../lib/container.ts";
 
 // The flush is the two-phase flight over the pending set: one provisioner
 // `acquire` run for the whole batch, the load check inside the sandbox image,
@@ -691,6 +699,8 @@ describe("the acquire-source launch", () => {
     test("the container arguments carry the session egress, both digests, and the read-only source mounts", () => {
         const rt = runtimes.docker;
         const args = acquireSourceArgs(rt, "inflexa-provisioner:test", {
+            containerName: "inflexa-source-test",
+            packageDir: "pkg/R",
             storeRoot: "/store/root",
             egressAllow: "github.com,snapshot.ubuntu.com,pypi.org",
             snapshotHost: "/scratch/src",
@@ -713,6 +723,12 @@ describe("the acquire-source launch", () => {
         expect(args).toContain("/store/root:/mnt/libs");
         expect(args).toContain("/scratch/src:/work/src:ro");
         expect(args).toContain("/scratch/build.sh:/work/build.sh:ro");
+        // The script reads the dependency library through a read-only view of the store, apart from the read-write mount.
+        expect(args).toContain("/store/root:/opt/inflexa/libs-ro:ro");
+        expect(args[args.indexOf("--lib-view") + 1]).toBe("/opt/inflexa/libs-ro");
+        // The name lets the runner remove the container when the run aborts.
+        expect(args[args.indexOf("--name") + 1]).toBe("inflexa-source-test");
+        expect(args[args.indexOf("--package-dir") + 1]).toBe("pkg/R");
         expect(args).toContain("--report");
         expect(args[args.indexOf("--report") + 1]).toBe("/mnt/libs/.inflexa-download/source-1.json");
         expect(args).toContain("--snapshot");
@@ -724,13 +740,14 @@ describe("the acquire-source launch", () => {
         expect(args).toContain("--commit");
         expect(args).toContain("--apt-snapshot-date");
         expect(args[args.indexOf("--apt-snapshot-date") + 1]).toBe("2026-02-14");
-        // Each apt package rides as its own repeat of the flag.
-        expect(args.filter((arg) => arg === "--apt-package")).toHaveLength(2);
+        // Each apt package rides as its own `--apt-package=<name>` word: argparse reads a separate word that starts with a dash as an option.
+        expect(args.filter((arg) => arg.startsWith("--apt-package"))).toEqual(["--apt-package=libcurl4-openssl-dev", "--apt-package=libgit2-dev"]);
         expect(args.join(" ")).not.toContain("--network none");
     });
 
     test("a folder source names no git pair", () => {
         const args = acquireSourceArgs(runtimes.docker, "img", {
+            containerName: "inflexa-source-test",
             storeRoot: "/store/root",
             egressAllow: "pypi.org",
             snapshotHost: "/scratch/src",
@@ -744,6 +761,76 @@ describe("the acquire-source launch", () => {
 
         expect(args).not.toContain("--git-url");
         expect(args).not.toContain("--commit");
+        // No package directory was named, and the view argument stays.
+        expect(args).not.toContain("--package-dir");
+        expect(args).toContain("--lib-view");
+    });
+});
+
+describe("runSourceBuild", () => {
+    const run: SourceBuildRun = {
+        containerName: "inflexa-source-abort-test",
+        storeRoot: "/store/root",
+        egressAllow: "pypi.org",
+        snapshotHost: "/scratch/src",
+        scriptHost: "/scratch/build.sh",
+        reportName: "r.json",
+        git: null,
+        aptSnapshotDate: "20260214T093000Z",
+        aptPackages: [],
+        imageDigests: { provisioner: "p", base: "b" },
+    };
+
+    function opts(captured: string[][], streamed: Array<Parameters<typeof runtimeStream>>): SourceBuildOpts {
+        return {
+            resolveRuntime: async () => ok(runtimes.docker),
+            ensureImage: async () => ok(undefined),
+            stream: async (rt, args, onLine, signal) => {
+                streamed.push([rt, args, onLine, signal]);
+                return { code: 143, stdout: "", stderr: "" };
+            },
+            capture: async (_rt, args) => {
+                captured.push(args);
+                return { code: 0, stdout: "", stderr: "" };
+            },
+        };
+    }
+
+    test("an abort removes the named container after the stream ends", async () => {
+        const controller = new AbortController();
+        controller.abort(new Error("turn cancelled"));
+        const captured: string[][] = [];
+        const streamed: Array<Parameters<typeof runtimeStream>> = [];
+
+        const ran = await runSourceBuild(run, () => undefined, controller.signal, opts(captured, streamed));
+
+        expect(ran.isOk()).toBe(true);
+        expect(streamed).toHaveLength(1);
+        expect(streamed[0]?.[3]).toBe(controller.signal);
+        expect(captured).toEqual([["rm", "-f", "inflexa-source-abort-test"]]);
+    });
+
+    test("a run that no abort touches removes nothing", async () => {
+        const captured: string[][] = [];
+
+        await runSourceBuild(run, () => undefined, new AbortController().signal, opts(captured, []));
+
+        expect(captured).toEqual([]);
+    });
+
+    test("a failed removal leaves the abort outcome unchanged", async () => {
+        const controller = new AbortController();
+        controller.abort(new Error("turn cancelled"));
+        const failing: SourceBuildOpts = {
+            ...opts([], []),
+            capture: async () => {
+                throw new Error("engine gone");
+            },
+        };
+
+        const ran = await runSourceBuild(run, () => undefined, controller.signal, failing);
+
+        expect(ran.isOk()).toBe(true);
     });
 });
 
@@ -805,10 +892,7 @@ describe("flySourceBuild", () => {
         const root = tempStore();
         const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
 
-        const flown = await flySourceBuild(
-            { ...params, storeRoot: root },
-            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]) },
-        );
+        const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]) });
 
         expect(flown).toEqual({ kind: "committed", pin: GREEN_OUTCOME.pin, storeDir: ROOT_DIR, storeDirs: [ROOT_DIR] });
         const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown>; by_name: { r: Record<string, string[]> } };
@@ -828,7 +912,16 @@ describe("flySourceBuild", () => {
                 loadCheck: async () =>
                     ok({
                         code: 1,
-                        stdout: JSON.stringify({ results: [{ package: ROOT_DIR, track: "r", ok: false, error: "links a library the image does not carry: libfoo.so.1 (linked by /work/src/SeedMatchR/libs/SeedMatchR.so)" }] }),
+                        stdout: JSON.stringify({
+                            results: [
+                                {
+                                    package: ROOT_DIR,
+                                    track: "r",
+                                    ok: false,
+                                    error: "links a library the image does not carry: libfoo.so.1 (linked by /work/src/SeedMatchR/libs/SeedMatchR.so)",
+                                },
+                            ],
+                        }),
                         stderr: "",
                     }),
             },
@@ -867,6 +960,118 @@ describe("flySourceBuild", () => {
         expect(rows).toHaveLength(1);
         expect(rows[0]?.row.state).toBe("failed");
         expect(rows[0]?.row.message).toStartWith("resolve: ");
+    });
+
+    /** The report files the flight leaves in the download directory of the store. */
+    function reportFiles(root: string): string[] {
+        const dir = join(root, ".inflexa-download");
+        return existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith("source-")) : [];
+    }
+
+    test("a refused run leaves no report file", async () => {
+        const root = tempStore();
+        const refusing: SourceBuildRunner = async (run) => {
+            mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+            writeFileSync(
+                join(run.storeRoot, run.reportName),
+                `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:?", outcome: "refused", reason: "the build script exited non-zero (exit 2)." }], nodes: {} })}\n`,
+            );
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        };
+
+        const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: refusing });
+
+        expect(flown.kind).toBe("failed");
+        expect(reportFiles(root)).toEqual([]);
+    });
+
+    test("a failed load check leaves no report file, and a green flight leaves none either", async () => {
+        const root = tempStore();
+        const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
+        mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+
+        const red = await flySourceBuild(
+            { ...params, storeRoot: root },
+            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: async () => ok({ code: 1, stdout: "not json", stderr: "" }) },
+        );
+        expect(red.kind).toBe("failed");
+        expect(reportFiles(root)).toEqual([]);
+
+        const green = await flySourceBuild(
+            { ...params, storeRoot: root, sourceSpelling: "Other" },
+            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]) },
+        );
+        expect(green.kind).toBe("committed");
+        expect(reportFiles(root)).toEqual([]);
+    });
+
+    test("a failed commit leaves no report file", async () => {
+        const root = tempStore();
+        // An edge to a node that the graph does not hold refuses the commit of the root.
+        const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: ["missing-dependency-1.0.0-0000000000000000"] } };
+
+        const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]) });
+
+        expect(flown.kind).toBe("failed");
+        if (flown.kind === "failed") expect(flown.reason).toStartWith("commit: ");
+        expect(reportFiles(root)).toEqual([]);
+    });
+
+    test("an aborted commit settles the row failed, passes the signal to the runner, and leaves no report file", async () => {
+        const root = tempStore();
+        const controller = new AbortController();
+        let seenSignal: AbortSignal | undefined;
+        let seenRun: SourceBuildRun | undefined;
+        const aborting: SourceBuildRunner = async (run, _onLine, signal) => {
+            seenSignal = signal;
+            seenRun = run;
+            mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+            writeFileSync(join(run.storeRoot, run.reportName), "{}");
+            controller.abort(new Error("turn cancelled"));
+            // The kill of the engine client ends the stream with a nonzero code.
+            return ok<CaptureResult, never>({ code: 143, stdout: "", stderr: "" });
+        };
+
+        const flown = await flySourceBuild({ ...params, storeRoot: root, signal: controller.signal, packageDir: "pkg/R" }, { run: aborting });
+
+        expect(flown.kind).toBe("failed");
+        if (flown.kind === "failed") expect(flown.reason).toContain("cancelled");
+        expect(seenSignal).toBe(controller.signal);
+        expect(seenRun?.packageDir).toBe("pkg/R");
+        expect(seenRun?.containerName).toStartWith("inflexa-source-");
+        const rows = readStoreFlights();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(reportFiles(root)).toEqual([]);
+    });
+
+    test("a cancel during the load check settles the row failed, passes the signal to the check, and commits nothing to the graph", async () => {
+        const root = tempStore();
+        const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
+        const controller = new AbortController();
+        let seenSignal: AbortSignal | undefined;
+        const cancelling: LoadCheckRunner = async (checkParams) => {
+            seenSignal = checkParams.signal;
+            controller.abort(new Error("turn cancelled"));
+            // The check itself reports green: only the signal can stop the commit.
+            return ok<CaptureResult, never>({ code: 0, stdout: JSON.stringify({ results: [{ package: ROOT_DIR, track: "r", ok: true }] }), stderr: "" });
+        };
+
+        const flown = await flySourceBuild(
+            { ...params, storeRoot: root, signal: controller.signal },
+            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: cancelling },
+        );
+
+        expect(flown.kind).toBe("failed");
+        if (flown.kind === "failed") expect(flown.reason).toBe("load_check: the source build was cancelled");
+        expect(seenSignal).toBe(controller.signal);
+        const depsPath = join(root, "deps.json");
+        const graph = existsSync(depsPath) ? (JSON.parse(readFileSync(depsPath, "utf8")) as { nodes: Record<string, unknown> }) : { nodes: {} };
+        expect(graph.nodes[ROOT_DIR]).toBeUndefined();
+        const rows = readStoreFlights();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.row.state).toBe("failed");
+        expect(reportFiles(root)).toEqual([]);
     });
 
     test("a claim another process owns refuses to run, joined, and no container starts", async () => {

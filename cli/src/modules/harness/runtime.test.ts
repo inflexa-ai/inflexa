@@ -23,6 +23,7 @@ import {
 import { inProcessChatTurns } from "@inflexa-ai/harness/testing";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
+import { createBuildSession, type BuildSessionHost } from "../libs/build-session.ts";
 import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
@@ -255,6 +256,7 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("probeEmbedding");
             return ok(undefined);
         },
+        createBuildSession,
     };
 }
 
@@ -1056,6 +1058,26 @@ describe("bootHarnessRuntime — the build-session binding", () => {
         const ids = agent.tools.map((tool) => tool.id);
         expect(ids.filter((id) => id === "install_from_source")).toHaveLength(1);
         expect((conversation?.hostTools ?? []).map((tool) => tool.id)).not.toContain("install_from_source");
+    });
+});
+
+describe("bootHarnessRuntime — the build-session limits", () => {
+    test("the session container ceilings are the per-step ceilings of the resource policy", async () => {
+        let received: BuildSessionHost | undefined;
+        const seams: BootSeams = {
+            ...recordingSeams([]),
+            createBuildSession: (storeRoot, host) => {
+                received = host;
+                return createBuildSession(storeRoot, host);
+            },
+        };
+
+        await bootHarnessRuntime({
+            seams,
+            config: testConfig({ resourcePolicy: { perStep: { maxCpu: 6, maxMemoryGb: 24, maxGpuCount: 0 }, budget: { cpu: 8, memoryGb: 32 } } }),
+        });
+
+        expect(received?.limits).toEqual({ cpu: 6, memoryGb: 24 });
     });
 });
 

@@ -73,6 +73,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -126,6 +127,25 @@ INDEX_URL = os.environ.get("INFLEXA_INDEX_URL", "https://pypi.org/simple")
 # bound exists for a direct run of the subcommand, so a wedged build ends as a
 # clean refusal instead of a hung process.
 BUILD_SCRIPT_TIMEOUT_SECONDS = 3600
+
+# The bound on the KILL sweep of the build user after the script returns. The
+# sweep signals processes and returns at once, thus a wait past this bound
+# means a wedged exec, not slow work.
+BUILD_KILL_TIMEOUT_SECONDS = 30
+
+# The build script runs as the `inflexa-build` user of the image. uid 1000 is
+# also the uid of the sandbox workload, which is why the session proves the
+# script under it.
+BUILD_UID = 1000
+BUILD_GID = 1000
+BUILD_HOME = "/home/inflexa-build"
+
+# A Debian package name: at least two characters, a lowercase letter or a digit
+# first. A value that starts with `-` never reaches apt-get as an option.
+APT_PACKAGE_NAME = re.compile(r"[a-z0-9][a-z0-9+.-]+")
+
+# How much of the script output a refusal reads back, in bytes from the end.
+OUTPUT_TAIL_BYTES = 8192
 
 # Marker written inside each store directory: the exact pin it was installed
 # from, thus a name+version glob can be confirmed rather than trusted.
@@ -1016,8 +1036,8 @@ def cmd_reclaim(args) -> int:
     graph reader then refuses the WHOLE pool. Explicit and host-invoked,
     never automatic.
 
-    With --debris the pass additionally removes the stale acquire reports,
-    and it never rewrites the graph — the boot pass and the flush tail call
+    With --debris the pass additionally removes the stale acquire and
+    source-build reports, and it never rewrites the graph — the boot pass and the flush tail call
     it, thus it stays cheap and write-free on the metadata.
     """
     debris = bool(getattr(args, "debris", False))
@@ -1038,7 +1058,8 @@ def cmd_reclaim(args) -> int:
             reports = 0
             download = LIBS / ".inflexa-download"
             if download.is_dir():
-                for report in sorted(download.glob("acquire-*.json")):
+                stale = sorted([*download.glob("acquire-*.json"), *download.glob("source-*.json")])
+                for report in stale:
                     report.unlink(missing_ok=True)
                     reports += 1
                     log(f"  removed stale report {report.name}")
@@ -1458,10 +1479,12 @@ def pin_apt_sources(snapshot_timestamp: str) -> Path:
     """Point every apt source at the dated Ubuntu snapshot, and drop the
     live-archive sources the image ships.
 
-    The run writes this BEFORE the build script, because the script's own
-    `apt-get update` must obey the pin: a plain update over the live archives
-    would resolve versions no dated snapshot served, and the build record's
-    apt block would then name versions the snapshot cannot reproduce.
+    The run writes this BEFORE its own `apt-get update` and `apt-get install`
+    of the plan's apt packages (install_apt_packages), because those commands
+    must obey the pin: a plain update over the live archives would resolve
+    versions no dated snapshot served, and the build record's apt block would
+    then name versions the snapshot cannot reproduce. The build script itself
+    runs without privilege and holds no apt step.
     """
     root = _apt_conf_root()
     sources_dir = root / "etc" / "apt" / "sources.list.d"
@@ -1490,6 +1513,150 @@ class SourceBuildError(Exception):
     """A refusal of one acquire-source run. The command catches it, thus the
     report carries the refusal as its outcome and the host settles a failed
     row, exactly as an index acquisition does."""
+
+
+def refuse_bad_apt_names(names: list[str]) -> None:
+    """Refuse an apt package name that is not a Debian package name, before any
+    install. A name such as `-oAPT::Get::AllowUnauthenticated=true` would reach
+    apt-get as an option."""
+    for name in names:
+        if not APT_PACKAGE_NAME.fullmatch(name):
+            raise SourceBuildError(
+                f"{name!r} is not a Debian package name, thus the run installs no apt package")
+
+
+def run_logged(argv: list[str], log_path: Path, what: str, **kwargs) -> int:
+    """Run `argv` with its combined output in `log_path`, and give the exit code.
+
+    A build can write without bound, thus the output goes to a file and a
+    refusal reads only the tail of it (refer to log_tail).
+    """
+    with open(log_path, "wb") as sink:
+        try:
+            proc = subprocess.run(argv, stdout=sink, stderr=subprocess.STDOUT,
+                                  timeout=BUILD_SCRIPT_TIMEOUT_SECONDS, **kwargs)
+        except subprocess.TimeoutExpired:
+            raise SourceBuildError(
+                f"{what} ran past {BUILD_SCRIPT_TIMEOUT_SECONDS} s, so the run ended it")
+    return proc.returncode
+
+
+def log_tail(log_path: Path, lines: int = 6) -> str:
+    """The last `lines` lines of the file, from at most OUTPUT_TAIL_BYTES."""
+    with open(log_path, "rb") as handle:
+        size = handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, size - OUTPUT_TAIL_BYTES))
+        data = handle.read()
+    return "\n".join(data.decode(errors="replace").strip().splitlines()[-lines:])
+
+
+def install_apt_packages(names: list[str]) -> None:
+    """Install the apt packages of the plan, as root, from the pinned sources.
+
+    The script runs without privilege and cannot call apt-get, thus the run
+    installs the packages the plan named before the script starts.
+    """
+    if not names:
+        return
+    log_path = run_temp("apt.log")
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    for argv in (["apt-get", "update"],
+                 ["apt-get", "install", "-y", "--no-install-recommends", *names]):
+        code = run_logged(argv, log_path, f"`{' '.join(argv[:2])}`", env=env)
+        if code != 0:
+            raise SourceBuildError(
+                f"`{' '.join(argv[:2])}` exited non-zero (exit {code}).\n"
+                f"{log_tail(log_path) or '(apt-get wrote nothing)'}")
+
+
+def hide_store_parent(parent: Path) -> None:
+    """Make the parent of the store mount readable by root alone.
+
+    uid 1000 on the host can own the read-write store, and the container
+    kernel enforces this mode for each engine, thus the script reaches the
+    store through the read-only view only.
+    """
+    os.chmod(parent, 0o700)
+
+
+def give_to_build_user(path: Path) -> None:
+    os.chown(path, BUILD_UID, BUILD_GID)
+
+
+def store_parent() -> Path:
+    """The directory to hide, or a refusal when it is `/`: hiding the root
+    directory would lock the run itself out of the system."""
+    parent = LIBS.parent
+    if parent == parent.parent:
+        raise SourceBuildError(
+            f"the store mount {LIBS} sits directly under /, thus the run cannot "
+            f"hide its parent from the build script")
+    return parent
+
+
+def view_of(library: Path, lib_view: str) -> Path:
+    """The path of `library` (a path under LIBS) inside the read-only view."""
+    return Path(lib_view) / library.relative_to(LIBS)
+
+
+def kill_build_user_processes() -> None:
+    """KILL each process of the build user that is still alive.
+
+    A script can leave a background process that keeps writing the output
+    directory after the script returns, while root reads and publishes that
+    output. `kill -1` from the build user signals each process that the user
+    may signal, which is the processes of that uid and no other. The exit
+    code is ignored: `kill` exits non-zero when no process is left. A refusal
+    to run the kill never replaces the outcome of the script.
+    """
+    try:
+        subprocess.run(
+            ["setpriv", f"--reuid={BUILD_UID}", f"--regid={BUILD_GID}", "--clear-groups",
+             "--", "kill", "-s", "KILL", "--", "-1"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=BUILD_KILL_TIMEOUT_SECONDS)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def run_build_script(snapshot: Path, script: Path, output: Path,
+                     r_library: Path | None, lib_view: str) -> None:
+    """Run the approved script as uid 1000 with no capability and no path to
+    the read-write store, and refuse when it fails.
+
+    The script runs from a copy that root owns in a directory that uid 1000
+    cannot write, so the script cannot change the bytes that run.
+    """
+    hide_store_parent(store_parent())
+    output.mkdir(parents=True, exist_ok=True)
+    give_to_build_user(output)
+    env = dict(os.environ)
+    env["HOME"] = BUILD_HOME
+    if r_library is not None:
+        env["R_LIBS_USER"] = str(view_of(r_library, lib_view))
+    script_dir = Path(tempfile.mkdtemp(prefix="inflexa-build-script-"))
+    try:
+        os.chmod(script_dir, 0o755)
+        copy = script_dir / "build.sh"
+        shutil.copyfile(script, copy)
+        os.chmod(copy, 0o755)
+        log_path = run_temp("build-output.log")
+        try:
+            code = run_logged(
+                ["setpriv", f"--reuid={BUILD_UID}", f"--regid={BUILD_GID}", "--init-groups",
+                 "--inh-caps=-all", "--bounding-set=-all", "--no-new-privs", "--",
+                 "bash", str(copy)],
+                log_path, "the build script", cwd=str(snapshot), env=env)
+        finally:
+            # On success, on failure, and on a timeout alike: no process of the
+            # script outlives the call, because root reads the output next.
+            kill_build_user_processes()
+        if code != 0:
+            raise SourceBuildError(
+                f"the build script exited non-zero (exit {code})."
+                f"\n{log_tail(log_path) or '(the script wrote nothing to its streams)'}")
+    finally:
+        shutil.rmtree(script_dir, ignore_errors=True)
 
 
 def pak_version() -> str:
@@ -1521,8 +1688,9 @@ def tool_versions() -> dict[str, str]:
 def apt_versions(names: list[str]) -> dict[str, str]:
     """The installed version of each apt package the plan named, from dpkg.
 
-    The script ran its apt-get install in THIS container, thus dpkg holds the
-    resolved versions. A plan names names; the record holds what installed. A
+    The run's own apt-get install (install_apt_packages) ran in THIS container
+    before the script, thus dpkg holds the versions the run installed. A plan
+    names names; the record holds what installed. A
     package dpkg does not know records the empty string, never a refusal: the
     artifact is built, and the record states the gap.
     """
@@ -1547,6 +1715,8 @@ def build_record(args, script: Path, tree_digest: str) -> dict:
         source = {"url": args.git_url, "commit": args.commit or ""}
     else:
         source = {"tree_hash": tree_digest}
+    if args.package_dir:
+        source["package_dir"] = args.package_dir
     return {
         "schema": 1,
         "source": source,
@@ -1717,11 +1887,12 @@ def publish_python_root(staging: Path, name: str, version: str, qualifier: str, 
     return final, is_new
 
 
-def source_r_dependencies(snapshot: Path, root_name: str) -> tuple[list[tuple[Path, str, bool]], Path]:
+def source_r_dependencies(tree: Path, root_name: str) -> tuple[list[tuple[Path, str, bool]], Path]:
     """The store directories of the dependency closure of a source-built R root,
     beside the staged library that holds them loadable.
 
-    pak resolves the SNAPSHOT tree, whose DESCRIPTION names the dependencies,
+    pak resolves the package tree (the snapshot root, or the package directory
+    inside it), whose DESCRIPTION names the dependencies,
     and the entries the pool does not hold install into a private staging
     library through the same lockfile path an index acquisition uses. The root
     itself never installs here: its provenance is the build record, not the
@@ -1734,17 +1905,19 @@ def source_r_dependencies(snapshot: Path, root_name: str) -> tuple[list[tuple[Pa
     packages: `store_r_package` moves a fresh install out of the staging tree,
     and the clean run mounts no farm, thus nothing else puts these
     dependencies on R's library path while `R CMD INSTALL` loads the root's
-    imports. The caller removes the library once the script and the record
+    imports. The links are relative, because the script reads the library
+    through the read-only view of the store, where the absolute store path does
+    not exist. The caller removes the library once the script and the record
     are done.
     """
     lock_out = run_temp("pak-lock-source.json")
     proc = subprocess.run(
-        ["Rscript", "/usr/local/bin/acquire_r.R", "resolve", str(snapshot), str(lock_out)],
+        ["Rscript", "/usr/local/bin/acquire_r.R", "resolve", str(tree), str(lock_out)],
         capture_output=True, text=True,
     )
     if proc.returncode != 0:
         raise SourceBuildError(
-            f"pak could not resolve the dependency closure of {snapshot}.\n"
+            f"pak could not resolve the dependency closure of {tree}.\n"
             f"{proc.stderr.strip() or '(pak wrote nothing to stderr)'}")
     pak_lock = json.loads(lock_out.read_text())
     entries = [
@@ -1794,21 +1967,24 @@ def source_r_dependencies(snapshot: Path, root_name: str) -> tuple[list[tuple[Pa
         name = pin.split("==", 1)[0]
         link = staging / name
         if not link.exists():
-            link.symlink_to(store_dir / name)
+            link.symlink_to(os.path.relpath(store_dir / name, staging))
     return stored, staging
 
 
-def source_python_dependencies(root_dir: Path) -> list[tuple[Path, str, bool]]:
-    """The store directories of the dependency closure of a source-built root.
+def source_python_dependencies(root_dir: Path, stored: list[tuple[Path, str, bool]]) -> None:
+    """Install the dependency closure of a source-built root, and append each
+    store directory to `stored` as it lands.
 
     The requirements come from the wheel the script built — the published
     store directory holds the same metadata — and every pin installs through
     the hash-enforced index path: a source build trades the hash of its root
-    for the record, never the hashes of its dependencies.
+    for the record, never the hashes of its dependencies. The caller owns
+    `stored`, thus a refusal in the middle of the loop still frees the
+    directories that earlier pins made.
     """
     requirements = root_requirements(root_dir)
     if not requirements:
-        return []
+        return
     try:
         constraints = _pool_constraints()
         if constraints is None:
@@ -1821,11 +1997,12 @@ def source_python_dependencies(root_dir: Path) -> list[tuple[Path, str, bool]]:
                 pins = resolve(requirements)
     except ResolveError as exc:
         raise SourceBuildError(str(exc)) from exc
-    stored: list[tuple[Path, str, bool]] = []
     for pin in pins:
-        path, is_new = ensure_stored(pin, pins[pin])
+        try:
+            path, is_new = ensure_stored(pin, pins[pin])
+        except (ResolveError, SystemExit) as exc:
+            raise SourceBuildError(str(exc)) from exc
         stored.append((path, pin, is_new))
-    return stored
 
 
 def refuse_dangling_edges(nodes: dict) -> None:
@@ -1853,10 +2030,32 @@ def refuse_dangling_edges(nodes: dict) -> None:
         f"edge:\n{lines}")
 
 
+def package_tree(snapshot: Path, package_dir: str | None) -> Path:
+    """The tree pak resolves: the snapshot root, or the package directory
+    inside it. A package directory that leaves the snapshot, or that holds no
+    DESCRIPTION, refuses the run."""
+    if not package_dir:
+        return snapshot
+    given = Path(package_dir)
+    if given.is_absolute() or ".." in given.parts:
+        raise SourceBuildError(
+            f"the package directory {package_dir!r} must be relative to the snapshot, with no `..` segment")
+    tree = snapshot / given
+    description = tree / "DESCRIPTION"
+    real_root = snapshot.resolve()
+    if not tree.resolve().is_relative_to(real_root) or not description.resolve().is_relative_to(real_root):
+        raise SourceBuildError(
+            f"the package directory {package_dir!r} resolves outside the snapshot")
+    if not description.is_file():
+        raise SourceBuildError(
+            f"the package directory {package_dir!r} holds no DESCRIPTION")
+    return tree
+
+
 def cmd_acquire_source(args) -> int:
-    """Run one clean source build: the apt pin, the dependency resolve in the
-    track's order, the script, the pool writes, the staged nodes, and the
-    build record.
+    """Run one clean source build: the apt pin and install, the dependency
+    resolve in the track's order, the unprivileged script, the pool writes,
+    the staged nodes, and the build record.
 
     The two-phase contract of `acquire` holds here too: the pool and the report
     are the only writes, deps.json and every farm stay untouched, and the host
@@ -1883,10 +2082,15 @@ def cmd_acquire_source(args) -> int:
                 raise SourceBuildError(f"the pristine source snapshot {snapshot} is absent")
             if not script.is_file():
                 raise SourceBuildError(f"the approved build script {script} is absent")
+            # Each refusal that needs no work comes before the first install.
+            tree = package_tree(snapshot, args.package_dir)
+            refuse_bad_apt_names(list(args.apt_package))
+            store_parent()
             # The apt sources pin to the dated snapshot BEFORE anything runs,
-            # because the script's own `apt-get update` must obey the pin.
+            # because the apt install of the run obeys the pin.
             if args.apt_snapshot_date:
                 pin_apt_sources(args.apt_snapshot_date)
+            install_apt_packages(list(args.apt_package))
             # The folder hash reads the pristine copy before the script runs,
             # because a build can write into its own source tree and the record
             # must hold the tree the session approved.
@@ -1898,27 +2102,13 @@ def cmd_acquire_source(args) -> int:
             # tree builds the wheel first (a wheel build needs no runtime
             # dependencies) and resolves the wheel's requirements after.
             r_library: Path | None = None
-            if (snapshot / "DESCRIPTION").is_file():
-                root_name, _version = read_r_pkg(snapshot)
-                stored, r_library = source_r_dependencies(snapshot, root_name)
+            if (tree / "DESCRIPTION").is_file():
+                root_name, _version = read_r_pkg(tree)
+                stored, r_library = source_r_dependencies(tree, root_name)
             # The script's `R CMD INSTALL` loads the root's imports from the
             # staged library alone: no farm is mounted here, thus no other
             # copy of a dependency sits on R's library path.
-            env = dict(os.environ)
-            if r_library is not None:
-                env["R_LIBS_USER"] = str(r_library)
-            try:
-                proc = subprocess.run(["bash", str(script)], cwd=str(snapshot),
-                                      capture_output=True, text=True, env=env,
-                                      timeout=BUILD_SCRIPT_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                raise SourceBuildError(
-                    f"the build script ran past {BUILD_SCRIPT_TIMEOUT_SECONDS} s, so the run ended it")
-            if proc.returncode != 0:
-                tail = "\n".join((proc.stderr or proc.stdout or "").strip().splitlines()[-6:])
-                raise SourceBuildError(
-                    f"the build script exited non-zero (exit {proc.returncode})."
-                    f"\n{tail or '(the script wrote nothing to its streams)'}")
+            run_build_script(snapshot, script, Path(args.output), r_library, args.lib_view)
             # The record is built AFTER the script and the dependency installs,
             # because dpkg then holds the versions the plan's apt packages
             # resolved to, and the record states what installed, not what a
@@ -1931,12 +2121,11 @@ def cmd_acquire_source(args) -> int:
             else:
                 staging = stage_python_root(artifact)
                 name, version = wheel_identity(staging)
-                dep_stored = source_python_dependencies(staging)
+                source_python_dependencies(staging, stored)
                 record = build_record(args, script, tree_digest)
                 pin = f"{name}=={version}{qualifier}"
                 root_dir, root_new = publish_python_root(staging, name, version, qualifier, record)
                 published.append((root_dir, root_new))
-                stored = dep_stored
             entries = [(root_dir, pin, root_new), *stored]
             unique_dirs = sorted({d for d, _pin, _new in entries}, key=lambda d: d.name)
             nodes = emit_deps.collect(unique_dirs)
@@ -2413,6 +2602,12 @@ def main() -> int:
     acquire_source.add_argument("--script", required=True,
                                 help="the approved build script; it builds exactly one root artifact into the output "
                                      "directory and installs no dependencies")
+    acquire_source.add_argument("--lib-view", required=True,
+                                help="the path of the read-only view of the store root; the build script reads "
+                                     "its R dependency library through it, because the script cannot reach /mnt/libs")
+    acquire_source.add_argument("--package-dir", default=None,
+                                help="the directory of the R package inside the snapshot, relative to the snapshot root; "
+                                     "absent means the snapshot root")
     acquire_source.add_argument("--output", default=DEFAULT_BUILD_OUT,
                                 help=f"the output directory of the root artifact (default: {DEFAULT_BUILD_OUT})")
     acquire_source.add_argument("--git-url", default=None,
@@ -2433,7 +2628,7 @@ def main() -> int:
     reclaim = sub.add_parser("reclaim", help="remove store directories that no farm references")
     reclaim.add_argument("--debris", action="store_true",
                          help="remove only the directories with no farm link and no graph node, "
-                              "plus the stale acquire reports; the graph stays untouched")
+                              "plus the stale acquire and source-build reports; the graph stays untouched")
     reclaim.set_defaults(func=cmd_reclaim)
 
     remove_farm = sub.add_parser("remove-farm", help="remove one farm; the pool stays")

@@ -696,7 +696,16 @@ export type {
 // conversation tool. An embedder that binds it lets the conversation agent
 // build a package no index serves from its source; the interface stays
 // channel-agnostic, so the container runtime stays a decision of the host.
-export type { BuildCommitResult, BuildExecResult, BuildPlan, BuildSession, BuildSessionCommand, BuildSessionHandle, BuildSource } from "./sandbox/types.js";
+export type {
+    BuildCommitRequest,
+    BuildCommitResult,
+    BuildExecResult,
+    BuildPlan,
+    BuildSession,
+    BuildSessionCommand,
+    BuildSessionHandle,
+    BuildSource,
+} from "./sandbox/types.js";
 // The identity of a package, the query that asks for one, and the resolution
 // between the two. An embedder reads `by_name` of the dependency graph with
 // these, thus the host lookup, the census, and the graph key never disagree on

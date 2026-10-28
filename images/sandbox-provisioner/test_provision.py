@@ -160,11 +160,41 @@ class StoreTestCase(unittest.TestCase):
         # path and no `-r` file); `install_tree` serves the `-r` installs.
         self.root_install_tree: dict[str, str] = {}
 
+        # The apt installs of the run: the failure text per command, keyed by
+        # the second word of the command (`update`, `install`).
+        self.apt_failures: dict[str, str] = {}
+        # Per-pin failure of the hash-pinned install: a pin text found in the
+        # requirement fragment fails with its stderr.
+        self.install_failures: dict[str, str] = {}
+        # What the unprivileged launch looked like at the moment it ran.
+        self.script_runs: list[dict] = []
+
+        # A normal user can neither chmod the parent of the store nor chown to
+        # uid 1000, thus the two system-path steps of the clean run record
+        # their call instead of making it.
+        self._system_patches = [
+            unittest.mock.patch.object(
+                provision, "hide_store_parent",
+                side_effect=lambda parent: self.calls.append(["hide-store-parent", str(parent)])),
+            unittest.mock.patch.object(
+                provision, "give_to_build_user",
+                side_effect=lambda path: self.calls.append(["give-to-build-user", str(path)])),
+        ]
+        for patch in self._system_patches:
+            patch.start()
+        # The read-only view of the store root, at a path that differs from it.
+        self.view_holder = Path(tempfile.mkdtemp(prefix="prov-view-"))
+        self.view = self.view_holder / "libs-ro"
+        self.view.symlink_to(self.root)
+
         self._orig_run = provision.subprocess.run
         provision.subprocess.run = self._fake_run
 
     def tearDown(self):
         self._apt_env.stop()
+        for patch in self._system_patches:
+            patch.stop()
+        shutil.rmtree(self.view_holder, ignore_errors=True)
         provision.subprocess.run = self._orig_run
         shutil.rmtree(self.root, ignore_errors=True)
 
@@ -176,6 +206,19 @@ class StoreTestCase(unittest.TestCase):
         prog = argv[0]
         if prog == "chmod":
             return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if prog == "setpriv":
+            inner = argv[argv.index("--") + 1:]
+            if inner[0] == "kill":
+                # The sweep of the build user: no process is left to signal.
+                return SimpleNamespace(returncode=1, stdout="", stderr="")
+            self._record_script_run(argv, kwargs)
+            return self._fake_run(inner, *args, **kwargs)
+        if prog == "apt-get":
+            failure = self.apt_failures.get(argv[1])
+            if failure is not None:
+                kwargs["stdout"].write(failure.encode())
+                return SimpleNamespace(returncode=100)
+            return SimpleNamespace(returncode=0)
         if prog == "bash":
             # The approved build script runs for real: it only copies fixture
             # trees around the temp store.
@@ -199,6 +242,11 @@ class StoreTestCase(unittest.TestCase):
             Path(argv[argv.index("-o") + 1]).write_text(text)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if prog == "uv" and "install" in argv:
+            if "-r" in argv:
+                fragment = Path(argv[argv.index("-r") + 1]).read_text()
+                for pin, stderr in self.install_failures.items():
+                    if pin in fragment:
+                        return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
             if self.uv_rc:
                 return SimpleNamespace(returncode=self.uv_rc, stdout="", stderr=self.uv_stderr)
             tree = self.root_install_tree if "-r" not in argv else self.install_tree
@@ -218,6 +266,19 @@ class StoreTestCase(unittest.TestCase):
             out = "".join(f"[cache] data {event} '{path}'\n" for event, path in events)
             return SimpleNamespace(returncode=0, stdout=out, stderr="")
         raise AssertionError(f"test triggered an unexpected subprocess: {argv!r}")
+
+    def _record_script_run(self, argv: list[str], kwargs: dict) -> None:
+        copy = Path(argv[-1])
+        self.script_runs.append({
+            "argv": argv,
+            "cwd": kwargs.get("cwd"),
+            "env": kwargs.get("env") or {},
+            "stdout": kwargs.get("stdout"),
+            "capture_output": kwargs.get("capture_output"),
+            "copy_text": copy.read_text(),
+            "copy_mode": copy.stat().st_mode & 0o777,
+            "copy_dir_mode": copy.parent.stat().st_mode & 0o777,
+        })
 
     @staticmethod
     def _write_tree(root: Path, tree: dict[str, str]) -> None:
@@ -509,6 +570,18 @@ class DebrisTests(StoreTestCase):
         self.assertFalse((download / "acquire-4242-x.json").exists())
         self.assertTrue((download / "catalog.tmp").exists())
         self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_debris_removes_a_stale_source_report(self):
+        download = provision.LIBS / ".inflexa-download"
+        download.mkdir()
+        (download / "source-4242-0a1b2c.json").write_text("{}")
+        (download / "catalog.tmp").write_text("")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.cmd_reclaim(SimpleNamespace(debris=True)), 0)
+
+        self.assertFalse((download / "source-4242-0a1b2c.json").exists())
+        self.assertTrue((download / "catalog.tmp").exists())
 
     def test_debris_prunes_no_dangling_node(self):
         # A node whose directory is gone is the full reclaim's work: the debris
@@ -2304,16 +2377,18 @@ class AcquireSourceRunTests(StoreTestCase):
             report=str(report), snapshot=str(snapshot), script=str(script), output=str(out),
             git_url=kw.get("git_url"), commit=kw.get("commit"),
             apt_snapshot_date=kw.get("apt_snapshot_date"),
-            apt_package=kw.get("apt_package", []))
+            apt_package=kw.get("apt_package", []),
+            package_dir=kw.get("package_dir"), lib_view=str(self.view))
         with contextlib.redirect_stdout(io.StringIO()):
             code = provision.cmd_acquire_source(args)
         return code, json.loads(report.read_text())
 
-    def _git_source(self, snapshot: Path, script: Path, out: Path) -> dict:
+    def _git_source(self, snapshot: Path, script: Path, out: Path, **kw) -> dict:
+        kw.setdefault("apt_package", ["libcurl4-openssl-dev"])
         _code, report = self._acquire_source(
             snapshot, script, out,
             git_url="https://github.com/tacazares/SeedMatchR", commit=self.SHA,
-            apt_snapshot_date="20260901T093000Z", apt_package=["libcurl4-openssl-dev"])
+            apt_snapshot_date="20260901T093000Z", **kw)
         return report
     # --- the clean paths -----------------------------------------------------
 
@@ -2435,8 +2510,8 @@ class AcquireSourceRunTests(StoreTestCase):
 
         self.assertEqual(first["outcome"], "source")
         staging = provision.staging_dir("r") / "source"
-        self.assertEqual(seen.read_text(), str(staging),
-                         "the script environment carries the staged library path")
+        self.assertEqual(seen.read_text(), str(self.view / staging.relative_to(self.root)),
+                         "the script environment carries the staged library path in the read-only view")
         # The run removed the library only after the script and the record.
         self.assertFalse(staging.exists())
 
@@ -2447,7 +2522,7 @@ class AcquireSourceRunTests(StoreTestCase):
 
         self.assertEqual(second["outcome"], "source")
         staging = provision.staging_dir("r") / "source"
-        self.assertEqual(seen.read_text(), str(staging))
+        self.assertEqual(seen.read_text(), str(self.view / staging.relative_to(self.root)))
         self.assertFalse(staging.exists())
 
     def test_the_index_build_of_the_root_name_joins_no_stage(self):
@@ -2536,8 +2611,8 @@ class AcquireSourceRunTests(StoreTestCase):
         real_run = provision.subprocess.run
 
         def run_past_budget(cmd, *args, **kwargs):
-            if cmd[0] == "bash":
-                raise subprocess.TimeoutExpired(cmd="bash", timeout=provision.BUILD_SCRIPT_TIMEOUT_SECONDS)
+            if cmd[0] == "setpriv":
+                raise subprocess.TimeoutExpired(cmd="setpriv", timeout=provision.BUILD_SCRIPT_TIMEOUT_SECONDS)
             return real_run(cmd, *args, **kwargs)
 
         with mock.patch.object(provision.subprocess, "run", side_effect=run_past_budget):
@@ -2560,6 +2635,349 @@ class AcquireSourceRunTests(StoreTestCase):
         outcome = report["outcomes"][0]
         self.assertEqual(outcome["outcome"], "refused")
         self.assertIn("neither an installed R package", outcome["reason"])
+
+    # --- the unprivileged run --------------------------------------------------
+
+    def test_the_script_runs_through_setpriv_from_a_root_owned_copy(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._copy_script(snapshot, out, "SeedMatchR")
+
+        report = self._git_source(snapshot, script, out)
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        [run] = self.script_runs
+        argv = run["argv"]
+        self.assertEqual(
+            argv[:-1],
+            ["setpriv", "--reuid=1000", "--regid=1000", "--init-groups",
+             "--inh-caps=-all", "--bounding-set=-all", "--no-new-privs", "--", "bash"])
+        # The copy is a different file from the mounted script, with the same
+        # bytes, and neither it nor its directory is writable by another user.
+        self.assertNotEqual(argv[-1], str(script))
+        self.assertEqual(run["copy_text"], script.read_text())
+        self.assertEqual(run["copy_mode"], 0o755)
+        self.assertEqual(run["copy_dir_mode"], 0o755)
+        self.assertFalse(Path(argv[-1]).exists(), "the run removes the copy")
+        self.assertEqual(run["cwd"], str(snapshot))
+        self.assertEqual(run["env"]["HOME"], "/home/inflexa-build")
+
+    KILL_SWEEP = ["setpriv", "--reuid=1000", "--regid=1000", "--clear-groups",
+                  "--", "kill", "-s", "KILL", "--", "-1"]
+
+    def test_the_build_user_is_swept_right_after_the_script_and_before_root_reads_the_output(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+
+        self._git_source(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        script_at = next(i for i, argv in enumerate(self.calls)
+                         if argv[0] == "bash" and "--" not in argv)
+        sweeps = [i for i, argv in enumerate(self.calls) if argv == self.KILL_SWEEP]
+        self.assertEqual(len(sweeps), 1, self.calls)
+        self.assertEqual(sweeps[0], script_at + 1, "the sweep is the call right after the script")
+        # Root reads the artifact (dpkg-query and Rscript answer the record) only after the sweep.
+        reads_after_script = [i for i, argv in enumerate(self.calls)
+                              if i > script_at and argv[0] in ("dpkg-query", "Rscript")]
+        self.assertTrue(reads_after_script)
+        self.assertTrue(all(i > sweeps[0] for i in reads_after_script), self.calls)
+
+    def test_the_build_user_is_swept_after_a_failed_script_too(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._script("#!/bin/sh\nexit 3\n")
+
+        report = self._git_source(snapshot, script, out)
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "refused")
+        self.assertEqual(self.calls.count(self.KILL_SWEEP), 1)
+
+    def test_the_build_user_is_swept_after_a_timeout_and_the_refusal_stays(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._script("#!/bin/sh\nexit 0\n")
+        swept: list[list[str]] = []
+        real_run = provision.subprocess.run
+
+        def run_past_budget(cmd, *args, **kwargs):
+            if cmd[0] == "setpriv" and "kill" in cmd:
+                swept.append(list(cmd))
+                raise subprocess.TimeoutExpired(cmd="setpriv", timeout=1)
+            if cmd[0] == "setpriv":
+                raise subprocess.TimeoutExpired(cmd="setpriv", timeout=provision.BUILD_SCRIPT_TIMEOUT_SECONDS)
+            return real_run(cmd, *args, **kwargs)
+
+        with mock.patch.object(provision.subprocess, "run", side_effect=run_past_budget):
+            report = self._git_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn(str(provision.BUILD_SCRIPT_TIMEOUT_SECONDS), outcome["reason"])
+        self.assertEqual(swept, [self.KILL_SWEEP])
+
+    def test_the_store_parent_is_hidden_and_the_output_is_handed_over_before_the_script(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+
+        self._git_source(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        heads = [argv[0] for argv in self.calls]
+        hide = self.calls[heads.index("hide-store-parent")]
+        chown = self.calls[heads.index("give-to-build-user")]
+        self.assertEqual(hide[1], str(provision.LIBS.parent))
+        self.assertEqual(chown[1], str(out))
+        self.assertTrue(out.is_dir(), "the run makes the output directory")
+        self.assertLess(heads.index("hide-store-parent"), heads.index("setpriv"))
+        self.assertLess(heads.index("give-to-build-user"), heads.index("setpriv"))
+
+    def test_a_store_parent_of_the_root_directory_refuses(self):
+        provision.LIBS = Path("/libs")
+
+        with self.assertRaisesRegex(provision.SourceBuildError, "directly under /"):
+            provision.store_parent()
+
+    def test_the_r_library_links_are_relative_and_resolve_through_the_view(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        seen = self.root / "link-target"
+        script = self._script(
+            "#!/bin/sh\nset -e\n"
+            f'readlink "$R_LIBS_USER/Rcpp" > "{seen}"\n'
+            'test -f "$R_LIBS_USER/Rcpp/DESCRIPTION"\n'
+            f'mkdir -p "{out}"\ncp -a "{snapshot}/built/SeedMatchR" "{out}/SeedMatchR"\n')
+
+        report = self._git_source(snapshot, script, out)
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        target = seen.read_text().strip()
+        self.assertFalse(os.path.isabs(target), target)
+        self.assertRegex(target, r"^\.\./\.\./rcpp-1\.0\.13-[0-9a-f]{16}/Rcpp$")
+
+    def test_the_script_output_goes_to_a_file_and_the_refusal_reads_its_tail(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        script = self._script(
+            "#!/bin/sh\nyes 'compiler output line of the build' | head -n 100000\n"
+            "echo boom >&2\nexit 3\n")
+
+        report = self._git_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("boom", outcome["reason"])
+        self.assertLess(len(outcome["reason"]), 1000)
+        [run] = self.script_runs
+        self.assertIsNot(run["stdout"], subprocess.PIPE)
+        self.assertFalse(run["capture_output"])
+
+    def test_the_log_tail_reads_at_most_the_tail_bytes(self):
+        log = self.root / "big.log"
+        log.write_bytes(b"first line\n" + b"filler\n" * 5000 + b"last line\n")
+
+        tail = provision.log_tail(log, lines=2)
+
+        self.assertEqual(tail, "filler\nlast line")
+
+    # --- the apt install ---------------------------------------------------------
+
+    def test_the_plan_apt_packages_install_as_root_after_the_pin_and_before_the_script(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out,
+            apt_package=["libcurl4-openssl-dev", "g++-13"])
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        apt = [argv for argv in self.calls if argv[0] == "apt-get"]
+        self.assertEqual(apt, [
+            ["apt-get", "update"],
+            ["apt-get", "install", "-y", "--no-install-recommends",
+             "libcurl4-openssl-dev", "g++-13"]])
+        heads = [argv[0] for argv in self.calls]
+        self.assertLess(heads.index("apt-get"), heads.index("setpriv"))
+        self.assertEqual(list(self.apt_sources.iterdir()),
+                         [self.apt_sources / provision.APT_SOURCES_FILE])
+
+    def test_a_plan_without_apt_packages_runs_no_apt_get(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out, apt_package=[])
+
+        self.assertEqual(report["outcomes"][0]["outcome"], "source")
+        self.assertNotIn("apt-get", [argv[0] for argv in self.calls])
+
+    def test_an_apt_option_is_not_a_package_name(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        option = "-oAPT::Get::AllowUnauthenticated=true"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out,
+            apt_package=["libcurl4-openssl-dev", option])
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn(option, outcome["reason"])
+        self.assertIn("not a Debian package name", outcome["reason"])
+        heads = [argv[0] for argv in self.calls]
+        self.assertNotIn("apt-get", heads)
+        self.assertNotIn("setpriv", heads)
+        self.assertNotIn("Rscript", heads)
+
+    def _parser_argv(self, snapshot: Path, script: Path, out: Path, *apt_words: str) -> list[str]:
+        return ["provision", "acquire-source",
+                "--report", str(self.root / "report.json"),
+                "--snapshot", str(snapshot), "--script", str(script),
+                "--lib-view", str(self.view), "--output", str(out),
+                "--apt-snapshot-date", "20260214T093000Z", *apt_words]
+
+    def test_a_leading_dash_apt_name_in_the_equals_form_reaches_the_refusal_through_the_real_parser(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        option = "-oAPT::Get::AllowUnauthenticated=true"
+        argv = self._parser_argv(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out,
+                                 f"--apt-package={option}")
+
+        with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+            code = provision.main()
+
+        self.assertEqual(code, 0)
+        outcome = json.loads((self.root / "report.json").read_text())["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn(option, outcome["reason"])
+        self.assertIn("not a Debian package name", outcome["reason"])
+        self.assertNotIn("apt-get", [argv[0] for argv in self.calls])
+
+    def test_the_separate_word_form_of_a_leading_dash_name_never_reaches_the_refusal(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        argv = self._parser_argv(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out,
+                                 "--apt-package", "-oAPT::Get::AllowUnauthenticated=true")
+
+        with mock.patch.object(sys, "argv", argv), \
+                contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                self.assertRaises(SystemExit) as exited:
+            provision.main()
+
+        self.assertEqual(exited.exception.code, 2)
+        self.assertIn("expected one argument", stderr.getvalue())
+        self.assertFalse((self.root / "report.json").exists())
+
+    def test_a_failed_apt_install_refuses_with_the_tail_of_its_output(self):
+        snapshot = self._r_source()
+        out = self.root / "out"
+        self.apt_failures["install"] = "E: Unable to locate package nosuchpkg\n"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out,
+            apt_package=["nosuchpkg"])
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("apt-get install", outcome["reason"])
+        self.assertIn("Unable to locate package nosuchpkg", outcome["reason"])
+        self.assertNotIn("setpriv", [argv[0] for argv in self.calls])
+
+    # --- the package directory -----------------------------------------------------
+
+    def test_the_package_directory_feeds_the_r_resolve_and_the_record(self):
+        snapshot = self._snapshot("mono")
+        pkg = snapshot / "pkg"
+        self._make_r_pkg(snapshot / "built" / "SeedMatchR", "SeedMatchR", "2.0.0")
+        pkg.mkdir()
+        (pkg / "DESCRIPTION").write_text(
+            "Package: SeedMatchR\nVersion: 2.0.0\nTitle: t\nImports: Rcpp\n")
+        self.dcf_fields = {"SeedMatchR": "Rcpp"}
+        self.pak_locks[str(pkg)] = {
+            "packages": [{"package": "Rcpp", "version": "1.0.13"},
+                         {"package": "SeedMatchR", "version": "2.0.0"}]}
+        out = self.root / "out"
+
+        report = self._git_source(
+            snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out, package_dir="pkg")
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "source")
+        resolves = [argv for argv in self.calls
+                    if argv[0] == "Rscript" and argv[1:3] == ["/usr/local/bin/acquire_r.R", "resolve"]]
+        self.assertEqual([argv[3] for argv in resolves], [str(pkg)])
+        self.assertTrue(any(p.name.startswith("rcpp-1.0.13-") for p in provision.STORE.iterdir()))
+        record = json.loads((provision.STORE / outcome["store_dir"] / "SeedMatchR"
+                             / provision.BUILD_MARKER).read_text())
+        self.assertEqual(record["source"]["package_dir"], "pkg")
+
+    def test_a_package_directory_that_leaves_the_snapshot_or_holds_no_description_refuses(self):
+        snapshot = self._r_source()
+        outside = self.root / "outside"
+        self._make_r_pkg(outside, "Evil", "1.0")
+        (snapshot / "link").symlink_to(outside)
+        (snapshot / "empty").mkdir()
+        out = self.root / "out"
+        script = self._copy_script(snapshot, out, "SeedMatchR")
+
+        for package_dir, reason in (
+                ("../etc", "no `..` segment"),
+                ("sub/../../etc", "no `..` segment"),
+                ("/etc", "must be relative"),
+                ("link", "resolves outside the snapshot"),
+                ("empty", "holds no DESCRIPTION")):
+            with self.subTest(package_dir=package_dir):
+                self.calls.clear()
+                report = self._git_source(snapshot, script, out, package_dir=package_dir)
+
+                outcome = report["outcomes"][0]
+                self.assertEqual(outcome["outcome"], "refused")
+                self.assertIn(package_dir, outcome["reason"])
+                self.assertIn(reason, outcome["reason"])
+                heads = [argv[0] for argv in self.calls]
+                for ran in ("Rscript", "apt-get", "setpriv"):
+                    self.assertNotIn(ran, heads)
+
+    # --- the Python dependency refusal -----------------------------------------------
+
+    def _python_source_with_two_requirements(self) -> tuple[Path, Path, Path]:
+        snapshot = self._snapshot("py")
+        built = snapshot / "built"
+        built.mkdir()
+        (built / "demo-1.0-py3-none-any.whl").write_bytes(b"PK\x03\x04\n")
+        self.root_install_tree = {
+            "demo/__init__.py": "x = 1\n",
+            "demo-1.0.dist-info/METADATA":
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"
+                "Requires-Dist: foo\nRequires-Dist: bar\n"}
+        out = self.root / "out"
+        script = self._copy_script(snapshot, out, "demo-1.0-py3-none-any.whl")
+        return snapshot, script, out
+
+    def test_a_failed_python_dependency_refuses_and_frees_the_earlier_pin(self):
+        snapshot, script, out = self._python_source_with_two_requirements()
+        # `bar` sorts before `foo`: bar installs, then foo fails.
+        self.compile_by_input = {"foo\nbar": FOO_1 + BAR_2}
+        self.install_tree = dict(BAR_2_TREE)
+        self.install_failures = {"foo==1.0": "error: no matching distribution for foo"}
+
+        _code, report = self._acquire_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("no matching distribution for foo", outcome["reason"])
+        self.assertEqual(report["nodes"], {})
+        self.assertEqual(list(provision.STORE.iterdir()), [],
+                         "the store directory of the first pin is gone")
+
+    def test_a_python_dependency_without_a_hash_refuses_with_its_reason(self):
+        snapshot, script, out = self._python_source_with_two_requirements()
+        self.compile_by_input = {"foo\nbar": "foo==1.0\n"}
+
+        _code, report = self._acquire_source(snapshot, script, out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "refused")
+        self.assertIn("without a source hash", outcome["reason"])
+        self.assertEqual(list(provision.STORE.iterdir()), [])
 
     # --- the identity rule -----------------------------------------------------
 
@@ -2637,7 +3055,8 @@ class BuildRecordTests(StoreTestCase):
         args = SimpleNamespace(
             report=str(report), snapshot=str(snapshot), script=str(script), output=str(out),
             git_url="https://github.com/tacazares/SeedMatchR", commit=self.SHA,
-            apt_snapshot_date="2026-09-01", apt_package=["libcurl4-openssl-dev"])
+            apt_snapshot_date="2026-09-01", apt_package=["libcurl4-openssl-dev"],
+            package_dir=None, lib_view=str(self.view))
         with unittest.mock.patch.dict(os.environ, env), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(provision.cmd_acquire_source(args), 0)
@@ -2692,7 +3111,8 @@ class BuildRecordTests(StoreTestCase):
         args = SimpleNamespace(report=str(report), snapshot=str(snapshot),
                                script=str(script), output=str(out),
                                git_url=None, commit=None,
-                               apt_snapshot_date=None, apt_package=[])
+                               apt_snapshot_date=None, apt_package=[],
+                               package_dir=None, lib_view=str(self.view))
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(provision.cmd_acquire_source(args), 0)
 

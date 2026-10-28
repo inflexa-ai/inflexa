@@ -90,12 +90,83 @@ export class ContainerRuntimeError extends Error {}
 /** Captured result of a container command. */
 export type CaptureResult = { code: number; stdout: string; stderr: string };
 
-/** Run a container command and capture its stdout/stderr/exit code. */
-export async function capture(rt: ContainerRuntime, args: string[]): Promise<CaptureResult> {
+/** The options of {@link capture}. */
+export type CaptureOpts = {
+    /** An aborted signal kills the child, and the capture then reports the exit code that the kill produced. */
+    readonly signal?: AbortSignal;
+    /** The most bytes that each stream keeps: the first half and the last half of the budget. The stream is still read to its end. */
+    readonly maxBytesPerStream?: number;
+};
+
+/**
+ * Read a piped stream to its end, and keep at most `maxBytes` of it: the first half of the budget, the last
+ * half, and a marker that names the dropped bytes between them. The pump never stops reading, because a child
+ * that blocks on a full pipe would never exit. The memory is bounded by the budget plus one chunk.
+ */
+async function pumpBounded(readable: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> {
+    const headMax = Math.floor(maxBytes / 2);
+    const tailMax = maxBytes - headMax;
+    const head: Uint8Array[] = [];
+    let headLength = 0;
+    const tail: Uint8Array[] = [];
+    let tailLength = 0;
+    let total = 0;
+    const reader = readable.getReader();
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        let rest = value;
+        if (headLength < headMax) {
+            const take = Math.min(headMax - headLength, rest.length);
+            head.push(rest.slice(0, take));
+            headLength += take;
+            rest = rest.subarray(take);
+        }
+        if (rest.length === 0) continue;
+        tail.push(rest.slice());
+        tailLength += rest.length;
+        // A leading chunk leaves once the chunks behind it already hold the whole tail budget.
+        while (tail.length > 1 && tailLength - (tail[0]?.length ?? 0) >= tailMax) tailLength -= tail.shift()?.length ?? 0;
+    }
+    // The first kept chunk can overshoot the budget by part of one chunk; cut its front.
+    const overshoot = tailLength - tailMax;
+    if (overshoot > 0 && tail[0] !== undefined) {
+        tail[0] = tail[0].subarray(overshoot);
+        tailLength -= overshoot;
+    }
+    const decoder = new TextDecoder();
+    const text = (chunks: Uint8Array[]): string => chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
+    const dropped = total - headLength - tailLength;
+    if (dropped <= 0) return text([...head, ...tail]);
+    return `${text(head)}\n[... ${dropped} bytes not captured ...]\n${text(tail)}`;
+}
+
+/**
+ * Run a container command and capture its stdout/stderr/exit code.
+ *
+ * `opts.maxBytesPerStream` bounds what the capture holds for each stream (the head and the tail, with a marker
+ * between them), so a command with an unbounded output costs a bounded amount of memory. `opts.signal` kills the
+ * child when it aborts, as {@link stream} does.
+ */
+export async function capture(rt: ContainerRuntime, args: string[], opts: CaptureOpts = {}): Promise<CaptureResult> {
     const proc = Bun.spawn({ cmd: [rt.bin, ...args], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const code = await proc.exited;
-    return { code, stdout, stderr };
+    // A signal that was already aborted kills the child at once, because `addEventListener` fires for a
+    // later abort only.
+    const onAbort = (): void => proc.kill();
+    if (opts.signal?.aborted === true) onAbort();
+    else opts.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+        const limit = opts.maxBytesPerStream;
+        const [stdout, stderr] =
+            limit === undefined
+                ? await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+                : await Promise.all([pumpBounded(proc.stdout, limit), pumpBounded(proc.stderr, limit)]);
+        const code = await proc.exited;
+        return { code, stdout, stderr };
+    } finally {
+        opts.signal?.removeEventListener("abort", onAbort);
+    }
 }
 
 /**

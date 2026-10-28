@@ -20,7 +20,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { ensureRuntime } from "../../lib/config.ts";
-import { stream, type CaptureResult, type ContainerRuntime } from "../../lib/container.ts";
+import { capture, stream, type CaptureResult, type ContainerRuntime } from "../../lib/container.ts";
 import { provisionerImageFor } from "./images.ts";
 import { configuredSandboxImage, ensureImagePresent } from "./pull.ts";
 
@@ -137,11 +137,16 @@ export const SOURCE_SNAPSHOT_MOUNT = "/work/src";
 /** The approved build script of a clean run, mounted read-only at a fixed container path. */
 export const SOURCE_SCRIPT_MOUNT = "/work/build.sh";
 
+/** The read-only view of the store that a clean run hands the build script for its dependency library. The read-write mount stays at {@link LIB_MOUNT} for the run itself. */
+export const SOURCE_LIB_VIEW_MOUNT = "/opt/inflexa/libs-ro";
+
 /** The output directory the script contract names: exactly one root artifact, and nothing else. */
 const BUILD_OUT = "/work/out";
 
 /** What one clean source-build run needs, beside the store it writes into. */
 export type SourceBuildRun = {
+    /** The container name. The runner removes the container by this name when the run aborts, because killing the engine client does not stop it. */
+    readonly containerName: string;
     readonly storeRoot: string;
     /** The approved session egress list, exactly as the user approved it. */
     readonly egressAllow: string;
@@ -152,6 +157,8 @@ export type SourceBuildRun = {
     readonly reportName: string;
     /** The resolved git source, or `null` for a folder source whose hash covers the snapshot. */
     readonly git: { readonly url: string; readonly commit: string } | null;
+    /** The directory of the source tree that holds the R `DESCRIPTION`, relative to the snapshot root. */
+    readonly packageDir?: string;
     readonly aptSnapshotDate: string;
     readonly aptPackages: readonly string[];
     /** The digests the build record copies. A process inside the container cannot read its own image digest, thus the launch names both. */
@@ -166,6 +173,8 @@ export function acquireSourceArgs(rt: ContainerRuntime, image: string, run: Sour
     return [
         "run",
         "--rm",
+        "--name",
+        run.containerName,
         "--cap-add",
         "NET_ADMIN",
         "-e",
@@ -176,6 +185,8 @@ export function acquireSourceArgs(rt: ContainerRuntime, image: string, run: Sour
         `INFLEXA_BASE_IMAGE_DIGEST=${run.imageDigests.base}`,
         "-v",
         rt.mountArg(run.storeRoot, LIB_MOUNT),
+        "-v",
+        rt.mountArgRo(run.storeRoot, SOURCE_LIB_VIEW_MOUNT),
         "-v",
         rt.mountArgRo(run.snapshotHost, SOURCE_SNAPSHOT_MOUNT),
         "-v",
@@ -190,30 +201,60 @@ export function acquireSourceArgs(rt: ContainerRuntime, image: string, run: Sour
         SOURCE_SCRIPT_MOUNT,
         "--output",
         BUILD_OUT,
+        "--lib-view",
+        SOURCE_LIB_VIEW_MOUNT,
+        ...(run.packageDir === undefined ? [] : ["--package-dir", run.packageDir]),
         ...(run.git === null ? [] : ["--git-url", run.git.url, "--commit", run.git.commit]),
         "--apt-snapshot-date",
         run.aptSnapshotDate,
-        ...run.aptPackages.flatMap((name) => ["--apt-package", name]),
+        // The `=` form keeps a name that starts with a dash a value of the flag: argparse reads a separate dash-leading word as an option and exits 2 with no report.
+        ...run.aptPackages.map((name) => `--apt-package=${name}`),
     ];
 }
 
-/** The default clean-run runner: one one-shot provisioner container over the pristine snapshot. */
-export const runSourceBuild: SourceBuildRunner = async (run, onLine, signal) => {
-    const rtResult = await ensureRuntime();
+/** The parts of the host the clean-run runner uses. Every piece is injectable, and each default is the real one. */
+export type SourceBuildOpts = {
+    /** Resolves and pins the container runtime. Default: `ensureRuntime`. */
+    readonly resolveRuntime?: typeof ensureRuntime;
+    /** Whether the engine holds the image. Default: `ensureImagePresent`. */
+    readonly ensureImage?: typeof ensureImagePresent;
+    /** Streams the run container. Default: `stream`. */
+    readonly stream?: typeof stream;
+    /** Runs the removal of the container of an aborted run. Default: `capture`. */
+    readonly capture?: typeof capture;
+};
+
+/**
+ * The default clean-run runner: one one-shot provisioner container over the pristine snapshot.
+ * When `signal` aborts, the engine client dies but the container does not, thus the runner removes the
+ * container by name once the client is gone.
+ */
+export async function runSourceBuild(
+    run: SourceBuildRun,
+    onLine: (line: string) => void,
+    signal?: AbortSignal,
+    opts: SourceBuildOpts = {},
+): Promise<Result<CaptureResult, ProvisionerError>> {
+    const rtResult = await (opts.resolveRuntime ?? ensureRuntime)();
     if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
     const rt = rtResult.value;
     const image = provisionerImageFor(configuredSandboxImage());
-    const present = await ensureImagePresent(rt, image);
+    const present = await (opts.ensureImage ?? ensureImagePresent)(rt, image);
     if (present.isErr()) return err({ type: "image_unavailable", message: present.error.message });
     try {
-        return ok(await stream(rt, acquireSourceArgs(rt, image, run), onLine, signal));
+        return ok(await (opts.stream ?? stream)(rt, acquireSourceArgs(rt, image, run), onLine, signal));
     } catch (cause) {
         return err({
             type: "runtime_unavailable",
             message: `Could not start the source build with ${rt.label}: ${cause instanceof Error ? cause.message : String(cause)}`,
         });
+    } finally {
+        if (signal?.aborted === true) {
+            // The container can already be gone, and a failed removal leaves the abort outcome unchanged.
+            await (opts.capture ?? capture)(rt, ["rm", "-f", run.containerName]).catch(() => undefined);
+        }
     }
-};
+}
 
 /** Turn a completed container run into a Result, mapping a store-lock conflict to its own actionable error. */
 export function classifyProvisionerRun(res: CaptureResult): Result<void, ProvisionerError> {
@@ -249,6 +290,8 @@ export type LoadCheckRunner = (params: {
     readonly storeRoot: string;
     /** The path of the acquire report, relative to the store root. */
     readonly reportName: string;
+    /** An aborted signal kills the engine client of the check. The check container has no network and ends on its own. */
+    readonly signal?: AbortSignal;
 }) => Promise<Result<CaptureResult, ProvisionerError>>;
 
 /** The default load-check runner. */
@@ -274,7 +317,7 @@ export const runLoadCheck: LoadCheckRunner = async (params) => {
         `${LIB_MOUNT}/${params.reportName}`,
     ];
     try {
-        return ok(await stream(rt, args, () => undefined));
+        return ok(await stream(rt, args, () => undefined, params.signal));
     } catch (cause) {
         return err({
             type: "runtime_unavailable",
