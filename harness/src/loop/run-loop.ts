@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { durableCalls } from "@dbos-inc/vercel-ai";
 import {
+    NoSuchToolError,
     streamText,
     wrapLanguageModel,
     type AssistantModelMessage,
@@ -51,6 +52,7 @@ import {
 } from "../memory/ai-sdk-message-storage.js";
 import { conversationView, lastRequestInputTokens, withoutReasoning } from "../memory/conversation-view.js";
 import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
+import { aliasedToolName } from "./tool-name-repair.js";
 import { fallbackModelOf } from "../providers/ai-sdk.js";
 import { extractStatus, findProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
@@ -859,6 +861,13 @@ async function runSeries(
         maxRetries: 0,
         abortSignal: AbortSignal.any([opts.signal, fatalController.signal]),
         telemetry: bound.telemetry,
+        repairToolCall: ({ toolCall, tools: declared, error }) => {
+            if (!NoSuchToolError.isInstance(error)) return Promise.resolve(null);
+            const tool = aliasedToolName(toolCall.toolName, new Set(Object.keys(declared)));
+            if (tool === undefined) return Promise.resolve(null);
+            log.warn("a tool call named a proxy alias of a declared tool", { alias: toolCall.toolName, tool });
+            return Promise.resolve({ ...toolCall, toolName: tool });
+        },
         toolApproval: async ({ toolCall }) => {
             const refusal = calls.refusalOf({ toolName: toolCall.toolName, input: toolCall.input }, spec.mask);
             if (refusal !== undefined) {
