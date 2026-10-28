@@ -605,7 +605,7 @@ describe("the chat turns of the composition", () => {
         try {
             const runtime = assembleCoreRuntime(chatDeps());
 
-            for (const name of ["chat-turn", "sub-agent.planner", "sub-agent.analogical-reasoner", "sub-agent.literature-reviewer"]) {
+            for (const name of ["chat-turn", "sub-agent.planner", "sub-agent.analogical-reasoner"]) {
                 expect(registered).toContain(name);
             }
             expect(Object.keys(runtime.chatTurns).sort()).toEqual(["answer", "open", "outcome", "read", "stop"]);

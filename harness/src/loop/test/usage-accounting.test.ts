@@ -23,8 +23,7 @@ import { makeSession } from "../../providers/__fixtures__/session.js";
 import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import type { ChatProvider, ChatUsage } from "../../providers/types.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
-import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
+import { createGenerateAnalogyReportTool } from "../../tools/research/generate-analogy-report.js";
 import { reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptedReply, type ScriptStep } from "../../testing.js";
 import { runLoop, type AgentFinish, type LoopOptions } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
@@ -460,36 +459,30 @@ describe("runLoop usage — sub-agent runs", () => {
     it("threads the deps bag and the turn accumulator through a real sub-agent factory", async () => {
         // The tests above drive a stand-in tool written here, which proves the loop
         // honours what a tool passes down but not that any shipped factory passes
-        // it. `createLiteratureReviewerTool` is the lightest real one — a provider,
+        // it. `createGenerateAnalogyReportTool` is the lightest real one — a provider,
         // a model label, and empty API keys — so it is what pins the wiring the
         // factories actually carry: the recorder from its deps, `ctx.turnUsage`,
         // and `ctx.invocationId`.
         const { recorder, records } = recordingRecorder();
         const childProvider = scriptedModel([reply([text("evidence report")], "stop", usage(100, 20))]).provider;
-        const reviewer = createLiteratureReviewerTool(
-            {
-                provider: childProvider,
-                model: "claude-test",
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                citationResolver: unusedCitationResolver,
-                usageRecorder: recorder,
-            },
+        const reasoner = createGenerateAnalogyReportTool(
+            { provider: childProvider, model: "claude-test", bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, usageRecorder: recorder },
             inProcessSubAgent,
         );
         const parent = scriptedModel([
-            reply([toolCall("tu-lit", "literature_reviewer", { brief: "profile these genes" })], "tool-calls", usage(10, 2)),
+            reply([toolCall("tu-lit", "generate_analogy_report", { problem: "profile these genes" })], "tool-calls", usage(10, 2)),
             reply([text("done")], "stop", usage(5, 1)),
         ]).provider;
 
-        const { finish } = await runLoop(agentDef([reviewer]), GO, runFramedSession(), opts(parent, recorder));
+        const { finish } = await runLoop(agentDef([reasoner]), GO, runFramedSession(), opts(parent, recorder));
 
-        const childRecords = records.filter((r) => r.agentId === "literature-reviewer");
+        const childRecords = records.filter((r) => r.agentId === "analogical-reasoner");
         expect(childRecords).toHaveLength(1);
-        expect(presentFirst(childRecords).callPath).toEqual(["conversation-agent", "literature-reviewer"]);
+        expect(presentFirst(childRecords).callPath).toEqual(["conversation-agent", "analogical-reasoner"]);
         expect(presentFirst(childRecords).usage).toEqual({ inputTokens: 100, outputTokens: 20 });
         // The dispatching tool call's id rides in the key — the discriminator that
         // only reaches the child because the factory forwards `ctx.invocationId`.
-        expect(presentFirst(childRecords).recordKey).toBe("run-1:step-a:conversation-agent>literature-reviewer:tu-lit:response-0");
+        expect(presentFirst(childRecords).recordKey).toBe("run-1:step-a:conversation-agent>analogical-reasoner:tu-lit:response-0");
 
         // The child folded into the root's accumulator rather than a private one.
         expect(finish.usage).toEqual({ inputTokens: 15, outputTokens: 3 });

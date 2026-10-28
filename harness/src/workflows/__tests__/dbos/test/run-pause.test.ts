@@ -36,7 +36,6 @@ import { unusedCitationResolver } from "../../../../citations/__fixtures__/resol
 import type { ArtifactRegistry } from "../../../../execution/artifact-registry.js";
 import { createRunCanceler } from "../../../../execution/run-canceler.js";
 import type { GateFailure } from "../../../../lib/hooks.js";
-import { inProcessSubAgent } from "../../../../loop/sub-agent.js";
 import { createWorkingMemory } from "../../../../memory/working-memory.js";
 import { unusedChatProvider } from "../../../../providers/__fixtures__/chat-provider.js";
 import type { SandboxClient } from "../../../../sandbox/client.js";
@@ -45,7 +44,7 @@ import type { AnalysisStep } from "../../../../schemas/workflow-state.js";
 import { insertRun, queryRun, queryStepsByRun, upsertAnalysis } from "../../../../state/index.js";
 import { queryPausesOfWork, type PauseRecord } from "../../../../state/paused-work.js";
 import { reply, scriptedModel, text, type ScriptStep } from "../../../../testing.js";
-import { createLiteratureReviewerTool } from "../../../../tools/research/literature-reviewer.js";
+import { createSynthesisLookupTools } from "../../../../tools/research/synthesis-lookups.js";
 import { createSubmitFileMetadataTool } from "../../../../tools/sandbox/submit-file-metadata.js";
 import { runExecuteAnalysisBody, type ExecuteAnalysisDeps, type ExecuteAnalysisResult } from "../../../execute-analysis.js";
 import { runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../../../sandbox-step.js";
@@ -149,15 +148,7 @@ function parentDeps(current: RunCase): ExecuteAnalysisDeps {
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         workingMemory: createWorkingMemory(rig.pool),
         synthesisModel: "test-model",
-        literatureReviewer: createLiteratureReviewerTool(
-            {
-                provider: unusedChatProvider(),
-                model: "test-model",
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                citationResolver: unusedCitationResolver,
-            },
-            inProcessSubAgent,
-        ),
+        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
         runCharge: current.runCharge,
         runAuthorizer: {
             authorize() {

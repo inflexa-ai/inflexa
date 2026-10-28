@@ -13,15 +13,13 @@
  *      `buildRunSynthesisPart` emits the chat data part shape.
  */
 
-import { inProcessSubAgent } from "../../loop/sub-agent.js";
-import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { okAsync } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import type { LoopStep } from "../../loop/run-loop.js";
@@ -31,6 +29,7 @@ import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import {
     __buildInnerToolsForTest,
+    pmidsIn,
     acceptedSynthesisOf,
     buildRunSynthesisPart,
     formatSynthesisEmbeddingText,
@@ -45,11 +44,10 @@ import { RunSynthesisPartSchema } from "../../contracts/schemas/chat-parts.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { RunSynthesis, SynthesisDraft } from "../../schemas/run-synthesis.js";
-import type { ToolContext } from "../../tools/define-tool.js";
+import { defineTool, type ToolContext } from "../../tools/define-tool.js";
 import { synthesisAgentPrompt } from "../../prompts/synthesis-agent.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
-import { presentAt, presentLast } from "../../lib/present.js";
+import { presentAt } from "../../lib/present.js";
 import { awaitOk } from "../../lib/test/result-assert.js";
 
 const RUN_ID = "run-001";
@@ -129,9 +127,21 @@ function unknownStepPayload(): SynthesisDraft {
     return bad;
 }
 
-const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
-
 const done = reply([text("done")]);
+
+/** The PMID that the valid payload cites. */
+const CITED_PMID = "12345678";
+
+/** A PubMed lookup that returns the cited PMID. */
+const pubmedLookup = defineTool({
+    id: "pubmed",
+    description: "Search PubMed.",
+    inputSchema: z.object({ query: z.string() }),
+    describeCall: "none",
+    execute: () => Promise.resolve(ok({ totalFound: 1, results: [{ pmid: CITED_PMID, title: "FOXP3 in regulatory T cells" }] })),
+});
+
+const lookup = (id: string) => callTools(toolCall(id, "pubmed", { query: "FOXP3 regulatory T cells" }));
 
 const submit = (id: string, synthesis: unknown) => callTools(toolCall(id, "submit_synthesis", { synthesis }));
 
@@ -142,17 +152,7 @@ function synthesize(script: readonly ScriptStep[], extra: Partial<GenerateRunSyn
         provider: model.provider,
         session: makeRunSession(),
         model: "claude-test",
-        literatureReviewer: createLiteratureReviewerTool(
-            {
-                provider: model.provider,
-                model: "claude-test",
-                bioKeys: BIO_KEYS,
-                citationResolver: unusedCitationResolver,
-                usageRecorder: extra.usageRecorder,
-                toolOutputStore: extra.toolOutputStore,
-            },
-            inProcessSubAgent,
-        ),
+        synthesisLookups: [pubmedLookup],
         summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
         planNarrative: "Compare stimulated vs resting T-cells.",
         runId: RUN_ID,
@@ -194,8 +194,8 @@ function submitCall(toolCallId: string, synthesis: unknown, value: Extract<ToolC
 }
 
 describe("submit_synthesis inner tool", () => {
-    it("accepts a valid synthesis", async () => {
-        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
+    it("accepts a valid synthesis whose PMIDs a lookup returned", async () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), lookedUpPmids: new Set([CITED_PMID]) });
 
         const result = (await tool.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
 
@@ -253,6 +253,18 @@ describe("submit_synthesis inner tool", () => {
         ]);
     });
 
+    it("refuses a numeric PMID that no lookup of the run returned", async () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), lookedUpPmids: new Set(["99999999"]) });
+
+        const result = (await tool.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap();
+
+        if (!("issues" in result)) throw new Error("expected a rejected submission");
+        expect(result.issues.map((i) => [i.path, i.message])).toEqual([
+            ["synthesis.findings[0].references[0].pmid", `pmid "${CITED_PMID}" is in no lookup result of this run`],
+            ["synthesis.keyReferences[0].pmid", `pmid "${CITED_PMID}" is in no lookup result of this run`],
+        ]);
+    });
+
     it("refuses a malformed synthesis at its input schema", () => {
         const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]) });
 
@@ -304,17 +316,17 @@ describe("report_blocker inner tool", () => {
 
 describe("generateRunSynthesis", () => {
     it("drives the agent loop to submit_synthesis and returns the accepted synthesis", async () => {
-        const { run, calls } = synthesize([submit("tu-1", validSynthesisPayload()), done]);
+        const { run, calls } = synthesize([lookup("lk-1"), submit("tu-1", validSynthesisPayload()), done]);
 
         const result = await run;
 
         expect(result).toEqual({ kind: "synthesis", synthesis: { runId: RUN_ID, ...validSynthesisPayload() } });
         // The submit does not end the run: the model reads the result, and its reply ends the run.
-        expect(calls).toHaveLength(2);
+        expect(calls).toHaveLength(3);
     });
 
     it("stamps the run id of its own run, whatever run id the model typed", async () => {
-        const { run } = synthesize([submit("tu-1", { ...validSynthesisPayload(), runId: "run-typed-by-the-model" }), done]);
+        const { run } = synthesize([lookup("lk-1"), submit("tu-1", { ...validSynthesisPayload(), runId: "run-typed-by-the-model" }), done]);
 
         const result = await run;
 
@@ -322,13 +334,13 @@ describe("generateRunSynthesis", () => {
         expect(result.synthesis.runId).toBe(RUN_ID);
     });
 
-    it("declares the synthesis tools, the reviewer, and then read_tool_output when it has a tool output store", async () => {
+    it("declares the synthesis tools, the lookups, and then read_tool_output when it has a tool output store", async () => {
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
-        const { run, calls } = synthesize([submit("tu-1", validSynthesisPayload()), done], { toolOutputStore });
+        const { run, calls } = synthesize([lookup("lk-1"), submit("tu-1", validSynthesisPayload()), done], { toolOutputStore });
 
         await run;
 
-        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["submit_synthesis", "report_blocker", "literature_reviewer", "read_tool_output"]);
+        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["submit_synthesis", "report_blocker", "pubmed", "read_tool_output"]);
     });
 
     it("returns skipped with the reason when the agent records only a blocker", async () => {
@@ -343,6 +355,7 @@ describe("generateRunSynthesis", () => {
 
     it("keeps an accepted synthesis over a blocker of the same run", async () => {
         const { run } = synthesize([
+            lookup("lk-1"),
             callTools(
                 toolCall("tu-1", "report_blocker", { reason: "nothing to synthesize" }),
                 toolCall("tu-2", "submit_synthesis", { synthesis: validSynthesisPayload() }),
@@ -356,19 +369,19 @@ describe("generateRunSynthesis", () => {
     });
 
     it("gives a refused synthesis its issues, and the corrected submission is the synthesis", async () => {
-        const { run, calls } = synthesize([submit("tu-1", unknownStepPayload()), submit("tu-2", validSynthesisPayload()), done]);
+        const { run, calls } = synthesize([lookup("lk-1"), submit("tu-1", unknownStepPayload()), submit("tu-2", validSynthesisPayload()), done]);
 
         const result = await run;
 
         expect(result).toEqual({ kind: "synthesis", synthesis: { runId: RUN_ID, ...validSynthesisPayload() } });
         const refused = z
             .object({ type: z.literal("json"), value: z.object({ accepted: z.literal(false), issues: z.array(z.object({ path: z.string() })) }) })
-            .parse(toolResultIn(presentAt(calls, 1), "tu-1"));
+            .parse(toolResultIn(presentAt(calls, 2), "tu-1"));
         expect(refused.value.issues.map((issue) => issue.path)).toContain("synthesis.findings[0].stepId");
     });
 
     it("accepts a synthesis that arrives as a JSON-encoded string", async () => {
-        const { run } = synthesize([submit("tu-1", JSON.stringify(validSynthesisPayload())), done]);
+        const { run } = synthesize([lookup("lk-1"), submit("tu-1", JSON.stringify(validSynthesisPayload())), done]);
 
         const result = await run;
 
@@ -376,21 +389,16 @@ describe("generateRunSynthesis", () => {
     });
 
     it("salvages a run that ends on prose, and the salvage lets only the terminal tools run", async () => {
-        const { run, calls } = synthesize([
-            reply([text("thinking out loud")]),
-            callTools(toolCall("rv-1", "literature_reviewer", { brief: "Investigate FOXP3." })),
-            submit("tu-1", validSynthesisPayload()),
-            done,
-        ]);
+        const { run, calls } = synthesize([lookup("lk-1"), reply([text("thinking out loud")]), lookup("lk-2"), submit("tu-1", validSynthesisPayload()), done]);
 
         const result = await run;
 
         expect(result.kind).toBe("synthesis");
-        expect(lastUserText(presentAt(calls, 1))).toContain("You ended without an accepted synthesis");
-        expect(toolResultIn(presentAt(calls, 2), "rv-1")).toEqual({
+        expect(lastUserText(presentAt(calls, 2))).toContain("You ended without an accepted synthesis");
+        expect(toolResultIn(presentAt(calls, 3), "lk-2")).toEqual({
             type: "error-text",
             value: JSON.stringify({
-                error: "The tool literature_reviewer is not available for this request, thus it did not run. The tools that can run now: submit_synthesis, report_blocker.",
+                error: "The tool pubmed is not available for this request, thus it did not run. The tools that can run now: submit_synthesis, report_blocker.",
                 retryable: false,
             }),
         });
@@ -407,40 +415,41 @@ describe("generateRunSynthesis", () => {
         expect(lastUserText(presentAt(calls, 1))).toContain("You ended without an accepted synthesis");
     });
 
-    it("runs 3 reviewer loops and refuses a fourth literature_reviewer call with the error of the budget", async () => {
-        // The synthesizer and its reviewers share this scripted model.
-        const isSynthesizer = (call: LanguageModelV4CallOptions): boolean => toolNamesOf(call).includes("submit_synthesis");
-        let synthesizerTurn = 0;
-        const answer = (call: LanguageModelV4CallOptions) => {
-            if (!isSynthesizer(call)) return reply([text("evidence report")]);
-            synthesizerTurn++;
-            // Three delegations in one round all run.
-            if (synthesizerTurn === 1) return callTools(...[1, 2, 3].map((n) => toolCall(`rv-${n}`, "literature_reviewer", { brief: `brief ${n}` })));
-            if (synthesizerTurn === 2) return callTools(toolCall("rv-4", "literature_reviewer", { brief: "brief 4" }));
-            if (synthesizerTurn === 3) return submit("tu-1", validSynthesisPayload());
-            return done;
-        };
-        const { run, calls } = synthesize(Array.from({ length: 7 }, () => answer));
+    it("refuses a PMID that no lookup returned, and accepts it after the lookup", async () => {
+        const { run, calls } = synthesize([submit("tu-1", validSynthesisPayload()), lookup("lk-1"), submit("tu-2", validSynthesisPayload()), done]);
 
         const result = await run;
 
-        expect(result.kind).toBe("synthesis");
-        // One reviewer loop of one request for each of the first 3 calls, and none for the fourth.
-        expect(calls.filter((call) => !isSynthesizer(call))).toHaveLength(3);
-        const lastSynthesizerRequest = presentLast(calls.filter(isSynthesizer));
-        expect(toolResultIn(lastSynthesizerRequest, "rv-4")).toEqual({
-            type: "error-text",
-            value: JSON.stringify({
-                error: "The tool literature_reviewer reached its limit of 3 calls in this run, thus this call did not run.",
-                retryable: false,
-            }),
-        });
+        expect(result).toEqual({ kind: "synthesis", synthesis: { runId: RUN_ID, ...validSynthesisPayload() } });
+        const refused = z
+            .object({ value: z.object({ accepted: z.literal(false), issues: z.array(z.object({ path: z.string(), message: z.string() })) }) })
+            .parse(toolResultIn(presentAt(calls, 1), "tu-1"));
+        expect(refused.value.issues.map((issue) => issue.message)).toEqual([
+            `pmid "${CITED_PMID}" is in no lookup result of this run`,
+            `pmid "${CITED_PMID}" is in no lookup result of this run`,
+        ]);
     });
 
     it("throws on empty summaries", async () => {
         const { run } = synthesize([], { summaries: [] });
 
         await expect(run).rejects.toThrow("no step summaries");
+    });
+});
+
+describe("pmidsIn", () => {
+    it("reads pmid and pmids keys at any depth", () => {
+        const found = pmidsIn({ results: [{ pmid: "111" }, { pmid: 222 }], phenotypes: [{ pmids: ["333", "not-a-pmid"] }], notFound: ["444"] });
+        expect([...found].sort()).toEqual(["111", "222", "333"]);
+    });
+
+    it("skips the request that a lookup gives back, thus an invented PMID that was only checked does not count", () => {
+        const resolution = {
+            input: { citation: "PMID 99999999" },
+            normalized: { identifiers: { pmid: "99999999" } },
+            sourceOutcomes: [{ records: [{ identifiers: { pmid: "12345678" } }] }],
+        };
+        expect([...pmidsIn(resolution)]).toEqual(["12345678"]);
     });
 });
 
@@ -454,7 +463,7 @@ describe("blocker discipline copy", () => {
 
     it("synthesizer prompt states an empty findings[] is a valid submission and not a blocker", () => {
         expect(synthesisAgentPrompt).toContain("is a valid submission");
-        expect(synthesisAgentPrompt).toContain("NOT a blocker");
+        expect(synthesisAgentPrompt).toContain("never a reason to `report_blocker`");
     });
 });
 

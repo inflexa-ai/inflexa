@@ -8,8 +8,7 @@
  * tested in `execution/test/run-synthesis.test.ts`; here we assert the wiring.
  */
 
-import { inProcessSubAgent } from "../../loop/sub-agent.js";
-import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
+import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,14 +65,7 @@ function validSynthesisPayload(): SynthesisDraft {
                 confidence: "high",
                 noveltyStatus: "confirmed",
                 literatureInterpretation: "Consistent with prior reports.",
-                references: [
-                    {
-                        pmid: "12345678",
-                        citation: "Smith 2020",
-                        relevance: "directly supports",
-                        concordance: "supports",
-                    },
-                ],
+                references: [],
             },
         ],
         themes: [
@@ -84,13 +76,7 @@ function validSynthesisPayload(): SynthesisDraft {
             },
         ],
         limitations: ["Single cohort; n=24."],
-        keyReferences: [
-            {
-                pmid: "12345678",
-                citation: "Smith 2020",
-                description: "Established FOXP3 as the master regulator.",
-            },
-        ],
+        keyReferences: [],
     };
 }
 
@@ -153,10 +139,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             embedding,
             resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
             synthesisModel: "claude-test",
-            literatureReviewer: createLiteratureReviewerTool(
-                { provider, model: "claude-test", bioKeys: BIO_KEYS, citationResolver: unusedCitationResolver },
-                inProcessSubAgent,
-            ),
+            synthesisLookups: createSynthesisLookupTools({ bioKeys: BIO_KEYS, citationResolver: unusedCitationResolver }),
         },
         get embedderCalls() {
             return embedderCalls;

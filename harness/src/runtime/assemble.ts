@@ -51,7 +51,7 @@ import type { ProvenanceSeam } from "../provenance/seam.js";
 import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
+import { createSynthesisLookupTools } from "../tools/research/synthesis-lookups.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -76,9 +76,9 @@ export type CoreWorkflowDeps = {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "runAuthorizer">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<
         ExecuteAnalysisDeps,
-        "usageRecorder" | "literatureReviewer" | "toolOutputStore" | "workingMemory"
+        "usageRecorder" | "synthesisLookups" | "toolOutputStore" | "workingMemory"
     > & {
-        /** API keys for the bio/chem tools of the literature reviewer of the synthesis. */
+        /** API keys for the bio/chem tools of the lookups of the synthesis. */
         readonly bioKeys: BioToolKeys;
     };
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
@@ -376,21 +376,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         runAuthorizer: conversation.runAuthorizer,
     });
     const { bioKeys: synthesisBioKeys, ...executeAnalysisDeps } = wf.buildExecuteAnalysis(sandboxStep);
-    const literatureReviewer = createLiteratureReviewerTool(
-        {
-            provider: executeAnalysisDeps.provider,
-            model: executeAnalysisDeps.synthesisModel,
-            bioKeys: synthesisBioKeys,
-            citationResolver,
-            usageRecorder,
-            toolOutputStore,
-            logger: executeAnalysisDeps.logger,
-        },
-        registerPausingSubAgent,
-    );
+    const synthesisLookups = createSynthesisLookupTools({ bioKeys: synthesisBioKeys, citationResolver, logger: executeAnalysisDeps.logger });
     const executeAnalysis = registerExecuteAnalysis({
         ...executeAnalysisDeps,
-        literatureReviewer,
+        synthesisLookups,
         usageRecorder,
         toolOutputStore,
         workingMemory: createWorkingMemory(conversation.pool),

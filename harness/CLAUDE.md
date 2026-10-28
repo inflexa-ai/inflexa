@@ -350,13 +350,12 @@ is an embedder concern.
   `runEphemeral`, `startReportSession`, `generateAnalogyReport`, and `showUser`.
   `createConversationAgent(deps)` is the composition root that wires the deps of
   each tool.
-- **Literature Reviewer** (`tools/research/literature-reviewer.ts`): a sub-agent
-  that is a tool. It receives a research brief, investigates with the bio-lookup
-  tools, and gives a structured evidence report. It runs `runLoop` under a child
-  session (`forSubAgent`). Inside the body of a workflow, the call starts a child
-  workflow (`loop/sub-agent.ts`), thus each model call and each tool call of the
-  child is a step of the child. The assembly registers the workflow of each
-  sub-agent kind one time, before DBOS launches.
+- **Sub-agent tools** (`generatePlan`, `generateAnalogyReport`): a sub-agent that
+  is a tool. It runs its loop under a child session (`forSubAgent`). Inside the
+  body of a workflow, the call starts a child workflow (`loop/sub-agent.ts`). Thus
+  each model call and each tool call of the child is a step of the child. The
+  assembly registers the workflow of each sub-agent kind one time, before DBOS
+  launches.
 - **`generatePlan` Tool** (`tools/research/generate-plan.ts`): an internal-LLM
   tool. It selects the planner outcome from the recorded results of the terminal
   tools: the last accepted plan, else the last clarification, else the first
@@ -372,7 +371,11 @@ is an embedder concern.
   summary are follow-up requests (`continueLoop`) in the conversation of the step
   agent. The last stage of the parent is the literature-grounded synthesis. It
   runs in the body of the parent: each read and write is a step, each model call
-  is a step, and each reviewer call starts a child workflow.
+  is a step, and each lookup call is a step.
+
+  The synthesizer (`execution/run-synthesis.ts`) holds its bio-lookup tools
+  (`tools/research/synthesis-lookups.ts`), and no sub-agent runs under it.
+  `submit_synthesis` refuses each cited PMID that no lookup of the run returned.
 - **Chat turn** (`app/chat-turn-workflow.ts`, `app/chat-turn.ts`): a host uses
   `CoreRuntime.chatTurns`. `open` checks the thread, resolves the agent of the
   thread type, claims the thread, and starts the workflow of the turn. A refusal

@@ -28,8 +28,7 @@
  * resume, 10.12 synthesis) need a real DBOS context and live outside this file.
  */
 
-import { inProcessSubAgent } from "../../loop/sub-agent.js";
-import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
+import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { collapseWhitespace } from "../../lib/text.js";
 import { errorOf } from "../../lib/thrown.js";
@@ -550,15 +549,7 @@ function makeDeps(opts: {
             },
         }),
         synthesisModel: "test-synthesis-model",
-        literatureReviewer: createLiteratureReviewerTool(
-            {
-                provider: unusedChatProvider(),
-                model: "test-model",
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                citationResolver: unusedCitationResolver,
-            },
-            inProcessSubAgent,
-        ),
+        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
         runCharge: {
             open: () => okAsync(undefined),
             close: ({ outcome }) => {
@@ -2560,7 +2551,7 @@ describe("run and step outcome metrics", () => {
     });
 });
 
-/** A synthesis of the step A that the checks of `submit_synthesis` accept. */
+/** A synthesis of the step A that the checks of `submit_synthesis` accept. It cites no PMID, thus it needs no lookup. */
 function synthesisOfStepA() {
     return {
         overview: "A test run analyzed gene expression.",
@@ -2573,12 +2564,12 @@ function synthesisOfStepA() {
                 confidence: "high",
                 noveltyStatus: "confirmed",
                 literatureInterpretation: "Consistent with prior reports.",
-                references: [{ pmid: "12345678", citation: "Smith 2020", relevance: "directly supports", concordance: "supports" }],
+                references: [],
             },
         ],
         themes: [{ name: "Regulatory program", findings: [{ stepId: "A", title: "Upregulation of FOXP3" }], narrative: "FOXP3 marks the program." }],
         limitations: ["Single cohort."],
-        keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
+        keyReferences: [],
     };
 }
 
