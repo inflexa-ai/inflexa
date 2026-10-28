@@ -66,7 +66,7 @@ export function synthesisEmission(
     phase: SynthesisPhase,
     activity: string,
     at: string,
-    extra: Pick<SynthesisProgressPart, "delegationCount" | "reason" | "error">,
+    extra: Pick<SynthesisProgressPart, "reason" | "error">,
 ): { readonly progress: SynthesisProgressPart; readonly entry: ActivityEntryPart } {
     return {
         progress: { type: "data-synthesis-progress", id: `synthesis-progress-${runId}`, runId, phase, activity, at, ...extra },

@@ -426,8 +426,6 @@ export type SynthesisProgressPart = {
     activity: string;
     /** ISO 8601 time of the emission. Absent in a stream that an older harness wrote. */
     at?: string;
-    /** Number of literature-reviewer delegations started so far. */
-    delegationCount?: number;
     /** Agent-provided reason — set when phase === "skipped". */
     reason?: string;
     /** Error message — set when phase === "failed". */

@@ -7,10 +7,12 @@
  *                            submission is the synthesis.
  *   - `report_blocker`    — the run produced nothing synthesizable. An
  *                            accepted synthesis wins over a blocker.
- *   - `literature_reviewer` — research sub-agent exposed as a tool. The
- *                            runtime registers it one time and gives it here;
- *                            the sub-agent loop's brief is the only context
- *                            handed across the boundary (forSubAgent semantics).
+ *   - the lookups         — the gene, protein, annotation, interaction,
+ *                            PubMed, citation, drug-gene, and preclinical
+ *                            tools (`createSynthesisLookupTools`). Each lookup
+ *                            records the PMIDs of its result, and
+ *                            `submit_synthesis` refuses a PMID that no lookup
+ *                            of the run returned.
  *
  * Two deliverables on a happy path: `synthesis.json` written to the run dir
  * and a `data-run-synthesis` chat data part emitted via the `emit` callback
@@ -29,6 +31,7 @@ import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { isAllDigits } from "../lib/text.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import { tryFs } from "../lib/fs-result.js";
 import { safeParseJsonAs } from "../lib/parse-json.js";
 
@@ -54,7 +57,7 @@ import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
-import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
+import { defineTool, readToolResultImages, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from "../tools/sandbox/report-blocker.js";
 
@@ -69,16 +72,10 @@ import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from ".
 export const SYNTHESIS_AGENT_ID = "run-synthesizer";
 
 /**
- * Budget for the synthesizer loop: read summaries + 1–3 reviewer delegations
- * + draft + 1–2 submit/fix cycles + headroom.
+ * Budget for the synthesizer loop: the rounds of lookups, each one a batch of
+ * parallel calls, then the draft, 1–2 submit/fix cycles, and headroom.
  */
-const SYNTHESIZER_MAX_ITERATIONS = 25;
-
-/**
- * Cap on `literature_reviewer` calls per run. Not named in the prompt: a
- * model treats a stated call-count limit as a target to hit, not a maximum.
- */
-const LITERATURE_REVIEWER_BUDGET = 3;
+const SYNTHESIZER_MAX_ITERATIONS = 40;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -99,7 +96,66 @@ const SUBMIT_SYNTHESIS_TOOL_ID = "submit_synthesis";
 type InnerToolContext = {
     /** stepIds present in the input summaries — used for reference checks. */
     readonly knownStepIds: ReadonlySet<string>;
+    /** Each PMID that a lookup of this run returned. The fold of the lookups fills it on the first run and on each replay. */
+    readonly lookedUpPmids: ReadonlySet<string>;
 };
+
+// ── The PMIDs of the lookups ────────────────────────────────────────
+
+/**
+ * The keys under which a lookup gives back its request: `resolve_citation`
+ * returns the citation that it was given, normalized. A PMID there came from
+ * the model, not from a source.
+ */
+const ECHO_KEYS = new Set(["input", "normalized", "supplied", "query"]);
+
+/** Each PMID that a lookup result holds under a `pmid` or `pmids` key, outside the echo of the request. */
+export function pmidsIn(value: unknown, found: Set<string> = new Set()): Set<string> {
+    if (Array.isArray(value)) {
+        for (const item of value) pmidsIn(item, found);
+        return found;
+    }
+    const record = parseUnknownRecord(value);
+    if (record === undefined) return found;
+    for (const [key, child] of Object.entries(record)) {
+        if (ECHO_KEYS.has(key)) continue;
+        if (key === "pmid" && (typeof child === "string" || typeof child === "number")) {
+            if (isAllDigits(String(child))) found.add(String(child));
+        } else if (key === "pmids" && Array.isArray(child)) {
+            for (const pmid of child) if (typeof pmid === "string" && isAllDigits(pmid)) found.add(pmid);
+        } else {
+            pmidsIn(child, found);
+        }
+    }
+    return found;
+}
+
+const PmidRecordSchema = z.object({ pmids: z.array(z.string()) });
+
+/**
+ * A lookup whose ok result records the PMIDs that it holds. The loop folds the
+ * record into `seen` after each round, on the first run and on each replay, thus
+ * the check of `submit_synthesis` reads the same set in both.
+ */
+export function recordingPmids(tool: Tool, seen: Set<string>): Tool {
+    if (tool.foldCallRecord !== undefined) throw new Error(`the lookup ${tool.id} keeps its own call record, which the PMID record would replace`);
+    return {
+        ...tool,
+        execute: async (input, ctx) =>
+            (await tool.execute(input, ctx)).map((value) => {
+                const record = parseUnknownRecord(value);
+                if (record === undefined) return value;
+                // The parsed record is a copy without the symbol keys of the value, thus the pictures move over by hand.
+                const images = readToolResultImages(value);
+                const carried = images.length === 0 ? record : withToolResultImages(record, images);
+                return withToolCallRecord(carried, { pmids: [...pmidsIn(record)] });
+            }),
+        foldCallRecord: (record) => {
+            const parsed = PmidRecordSchema.safeParse(record);
+            if (parsed.success) for (const pmid of parsed.data.pmids) seen.add(pmid);
+        },
+    };
+}
 
 // ── Validation ──────────────────────────────────────────────────────
 
@@ -188,6 +244,21 @@ function checkKeyReferencePmidFormat(keyReferences: readonly KeyReference[]): Va
     return issues;
 }
 
+function checkPmidsLookedUp(synthesis: SynthesisDraft, lookedUp: ReadonlySet<string>): ValidationIssue[] {
+    const cited = [
+        ...synthesis.findings.flatMap((f, fi) => f.references.map((r, ri) => ({ pmid: r.pmid, path: `synthesis.findings[${fi}].references[${ri}].pmid` }))),
+        ...synthesis.keyReferences.map((r, i) => ({ pmid: r.pmid, path: `synthesis.keyReferences[${i}].pmid` })),
+    ];
+    return cited
+        .filter(({ pmid }) => pmid.length > 0 && isAllDigits(pmid) && !lookedUp.has(pmid))
+        .map(({ pmid, path }) => ({
+            path,
+            code: "semantic" as const,
+            message: `pmid "${pmid}" is in no lookup result of this run`,
+            hint: "Cite only a PMID that a lookup of this run returned. Look it up, or remove the reference.",
+        }));
+}
+
 function semanticCheck(synthesis: SynthesisDraft, ctx: InnerToolContext): ValidationIssue[] {
     return [
         ...checkFindingStepIds(synthesis.findings, ctx),
@@ -195,6 +266,7 @@ function semanticCheck(synthesis: SynthesisDraft, ctx: InnerToolContext): Valida
         ...checkKeyReferencesCited(synthesis.keyReferences, synthesis.findings),
         ...checkFindingPmidFormat(synthesis.findings),
         ...checkKeyReferencePmidFormat(synthesis.keyReferences),
+        ...checkPmidsLookedUp(synthesis, ctx.lookedUpPmids),
     ];
 }
 
@@ -206,7 +278,7 @@ function buildSubmitTool(ctx: InnerToolContext): Tool<{ synthesis: SynthesisDraf
         description:
             "Submit the synthesis. Checks the payload against the semantic checks " +
             "the arg schema cannot express (stepId refs, theme→finding refs, " +
-            "keyReferences PMIDs cited, numeric PMIDs). On success returns " +
+            "keyReferences PMIDs cited, numeric PMIDs, each PMID returned by a lookup of this run). On success returns " +
             "{accepted: true} — STOP after this. On rejection returns " +
             "{accepted: false, issues} — fix the specific fields at each issue " +
             "path and call again, or switch to report_blocker if the synthesis " +
@@ -250,11 +322,11 @@ function buildBlockerTool(): Tool<{ reason: string }> {
  * Test-only — expose the inner-tool factory so unit tests can assert on
  * the checks without driving the whole agent loop.
  */
-export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string> }): {
+export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string>; lookedUpPmids?: ReadonlySet<string> }): {
     submit: Tool<{ synthesis: SynthesisDraft }, SubmitSynthesisOutput>;
     blocker: Tool<{ reason: string }>;
 } {
-    const ctx: InnerToolContext = { knownStepIds: args.knownStepIds };
+    const ctx: InnerToolContext = { knownStepIds: args.knownStepIds, lookedUpPmids: args.lookedUpPmids ?? new Set() };
     return { submit: buildSubmitTool(ctx), blocker: buildBlockerTool() };
 }
 
@@ -264,11 +336,11 @@ export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
-    /** The `literature_reviewer` tool of the synthesizer (`createLiteratureReviewerTool`). */
-    readonly literatureReviewer: Tool;
+    /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). */
+    readonly synthesisLookups: readonly Tool[];
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /** The store of the synthesizer and reviewer loops and of their read tools. */
+    /** The store of the synthesizer loop and of its read tool. */
     readonly toolOutputStore?: ToolOutputStore;
     /** Step summaries from the completed run. Non-empty. */
     readonly summaries: readonly StepSummary[];
@@ -297,13 +369,14 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
     }
 
     const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
-    const innerCtx: InnerToolContext = { knownStepIds };
-    const reviewer = input.literatureReviewer;
+    const lookedUpPmids = new Set<string>();
+    const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids };
 
     const submitTool = buildSubmitTool(innerCtx);
     const blockerTool = buildBlockerTool();
+    const lookups = input.synthesisLookups.map((tool) => recordingPmids(tool, lookedUpPmids));
     const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
-    const tools: readonly Tool[] = [submitTool, blockerTool, reviewer, ...readTools];
+    const tools: readonly Tool[] = [submitTool, blockerTool, ...lookups, ...readTools];
 
     const agent: AgentDefinition = {
         id: SYNTHESIS_AGENT_ID,
@@ -328,7 +401,6 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
             emit,
             usageRecorder: input.usageRecorder,
             toolOutputStore: input.toolOutputStore,
-            policy: { budget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET } },
             pause: input.pause,
         },
         {

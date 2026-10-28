@@ -1,8 +1,7 @@
 /**
  * generateAnalogyReport — cross-domain analogy report as a sub-agent tool.
  *
- * An inline harness `AgentDefinition` (mirroring `createLiteratureReviewerTool`)
- * driven by `runWithSalvage`. The result reaches the wrapper through one of two
+ * An inline harness `AgentDefinition` driven by `runWithSalvage`. The result reaches the wrapper through one of two
  * submit tools because the output envelope is a union and `defineTool` takes
  * only a top-level object. Neither tool ends the run: the wrapper selects the
  * last accepted report from the recorded calls, else the first blocker. A run
