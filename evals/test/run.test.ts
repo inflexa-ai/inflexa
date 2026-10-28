@@ -103,6 +103,7 @@ describe("the agent of a case", () => {
             asks: [],
             text: "",
             finishReason: "stop",
+            stepFinishes: ["tool-calls"],
         });
         const grade = plans("a DE step", (steps) => steps.some((step) => step.agent === "bulk-transcriptomics-agent"));
 
@@ -157,6 +158,22 @@ describe("the cases", () => {
             const toolIds = new Set([...own.tools, ...(own.scriptTools ?? [])].map((tool) => tool.id));
             for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
         }
+    });
+
+    test("each fixed ok result has the result shape that its tool declares", () => {
+        const failures: string[] = [];
+        for (const c of allCases) {
+            const own = agents[c.agent ?? "conversation"];
+            const byId = new Map([...own.tools, ...(own.scriptTools ?? [])].map((tool) => [tool.id, tool]));
+            for (const [id, script] of Object.entries(c.tools ?? {})) {
+                const schema = byId.get(id)?.outputSchema;
+                if (schema === undefined || typeof script !== "object" || !("ok" in script)) continue;
+                const parsed = schema.safeParse(script.ok);
+                if (!parsed.success)
+                    failures.push(`${c.id} ${id}: ${parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`).join("; ")}`);
+            }
+        }
+        expect(failures).toEqual([]);
     });
 
     test("each held-out case paraphrases a dev case", () => {

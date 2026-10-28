@@ -78,12 +78,23 @@ const PLANNER_TOOLS: Readonly<Record<string, ToolScript>> = {
     request_clarification: REAL_TOOL,
     report_blocker: REAL_TOOL,
     pubmed: {
-        ok: { totalFound: 1, results: [{ pmid: "25516281", title: "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2" }] },
+        ok: {
+            totalFound: 1,
+            results: [
+                {
+                    pmid: "25516281",
+                    title: "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2",
+                    journal: "Genome Biology",
+                    year: "2014",
+                    authors: "Love MI, Huber W, Anders S",
+                },
+            ],
+        },
     },
-    search_geo_datasets: { ok: { results: [] } },
-    search_semantic_scholar: { ok: { results: [] } },
-    search_arxiv: { ok: { results: [] } },
-    search_github_repos: { ok: { results: [] } },
+    search_geo_datasets: { ok: { totalFound: 0, datasets: [] } },
+    search_semantic_scholar: { ok: { success: true, papers: [] } },
+    search_arxiv: { ok: { success: true, papers: [] } },
+    search_github_repos: { ok: { success: true, repos: [] } },
     list_available_refs: { ok: { available: true, content: REFS_WITH_GENE_SETS.split("\n").slice(2).join("\n") } },
     list_available_packages: { ok: { available: true, total: 15, returned: 15, hasMore: false, content: PACKAGES.split("\n").slice(2).join("\n") } },
 };

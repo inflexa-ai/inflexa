@@ -38,6 +38,8 @@ export type Trial = {
     /** The text of each reply of the trial, joined. */
     readonly text: string;
     readonly finishReason: string;
+    /** The finish of each model request, in order, with the raw reason of the provider when it differs. */
+    readonly stepFinishes: readonly string[];
 };
 
 export type Grade = { readonly pass: boolean; readonly detail: string };
@@ -126,7 +128,10 @@ export function trialOf(steps: readonly LoopStep[], asks: readonly TrialAsk[], t
             return [own, ...nested];
         }),
     );
-    return { calls, asks, text, finishReason };
+    const stepFinishes = steps.map((step) =>
+        step.rawFinishReason === undefined || step.rawFinishReason === step.finishReason ? step.finishReason : `${step.finishReason} (${step.rawFinishReason})`,
+    );
+    return { calls, asks, text, finishReason, stepFinishes };
 }
 
 /** An input matches when each key of `expected` has the same value in the input. Other keys are free. */

@@ -31,6 +31,7 @@ export type TrialResult =
           readonly asks: readonly TrialAsk[];
           readonly text: string;
           readonly finishReason: string;
+          readonly stepFinishes: readonly string[];
           readonly usage?: AgentRunUsage;
       } & Grade)
     | { readonly kind: "error"; readonly error: string };
@@ -141,7 +142,16 @@ export async function runTrial(evalCase: EvalCase, options: Pick<RunOptions, "ag
         const text = replyText(result.messages.slice(history.length));
         const trial = trialOf(result.steps, asks, text, result.finish.reason);
         const grade = evalCase.grade(trial);
-        return { kind: "graded", ...grade, calls: trial.calls, asks, text, finishReason: trial.finishReason, usage: result.finish.usage };
+        return {
+            kind: "graded",
+            ...grade,
+            calls: trial.calls,
+            asks,
+            text,
+            finishReason: trial.finishReason,
+            stepFinishes: trial.stepFinishes,
+            usage: result.finish.usage,
+        };
     } catch (cause) {
         return { kind: "error", error: errorMessageOf(cause) ?? "the trial failed with no message" };
     }
