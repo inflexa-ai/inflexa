@@ -2,8 +2,8 @@
  * Run synthesis schema — cross-step findings grounded in literature.
  *
  * Produced by the synthesis step after all sandbox steps complete.
- * Combines computational findings from step summaries with literature
- * evidence from the literature-reviewer agent.
+ * Combines computational findings from step summaries with the literature
+ * evidence of the lookups of the synthesizer.
  *
  * This schema is the synthesizer's output contract: it is emitted as the
  * `submit_synthesis` tool's arg schema, so every field's meaning must live in
@@ -13,7 +13,7 @@
 import { z } from "zod";
 
 export const LiteratureReferenceSchema = z.object({
-    pmid: z.string().describe("Numeric PubMed ID. Must come from a literature_reviewer response — never invented."),
+    pmid: z.string().describe("Numeric PubMed ID, from a lookup result of this run."),
     citation: z.string().describe('Short citation for the paper, e.g. "Smith 2020".'),
     relevance: z.string().describe("Why this paper matters to the finding — what it establishes, challenges, or contextualizes."),
     concordance: z

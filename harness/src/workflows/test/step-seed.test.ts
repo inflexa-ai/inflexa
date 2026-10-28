@@ -8,8 +8,7 @@
  * a persisted data profile, and a working-memory row read through the real store.
  */
 
-import { inProcessSubAgent } from "../../loop/sub-agent.js";
-import { createLiteratureReviewerTool } from "../../tools/research/literature-reviewer.js";
+import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -113,15 +112,7 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
         },
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         synthesisModel: "test-synthesis-model",
-        literatureReviewer: createLiteratureReviewerTool(
-            {
-                provider: unusedChatProvider(),
-                model: "test-model",
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                citationResolver: unusedCitationResolver,
-            },
-            inProcessSubAgent,
-        ),
+        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
         runCharge: createNoopRunCharge(),
         runAuthorizer: {
             authorize() {

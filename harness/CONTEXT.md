@@ -651,7 +651,7 @@ Other facts:
 - **Sub-agents** — exposed as regular tools. The `execute` of such a tool calls
   `runLoop(subAgent, prompt, childSession, opts)`, where `childSession` derives the
   agentId and the callPath from the parent, through
-  `forSubAgent(ctx.session, childAgentId)`. The examples are `literature-reviewer`
+  `forSubAgent(ctx.session, childAgentId)`. The examples are `planner`
   and `analogical-reasoner`. There is no special delegation
   primitive and no message stripping. A sub-agent transcript is ephemeral. The
   workflow-decides path uses `runLoop` directly, with no tool wrapper.

@@ -135,7 +135,7 @@ describe("applyTreeDelta", () => {
 describe("synthesisEmission", () => {
     it("gives the reconciling progress part and one history entry under the synthesis step", () => {
         const at = "2026-10-12T10:00:00.000Z";
-        const { progress, entry } = synthesisEmission("r1", "synthesis", 2, "researching", "Reviewing the literature", at, { delegationCount: 3 });
+        const { progress, entry } = synthesisEmission("r1", "synthesis", 2, "researching", "Reviewing the literature", at, {});
 
         expect(progress).toEqual({
             type: "data-synthesis-progress",
@@ -144,7 +144,6 @@ describe("synthesisEmission", () => {
             phase: "researching",
             activity: "Reviewing the literature",
             at,
-            delegationCount: 3,
         });
         expect(entry).toEqual({
             type: "data-activity-entry",

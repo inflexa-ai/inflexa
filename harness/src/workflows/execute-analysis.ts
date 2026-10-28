@@ -259,8 +259,8 @@ export type ExecuteAnalysisDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
-    /** The `literature_reviewer` tool of the synthesis. The runtime registers its sub-agent one time. */
-    readonly literatureReviewer: Tool;
+    /** The lookup tools of the synthesis (`createSynthesisLookupTools`). */
+    readonly synthesisLookups: readonly Tool[];
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
     readonly runCharge: RunCharge;
     /** The delays of the timer of an outage. Absent: the default of the pause. */
@@ -870,7 +870,7 @@ export function synthesizeFindings(args: {
             embedding: deps.embedding,
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             synthesisModel: deps.synthesisModel,
-            literatureReviewer: deps.literatureReviewer,
+            synthesisLookups: deps.synthesisLookups,
             usageRecorder: deps.usageRecorder,
             toolOutputStore: deps.toolOutputStore,
         },

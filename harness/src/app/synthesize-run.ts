@@ -58,17 +58,16 @@ export type SynthesizeRunDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
-    /** The `literature_reviewer` tool of the synthesizer. */
-    readonly literatureReviewer: Tool;
+    /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). */
+    readonly synthesisLookups: readonly Tool[];
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /** The store of the synthesizer and reviewer loops and of their read tools. */
+    /** The store of the synthesizer loop and of its read tool. */
     readonly toolOutputStore?: ToolOutputStore;
 };
 
 /** Optional fields for a progress update, mirroring the wire part. */
 export type SynthesisProgressExtra = {
-    readonly delegationCount?: number;
     readonly reason?: string;
     readonly error?: string;
 };
@@ -102,7 +101,7 @@ export type SynthesizeRunResult = {
 };
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
-    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, literatureReviewer, usageRecorder } = deps;
+    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, synthesisLookups, usageRecorder } = deps;
     const { analysisId, runId, completedSteps, session, emit, onProgress, durably, pause } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
@@ -128,7 +127,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             provider,
             session: synthesizerSession,
             model: synthesisModel,
-            literatureReviewer,
+            synthesisLookups,
             usageRecorder,
             toolOutputStore: deps.toolOutputStore,
             summaries,
