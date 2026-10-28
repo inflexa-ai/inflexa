@@ -75,9 +75,11 @@ type pollSnapshot struct {
 	body      []byte
 }
 
-// execTable keeps each entry for the life of the process: a recovered host step
-// submits the same execId again, and it must find the entry, not run the
-// command a second time.
+// execTable is the live source of the exec records. The record store
+// (`records.go`) holds a copy of each record on the volume, and a new process
+// restores the table from it. Thus a recovered host step that submits the same
+// execId again finds the entry, also on a replacement machine, and the command
+// does not run a second time.
 type execTable struct {
 	mu      sync.RWMutex
 	entries map[string]*execState
@@ -195,6 +197,58 @@ func (t *execTable) pollSnapshotFor(execID string, since int64) (pollSnapshot, b
 		snap.body = out
 	}
 	return snap, true
+}
+
+// forget removes the entry of an exec that never started, for example after its
+// running record did not reach the store.
+func (t *execTable) forget(execID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.entries, execID)
+}
+
+// restore inserts each record of the store as a terminal entry. It runs once,
+// before the server listens.
+func (t *execTable) restore(records []persistedRecord) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, rec := range records {
+		t.entries[rec.ExecID] = &execState{
+			ExecID:         rec.ExecID,
+			Status:         rec.Status,
+			StartedAt:      rec.StartedAt,
+			CompletionBody: rec.Completion,
+		}
+	}
+}
+
+// persistedOf copies out the part of the record that the store keeps.
+func (t *execTable) persistedOf(execID string) (persistedRecord, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	st, ok := t.entries[execID]
+	if !ok {
+		return persistedRecord{}, false
+	}
+	rec := persistedRecord{ExecID: st.ExecID, Status: st.Status, StartedAt: st.StartedAt}
+	if st.CompletionBody != nil {
+		rec.Completion = append(json.RawMessage(nil), st.CompletionBody...)
+	}
+	return rec, true
+}
+
+// runningCount is the count of the execs whose command has not ended. The host
+// reads it from `/health` before it removes an idle machine.
+func (t *execTable) runningCount() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	n := 0
+	for _, st := range t.entries {
+		if st.Status == execStatusRunning {
+			n++
+		}
+	}
+	return n
 }
 
 func (t *execTable) size() int {

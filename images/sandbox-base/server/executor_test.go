@@ -15,7 +15,16 @@ import (
 
 func newTestExecutor(t *testing.T) *executor {
 	t.Helper()
-	return newExecutor(newExecTable(), newProcessTable())
+	return newExecutor(newExecTable(), newProcessTable(), newTestRecordStore(t, t.TempDir()))
+}
+
+func newTestRecordStore(t *testing.T, dir string) *recordStore {
+	t.Helper()
+	store, err := openRecordStore(dir)
+	if err != nil {
+		t.Fatalf("open the record store: %v", err)
+	}
+	return store
 }
 
 func submit(t *testing.T, exe *executor, body any) *httptest.ResponseRecorder {

@@ -47,7 +47,7 @@ local builds.
 
 The server listens on `:8765` (override `SANDBOX_SERVER_PORT`) and exposes:
 
-- `GET  /health` — the readiness probe.
+- `GET  /health` — the readiness probe. It sends `{ status, runningExecs }`, the count of the execs whose command has not ended.
 - `POST /exec` — submit a command. The server sends `202` immediately and runs the command in the background.
 - `GET  /exec/{execId}?since={cursor}` — the poll. It sends `{ status, events[], cursor, truncated?, result? }`. If `since` is not there, the server uses `0`.
 - `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set (the shipped image never sets it).
@@ -59,8 +59,19 @@ is in the poll only after the exec ends. Thus the host reads the end of the
 exec from `result`.
 
 The `execId` is the key of the exec record. A submit with a known `execId` sends
-the stored status, and the command does not run again. The server keeps each
-record in memory for the life of the process. There is no `kill` route.
+the stored status, and the command does not run again. There is no `kill` route.
+
+The server writes each record to the directory that `EXEC_RECORD_DIR` gives, at
+the submit and at the end of the command. The variable is necessary, and the
+server does not start without it. The harness mounts that directory from the
+volume of the analysis, thus a new machine of the same lease reads the records
+again at start. A record that was still running becomes `failed`, with the
+result `{ execId, exitCode: null, stdout: "", stderr: "", durationMs: null,
+lost: { reason: "sandbox-replaced" } }`. A record file that the server cannot
+read becomes the same lost record.
+
+Each exec gets its own `TMPDIR` under `/tmp`. The server deletes it when the
+command ends, thus no exec keeps state for a later exec outside the mounts.
 
 ## Confinement
 

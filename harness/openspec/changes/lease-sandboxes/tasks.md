@@ -2,11 +2,11 @@
 
 ## 1. sandbox-server
 
-- [ ] 1.1 Write each exec record to `{EXEC_RECORD_DIR}/{base64url(execId)}.json` with a temporary file and a rename, at the submit and at the end of the command. Refuse to start when `EXEC_RECORD_DIR` is absent (D9). Do a Go test: a record survives a restart of the server.
-- [ ] 1.2 At start, read each record file. A `running` record becomes `failed` with `lost: { reason: "sandbox-replaced" }`. A file that the server cannot read becomes a lost record for the id in its name (D9). Do Go tests for the two cases and for a start that a bad file does not stop.
-- [ ] 1.3 Add the comment on the accepted risk of D9 beside the record writer. The comment states the risk and its bound, and no prompt, skill, or tool description states it.
-- [ ] 1.4 Give each exec a new `TMPDIR` under `/tmp`, and delete it when the exec ends (D10). Do a Go test: a file that one exec writes to `TMPDIR` is absent in the next exec.
-- [ ] 1.5 Give the count of running execs in the `GET /health` answer (D7). Do a Go test with one running exec and one completed exec.
+- [x] 1.1 Write each exec record to `{EXEC_RECORD_DIR}/{base64url(execId)}.json` with a temporary file and a rename, at the submit and at the end of the command. Refuse to start when `EXEC_RECORD_DIR` is absent (D9). Do a Go test: a record survives a restart of the server.
+- [x] 1.2 At start, read each record file. A `running` record becomes `failed` with `lost: { reason: "sandbox-replaced" }`. A file that the server cannot read becomes a lost record for the id in its name (D9). Do Go tests for the two cases and for a start that a bad file does not stop.
+- [x] 1.3 Add the comment on the accepted risk of D9 beside the record writer. The comment states the risk and its bound, and no prompt, skill, or tool description states it.
+- [x] 1.4 Give each exec a new `TMPDIR` under `/tmp`, and delete it when the exec ends (D10). Do a Go test: a file that one exec writes to `TMPDIR` is absent in the next exec.
+- [x] 1.5 Give the count of running execs in the `GET /health` answer (D7). Do a Go test with one running exec and one completed exec.
 
 ## 2. The lease table
 
@@ -82,4 +82,5 @@
 
 - The managed host removes `registerSandboxReaper` and the budget of its run trigger in its own repository.
 - Before the upgrade, stop or finish each active run and each active data profile (refer to the Migration Plan).
-- At the archive, update the Purpose of `harness-sandbox-exec`, `docker-sandbox-provider`, `step-execution-tracking`, and `resource-budgeted-scheduling`, because each names the registry, the reaper, or the scheduler admission.
+- At the archive, update the Purpose of `harness-sandbox-exec`, `docker-sandbox-provider`, `step-execution-tracking`, `adhoc-analysis-execution`, and `dynamic-resource-allocation`, because each names the registry, the reaper, the plan resources, or the step timeout.
+- After the archive, delete `openspec/specs/resource-budgeted-scheduling/`, because the change removes each of its requirements.

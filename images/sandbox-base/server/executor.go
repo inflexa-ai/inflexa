@@ -93,15 +93,20 @@ type provenancePayload struct {
 	Deletes  []ProvenanceEntry `json:"deletes,omitempty"`
 }
 
+// execTempRoot holds the temporary directory of each exec.
+const execTempRoot = "/tmp"
+
 // executor runs each submitted command and records its events and terminal
-// result in the exec table for the host to poll. One executor per server.
+// result in the exec table for the host to poll. It writes each record to the
+// record store too, at the submit and at the end. One executor per server.
 type executor struct {
-	table *execTable
-	procs *processTable
+	table   *execTable
+	procs   *processTable
+	records *recordStore
 }
 
-func newExecutor(table *execTable, procs *processTable) *executor {
-	return &executor{table: table, procs: procs}
+func newExecutor(table *execTable, procs *processTable, records *recordStore) *executor {
+	return &executor{table: table, procs: procs, records: records}
 }
 
 // handle is the POST /exec submit handler. Validates the request, dedups by
@@ -149,6 +154,18 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The running record reaches the store before the command starts. Thus a
+	// replacement machine knows of each command that started, and it reports a
+	// cut command as lost instead of a second run.
+	if rec, ok := e.table.persistedOf(req.ExecID); ok {
+		if err := e.records.write(rec); err != nil {
+			log.Printf("[records] %v", err)
+			e.table.forget(req.ExecID)
+			writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "the exec record could not be written"})
+			return
+		}
+	}
+
 	//nolint:boundedfanout // the submit returns before the exec ends, and killAll at shutdown stops the command that run waits on
 	go e.run(context.WithoutCancel(r.Context()), req, traceID)
 	writeJSONResponse(w, http.StatusAccepted, execSubmitResponse{ExecID: req.ExecID, Status: string(execStatusRunning)})
@@ -181,6 +198,20 @@ func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID s
 		provenanceDisabled = true
 	}
 	cmd.Env = append(cmd.Env, provTracker.Env()...)
+
+	// Each exec gets its own temporary directory, and the directory goes when the
+	// exec ends. Thus no exec keeps state for a later exec outside the mounts, and
+	// a replacement machine loses nothing that an exec of the lease can read.
+	tmpDir, err := os.MkdirTemp(execTempRoot, "exec-")
+	if err != nil {
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: exec temp dir: %s", err), provTracker, provenanceDisabled)
+		return
+	}
+	// The directory goes before the result is visible, and the defer covers each early return.
+	removeTmp := sync.OnceFunc(func() { removeExecTempDir(req.ExecID, tmpDir) })
+	defer removeTmp()
+	// The last value of a key wins in `cmd.Env`, thus a TMPDIR of the request cannot replace this one.
+	cmd.Env = append(cmd.Env, "TMPDIR="+tmpDir)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -225,6 +256,7 @@ func (e *executor) run(rootCtx context.Context, req execSubmitRequest, traceID s
 	wg.Wait()
 	waitErr := cmd.Wait()
 	durationMs := time.Since(startedAt).Milliseconds()
+	removeTmp()
 
 	if diffStop != nil {
 		diffStop()
@@ -335,15 +367,30 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 	})
 }
 
-// recordCompletion stores the terminal result bytes in the exec table, where
-// `GET /exec/{execId}` serves them as `result`.
+// recordCompletion stores the terminal result bytes in the record store, and
+// then in the exec table, where `GET /exec/{execId}` serves them as `result`.
+// Thus the record is on the volume before the host can read the result.
 func (e *executor) recordCompletion(execID string, payload completionPayload) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[completion] marshal failed for %s: %v", execID, err)
 		return
 	}
+	if rec, ok := e.table.persistedOf(execID); ok {
+		rec.Completion = body
+		// A failed write leaves the result in memory, and this process still
+		// serves it. Only a replacement machine then reports the exec as lost.
+		if err := e.records.write(rec); err != nil {
+			log.Printf("[records] %v", err)
+		}
+	}
 	e.table.setCompletionBody(execID, body)
+}
+
+func removeExecTempDir(execID, dir string) {
+	if err := os.RemoveAll(dir); err != nil {
+		log.Printf("[exec] remove the temporary directory of %s: %v", execID, err)
+	}
 }
 
 // startTreeDiffer launches the periodic tree-diff loop for an exec. Returns a
