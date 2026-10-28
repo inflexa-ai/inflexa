@@ -9,7 +9,7 @@
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
 import type { ToolScript } from "../lib/agent.js";
-import { all, assistantText, decides, never, priorCall, userMessage, type EvalCase, type Grader } from "../lib/case.js";
+import { all, assistantText, callsAny, decides, never, priorCall, userMessage, type EvalCase, type Grader } from "../lib/case.js";
 
 const DE_TABLE = "runs/0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11/differential-expression/output/de_results.csv";
 const VOLCANO = "runs/0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11/differential-expression/figures/volcano.png";
@@ -84,6 +84,10 @@ const COMPOSE_TOOLS: Readonly<Record<string, ToolScript>> = {
         ok: { outcome: "examined", coverage: { kind: "full" }, consoleErrors: [], failedRequests: [], pagePath: "report-sessions/thread-r/index.html" },
     },
     record_report_version: { ok: { outcome: "recorded", versionId: "v-1", replaced: false, warnings: [] } },
+    render_chart: (input) => ({ ok: { path: `report-sessions/thread-r/derived/${String(parseUnknownRecord(input)?.name ?? "chart")}.svg`, bytes: 18_204 } }),
+    export_pdf: (input) => ({
+        ok: { path: `report-sessions/thread-r/derived/${String(parseUnknownRecord(input)?.name ?? "report.pdf")}`, bytes: 52_118, missingImages: [] },
+    }),
 };
 
 /** An `add_block` call whose input holds a block of `kind` with `text` in it. */
@@ -133,6 +137,35 @@ const PREVIEWED = [
 
 const REPORT: Pick<EvalCase, "agent" | "tools"> = { agent: "report", tools: COMPOSE_TOOLS };
 
+/** The blocks of the drafted report, as `read_block` gives them. */
+const DRAFT_BLOCKS: Readonly<Record<string, unknown>> = {
+    "s-summary": { id: "s-summary", kind: "section", title: "Summary", children: ["t-summary"] },
+    "s-methods": { id: "s-methods", kind: "section", title: "Methods", children: ["t-methods"] },
+    "t-methods": { id: "t-methods", kind: "text", text: "DESeq2 on the counts of six samples, treated against control, three replicates for each group." },
+    "s-results": { id: "s-results", kind: "section", title: "Interferon response", children: ["c-volcano"] },
+    "c-volcano": {
+        id: "c-volcano",
+        kind: "chart",
+        chart: "volcano",
+        caption: "Volcano plot of the treatment response: 412 genes up and 198 down at FDR 0.05.",
+        data: { kind: "artifact-table", path: DE_TABLE },
+        x: "log2FoldChange",
+        y: "padj",
+    },
+    "s-limits": { id: "s-limits", kind: "section", title: "Limitations", children: [] },
+};
+
+/** The tools of a drafted session: the outline and the blocks of the draft read back as the history shows them. */
+const DRAFTED_TOOLS: Readonly<Record<string, ToolScript>> = {
+    ...COMPOSE_TOOLS,
+    read_outline: { ok: OUTLINE },
+    read_block: (input) => {
+        const id = String(parseUnknownRecord(input)?.targetId ?? "");
+        const block = DRAFT_BLOCKS[id];
+        return { ok: block === undefined ? { found: false } : { found: true, block } };
+    },
+};
+
 export const reportCases: readonly EvalCase[] = [
     {
         id: "report-binds-chart",
@@ -176,6 +209,17 @@ export const reportCases: readonly EvalCase[] = [
         grade: decides("examine_page", ["record_report_version"]),
     },
     {
+        id: "report-pdf-in-script",
+        set: "dev",
+        source: "owner: a PDF of a report is a document that a script builds, not a print of the page",
+        history: PREVIEWED,
+        user: "Can I get this as a PDF?",
+        maxSteps: 14,
+        agent: "report",
+        tools: DRAFTED_TOOLS,
+        grade: all(callsAny(["export_pdf"]), never(["record_report_version"])),
+    },
+    {
         id: "report-binds-chart-held-out",
         set: "held-out",
         source: "paraphrase of report-binds-chart",
@@ -202,6 +246,17 @@ export const reportCases: readonly EvalCase[] = [
         maxSteps: 3,
         ...REPORT,
         grade: all(decides("change_block", ["add_block", "remove_block"]), never(["remove_block"])),
+    },
+    {
+        id: "report-pdf-in-script-held-out",
+        set: "held-out",
+        source: "paraphrase of report-pdf-in-script",
+        history: PREVIEWED,
+        user: "Please export the report to a PDF file I can print.",
+        maxSteps: 14,
+        agent: "report",
+        tools: DRAFTED_TOOLS,
+        grade: all(callsAny(["export_pdf"]), never(["record_report_version"])),
     },
     {
         id: "report-look-before-record-held-out",

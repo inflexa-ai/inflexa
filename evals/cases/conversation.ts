@@ -25,6 +25,7 @@ import {
     type EvalCase,
     type TurnState,
 } from "../lib/case.js";
+import type { ScriptedResult } from "../lib/agent.js";
 
 const LITERATURE_TOOLS = ["pubmed", "search_semantic_scholar", "search_arxiv"];
 const RUN_TOOLS = ["execute_analysis", "generate_plan"];
@@ -262,6 +263,14 @@ const SC_TOOLS = {
 
 /** The tools of a request to put the results into a file. */
 const SUMMARY_FILE_TOOLS = { ...REPORT_TOOLS, ...DERIVED_FILE_TOOLS };
+
+const SUMMARY_PDF_TOOLS = {
+    ...SUMMARY_FILE_TOOLS,
+    render_chart: { ok: { path: "conversation-sessions/thread-1/derived/volcano.svg", bytes: 18_204 } },
+    export_pdf: (input: unknown): ScriptedResult => ({
+        ok: { path: `conversation-sessions/thread-1/derived/${String(parseUnknownRecord(input)?.name ?? "summary.pdf")}`, bytes: 48_310, missingImages: [] },
+    }),
+};
 
 const PLAN_TOOLS = {
     ...PROFILE_TOOLS,
@@ -608,6 +617,26 @@ export const conversationCases: readonly EvalCase[] = [
         maxSteps: 4,
         tools: SC_TOOLS,
         grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
+    },
+    {
+        id: "summary-to-pdf",
+        set: "dev",
+        source: "complaint: a request to summarize the results into a PDF started a report session",
+        history: RUN_DONE_HISTORY,
+        user: "Can you summarize this run into a PDF for my PI?",
+        maxSteps: 8,
+        tools: SUMMARY_PDF_TOOLS,
+        grade: all(never(["start_report_session", ...RUN_TOOLS]), callsAny(["export_pdf"])),
+    },
+    {
+        id: "summary-to-pdf-held-out",
+        set: "held-out",
+        source: "paraphrase of summary-to-pdf",
+        history: RUN_DONE_HISTORY,
+        user: "I need the main results as a PDF I can attach to an email.",
+        maxSteps: 8,
+        tools: SUMMARY_PDF_TOOLS,
+        grade: all(never(["start_report_session", ...RUN_TOOLS]), callsAny(["export_pdf"])),
     },
     {
         id: "summary-to-markdown-file-held-out",
