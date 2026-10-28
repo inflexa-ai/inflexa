@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.js";
 import {
     createNoopRunCharge,
     createSandboxAgents,
@@ -130,6 +131,8 @@ export type RunEngineComposition = {
      * planner gets no knowledge tool: the default state of the open-source CLI.
      */
     readonly knowledge?: KnowledgeClient;
+    /** Where the VM of `run_script` comes from in a compiled binary, for the lookups of a step agent. Absent from source. */
+    readonly scriptRuntime?: ScriptRuntime;
 };
 
 /**
@@ -163,6 +166,7 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
         ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
+        scriptRuntime: comp.scriptRuntime,
         reportsBlocker: ctx.reportsBlocker,
         fileMetadata: ctx.fileMetadata,
         ...(ctx.toolOutputStore ? { toolOutputStore: ctx.toolOutputStore } : {}),

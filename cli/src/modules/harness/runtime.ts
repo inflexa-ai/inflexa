@@ -1156,6 +1156,7 @@ async function bootHarnessRuntimeOnce(
             extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
             bioKeys: cfg.bioKeys,
             ...(knowledge ? { knowledge } : {}),
+            scriptRuntime: codemodeRuntime(),
         };
 
         // Registration cohort — ONE pre-launch call. `assembleCoreRuntime`
@@ -1194,6 +1195,7 @@ async function bootHarnessRuntimeOnce(
                 // ask — the analysis consent covered the store at setup.
                 extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
                 notifyDataProfileSettled: notifyProfileSettledActivity,
+                scriptRuntime: codemodeRuntime(),
             },
         };
         // The conversation agent's dep surface minus the three fields

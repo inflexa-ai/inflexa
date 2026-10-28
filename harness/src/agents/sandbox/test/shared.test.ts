@@ -99,7 +99,7 @@ describe("createSandboxAgent", () => {
     it("resolves meta.tools to exactly the declared bio/research tools + workspace surface", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
 
-        const toolIds = def.tools.map((t) => t.id);
+        const toolIds = [...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id);
         // Workspace surface is always wired (5 tools: execute_command, write_file,
         // edit_file, read-file, grep).
         expect(toolIds).toContain("execute_command");
@@ -169,7 +169,7 @@ describe("createSandboxAgent", () => {
             readOnly: true,
         });
 
-        const toolIds = def.tools.map((t) => t.id);
+        const toolIds = [...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id);
         // Write surface is gone.
         expect(toolIds).not.toContain("write_file");
         expect(toolIds).not.toContain("edit_file");
@@ -183,7 +183,7 @@ describe("createSandboxAgent", () => {
 
     it("default (writable) sandbox agent has write_file + edit_file", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
-        const toolIds = def.tools.map((t) => t.id);
+        const toolIds = [...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id);
         expect(toolIds).toContain("write_file");
         expect(toolIds).toContain("edit_file");
     });
@@ -226,12 +226,12 @@ describe("createSandboxAgent", () => {
 
         expect(() => createSandboxAgent(makeFakeSandboxAgentDeps(), citationMeta, body)).toThrow("requires a CitationResolver");
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), citationResolver }, citationMeta, body);
-        expect(def.tools.map((tool) => tool.id)).toContain("resolve_citation");
+        expect((def.scriptTools ?? []).map((tool) => tool.id)).toContain("resolve_citation");
     });
 
     it("declaring the same tool twice does not duplicate it in the resolved list", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...meta, tools: [...BASE_SANDBOX_TOOLS, "pubmed", "pubmed"] }, body);
-        const matches = def.tools.filter((t) => t.id === "pubmed");
+        const matches = (def.scriptTools ?? []).filter((t) => t.id === "pubmed");
         expect(matches).toHaveLength(1);
     });
 });
