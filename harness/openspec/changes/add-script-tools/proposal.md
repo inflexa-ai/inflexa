@@ -31,7 +31,7 @@ A script that calls the lookups as functions declares one tool. It reads a full 
 
 - `provenance-seam`: a script that reads or writes a file emits one `run-script` event.
 - `workspace-layout`: the scratch of a conversation lives under `conversation-sessions/{threadId}/`.
-- `echart-layout`: data that is not chart-ready goes through `run_script` and `write_derived`.
+- `echart-layout`: the requirement on the `dataPath` obligation is removed, because it pinned the wording of a tool description.
 - `report-session-agent`: a derivation of a small table runs in a script.
 
 Each of these requirements said that the conversation agent declares a lookup in its tool array. Each now says that the lookup is a script tool of the conversation agent:

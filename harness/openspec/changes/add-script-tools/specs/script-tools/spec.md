@@ -132,7 +132,7 @@ Inside a workflow, a `run_script` call MUST be one durable step of the loop, the
 
 ### Requirement: The conversation agent calls its lookups from a script
 
-`createConversationAgent` MUST give each lookup, and `read_table`, `write_derived`, and `render_chart`, as script tools, and it MUST NOT declare one as a tool of the agent. A lookup is a read-only API call, for example an identifier, the literature, a compound, or a target. The conversation prompt MUST tell the agent to run its lookups in `run_script`, with independent lookups in one script, and that light work on a table is no analysis run.
+`createConversationAgent` MUST give each lookup, and `read_table`, `write_derived`, and `render_chart`, as script tools, and it MUST NOT declare one as a tool of the agent. A lookup is a read-only API call, for example an identifier, the literature, a compound, or a target.
 
 #### Scenario: The lookups are script tools only
 
