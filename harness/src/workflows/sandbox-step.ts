@@ -45,7 +45,7 @@ import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { maskExcept } from "../loop/call-policy.js";
-import { runLoop, type LoopStep } from "../loop/run-loop.js";
+import { runLoop, withRunScript, type LoopStep } from "../loop/run-loop.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import {
@@ -485,7 +485,9 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // Built over THIS agent's tools, not a shared table: a sandbox agent's roster
     // differs per agent type, and each tool describes its own calls.
-    const resolveDetail = createDetailResolver(agent.tools, logger);
+    // The declared tools and `run_script` describe the calls of the agent, and its script tools describe the nested calls.
+    const declared = withRunScript(agent).tools;
+    const resolveDetail = createDetailResolver([...declared, ...(agent.scriptTools ?? [])], logger);
 
     // Forward every loop event onto the child's own DBOS `"events"` stream
     // (the route fans-in parent + every active child stream — Pattern A).
@@ -631,7 +633,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             // request from its first request, and the task must not use it.
             policy: {
                 mask: maskExcept(
-                    agent.tools.map((tool) => tool.id),
+                    declared.map((tool) => tool.id),
                     [SUBMIT_FILE_METADATA_TOOL_ID],
                 ),
             },

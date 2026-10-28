@@ -18,6 +18,7 @@
  * UPDATE wins); each winning attempt starts a workflow under a per-attempt id.
  */
 
+import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import { DBOS } from "@dbos-inc/dbos-sdk";
@@ -36,7 +37,7 @@ import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import { runWithSalvage, type LoopStep } from "../loop/run-loop.js";
+import { runWithSalvage, withRunScript, type LoopStep } from "../loop/run-loop.js";
 import { recordedInputOf } from "../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -265,6 +266,8 @@ export type DataProfileDeps = EnvironmentStorePaths & {
     readonly notifyDataProfileSettled?: NotifyDataProfileSettled;
     /** The delays of the timer of an outage. Absent: the default of the pause. */
     readonly pauseRetryDelaysMs?: readonly number[];
+    /** Where the VM of `run_script` comes from, for the lookups of the profiler. */
+    readonly scriptRuntime?: ScriptRuntime;
 };
 
 /**
@@ -528,6 +531,7 @@ export function profilerSandboxAgentDeps(deps: DataProfileDeps, step: SandboxAge
         extendAnalysisFarm: deps.extendAnalysisFarm,
         toolOutputStore: deps.toolOutputStore,
         bioKeys: deps.bioKeys,
+        scriptRuntime: deps.scriptRuntime,
         step,
     };
 }
@@ -774,7 +778,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             const agentDef = { ...baseAgent, tools: [...baseAgent.tools, submitProfileTool] };
             // The profiler's own roster, `submit_profile` included, so every call it
             // makes is phrased by the tool that was called.
-            const resolveDetail = createDetailResolver(agentDef.tools, logger);
+            const resolveDetail = createDetailResolver([...withRunScript(agentDef).tools, ...(agentDef.scriptTools ?? [])], logger);
 
             const signal = new AbortController().signal;
 

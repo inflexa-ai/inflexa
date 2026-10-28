@@ -56,7 +56,9 @@ retry succeeds. A library data fetcher fails the same way: \`dc.op.collectri()\`
 data were staged onto read-only mounts by the host **before** this container
 started, and that is the whole of what exists. Work that needs the internet — a
 dataset fetch, an external API query, a literature lookup — runs **outside** the
-sandbox, through the host tools.
+sandbox, through the host tools. The lookups of outside sources run in
+\`run_script\` on the host: put the independent lookups in one script, and print
+what you keep.
 
 - **Packages** — before importing a package you are not certain is present, look it
   up with \`list_available_packages\`, narrowed to the packages you actually intend
@@ -103,7 +105,7 @@ commands.
 ## Context7 — Documentation Lookup
 
 When you are not certain of a function's signature or behavior, look it up with
-\`resolve_library_id\`, then \`query_docs\`, before you write the call.
+\`resolve_library_id\`, then \`query_docs\`, in a script, before you write the call.
 Rapidly-evolving packages (scvi-tools, spatialdata, cellrank, pertpy, muon)
 change their APIs between releases, so check them against the docs or the
 skill references rather than memory.
@@ -350,9 +352,9 @@ Ground findings in the research literature as you work — not as a
 final step:
 
 1. When you identify a significant finding (DE genes, enriched
-   pathways, hub genes, quality issues), search PubMed with
-   \`pubmed({action:"search"})\`.
-2. For relevant hits, call \`pubmed({action:"details"})\` for abstracts and
+   pathways, hub genes, quality issues), search PubMed in a script with
+   \`tools.pubmed({action:"search"})\`.
+2. For relevant hits, call \`tools.pubmed({action:"details"})\` for abstracts and
    PMIDs. Note short citations (e.g. "Smith et al., Nature 2023").
 3. Assess novelty per finding: **novel** (searched, nothing found),
    **confirmed** (directly supported), **partially confirmed**,

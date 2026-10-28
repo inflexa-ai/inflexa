@@ -82,6 +82,7 @@ import type { CitationResolver } from "../../citations/types.js";
 import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
 import { createKnowledgeTemplateTool, type KnowledgeClient, type TemplateBinding } from "../../tools/knowledge/index.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
+import type { ScriptRuntime } from "../../tools/script/run-script.js";
 
 /**
  * Tools every sandbox agent receives — sandbox-environment introspection,
@@ -175,7 +176,15 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
      * of the open-source host and never an error.
      */
     readonly knowledge?: KnowledgeClient;
+    /** Where the VM of `run_script` comes from, for the lookups of the agent. */
+    readonly scriptRuntime?: ScriptRuntime;
 };
+
+/**
+ * The tools of the allowlist that stay direct: the environment of the step. Each other tool of the allowlist is a
+ * lookup of an outside source, and it runs in `run_script`.
+ */
+const DIRECT_ALLOWLIST_TOOLS: ReadonlySet<string> = new Set(["list_available_packages", "list_available_refs", "scan_inputs", "knowledge_template"]);
 
 /** Per-agent override for the prompt composition and tool surface. */
 export type SandboxAgentPromptOptions = {
@@ -349,6 +358,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
 
     const skillTools = deps.skillsDir ? Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: meta.skills })) : [];
     const workspace = buildWorkspaceTools(deps, opts.readOnly ?? false);
+    const allowlisted = resolveSandboxTools(deps, meta.tools, workspace.mutator);
     const tools: Tool[] = [
         ...workspace.tools,
         ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
@@ -363,7 +373,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         // seam (the harness-sandbox-agents spec).
         ...(deps.extendAnalysisFarm ? [createLinkPackagesTool({ extendAnalysisFarm: deps.extendAnalysisFarm, analysisId: deps.step.analysisId })] : []),
         ...skillTools,
-        ...resolveSandboxTools(deps, meta.tools, workspace.mutator),
+        ...allowlisted.filter((tool) => DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
         ...(deps.reportsBlocker === true ? [createReportBlockerTool()] : []),
         ...(deps.fileMetadata ? [createSubmitFileMetadataTool(deps.fileMetadata)] : []),
     ];
@@ -373,6 +383,8 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         systemPrompt,
         model: deps.model,
         tools,
+        scriptTools: allowlisted.filter((tool) => !DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
+        scriptRuntime: deps.scriptRuntime,
         maxIterations: meta.defaultMaxSteps ?? SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS,
     };
 }
