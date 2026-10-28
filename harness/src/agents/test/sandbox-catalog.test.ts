@@ -53,6 +53,17 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
             expect(rendered).toContain(`suitable for: [${meta.suitableFor.join(", ")}]`);
         }
     });
+
+    it("names the databases that an agent queries at run time, thus the planner asks no staged copy of them", () => {
+        const drugLine = formatAgentCatalog()
+            .split("\n")
+            .find((line) => line.startsWith("- **drug-repurposing-agent**"));
+
+        expect(drugLine).toContain("live lookups: [");
+        expect(drugLine).toContain("ChEMBL");
+        expect(drugLine).toContain("DGIdb, DrugBank, and PharmGKB");
+        expect(formatAgentCatalog([{ id: "a", capabilities: ["x"], suitableFor: ["y"], liveSources: [] }])).toBe("- **a**: capabilities: [x], suitable for: [y]");
+    });
 });
 
 /**

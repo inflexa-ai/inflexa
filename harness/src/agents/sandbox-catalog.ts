@@ -9,12 +9,38 @@
  */
 
 import { SANDBOX_AGENT_META } from "./sandbox/index.js";
+import type { SandboxToolName } from "./sandbox/types.js";
 
 /** Planner-facing metadata for one sandbox agent. */
 export type PlannerAgentMeta = {
     readonly id: string;
     readonly capabilities: readonly string[];
     readonly suitableFor: readonly string[];
+    /** The public databases that the agent queries at run time, thus a step of the agent needs no staged copy of them. */
+    readonly liveSources: readonly string[];
+};
+
+/**
+ * The public database behind each lookup tool of a sandbox agent. A tool that reads the environment or the run, and
+ * not a public database, has no entry.
+ */
+const LIVE_SOURCES: Partial<Record<SandboxToolName, string>> = {
+    pubmed: "PubMed",
+    searchGene: "Ensembl and NCBI Gene",
+    lookupAnnotation: "GO, KEGG, and Reactome annotation",
+    searchInteractions: "STRING",
+    chembl: "ChEMBL",
+    pubchem: "PubChem",
+    opentargets: "Open Targets",
+    geneDiseaseEvidence: "GWAS Catalog, DisGeNET, and ClinVar",
+    drugGeneInteractions: "DGIdb, DrugBank, and PharmGKB",
+    genePreclinicalProfile: "Bgee expression and IMPC knockouts",
+    searchFaers: "FAERS",
+    searchClinicalTrials: "ClinicalTrials.gov",
+    searchGeoDatasets: "GEO",
+    searchRegulatoryApprovals: "FDA and EMA approvals",
+    targetSafety: "a curated target safety panel",
+    comptox: "EPA CompTox",
 };
 
 /** The sandbox agents the planner may assign to analysis-plan steps. */
@@ -24,6 +50,10 @@ export const PLANNABLE_AGENT_CATALOG: readonly PlannerAgentMeta[] = Object.value
         id: meta.id,
         capabilities: [...meta.capabilities],
         suitableFor: [...meta.suitableFor],
+        liveSources: meta.tools.flatMap((tool) => {
+            const source = LIVE_SOURCES[tool];
+            return source === undefined ? [] : [source];
+        }),
     }));
 
 /**
@@ -74,6 +104,9 @@ export const KNOWN_AGENT_IDS: readonly string[] = Object.keys(SANDBOX_AGENT_META
  */
 export function formatAgentCatalog(catalog: readonly PlannerAgentMeta[] = PLANNABLE_AGENT_CATALOG): string {
     return catalog
-        .map((meta) => `- **${meta.id}**: capabilities: [${meta.capabilities.join(", ")}], ` + `suitable for: [${meta.suitableFor.join(", ")}]`)
+        .map((meta) => {
+            const live = meta.liveSources.length === 0 ? "" : `, live lookups: [${meta.liveSources.join(", ")}]`;
+            return `- **${meta.id}**: capabilities: [${meta.capabilities.join(", ")}], suitable for: [${meta.suitableFor.join(", ")}]${live}`;
+        })
         .join("\n");
 }

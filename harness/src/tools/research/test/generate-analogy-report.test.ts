@@ -11,6 +11,8 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../../testin
 import type { ToolContext } from "../../define-tool.js";
 import { buildResearchPrompt, createGenerateAnalogyReportTool } from "../generate-analogy-report.js";
 import { presentAt } from "../../../lib/present.js";
+import { AnalogyReportSchema } from "../../../contracts/analogy-report.js";
+import { analogicalReasonerPrompt } from "../../../prompts/analogical-reasoner.js";
 
 const VALID_ENVELOPE = {
     schemaVersion: "1",
@@ -302,5 +304,15 @@ describe("buildResearchPrompt", () => {
     it("omits the Context section and Knobs section when both are absent", () => {
         const prompt = buildResearchPrompt({ problem: "Just the problem." });
         expect(prompt).toBe("## Problem\nJust the problem.");
+    });
+});
+
+describe("the shape of the report lives in the schema", () => {
+    it("the schema describes the solution fields, and the prompt holds no JSON example", () => {
+        const schema = JSON.stringify(z.toJSONSchema(AnalogyReportSchema));
+
+        expect(schema).toContain("How the method transfers back to the source problem.");
+        expect(schema).toContain("The exact title as the search result gives it.");
+        expect(analogicalReasonerPrompt).not.toContain('"schemaVersion"');
     });
 });
