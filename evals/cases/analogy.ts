@@ -1,13 +1,15 @@
 /**
  * The decision cases of the analogical reasoner that `generate_analogy_report` runs.
  *
- * The message of each case is the brief that the tool composes. Each search tool gives the same small set of real
- * papers for every query, thus a grader can tell a title that a search returned from a title that the reasoner made
- * up. The submit tool is real: its input schema checks the report.
+ * The message of each case is the brief that the tool composes. Each search tool gives the papers of a small set whose
+ * keywords the query holds, thus a grader can tell a title that a search returned from a title that the reasoner made
+ * up. The record tools are real: their input schemas check each part of the report.
  */
 
 import { buildResearchPrompt } from "@inflexa-ai/harness/tools/research/generate-analogy-report.js";
 import { z } from "zod";
+
+import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
 import { REAL_TOOL, type ToolScript } from "../lib/agent.js";
 import { all, callsAny, type EvalCase, type Grader } from "../lib/case.js";
@@ -40,17 +42,31 @@ const PAPERS: readonly Paper[] = [
 
 const TITLES = new Set(PAPERS.map((paper) => paper.title));
 
-const SEMANTIC_SCHOLAR: ToolScript = {
-    ok: {
-        success: true,
-        papers: PAPERS.map((paper) => ({ id: paper.url, title: paper.title, abstract: paper.abstract, year: 2019, url: paper.url, authors: [] })),
-    },
+/** The words that make a search find a paper, by its URL. */
+const KEYWORDS: Readonly<Record<string, readonly string[]>> = {
+    "https://www.semanticscholar.org/paper/ftc-redundancy": ["control", "redundan", "fault", "reconfigur", "actuator", "feedback"],
+    "https://www.semanticscholar.org/paper/network-resilience": ["network", "resilien", "robust", "node", "attack", "interdiction", "flow", "cut"],
+    "https://www.semanticscholar.org/paper/ipm-resistance": ["pest", "resistance", "insecticide", "rotation", "mixture", "combination", "ecolog", "evolution"],
+    "https://arxiv.org/abs/2305.12345": ["rout", "link", "traffic", "network", "failover", "path", "flow"],
 };
 
-const ARXIV: ToolScript = {
+/** The papers whose keywords the query holds. A query that names none of them finds nothing, as a real search can. */
+function papersFor(input: unknown): readonly Paper[] {
+    const query = String(parseUnknownRecord(input)?.query ?? "").toLowerCase();
+    return PAPERS.filter((paper) => (KEYWORDS[paper.url] ?? []).some((keyword) => query.includes(keyword)));
+}
+
+const SEMANTIC_SCHOLAR: ToolScript = (input) => ({
     ok: {
         success: true,
-        papers: PAPERS.map((paper) => ({
+        papers: papersFor(input).map((paper) => ({ id: paper.url, title: paper.title, abstract: paper.abstract, year: 2019, url: paper.url, authors: [] })),
+    },
+});
+
+const ARXIV: ToolScript = (input) => ({
+    ok: {
+        success: true,
+        papers: papersFor(input).map((paper) => ({
             id: paper.url,
             title: paper.title,
             abstract: paper.abstract,
@@ -60,7 +76,7 @@ const ARXIV: ToolScript = {
             url: paper.url,
         })),
     },
-};
+});
 
 const ANALOGY_TOOLS: Readonly<Record<string, ToolScript>> = {
     search_semantic_scholar: SEMANTIC_SCHOLAR,
@@ -80,33 +96,38 @@ const ANALOGY_TOOLS: Readonly<Record<string, ToolScript>> = {
         },
     },
     search_github_repos: { ok: { success: true, repos: [] } },
-    submit_analogy_report: REAL_TOOL,
+    record_problem: REAL_TOOL,
+    record_analogy: REAL_TOOL,
     report_blocker: REAL_TOOL,
 };
 
-const ReportViewSchema = z.object({
-    analogies: z.array(
-        z.object({
-            targetDomain: z.string(),
-            solutions: z.array(z.object({ title: z.string(), sources: z.array(z.object({ title: z.string() })) })),
-        }),
-    ),
+const AnalogyViewSchema = z.object({
+    targetDomain: z.string(),
+    analogyTitle: z.string(),
+    solutions: z.array(z.object({ title: z.string(), sources: z.array(z.object({ title: z.string() })) })),
 });
 
 /**
- * The last submitted report holds at least two analogies outside biology and medicine, and each cited source title is
- * a title that a search returned, verbatim.
+ * The accepted analogy records hold at least two analogies outside biology and medicine, and each cited source title
+ * is a title that a search returned, verbatim. The last accepted record of a title counts, as in the assembly of the
+ * report.
  */
 const crossDomainCited: Grader = (trial) => {
-    const last = trial.calls.filter((call) => call.tool === "submit_analogy_report").at(-1);
-    if (last === undefined) return { pass: false, detail: `no submit_analogy_report (calls: ${trial.calls.map((call) => call.tool).join(", ")})` };
-    const parsed = ReportViewSchema.safeParse(last.input);
-    if (!parsed.success) return { pass: false, detail: "the report does not parse" };
-    const { analogies } = parsed.data;
+    const byTitle = new Map<string, z.infer<typeof AnalogyViewSchema>>();
+    for (const call of trial.calls) {
+        if (call.tool !== "record_analogy" || call.ok !== true) continue;
+        const parsed = AnalogyViewSchema.safeParse(call.input);
+        if (parsed.success) byTitle.set(parsed.data.analogyTitle, parsed.data);
+    }
+    const analogies = [...byTitle.values()];
+    if (!trial.calls.some((call) => call.tool === "record_problem" && call.ok === true)) {
+        return { pass: false, detail: `no accepted record_problem (calls: ${trial.calls.map((call) => call.tool).join(", ")})` };
+    }
     const domains = analogies.map((analogy) => analogy.targetDomain);
     const inSource = domains.filter((domain) => /biolog|medic|oncolog|cancer|clinical/i.test(domain));
-    if (analogies.length < 2 || inSource.length > 0) return { pass: false, detail: `domains: ${domains.join("; ")}` };
+    if (analogies.length < 2 || inSource.length > 0) return { pass: false, detail: `domains: ${domains.join("; ") || "none"}` };
     const cited = analogies.flatMap((analogy) => analogy.solutions.flatMap((solution) => solution.sources.map((source) => source.title)));
+    if (cited.length === 0) return { pass: false, detail: `${String(analogies.length)} analogies with no cited source` };
     const invented = cited.filter((title) => !TITLES.has(title));
     return invented.length === 0
         ? { pass: true, detail: `${String(analogies.length)} analogies, ${String(cited.length)} cited sources, each returned by a search` }

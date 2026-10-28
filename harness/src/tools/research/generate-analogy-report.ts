@@ -1,12 +1,11 @@
 /**
  * generateAnalogyReport — cross-domain analogy report as a sub-agent tool.
  *
- * An inline harness `AgentDefinition` driven by `runWithSalvage`. The result reaches the wrapper through one of two
- * submit tools because the output envelope is a union and `defineTool` takes
- * only a top-level object. Neither tool ends the run: the wrapper selects the
- * last accepted report from the recorded calls, else the first blocker. A run
- * with no outcome gets one salvage request, then an `extraction-failed`
- * envelope, so the frontend never renders raw prose.
+ * An inline harness `AgentDefinition` driven by `runWithSalvage`. The reasoner records its report in parts: the
+ * problem with its planned analogies, then each analogy when its search is done. A provider filter can stop a reply in
+ * the middle of a call, and a cut call is lost whole, thus a small part loses little. The wrapper assembles the report
+ * from the last accepted record of each part, else it gives the first blocker. A run with no outcome gets one salvage
+ * request, then an `extraction-failed` envelope, so the frontend never renders raw prose.
  */
 
 import { errorMessageOf } from "../../lib/thrown.js";
@@ -14,7 +13,13 @@ import { textOf } from "../../lib/unknown-text.js";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
-import { AnalogyReportSchema, type AnalogicalReasonerOutput, type AnalogyReport } from "@inflexa-ai/harness/contracts/analogy-report.js";
+import {
+    AnalogyProblemSchema,
+    AnalogySchema,
+    type AnalogicalReasonerOutput,
+    type Analogy,
+    type AnalogyReport,
+} from "@inflexa-ai/harness/contracts/analogy-report.js";
 
 import { analogicalReasonerPrompt } from "../../prompts/analogical-reasoner.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
@@ -47,37 +52,88 @@ const AGENT_ID = "analogical-reasoner";
 const RESEARCH_MAX_ITERATIONS = 40;
 
 const ANALOGY_SALVAGE_NUDGE =
-    "You ended without a terminal outcome. Call submit_analogy_report with " +
-    "your report now, or report_blocker if phase 1 cannot run. Do not reply " +
-    "with prose.";
+    "You ended without a terminal outcome. Record the problem with record_problem and each analogy with " +
+    "record_analogy now, or call report_blocker if phase 1 cannot run. Do not reply with prose.";
 
-const SUBMIT_ANALOGY_REPORT_TOOL_ID = "submit_analogy_report";
+const RECORD_PROBLEM_TOOL_ID = "record_problem";
+const RECORD_ANALOGY_TOOL_ID = "record_analogy";
 
-function createSubmitAnalogyReportTool(): Tool {
+const RecordProblemInputSchema = AnalogyProblemSchema.extend({
+    plannedAnalogies: z
+        .array(z.object({ analogyTitle: z.string(), targetDomain: z.string() }))
+        .min(1)
+        .describe("Each analogy of phase 1. An analogy that gets no record_analogy call arrives in the report as not loaded."),
+});
+
+function createRecordProblemTool(): Tool {
     return defineTool({
-        id: SUBMIT_ANALOGY_REPORT_TOOL_ID,
+        id: RECORD_PROBLEM_TOOL_ID,
         description:
-            "Submit the analogy report: the problem summary, objects, " +
-            "relations, and key terms of phase 1, and each analogy with its " +
-            "coverage and its cited solutions from phase 2. Call it one time with " +
-            "the full report. If it rejects the report, correct the fields that it " +
-            "names and call it again. The last accepted report is the result.",
-        inputSchema: AnalogyReportSchema,
+            "Record the extraction of phase 1: the problem summary, objects, relations, key terms, and the analogies " +
+            "that phase 2 searches. A later call replaces the record.",
+        inputSchema: RecordProblemInputSchema,
         describeCall: "none",
-        execute: () => Promise.resolve(ok({ recorded: true as const, message: "Report recorded. Stop now." })),
+        execute: () => Promise.resolve(ok({ recorded: true as const })),
     });
 }
 
-/** The last report of a run that its call accepted. The input schema of the tool checked it. */
-export function acceptedReportOf(steps: readonly LoopStep[]): AnalogyReport | undefined {
-    let accepted: AnalogyReport | undefined;
+function createRecordAnalogyTool(): Tool {
+    return defineTool({
+        id: RECORD_ANALOGY_TOOL_ID,
+        description:
+            "Record one analogy with its coverage and its cited solutions, when its search is done. A later call " +
+            "with the same analogyTitle replaces the record.",
+        inputSchema: AnalogySchema,
+        describeCall: ({ analogyTitle }) => analogyTitle,
+        execute: () => Promise.resolve(ok({ recorded: true as const })),
+    });
+}
+
+/** The parts that a run recorded: the last accepted problem, and the last accepted record of each analogy title. */
+function recordedParts(steps: readonly LoopStep[]): { problem?: z.infer<typeof RecordProblemInputSchema>; analogies: Map<string, Analogy> } {
+    let problem: z.infer<typeof RecordProblemInputSchema> | undefined;
+    const analogies = new Map<string, Analogy>();
     for (const step of steps) {
         for (const call of step.calls) {
-            if (call.toolName !== SUBMIT_ANALOGY_REPORT_TOOL_ID || call.output?.outcome !== "ok") continue;
-            accepted = recordedInputOf(AnalogyReportSchema, call.input) ?? accepted;
+            if (call.output?.outcome !== "ok") continue;
+            if (call.toolName === RECORD_PROBLEM_TOOL_ID) problem = recordedInputOf(RecordProblemInputSchema, call.input) ?? problem;
+            if (call.toolName === RECORD_ANALOGY_TOOL_ID) {
+                const analogy = recordedInputOf(AnalogySchema, call.input);
+                if (analogy !== undefined) analogies.set(analogy.analogyTitle, analogy);
+            }
         }
     }
-    return accepted;
+    return { problem, analogies };
+}
+
+/**
+ * The report that a run recorded, or nothing when it recorded no problem. The analogies keep the planned order, and a
+ * recorded analogy that the plan does not name follows them. A planned analogy with no record is not loaded.
+ */
+export function assembledReportOf(steps: readonly LoopStep[]): AnalogyReport | undefined {
+    const { problem, analogies } = recordedParts(steps);
+    if (problem === undefined) return undefined;
+    const { plannedAnalogies, ...extraction } = problem;
+    const planned = plannedAnalogies.map(
+        (plan): Analogy =>
+            analogies.get(plan.analogyTitle) ?? {
+                targetDomain: plan.targetDomain,
+                analogyTitle: plan.analogyTitle,
+                objectMappings: [],
+                sharedRelations: "",
+                coverage: "not_loaded",
+                solutions: [],
+            },
+    );
+    const titles = new Set(plannedAnalogies.map((plan) => plan.analogyTitle));
+    const extra = [...analogies.values()].filter((analogy) => !titles.has(analogy.analogyTitle));
+    return { schemaVersion: "1", ...extraction, analogies: [...planned, ...extra] };
+}
+
+/** The run recorded the problem and each analogy that it planned, thus nothing is left to record. */
+function everyPartRecorded(steps: readonly LoopStep[]): boolean {
+    const { problem, analogies } = recordedParts(steps);
+    return problem !== undefined && problem.plannedAnalogies.every((plan) => analogies.has(plan.analogyTitle));
 }
 
 function createAnalogyBlockerTool(): Tool {
@@ -186,7 +242,8 @@ export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" |
             createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
             ncbi.pubmed,
             ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
-            createSubmitAnalogyReportTool(),
+            createRecordProblemTool(),
+            createRecordAnalogyTool(),
             createAnalogyBlockerTool(),
         ],
         maxIterations: RESEARCH_MAX_ITERATIONS,
@@ -212,11 +269,13 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
                     logger,
                     usageRecorder: deps.usageRecorder,
                     toolOutputStore: deps.toolOutputStore,
+                    // The run ends when each planned analogy has a record, because the wrapper reads no prose.
+                    stopWhen: everyPartRecorded,
                 },
                 {
-                    tools: [SUBMIT_ANALOGY_REPORT_TOOL_ID, REPORT_BLOCKER_TOOL_ID],
+                    tools: [RECORD_PROBLEM_TOOL_ID, RECORD_ANALOGY_TOOL_ID, REPORT_BLOCKER_TOOL_ID],
                     nudge: ANALOGY_SALVAGE_NUDGE,
-                    hasOutcome: (done) => acceptedReportOf(done) !== undefined || blockerOf(done) !== null,
+                    hasOutcome: (done) => assembledReportOf(done) !== undefined || blockerOf(done) !== null,
                 },
             );
             steps = run.steps;
@@ -232,10 +291,21 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
         }
 
         // A report wins over a blocker.
-        const report = acceptedReportOf(steps);
+        const report = assembledReportOf(steps);
         if (report !== undefined) return report;
         const blocker = blockerOf(steps);
         if (blocker !== null) return { schemaVersion: "1", error: { kind: "extraction-failed", message: blocker.reason } };
+        if (steps.some((step) => step.finishReason === "content-filter")) {
+            logger.warn("the content filter of the provider stopped the analogical reasoner", { steps: steps.length });
+            return {
+                schemaVersion: "1",
+                error: {
+                    kind: "extraction-failed",
+                    message:
+                        "The content filter of the model provider stopped the reasoner before it recorded the problem. A different wording of the problem can pass the filter.",
+                },
+            };
+        }
         return buildExtractionFailedEnvelope();
     });
 
