@@ -58,6 +58,7 @@
         "@anthropic-ai/sdk": "^0.116.0",
         "@dbos-inc/dbos-sdk": "^5.3.0",
         "@dbos-inc/vercel-ai": "0.5.4",
+        "@earendil-works/pi-codemode": "1.4.0",
         "@fontsource-variable/space-grotesk": "5.1.1",
         "@fontsource/ibm-plex-mono": "5.1.1",
         "@inflexa-ai/tsprov": "0.6.0",

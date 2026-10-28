@@ -13,7 +13,7 @@ import { renderRunActivity } from "@inflexa-ai/harness/app/run-activity.js";
 import { allWithConcurrency } from "@inflexa-ai/harness/lib/async-utils.js";
 import { makeSession } from "@inflexa-ai/harness/providers/__fixtures__/session.js";
 import type { AgentRunUsage } from "@inflexa-ai/harness/loop/metrics.js";
-import { runLoop } from "@inflexa-ai/harness/loop/run-loop.js";
+import { runLoop, withRunScript } from "@inflexa-ai/harness/loop/run-loop.js";
 import type { AgentDefinition, LoopMessage } from "@inflexa-ai/harness/loop/types.js";
 import type { WorkingMemoryStore } from "@inflexa-ai/harness/memory/working-memory.js";
 import type { ChatProvider } from "@inflexa-ai/harness/providers/types.js";
@@ -53,7 +53,9 @@ export type RunOptions = {
 export function promptDigest(agent: AgentDefinition): string {
     const hash = createHash("sha256");
     hash.update(agent.systemPrompt);
-    for (const tool of agent.tools) hash.update(JSON.stringify([tool.id, tool.description, tool.jsonSchema]));
+    // The loop declares `run_script`, whose description holds the catalog of the script tools, thus the digest reads
+    // the tools that a request declares, and each script tool too.
+    for (const tool of [...withRunScript(agent).tools, ...(agent.scriptTools ?? [])]) hash.update(JSON.stringify([tool.id, tool.description, tool.jsonSchema]));
     return hash.digest("hex").slice(0, 16);
 }
 
