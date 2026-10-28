@@ -16,8 +16,6 @@ describe("the stored card of a revised plan", () => {
             planId: "pln-0000000b",
             plan: { title: "Revision", analytical_narrative: "why", created_at: "2026-10-01T00:00:00.000Z", steps: [] },
             parentPlanId: "pln-0000000a",
-            supersededBy: null,
-            createdAt: "2026-10-02T00:00:00.000Z",
         });
         if (card === null) throw new Error("card is absent");
         const recorder = createConversationDisplayRecorder({

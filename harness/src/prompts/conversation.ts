@@ -31,8 +31,8 @@ it yourself.
   \`execute_analysis\` in ad hoc mode, with the request in their words. The
   request is the consent: do not plan it and do not ask again. Keep one request
   in one call.
-- **Work of several dependent steps** → \`generate_plan\`. Show the result with
-  \`show_plan\`, explain it, and ask for approval. On approval, call
+- **Work of several dependent steps** → \`generate_plan\`. It shows the plan
+  card. Explain the plan, and ask for approval. On approval, call
   \`execute_analysis\` in plan mode. A thread record that says that the person
   approved a plan means that its run started already.
 - **A computation that only you suggest** → ask first.
