@@ -12,6 +12,11 @@ A script that calls the lookups as functions declares one tool. It reads a full 
 - The new tool `run_script` (`harness/src/tools/script/run-script.ts`) runs one JavaScript script in QuickJS, a WASM VM in a worker thread. The VM has no files, no network, and no timers. `tools.<name>(args)` runs the `execute` of a script tool after a parse of its input. `describe("<name>")` gives the full description and the input type of a script tool. The result is `{ ok, output, value?, error?, calls }`. The deadline of a script is 180 s, and its heap stops at 128 MiB.
 - The loop adds `run_script` after the tools of the agent at the open of each conversation, when the agent has script tools (`withRunScript` in `harness/src/loop/run-loop.ts`). It throws for a script tool with an approval hook or one that starts a workflow.
 - The conversation agent moves its lookups from `tools` to `scriptTools`. The section "Literature and Biology" of the conversation prompt tells the agent to run its lookups in `run_script`.
+- Light work on a table needs no analysis run. Three file tools of a script give a script its only way to a file: `read_table` reads a table of up to 16 MiB through the read seam, and `write_derived` and `render_chart` write a derived file or an SVG chart into `conversation-sessions/{threadId}/derived/`. A derived name holds one file for the life of the session. The heap of the VM grows to 256 MiB, which holds a table of the read cap as rows.
+- With a scratch directory, `run_script` saves each script before it runs, shows the derived files and the script in one file card, and gives the reads and the writes to provenance as one `run-script` session event.
+- Each nested call streams its start and its end one level below the `run_script` call, thus the activity line of the call shows what the script does. The input gets an optional `description`, which names the call.
+- OTel metrics count each script by its failure, and each refused table read by its reason. A rise of the refusals for size and format is the signal for a warm sandbox.
+- `show_user` sends data that is not chart-ready to `run_script`, not to a sandbox step.
 - New dependency: `@earendil-works/pi-codemode` 1.4.0, with an exact pin.
 - Measured on this branch: one conversation request falls from about 135k to about 64.5k characters, and from 48 to 25 declared tools.
 
@@ -22,6 +27,10 @@ A script that calls the lookups as functions declares one tool. It reads a full 
 - `script-tools`: the tools that an agent calls from a script, and the `run_script` tool that the loop adds for them. It holds the script API, the isolation and the limits of a script, and its result. It also holds the place of a script in a durable workflow, and the lookups of the conversation agent.
 
 ### Modified Capabilities
+
+- `provenance-seam`: a script that reads or writes a file emits one `run-script` event.
+- `workspace-layout`: the scratch of a conversation lives under `conversation-sessions/{threadId}/`.
+- `echart-layout`: data that is not chart-ready goes through `run_script` and `write_derived`.
 
 Each of these requirements said that the conversation agent declares a lookup in its tool array. Each now says that the lookup is a script tool of the conversation agent:
 

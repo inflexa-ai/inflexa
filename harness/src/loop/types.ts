@@ -10,6 +10,7 @@ import type { ChatStreamEvent, ProviderOptions } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { CompactionRules } from "./compaction.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
+import type { ScriptScratch } from "../tools/script/scratch.js";
 
 /**
  * A loop message. The harness's working message array is AI SDK-shaped
@@ -30,12 +31,15 @@ export type AgentDefinition = {
     /**
      * The tools that the agent calls from a script, through the one `run_script` tool that the loop adds. A request
      * declares only `run_script`, with one catalog line for each of them, thus their full descriptions stay out of
-     * the context until a script asks for one. Each must ask no approval and write nothing, because a script runs as
-     * one step. Absent or empty: the agent has no `run_script`.
+     * the context until a script asks for one. Each must ask no approval and start no workflow, because a script runs
+     * as one step. A step that did not complete runs its script again, thus a tool that writes must accept the same
+     * write again. Absent or empty: the agent has no `run_script`.
      */
     readonly scriptTools?: readonly Tool[];
     /** Where the VM of `run_script` comes from. Absent: the VM loads from `node_modules`. */
     readonly scriptRuntime?: ScriptRuntime;
+    /** The scratch directory of the scripts of the agent. Absent: no script is saved, and no script writes a file. */
+    readonly scriptScratch?: ScriptScratch;
     /** Runaway guard: the cap of model requests of one run. The run ends at the cap. */
     readonly maxIterations: number;
     /** The compaction rules of an agent that a chat thread runs. Absent: the conversation never compacts. */

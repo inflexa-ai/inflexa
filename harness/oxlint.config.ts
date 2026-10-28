@@ -295,6 +295,9 @@ export default typescript({
             //   that an OpenAI-compatible backend can refuse. The presentation schema
             //   in `contracts/` keeps `z.json()` for the stored card, because no model
             //   reads it.
+            // - src/tools/script/file-tools.ts — the `spec` member of `render_chart`, for
+            //   the reason of `show_user`: the catalog of `run_script` renders the input
+            //   schema as a signature, and a recursive `z.json()` renders as `$ref` noise.
             files: [
                 "src/execution/run-synthesis.ts",
                 "src/lib/unknown-containers.ts",
@@ -305,6 +308,7 @@ export default typescript({
                 "src/tools/research/generate-plan.ts",
                 "src/memory/conversation-display-storage.ts",
                 "src/tools/display/show-user.ts",
+                "src/tools/script/file-tools.ts",
             ],
             rules: { "@inflexa-ai/no-empty-schema": "off" },
         },

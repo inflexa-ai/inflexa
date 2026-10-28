@@ -4,10 +4,14 @@
  * The script runs in QuickJS (`@earendil-works/pi-codemode`), a WASM VM in a worker thread. The VM has no files, no
  * network, and no timers. Its only capability is a call of a script tool, and each call runs the `execute` of that
  * tool with the context of the `run_script` call. Only what the script prints or returns reaches the model, thus a
- * script can join and filter large lookup results before the model reads them.
+ * script can join and filter large lookup results and tables before the model reads them.
  *
- * A script tool asks no approval and writes nothing, thus the whole script is one durable step: a replay returns the
- * cached result and runs no lookup again.
+ * The whole script is one durable step: a replay returns the cached result and runs no lookup again. A step that
+ * did not complete runs the whole script again, thus a script tool that writes must accept the same write again.
+ *
+ * Each nested call streams its start and its end under the `run_script` call, thus a surface shows what the script
+ * does while it runs. With a scratch directory, the script is saved before it runs, each derived file is shown to
+ * the user in one file card with the script, and the files that the script read and wrote reach provenance.
  */
 
 import {
@@ -15,28 +19,39 @@ import {
     loadQuickJSWasm,
     renderToolSample,
     renderToolSignature,
+    type CodemodeError,
     type CodemodeSandboxOptions,
     type CodemodeTool,
 } from "@earendil-works/pi-codemode";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import type { ChatFrame, ChatPartFrame, EventSource } from "../../contracts/chat-events.js";
+import { createSubAgentActivityTracker } from "../../contracts/subagent-activity.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord, UnknownArraySchema } from "../../lib/unknown-containers.js";
-import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
+import { computeDetail, computeResultDetail } from "../../loop/tool-detail.js";
+import { buildFileReferenceCardData, MAX_FILES } from "../../memory/card-builders.js";
+import { defineTool, readToolCallRecord, withToolCallRecord, type Tool, type ToolContext, type ToolError, type WithToolCallRecord } from "../define-tool.js";
+import { ScriptFileEffectSchema } from "./file-tools.js";
+import { recordScriptRun, type ScriptFailure } from "./metrics.js";
+import type { ScratchFile, ScriptRead, ScriptRunRecord, ScriptScratch } from "./scratch.js";
 
 export const RUN_SCRIPT_TOOL_ID = "run_script";
 
 /** The deadline of one script, for each lookup in it together. */
 const SCRIPT_TIMEOUT_MS = 180_000;
 
-/** The heap of the VM. A script holds lookup results and small tables, not datasets. */
-const SCRIPT_MEMORY_BYTES = 128 * 1024 * 1024;
+/** The heap of the VM. A script holds lookup results and tables of up to the read cap, not datasets. */
+const SCRIPT_MEMORY_BYTES = 256 * 1024 * 1024;
 
 /** The text of a result that reaches the model. A longer output keeps its head and its tail. */
 const MAX_RESULT_CHARS = 24_000;
 
 const inputSchema = z.object({
+    description: z.string().max(200).optional().describe("One short line that tells the user what the script does, for example 'Top 20 genes by padj'."),
     code: z
         .string()
         .min(1)
@@ -56,6 +71,12 @@ export type ScriptRuntime = {
     readonly workerUrl?: string | URL;
 };
 
+/** What `run_script` needs beside its tools: the scratch directory of the session, and the logger. */
+export type RunScriptOptions = {
+    readonly scratch?: ScriptScratch;
+    readonly logger?: Logger;
+};
+
 export type ScriptCall = { readonly tool: string; readonly ok: boolean };
 
 export type RunScriptOutput = {
@@ -68,6 +89,10 @@ export type RunScriptOutput = {
     readonly error?: string;
     /** Each tool call of the script, in the order of the calls. */
     readonly calls: readonly ScriptCall[];
+    /** The saved script, analysis-root-relative. Absent with no scratch directory. */
+    readonly script?: string;
+    /** Each file that the script derived, analysis-root-relative. */
+    readonly files?: readonly string[];
 };
 
 /** The first sentence of a description, for the catalog line of a tool. */
@@ -96,26 +121,69 @@ function issuesOf(error: z.ZodError): string {
     return error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ");
 }
 
+/** What the nested calls of one script collect: the calls, and the files that the calls read and wrote. */
+type ScriptState = {
+    readonly calls: ScriptCall[];
+    readonly reads: ScriptRead[];
+    readonly writes: ScratchFile[];
+    readonly nextInvocationId: () => string;
+    /** The source of the frames of a nested call: one level below the `run_script` call. */
+    readonly source: EventSource;
+    readonly observe: (frame: ChatFrame) => void;
+};
+
+/** Keep the files of the call record of one nested call. A record of another shape carries no file. */
+function collectEffect(state: ScriptState, value: unknown): void {
+    const effect = ScriptFileEffectSchema.safeParse(readToolCallRecord(value));
+    if (!effect.success) return;
+    state.reads.push(...(effect.data.reads ?? []));
+    state.writes.push(...(effect.data.writes ?? []));
+}
+
 /**
  * A script tool as the VM calls it. Each call gets its own invocation id, `<id of run_script>:<n>` in call order: a
  * tool keys what it stores by its invocation id (`web_fetch` keeps the cut text of a page under it), thus two calls of
  * one script must not share it. The script is one step, thus a replay calls nothing and the ids stay as recorded.
  */
-function scriptToolOf(tool: Tool, ctx: ToolContext, calls: ScriptCall[], nextInvocationId: () => string): CodemodeTool {
+function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger): CodemodeTool {
     return {
         name: tool.id,
         description: tool.description,
         inputSchema: tool.jsonSchema,
         execute: async (args, { signal }) => {
+            const invocationId = state.nextInvocationId();
+            const detail = computeDetail(tool, args, log);
+            const started = performance.now();
+            const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, input: args, detail } as const;
+            state.observe(startFrame);
+            await ctx.emit(startFrame);
+            const finish = async (outcome: "ok" | "error", finishedDetail: string | undefined): Promise<void> => {
+                state.calls.push({ tool: tool.id, ok: outcome === "ok" });
+                const endFrame = {
+                    type: "tool-finished",
+                    source: state.source,
+                    toolUseId: invocationId,
+                    name: tool.id,
+                    outcome,
+                    durationMs: Math.round(performance.now() - started),
+                    detail: finishedDetail,
+                } as const;
+                state.observe(endFrame);
+                await ctx.emit(endFrame);
+            };
+
             const parsed = tool.inputSchema.safeParse(args);
             if (!parsed.success) {
-                calls.push({ tool: tool.id, ok: false });
+                await finish("error", detail);
                 throw new Error(`${tool.id}: ${issuesOf(parsed.error)}`);
             }
-            const invocationId = nextInvocationId();
             const result = await tool.execute(parsed.data, { ...ctx, invocationId, signal: AbortSignal.any([ctx.signal, signal]) });
-            calls.push({ tool: tool.id, ok: result.isOk() });
-            if (result.isErr()) throw new Error(`${tool.id}: ${result.error.error}`);
+            if (result.isErr()) {
+                await finish("error", detail);
+                throw new Error(`${tool.id}: ${result.error.error}`);
+            }
+            collectEffect(state, result.value);
+            await finish("ok", computeResultDetail(tool, parsed.data, result.value, log) ?? detail);
             return plainJson(result.value);
         },
     };
@@ -145,7 +213,7 @@ function descriptionOf(tools: readonly Tool[]): string {
     const catalog = tools.map(catalogEntry).join("\n");
     return (
         "Run a JavaScript script that calls the tools below as functions, in a sandbox with no files and no network. " +
-        "Use it for lookups: call several tools in parallel with Promise.all, filter and join their results, and print only what you need. " +
+        "Use it for lookups and for light work on tables: call several tools in parallel with Promise.all, filter, join, and count their results, and print only what you need. " +
         "Only the printed output and the returned value come back to you.\n" +
         "API: `await tools.<name>(args)` returns the JSON result of the tool and throws an Error on a failed call. " +
         '`await describe("<name>")` returns the full description of a tool, with the meaning of each argument. ' +
@@ -161,22 +229,77 @@ function sandboxRuntimeOf(runtime: ScriptRuntime): Pick<CodemodeSandboxOptions, 
     return options;
 }
 
+/** The failure of a script, for the metrics. The VM reports an exhausted heap as an error of the script. */
+function failureOf(error: CodemodeError): ScriptFailure {
+    if (error.kind === "script") return error.message.includes("out of memory") ? "memory" : "script";
+    return error.kind;
+}
+
+/** The card of the files that a script derived, with the script beside them. A card holds at most ten files. */
+function filesCard(
+    description: string | undefined,
+    writes: readonly ScratchFile[],
+    script: ScratchFile | undefined,
+): ReturnType<typeof buildFileReferenceCardData> {
+    const files: { path: string; caption?: string }[] = [...new Map(writes.map((write) => [write.path, { path: write.path }])).values()];
+    const room = script === undefined ? MAX_FILES : MAX_FILES - 1;
+    const shown = files.slice(0, room);
+    if (script !== undefined) shown.push({ path: script.path, caption: "The script that derived these files." });
+    return buildFileReferenceCardData({ title: description ?? "Derived files", files: shown });
+}
+
+type RunScriptResult = RunScriptOutput | WithToolCallRecord<RunScriptOutput, ScriptRunRecord>;
+
 /** The `run_script` tool over the script tools of an agent. */
-export function createRunScriptTool(scriptTools: readonly Tool[], runtime: ScriptRuntime = {}): Tool<z.infer<typeof inputSchema>, RunScriptOutput> {
+export function createRunScriptTool(
+    scriptTools: readonly Tool[],
+    runtime: ScriptRuntime = {},
+    options: RunScriptOptions = {},
+): Tool<z.infer<typeof inputSchema>, RunScriptResult> {
     const vm = sandboxRuntimeOf(runtime);
     const byId = new Map(scriptTools.map((tool) => [tool.id, tool]));
+    const log = (options.logger ?? createNoopLogger()).named("run-script");
+    const { scratch } = options;
     return defineTool({
         id: RUN_SCRIPT_TOOL_ID,
         description: descriptionOf(scriptTools),
         inputSchema,
-        describeCall: "none",
-        describeResult: (_input, result) => (result.calls.length === 0 ? undefined : result.calls.map((call) => call.tool).join(", ")),
-        execute: async ({ code }, ctx): Promise<Result<RunScriptOutput, ToolError>> => {
-            const calls: ScriptCall[] = [];
+        describeCall: ({ description }) => description,
+        describeResult: ({ description }, result) => {
+            const tools = result.calls.length === 0 ? undefined : result.calls.map((call) => call.tool).join(", ");
+            return description === undefined ? tools : tools === undefined ? description : `${description} (${tools})`;
+        },
+        foldCallRecord: (record) => scratch?.recordRun(record),
+        execute: async ({ description, code }, ctx): Promise<Result<RunScriptResult, ToolError>> => {
+            const startedAt = performance.now();
+            const script = await scratch?.saveScript({ session: ctx.session, invocationId: ctx.invocationId, code });
+            const caller = ctx.session.provenance;
+            const tracker = createSubAgentActivityTracker();
+            // The tracker reads the call of the script first, thus each nested call belongs to it. Only a call of the
+            // root agent has an activity part: the tracker keeps no root for a deeper caller.
+            tracker.track(
+                {
+                    type: "tool-started",
+                    toolUseId: ctx.invocationId,
+                    name: RUN_SCRIPT_TOOL_ID,
+                    source: { agentId: caller.agentId, callPath: [...caller.callPath] },
+                },
+                Date.now(),
+            );
+            const tracked: { part: ChatPartFrame | null } = { part: null };
             let started = 0;
-            const nextInvocationId = (): string => `${ctx.invocationId}:${++started}`;
+            const state: ScriptState = {
+                calls: [],
+                reads: [],
+                writes: [],
+                nextInvocationId: () => `${ctx.invocationId}:${++started}`,
+                source: { agentId: RUN_SCRIPT_TOOL_ID, callPath: [...caller.callPath, RUN_SCRIPT_TOOL_ID], invocationId: ctx.invocationId },
+                observe: (frame) => {
+                    tracked.part = tracker.track(frame, Date.now()) ?? tracked.part;
+                },
+            };
             const sandbox = new CodemodeSandbox({
-                tools: scriptTools.map((tool) => scriptToolOf(tool, ctx, calls, nextInvocationId)),
+                tools: scriptTools.map((tool) => scriptToolOf(tool, ctx, state, log)),
                 globals: [
                     {
                         name: "describe",
@@ -201,8 +324,46 @@ export function createRunScriptTool(scriptTools: readonly Tool[], runtime: Scrip
                         .map((item) => item.text)
                         .join("\n"),
                 );
-                if (!result.ok) return ok({ ok: false, output, error: `${result.error.kind}: ${result.error.message}`, calls });
-                return ok({ ok: true, output, value: result.value === undefined ? undefined : plainJson(result.value), calls });
+                const failure = result.ok ? "none" : failureOf(result.error);
+                recordScriptRun(caller.agentId, failure);
+                log.info("a script ran", {
+                    invocationId: ctx.invocationId,
+                    failure,
+                    durationMs: Math.round(performance.now() - startedAt),
+                    calls: state.calls.length,
+                    reads: state.reads.length,
+                    writes: state.writes.length,
+                });
+
+                if (tracked.part !== null) await ctx.emit({ type: tracked.part.type, data: tracked.part });
+                if (state.writes.length > 0) {
+                    const card = filesCard(description, state.writes, script);
+                    if (card !== null) await ctx.emit({ type: "data-file-reference", source: caller, data: card });
+                }
+
+                const record: ScriptRunRecord = {
+                    analysisId: ctx.session.scope.analysisId,
+                    threadId: ctx.session.scope.threadId,
+                    invocationId: ctx.invocationId,
+                    script,
+                    reads: state.reads,
+                    writes: state.writes,
+                    tools: state.calls.map((call) => call.tool),
+                    ok: result.ok,
+                };
+                const files = state.writes.length === 0 ? undefined : state.writes.map((write) => write.path);
+                const outcome: RunScriptOutput = result.ok
+                    ? {
+                          ok: true,
+                          output,
+                          value: result.value === undefined ? undefined : plainJson(result.value),
+                          calls: state.calls,
+                          script: script?.path,
+                          files,
+                      }
+                    : { ok: false, output, error: `${result.error.kind}: ${result.error.message}`, calls: state.calls, script: script?.path, files };
+                // Only a scratch directory folds the record into provenance, thus a script with none carries no record.
+                return ok(scratch === undefined ? outcome : withToolCallRecord(outcome, record));
             } finally {
                 await sandbox.close();
             }

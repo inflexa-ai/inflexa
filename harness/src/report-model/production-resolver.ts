@@ -53,7 +53,7 @@ import {
 } from "./reference-resolver.js";
 
 /** One artifact row, as plain cells. A text-backed format holds a numeric column as a string. */
-type Row = Record<string, string | number>;
+export type Row = Record<string, string | number>;
 
 /**
  * The default cap on the file size that the host fast path reads. A larger file takes the fall-through.
@@ -254,7 +254,7 @@ function describeReference(reference: DerivationInputReference): string {
  * This is the one format decision of the report path. The extraction request carries the answer, thus the
  * sandbox arm never repeats the mapping and the two arms hold no second table between them.
  */
-function detectFormat(path: string): TabularFormat | undefined {
+export function detectFormat(path: string): TabularFormat | undefined {
     switch (extname(path).toLowerCase()) {
         case ".csv":
             return "csv";
@@ -510,17 +510,24 @@ async function hostReadCells(cap: number, path: string, identity: ReadyIdentity)
     } catch {
         return { kind: "fall-through", format, detail: "the file could not be read" };
     }
-    if (format === "parquet") {
-        const rows = await parseParquet(bytes);
-        return rows === undefined ? { kind: "fall-through", format, detail: "the parquet read did not succeed" } : { kind: "rows", rows };
-    }
+    const rows = await parseTable(format, bytes);
+    return rows === undefined ? { kind: "fall-through", format, detail: PARSE_FAULT_DETAIL[format] } : { kind: "rows", rows };
+}
+
+/** The detail of a parse fault, for each format. */
+const PARSE_FAULT_DETAIL: Record<TabularFormat, string> = {
+    csv: "the delimited parse did not succeed",
+    tsv: "the delimited parse did not succeed",
+    json: "the JSON parse did not succeed",
+    parquet: "the parquet read did not succeed",
+};
+
+/** Parse the bytes of one table in a decided format. A parse fault gives back `undefined`. */
+export async function parseTable(format: TabularFormat, bytes: Buffer): Promise<Row[] | undefined> {
+    if (format === "parquet") return parseParquet(bytes);
     const text = bytes.toString("utf8");
-    if (format === "json") {
-        const rows = parseJsonTable(text);
-        return rows === undefined ? { kind: "fall-through", format, detail: "the JSON parse did not succeed" } : { kind: "rows", rows };
-    }
-    const rows = parseDelimited(text, format === "tsv" ? "\t" : ",");
-    return rows === undefined ? { kind: "fall-through", format, detail: "the delimited parse did not succeed" } : { kind: "rows", rows };
+    if (format === "json") return parseJsonTable(text);
+    return parseDelimited(text, format === "tsv" ? "\t" : ",");
 }
 
 /**
