@@ -211,6 +211,11 @@ export function notAsked(tool: string, words: readonly string[] = []): Grader {
     };
 }
 
+/** The text of the replies holds `text`, for example the count that a question asks for. */
+export function mentions(text: string): Grader {
+    return (trial) => (trial.text.includes(text) ? { pass: true, detail: `mentions ${text}` } : { pass: false, detail: `the reply does not mention ${text}` });
+}
+
 /** Each grader passes. The detail names the first failure. */
 export function all(...graders: readonly Grader[]): Grader {
     return (trial) => {

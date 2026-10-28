@@ -11,7 +11,20 @@
 
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
-import { all, assistantText, atMostWith, callsAny, decides, never, priorCall, threadRecord, userMessage, type EvalCase, type TurnState } from "../lib/case.js";
+import {
+    all,
+    assistantText,
+    atMostWith,
+    callsAny,
+    decides,
+    mentions,
+    never,
+    priorCall,
+    threadRecord,
+    userMessage,
+    type EvalCase,
+    type TurnState,
+} from "../lib/case.js";
 
 const LITERATURE_TOOLS = ["pubmed", "search_semantic_scholar", "search_arxiv"];
 const RUN_TOOLS = ["execute_analysis", "generate_plan"];
@@ -142,6 +155,41 @@ function deResultsCsv(): string {
     return rows.join("\n");
 }
 
+/** The rows of the results table, as `read_table` gives them: a plain number reads as a number. */
+const DE_ROWS = deResultsCsv()
+    .split("\n")
+    .slice(1)
+    .map((line) => {
+        const [geneId = "", symbol = "", lfc = "", padj = ""] = line.split(",");
+        return { gene_id: geneId, symbol, log2FoldChange: Number(lfc), padj: Number(padj) };
+    });
+
+/** `read_table` of a script over the results table of the run. */
+function readTable(input: unknown): { ok: unknown } | { error: string } {
+    const path = String(parseUnknownRecord(input)?.path ?? "");
+    if (!path.endsWith("de_results.csv")) return { error: `read_table: ${path} does not exist; find the path with workspace_search or list_files` };
+    return {
+        ok: {
+            path: DE_RESULTS_PATH.slice("/analysis-001/".length),
+            columns: ["gene_id", "symbol", "log2FoldChange", "padj"],
+            rowCount: DE_ROWS.length,
+            rows: DE_ROWS,
+        },
+    };
+}
+
+/** `write_derived` of a script: the file lands in the derived directory of the conversation. */
+function writeDerived(input: unknown): { ok: unknown } {
+    const name = String(parseUnknownRecord(input)?.name ?? "file");
+    return { ok: { path: `conversation-sessions/thread-1/derived/${name}`, bytes: 512 } };
+}
+
+/** The count of the genes with an adjusted p-value below 1e-30 and a log2 fold change above 2. */
+const STRONG_UP = DE_ROWS.filter((row) => row.padj < 1e-30 && row.log2FoldChange > 2).length;
+
+/** The count of the down-regulated genes with an adjusted p-value below 1e-30. */
+const STRONG_DOWN = DE_ROWS.filter((row) => row.padj < 1e-30 && row.log2FoldChange < 0).length;
+
 /** The tools of a file whose content comes from the results of a run that completed. */
 const DERIVED_FILE_TOOLS = {
     inspect_run: RUN_DONE,
@@ -172,7 +220,48 @@ const DERIVED_FILE_TOOLS = {
         },
     },
     write_file: (input: unknown) => ({ ok: { path: `/analysis-001/${String(parseUnknownRecord(input)?.path ?? "file")}`, bytes: 180 } }),
+    read_table: readTable,
+    write_derived: writeDerived,
 };
+
+/** The lookups of a script about the genes of the run. Each one gives a small answer. */
+const LOOKUP_TOOLS = {
+    ...DERIVED_FILE_TOOLS,
+    opentargets: { ok: { target: "ISG15", associations: [{ disease: "acute myeloid leukemia", score: 0.31 }] } },
+    drug_gene_interactions: { ok: { gene: "ISG15", interactions: [] } },
+    chembl: { ok: { results: [] } },
+};
+
+/** A single-cell profile: one AnnData file of 48,213 cells. */
+const SC_PROFILE = {
+    state: "ready",
+    profile: {
+        organism: "Homo sapiens",
+        domain: "single-cell RNA-seq",
+        design: "peripheral blood mononuclear cells of two donors",
+        files: {
+            total: 1,
+            hasMore: false,
+            members: [{ path: "/analysis-001/data/inputs/f-sc/pbmc.h5ad", type: "AnnData h5ad", dimensions: { cells: 48_213, genes: 33_538 } }],
+        },
+        qualityConcerns: [],
+    },
+};
+
+const SC_PROFILED = [
+    userMessage("I uploaded my single-cell data. What is in there?"),
+    ...priorCall("inspect_data_profile", {}, SC_PROFILE),
+    assistantText("Your data is one AnnData file of human PBMCs from two donors: 48,213 cells and 33,538 genes."),
+];
+
+const SC_TOOLS = {
+    inspect_data_profile: { ok: SC_PROFILE },
+    execute_analysis: RUN_STARTED,
+    read_table: { error: "read_table: data/inputs/f-sc/pbmc.h5ad has no table format that a script reads (csv, tsv, json, parquet); an analysis run reads it" },
+};
+
+/** The tools of a request to put the results into a file. */
+const SUMMARY_FILE_TOOLS = { ...REPORT_TOOLS, ...DERIVED_FILE_TOOLS };
 
 const PLAN_TOOLS = {
     ...PROFILE_TOOLS,
@@ -309,6 +398,56 @@ export const conversationCases: readonly EvalCase[] = [
         grade: all(decides("generate_plan", ["execute_analysis"]), never(["execute_analysis"])),
     },
     {
+        id: "filter-result-table",
+        set: "dev",
+        source: "research: a filter of a result table is light work, not an analysis run",
+        history: RUN_DONE_HISTORY,
+        user: "How many genes have an adjusted p-value below 1e-30 and a log2 fold change above 2?",
+        maxSteps: 5,
+        tools: DERIVED_FILE_TOOLS,
+        grade: all(never(RUN_TOOLS), callsAny(["read_table", "read_file"]), mentions(String(STRONG_UP))),
+    },
+    {
+        id: "lookup-batch",
+        set: "dev",
+        source: "research: a batch of lookups over the genes of a run runs in one script, not in a run",
+        history: RUN_DONE_HISTORY,
+        user: "Get the Open Targets association score with acute myeloid leukemia for the top 5 genes by adjusted p-value.",
+        maxSteps: 5,
+        tools: LOOKUP_TOOLS,
+        grade: all(never(RUN_TOOLS), callsAny(["opentargets"])),
+    },
+    {
+        id: "enrichment-stays-adhoc",
+        set: "dev",
+        source: "counter-case of filter-result-table: an enrichment is a method of the sandbox",
+        history: RUN_DONE_HISTORY,
+        user: "Run a hallmark gene set enrichment of the significant genes.",
+        maxSteps: 4,
+        tools: { ...DERIVED_FILE_TOOLS, execute_analysis: RUN_STARTED },
+        grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
+    },
+    {
+        id: "large-file-stays-adhoc",
+        set: "dev",
+        source: "counter-case of filter-result-table: a table that a script cannot read is work for a run",
+        history: SC_PROFILED,
+        user: "Compute the QC metrics of each cell: the genes detected, the total counts, and the mitochondrial fraction.",
+        maxSteps: 4,
+        tools: SC_TOOLS,
+        grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
+    },
+    {
+        id: "summary-to-markdown-file",
+        set: "dev",
+        source: "complaint: a request to put the results into a markdown file started a report session",
+        history: RUN_DONE_HISTORY,
+        user: "Summarize the findings of this run into a markdown file that I can share with my PI.",
+        maxSteps: 5,
+        tools: SUMMARY_FILE_TOOLS,
+        grade: all(never(["start_report_session", ...RUN_TOOLS]), callsAny(["write_file", "write_derived"])),
+    },
+    {
         id: "literature-search-held-out",
         set: "held-out",
         source: "paraphrase of literature-search",
@@ -429,5 +568,55 @@ export const conversationCases: readonly EvalCase[] = [
         maxSteps: 3,
         tools: PLAN_TOOLS,
         grade: all(decides("generate_plan", ["execute_analysis"]), never(["execute_analysis"])),
+    },
+    {
+        id: "filter-result-table-held-out",
+        set: "held-out",
+        source: "paraphrase of filter-result-table",
+        history: RUN_DONE_HISTORY,
+        user: "Count the down-regulated genes whose adjusted p-value is under 1e-30.",
+        maxSteps: 5,
+        tools: DERIVED_FILE_TOOLS,
+        grade: all(never(RUN_TOOLS), callsAny(["read_table", "read_file"]), mentions(String(STRONG_DOWN))),
+    },
+    {
+        id: "lookup-batch-held-out",
+        set: "held-out",
+        source: "paraphrase of lookup-batch",
+        history: RUN_DONE_HISTORY,
+        user: "For the five most significant genes, what does Open Targets say about their link to AML?",
+        maxSteps: 5,
+        tools: LOOKUP_TOOLS,
+        grade: all(never(RUN_TOOLS), callsAny(["opentargets"])),
+    },
+    {
+        id: "enrichment-stays-adhoc-held-out",
+        set: "held-out",
+        source: "paraphrase of enrichment-stays-adhoc",
+        history: RUN_DONE_HISTORY,
+        user: "Test the significant genes for enrichment in the KEGG pathways.",
+        maxSteps: 4,
+        tools: { ...DERIVED_FILE_TOOLS, execute_analysis: RUN_STARTED },
+        grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
+    },
+    {
+        id: "large-file-stays-adhoc-held-out",
+        set: "held-out",
+        source: "paraphrase of large-file-stays-adhoc",
+        history: SC_PROFILED,
+        user: "Find the cells with fewer than 200 detected genes or more than 10% mitochondrial reads, and tell me how many there are.",
+        maxSteps: 4,
+        tools: SC_TOOLS,
+        grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
+    },
+    {
+        id: "summary-to-markdown-file-held-out",
+        set: "held-out",
+        source: "paraphrase of summary-to-markdown-file",
+        history: RUN_DONE_HISTORY,
+        user: "Write up the key results as a short markdown document.",
+        maxSteps: 5,
+        tools: SUMMARY_FILE_TOOLS,
+        grade: all(never(["start_report_session", ...RUN_TOOLS]), callsAny(["write_file", "write_derived"])),
     },
 ];
