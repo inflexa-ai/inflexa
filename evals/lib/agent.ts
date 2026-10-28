@@ -19,6 +19,7 @@ import { err, ok, okAsync } from "neverthrow";
 import { createConversationAgent } from "@inflexa-ai/harness/agents/conversation-agent.js";
 import { createReportSessionAgent } from "@inflexa-ai/harness/agents/report-session-agent.js";
 import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
+import { analogyAgentOf } from "@inflexa-ai/harness/tools/research/generate-analogy-report.js";
 import { buildPlannerSearchTools, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "@inflexa-ai/harness/tools/research/generate-plan.js";
 import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
@@ -51,7 +52,7 @@ export const REAL_TOOL = "real";
 export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult) | typeof REAL_TOOL;
 
 /** The agents that a case can run. */
-export type AgentKind = "conversation" | "planner" | "report";
+export type AgentKind = "conversation" | "planner" | "report" | "analogy";
 
 export const UNSCRIPTED_ERROR = "This tool is not available now.";
 
@@ -153,9 +154,14 @@ export function reportAgent(): AgentDefinition {
     });
 }
 
+/** The analogical reasoner that `generate_analogy_report` runs. */
+export function analogyAgent(): AgentDefinition {
+    return analogyAgentOf({ model: "eval", bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, toolOutputStore: unusedToolOutputStore });
+}
+
 /** The agent of each kind. */
 export function evalAgents(): Readonly<Record<AgentKind, AgentDefinition>> {
-    return { conversation: conversationAgent(), planner: plannerAgent(), report: reportAgent() };
+    return { conversation: conversationAgent(), planner: plannerAgent(), report: reportAgent(), analogy: analogyAgent() };
 }
 
 /**

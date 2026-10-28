@@ -100,12 +100,12 @@ function workingMemoryOf(render: string): WorkingMemoryStore {
 
 /**
  * The input of a turn. A chat turn gives the sanitized user message, then the context records that the harness adds
- * (`app/chat-turn.ts`); a report thread reads no working memory. A planner gets its seed alone, as `generate_plan`
- * gives it.
+ * (`app/chat-turn.ts`); a report thread reads no working memory. A planner and an analogical reasoner get their seed
+ * alone, as `generate_plan` and `generate_analogy_report` give it.
  */
 export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMessage[]): Promise<LoopMessage[]> {
     const kind = evalCase.agent ?? "conversation";
-    if (kind === "planner") return [{ role: "user", content: evalCase.user }];
+    if (kind === "planner" || kind === "analogy") return [{ role: "user", content: evalCase.user }];
     const state = evalCase.state ?? {};
     const runs = (state.runningRuns ?? []).map(runningRow);
     const records = await contextRecordsFor(
