@@ -245,7 +245,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
             "(default), old_string must occur exactly once. For a bulk pattern " +
             "edit set regex=true: old_string is a JS regex, new_string may use $1 " +
             "references, and exactly one of replace_all=true or expected_matches " +
-            "gates the write. Returns `out_of_prefix` / `out_of_scope` / `symlink_denied` / " +
+            "gates the write. Returns `out_of_prefix` / `out_of_scope` / `symlink_denied` / `read_only` / " +
             "`file_not_found` / `not_found` / `not_unique` / `match_count_mismatch` / " +
             "`invalid_pattern` / `invalid_arguments` data variants — never throws on expected outcomes. " +
             "A data variant other than `ok` writes nothing.",

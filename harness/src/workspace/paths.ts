@@ -261,6 +261,13 @@ function normalizeTail(tail: string): string {
 }
 
 /**
+ * Where the embedder stages the inputs of an analysis, workspace-root-relative
+ * (see the data-profile-init spec). The inputs are immutable: no file tool of the
+ * harness writes under this directory.
+ */
+export const STAGED_INPUT_ROOT = "data/inputs";
+
+/**
  * Parent of every report session, workspace-root-relative. Callers that
  * enumerate the sessions join this. Callers that address one join
  * {@link reportSessionDir}. Both spell the segment through this constant, thus

@@ -56,7 +56,7 @@ import type { BoundLease, SandboxLeases } from "../sandbox/leases.js";
 import { workPause } from "../workflows/pause.js";
 import { clearPausesOfWork } from "../state/paused-work.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { STAGED_INPUT_ROOT, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-resources.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
@@ -208,9 +208,6 @@ function selectedSubmission(
     const chosen = submissions.filter((entry) => entry.accepted).at(-1) ?? submissions.at(-1);
     return chosen === undefined ? undefined : { ...chosen, count: submissions.length };
 }
-
-/** Where the embedder stages this analysis's inputs (see the data-profile-init spec). */
-const STAGED_INPUT_ROOT = "data/inputs";
 
 /** The settle of one profile claim: the ledger row left `running`, and the terminal write stamped it. */
 export type DataProfileSettlement = {

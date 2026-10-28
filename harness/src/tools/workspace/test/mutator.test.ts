@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { isSha256Hash } from "../../../lib/test/text-shapes.js";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +40,12 @@ async function writeAndRecord(mutator: WorkspaceMutator, args: Parameters<Worksp
 }
 
 const session = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS } });
+
+/** The status and the path of a write outcome, and whether its reason names the staged inputs. */
+function refusalOf(result: { readonly status: string; readonly path: string }) {
+    const namesInputs = "reason" in result && typeof result.reason === "string" && result.reason.includes("data/inputs/");
+    return { status: result.status, path: result.path, namesInputs };
+}
 
 describe("WorkspaceMutator provenance recording", () => {
     let basePath: string;
@@ -392,6 +398,65 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
             }
             rmSync(planted, { recursive: true, force: true });
         }
+    });
+
+    test("a write under the staged inputs is read_only with its reason, lands nothing, and emits nothing", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const inputDir = join(basePath, ANALYSIS, "data", "inputs", "f1");
+        await mkdir(inputDir, { recursive: true });
+        writeFileSync(join(inputDir, "counts.csv"), "gene,count\n");
+
+        for (const path of [
+            "data/inputs/f1/counts.csv",
+            `/${ANALYSIS}/data/inputs/f1/counts.csv`,
+            "notes/../data/inputs/f1/counts.csv",
+            "data/inputs/f1/new.csv",
+            "data/inputs",
+        ]) {
+            const result = await writeAndRecord(mutator, { path, content: "x", toolName: "write_file", invocationId: "inv-1", session: chatSession });
+            expect(refusalOf(result)).toEqual({ status: "read_only", path, namesInputs: true });
+        }
+
+        expect(readFileSync(join(inputDir, "counts.csv"), "utf8")).toBe("gene,count\n");
+        expect(readdirSync(inputDir)).toEqual(["counts.csv"]);
+        expect(lstatSync(join(basePath, ANALYSIS, "data", "inputs")).isDirectory()).toBe(true);
+        expect(events).toHaveLength(0);
+    });
+
+    test("a symlinked ancestor that resolves into the staged inputs is read_only", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const inputDir = join(basePath, ANALYSIS, "data", "inputs", "f1");
+        await mkdir(inputDir, { recursive: true });
+        writeFileSync(join(inputDir, "counts.csv"), "gene,count\n");
+        const outputDir = join(basePath, ANALYSIS, "runs", RUN, STEP, "output");
+        await mkdir(outputDir, { recursive: true });
+        await symlink("../../../../data/inputs/f1", join(outputDir, "staged"));
+
+        const path = `runs/${RUN}/${STEP}/output/staged/counts.csv`;
+        const result = await writeAndRecord(mutator, { path, content: "x", toolName: "write_file", invocationId: "inv-1", session: chatSession });
+
+        expect(refusalOf(result)).toEqual({ status: "read_only", path, namesInputs: true });
+        expect(readFileSync(join(inputDir, "counts.csv"), "utf8")).toBe("gene,count\n");
+        expect(readdirSync(inputDir)).toEqual(["counts.csv"]);
+        expect(events).toHaveLength(0);
+    });
+
+    test("edit_file on a staged input is read_only and leaves the input unchanged", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const inputDir = join(basePath, ANALYSIS, "data", "inputs", "f1");
+        await mkdir(inputDir, { recursive: true });
+        writeFileSync(join(inputDir, "counts.csv"), "gene,count\n");
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
+        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs, intents: { put: () => okAsync(undefined), get: () => okAsync(null) } });
+        const { ctx } = makeToolContext();
+
+        const edited = (
+            await editTool.execute({ path: "data/inputs/f1/counts.csv", old_string: "count", new_string: "total", replace_all: false, regex: false }, ctx)
+        )._unsafeUnwrap();
+
+        expect(refusalOf(edited)).toEqual({ status: "read_only", path: "data/inputs/f1/counts.csv", namesInputs: true });
+        expect(readFileSync(join(inputDir, "counts.csv"), "utf8")).toBe("gene,count\n");
+        expect(events).toHaveLength(0);
     });
 
     test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
