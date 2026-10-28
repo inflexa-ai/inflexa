@@ -292,9 +292,23 @@ function scriptRun(writes: Readonly<Record<string, string>>, stdout = "done"): E
     };
 }
 
-/** A command that runs a script of the step, or that imports `pkg`. */
-function runsWith(pkg: RegExp): CallMatch {
-    return { tool: "execute_command", input: (input) => /scripts\//.test(JSON.stringify(input)) || pkg.test(JSON.stringify(input)) };
+/** A command that runs a script of the step. */
+const runsScript: CallMatch = { tool: "execute_command", input: (input) => /scripts\//.test(JSON.stringify(input)) };
+
+/**
+ * The step makes sure that `pkg` is present before a script of the step runs: a package listing or a link that names
+ * it, or an inline import of it, which fails when the package is absent.
+ */
+function checksBeforeUse(pkg: RegExp): EvalCase["grade"] {
+    const importProbe: CallMatch = {
+        tool: "execute_command",
+        input: (input) => /python3? -c/.test(JSON.stringify(input)) && new RegExp(`import ${pkg.source}`, "i").test(JSON.stringify(input)),
+    };
+    return anyOf(
+        before({ tool: "list_available_packages", input: names(pkg) }, runsScript),
+        before({ tool: "link_packages", input: names(pkg) }, runsScript),
+        before(importProbe, runsScript),
+    );
 }
 
 function names(word: RegExp): CallMatch["input"] {
@@ -427,10 +441,7 @@ const stepCases: readonly EvalCase[] = [
         step: { ...ENRICH_STEP, constraints: ["Run a preranked GSEA with gseapy."] },
         setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: ENRICH_LOCK },
         maxSteps: 10,
-        grade: anyOf(
-            before({ tool: "list_available_packages", input: names(/gseapy/i) }, runsWith(/gseapy/i)),
-            before({ tool: "link_packages", input: names(/gseapy/i) }, runsWith(/gseapy/i)),
-        ),
+        grade: checksBeforeUse(/gseapy/i),
     }),
     sandboxCase({
         id: "step-package-lookup-held-out",
@@ -439,10 +450,7 @@ const stepCases: readonly EvalCase[] = [
         step: { ...DE_STEP, constraints: ["Use PyDESeq2 for the model."] },
         setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2] },
         maxSteps: 10,
-        grade: anyOf(
-            before({ tool: "list_available_packages", input: names(/deseq/i) }, runsWith(/deseq/i)),
-            before({ tool: "link_packages", input: names(/deseq/i) }, runsWith(/deseq/i)),
-        ),
+        grade: checksBeforeUse(/pydeseq2/i),
     }),
     sandboxCase({
         id: "step-absent-package-blocks",
