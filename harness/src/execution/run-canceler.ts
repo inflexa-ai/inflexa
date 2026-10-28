@@ -76,7 +76,7 @@ export type CancelRunResult = {
     readonly finalStatus: RunStatus;
     /** What actually converged. `charge` and `mandate` are vacuously true when
      * there is nothing for this cancel to converge — a refused terminal write
-     * (the body owns them) and, for `mandate`, a row with no persisted jti — so
+     * (the body owns them) and, for `mandate`, a row with no persisted mandate id — so
      * hosts alert on any false flag. */
     readonly converged: {
         readonly steps: boolean;
@@ -284,7 +284,7 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             // because there is nothing for this cancel to converge. With a recorded run
             // end the body did both acts, and the flags are its results.
             let charge = recorded !== null ? recorded.closed : writeOutcome === "refused";
-            let mandate = recorded !== null ? recorded.revoked : writeOutcome === "refused" || (writeOutcome === "failed" && row.mandateJti === null);
+            let mandate = recorded !== null ? recorded.revoked : writeOutcome === "refused" || (writeOutcome === "failed" && row.mandateId === null);
             if (transitioned && recorded === null) {
                 charge = await deliverNotice(
                     logger.with({ runId }),
@@ -293,11 +293,11 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 );
 
                 mandate =
-                    row.mandateJti === null ||
+                    row.mandateId === null ||
                     (await deliverNotice(
-                        logger.with({ runId, jti: row.mandateJti }),
-                        "RunAuthorizer.revokeByJti",
-                        runAuthorizer.revokeByJti({ jti: row.mandateJti, auth: session.auth }, EXTERNAL_CANCEL_REASON),
+                        logger.with({ runId, mandateId: row.mandateId }),
+                        "RunAuthorizer.revokeByMandateId",
+                        runAuthorizer.revokeByMandateId({ mandateId: row.mandateId, auth: session.auth }, EXTERNAL_CANCEL_REASON),
                     ));
             }
 

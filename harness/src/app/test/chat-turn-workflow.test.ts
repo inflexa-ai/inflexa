@@ -28,6 +28,7 @@ import { createAskGateway } from "../../tools/approval/gateway.js";
 import { defineTool } from "../../tools/define-tool.js";
 import { workPause } from "../../workflows/pause.js";
 import { registerChatTurns } from "../chat-turn-workflow.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import { createPausedWork, type PausedWork } from "../paused-work.js";
 
 if (DBOS.isInitialized()) {
@@ -576,6 +577,7 @@ const pausedWork = createPausedWork({
     get pool() {
         return rig.pool;
     },
+    runAuthorizer: createLocalRunAuthorizer(),
 });
 
 /** The paused work of a turn, when the turn waits in a pause. */

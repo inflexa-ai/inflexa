@@ -64,6 +64,8 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
                         return c.json<ResumedWork>({ workId, workflows: outcome.workflows });
                     case "not_found":
                         return apiError(c, "not_found", "No paused work of this analysis has this id. It can have resumed or stopped already.");
+                    case "refused":
+                        return apiError(c, "forbidden", `The work stays paused: ${outcome.reason}`);
                     default: {
                         const exhaustive: never = outcome;
                         throw new Error(`unhandled resume outcome: ${JSON.stringify(exhaustive)}`);

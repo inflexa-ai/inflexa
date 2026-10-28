@@ -99,7 +99,9 @@ function deps(pool: Querier, sandboxClient: SandboxClient, revoked: string[]): D
                 revoked.push(reason);
                 return okAsync(undefined);
             },
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },

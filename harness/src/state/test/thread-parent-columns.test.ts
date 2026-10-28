@@ -156,6 +156,8 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
             "20261027120300_mark_the_active_turn_of_a_thread",
             "20261028120000_record_the_paused_work",
             "20261028120100_end_the_suspended_runs",
+            "20261029120000_reference_the_run_mandate",
+            "20261029120100_record_the_run_session_of_a_pause",
         ]);
     }, 20_000);
 });

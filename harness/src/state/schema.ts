@@ -73,8 +73,7 @@ export const CortexRunRowSchema = z.object({
     synthesisStatus: SynthesisStatus.nullable(),
     synthesisReason: z.string().nullable(),
     parts: z.array(z.json()).nullable(),
-    mandateJti: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-    mandateExpiresAt: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+    mandateId: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     planId: z.string().nullable(),
 });
 export type CortexRunRow = z.infer<typeof CortexRunRowSchema>;

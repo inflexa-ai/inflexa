@@ -3,7 +3,7 @@
  *
  * Issues a durable `RunSession` straight from the async-edge input: no remote
  * authorization, no credential read. It owns nothing revocable (it mints no
- * jti), so `revoke` and `revokeByJti` are no-ops. The opaque caller `auth` is
+ * reference), so `revoke`, `revokeByMandateId`, `suspend`, and `renew` are no-ops. The opaque caller `auth` is
  * forwarded untouched — local code never
  * inspects it (no `getAuth`).
  */
@@ -26,6 +26,8 @@ export function createLocalRunAuthorizer(): RunAuthorizer {
             return okAsync({ runSession, ownsMandate: false }); // oss-core-managed-ok
         },
         revoke: () => okAsync(undefined),
-        revokeByJti: () => okAsync(undefined),
+        revokeByMandateId: () => okAsync(undefined), // oss-core-managed-ok
+        suspend: () => okAsync(undefined),
+        renew: () => okAsync(undefined),
     };
 }

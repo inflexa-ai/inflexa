@@ -986,6 +986,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         analysisId: input.analysisId,
         emit: emitStreamPart,
         retryDelaysMs: deps.pauseRetryDelaysMs,
+        run: { session: input.runSession, authorizer: deps.runAuthorizer },
         logger,
     });
     const init = await validateAndInit(input, runId, deps, pause);

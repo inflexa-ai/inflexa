@@ -574,9 +574,11 @@ function makeDeps(opts: {
                 record.mandateRevokeCalls.push({ reason });
                 return okAsync(undefined);
             },
-            revokeByJti() {
-                throw new Error("runAuthorizer.revokeByJti not exercised in body tests");
+            revokeByMandateId() {
+                throw new Error("runAuthorizer.revokeByMandateId not exercised in body tests");
             },
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
         observeRun: opts.observeRun,
         knowledge: opts.knowledge,

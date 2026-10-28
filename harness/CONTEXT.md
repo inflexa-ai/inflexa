@@ -287,9 +287,13 @@ fact after the operation. Its `err` goes to the log, and the operation continues
   caller `auth` into a durable `RunSession` at the async edge. It is the sole
   constructor of a `RunSession`, thus it is the single chokepoint where the
   in-process identity becomes the durable workflow identity. OSS realization:
-  `auth/local-run-authorizer.ts` issues a `RunSession` with no remote mint, no jti,
-  and no revoke, thus the authorization is purely structural. `authorize` is a
-  gate. `revoke` and `revokeByJti` are notices.
+  `auth/local-run-authorizer.ts` issues a `RunSession` with no remote mint, no
+  reference, and no revoke, thus the authorization is purely structural. The
+  `RunSession` holds a durable reference to the run credential, not a time-bound
+  secret, because the work has no time limit. `authorize` and `renew` are gates.
+  `revoke`, `revokeByMandateId`, and `suspend` are notices. A pause for a person
+  calls `suspend`, and a resume calls `renew` with the `auth` of the person before
+  the work goes on.
 - **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — post-step artifact
   recording with content-attested lineage. `register(input, session)` and
   `sync(input, session)` are the two methods. `register` takes the manifest of the

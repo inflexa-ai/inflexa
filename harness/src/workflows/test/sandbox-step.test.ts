@@ -36,6 +36,7 @@ import { isKnownPartType, isReconciling } from "@inflexa-ai/harness/contracts/pa
 
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { SpawnSession } from "../../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../../__tests__/setup/logger.js";
@@ -340,6 +341,7 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         citationResolver: unusedCitationResolver,
         pool: makeFakePool(),
         logger: silentLogger,
+        runAuthorizer: createLocalRunAuthorizer(),
         provider: makeProvider(usage),
         embedding: { dimensions: 3, embed: (texts: readonly string[]) => okAsync(texts.map(() => [0, 0, 0])) },
         sandboxClient: makeSandboxClient(),

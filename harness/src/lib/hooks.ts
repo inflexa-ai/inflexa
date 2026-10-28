@@ -56,10 +56,17 @@ export type NoticeFailure = {
     readonly reason: string;
 };
 
-export type GateName = "RunAuthorizer.authorize" | "RunCharge.open" | "ArtifactRegistry.register" | "resolveRequestHeaders" | "resolveSandboxLabels";
+export type GateName =
+    "RunAuthorizer.authorize" | "RunAuthorizer.renew" | "RunCharge.open" | "ArtifactRegistry.register" | "resolveRequestHeaders" | "resolveSandboxLabels";
 
 export type NoticeName =
-    "RunAuthorizer.revoke" | "RunAuthorizer.revokeByJti" | "RunCharge.close" | "ArtifactRegistry.sync" | "UsageRecorder.record" | "notifyDataProfileSettled";
+    | "RunAuthorizer.revoke"
+    | "RunAuthorizer.revokeByMandateId"
+    | "RunAuthorizer.suspend"
+    | "RunCharge.close"
+    | "ArtifactRegistry.sync"
+    | "UsageRecorder.record"
+    | "notifyDataProfileSettled";
 
 export type GateRefusal =
     | { readonly kind: "failed"; readonly gate: GateName; readonly reason: string }

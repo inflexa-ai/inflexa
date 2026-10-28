@@ -21,7 +21,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { closeDurableStream } from "@dbos-inc/vercel-ai";
 
-import type { AgentSession, AuthContext, Identity, Provenance, RunFrame, Scope } from "../auth/types.js";
+import type { AgentSession, AuthContext, Identity, Provenance, RunFrame, RunSession, Scope } from "../auth/types.js";
 import type { ChatFrame, ChatPartFrame } from "../contracts/chat-events.js";
 import type { PausedWorkKind, PausePart } from "../contracts/chat-parts.js";
 import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
@@ -80,6 +80,8 @@ export type SubAgentWork = {
     readonly workKind: PausedWorkKind;
     readonly analysisId: string;
     readonly threadId?: string;
+    /** The run session of a child of a run, whose credential the pause suspends and the resume renews. */
+    readonly runSession?: RunSession;
 };
 
 /** Gives the pause of the loops of a child, which writes its part through `emit`. The assembly gives it. */
@@ -89,9 +91,11 @@ export type SubAgentPauses = (work: SubAgentWork, emit: (part: PausePart) => Pro
 function workOf(input: SubAgentInput<unknown>): SubAgentWork | undefined {
     const { analysisId, threadId } = input.scope;
     if (input.rootTurnId !== undefined) return { workId: input.rootTurnId, workKind: "turn", analysisId, threadId };
-    const runId = input.runFrame?.runId;
-    if (runId === undefined || runId === DATA_PROFILE_RUN_LITERAL) return undefined;
-    return { workId: runId, workKind: "run", analysisId };
+    const runFrame = input.runFrame;
+    if (runFrame === undefined || runFrame.runId === DATA_PROFILE_RUN_LITERAL) return undefined;
+    const runSession =
+        input.auth === undefined ? undefined : { identity: input.identity, scope: input.scope, provenance: input.provenance, runFrame, auth: input.auth };
+    return { workId: runFrame.runId, workKind: "run", analysisId, runSession };
 }
 
 /**

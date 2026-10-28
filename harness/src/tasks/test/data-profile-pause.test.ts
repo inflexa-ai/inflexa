@@ -20,6 +20,7 @@ import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createPausedWork } from "../../app/paused-work.js";
+import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import type { PausePart } from "../../contracts/chat-parts.js";
@@ -139,7 +140,9 @@ function depsFor(sandboxClient: SandboxClient, provider: ChatProvider, revoked: 
                 revoked.push(reason);
                 return okAsync(undefined);
             },
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [1, 0, 0])) },
@@ -214,7 +217,7 @@ describe("the data profile inside a workflow — a refused spawn with the suspen
         expect(await analysisStatus(analysisId)).toBe("active");
         expect(revoked).toEqual([]);
 
-        const surface = createPausedWork({ pool });
+        const surface = createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() });
         expect(await surface.list(analysisId)).toMatchObject([{ workId: workflowId, kind: "profile", analysisId, waiting: [{ workflowId, state: "paused" }] }]);
         const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const, analysisId }, auth: makeLocalAuth() };
         expect(await surface.resume(session, workflowId)).toEqual({ kind: "resumed", workflows: 1 });
@@ -265,7 +268,10 @@ describe("the data profile inside a workflow — a suspend error of the profiler
         expect(revoked).toEqual([]);
 
         const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const, analysisId }, auth: makeLocalAuth() };
-        expect(await createPausedWork({ pool }).resume(session, workflowId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workflowId)).toEqual({
+            kind: "resumed",
+            workflows: 1,
+        });
         await handle.getResult();
 
         expect(model.calls).toHaveLength(3);

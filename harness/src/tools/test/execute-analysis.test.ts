@@ -120,7 +120,9 @@ function recordingAuthorizer(): {
             revokes.push(reason);
             return okAsync(undefined);
         },
-        revokeByJti: () => okAsync(undefined),
+        revokeByMandateId: () => okAsync(undefined),
+        suspend: () => okAsync(undefined),
+        renew: () => okAsync(undefined),
     };
     return { authorizer, revokes };
 }
@@ -132,7 +134,9 @@ const throwingAuthorizer: RunAuthorizer = {
         throw new Error("authorize should not be reached in this test");
     },
     revoke: () => okAsync(undefined),
-    revokeByJti: () => okAsync(undefined),
+    revokeByMandateId: () => okAsync(undefined),
+    suspend: () => okAsync(undefined),
+    renew: () => okAsync(undefined),
 };
 
 const ANALYSIS_ID = "analysis-test-1";
@@ -216,8 +220,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
                 synthesis_status: null,
                 synthesis_reason: null,
                 parts: null,
-                mandate_jti: null,
-                mandate_expires_at: null,
+                mandate_id: null,
                 plan_id: values[5] ?? null,
             };
             runs.set(runId, row);
@@ -350,8 +353,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
                     completed_at: null,
                     error: null,
                     parts: null,
-                    mandate_jti: "jti-existing",
-                    mandate_expires_at: "2099-01-01T00:00:00Z",
+                    mandate_id: "jti-existing",
                 },
             ],
         });
@@ -410,7 +412,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const failingAuthorizer: RunAuthorizer = {
             authorize: () => errAsync({ reason: "mint refused", suspend: false }),
             revoke: () => okAsync(undefined),
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         };
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
@@ -440,7 +444,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const suspendingAuthorizer: RunAuthorizer = {
             authorize: () => errAsync({ reason: "no_funds", suspend: true }),
             revoke: () => okAsync(undefined),
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         };
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,

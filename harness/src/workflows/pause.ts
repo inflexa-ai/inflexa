@@ -14,8 +14,11 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { z } from "zod";
 
+import type { RunSession } from "../auth/types.js";
 import type { PauseCause, PausedWorkKind, PausePart } from "../contracts/chat-parts.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isTurnCredentialMissing } from "../loop/turn-credentials.js";
@@ -77,6 +80,11 @@ export type PauseScope = {
     readonly emit: (part: PausePart) => Promise<void>;
     /** The delays of the timer of an outage. Absent: {@link DEFAULT_PAUSE_RETRY_DELAYS_MS}. */
     readonly retryDelaysMs?: readonly number[];
+    /**
+     * The run credential of a run or a profile. A wait for a person suspends it, and the row keeps the run session
+     * for the renewal at the resume. Absent for a turn, whose credential comes with the person who resumes it.
+     */
+    readonly run?: { readonly session: RunSession; readonly authorizer: RunAuthorizer };
     readonly logger?: Logger;
 };
 
@@ -147,10 +155,21 @@ export function workPause(scope: PauseScope): WorkPause {
                         retryAt,
                         topic,
                         pausedAt: new Date(pausedAt).toISOString(),
+                        runSession: scope.run?.session,
                     }),
                 ),
             { name: "pause.record" },
         );
+        // Only a person ends a wait in `paused`, thus the credential stops until the renewal of the resume.
+        const suspendCredential = async (stepName: string): Promise<void> => {
+            const run = scope.run;
+            if (run === undefined) return;
+            await DBOS.runStep(
+                () => deliverNotice(log.with({ workflowId }), "RunAuthorizer.suspend", run.authorizer.suspend(run.session, `paused:${cause.kind}`)),
+                { name: stepName },
+            );
+        };
+        if (state === "paused") await suspendCredential("pause.suspend");
         await scope.emit({ type: "data-pause", id: workflowId, ...work, state, cause, attempt, retryAt });
         log.warn("work paused", { workflowId, ...work, state, cause: cause.kind, attempt });
 
@@ -171,10 +190,12 @@ export function workPause(scope: PauseScope): WorkPause {
                             attempt,
                             topic,
                             pausedAt: new Date(pausedAt).toISOString(),
+                            runSession: scope.run?.session,
                         }),
                     ),
                 { name: "pause.hold" },
             );
+            await suspendCredential("pause.hold.suspend");
             await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "paused", cause, attempt });
             log.info("work held", { workflowId, ...work, attempt });
             const held = await waitForMessage(topic, undefined, signal);

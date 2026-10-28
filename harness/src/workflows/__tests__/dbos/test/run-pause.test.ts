@@ -29,6 +29,7 @@ import { errAsync, okAsync } from "neverthrow";
 import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 import { makeFakeWorkspaceFs } from "../../../../agents/sandbox/__fixtures__/deps.js";
 import { createPausedWork } from "../../../../app/paused-work.js";
+import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
 import type { RunChargeOutcome } from "../../../../billing/run-charge.js";
 import { unusedCitationResolver } from "../../../../citations/__fixtures__/resolver.js";
@@ -101,6 +102,7 @@ function stepDeps(current: RunCase, stepId: string): SandboxStepDeps {
     return {
         citationResolver: unusedCitationResolver,
         pool: rig.pool,
+        runAuthorizer: createLocalRunAuthorizer(),
         provider: script.provider,
         embedding: { dimensions: 3, embed: (texts: readonly string[]) => okAsync(texts.map(() => [0, 0, 0])) },
         sandboxClient: current.sandboxClient,
@@ -156,7 +158,9 @@ function parentDeps(current: RunCase): ExecuteAnalysisDeps {
                 current.ends.push(`revoke:${reason}`);
                 return okAsync(undefined);
             },
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
     };
 }
@@ -302,7 +306,10 @@ function sessionOf(analysisId: string): Parameters<ReturnType<typeof createPause
 }
 
 async function resume(current: RunCase, runId: string): Promise<void> {
-    expect(await createPausedWork({ pool: rig.pool }).resume(sessionOf(current.analysisId), runId)).toEqual({ kind: "resumed", workflows: 1 });
+    expect(await createPausedWork({ pool: rig.pool, runAuthorizer: createLocalRunAuthorizer() }).resume(sessionOf(current.analysisId), runId)).toEqual({
+        kind: "resumed",
+        workflows: 1,
+    });
 }
 
 describe("the pause of a run", () => {

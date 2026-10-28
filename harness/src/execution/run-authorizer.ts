@@ -22,12 +22,12 @@ import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
 /**
  * Locates a run credential when no `RunAuthorization` exists: the persisted
- * jti from `cortex_runs` plus the revoking caller's opaque `auth` — the sole
- * carrier of credential/org behind a session, downcast only by managed
+ * mandate id from `cortex_runs` plus the revoking caller's opaque `auth` — the
+ * sole carrier of credential/org behind a session, downcast only by managed
  * realizations.
  */
-export type RevokeByJtiRef = {
-    readonly jti: string;
+export type RevokeByMandateRef = {
+    readonly mandateId: string; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     readonly auth: AuthContext;
 };
 
@@ -54,6 +54,11 @@ export type RunAuthorization = {
  * Authorize durable work at the async edge. `authorize` produces the durable
  * `RunSession`; `revoke` releases a self-minted run credential on the terminal
  * path (a no-op for reused or local authorizations).
+ *
+ * The `RunSession` is a durable reference to the run credential, not a
+ * time-bound secret: the work has no time limit, and a pause can last days. A
+ * realization resolves the reference to a short-lived credential where it
+ * calls its host, and `suspend` and `renew` follow the pause of the work.
  */
 export type RunAuthorizer = {
     authorize(input: AuthorizeRunInput): ResultAsync<RunAuthorization, GateFailure>;
@@ -61,9 +66,21 @@ export type RunAuthorizer = {
     /**
      * Out-of-band revocation for paths holding no `RunAuthorization`. Normal
      * terminal paths use `revoke(authorization, reason)` under the run
-     * credential; `revokeByJti` covers external cancellation, where the run
-     * credential's JWT was never persisted and only its jti survives on
-     * `cortex_runs`. Local/OSS authorizers no-op — they mint no jti.
+     * credential; `revokeByMandateId` covers external cancellation, where only
+     * the reference on `cortex_runs` survives. Local/OSS authorizers no-op —
+     * they record no reference.
      */
-    revokeByJti(ref: RevokeByJtiRef, reason: string): ResultAsync<void, NoticeFailure>;
+    revokeByMandateId(ref: RevokeByMandateRef, reason: string): ResultAsync<void, NoticeFailure>; // oss-core-managed-ok
+    /**
+     * The work paused and waits for a person: stop the run credential until a
+     * renewal. A notice — the work waits whatever the outcome. A wait that only
+     * a timer ends does not suspend, because no person resumes it.
+     */
+    suspend(runSession: RunSession, reason: string): ResultAsync<void, NoticeFailure>;
+    /**
+     * A person resumes paused work: renew the run credential under the opaque
+     * `auth` of that person. A gate — a refusal keeps the work paused and sends
+     * no resume. Ownership does not matter here; it governs `revoke` only.
+     */
+    renew(runSession: RunSession, auth: AuthContext): ResultAsync<void, GateFailure>;
 };

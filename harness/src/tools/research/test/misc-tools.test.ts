@@ -82,8 +82,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
             synthesis_status: null,
             synthesis_reason: null,
             parts: null,
-            mandate_jti: null,
-            mandate_expires_at: null,
+            mandate_id: null,
             plan_id: "plan-1",
             ...overrides,
         };
@@ -221,6 +220,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
             retry_at: null,
             topic: "pause:p-1",
             paused_at: new Date("2026-01-01T00:00:03.000Z"),
+            run_session: null,
             ...overrides,
         };
     }

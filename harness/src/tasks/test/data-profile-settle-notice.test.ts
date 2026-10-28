@@ -96,7 +96,9 @@ describe("the settle notice of the data profile", () => {
                     throw new Error("the body never authorizes");
                 },
                 revoke: () => okAsync(undefined),
-                revokeByJti: () => okAsync(undefined),
+                revokeByMandateId: () => okAsync(undefined),
+                suspend: () => okAsync(undefined),
+                renew: () => okAsync(undefined),
             },
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             // The embedder is read only when the body indexes a profile, which no case here reaches.

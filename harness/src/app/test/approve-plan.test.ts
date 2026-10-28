@@ -87,7 +87,9 @@ function doubles(over: { launchFails?: boolean } = {}) {
             });
         },
         revoke: () => okAsync(undefined),
-        revokeByJti: () => okAsync(undefined),
+        revokeByMandateId: () => okAsync(undefined),
+        suspend: () => okAsync(undefined),
+        renew: () => okAsync(undefined),
     };
     const provenance: ProvenanceSeam = { emitSessionEvent: (event) => events.push(event) };
     return { launches, authorizations, events, runLauncher, runAuthorizer, provenance };
