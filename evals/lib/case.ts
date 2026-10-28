@@ -15,7 +15,7 @@ import type { LoopStep } from "@inflexa-ai/harness/loop/run-loop.js";
 import { modelViewOf } from "@inflexa-ai/harness/loop/tool-adapter.js";
 import type { LoopMessage } from "@inflexa-ai/harness/loop/types.js";
 import { syntheticRecordMessage } from "@inflexa-ai/harness/memory/ai-sdk-message-storage.js";
-import type { ToolScript } from "./agent.js";
+import type { AgentKind, ToolScript } from "./agent.js";
 
 /** One call that the model made in a trial. */
 export type TrialCall = {
@@ -60,6 +60,8 @@ export type TurnState = {
 export type EvalCase = {
     readonly id: string;
     readonly set: CaseSet;
+    /** The agent of the turn. Absent: the conversation agent. The message of a planner case is the seed of the planner. */
+    readonly agent?: AgentKind;
     /** The complaint, the issue, or the brief that the case comes from. */
     readonly source: string;
     /** The conversation before the turn, oldest first. */
@@ -129,6 +131,8 @@ export function trialOf(steps: readonly LoopStep[], asks: readonly TrialAsk[], t
 
 /** An input matches when each key of `expected` has the same value in the input. Other keys are free. */
 export function inputMatches(input: unknown, expected: Readonly<Record<string, unknown>>): boolean {
+    // A nested call of a script carries no input, and an empty expectation asks for none.
+    if (Object.keys(expected).length === 0) return true;
     const record = parseUnknownRecord(input);
     if (record === undefined) return false;
     return Object.entries(expected).every(([key, value]) => isDeepStrictEqual(record[key], value));
@@ -216,7 +220,46 @@ export function mentions(text: string): Grader {
     return (trial) => (trial.text.includes(text) ? { pass: true, detail: `mentions ${text}` } : { pass: false, detail: `the reply does not mention ${text}` });
 }
 
-/** Each grader passes. The detail names the first failure. */
+/** One step of a plan, as `submit_plan` takes it. A grader reads the fields that it names. */
+export type PlanStepView = {
+    readonly id: string;
+    readonly agent: string;
+    readonly name: string;
+    readonly question: string;
+    readonly depends_on: readonly string[];
+};
+
+const PlanViewSchema = z.object({
+    plan: z.object({
+        steps: z.array(
+            z.object({
+                id: z.string(),
+                agent: z.string().catch(""),
+                name: z.string().catch(""),
+                question: z.string().catch(""),
+                depends_on: z.array(z.string()).catch([]),
+            }),
+        ),
+    }),
+});
+
+/**
+ * The plan of the last `submit_plan` call meets `check`. The real check of `submit_plan` runs in a planner case, thus
+ * a rejected plan that the planner repairs is graded by its repair.
+ */
+export function plans(describe: string, check: (steps: readonly PlanStepView[]) => boolean): Grader {
+    return (trial) => {
+        const last = trial.calls.filter((call) => call.tool === "submit_plan").at(-1);
+        if (last === undefined) return { pass: false, detail: `no submit_plan (calls: ${describeCalls(trial.calls)})` };
+        const parsed = PlanViewSchema.safeParse(last.input);
+        if (!parsed.success) return { pass: false, detail: "the last submit_plan holds no plan with steps" };
+        const steps = parsed.data.plan.steps;
+        const shape = steps.map((step) => `${step.id}:${step.agent}`).join(", ");
+        return check(steps) ? { pass: true, detail: `${describe} (${shape})` } : { pass: false, detail: `not ${describe} (${shape})` };
+    };
+}
+
+/** The text of the replies holds `text`, for example the count that a question asks for. */
 export function all(...graders: readonly Grader[]): Grader {
     return (trial) => {
         const grades = graders.map((grader) => grader(trial));

@@ -1,7 +1,8 @@
 /**
- * The agent under test: the conversation agent as the CLI composes it, with the
- * host tools of the CLI, over deps that no tool reaches, and with each tool
- * swapped for a scripted one.
+ * The agents under test: the conversation agent as the CLI composes it, with the
+ * host tools of the CLI, the planner that `generate_plan` runs, and the report
+ * agent of a report session. Each runs over deps that no tool reaches, and with
+ * each tool swapped for a scripted one.
  *
  * A scripted tool keeps the id, the description, the JSON schema, and the
  * approval hook of the real tool, thus the model sees the same request as in
@@ -16,6 +17,9 @@ import { join } from "node:path";
 import { err, ok, okAsync } from "neverthrow";
 
 import { createConversationAgent } from "@inflexa-ai/harness/agents/conversation-agent.js";
+import { createReportSessionAgent } from "@inflexa-ai/harness/agents/report-session-agent.js";
+import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
+import { buildPlannerSearchTools, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "@inflexa-ai/harness/tools/research/generate-plan.js";
 import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
 import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
@@ -40,8 +44,14 @@ import { createLaunchDirTool } from "../../cli/src/modules/harness/launch_dir_to
 /** What a scripted tool gives: an ok value, or an error that the model reads. */
 export type ScriptedResult = { readonly ok: unknown } | { readonly error: string };
 
+/** A script that keeps the real tool, for a tool whose `execute` is pure, such as the check of `submit_plan`. */
+export const REAL_TOOL = "real";
+
 /** The scripted result of a call, from its input. A tool with no script gives {@link UNSCRIPTED_ERROR}. */
-export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult);
+export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult) | typeof REAL_TOOL;
+
+/** The agents that a case can run. */
+export type AgentKind = "conversation" | "planner" | "report";
 
 export const UNSCRIPTED_ERROR = "This tool is not available now.";
 
@@ -111,6 +121,43 @@ export function conversationAgent(): AgentDefinition {
     });
 }
 
+/** The planner that `generate_plan` runs, with the terminal tools of a run with no knowledge answer. */
+export function plannerAgent(): AgentDefinition {
+    const deps: GeneratePlanDeps = {
+        conversation: { provider: unusedChatProvider(), model: "eval" },
+        pool: unconnectedPool(),
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        refStorePath: "/eval/refs",
+        farmLockFile: "/eval/farm.lock",
+        imagePackagesFile: "/eval/image-packages.json",
+        toolOutputStore: unusedToolOutputStore,
+    };
+    return plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(undefined, createNoopLogger()));
+}
+
+/** The report agent of a report session. Each tool is scripted, thus no dependency below is reached. */
+export function reportAgent(): AgentDefinition {
+    const unused = (): never => refuse();
+    return createReportSessionAgent({
+        model: "eval",
+        pool: unconnectedPool(),
+        embedding: unusedEmbedding,
+        workspaceFs: makeFakeWorkspaceFs(),
+        gateway: { load: unused, persist: unused, stampRendered: unused, stampSeen: unused },
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/eval", id)),
+        store: { record: unused, getVersion: unused, getThreadVersion: unused },
+        threads: { getThread: unused, setAutoTitle: unused },
+        chrome: {},
+        derivations: { appendDerivation: unused },
+        toolOutputStore: unusedToolOutputStore,
+    });
+}
+
+/** The agent of each kind. */
+export function evalAgents(): Readonly<Record<AgentKind, AgentDefinition>> {
+    return { conversation: conversationAgent(), planner: plannerAgent(), report: reportAgent() };
+}
+
 /**
  * The approval of a tool whose real hook reads the state of the CLI. The hook of `manage_inputs` reads
  * the inputs of the analysis from the database of the user, thus the eval asks for each add and each
@@ -125,6 +172,7 @@ const SCRIPTED_APPROVALS: Readonly<Record<string, (input: unknown) => AskRequest
 };
 
 function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
+    if (script === REAL_TOOL) return tool;
     const scriptedApproval = SCRIPTED_APPROVALS[tool.id];
     const approval = scriptedApproval === undefined ? tool.approval : (input: unknown) => scriptedApproval(input);
     return {

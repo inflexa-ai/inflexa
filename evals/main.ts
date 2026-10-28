@@ -21,7 +21,7 @@ import { parseArgs } from "node:util";
 import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
 import { parseJsonAs } from "@inflexa-ai/harness/lib/parse-json.js";
 import { allCases } from "./cases/index.js";
-import { conversationAgent } from "./lib/agent.js";
+import { evalAgents } from "./lib/agent.js";
 import type { EvalCase } from "./lib/case.js";
 import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/provider.js";
 import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
@@ -91,13 +91,13 @@ async function run(args: readonly string[]): Promise<void> {
         values.provider === undefined
             ? await cliProvider(logger)
             : await readProviderFile(values.provider).then((file) => ({ provider: providerOf(file, process.env, logger), identity: identityOf(file) }));
-    const agent = conversationAgent();
+    const agents = evalAgents();
     const startedAt = new Date().toISOString();
-    const digest = promptDigest(agent);
+    const digest = promptDigest(agents);
 
     process.stderr.write(`${cases.length} cases x ${trials} trials on ${identity.model}, prompt ${digest}\n`);
     const results = await runCases(cases, {
-        agent,
+        agents,
         provider,
         trials,
         concurrency: positiveInt(values.concurrency, 4, "concurrency"),
