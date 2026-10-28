@@ -154,7 +154,7 @@ function parentDeps(current: RunCase): ExecuteAnalysisDeps {
             authorize() {
                 throw new Error("runAuthorizer.authorize not exercised");
             },
-            revoke(_authorization, reason) {
+            revoke(_runSession, reason) {
                 current.ends.push(`revoke:${reason}`);
                 return okAsync(undefined);
             },

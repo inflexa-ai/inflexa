@@ -7,7 +7,7 @@ the table gives no value, the `ok` of the hook MUST carry `void`.
 
 | Hook | Kind | Value |
 |-|-|-|
-| `RunAuthorizer.authorize` | gate | `RunAuthorization` |
+| `RunAuthorizer.authorize` | gate | `RunSession` |
 | `RunAuthorizer.revoke`, `RunAuthorizer.revokeByMandateId`, `RunAuthorizer.suspend` | notice | none |
 | `RunAuthorizer.renew` | gate | none |
 | `resolveRequestHeaders` | gate | `RequestHeaders` |
@@ -28,7 +28,7 @@ result arrives, the loop MUST log an `err`.
 #### Scenario: The type of a gate carries its value
 
 - **WHEN** a host writes a realization of `RunAuthorizer.authorize`
-- **THEN** the realization returns `ResultAsync<RunAuthorization, GateFailure>`
+- **THEN** the realization returns `ResultAsync<RunSession, GateFailure>`
 
 #### Scenario: The type of a notice carries no value
 

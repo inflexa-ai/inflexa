@@ -23,7 +23,7 @@ export function createLocalRunAuthorizer(): RunAuthorizer {
                 runFrame: frame,
                 auth,
             };
-            return okAsync({ runSession, ownsMandate: false }); // oss-core-managed-ok
+            return okAsync(runSession);
         },
         revoke: () => okAsync(undefined),
         revokeByMandateId: () => okAsync(undefined), // oss-core-managed-ok

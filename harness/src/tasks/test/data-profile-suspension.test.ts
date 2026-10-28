@@ -95,7 +95,7 @@ function deps(pool: Querier, sandboxClient: SandboxClient, revoked: string[]): D
             authorize: () => {
                 throw new Error("the body never authorizes");
             },
-            revoke: (_authorization, reason) => {
+            revoke: (_runSession, reason) => {
                 revoked.push(reason);
                 return okAsync(undefined);
             },

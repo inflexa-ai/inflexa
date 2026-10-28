@@ -570,7 +570,7 @@ function makeDeps(opts: {
             authorize() {
                 throw new Error("runAuthorizer.authorize not exercised in body tests");
             },
-            revoke(_authorization, reason) {
+            revoke(_runSession, reason) {
                 record.mandateRevokeCalls.push({ reason });
                 return okAsync(undefined);
             },

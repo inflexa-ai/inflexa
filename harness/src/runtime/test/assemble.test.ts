@@ -677,14 +677,11 @@ describe("the approval of the composition", () => {
         const runAuthorizer: RunAuthorizer = {
             authorize: () =>
                 okAsync({
-                    runSession: {
-                        identity: { user: "u-1" },
-                        scope: { kind: "analysis", analysisId: ANALYSIS_ID },
-                        provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
-                        runFrame: { runId: "run-assemble" },
-                        auth: makeLocalAuth(),
-                    },
-                    ownsMandate: true,
+                    identity: { user: "u-1" },
+                    scope: { kind: "analysis", analysisId: ANALYSIS_ID },
+                    provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+                    runFrame: { runId: "run-assemble" },
+                    auth: makeLocalAuth(),
                 }),
             revoke: () => okAsync(undefined),
             revokeByMandateId: () => okAsync(undefined),

@@ -76,14 +76,11 @@ function doubles(over: { launchFails?: boolean } = {}) {
         authorize: (input) => {
             authorizations.push(input);
             return okAsync({
-                runSession: {
-                    identity: { user: "u-1" },
-                    scope: { kind: "analysis", analysisId: ANALYSIS_ID },
-                    provenance: { agentId: "approvePlan", callPath: ["approvePlan"] },
-                    runFrame: { runId: "run-approve" },
-                    auth: makeLocalAuth(),
-                },
-                ownsMandate: true,
+                identity: { user: "u-1" },
+                scope: { kind: "analysis", analysisId: ANALYSIS_ID },
+                provenance: { agentId: "approvePlan", callPath: ["approvePlan"] },
+                runFrame: { runId: "run-approve" },
+                auth: makeLocalAuth(),
             });
         },
         revoke: () => okAsync(undefined),

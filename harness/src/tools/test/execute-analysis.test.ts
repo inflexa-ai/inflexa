@@ -50,9 +50,9 @@ function launchedInput(stored: unknown): {
         .parse(stored);
 }
 
-import type { RequestSession } from "../../auth/types.js";
+import type { RequestSession, RunSession } from "../../auth/types.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
-import type { RunAuthorization, RunAuthorizer } from "../../execution/run-authorizer.js";
+import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
@@ -106,17 +106,14 @@ function recordingAuthorizer(): {
     const revokes: string[] = [];
     const authorizer: RunAuthorizer = {
         authorize: () =>
-            okAsync<RunAuthorization, GateFailure>({
-                runSession: {
-                    identity: { user: "u-1" },
-                    scope: { kind: "analysis", analysisId: "a1" },
-                    provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
-                    runFrame: { runId: "run-test" },
-                    auth: makeLocalAuth(),
-                },
-                ownsMandate: true,
+            okAsync<RunSession, GateFailure>({
+                identity: { user: "u-1" },
+                scope: { kind: "analysis", analysisId: "a1" },
+                provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+                runFrame: { runId: "run-test" },
+                auth: makeLocalAuth(),
             }),
-        revoke: (_authorization, reason) => {
+        revoke: (_runSession, reason) => {
             revokes.push(reason);
             return okAsync(undefined);
         },
