@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { err, ok } from "neverthrow";
 import { z } from "zod";
@@ -10,6 +13,12 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../../testin
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { defineTool, type Tool } from "../../define-tool.js";
 import { createRunScriptTool, RUN_SCRIPT_TOOL_ID, type RunScriptOutput } from "../run-script.js";
+import { readToolCallRecord, type ToolContext } from "../../define-tool.js";
+import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
+import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
+import { conversationSessionDir } from "../../../workspace/paths.js";
+import { createScriptFileTools } from "../file-tools.js";
+import { createScriptScratch } from "../scratch.js";
 
 const searchGene = defineTool({
     id: "search_gene",
@@ -132,6 +141,109 @@ describe("run_script", () => {
         expect(description).toContain("identifiers: Array<string>;");
         expect(description).toContain("/** Search PubMed. */\npubmed(args: {");
         expect(description).not.toContain("Batch up to 200 identifiers.");
+    });
+});
+
+describe("run_script with a scratch directory", () => {
+    const THREAD = "thread-1";
+    let root: string;
+    let events: SessionProvenanceEvent[];
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), "run-script-"));
+        mkdirSync(join(root, "runs/r1/s1/output"), { recursive: true });
+        writeFileSync(join(root, "runs/r1/s1/output/de.csv"), "gene,padj\nTP53,0.001\nFLT3,0.2\nKIT,0.03\n");
+        events = [];
+    });
+
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    function setup(): { tool: Tool; ctx: ToolContext; emitted: unknown[] } {
+        const resolveWorkspaceRoot = (): Promise<string> => Promise.resolve(root);
+        const scratch = createScriptScratch({
+            resolveWorkspaceRoot,
+            sessionDir: conversationSessionDir,
+            provenance: { emitSessionEvent: (event) => events.push(event) },
+        });
+        const fileTools = createScriptFileTools({ workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }), resolveWorkspaceRoot, scratch });
+        const { ctx, emitted } = makeToolContext();
+        const session = makeSession({ scope: { kind: "analysis", analysisId: "analysis-001", threadId: THREAD } });
+        return { tool: createRunScriptTool([...fileTools, pubmed], {}, { scratch }), ctx: { ...ctx, invocationId: "toolu_1", session }, emitted };
+    }
+
+    const code = `
+        const table = await tools.read_table({ path: "runs/r1/s1/output/de.csv" });
+        const top = table.rows.filter((row) => row.padj < 0.05);
+        await tools.write_derived({ name: "top.csv", rows: top });
+        return top.length;
+    `;
+
+    test("saves the script, derives the file, and gives both paths", async () => {
+        const { tool, ctx } = setup();
+
+        const result = (await tool.execute({ description: "Significant genes", code }, ctx))._unsafeUnwrap();
+
+        const dir = conversationSessionDir(THREAD);
+        expect(result).toMatchObject({ ok: true, value: 2, script: `${dir}/scripts/toolu_1.js`, files: [`${dir}/derived/top.csv`] });
+        expect(readFileSync(join(root, dir, "scripts/toolu_1.js"), "utf8")).toBe(code);
+        expect(readFileSync(join(root, dir, "derived/top.csv"), "utf8")).toBe("gene,padj\nTP53,0.001\nKIT,0.03\n");
+    });
+
+    test("streams each nested call under the run_script call, and shows the derived file and the script in one card", async () => {
+        const { tool, ctx, emitted } = setup();
+
+        (await tool.execute({ description: "Significant genes", code }, ctx))._unsafeUnwrap();
+
+        const source = { agentId: RUN_SCRIPT_TOOL_ID, callPath: ["conversation-agent", RUN_SCRIPT_TOOL_ID], invocationId: "toolu_1" };
+        expect(emitted).toContainEqual(
+            expect.objectContaining({ type: "tool-started", source, toolUseId: "toolu_1:1", name: "read_table", detail: "runs/r1/s1/output/de.csv" }),
+        );
+        expect(emitted).toContainEqual(expect.objectContaining({ type: "tool-finished", source, toolUseId: "toolu_1:1", outcome: "ok", detail: "3 rows" }));
+        expect(emitted).toContainEqual(
+            expect.objectContaining({ type: "tool-finished", source, toolUseId: "toolu_1:2", name: "write_derived", outcome: "ok" }),
+        );
+        const parts = emitted.filter((event) => z.object({ type: z.string() }).safeParse(event).data?.type.startsWith("data-") === true);
+        const dir = conversationSessionDir(THREAD);
+        expect(parts).toMatchObject([
+            { type: "data-subagent-activity", data: { toolCallId: "toolu_1", entries: [{ tool: "read_table" }, { tool: "write_derived" }] } },
+            {
+                type: "data-file-reference",
+                data: { title: "Significant genes", files: [{ path: `${dir}/derived/top.csv` }, { path: `${dir}/scripts/toolu_1.js` }] },
+            },
+        ]);
+    });
+
+    test("the fold of the call record gives provenance the script, the table it read, and the file it derived", async () => {
+        const { tool, ctx } = setup();
+
+        const result = (await tool.execute({ code }, ctx))._unsafeUnwrap();
+        tool.foldCallRecord?.(readToolCallRecord(result));
+
+        const dir = conversationSessionDir(THREAD);
+        expect(events).toMatchObject([
+            {
+                type: "run-script",
+                analysisId: "analysis-001",
+                threadId: THREAD,
+                invocationId: "toolu_1",
+                script: { path: `${dir}/scripts/toolu_1.js` },
+                reads: [{ path: "runs/r1/s1/output/de.csv" }],
+                writes: [{ path: `${dir}/derived/top.csv` }],
+                tools: ["read_table", "write_derived"],
+                ok: true,
+            },
+        ]);
+    });
+
+    test("the description names the call, and the result names the tools that the script called", () => {
+        const { tool } = setup();
+
+        expect(tool.describeCall?.({ description: "Significant genes", code })).toBe("Significant genes");
+        expect(tool.describeResult?.({ description: "Significant genes", code }, { ok: true, output: "", calls: [{ tool: "read_table", ok: true }] })).toBe(
+            "Significant genes (read_table)",
+        );
     });
 });
 

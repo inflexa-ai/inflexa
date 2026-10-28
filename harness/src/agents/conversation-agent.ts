@@ -103,6 +103,9 @@ import { createResolveCitationTool } from "../tools/research/resolve-citation.js
 import { createWebFetchTool } from "../tools/research/web-fetch.js";
 import { createWebSearchTool, type WebSearchEngine } from "../tools/research/web-search.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
+import { createScriptFileTools } from "../tools/script/file-tools.js";
+import { createScriptScratch } from "../tools/script/scratch.js";
+import { conversationSessionDir } from "../workspace/paths.js";
 
 /** Canonical agent id — the single source of truth. */
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
@@ -262,8 +265,19 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         logger: deps.logger,
     });
 
-    // The lookups run in a script (`run_script`): each is a read-only API call that asks no approval.
+    // The scratch directory of each conversation: the scripts of `run_script`, and the files that they derive.
+    const scriptScratch = createScriptScratch({
+        resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
+        sessionDir: conversationSessionDir,
+        provenance: deps.provenance,
+        logger: deps.logger,
+    });
+
+    // The lookups and the light work on tables run in a script (`run_script`). Each tool asks no approval, and a
+    // script writes only into the scratch directory of its conversation.
     const scriptTools: Tool[] = [
+        // Tables of the workspace in, derived files and chart files out.
+        ...createScriptFileTools({ workspaceFs, resolveWorkspaceRoot: deps.resolveWorkspaceRoot, scratch: scriptScratch }),
         // Identifier resolution — the ENSG most other bio tools key off, and the
         // UniProt accession that the structure tools take.
         searchGeneTool,
@@ -427,6 +441,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         tools,
         scriptTools,
         scriptRuntime: deps.scriptRuntime,
+        scriptScratch,
         maxIterations: CONVERSATION_MAX_ITERATIONS,
         compaction: CONVERSATION_COMPACTION,
     };

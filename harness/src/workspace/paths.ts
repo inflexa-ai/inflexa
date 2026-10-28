@@ -290,6 +290,18 @@ export function reportSessionDerivedDir(threadId: string): string {
     return `${reportSessionDir(threadId)}/derived`;
 }
 
+/** Parent of the scratch directory of each conversation, workspace-root-relative. */
+export const CONVERSATION_SESSIONS_ROOT = "conversation-sessions";
+
+/**
+ * The scratch directory of one conversation, workspace-root-relative: the scripts that its turns ran, and the
+ * files that those scripts derived.
+ */
+export function conversationSessionDir(threadId: string): string {
+    assertSafeId(threadId, "threadId");
+    return `${CONVERSATION_SESSIONS_ROOT}/${threadId}`;
+}
+
 /**
  * For an analysis-rooted input (`/{analysisId}/...`), strip the leading
  * `/{analysisId}/` segment so it can be resolved relative to the analysis

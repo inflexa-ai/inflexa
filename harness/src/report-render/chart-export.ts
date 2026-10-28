@@ -175,7 +175,7 @@ function finishedSvg(svg: string, size: ChartExportSize): string {
  * polygon draws one coordinate for each indicator, and a violin outline draws two vertices for each grid
  * point, thus each counts every coordinate that it draws.
  */
-function plottedPoints(option: EchartOption): number {
+export function plottedPoints(option: EchartOption): number {
     const series = option.series;
     if (!Array.isArray(series)) return 0;
     let count = 0;

@@ -27,6 +27,14 @@
 - [x] 5.1 Run `tsc -p tsconfig.build.json` in `harness`, and make sure that it passes.
 - [x] 5.2 Run `bun test` in `harness`, and make sure that it passes.
 
+## 6. The file tools and the scratch of a script
+
+- [x] 6.1 Add `read_table`, `write_derived`, and `render_chart` (`tools/script/file-tools.ts`) and the scratch directory (`tools/script/scratch.ts`). Export `parseTable` and `detectFormat` of the production resolver, `plottedPoints` of the chart export, and `confinedWrite` of the mutator, and add `conversationSessionDir` to `workspace/paths.ts`.
+- [x] 6.2 Give `run_script` the description input, the saved script, the frames of each nested call, the activity part, the file card, the call record and its fold, and the metrics (`tools/script/metrics.ts`).
+- [x] 6.3 Add the `run-script` session event to the provenance seam, and wire the scratch and the file tools in `createConversationAgent`.
+- [x] 6.4 Point the `dataPath` description of `show_user` at `run_script`. Tell the conversation prompt that light work on a table is no run.
+- [x] 6.5 Map the event in the CLI bridge (`prov.script_run`), and add the `script_run` event to the kernel (`prov-kernel` change `add-script-run-event`).
+
 ## Workflow follow-up
 
 - Archive `remove-literature-reviewer` before this change. The `uniprot-tools` delta modifies a requirement that `remove-literature-reviewer` adds, and the `literature-search` delta starts from its text. `openspec validate` gives an info for the `uniprot-tools` delta until then.

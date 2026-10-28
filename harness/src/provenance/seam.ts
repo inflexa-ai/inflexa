@@ -98,7 +98,8 @@ type BlockAct = {
  * One observation of a session.
  *
  * The union names one event for each act: the start of a session, the four block operations, the title,
- * the derivation, the preview, the record, the file write of a conversation turn, and the approval of a plan. Each event carries
+ * the derivation, the preview, the record, the file write of a conversation turn, a script that read or wrote a
+ * file, and the approval of a plan. Each event carries
  * the analysis and the thread, thus a consumer places it with no lookup. The title sits on the document,
  * thus the title event names no block.
  *
@@ -170,6 +171,30 @@ export type SessionProvenanceEvent =
           tool: string;
           /** The loop's tool-call id of the write — the replay-stable identity of the invocation. */
           invocationId: string;
+      }
+    | {
+          /**
+           * One script of `run_script` that read or wrote a file. The script, each file that it read, and each
+           * file that it derived carry the hash of their exact bytes, thus a derived file chains to the files
+           * that made it. The harness emits it from the fold of the call record, thus a replay emits it again
+           * with the same values.
+           */
+          type: "run-script";
+          analysisId: string;
+          /** The thread whose turn ran the script. Absent when the scope carries none. */
+          threadId?: string;
+          /** The loop's tool-call id of the `run_script` call. */
+          invocationId: string;
+          /** The saved script. Absent when the session has no scratch directory. */
+          script?: { path: string; hash: string; size: number };
+          /** Each table that the script read, analysis-root-relative. */
+          reads: ReadonlyArray<{ path: string; hash: string }>;
+          /** Each file that the script derived, analysis-root-relative. */
+          writes: ReadonlyArray<{ path: string; hash: string; size: number }>;
+          /** Each tool that the script called, in call order. */
+          tools: readonly string[];
+          /** The script ran to its end. A failed script keeps the files that it wrote before the failure. */
+          ok: boolean;
       };
 
 /**
