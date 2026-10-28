@@ -97,14 +97,14 @@ export type ExecuteAnalysisToolDeps = Pick<EnvironmentStorePaths, "farmLockFile"
 
 export class PlanNotFoundError extends Error {
     constructor(planId: string) {
-        super(`Plan ${planId} not found for this analysis`);
+        super(`Plan ${planId} not found for this analysis. Generate a new plan; a retry of this planId fails the same way.`);
         this.name = "PlanNotFoundError";
     }
 }
 
 export class PlanMalformedError extends Error {
     constructor(planId: string) {
-        super(`Plan ${planId} is malformed`);
+        super(`Plan ${planId} is malformed. Generate a new plan; a retry of this planId fails the same way.`);
         this.name = "PlanMalformedError";
     }
 }
@@ -114,7 +114,7 @@ export class PlanValidationError extends Error {
         planId: string,
         readonly errors: string[],
     ) {
-        super(`Plan ${planId} failed validation: ${errors.length} error(s)`);
+        super(`Plan ${planId} failed validation: ${errors.length} error(s). Generate a new plan; a retry of this planId fails the same way.`);
         this.name = "PlanValidationError";
     }
 }
@@ -762,7 +762,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
             "Launch analysis computation asynchronously. Use mode=plan with the planId only after the user approved that stored plan. " +
             "Use mode=adhoc with the user's exact targeted computational request when they explicitly asked to run/compute/test/compare it; " +
             "that explicit request is consent and needs no synthetic-plan approval. If computation is merely your suggestion, ask first. " +
-            "You never choose the sandbox specialist: ad hoc routing does that automatically. Returns runId with status=in_progress; inspect results on a later turn. " +
+            "Returns runId with status=in_progress; inspect results on a later turn. " +
             "A plan that already has an active run returns that run, so a second run of one plan does not start. " +
             "The launch fails with an error, and no run starts, when the plan is not found or fails validation, when a package of the plan cannot link, or when the run is not authorized.",
         inputSchema,
