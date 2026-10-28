@@ -232,7 +232,7 @@ function traceOf(steps: readonly LoopStep[]): PlannerTrace {
 
 /** The planner system prompt is deterministic per policy — build it once per
  *  factory (the policy is a construction-time dep, fixed for the process). */
-function plannerInstructions(resourcePolicy?: ResourcePolicy): string {
+export function plannerInstructions(resourcePolicy?: ResourcePolicy): string {
     return plannerPrompt(formatAgentCatalog(), resourcePolicy);
 }
 
@@ -314,7 +314,7 @@ function selectedOutcomeOf(
  * Format a loaded prior plan as a markdown block the planner can read —
  * narrative + one line per step. Used only when `parentPlanId` is set.
  */
-function formatPriorPlan(parentPlanId: string, plan: unknown): string | null {
+export function formatPriorPlan(parentPlanId: string, plan: unknown): string | null {
     const parsed = AnalysisPlanSchema.safeParse(plan);
     if (!parsed.success) return null;
     const p = parsed.data;
@@ -351,7 +351,7 @@ function formatPriorPlan(parentPlanId: string, plan: unknown): string | null {
  * being produced — a planner told which state it is in can plan accordingly; a
  * planner told nothing plans on facts it cannot know are rotten.
  */
-type DataGrounding =
+export type DataGrounding =
     | { kind: "ready"; result: DataProfileResult }
     /** A profile IS available, but may not describe the analysis's current inputs. */
     | { kind: "provisional"; result: DataProfileResult; reasons: readonly string[] }
@@ -421,7 +421,7 @@ const NO_FACTS_GUIDANCE =
  *
  * Pure — the same grounding renders the same string.
  */
-function renderDataContext(grounding: DataGrounding, analysisId: string): string {
+export function renderDataContext(grounding: DataGrounding, analysisId: string): string {
     switch (grounding.kind) {
         case "absent":
             return "";
@@ -732,6 +732,25 @@ type InnerTools = {
     readonly terminal: Tool[];
 };
 
+/** The planner agent over its search tools and its terminal tools. */
+export function plannerAgentOf(deps: GeneratePlanDeps, searchTools: readonly Tool[], terminal: readonly Tool[]): AgentDefinition {
+    const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
+    return {
+        id: PLANNER_AGENT_ID,
+        systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
+        model: deps.conversation.model,
+        // The search tools come first, and the terminal tools come last. The order is the order of the prompt, and it
+        // is stable across every invocation, thus the cached request prefix holds.
+        tools: [...searchTools, ...readTools, ...terminal],
+        maxIterations: PLANNER_MAX_ITERATIONS,
+    };
+}
+
+/** The terminal tools of a planner with no knowledge answer, for a consumer that runs the planner outside this tool. */
+export function plannerTerminalTools(resourcePolicy: ResourcePolicy | undefined, logger: Logger): Tool[] {
+    return buildInnerTools(resourcePolicy, logger, { steps: new Map(), claims: new Set() }).terminal;
+}
+
 /**
  * Build the planner's inner tools for one invocation. `memory` holds the last
  * `knowledge_recommend` answer of the run, which the loop folds after each round.
@@ -824,7 +843,7 @@ function buildInnerTools(resourcePolicy: ResourcePolicy | undefined, logger: Log
  * no outcome distinguishes. The record is what makes "the planner produced a plan
  * naming packages this install does not have" traceable to its cause.
  */
-function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execute"]>>, logger: Logger): string {
+export function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execute"]>>, logger: Logger): string {
     if (result.isErr()) {
         logger.warn("planner grounding inventory lookup failed", { inventory: label, error: result.error.error });
         return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
@@ -1116,6 +1135,30 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
     ];
 }
 
+/**
+ * The seed of the planner: the prior plan when the call revises one, the data context, the two censuses, and then
+ * what the caller gave. Each block is optional where the call holds none.
+ */
+export function composePlannerSeed(parts: {
+    readonly priorPlanBlock: string | null;
+    readonly dataContextBlock: string;
+    readonly groundingBlock: string;
+    readonly input: Pick<z.infer<typeof generatePlanInputSchema>, "researchQuestion" | "analystNotes" | "priorRuns" | "userConstraints">;
+}): string {
+    const { priorPlanBlock, dataContextBlock, groundingBlock, input } = parts;
+    return [
+        ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
+        ...(dataContextBlock ? [dataContextBlock, ""] : []),
+        groundingBlock,
+        "",
+        "## Research Question",
+        input.researchQuestion,
+        ...(input.analystNotes ? ["", "## Analyst Notes (from the user — facts about the data the profile does not record)", input.analystNotes] : []),
+        ...(input.priorRuns ? ["", "## Prior Run Results", input.priorRuns] : []),
+        ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
+    ].join("\n");
+}
+
 const generatePlanInputSchema = z.object({
     researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),
     analystNotes: z
@@ -1266,17 +1309,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             const packagesBlock = inventoryContent("Available Packages", packagesResult, logger);
             const groundingBlock = [refsBlock, packagesBlock].join("\n\n");
 
-            const prompt = [
-                ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
-                ...(dataContextBlock ? [dataContextBlock, ""] : []),
-                groundingBlock,
-                "",
-                "## Research Question",
-                input.researchQuestion,
-                ...(input.analystNotes ? ["", "## Analyst Notes (from the user — facts about the data the profile does not record)", input.analystNotes] : []),
-                ...(input.priorRuns ? ["", "## Prior Run Results", input.priorRuns] : []),
-                ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
-            ].join("\n");
+            const prompt = composePlannerSeed({ priorPlanBlock, dataContextBlock, groundingBlock, input });
             return {
                 prompt,
                 grounding: grounding.kind,
@@ -1336,17 +1369,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         const searchTools = buildPlannerSearchTools(deps, {
             onRecommend: (answer) => rememberAnswer(memory, answer),
         });
-        const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
-        const planner: AgentDefinition = {
-            id: PLANNER_AGENT_ID,
-            systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
-            model: deps.conversation.model,
-            // The search tools come first, and the terminal tools come last.
-            // The order is the order of the prompt, and it is stable across
-            // every invocation, thus the cached request prefix holds.
-            tools: [...searchTools, ...readTools, ...innerTools.terminal],
-            maxIterations: PLANNER_MAX_ITERATIONS,
-        };
+        const planner = plannerAgentOf(deps, searchTools, innerTools.terminal);
 
         // Merge the outer abort signal with a wall-clock timeout — either
         // cancels the planner promptly.
