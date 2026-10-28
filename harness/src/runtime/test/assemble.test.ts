@@ -687,7 +687,9 @@ describe("the approval of the composition", () => {
                     ownsMandate: true,
                 }),
             revoke: () => okAsync(undefined),
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         };
         const deps: CoreRuntimeDeps = {
             conversation: {

@@ -139,6 +139,17 @@ describe("POST {A}/paused-work/:workId/resume", () => {
         expect(paused.resumed[0]?.session.scope).toEqual({ kind: "analysis", analysisId: A });
     });
 
+    test("a renewal that the host refuses gives 403 `forbidden` with its reason", async () => {
+        const refusing: PausedWorkSurface = {
+            list: async () => [PAUSED_RUN],
+            resume: async () => ({ kind: "refused", reason: "only the subject can renew" }),
+            hold: async () => ({ kind: "not_found" }),
+        };
+        const response = await appWith(readyBoot(refusing)).request("/run-1/resume", { method: "POST" });
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "forbidden", message: "The work stays paused: only the subject can renew" });
+    });
+
     test("an id that no paused work of the analysis has gives 404 `not_found`", async () => {
         const response = await appWith(readyBoot(fakePausedWork([PAUSED_RUN]))).request("/run-unknown/resume", { method: "POST" });
         expect(response.status).toBe(404);

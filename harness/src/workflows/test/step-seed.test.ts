@@ -130,9 +130,11 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
             revoke() {
                 throw new Error("runAuthorizer.revoke not exercised in the seed tests");
             },
-            revokeByJti() {
-                throw new Error("runAuthorizer.revokeByJti not exercised in the seed tests");
+            revokeByMandateId() {
+                throw new Error("runAuthorizer.revokeByMandateId not exercised in the seed tests");
             },
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
         workingMemory: createWorkingMemory(pool),
         knowledge,

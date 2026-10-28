@@ -37,8 +37,7 @@ export type InsertRunInput = {
     threadId?: string | null;
     workflowName: string;
     planId?: string | null;
-    mandateJti?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-    mandateExpiresAt?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+    mandateId?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     /** The start time as an ISO string. Without it, the row gets the clock of the host. */
     startedAt?: string;
 };
@@ -92,8 +91,8 @@ export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<voi
         await pool.query({
             text: `INSERT INTO cortex_runs
             (run_id, analysis_id, thread_id, workflow_name,
-             status, started_at, plan_id, mandate_jti, mandate_expires_at) -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8)`,
+             status, started_at, plan_id, mandate_id) -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7)`,
             values: [
                 input.runId,
                 input.analysisId,
@@ -101,8 +100,7 @@ export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<voi
                 input.workflowName,
                 now,
                 input.planId ?? null,
-                input.mandateJti ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-                input.mandateExpiresAt ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                input.mandateId ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             ],
         });
     }).mapErr((e) => {
@@ -124,20 +122,11 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
         const result = await pool.query({
             text: `INSERT INTO cortex_runs
             (run_id, analysis_id, thread_id, workflow_name,
-             status, started_at, plan_id, mandate_jti, mandate_expires_at)
-            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8)
+             status, started_at, plan_id, mandate_id)
+            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7)
             ON CONFLICT (run_id) DO NOTHING
             RETURNING run_id`,
-            values: [
-                input.runId,
-                input.analysisId,
-                input.threadId ?? null,
-                input.workflowName,
-                now,
-                input.planId ?? null,
-                input.mandateJti ?? null,
-                input.mandateExpiresAt ?? null,
-            ],
+            values: [input.runId, input.analysisId, input.threadId ?? null, input.workflowName, now, input.planId ?? null, input.mandateId ?? null],
         });
         return (result.rowCount ?? 0) > 0;
     }).andThen((inserted) =>
@@ -145,7 +134,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
             const result = await pool.query({
                 text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                        status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                       mandate_jti, mandate_expires_at, plan_id
+                       mandate_id, plan_id
                 FROM cortex_runs
                 WHERE run_id = $1`,
                 values: [input.runId],
@@ -176,7 +165,7 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
               AND plan_id IS NOT DISTINCT FROM $2
@@ -235,7 +224,7 @@ export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string, { q
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
               AND status = 'running'
@@ -346,7 +335,7 @@ export function queryRun(pool: RunRowQuerier, runId: string): ResultAsync<Cortex
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE run_id = $1`,
             values: [runId],
@@ -371,7 +360,7 @@ export function queryRunsByAnalysis(
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
               ${text}
@@ -457,7 +446,7 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
         const rowsResult = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id
+                   mandate_id, plan_id
             FROM cortex_runs
             WHERE analysis_id = $1
               AND status = 'running'
@@ -491,7 +480,7 @@ export function queryRunsForInspection(
         const rowsResult = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id
+                   mandate_id, plan_id
             FROM cortex_runs
             WHERE analysis_id = $1
             ORDER BY CASE status
@@ -523,7 +512,7 @@ export function queryRunsByThread(
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1 AND thread_id = $2
               ${text}
@@ -535,20 +524,20 @@ export function queryRunsByThread(
 }
 
 /**
- * Persist the run mandate jti + expiry for a run. oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
- * Called by `authorizeForRun` after a successful mint so the cancel
- * handler can revoke the mandate by `runId → jti` lookup. oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
- * The JWT itself is NOT persisted — it rides in DBOS workflow input.
+ * Persist the run mandate reference for a run. oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+ * Called by the host authorizer after it authorizes the run, so the cancel
+ * handler can revoke the mandate by `runId → mandate id` lookup. oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+ * The reference has no expiry here: the run does not depend on a clock.
  */
-export function setRunMandate(pool: Querier, runId: string, jti: string, expiresAt: string): ResultAsync<void, DbError> {
+export function setRunMandate(pool: Querier, runId: string, mandateId: string): ResultAsync<void, DbError> {
     // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     return tryMutation("runs.setRunMandate", async () => {
         // oss-core-managed-ok: run-mandate ledger op label
         await pool.query({
             text: `UPDATE cortex_runs
-            SET mandate_jti = $1, mandate_expires_at = $2 -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-            WHERE run_id = $3`,
-            values: [jti, expiresAt, runId],
+            SET mandate_id = $1 -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+            WHERE run_id = $2`,
+            values: [mandateId, runId],
         });
     });
 }
@@ -599,8 +588,7 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
         synthesisStatus: row.synthesis_status ?? null,
         synthesisReason: row.synthesis_reason ?? null,
         parts: parsedParts.success ? parsedParts.data : null,
-        mandateJti: row.mandate_jti ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-        mandateExpiresAt: row.mandate_expires_at ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+        mandateId: row.mandate_id ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         planId: row.plan_id ?? null,
     });
 }

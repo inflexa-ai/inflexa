@@ -46,8 +46,7 @@ function runRow(overrides: Row = {}): Row {
         synthesis_status: null,
         synthesis_reason: null,
         parts: null,
-        mandate_jti: null,
-        mandate_expires_at: null,
+        mandate_id: null,
         plan_id: null,
         ...overrides,
     };
@@ -176,8 +175,8 @@ function recordingCharge(opts: { fail?: boolean } = {}): {
     return { charge, closes };
 }
 
-function recordingAuthorizer(): { authorizer: RunAuthorizer; revoked: Array<{ jti: string; reason: string }> } {
-    const revoked: Array<{ jti: string; reason: string }> = [];
+function recordingAuthorizer(): { authorizer: RunAuthorizer; revoked: Array<{ mandateId: string; reason: string }> } {
+    const revoked: Array<{ mandateId: string; reason: string }> = [];
     const authorizer: RunAuthorizer = {
         authorize: () => {
             throw new Error("authorize is not reached by the canceler");
@@ -185,10 +184,12 @@ function recordingAuthorizer(): { authorizer: RunAuthorizer; revoked: Array<{ jt
         revoke: () => {
             throw new Error("terminal-path revoke is not reached by the canceler");
         },
-        revokeByJti: ({ jti }, reason) => {
-            revoked.push({ jti, reason });
+        revokeByMandateId: ({ mandateId }, reason) => {
+            revoked.push({ mandateId, reason });
             return okAsync(undefined);
         },
+        suspend: () => okAsync(undefined),
+        renew: () => okAsync(undefined),
     };
     return { authorizer, revoked };
 }
@@ -253,7 +254,7 @@ describe("createRunCanceler", () => {
     it("converges a running run: engine cancel with children, conditional row write, sweep, charge close, revoke", async () => {
         // One incomplete child is cancelled beside the parent; the completed child is not re-cancelled.
         const steps = [stepRow("s1", "wf-child-1"), stepRow("s2", "wf-child-2", "2026-08-12T00:30:00.000Z"), stepRow("s3", null)];
-        const db = fakeDb(runRow({ mandate_jti: "jti-1", mandate_expires_at: "2026-08-13T00:00:00.000Z" }), [steps]);
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }), [steps]);
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows, cancelled } = recordingCancel();
@@ -274,7 +275,7 @@ describe("createRunCanceler", () => {
         expect(db.state.run?.completed_at).not.toBeNull();
         expect(db.state.swept).toBe(1);
         expect(closes).toEqual([{ analysisId: "analysis-1", runId: "run-1", outcome: { kind: "canceled" } }]);
-        expect(revoked).toEqual([{ jti: "jti-1", reason: "external_cancel" }]);
+        expect(revoked).toEqual([{ mandateId: "mandate-1", reason: "external_cancel" }]);
     });
 
     it("clears each row of a pause of the run after the engine cancel, and keeps the rows of other work", async () => {
@@ -312,7 +313,7 @@ describe("createRunCanceler", () => {
     });
 
     it("still revokes the mandate when the charge close gives an err, and resolves with converged.charge false", async () => {
-        const db = fakeDb(runRow({ mandate_jti: "jti-1" }));
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }));
         const { charge } = recordingCharge({ fail: true });
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows } = recordingCancel();
@@ -322,7 +323,7 @@ describe("createRunCanceler", () => {
 
         expect(result.converged).toEqual({ steps: true, charge: false, mandate: true });
         expect(result.finalStatus).toBe("canceled");
-        expect(revoked).toEqual([{ jti: "jti-1", reason: "external_cancel" }]);
+        expect(revoked).toEqual([{ mandateId: "mandate-1", reason: "external_cancel" }]);
     });
 
     it("skips the revoke for a row with no mandate jti and reports mandate converged vacuously", async () => {
@@ -363,7 +364,7 @@ describe("createRunCanceler", () => {
     });
 
     it("closes no charge and revokes no mandate when the body won the row, and reports both converged", async () => {
-        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[pendingRow("waiting")]]);
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }), [[pendingRow("waiting")]]);
         const { cancelWorkflows } = recordingCancel(() => {
             if (db.state.run === null) throw new Error("the run row exists");
             db.state.run = { ...db.state.run, status: "completed", completed_at: "2026-08-12T02:00:00.000Z" };
@@ -383,7 +384,7 @@ describe("createRunCanceler", () => {
     });
 
     it("closes no charge and revokes no mandate when the terminal write fails, and resolves with both flags false", async () => {
-        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { runWriteFails: true });
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { runWriteFails: true });
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows } = recordingCancel();
@@ -402,7 +403,7 @@ describe("createRunCanceler", () => {
     });
 
     it("isolates a sweep failure from the phases after it", async () => {
-        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[]], { sweepFails: true });
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }), [[]], { sweepFails: true });
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows } = recordingCancel();
@@ -455,7 +456,7 @@ describe("createRunCanceler", () => {
     });
 
     it("still settles the running steps when the pending sweep fails", async () => {
-        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { sweepFails: true });
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { sweepFails: true });
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows } = recordingCancel();
@@ -471,7 +472,7 @@ describe("createRunCanceler", () => {
     });
 
     it("still sweeps the pending steps when the running settle fails", async () => {
-        const db = fakeDb(runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { settleFails: true });
+        const db = fakeDb(runRow({ mandate_id: "mandate-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], { settleFails: true });
         const { charge, closes } = recordingCharge();
         const { authorizer, revoked } = recordingAuthorizer();
         const { cancelWorkflows } = recordingCancel();
@@ -678,7 +679,7 @@ describe("createRunCanceler run end record", () => {
 
     it("a throwing run emit changes no convergence phase and no result", async () => {
         const steps = [stepRow("cut", "wf-child-1"), pendingRow("waiting")];
-        const run = runRow({ mandate_jti: "jti-1" });
+        const run = runRow({ mandate_id: "mandate-1" });
 
         const baselineDb = fakeDb(run, [steps]);
         const baseline = await createRunCanceler({
@@ -715,7 +716,7 @@ describe("createRunCanceler run end record", () => {
         expect(db.state.ledger.find((row) => row.step_id === "cut")?.status).toBe("canceled");
         expect(db.state.ledger.find((row) => row.step_id === "waiting")?.status).toBe("skipped");
         expect(closes).toHaveLength(1);
-        expect(revoked).toEqual([{ jti: "jti-1", reason: "external_cancel" }]);
+        expect(revoked).toEqual([{ mandateId: "mandate-1", reason: "external_cancel" }]);
     });
 
     it("behaves as before when the provenance binding has no run emit", async () => {
@@ -753,7 +754,7 @@ describe("createRunCanceler recorded run end", () => {
     }
 
     function setup(opts: { record?: unknown; readFails?: boolean; row?: Row; onRead?: (db: FakeDb) => void; runWriteFails?: boolean }) {
-        const db = fakeDb(opts.row ?? runRow({ mandate_jti: "jti-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], {
+        const db = fakeDb(opts.row ?? runRow({ mandate_id: "mandate-1" }), [[stepRow("cut", "wf-child-1"), pendingRow("waiting")]], {
             runWriteFails: opts.runWriteFails,
         });
         const { charge, closes } = recordingCharge();

@@ -59,6 +59,7 @@ import {
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
@@ -288,6 +289,8 @@ export type SandboxStepDeps = {
     readonly artifactRegistry: ArtifactRegistry;
     /** The delays of the timer of an outage. Absent: the default of the pause. */
     readonly pauseRetryDelaysMs?: readonly number[];
+    /** The run authorizer of the runtime. A pause of the step for a person suspends the run credential through it. */
+    readonly runAuthorizer: RunAuthorizer;
     /**
      * No longer read by the step body; kept because `src/index.ts` exports
      * this type and an embedder builds it as an object literal.
@@ -458,6 +461,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         analysisId: input.analysisId,
         emit: safeEmit,
         retryDelaysMs: deps.pauseRetryDelaysMs,
+        run: { session: input.runSession, authorizer: deps.runAuthorizer },
         logger,
     });
 

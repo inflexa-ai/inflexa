@@ -122,7 +122,9 @@ function deps(): ExecuteAnalysisDeps {
                 throw new Error("the synthesis authorizes no run");
             },
             revoke: () => okAsync(undefined),
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
     };
 }

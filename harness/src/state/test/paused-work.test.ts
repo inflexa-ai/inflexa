@@ -64,6 +64,26 @@ describe("the rows of the paused work", () => {
         expect((await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap()).toEqual([host]);
     });
 
+    it("reads back the run session of the pause of a run, with the opaque auth of the host", async () => {
+        const runSession = {
+            identity: { user: "u-1" },
+            scope: { kind: "analysis", analysisId: "a1" },
+            provenance: { agentId: "executeAnalysis", callPath: ["executeAnalysis"] },
+            runFrame: { runId: "run-1", stepId: "step-a" },
+            auth: { credential: { kind: "mandate", mandateId: "m-1" }, orgId: "o-1" },
+        };
+        // The host writes its own auth into the session, thus the row goes in as the JSON that a workflow writes.
+        await pool.query(
+            `INSERT INTO cortex_paused_work (workflow_id, work_id, work_kind, analysis_id, state, cause, attempt, topic, paused_at, run_session)
+             VALUES ('wf-run', 'run-1', 'run', 'a1', 'paused', '{"kind":"outage"}', 0, 'pause:wf-run', NOW(), $1)`,
+            [JSON.stringify(runSession)],
+        );
+
+        const [row] = (await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap();
+        const stored: unknown = row?.runSession;
+        expect(stored).toEqual(runSession);
+    });
+
     it("replaces the row of a workflow that pauses again", async () => {
         await record(pause({ workflowId: "wf-1", state: "retrying", cause: { kind: "outage" }, retryAt: "2026-10-28T10:01:00.000Z" }));
         const again = pause({ workflowId: "wf-1", attempt: 1, topic: "pause:second", pausedAt: "2026-10-28T10:02:00.000Z" });

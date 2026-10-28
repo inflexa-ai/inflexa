@@ -85,7 +85,7 @@ export type { BioToolKeys } from "./tools/bio/keys.js";
 
 // Seam: run authorization.
 export { createLocalRunAuthorizer } from "./auth/local-run-authorizer.js";
-export type { RunAuthorizer, AuthorizeRunInput, RunAuthorization, RevokeByJtiRef } from "./execution/run-authorizer.js";
+export type { RunAuthorizer, AuthorizeRunInput, RunAuthorization, RevokeByMandateRef } from "./execution/run-authorizer.js"; // oss-core-managed-ok
 
 // The two kinds of host hook. A gate gives a value that the harness must have
 // before it continues an operation: its err fails the operation, or suspends it

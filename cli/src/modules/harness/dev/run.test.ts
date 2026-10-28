@@ -76,8 +76,7 @@ function runRow(overrides: Partial<CortexRunRow> = {}): CortexRunRow {
         synthesisStatus: null,
         synthesisReason: null,
         parts: null,
-        mandateJti: null,
-        mandateExpiresAt: null,
+        mandateId: null,
         planId: "pln-abc12345",
         ...overrides,
     };
@@ -137,7 +136,9 @@ function makeSeams(
                 rec.revoke++;
                 return okAsync(undefined);
             },
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
         launch: async (input, runId) => {
             rec.launch++;

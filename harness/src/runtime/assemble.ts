@@ -72,7 +72,7 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * the same memory that the conversation agent writes.
  */
 export type CoreWorkflowDeps = {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "runAuthorizer">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<
         ExecuteAnalysisDeps,
         "usageRecorder" | "literatureReviewer" | "toolOutputStore" | "workingMemory"
@@ -355,11 +355,25 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const toolOutputStore = createToolOutputStore(conversation.pool);
     const pauseRetryDelaysMs = deps.pauseRetryDelaysMs;
     // Each child of a sub-agent pauses with the work of its caller, thus a resume of the turn or of the run ends its wait.
-    const subAgentPauses: SubAgentPauses = (work, emit) =>
-        workPause({ pool: conversation.pool, ...work, emit, retryDelaysMs: pauseRetryDelaysMs, logger: conversation.logger }).afterFailure;
+    const subAgentPauses: SubAgentPauses = ({ runSession, ...work }, emit) =>
+        workPause({
+            pool: conversation.pool,
+            ...work,
+            emit,
+            retryDelaysMs: pauseRetryDelaysMs,
+            run: runSession === undefined ? undefined : { session: runSession, authorizer: conversation.runAuthorizer },
+            logger: conversation.logger,
+        }).afterFailure;
     const registerPausingSubAgent: SubAgentRegistrar = (name, body) => registerSubAgent(name, body, subAgentPauses);
 
-    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
+    const sandboxStep = registerSandboxStep({
+        ...wf.sandboxStep,
+        citationResolver,
+        usageRecorder,
+        toolOutputStore,
+        pauseRetryDelaysMs,
+        runAuthorizer: conversation.runAuthorizer,
+    });
     const { bioKeys: synthesisBioKeys, ...executeAnalysisDeps } = wf.buildExecuteAnalysis(sandboxStep);
     const literatureReviewer = createLiteratureReviewerTool(
         {
@@ -500,7 +514,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         agents: agentResolver,
         askGateway,
         chatTurns,
-        pausedWork: createPausedWork({ pool: conversation.pool, logger: conversation.logger }),
+        pausedWork: createPausedWork({ pool: conversation.pool, runAuthorizer: conversation.runAuthorizer, logger: conversation.logger }),
         reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
             executeAnalysis,

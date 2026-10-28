@@ -7,6 +7,7 @@ import type { ResultAsync } from "neverthrow";
 import type { QueryConfig } from "pg";
 import { z } from "zod";
 
+import type { RunSession } from "../auth/types.js";
 import type { PauseCause, PausedWorkKind } from "../contracts/chat-parts.js";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
@@ -28,6 +29,8 @@ export type PauseRecord = {
     readonly topic: string;
     /** ISO 8601. */
     readonly pausedAt: string;
+    /** The run session of the workflow, for a run and a profile. A resume renews the run credential from it. */
+    readonly runSession?: RunSession;
 };
 
 const PauseCauseSchema = z.discriminatedUnion("kind", [
@@ -48,6 +51,17 @@ const PauseRowSchema = z.object({
     retry_at: z.date().nullable(),
     topic: z.string(),
     paused_at: z.date(),
+    run_session: z
+        .object({
+            identity: z.object({ user: z.string() }),
+            scope: z.object({ kind: z.literal("analysis"), analysisId: z.string(), threadId: z.string().optional() }),
+            provenance: z.object({ agentId: z.string(), callPath: z.array(z.string()) }),
+            runFrame: z.object({ runId: z.string(), stepId: z.string().optional() }),
+            // The harness never reads the opaque `auth`: the row holds the JSON that the workflow wrote from its own
+            // `RunSession`, and the realization of the host downcasts it.
+            auth: z.record(z.string(), z.json()),
+        })
+        .nullable(),
 });
 
 /**
@@ -58,7 +72,7 @@ export type PauseRowQuerier = {
     query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
 };
 
-const COLUMNS = "workflow_id, work_id, work_kind, analysis_id, thread_id, state, cause, attempt, retry_at, topic, paused_at";
+const COLUMNS = "workflow_id, work_id, work_kind, analysis_id, thread_id, state, cause, attempt, retry_at, topic, paused_at, run_session";
 
 function recordOf(row: unknown): PauseRecord {
     const parsed = PauseRowSchema.parse(row);
@@ -74,6 +88,7 @@ function recordOf(row: unknown): PauseRecord {
         retryAt: parsed.retry_at?.toISOString(),
         topic: parsed.topic,
         pausedAt: parsed.paused_at.toISOString(),
+        runSession: parsed.run_session ?? undefined,
     };
 }
 
@@ -82,11 +97,12 @@ export function recordPause(pool: Querier, record: PauseRecord): ResultAsync<voi
     return tryMutation("pausedWork.record", () =>
         pool.query(
             `INSERT INTO cortex_paused_work (${COLUMNS})
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (workflow_id) DO UPDATE SET
                work_id = EXCLUDED.work_id, work_kind = EXCLUDED.work_kind, analysis_id = EXCLUDED.analysis_id,
                thread_id = EXCLUDED.thread_id, state = EXCLUDED.state, cause = EXCLUDED.cause, attempt = EXCLUDED.attempt,
-               retry_at = EXCLUDED.retry_at, topic = EXCLUDED.topic, paused_at = EXCLUDED.paused_at`,
+               retry_at = EXCLUDED.retry_at, topic = EXCLUDED.topic, paused_at = EXCLUDED.paused_at,
+               run_session = EXCLUDED.run_session`,
             [
                 record.workflowId,
                 record.workId,
@@ -99,6 +115,7 @@ export function recordPause(pool: Querier, record: PauseRecord): ResultAsync<voi
                 record.retryAt ?? null,
                 record.topic,
                 record.pausedAt,
+                record.runSession === undefined ? null : JSON.stringify(record.runSession),
             ],
         ),
     ).map(() => undefined);

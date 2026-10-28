@@ -591,6 +591,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             analysisId,
             emit: (part) => DBOS.writeStream("events", part),
             retryDelaysMs: deps.pauseRetryDelaysMs,
+            run: { session: runSession, authorizer: deps.runAuthorizer },
             logger,
         });
         const childSession = forSubAgent(runSession, DATA_PROFILE_AGENT_ID);

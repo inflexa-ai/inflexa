@@ -11,14 +11,17 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { ok } from "neverthrow";
+import { errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
 import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 import { createPausedWork } from "../../../../app/paused-work.js";
+import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
+import type { RunSession } from "../../../../auth/types.js";
 import type { PausePart } from "../../../../contracts/chat-parts.js";
+import type { RunAuthorizer } from "../../../../execution/run-authorizer.js";
 import { CONTINUE_REQUEST, runLoop } from "../../../../loop/run-loop.js";
 import { makeSession } from "../../../../providers/__fixtures__/session.js";
 import { queryPausesOfWork, type PauseRecord } from "../../../../state/paused-work.js";
@@ -52,6 +55,8 @@ type Case = {
     readonly parts: PausePart[];
     readonly retryDelaysMs: readonly number[];
     readonly live: boolean;
+    /** The run credential of the work, when the case pauses a run with one. */
+    readonly run?: { readonly session: RunSession; readonly authorizer: RunAuthorizer };
 };
 
 const cases = new Map<string, Case>();
@@ -71,6 +76,7 @@ const pausingLoop = DBOS.registerWorkflow(
                 return Promise.resolve();
             },
             retryDelaysMs: current.retryDelaysMs,
+            run: current.run,
         });
         const result = await runLoop(
             { id: "pause-agent", systemPrompt: "Test.", model: "scripted-model", tools: [echo], maxIterations: 5 },
@@ -109,10 +115,11 @@ const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const,
 
 function start(
     script: readonly ScriptStep[],
-    options: { readonly retryDelaysMs?: readonly number[]; readonly live?: boolean } = {},
+    options: { readonly retryDelaysMs?: readonly number[]; readonly live?: boolean; readonly authorizer?: RunAuthorizer } = {},
 ): { workId: string; current: Case } {
     const workId = rig.nextWorkflowId("pause-");
-    const current: Case = { script: scriptedModel(script), parts: [], retryDelaysMs: options.retryDelaysMs ?? [], live: options.live === true };
+    const run = options.authorizer === undefined ? undefined : { session: runSessionOf(workId), authorizer: options.authorizer };
+    const current: Case = { script: scriptedModel(script), parts: [], retryDelaysMs: options.retryDelaysMs ?? [], live: options.live === true, run };
     cases.set(workId, current);
     return { workId, current };
 }
@@ -144,7 +151,7 @@ describe("the pause of a loop inside a workflow", () => {
             cause: { kind: "host", reason: "payment_required" },
         });
 
-        const resumed = await createPausedWork({ pool }).resume(session, workId);
+        const resumed = await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workId);
         expect(resumed).toEqual({ kind: "resumed", workflows: 1 });
 
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "done" });
@@ -167,7 +174,7 @@ describe("the pause of a loop inside a workflow", () => {
         expect(typeof retrying?.retryAt).toBe("string");
         expect(current.script.calls).toHaveLength(2);
 
-        await createPausedWork({ pool }).resume(session, workId);
+        await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workId);
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "back" });
         expect(current.script.calls).toHaveLength(3);
     });
@@ -177,16 +184,16 @@ describe("the pause of a loop inside a workflow", () => {
         const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
         await waitForPause(workId, "retrying");
 
-        expect(await createPausedWork({ pool }).hold(session, workId)).toEqual({ kind: "held", workflows: 1 });
+        expect(await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).hold(session, workId)).toEqual({ kind: "held", workflows: 1 });
 
         const row = await waitForPause(workId, "paused");
         expect(row).toMatchObject({ state: "paused", cause: { kind: "outage" }, attempt: 0 });
         expect(row.retryAt).toBeUndefined();
         expect(current.parts.map((part) => part.state)).toEqual(["retrying", "paused"]);
         expect(current.script.calls).toHaveLength(1);
-        expect(await createPausedWork({ pool }).hold(session, workId)).toEqual({ kind: "held", workflows: 0 });
+        expect(await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).hold(session, workId)).toEqual({ kind: "held", workflows: 0 });
 
-        await createPausedWork({ pool }).resume(session, workId);
+        await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workId);
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "held, then resumed" });
         expect(current.script.calls).toHaveLength(2);
     });
@@ -217,7 +224,7 @@ describe("the pause of a loop inside a workflow", () => {
         const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
 
         await waitForPause(workId, "paused");
-        await createPausedWork({ pool }).resume(session, workId);
+        await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workId);
 
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "answer." });
         const prompt = JSON.stringify(current.script.calls[1]?.prompt);
@@ -239,7 +246,7 @@ describe("the pause of a loop inside a workflow", () => {
         expect(row.cause).toEqual({ kind: "host", reason: "payment_required" });
         expect(current.script.calls).toHaveLength(1);
 
-        await createPausedWork({ pool }).resume(session, workId);
+        await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workId);
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "after the crash" });
         expect(current.script.calls).toHaveLength(2);
     }, 30_000);
@@ -256,7 +263,7 @@ describe("the paused work of an analysis", () => {
             [ANALYSIS_ID],
         );
 
-        const surface = createPausedWork({ pool });
+        const surface = createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() });
         const listed = await surface.list(ANALYSIS_ID);
         expect(listed.map((work) => work.workId)).toContain(workId);
         expect(listed.map((work) => work.workId)).not.toContain("work-ended");
@@ -274,7 +281,7 @@ describe("the paused work of an analysis", () => {
         const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
         const first = await waitForPause(workId, "paused");
 
-        const surface = createPausedWork({ pool });
+        const surface = createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() });
         await Promise.all([surface.resume(session, workId), surface.resume(session, workId)]);
         await waitFor(() => current.script.calls.length === 2);
         const second = await waitForPause(workId, "paused");
@@ -286,6 +293,99 @@ describe("the paused work of an analysis", () => {
 
         await surface.resume(session, workId);
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "third time" });
+    });
+});
+
+function runSessionOf(runId: string): RunSession {
+    return {
+        identity: { user: "u-1" },
+        scope: { kind: "analysis", analysisId: ANALYSIS_ID },
+        provenance: { agentId: "pause-agent", callPath: ["pause-agent"] },
+        runFrame: { runId },
+        auth: makeLocalAuth(),
+    };
+}
+
+/** A run authorizer that records each suspend and renew, and refuses a renewal while `refusal` is set. */
+function recordingAuthorizer(): RunAuthorizer & { suspended: string[]; renewed: string[]; refusal?: string } {
+    const recording: RunAuthorizer & { suspended: string[]; renewed: string[]; refusal?: string } = {
+        ...createLocalRunAuthorizer(),
+        suspended: [],
+        renewed: [],
+        suspend: (runSession, reason) => {
+            recording.suspended.push(`${runSession.runFrame.runId}:${reason}`);
+            return okAsync(undefined);
+        },
+        renew: (runSession) => {
+            if (recording.refusal !== undefined) return errAsync({ reason: recording.refusal, suspend: false });
+            recording.renewed.push(runSession.runFrame.runId);
+            return okAsync(undefined);
+        },
+    };
+    return recording;
+}
+
+describe("the run credential of paused work", () => {
+    it("suspends the credential at a pause for a person, keeps the run session on the row, and renews it at the resume", async () => {
+        const authorizer = recordingAuthorizer();
+        const { workId } = start([failure(402), reply([text("renewed")])], { authorizer });
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+
+        const row = await waitForPause(workId, "paused");
+        expect(row.runSession).toEqual(runSessionOf(workId));
+        await waitFor(() => authorizer.suspended.length === 1);
+        expect(authorizer.suspended).toEqual([`${workId}:paused:host`]);
+
+        expect(await createPausedWork({ pool, runAuthorizer: authorizer }).resume(session, workId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(authorizer.renewed).toEqual([workId]);
+        expect(await handle.getResult()).toEqual({ reason: "stop", text: "renewed" });
+    });
+
+    it("suspends a wait that a person holds, and renews it at the resume", async () => {
+        const authorizer = recordingAuthorizer();
+        const { workId } = start([failure(503), reply([text("held and renewed")])], { retryDelaysMs: [60_000], authorizer });
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+        await waitForPause(workId, "retrying");
+        expect(authorizer.suspended).toEqual([]);
+
+        const surface = createPausedWork({ pool, runAuthorizer: authorizer });
+        expect(await surface.hold(session, workId)).toEqual({ kind: "held", workflows: 1 });
+        const row = await waitForPause(workId, "paused");
+        expect(row.runSession).toEqual(runSessionOf(workId));
+        await waitFor(() => authorizer.suspended.length === 1);
+        expect(authorizer.suspended).toEqual([`${workId}:paused:outage`]);
+
+        expect(await surface.resume(session, workId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(authorizer.renewed).toEqual([workId]);
+        expect(await handle.getResult()).toEqual({ reason: "stop", text: "held and renewed" });
+    });
+
+    it("does not suspend a wait that the timer ends", async () => {
+        const authorizer = recordingAuthorizer();
+        const { workId } = start([failure(503), reply([text("on the timer")])], { retryDelaysMs: [500], authorizer });
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+
+        expect(await handle.getResult()).toEqual({ reason: "stop", text: "on the timer" });
+        expect(authorizer.suspended).toEqual([]);
+    });
+
+    it("keeps the work paused when the host refuses the renewal, and sends no resume", async () => {
+        const authorizer = recordingAuthorizer();
+        authorizer.refusal = "only the subject can renew";
+        const { workId, current } = start([failure(402), reply([text("after the refusal")])], { authorizer });
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+        await waitForPause(workId, "paused");
+
+        const surface = createPausedWork({ pool, runAuthorizer: authorizer });
+        expect(await surface.resume(session, workId)).toEqual({ kind: "refused", reason: "only the subject can renew" });
+        // A sent resume would end the wait within a poll of its `recv`.
+        await sleep(500);
+        expect((await queryPausesOfWork(pool, ANALYSIS_ID, workId))._unsafeUnwrap()).toHaveLength(1);
+        expect(current.script.calls).toHaveLength(1);
+
+        authorizer.refusal = undefined;
+        expect(await surface.resume(session, workId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(await handle.getResult()).toEqual({ reason: "stop", text: "after the refusal" });
     });
 });
 

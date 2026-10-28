@@ -87,7 +87,9 @@ function parkedDispatchDeps(pool: Querier): DataProfileTriggerDeps {
         runAuthorizer: {
             authorize: () => new ResultAsync(new Promise(() => {})),
             revoke: () => okAsync(undefined),
-            revokeByJti: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
         },
         runLauncher: noEngineLauncher,
         workflow: async () => {},
@@ -399,7 +401,9 @@ describe("triggerDataProfile — a refused authorization", () => {
             runAuthorizer: {
                 authorize: () => errAsync({ reason: "no_funds", suspend }),
                 revoke: () => okAsync(undefined),
-                revokeByJti: () => okAsync(undefined),
+                revokeByMandateId: () => okAsync(undefined),
+                suspend: () => okAsync(undefined),
+                renew: () => okAsync(undefined),
             },
             runLauncher: noEngineLauncher,
             workflow: () => {
@@ -508,7 +512,9 @@ describe("runDataProfile — the outcome of the dispatch", () => {
                 runAuthorizer: {
                     authorize: () => errAsync({ reason: "no_funds", suspend }),
                     revoke: () => okAsync(undefined),
-                    revokeByJti: () => okAsync(undefined),
+                    revokeByMandateId: () => okAsync(undefined),
+                    suspend: () => okAsync(undefined),
+                    renew: () => okAsync(undefined),
                 },
                 runLauncher: noEngineLauncher,
                 workflow: () => {

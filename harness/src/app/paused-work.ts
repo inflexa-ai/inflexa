@@ -9,7 +9,9 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import type { PauseCause, PausedWorkKind } from "../contracts/chat-parts.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { turnCredentials } from "../loop/turn-credentials.js";
@@ -41,7 +43,11 @@ export type PausedWork = {
     readonly waiting: readonly PausedWorkflow[];
 };
 
-export type PausedWorkResume = { readonly kind: "resumed"; readonly workflows: number } | { readonly kind: "not_found" };
+export type PausedWorkResume =
+    | { readonly kind: "resumed"; readonly workflows: number }
+    | { readonly kind: "not_found" }
+    /** The host refused to renew the run credential under the session, thus the work stays paused. */
+    | { readonly kind: "refused"; readonly reason: string };
 
 /** `workflows` is the count of waits in `retrying` that the hold reached. A wait in `paused` needs no hold. */
 export type PausedWorkHold = { readonly kind: "held"; readonly workflows: number } | { readonly kind: "not_found" };
@@ -52,7 +58,8 @@ export type PausedWorkSurface = {
     list(analysisId: string): Promise<PausedWork[]>;
     /**
      * Resume the work: each of its waiting workflows sends its request again. A wait in `retrying` ends at once, thus
-     * the same call is "retry now". For a turn, the credential of the session goes to the turn first. Work of a
+     * the same call is "retry now". For a turn, the credential of the session goes to the turn first. For a run or a
+     * profile, the host renews the run credential under the session first, and a refusal sends nothing. Work of a
      * different analysis than the session gives `not_found`.
      */
     resume(session: ChatTurnSession, workId: string): Promise<PausedWorkResume>;
@@ -65,6 +72,7 @@ export type PausedWorkSurface = {
 
 export type PausedWorkDeps = {
     readonly pool: Querier;
+    readonly runAuthorizer: RunAuthorizer;
     readonly logger?: Logger;
 };
 
@@ -114,6 +122,15 @@ export function createPausedWork(deps: PausedWorkDeps): PausedWorkSurface {
         async resume(session, workId) {
             const records = unwrapOrThrow(await queryPausesOfWork(deps.pool, session.scope.analysisId, workId));
             if (records.length === 0) return { kind: "not_found" };
+            // Each workflow of one work holds the same run credential, thus one renewal covers the work.
+            const runSession = records.find((record) => record.runSession !== undefined)?.runSession;
+            if (runSession !== undefined) {
+                const renewed = await passGate("RunAuthorizer.renew", deps.runAuthorizer.renew(runSession, session.auth));
+                if (renewed.isErr()) {
+                    logger.warn("work resume refused", { workId, reason: renewed.error.reason });
+                    return { kind: "refused", reason: renewed.error.reason };
+                }
+            }
             if (records.some((record) => record.workKind === "turn")) turnCredentials.put(workId, session.auth);
             // One send for each waiting workflow of the work. The key of the send is the topic of its pause, thus a
             // second resume of the same pause sends nothing new.

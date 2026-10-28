@@ -101,10 +101,12 @@ function productionCanceler(closes: string[], revokes: string[]) {
         revoke: () => {
             throw new Error("revoke is not reached by the canceler");
         },
-        revokeByJti: ({ jti }) => {
-            revokes.push(jti);
+        revokeByMandateId: ({ mandateId }) => {
+            revokes.push(mandateId);
             return okAsync(undefined);
         },
+        suspend: () => okAsync(undefined),
+        renew: () => okAsync(undefined),
     };
     return createRunCanceler({ pool: rig.pool, runCharge, runAuthorizer, logger: silentLogger });
 }
@@ -112,7 +114,7 @@ function productionCanceler(closes: string[], revokes: string[]) {
 describe("the recorded run end across the engine", () => {
     it("a canceler with the production read repairs the row from the event of a workflow", async () => {
         const runId = rig.nextWorkflowId("run-end-");
-        (await insertRun(rig.pool, { runId, analysisId: "analysis-1", workflowName: "executeAnalysis", mandateJti: "jti-1" }))._unsafeUnwrap();
+        (await insertRun(rig.pool, { runId, analysisId: "analysis-1", workflowName: "executeAnalysis", mandateId: "jti-1" }))._unsafeUnwrap();
         const handle = await DBOS.startWorkflow(recordsRunEnd, { workflowID: runId })();
         await handle.getResult();
         const closes: string[] = [];
@@ -131,7 +133,7 @@ describe("the recorded run end across the engine", () => {
 
     it("the read for a workflow with no such event gives null at once, and the canceler then owns the run end", async () => {
         const runId = rig.nextWorkflowId("run-no-event-");
-        (await insertRun(rig.pool, { runId, analysisId: "analysis-1", workflowName: "executeAnalysis", mandateJti: "jti-2" }))._unsafeUnwrap();
+        (await insertRun(rig.pool, { runId, analysisId: "analysis-1", workflowName: "executeAnalysis", mandateId: "jti-2" }))._unsafeUnwrap();
         const handle = await DBOS.startWorkflow(recordsNothing, { workflowID: runId })();
         await handle.getResult();
 
