@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { formatPriorPlan } from "../../tools/research/generate-plan.js";
 import { packagesSection, plannerPrompt } from "../planner.js";
 
 describe("plannerPrompt — the packages of each step", () => {
@@ -24,5 +25,30 @@ describe("plannerPrompt — the packages of each step", () => {
         expect(section).toContain('"python:igraph"');
         expect(section).toContain('"r:igraph"');
         expect(plannerPrompt("- agent-a: does a thing")).toContain(section);
+    });
+});
+
+describe("the revision rules ride the prior plan block", () => {
+    it("the block of a prior plan names the rules, and the system prompt holds no revision section", () => {
+        const block = formatPriorPlan("pln-1a2b3c4d", {
+            analytical_narrative: "DE, then pathways.",
+            created_at: "2026-10-27T09:00:00.000Z",
+            steps: [
+                {
+                    id: "T1S1",
+                    name: "Differential expression",
+                    track: "T1",
+                    step_type: "analysis",
+                    question: "Which genes change?",
+                    acceptance_criteria: ["A results table"],
+                    depends_on: [],
+                    maxSteps: 40,
+                },
+            ],
+        });
+
+        expect(block).toContain("Each step keeps its id, its agent, and its order, also a step that the user asked to change");
+        expect(block).toContain("Give a new id to new work only.");
+        expect(plannerPrompt("- agent-a: does a thing")).not.toContain("Prior Plan");
     });
 });

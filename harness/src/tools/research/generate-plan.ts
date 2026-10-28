@@ -331,10 +331,9 @@ export function formatPriorPlan(parentPlanId: string, plan: unknown): string | n
         "**Steps:**",
         ...stepLines,
         "",
-        "The user is iterating on this plan. Preserve steps and IDs that are " +
-            "not being changed; modify only what `userConstraints` describes. " +
-            "Reuse step IDs when a step's purpose is unchanged so downstream " +
-            "references survive.",
+        "The user is revising this plan, not asking for a new one. The changes are in `## User Constraints`. " +
+            "Each step keeps its id, its agent, and its order, also a step that the user asked to change: apply the change to that step. " +
+            "Thus `depends_on` and the stored artifacts survive. Give a new id to new work only.",
     ].join("\n");
 }
 
