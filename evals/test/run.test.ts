@@ -4,7 +4,7 @@ import { callTools, reply, scriptedModel, text, toolCall } from "@inflexa-ai/har
 import { conversationAgent, UNSCRIPTED_ERROR } from "../lib/agent.js";
 import { asked, decides, never, type EvalCase } from "../lib/case.js";
 import { allCases } from "../cases/index.js";
-import { promptDigest, runTrial } from "../lib/run.js";
+import { promptDigest, runTrial, turnInputOf } from "../lib/run.js";
 
 const agent = conversationAgent();
 
@@ -49,6 +49,30 @@ describe("runTrial", () => {
         const model = scriptedModel([{ fail: new Error("the endpoint is down") }]);
         const result = await runTrial(evalCase({}), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
         expect(result.kind).toBe("error");
+    });
+});
+
+describe("turnInputOf", () => {
+    test("gives the user message, then the context records of a production turn", async () => {
+        const input = await turnInputOf(
+            evalCase({ user: "Is it done?", state: { runningRuns: [{ runId: "r-1", planId: "pln-1a2b3c4d", startedAt: "2026-10-27T09:00:00.000Z" }] } }),
+            [],
+        );
+        expect(input.map((message) => message.content)).toEqual([
+            "Is it done?",
+            "[Run Activity]\nRunning:\n- runId: r-1 | planId: pln-1a2b3c4d | startedAt: 2026-10-27T09:00:00.000Z",
+            "[Working Memory]\nThe working memory is empty.",
+        ]);
+    });
+
+    test("an empty state gives the records of an analysis with no run, and the analysis context comes first", async () => {
+        const input = await turnInputOf(evalCase({ user: "Hi", state: { analysisContext: "A treatment study." } }), []);
+        expect(input.map((message) => message.content)).toEqual([
+            "Hi",
+            "[Analysis Context]\nA treatment study.",
+            "[Run Activity]\nNo runs are currently running.",
+            "[Working Memory]\nThe working memory is empty.",
+        ]);
     });
 });
 

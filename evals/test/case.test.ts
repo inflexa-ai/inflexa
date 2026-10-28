@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { all, atMost, decides, firstCallOneOf, inputMatches, never, type Trial, type TrialCall } from "../lib/case.js";
+import { all, atMostWith, callsAny, decides, inputMatches, never, type Trial, type TrialCall } from "../lib/case.js";
 
 function trial(...calls: readonly Omit<TrialCall, "refused">[]): Trial {
     return { calls: calls.map((call) => ({ ...call, refused: false })), asks: [], text: "", finishReason: "stop" };
@@ -32,16 +32,19 @@ describe("decides", () => {
     });
 });
 
-describe("firstCallOneOf", () => {
-    test("reads every call of the first step that calls a tool", () => {
-        const grader = firstCallOneOf(["pubmed", "search_semantic_scholar"]);
-        expect(grader(trial({ step: 0, tool: "search_gene", input: {} }, { step: 0, tool: "pubmed", input: {} })).pass).toBe(true);
-        expect(grader(trial({ step: 0, tool: "search_gene", input: {} }, { step: 1, tool: "pubmed", input: {} })).pass).toBe(false);
-        expect(grader(trial()).detail).toBe("answered with no tool call");
+describe("callsAny", () => {
+    test("passes on a call of the set at any step, after a lookup", () => {
+        const grader = callsAny(["pubmed", "search_semantic_scholar"]);
+        expect(grader(trial({ step: 0, tool: "search_gene", input: {} }, { step: 1, tool: "pubmed", input: {} }))).toEqual({
+            pass: true,
+            detail: "called pubmed",
+        });
+        expect(grader(trial({ step: 0, tool: "search_gene", input: {} })).detail).toBe("no call of pubmed, search_semantic_scholar (calls: search_gene)");
+        expect(grader(trial()).pass).toBe(false);
     });
 });
 
-describe("never, atMost, all", () => {
+describe("never, atMostWith, all", () => {
     test("never fails on a call of a named tool", () => {
         expect(never(["execute_analysis"])(trial({ step: 0, tool: "execute_analysis", input: {} }))).toEqual({
             pass: false,
@@ -49,14 +52,24 @@ describe("never, atMost, all", () => {
         });
     });
 
-    test("atMost counts the calls of one tool", () => {
-        const twice = trial({ step: 0, tool: "inspect_run", input: {} }, { step: 1, tool: "inspect_run", input: {} });
-        expect(atMost("inspect_run", 1)(twice)).toEqual({ pass: false, detail: "2 calls of inspect_run" });
-        expect(atMost("inspect_run", 2)(twice).pass).toBe(true);
+    test("atMostWith counts only the calls whose input sets the key", () => {
+        const waitThenLook = trial(
+            { step: 0, tool: "inspect_run", input: { runId: "r", waitForTerminalSeconds: 30 } },
+            { step: 1, tool: "inspect_run", input: { runId: "r", includeDiagnostics: true } },
+        );
+        expect(atMostWith("inspect_run", "waitForTerminalSeconds", 1)(waitThenLook)).toEqual({
+            pass: true,
+            detail: "1 calls of inspect_run with waitForTerminalSeconds",
+        });
+        const twoWaits = trial(
+            { step: 0, tool: "inspect_run", input: { runId: "r", waitForTerminalSeconds: 30 } },
+            { step: 1, tool: "inspect_run", input: { runId: "r", waitForTerminalSeconds: 30 } },
+        );
+        expect(atMostWith("inspect_run", "waitForTerminalSeconds", 1)(twoWaits).pass).toBe(false);
     });
 
     test("all gives the detail of the first failure", () => {
-        const grade = all(atMost("inspect_run", 5), never(["inspect_run"]))(trial({ step: 0, tool: "inspect_run", input: {} }));
+        const grade = all(atMostWith("inspect_run", "runId", 5), never(["inspect_run"]))(trial({ step: 0, tool: "inspect_run", input: {} }));
         expect(grade).toEqual({ pass: false, detail: "called inspect_run" });
     });
 });

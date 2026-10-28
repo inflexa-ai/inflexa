@@ -47,6 +47,16 @@ export type Grader = (trial: Trial) => Grade;
 /** The cases of a hill-climb loop are `dev`. The `held-out` cases stay out of it, and they show an overfit. */
 export type CaseSet = "dev" | "held-out";
 
+/** A run that is running when the turn opens. */
+export type RunningRun = { readonly runId: string; readonly planId?: string; readonly startedAt: string };
+
+/** The state that a chat turn reads into the context records after the user message. Absent fields are empty. */
+export type TurnState = {
+    readonly analysisContext?: string;
+    readonly runningRuns?: readonly RunningRun[];
+    readonly workingMemory?: string;
+};
+
 export type EvalCase = {
     readonly id: string;
     readonly set: CaseSet;
@@ -56,6 +66,7 @@ export type EvalCase = {
     readonly history?: readonly LoopMessage[];
     /** The message of the user that opens the turn. */
     readonly user: string;
+    readonly state?: TurnState;
     /** The result of each tool that the trial can call. */
     readonly tools?: Readonly<Record<string, ToolScript>>;
     /** The model requests of a trial. A trial also ends when a reply calls no tool. */
@@ -130,14 +141,13 @@ export function decides(tool: string, among: readonly string[], input: Readonly<
     };
 }
 
-/** The first reply that calls a tool calls one of `tools`. A reply with text only fails. */
-export function firstCallOneOf(tools: readonly string[]): Grader {
+/** A call to a tool of `tools` at any step. A lookup before it is free, and an answer with no such call fails. */
+export function callsAny(tools: readonly string[]): Grader {
     return (trial) => {
-        const first = trial.calls[0];
-        if (first === undefined) return { pass: false, detail: "answered with no tool call" };
-        const firstStep = trial.calls.filter((call) => call.step === first.step);
-        const hit = firstStep.find((call) => tools.includes(call.tool));
-        return hit === undefined ? { pass: false, detail: `first calls: ${describeCalls(firstStep)}` } : { pass: true, detail: `called ${hit.tool}` };
+        const hit = trial.calls.find((call) => tools.includes(call.tool));
+        return hit === undefined
+            ? { pass: false, detail: `no call of ${tools.join(", ")} (calls: ${describeCalls(trial.calls)})` }
+            : { pass: true, detail: `called ${hit.tool}` };
     };
 }
 
@@ -149,11 +159,11 @@ export function never(tools: readonly string[]): Grader {
     };
 }
 
-/** At most `limit` calls to `tool`. */
-export function atMost(tool: string, limit: number): Grader {
+/** At most `limit` calls to `tool` whose input sets `key`. A call without the key is free. */
+export function atMostWith(tool: string, key: string, limit: number): Grader {
     return (trial) => {
-        const count = trial.calls.filter((call) => call.tool === tool).length;
-        return { pass: count <= limit, detail: `${count} calls of ${tool}` };
+        const count = trial.calls.filter((call) => call.tool === tool && parseUnknownRecord(call.input)?.[key] !== undefined).length;
+        return { pass: count <= limit, detail: `${count} calls of ${tool} with ${key}` };
     };
 }
 
