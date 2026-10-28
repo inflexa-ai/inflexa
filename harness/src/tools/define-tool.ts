@@ -190,6 +190,10 @@ export type Tool<Input = unknown, Output = unknown> = {
     readonly description: string;
     readonly inputSchema: z.ZodType<Input>;
     readonly jsonSchema: Record<string, unknown>;
+    /** See {@link ToolDefinition.outputSchema}. Absent when the tool declares none. */
+    readonly outputSchema?: z.ZodType;
+    /** The JSON Schema of {@link outputSchema}. */
+    readonly outputJsonSchema?: Record<string, unknown>;
     /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
     describeCall?(input: Input): string | undefined;
     /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
@@ -203,13 +207,20 @@ export type Tool<Input = unknown, Output = unknown> = {
     approval?(input: Input, ctx: ToolApprovalContext): AskRequest | undefined | Promise<AskRequest | undefined>;
     /** See {@link ToolDefinition.startsWorkflow}. */
     readonly startsWorkflow?: boolean;
+    /** See {@link ToolDefinition.ownStep}. */
+    readonly ownStep?: boolean;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
-export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> = {
+export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output, OutputSchema extends z.ZodType = z.ZodType> = {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
+    /**
+     * The shape of the ok value. A script reads the value as data, thus `run_script` shows this type in the signature
+     * of the tool. The value of `execute` must hold each field of the schema, and it can hold more.
+     */
+    readonly outputSchema?: OutputSchema;
     /**
      * One line that names what THIS call does — the call-time counterpart of
      * `description`. `description` self-describes the tool at attach time, so an
@@ -299,6 +310,11 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> =
      * child before its first `await`, thus the parallel calls of one reply keep their order on a replay.
      */
     readonly startsWorkflow?: boolean;
+    /**
+     * The call must be one durable step of its own, for example an exec whose id comes from its step. Each call of
+     * a script runs inside the one step of the script, thus `withRunScript` refuses such a tool as a script tool.
+     */
+    readonly ownStep?: boolean;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
@@ -309,7 +325,9 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output> =
  * the first LLM call). Union-shaped inputs must be modelled as a flat object
  * with a discriminator field.
  */
-export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(def: ToolDefinition<Schema, Output>): Tool<z.infer<Schema>, Output> {
+export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output extends z.output<OutputSchema>, OutputSchema extends z.ZodType = z.ZodType>(
+    def: ToolDefinition<Schema, Output, OutputSchema>,
+): Tool<z.infer<Schema>, Output> {
     const jsonSchema: Record<string, unknown> = z.toJSONSchema(def.inputSchema);
     delete jsonSchema.$schema;
 
@@ -323,13 +341,14 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(d
         );
     }
 
-    const packaged: Tool<z.infer<Schema>, Output> = {
+    let packaged: Tool<z.infer<Schema>, Output> = {
         id: def.id,
         description: def.description,
         inputSchema: def.inputSchema,
         jsonSchema,
         execute: def.execute.bind(def),
     };
+    if (def.outputSchema !== undefined) packaged = { ...packaged, outputSchema: def.outputSchema, outputJsonSchema: outputJsonSchemaOf(def.outputSchema) };
     if (typeof def.foldCallRecord === "function") packaged.foldCallRecord = def.foldCallRecord.bind(def);
     if (typeof def.approval === "function") packaged.approval = def.approval.bind(def);
     // A tool that declines carries no `describeCall` key at all, so "has a
@@ -341,6 +360,14 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output>(d
     // declares no result hook carries no key, thus "has a hook" is one
     // property check on either side.
     if (def.describeResult !== undefined) packaged.describeResult = def.describeResult;
+    if (def.ownStep === true) packaged = { ...packaged, ownStep: true };
     if (def.startsWorkflow === true) return { ...packaged, startsWorkflow: true };
     return packaged;
+}
+
+/** The JSON Schema of an ok value, as a reader of the value sees it. */
+function outputJsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
+    const json: Record<string, unknown> = z.toJSONSchema(schema, { io: "output", unrepresentable: "any" });
+    delete json.$schema;
+    return json;
 }

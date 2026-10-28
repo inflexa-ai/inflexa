@@ -448,9 +448,8 @@ export function withRunScript(agent: AgentDefinition, logger?: Logger): AgentDef
     if (scriptTools.length === 0) return agent;
     const asking = scriptTools.find((tool) => tool.approval !== undefined || tool.startsWorkflow === true);
     if (asking !== undefined) throw new Error(`the script tool ${asking.id} of agent ${agent.id} asks an approval or starts a workflow`);
-    // `run_script` keeps only the files of the call records of a script, and runs no fold of a script tool.
-    const recording = scriptTools.find((tool) => tool.foldCallRecord !== undefined);
-    if (recording !== undefined) throw new Error(`the script tool ${recording.id} of agent ${agent.id} keeps a call record, which a script drops`);
+    const ownStep = scriptTools.find((tool) => tool.ownStep === true);
+    if (ownStep !== undefined) throw new Error(`the script tool ${ownStep.id} of agent ${agent.id} must run as its own durable step`);
     return { ...agent, tools: [...agent.tools, createRunScriptTool(scriptTools, agent.scriptRuntime, { scratch: agent.scriptScratch, logger })] };
 }
 

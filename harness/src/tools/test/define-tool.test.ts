@@ -51,6 +51,48 @@ describe("defineTool", () => {
         ).toThrow(UNION_TOOL_REFUSAL);
     });
 
+    describe("outputSchema", () => {
+        it("emits the JSON Schema of the ok value", () => {
+            const tool = defineTool({
+                id: "typed",
+                description: "Gives a count.",
+                inputSchema: z.object({}),
+                outputSchema: z.object({ count: z.number(), names: z.array(z.string()) }),
+                describeCall: "none",
+                execute: () => Promise.resolve(ok({ count: 1, names: ["a"], extra: true })),
+            });
+
+            expect(tool.outputJsonSchema).toMatchObject({ type: "object", required: ["count", "names"] });
+            expect(tool.outputJsonSchema?.$schema).toBeUndefined();
+        });
+
+        it("refuses at compile time an ok value that lacks a field of the schema", () => {
+            const definition = {
+                id: "short",
+                description: "Gives a count.",
+                inputSchema: z.object({}),
+                outputSchema: z.object({ count: z.number(), names: z.array(z.string()) }),
+                describeCall: "none" as const,
+                execute: () => Promise.resolve(ok({ count: 1 })),
+            };
+            // @ts-expect-error -- the ok value has no `names`, which the schema promises to a script.
+            const tool = defineTool(definition);
+            expect(tool.id).toBe("short");
+        });
+
+        it("packages no result schema for a tool that declares none", () => {
+            const tool = defineTool({
+                id: "untyped",
+                description: "Gives a value.",
+                inputSchema: z.object({}),
+                describeCall: "none",
+                execute: () => Promise.resolve(ok(1)),
+            });
+
+            expect(tool.outputJsonSchema).toBeUndefined();
+        });
+    });
+
     describe("describeCall", () => {
         it("carries a declared hook onto the packaged tool", () => {
             const tool = defineTool({

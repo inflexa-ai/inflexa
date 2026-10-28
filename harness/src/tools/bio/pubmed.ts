@@ -139,6 +139,39 @@ const inputSchema = z
         path: ["action"],
     });
 
+const ArticleSummarySchema = z.object({ pmid: z.string(), title: z.string(), journal: z.string(), year: z.string(), authors: z.string() });
+
+const ArticleSchema = z.object({
+    pmid: z.string(),
+    title: z.string(),
+    abstract: z.string(),
+    authors: z.array(z.string()),
+    authorCount: z.number(),
+    journal: z.string(),
+    year: z.string(),
+    doi: z.string(),
+    meshTerms: z.array(z.string()),
+    meshTermCount: z.number(),
+    pmcId: z.string().nullable(),
+});
+
+const outputSchema = z.union([
+    z.object({ totalFound: z.number(), results: z.array(ArticleSummarySchema) }).describe("action 'search'"),
+    z.object({ articles: z.array(ArticleSchema), notFound: z.array(z.string()) }).describe("action 'details'"),
+    z.object({ pmcId: z.string(), available: z.literal(false) }).describe("action 'fulltext', not open access"),
+    z
+        .object({
+            pmcId: z.string(),
+            available: z.literal(true),
+            fullText: z.string(),
+            outline: z.array(z.object({ heading: z.string(), chars: z.number(), included: z.boolean() })),
+            totalChars: z.number(),
+            returnedChars: z.number(),
+            truncated: z.boolean(),
+        })
+        .describe("action 'fulltext'"),
+]);
+
 type PubMedOutput =
     | { totalFound: number; results: PubMedSummary[] }
     | { articles: BoundedArticleDetail[]; notFound: string[] }
@@ -162,6 +195,7 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }): Tool<z.infer<ty
             "An empty result set and available: false are expected outcomes, not errors — an article with no PMC record simply has no open full text. " +
             "Report it and continue, do not retry it.",
         inputSchema,
+        outputSchema,
         // One tool, three jobs. The action alone would still render three
         // different searches identically, so each action names its own subject:
         // the query, how many articles, or which article.

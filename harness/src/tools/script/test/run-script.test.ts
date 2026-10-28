@@ -13,7 +13,7 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../../testin
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { defineTool, type Tool } from "../../define-tool.js";
 import { createRunScriptTool, RUN_SCRIPT_TOOL_ID, type RunScriptOutput } from "../run-script.js";
-import { readToolCallRecord, type ToolContext } from "../../define-tool.js";
+import { readToolCallRecord, withToolCallRecord, type ToolContext } from "../../define-tool.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { conversationSessionDir } from "../../../workspace/paths.js";
@@ -63,6 +63,41 @@ describe("run_script", () => {
                 { tool: "pubmed", ok: true },
             ],
         });
+    });
+
+    test("folds the call record of each nested call into its tool, in the order of the calls", async () => {
+        const folded: unknown[] = [];
+        const lookup = defineTool({
+            id: "lookup",
+            description: "Look up an id.",
+            inputSchema: z.object({ id: z.string() }),
+            describeCall: "none",
+            foldCallRecord: (record) => {
+                folded.push(record);
+            },
+            execute: ({ id }) => Promise.resolve(ok(withToolCallRecord({ id }, { seen: id }))),
+        });
+        const tool = createRunScriptTool([lookup]);
+
+        const result = (
+            await tool.execute({ code: 'await tools.lookup({ id: "a" }); await tools.lookup({ id: "b" });' }, makeToolContext().ctx)
+        )._unsafeUnwrap();
+        tool.foldCallRecord?.(readToolCallRecord(result));
+
+        expect(folded).toEqual([{ seen: "a" }, { seen: "b" }]);
+    });
+
+    test("shows the result type of a tool in its signature", () => {
+        const typed = defineTool({
+            id: "count_genes",
+            description: "Count the genes of a set.",
+            inputSchema: z.object({ set: z.string() }),
+            outputSchema: z.object({ count: z.number().describe("The number of genes.") }),
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ count: 3 })),
+        });
+
+        expect(createRunScriptTool([typed]).description).toContain("count_genes(args: { set: string; }): Promise<{ count: number; }>;");
     });
 
     test("a failed tool call is an Error that the script can catch", async () => {
@@ -261,12 +296,10 @@ describe("withRunScript", () => {
         expect(withRunScript({ ...agent, scriptTools: [] }).tools).toEqual([pubmed]);
     });
 
-    test("refuses a script tool that keeps a call record", () => {
-        const recording: Tool = { ...pubmed, foldCallRecord: () => undefined };
+    test("refuses a script tool that must run as its own durable step", () => {
+        const exec: Tool = { ...pubmed, ownStep: true };
 
-        expect(() => withRunScript({ ...agent, scriptTools: [recording] })).toThrow(
-            "the script tool pubmed of agent a keeps a call record, which a script drops",
-        );
+        expect(() => withRunScript({ ...agent, scriptTools: [exec] })).toThrow("the script tool pubmed of agent a must run as its own durable step");
     });
 
     test("refuses a script tool that asks an approval", () => {

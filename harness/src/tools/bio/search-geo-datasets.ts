@@ -88,6 +88,21 @@ export function mapGeoDatasets(ids: string[], summary: z.infer<typeof GeoEsummar
     return datasets;
 }
 
+const SearchGeoDatasetsOutputSchema = z.object({
+    totalFound: z.number(),
+    datasets: z.array(
+        z.object({
+            accession: z.string(),
+            title: z.string(),
+            summary: z.string(),
+            platform: z.string().nullable(),
+            sampleCount: z.number().nullable(),
+            organism: z.string().nullable(),
+            pubmedIds: z.array(z.union([z.string(), z.number()])),
+        }),
+    ),
+});
+
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
     description:
@@ -99,6 +114,7 @@ export const searchGeoDatasetsTool = defineTool({
         "HARD CAVEAT: this tool returns metadata only, and sandbox containers have no network — never plan an in-sandbox step that downloads a GEO dataset. " +
         "Bringing the data itself in is a capability of the surrounding environment, not of this tool: consult the tools you actually have rather than assuming it is possible or that it is not. " +
         "An empty datasets array is a valid 'nothing matched' — do not retry the identical query.",
+    outputSchema: SearchGeoDatasetsOutputSchema,
     inputSchema: z.object({
         query: z
             .string()
