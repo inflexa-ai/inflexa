@@ -135,7 +135,7 @@ describe("the data profile — a refused spawn", () => {
         });
     }
 
-    it("passes a cancel from DBOS through with no change, and runs no failure path", async () => {
+    it("passes a cancel from DBOS through with no change, revokes the mandate, and runs no failure path", async () => {
         const { pool, statements } = statementPool();
         const revoked: string[] = [];
         const cancel = new DBOSErrors.DBOSWorkflowCancelledError("wf-profile");
@@ -151,7 +151,7 @@ describe("the data profile — a refused spawn", () => {
 
         expect(outcome).toBe(cancel);
         expect(statements.some((q) => q.text.includes("data_profile_status = 'failed'"))).toBe(false);
-        expect(revoked).toEqual([]);
+        expect(revoked).toEqual(["data-profile-stopped"]);
     });
 });
 
