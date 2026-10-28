@@ -5,7 +5,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { err, ok } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { recoverAtCrashPoint } from "../../__tests__/setup/dbos-crash.js";
@@ -21,6 +21,7 @@ import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
+import type { ResolveRequestHeaders } from "../../providers/request-headers.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptEntry, type ScriptStep } from "../../testing.js";
@@ -59,6 +60,15 @@ let parkChildTool = false;
 let childParked = false;
 let childToolRuns = 0;
 let researchCallsSettled = 0;
+let pausingResearchSettled = 0;
+
+const TOKEN_HEADER = "x-test-token";
+
+/** Puts the token of the credential of each model call on its request, as a host puts the headers of its billing. */
+const tokenHeaders: ResolveRequestHeaders = (session) => {
+    const token: unknown = Reflect.get(session.auth, "token");
+    return okAsync({ [TOKEN_HEADER]: typeof token === "string" ? token : "none" });
+};
 
 const echo = defineTool({
     id: "echo",
@@ -165,7 +175,13 @@ const pausingResearch = defineTool({
     inputSchema: z.object({ brief: z.string() }),
     describeCall: "none",
     startsWorkflow: true,
-    execute: async (input, ctx) => ok({ report: await pausingResearcher(input, ctx) }),
+    execute: async (input, ctx) => {
+        try {
+            return ok({ report: await pausingResearcher(input, ctx) });
+        } finally {
+            pausingResearchSettled += 1;
+        }
+    },
 });
 
 const agent = {
@@ -224,11 +240,11 @@ async function askOf(threadId: string): Promise<{ id: string; status: string } |
 }
 
 /** A session whose credential holds a secret, thus a test can look for it in the stored input. */
-function sessionWithSecret() {
+function sessionWithSecret(token = SECRET) {
     return {
         identity: { user: "user-1" },
         scope: { kind: "analysis" as const, analysisId: ANALYSIS },
-        auth: Object.assign(makeLocalAuth(), { token: SECRET }),
+        auth: Object.assign(makeLocalAuth(), { token }),
     };
 }
 
@@ -318,11 +334,13 @@ describe("a chat turn as a workflow", () => {
         expect(textOf(await readAll(turnId))).toBe("Done after the crash.");
     });
 
-    it("pauses a recovered turn with no credential, and a resume with a credential continues it", async () => {
+    it("pauses a recovered turn with no credential, and a resume with a credential continues it under that credential", async () => {
         toolRuns = 0;
         parkedWrite = false;
         credentialAfterRestart = undefined;
-        const scripted = scriptedModel([callTools(toolCall("c1", "crash_after", {})), reply([text("after the resume")])]);
+        const scripted = scriptedModel([callTools(toolCall("c1", "crash_after", {})), reply([text("after the resume")])], {
+            resolveRequestHeaders: tokenHeaders,
+        });
         provider = scripted.provider;
         const threadId = `thread-${rig.nextWorkflowId()}`;
 
@@ -345,6 +363,7 @@ describe("a chat turn as a workflow", () => {
         await handle.getResult();
 
         expect(scripted.calls).toHaveLength(2);
+        expect(scripted.calls[1]?.headers?.[TOKEN_HEADER]).toBe(SECRET);
         expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
         expect(await turns.outcome(turnId)).toMatchObject({ status: "done" });
         const frames = await readAll(turnId);
@@ -355,6 +374,27 @@ describe("a chat turn as a workflow", () => {
         ]);
         expect(await work.list(ANALYSIS)).toEqual([]);
         credentialAfterRestart = makeLocalAuth();
+    }, 30_000);
+
+    it("pauses a turn whose host refuses its expired credential, and a resume continues it under the new credential", async () => {
+        const fresh = "pass-fresh-456";
+        const scripted = scriptedModel([reply([text("under the new credential")])], {
+            resolveRequestHeaders: (session) =>
+                Reflect.get(session.auth, "token") === fresh
+                    ? okAsync({ [TOKEN_HEADER]: fresh })
+                    : errAsync({ reason: "the passport expired", suspend: false, credential: true }),
+        });
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+
+        expect(await pausedWorkOf(turnId)).toMatchObject({ waiting: [{ workflowId: turnId, state: "paused", cause: { kind: "credential" } }] });
+        expect(scripted.calls).toHaveLength(0);
+        expect(await work.resume(sessionWithSecret(fresh), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(textOf(await readAll(turnId))).toBe("under the new credential");
+        expect(scripted.calls[0]?.headers?.[TOKEN_HEADER]).toBe(fresh);
+        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
     }, 30_000);
 
     it("stops a paused turn through the work surface, and the turn leaves the active work", async () => {
@@ -534,6 +574,40 @@ describe("the sub-agents of a chat turn workflow", () => {
         await DBOS.retrieveWorkflow(turnId).getResult();
         expect(await work.list(ANALYSIS)).toEqual([]);
     });
+
+    it("pauses a recovered child with no credential, and a resume of the turn continues the child under that credential", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        childParked = false;
+        parkChildTool = true;
+        pausingResearchSettled = 0;
+        const child = scriptedModel([callTools(toolCall("k1", "child_park", {})), reply([text("a report")])], { resolveRequestHeaders: tokenHeaders });
+        childProvider = child.provider;
+        provider = scriptedModel([callTools(toolCall("p1", "pausing_research", { brief: "a" })), reply([text("Done.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const childId = `${turnId}-p1`;
+        await waitUntil(() => childParked);
+        const childEnded = DBOS.retrieveWorkflow(childId)
+            .getResult()
+            .catch(() => undefined);
+        // The cancel of the turn and its child is the crash. The recovery runs where the turn has no live credential.
+        await DBOS.cancelWorkflow(turnId, { cancelChildren: true });
+        await childEnded;
+        credentialAfterRestart = undefined;
+        await waitUntil(() => pausingResearchSettled === 1 && turnCredentials.of(turnId) === undefined);
+        await DBOS.resumeWorkflow(childId);
+        const handle = await DBOS.resumeWorkflow(turnId);
+
+        expect(await pausedWorkOf(turnId)).toMatchObject({ waiting: [{ workflowId: childId, state: "paused", cause: { kind: "credential" } }] });
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await handle.getResult();
+
+        expect(child.calls).toHaveLength(2);
+        expect(child.calls[1]?.headers?.[TOKEN_HEADER]).toBe(SECRET);
+        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
+        credentialAfterRestart = makeLocalAuth();
+    }, 30_000);
 
     it("runs the sub-agents of one reply as child workflows at the same time, and adds their usage to the turn", async () => {
         credentialAfterRestart = makeLocalAuth();

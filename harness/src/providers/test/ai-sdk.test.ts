@@ -1029,6 +1029,20 @@ describe("the request headers hook", () => {
         expect(failure.type === "suspend" ? failure.status : "not a suspend error").toBeUndefined();
     });
 
+    it("gives an auth error on a hook err with the credential flag, thus the work pauses for a person", async () => {
+        const model = replyingModel();
+        const provider = createAiSdkProvider({
+            model,
+            resolveRequestHeaders: () => errAsync({ reason: "passport expired", suspend: false, credential: true }),
+        });
+
+        const failure = providerErrorOf(await drive(provider));
+
+        expect(failure).toMatchObject({ type: "auth", retryable: false });
+        expect(failure.message).toContain("passport expired");
+        expect(model.doStreamCalls).toHaveLength(0);
+    });
+
     it("stops the retries when the hook refuses a later attempt", async () => {
         let hookCalls = 0;
         const model = fakeModel(() => Promise.reject(apiError503()));

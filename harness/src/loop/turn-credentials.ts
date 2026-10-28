@@ -37,6 +37,27 @@ export const turnCredentials = {
     },
 };
 
+/**
+ * The `auth` of a session whose credential can come later: each read goes to `current`, and no credential reads as an
+ * empty object. A copy of the session keeps this object, thus each copy sees the credential that a resume puts.
+ */
+export function liveAuth(current: () => AuthContext | undefined): AuthContext {
+    const credential = (): object => current() ?? {};
+    return new Proxy(
+        {},
+        {
+            get: (_shell, key): unknown => Reflect.get(credential(), key),
+            has: (_shell, key) => Reflect.has(credential(), key),
+            ownKeys: () => Reflect.ownKeys(credential()),
+            getOwnPropertyDescriptor: (_shell, key) => {
+                const descriptor = Reflect.getOwnPropertyDescriptor(credential(), key);
+                // A proxy can report a key that its shell does not hold only as configurable.
+                return descriptor === undefined ? undefined : { ...descriptor, configurable: true };
+            },
+        },
+    );
+}
+
 /** Run the body of a turn, or of one of its sub-agents, with the id of its root turn in its context. */
 export function withRootTurn<T>(turnId: string, body: () => Promise<T>): Promise<T> {
     return rootTurn.run(turnId, body);

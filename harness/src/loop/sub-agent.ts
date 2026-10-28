@@ -30,7 +30,7 @@ import type { ToolContext } from "../tools/define-tool.js";
 import { CHAT_STREAM_KEY, createTurnStreamWriter, SUB_AGENT_STREAM_PART } from "./chat-stream.js";
 import { addChatUsage, type AgentRunUsage } from "./metrics.js";
 import type { LoopOptions } from "./run-loop.js";
-import { credentialGuard, currentRootTurn, turnCredentials, withRootTurn } from "./turn-credentials.js";
+import { credentialGuard, currentRootTurn, liveAuth, turnCredentials, withRootTurn } from "./turn-credentials.js";
 
 /** The options of the loop of a sub-agent that the place where it runs decides. */
 export type SubAgentLoopOptions = Pick<LoopOptions, "signal" | "emit" | "toolWriter" | "invocationId" | "turnUsage" | "modelMiddleware" | "pause">;
@@ -125,11 +125,10 @@ export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>, p
                 scope: input.scope,
                 provenance: input.provenance,
                 runFrame: input.runFrame,
-                // The credential comes at each read, thus a call after a resume of the turn uses the credential that the
-                // resume put. A child with no credential makes no model call, thus no adapter reads the empty value.
-                get auth(): AuthContext {
-                    return authOf() ?? {};
-                },
+                // The credential comes at each read, also through a copy of the session, thus a call after a resume of the
+                // turn uses the credential that the resume put. A child with no credential makes no model call, thus no
+                // adapter reads the empty value.
+                auth: liveAuth(authOf),
             };
             // The input holds the provenance of the caller. The body of the sub-agent extends it.
             const caller = { agentId: input.provenance.agentId, callPath: [...input.provenance.callPath] };

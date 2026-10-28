@@ -15,7 +15,7 @@ permission that is necessary before the harness can continue an operation. A not
 operation.
 
 ```ts
-type GateFailure = { readonly reason: string; readonly suspend: boolean }
+type GateFailure = { readonly reason: string; readonly suspend: boolean; readonly credential?: boolean }
 type NoticeFailure = { readonly reason: string }
 
 // A gate.
@@ -26,6 +26,10 @@ type NoticeFailure = { readonly reason: string }
 
 If a gate gives an `err`, the operation MUST fail with the reason of the host. If `suspend` is also true, and the
 gate runs inside a workflow, the work MUST pause in place of the failure, as the `work-pause` capability describes.
+
+If `credential` is true and `suspend` is false, the host refuses the credential of the caller: it is expired, revoked,
+or absent. The gate helper MUST give a refusal of the kind `credential`. The request headers hook gives it as an `auth`
+error. Each other gate MUST treat it as a failure.
 
 If a notice gives an `err`, the harness MUST log the reason at the error level. The outcome of the operation MUST NOT
 change, because the work is complete.
@@ -116,7 +120,8 @@ If the hook gives an `err`, the request MUST fail at once, with no retry, becaus
 provider MUST NOT send the attempt that the hook refused. The provider MUST give a `ProviderError` with
 `retryable: false`. Its message MUST
 name the workload and carry the reason of the host. If `suspend` is true, the error MUST have the kind `suspend`, with
-the reason and with no status. If `suspend` is false, the error MUST have the kind `provider`.
+the reason and with no status. If `suspend` is false and `credential` is true, the error MUST have the kind `auth`.
+Each other refusal MUST give the kind `provider`.
 
 #### Scenario: The headers reach the request as the hook gives them
 
@@ -148,6 +153,13 @@ the reason and with no status. If `suspend` is false, the error MUST have the ki
 - **GIVEN** a hook that gives `errAsync({ reason: "r", suspend: true })`
 - **WHEN** the provider runs a model call
 - **THEN** the call gives an `err` of the kind `suspend` with the reason `r` and with no status
+
+#### Scenario: A hook err with credential gives an auth error
+
+- **GIVEN** a hook that gives `errAsync({ reason: "r", suspend: false, credential: true })`
+- **WHEN** the provider runs a model call
+- **THEN** the provider sends no request, and the call gives an `err` of the kind `auth` whose message carries `r`
+- **AND** a turn workflow that makes the call pauses with the cause `credential`
 
 #### Scenario: A hook err on a later attempt stops the retries
 

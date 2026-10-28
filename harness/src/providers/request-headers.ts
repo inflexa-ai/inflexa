@@ -27,7 +27,16 @@ export function requestHeadersFor(hook: ResolveRequestHeaders | undefined, sessi
 
 export function headersRefusalError(refusal: GateRefusal, workload: string): ProviderError {
     const message = `The request headers hook refused the model call for ${workload}: ${refusal.reason}`;
-    return refusal.kind === "suspended"
-        ? { type: "suspend", retryable: false, reason: refusal.reason, message }
-        : { type: "provider", retryable: false, message };
+    switch (refusal.kind) {
+        case "suspended":
+            return { type: "suspend", retryable: false, reason: refusal.reason, message };
+        case "credential":
+            return { type: "auth", retryable: false, message };
+        case "failed":
+            return { type: "provider", retryable: false, message };
+        default: {
+            const exhaustive: never = refusal;
+            return exhaustive;
+        }
+    }
 }

@@ -27,6 +27,11 @@ export type GateFailure = {
     readonly reason: string;
     /** True when the host asks the harness to suspend the work in place of a failure. */
     readonly suspend: boolean;
+    /**
+     * True when the host refuses the credential of the caller: it is expired, revoked, or absent. A person repairs
+     * it, thus a work that can pause waits for a resume. The suspend flag wins over it.
+     */
+    readonly credential?: boolean;
 };
 
 /**
@@ -70,7 +75,13 @@ export type NoticeName =
 
 export type GateRefusal =
     | { readonly kind: "failed"; readonly gate: GateName; readonly reason: string }
-    | { readonly kind: "suspended"; readonly gate: GateName; readonly reason: string };
+    | { readonly kind: "suspended"; readonly gate: GateName; readonly reason: string }
+    | { readonly kind: "credential"; readonly gate: GateName; readonly reason: string };
+
+function refusalKindOf(failure: GateFailure): GateRefusal["kind"] {
+    if (failure.suspend) return "suspended";
+    return failure.credential === true ? "credential" : "failed";
+}
 
 /**
  * The host can build its `Result` with its own copy of neverthrow. The helper
@@ -83,7 +94,7 @@ export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure> 
         (async () => {
             const settled = await settlementOf(result);
             if (settlementOk(settled)) return ok(settled.value);
-            return err<T, GateRefusal>({ kind: settled.error.suspend ? "suspended" : "failed", gate, reason: settled.error.reason });
+            return err<T, GateRefusal>({ kind: refusalKindOf(settled.error), gate, reason: settled.error.reason });
         })(),
     );
 }

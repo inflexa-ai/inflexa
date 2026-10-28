@@ -51,7 +51,7 @@ import {
     type TurnTransport,
 } from "./chat-turn.js";
 import { CHAT_STREAM_KEY, createTurnStreamWriter, readChatTurn } from "../loop/chat-stream.js";
-import { credentialGuard, turnCredentials, withRootTurn } from "../loop/turn-credentials.js";
+import { credentialGuard, liveAuth, turnCredentials, withRootTurn } from "../loop/turn-credentials.js";
 import { assembleMessages, loadHistoryView, sanitizedUserMessage } from "./message-assembly.js";
 
 /** The name of the turn workflow. */
@@ -395,11 +395,10 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
     const session: ChatTurnSession = {
         identity: { user: input.userId },
         scope: { kind: "analysis", analysisId: input.analysisId, threadId: input.threadId },
-        // The credential comes at each read, thus a call after a resume uses the credential that the resume put. A
-        // turn with no credential makes no model call, thus no adapter reads the empty value.
-        get auth(): AuthContext {
-            return turnCredentials.of(input.turnId) ?? {};
-        },
+        // The credential comes at each read, also through a copy of the session, thus a call after a resume uses the
+        // credential that the resume put. A turn with no credential makes no model call, thus no adapter reads the
+        // empty value.
+        auth: liveAuth(() => turnCredentials.of(input.turnId)),
     };
     const ran = await runOpenTurn(
         deps,
