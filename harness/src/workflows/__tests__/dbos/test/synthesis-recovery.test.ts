@@ -57,12 +57,14 @@ const SYNTHESIS = {
     keyReferences: [{ pmid: "12345678", citation: "Smith 2020", description: "Established FOXP3." }],
 };
 
-// The synthesizer looks up once, then submits.
+// The synthesizer looks up once in a script, then submits.
 let synthesizerTurn = 0;
 const answer: ScriptStep = (call) => {
     if (!isSynthesizer(call)) return reply([text("not the synthesizer")]);
     synthesizerTurn += 1;
-    if (synthesizerTurn === 1) return callTools(toolCall("lk-1", "pubmed", { query: "FOXP3 regulatory T cells" }));
+    if (synthesizerTurn === 1) {
+        return callTools(toolCall("lk-1", "run_script", { code: 'const r = await tools.pubmed({ query: "FOXP3 regulatory T cells" }); text(r.totalFound);' }));
+    }
     if (synthesizerTurn === 2) return callTools(toolCall("tu-1", "submit_synthesis", { synthesis: SYNTHESIS }));
     return reply([text("done")]);
 };

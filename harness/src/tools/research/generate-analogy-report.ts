@@ -31,6 +31,7 @@ import type { SubAgentRegistrar } from "../../loop/sub-agent.js";
 import { recordedInputOf } from "../../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
+import type { ScriptRuntime } from "../script/run-script.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
@@ -225,11 +226,13 @@ export type GenerateAnalogyReportDeps = {
     readonly toolOutputStore?: ToolOutputStore;
     /** Logging seam; omitted falls back to no-op. Logs the salvage warning and an accounting error of the reasoner loop. */
     readonly logger?: Logger;
+    /** Where the VM of `run_script` comes from. See {@link ScriptRuntime}. */
+    readonly scriptRuntime?: ScriptRuntime;
 };
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
-/** The analogical reasoner over its search tools, its submit tool, and its blocker tool. */
-export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" | "model" | "toolOutputStore">): AgentDefinition {
+/** The analogical reasoner: its searches run in a script, and it records its report and a blocker directly. */
+export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" | "model" | "toolOutputStore" | "scriptRuntime">): AgentDefinition {
     const ncbi = createNcbiTools(deps.bioKeys);
     return {
         id: AGENT_ID,
@@ -237,15 +240,18 @@ export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" |
         model: deps.model,
         // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
         tools: [
-            createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
-            searchArxivTool,
-            createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
-            ncbi.pubmed,
             ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
             createRecordProblemTool(),
             createRecordAnalogyTool(),
             createAnalogyBlockerTool(),
         ],
+        scriptTools: [
+            createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
+            searchArxivTool,
+            createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
+            ncbi.pubmed,
+        ],
+        scriptRuntime: deps.scriptRuntime,
         maxIterations: RESEARCH_MAX_ITERATIONS,
     };
 }

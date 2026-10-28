@@ -24,6 +24,7 @@
  * `failed` part. We do not throw here for routine submitter rejections.
  */
 
+import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok, type Result } from "neverthrow";
@@ -336,8 +337,10 @@ export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
-    /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). */
+    /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). They run in `run_script`. */
     readonly synthesisLookups: readonly Tool[];
+    /** Where the VM of `run_script` comes from. See {@link ScriptRuntime}. */
+    readonly scriptRuntime?: ScriptRuntime;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer loop and of its read tool. */
@@ -376,13 +379,14 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
     const blockerTool = buildBlockerTool();
     const lookups = input.synthesisLookups.map((tool) => recordingPmids(tool, lookedUpPmids));
     const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
-    const tools: readonly Tool[] = [submitTool, blockerTool, ...lookups, ...readTools];
-
+    // The lookups run in `run_script`, which gives the PMID record of each nested call to its lookup.
     const agent: AgentDefinition = {
         id: SYNTHESIS_AGENT_ID,
         systemPrompt: composeSystemPrompt(synthesisAgentPrompt),
         model: input.model,
-        tools,
+        tools: [submitTool, blockerTool, ...readTools],
+        scriptTools: lookups,
+        scriptRuntime: input.scriptRuntime,
         maxIterations: SYNTHESIZER_MAX_ITERATIONS,
     };
 

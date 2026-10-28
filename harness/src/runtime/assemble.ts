@@ -400,6 +400,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const executeAnalysis = registerExecuteAnalysis({
         ...executeAnalysisDeps,
         synthesisLookups,
+        scriptRuntime: conversation.scriptRuntime,
         usageRecorder,
         toolOutputStore,
         workingMemory: createWorkingMemory(conversation.pool),

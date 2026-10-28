@@ -141,7 +141,9 @@ const pubmedLookup = defineTool({
     execute: () => Promise.resolve(ok({ totalFound: 1, results: [{ pmid: CITED_PMID, title: "FOXP3 in regulatory T cells" }] })),
 });
 
-const lookup = (id: string) => callTools(toolCall(id, "pubmed", { query: "FOXP3 regulatory T cells" }));
+/** A script that looks the PMID up, and prints only the count, thus the model never reads the PMID itself. */
+const lookup = (id: string) =>
+    callTools(toolCall(id, "run_script", { code: 'const r = await tools.pubmed({ query: "FOXP3 regulatory T cells" }); text(r.totalFound);' }));
 
 const submit = (id: string, synthesis: unknown) => callTools(toolCall(id, "submit_synthesis", { synthesis }));
 
@@ -334,13 +336,13 @@ describe("generateRunSynthesis", () => {
         expect(result.synthesis.runId).toBe(RUN_ID);
     });
 
-    it("declares the synthesis tools, the lookups, and then read_tool_output when it has a tool output store", async () => {
+    it("declares the synthesis tools, read_tool_output when it has a tool output store, and run_script over the lookups", async () => {
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
         const { run, calls } = synthesize([lookup("lk-1"), submit("tu-1", validSynthesisPayload()), done], { toolOutputStore });
 
         await run;
 
-        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["submit_synthesis", "report_blocker", "pubmed", "read_tool_output"]);
+        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["submit_synthesis", "report_blocker", "read_tool_output", "run_script"]);
     });
 
     it("returns skipped with the reason when the agent records only a blocker", async () => {
@@ -398,7 +400,7 @@ describe("generateRunSynthesis", () => {
         expect(toolResultIn(presentAt(calls, 3), "lk-2")).toEqual({
             type: "error-text",
             value: JSON.stringify({
-                error: "The tool pubmed is not available for this request, thus it did not run. The tools that can run now: submit_synthesis, report_blocker.",
+                error: "The tool run_script is not available for this request, thus it did not run. The tools that can run now: submit_synthesis, report_blocker.",
                 retryable: false,
             }),
         });
@@ -415,7 +417,7 @@ describe("generateRunSynthesis", () => {
         expect(lastUserText(presentAt(calls, 1))).toContain("You ended without an accepted synthesis");
     });
 
-    it("refuses a PMID that no lookup returned, and accepts it after the lookup", async () => {
+    it("refuses a PMID that no lookup returned, and accepts it after a script looked it up, also with the PMID unprinted", async () => {
         const { run, calls } = synthesize([submit("tu-1", validSynthesisPayload()), lookup("lk-1"), submit("tu-2", validSynthesisPayload()), done]);
 
         const result = await run;
