@@ -67,7 +67,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
         id: "grep",
         description:
             "Regex search over the text files of the workspace (input data, prior runs, step " +
-            "outputs, summaries, syntheses). Pass a file or a " +
+            "outputs, summaries, syntheses). It reads the workspace directly and runs no sandbox command. Pass a file or a " +
             `directory path; directories are walked recursively, to a depth of ${MAX_DIR_DEPTH}. Results are ` +
             `capped at ${DEFAULT_MAX_MATCHES} matches, and each preview at ${DEFAULT_MAX_MATCH_BYTES} characters of its line. ` +
             `Only the first ${MAX_GREP_FILE_BYTES / (1024 * 1024)} MiB of each file is searched, and a file with a NUL byte ` +

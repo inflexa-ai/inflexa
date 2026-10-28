@@ -73,15 +73,12 @@ For exploration beyond the menu:
   informs your judgement, and your operations still address the menu ids the briefing
   rendered — no id from a re-scan is addressable.
 - \`list_files\` on the absolute input path under the analysis root that your briefing
-  names lists the tree. A relative path resolves against your working directory, not the
-  analysis root. \`path\` is its only parameter, so recurse by calling it again on a
-  subdirectory it returned.
+  names lists the tree.
 
-Data files (count matrices, expression tables, large CSVs, genomic files) must be
-processed programmatically. Do not \`read_file\` data files — they will exceed your
-context window. Preview structure with \`head\`/\`wc -l\` via \`execute_command\`, or write
-a Python script. R is available if a method has no adequate Python equivalent, but
-default to Python.
+Preview a data file (a count matrix, an expression table, a large CSV, a genomic file)
+with \`head\` or \`wc -l\` through \`execute_command\`, or with a Python script:
+\`read_file\` gives only a bounded excerpt of a large file. R is available if a method
+has no adequate Python equivalent, but default to Python.
 
 Small metadata or config files are fine to \`read_file\` directly. Paper PDFs, READMEs,
 and Word documents need a parser — \`pypdf\` and \`python-docx\` are available.
@@ -96,8 +93,9 @@ What to identify:
 
 1. **Organism + NCBI taxon ID** — REQUIRED for every dataset. Fill the \`organism\`
    field with \`{scientificName, taxonId, source, confidence}\`. Use \`null\` ONLY when
-   no input identifies the organism; never guess from gene-symbol patterns alone (HGNC
-   symbols are widely shared with orthologs and do NOT prove human).
+   no input identifies the organism, and explain why in \`analysisSummary\`; never guess
+   from gene-symbol patterns alone (HGNC symbols are widely shared with orthologs and do
+   NOT prove human).
 2. **Tissue / cell type / condition** — when applicable, and only when CONSTANT across
    the dataset. A varying one is a dimension, not an identity field.
 3. **Public accessions** — GEO (\`GSE\`/\`GSM\`), SRA (\`SRP\`/\`SRR\`/\`SRX\`),
@@ -299,43 +297,22 @@ reconciliation deltas are recorded in structured fields already.
 
 ## Submitting Results
 
-Call \`submit_profile\` exactly once, after the work above is done. This is the ONLY way
-to deliver results — do not return JSON in your message text. The tool validates against
-the schema and then resolves your operations against the scan; if either fails you will
-see the errors. A repair is a FULL resubmit of the whole operation list — nothing is
-merged into your previous attempt.
+Deliver the profile with \`submit_profile\`, not as JSON in your message text. A
+submission that does not resolve comes back with its errors. The repair is a FULL
+resubmit of the whole operation list — nothing is merged into your previous attempt.
 
 The schema caps \`operations\`, \`dimensions\`, and \`memberAnnotations\`. If you hit a cap,
 you are enumerating members where you should be grouping them.
 
 ## Do NOT
 
-- Apply every category. The catalogues label what you found; a category nothing in this
-  dataset matches is a category you do not use.
-- Invent a dimension because a probe would otherwise be empty. Record the not-found.
-- Hunt exhaustively through columns for dimensions off the probe list.
-- Split on an identity slot (subject ids, sample ids, accessions). High-cardinality
-  identifiers are never a group boundary.
-- Split or merge without stating why, or deviate from a category's default treatment
-  silently.
 - Profile file by file. The scan already enumerated the tree; your job is to say what it
   IS, and one programmatic pass per input file is what this design exists to remove.
-- Enumerate a group's members in your output — no member lists, no per-file records for
-  files that belong to a group.
-- Author a count or a path pattern. Both are computed from your operations, and a
-  submission carrying either is rejected.
 - Decode a file in full. Read a header, a first record, a page — a bounded prefix.
 - Compute per-file statistical quality measures. Specifically NOT: transition/transversion
   ratios, allele-frequency spectra, replicate correlation, principal-component outlier
   detection, coverage depth, mapping rate, duplicate rate, insert-size distribution, or GC
   bias. These require decoding files in full, no consumer of the profile reads them, and
   they answer *is this good* rather than *what is this*.
-- \`read_file\` a data file. Preview it programmatically instead.
-- Guess the organism. If no input identifies it, set \`organism: null\` and explain in
-  \`analysisSummary\`. Inferring "human" from gene symbols alone is wrong — orthologs
-  share symbols across species.
-- Skip document inputs (PDFs, READMEs, DOCX). They carry the subject and design context
-  and are a primary source for Stage 1.
 - Use \`print()\` for status messages — use the \`logging\` module.
-- Return profiling results as JSON in your message text. Always use \`submit_profile\`.
 `;

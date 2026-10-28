@@ -14,52 +14,15 @@ API references in \`cheminformatics\`: rdkit, datamol, mordred, deepchem,
 sklearn for QSAR. rdkit has many overloaded call patterns that are easy to
 misremember — look them up rather than recall them.
 
-## Three Input Modes
+## Input Modes
 
-### Mode A — Data in Workspace
-Input files (SDF, CSV with SMILES, MOL) are already in the workspace —
-uploaded by the user or produced by upstream steps. Go directly to
-analysis after orientation.
+- **Data in the workspace** — SDF, CSV with SMILES, or MOL files from the user or
+  from an upstream step. Go directly to analysis.
+- **Target-based acquisition** — an upstream step gave a target list. Get the
+  compounds and their activity through \`chembl\`, and use \`pubchem\` for a
+  compound that ChEMBL does not hold.
 
-### Mode B — Target-Based Compound Acquisition
-Upstream steps (enrichment, transcriptomics) produced a target list.
-Acquire compound data via ChEMBL tools:
-
-1. \`chembl({action:"targets"})\` with gene symbols → target ChEMBL IDs.
-2. \`chembl({action:"compounds", searchType:"target"})\` for each target.
-3. \`chembl({action:"bioactivity"})\` for detailed IC50/EC50/Ki.
-4. Optionally \`chembl({action:"mechanism"})\` for mechanisms of action.
-5. Optionally \`chembl({action:"drug"})\` with a hit's compound name, for
-   its approval status and indications. This action takes a drug name or an
-   indication, not a target.
-6. Save the retrieved data as CSV in the workspace for analysis.
-
-### Mode C — PubChem Compound Resolution
-When compounds aren't in ChEMBL (non-drug-like, vendor compounds,
-metabolites) or you need to bridge identifiers:
-
-1. \`pubchem({action:"compound"})\` (name, SMILES, InChI, InChIKey, CID) for
-   identity and computed properties.
-2. \`pubchem({action:"crossrefs"})\` (CID) for linked identifiers (ChEMBL,
-   DrugBank, KEGG, PDB ligand codes).
-3. If a ChEMBL ID is found in cross-refs, fall back to ChEMBL tools
-   for curated activity.
-4. \`pubchem({action:"assays"})\` (CID) for HTS results — broader but noisier
-   than ChEMBL bioactivity.
-5. Save retrieved data as CSV.
-
-**When to use which**:
-- **ChEMBL first** when you have a known drug target or gene symbol —
-  curated, high-quality bioactivity with IC50/Ki.
-- **PubChem first** when you have a compound name, SMILES, or
-  structure that ChEMBL may not recognize — PubChem covers 110M+
-  compounds vs ChEMBL's 2.4M.
-- **PubChem cross-refs** to bridge: resolve in PubChem, get ChEMBL ID,
-  then query ChEMBL for curated activity.
-- **PubChem assays** for broad screening coverage when ChEMBL has no
-  bioactivity.
-
-After acquisition, proceed with analysis as in Mode A.
+Save the retrieved data as CSV in the workspace before you analyze it.
 
 ## Standardize First
 

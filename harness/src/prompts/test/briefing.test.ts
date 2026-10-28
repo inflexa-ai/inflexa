@@ -12,6 +12,7 @@ import { WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { contractAnswer } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import {
     ANALYSIS_MEMORY_HEADING,
+    MAX_LISTED_UPSTREAM_DEPS,
     MAX_TEMPLATE_SLOTS,
     MAX_UPSTREAM_ARTIFACTS,
     MAX_UPSTREAM_DEPS,
@@ -184,11 +185,10 @@ describe("renderTemplateContract", () => {
         expect(rendered).toContain("metadata: `{{metadata_path}}`");
     });
 
-    it("renders each bound setting with its value and source, under the override rule", () => {
+    it("renders each bound setting with its value and source", () => {
         const rendered = renderTemplateContract(brief());
         expect(rendered).toContain("Bound by the plan");
         expect(rendered).toContain('`lfc_shrink` = "apeglm" (doi:10.1093/bioinformatics/bty895)');
-        expect(rendered).toContain("`overrides`");
     });
 
     it("names the unbound settings", () => {
@@ -313,12 +313,36 @@ describe("renderUpstream", () => {
         expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
     });
 
-    it("renders at most MAX_UPSTREAM_DEPS dependencies and counts the rest", () => {
-        const many = Array.from({ length: MAX_UPSTREAM_DEPS + 3 }, (_, i) => handoff({ stepId: `T1S${i}`, summaryMarkdown: `GIST_${i}` }));
+    function dependency(i: number): UpstreamHandoff {
+        return handoff({
+            stepId: `T1S${i}`,
+            summaryMarkdown: `GIST_${i}`,
+            summaryPath: `/an-1/runs/run-1/T1S${i}/output/summary.md`,
+            outputDir: `/an-1/runs/run-1/T1S${i}/output`,
+        });
+    }
+
+    it("renders at most MAX_UPSTREAM_DEPS dependencies in full, and lists the next ones by their absolute paths", () => {
+        const many = Array.from({ length: MAX_UPSTREAM_DEPS + 3 }, (_, i) => dependency(i));
         const rendered = renderUpstream(many);
         for (let i = 0; i < MAX_UPSTREAM_DEPS; i++) expect(rendered).toContain(`GIST_${i}`);
-        expect(rendered).not.toContain(`GIST_${MAX_UPSTREAM_DEPS}`);
-        expect(rendered).toContain("+3 more");
+        for (let i = MAX_UPSTREAM_DEPS; i < MAX_UPSTREAM_DEPS + 3; i++) {
+            expect(rendered).not.toContain(`GIST_${i}`);
+            expect(rendered).toContain(`/an-1/runs/run-1/T1S${i}/output/summary.md`);
+            expect(rendered).toContain(`/an-1/runs/run-1/T1S${i}/output\``);
+        }
+        expect(rendered).not.toContain("more completed");
+        expect(rendered).not.toContain("inspect_run");
+    });
+
+    it("counts the dependencies past the listed ones, and says where their summaries are", () => {
+        const total = MAX_UPSTREAM_DEPS + MAX_LISTED_UPSTREAM_DEPS + 2;
+        const rendered = renderUpstream(Array.from({ length: total }, (_, i) => dependency(i)));
+        expect(rendered).toContain(`/an-1/runs/run-1/T1S${total - 3}/output/summary.md`);
+        expect(rendered).not.toContain(`/an-1/runs/run-1/T1S${total - 2}/output/summary.md`);
+        expect(rendered).toContain("+2 more completed dependencies, not listed");
+        expect(rendered).toContain("beside your working directory");
+        expect(rendered).toContain("`output/summary.md`");
     });
 
     it("lists at most MAX_UPSTREAM_ARTIFACTS artifacts per dependency and counts the rest", () => {

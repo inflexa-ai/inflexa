@@ -85,7 +85,7 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
         id: "read_file",
         description:
             "Read a workspace file: input data, prior-run outputs, current-run " +
-            "outputs, step summaries, or run syntheses. Returns the file content " +
+            "outputs, step summaries, or run syntheses. It reads the workspace directly and runs no sandbox command. Returns the file content " +
             "as UTF-8 text. Output is capped at " +
             `${DEFAULT_MAX_BYTES} bytes; pass headLines or tailLines to read a ` +
             "specific window of a large file (typical for bio CSV/TSV/log files). " +

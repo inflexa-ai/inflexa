@@ -46,13 +46,10 @@ Your skills: \`pkpd-clinical-response\`, \`statistical-modeling\`,
 
 Use \`drug_gene_interactions\` with \`sources:["pharmgkb"]\` for
 pharmacogenomic context, ChEMBL for compound-target data, and FAERS for
-real-world safety signals. For target-level intelligence on the drug's
-primary target, use \`gene_preclinical_profile\` (geneSymbol). It returns
-cross-species baseline expression (tissue-of-action / distribution priors)
-together with the mouse-KO phenotype + viability (preclinical tolerability
-prior when interpreting safety signals). It takes a single human gene
-symbol per call; treat empty/null outputs as valid "no data" and do not
-retry.
+real-world safety signals. Use \`gene_preclinical_profile\` on the primary
+target of the drug: its baseline expression gives the tissue-of-action and
+distribution priors, and its mouse-KO phenotype gives a tolerability prior for
+the safety signals.
 
 Report PK parameter tables, response summaries, and clinical-quality
 visualizations.

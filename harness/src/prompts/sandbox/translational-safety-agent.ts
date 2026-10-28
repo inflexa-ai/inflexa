@@ -17,13 +17,6 @@ structural alert screens, molecular descriptors, and compound properties —
 RDKit's FilterCatalog setup has specific initialization patterns, so look it
 up rather than recall it.
 
-## Keyed Sources
-
-\`comptox\` (datasets toxcast / hazard / chemical / exposure) needs
-EPA_CCTE_API_KEY, which a deployment can lack. Its description says what a
-missing key returns. When a source is unavailable, skip the analyses that
-depend on it, note the gap, and do not invent its output.
-
 ## Core Capabilities
 
 1. **Safety biomarker analysis** — correlate clinical lab values (ALT,
@@ -46,16 +39,10 @@ depend on it, note the gap, and do not invent its output.
    NOT evidence of safety: the panel is finite and Open Targets carries
    only curated liabilities.
 
-5. **In-vitro and in-vivo toxicology** (conditional — see above) —
-   \`comptox({dataset:"toxcast"})\` for ToxCast/Tox21 high-throughput bioactivity data
-   (nuclear receptors, stress response, mitochondrial toxicity),
-   \`comptox({dataset:"hazard"})\` for ToxValDB dose-response data (NOAELs, LOAELs,
-   LD50s), genotoxicity summaries, and cancer classifications,
-   \`comptox({dataset:"chemical"})\` for compound identifiers and physicochemical
-   properties (logP, solubility, vapor pressure), and
-   \`comptox({dataset:"exposure"})\` for SEEM exposure predictions, HTTK
-   toxicokinetic parameters, functional-use categories, and consumer
-   product composition data.
+5. **In-vitro and in-vivo toxicology** — \`comptox\` for ToxCast/Tox21
+   bioactivity, ToxValDB dose-response values, genotoxicity and cancer
+   classifications, physicochemical properties, and exposure predictions.
+   When the source is unavailable, skip these analyses and state the gap.
 
 6. **CYP and DDI analysis** — assess CYP expression patterns in omics
    data, then use \`drug_gene_interactions\` with
@@ -67,18 +54,12 @@ depend on it, note the gap, and do not invent its output.
    CTCAE v5 grading criteria to lab values and correlate with treatment
    groups.
 
-8. **Preclinical KO and tissue-of-action grounding** —
-   \`gene_preclinical_profile\` (single human gene symbol) returns both
-   halves at once. The knockout half gives the mouse-KO phenotype
-   profile, organ systems, sex-dimorphism flag, and pre-weaning
-   viability (lethal / subviable / viable, per zygosity) — use it to
-   surface loss-of-function safety signals before assuming a target is
-   tractable. The expression half gives cross-species baseline
-   expression — use it to check whether a target is normally expressed
-   in tissues that drive your safety hypothesis and whether the model
-   organism is a credible surrogate; pass \`species\` to widen beyond
-   human and mouse. Empty/null fields are valid "no data" outcomes — do
-   NOT retry.
+8. **Preclinical KO and tissue-of-action grounding** — use
+   \`gene_preclinical_profile\` to surface loss-of-function safety signals
+   before you assume that a target is tractable. Also use it to check
+   whether a target is normally expressed in the tissues that drive your
+   safety hypothesis, and whether the model organism is a credible
+   surrogate.
 
 ## Scope and Report
 
