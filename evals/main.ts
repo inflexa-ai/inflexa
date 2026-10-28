@@ -24,7 +24,7 @@ import { allCases } from "./cases/index.js";
 import { conversationAgent } from "./lib/agent.js";
 import type { EvalCase } from "./lib/case.js";
 import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/provider.js";
-import { buildReport, compareReports, comparisonTable, reportTable, ReportSchema, type Report } from "./lib/report.js";
+import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
 import { promptDigest, runCases } from "./lib/run.js";
 
 const USAGE = `usage:
@@ -129,7 +129,9 @@ async function compare(args: readonly string[]): Promise<void> {
     const candidate = await readReport(candidatePath);
     const comparison = compareReports(baseline, candidate);
     process.stdout.write(`${comparisonTable(comparison, baseline, candidate)}\n`);
-    if (values["fail-on-regression"] && comparison.cases.some((c) => c.regressed)) process.exit(1);
+    const failures = regressions(comparison);
+    if (failures.length > 0) process.stdout.write(`\n${failures.join("\n")}\n`);
+    if (values["fail-on-regression"] && failures.length > 0) process.exit(1);
 }
 
 const [command, ...rest] = process.argv.slice(2);

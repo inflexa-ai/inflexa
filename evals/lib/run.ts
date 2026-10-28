@@ -6,15 +6,23 @@
 
 import { createHash } from "node:crypto";
 
+import { okAsync } from "neverthrow";
+
+import { contextRecordsFor, sanitizedUserMessage } from "@inflexa-ai/harness/app/message-assembly.js";
+import { renderRunActivity } from "@inflexa-ai/harness/app/run-activity.js";
 import { allWithConcurrency } from "@inflexa-ai/harness/lib/async-utils.js";
 import { makeSession } from "@inflexa-ai/harness/providers/__fixtures__/session.js";
 import type { AgentRunUsage } from "@inflexa-ai/harness/loop/metrics.js";
 import { runLoop } from "@inflexa-ai/harness/loop/run-loop.js";
 import type { AgentDefinition, LoopMessage } from "@inflexa-ai/harness/loop/types.js";
+import type { WorkingMemoryStore } from "@inflexa-ai/harness/memory/working-memory.js";
 import type { ChatProvider } from "@inflexa-ai/harness/providers/types.js";
+import type { CortexRunRow } from "@inflexa-ai/harness/state/schema.js";
 import { errorMessageOf } from "@inflexa-ai/harness/lib/thrown.js";
 import { withScriptedTools } from "./agent.js";
-import { trialOf, userMessage, type EvalCase, type Grade, type TrialAsk, type TrialCall } from "./case.js";
+import { trialOf, type EvalCase, type Grade, type RunningRun, type TrialAsk, type TrialCall } from "./case.js";
+
+const ANALYSIS_ID = "analysis-001";
 
 export type TrialResult =
     | ({
@@ -59,17 +67,59 @@ function replyText(messages: readonly LoopMessage[]): string {
     return parts.join("\n").trim();
 }
 
+function runningRow(run: RunningRun): CortexRunRow {
+    return {
+        runId: run.runId,
+        analysisId: ANALYSIS_ID,
+        threadId: null,
+        workflowName: "execute-analysis",
+        status: "running",
+        startedAt: run.startedAt,
+        completedAt: null,
+        error: null,
+        synthesisStatus: null,
+        synthesisReason: null,
+        parts: null,
+        mandateId: null,
+        planId: run.planId ?? null,
+    };
+}
+
+function workingMemoryOf(render: string): WorkingMemoryStore {
+    const unused = (): never => {
+        throw new Error("an eval turn only renders the working memory");
+    };
+    return { load: unused, updateSection: unused, render: () => okAsync(render) };
+}
+
+/** The input of a chat turn: the sanitized user message, then the context records that the harness adds (`app/chat-turn.ts`). */
+export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMessage[]): Promise<LoopMessage[]> {
+    const state = evalCase.state ?? {};
+    const runs = (state.runningRuns ?? []).map(runningRow);
+    const records = await contextRecordsFor(
+        {
+            threadType: "conversation",
+            analysisId: ANALYSIS_ID,
+            analysisContext: state.analysisContext ?? null,
+            runActivityContext: renderRunActivity({ runs, total: runs.length }),
+            workingMemory: workingMemoryOf(state.workingMemory ?? ""),
+        },
+        history,
+    );
+    return [sanitizedUserMessage(evalCase.user), ...records];
+}
+
 export async function runTrial(evalCase: EvalCase, options: Pick<RunOptions, "agent" | "provider" | "trialTimeoutMs">): Promise<TrialResult> {
     const agent = withScriptedTools(options.agent, evalCase.tools ?? {});
     const history = evalCase.history ?? [];
     try {
         const asks: TrialAsk[] = [];
         const decision = evalCase.approve ?? "approve";
-        const result = await runLoop(agent, history, makeSession(), {
+        const result = await runLoop(agent, history, makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_ID } }), {
             provider: options.provider,
             signal: AbortSignal.timeout(options.trialTimeoutMs),
             emit: () => undefined,
-            turnInput: [userMessage(evalCase.user)],
+            turnInput: await turnInputOf(evalCase, history),
             stopWhen: (steps) => steps.length >= evalCase.maxSteps,
             approve: (request, call) => {
                 asks.push({ tool: call.toolName, command: request.command });

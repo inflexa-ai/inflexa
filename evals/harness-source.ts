@@ -2,12 +2,14 @@
  * Resolve `@inflexa-ai/harness` and each deep specifier of it to the source of
  * the harness in this repository.
  *
- * The CLI files that the evals import name the harness by its package name, and
- * the install of the CLI resolves that name to the npm release or to the built
- * `dist/`. The evals must run the working copy, and the CLI host tools must see
- * the same module instances as the agent, thus the plugin maps the name for
- * every importer. A deep specifier names the emitted `.js` file, and its source
- * is the `.ts` file beside it.
+ * The plugin maps each deep specifier, from each importer, to the source. A deep
+ * specifier names the emitted `.js` file, and its source is the `.ts` file
+ * beside it.
+ *
+ * Bun resolves the bare `@inflexa-ai/harness` through the package install of the
+ * importer before it asks a plugin. Thus the CLI host tools, which import the bare
+ * name, load the harness that `cli/node_modules` holds. The npm release there
+ * drops the approval hooks of the host tools, and `lib/agent.ts` refuses it.
  */
 
 import { existsSync } from "node:fs";
