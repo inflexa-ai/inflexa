@@ -83,8 +83,7 @@ export type SynthesizeRunParams = {
     readonly onProgress: (phase: SynthesisPhase, activity: string, extra?: SynthesisProgressExtra) => void | Promise<void>;
     /**
      * Run a read or a write of the synthesis once: a step in the body of a workflow, a plain call in a process. The
-     * loop of the synthesizer runs outside it, thus each of its model calls is a step of its own, and each reviewer
-     * call starts a child workflow.
+     * loop of the synthesizer runs outside it, thus each of its model calls and each of its lookups is a step of its own.
      */
     readonly durably: <T>(name: string, run: () => Promise<T>) => Promise<T>;
     /** The pause of the run, for the loop of the synthesizer. Absent: a failed request fails the synthesis. */

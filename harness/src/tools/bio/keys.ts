@@ -11,7 +11,7 @@ import { createSearchRegulatoryApprovalsTool } from "./search-regulatory-approva
 /**
  * API keys for the external bio/chem data sources. Threaded from the
  * composition root to every place that assembles bio tools (conversation
- * agent, sandbox agents, literature reviewer, analogy reporter). Each key
+ * agent, sandbox agents, run synthesizer, analogy reporter). Each key
  * may be empty when its source is unconfigured — the tool surfaces the
  * resulting auth failure as a normal tool error.
  */
