@@ -11,6 +11,7 @@ import type {
     ProvUsedInputRef,
     ProvFileRef,
     ProvCallRef,
+    ProvScriptRunRef,
     ProvCommandRef,
     ProvSessionRef,
     ProvReportBlockRef,
@@ -132,6 +133,8 @@ export type BusEvent =
           step?: ProvStepRef;
       }
     | { type: "prov.input_used"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef }
+    /** A script of `run_script` that read or wrote a file: the script, the files it read, and the files it derived. */
+    | { type: "prov.script_run"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; script: ProvScriptRunRef }
     /**
      * The report family. The agent performs each of these acts, so every member stamps the SYSTEM
      * actor and carries the model that drove the session at emit time — the same treatment

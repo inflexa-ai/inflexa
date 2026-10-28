@@ -580,6 +580,26 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                     },
                 });
                 return;
+            case "run-script":
+                Bus.emit("inflexa", {
+                    type: "prov.script_run",
+                    analysisId,
+                    actor,
+                    model,
+                    script: {
+                        invocationId: event.invocationId,
+                        // A chat scope can carry no thread; the key then stays absent rather than carrying
+                        // `undefined` into the record.
+                        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
+                        ...(event.script !== undefined ? { script: { path: event.script.path, hash: event.script.hash, size: event.script.size } } : {}),
+                        // Copied pair by pair, so nothing that the tool still holds reaches a subscriber.
+                        reads: event.reads.map((read) => ({ path: read.path, hash: read.hash })),
+                        writes: event.writes.map((write) => ({ path: write.path, hash: write.hash, size: write.size })),
+                        tools: [...event.tools],
+                        ok: event.ok,
+                    },
+                });
+                return;
             case "approve-plan":
                 // A person approves, and no model drives the act, thus the member carries the user
                 // actor and no model. The kernel writes the approval at `atMs` and not at the clock
