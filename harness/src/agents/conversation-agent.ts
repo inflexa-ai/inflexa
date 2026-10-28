@@ -268,7 +268,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         logger: deps.logger,
     });
 
-    const tools: Tool[] = [
+    // The lookups run in a script (`run_script`): each is a read-only API call that asks no approval.
+    const scriptTools: Tool[] = [
         // Identifier resolution — the ENSG most other bio tools key off, and the
         // UniProt accession that the structure tools take.
         searchGeneTool,
@@ -315,6 +316,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         targetSafetyTool,
         // EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
         chemDb.comptox,
+    ];
+
+    const tools: Tool[] = [
         // What reference data this install actually holds. The conversation agent is
         // where provisioning is decided — an embedder may give it a way to install more,
         // and a host that does asks the user to approve the download. Deciding that
@@ -429,6 +433,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         systemPrompt: composeSystemPrompt(conversationPrompt, { identity: true, conversational: true }),
         model,
         tools,
+        scriptTools,
         maxIterations: CONVERSATION_MAX_ITERATIONS,
         compaction: CONVERSATION_COMPACTION,
     };

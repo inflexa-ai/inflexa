@@ -26,6 +26,13 @@ export type AgentDefinition = {
     readonly systemPrompt: string;
     readonly model: string;
     readonly tools: readonly Tool[];
+    /**
+     * The tools that the agent calls from a script, through the one `run_script` tool that the loop adds. A request
+     * declares only `run_script`, with one catalog line for each of them, thus their full descriptions stay out of
+     * the context until a script asks for one. Each must ask no approval and write nothing, because a script runs as
+     * one step. Absent or empty: the agent has no `run_script`.
+     */
+    readonly scriptTools?: readonly Tool[];
     /** Runaway guard: the cap of model requests of one run. The run ends at the cap. */
     readonly maxIterations: number;
     /** The compaction rules of an agent that a chat thread runs. Absent: the conversation never compacts. */

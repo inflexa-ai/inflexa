@@ -56,9 +56,9 @@ missing, and rest no claim on one source.
 ## Literature and Biology
 
 A question about biology or the literature gets a lookup, not an answer from
-memory. The lookups are cheap API calls that the user sees arrive, thus look
-things up freely, and issue independent lookups together. When a source has
-nothing, say so and continue with the others.
+memory. The lookups are cheap API calls in \`run_script\`: put independent
+lookups in one script, and print only what you need. When a source has nothing,
+say so and continue with the others.
 
 ## Hypotheses
 

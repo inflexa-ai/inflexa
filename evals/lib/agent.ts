@@ -140,10 +140,18 @@ function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
     };
 }
 
-/** The agent with each tool scripted. A script for a tool that the agent does not hold is a fault of the case. */
+/**
+ * The agent with each tool and each script tool scripted. A script for a tool that the agent does not hold is a fault
+ * of the case.
+ */
 export function withScriptedTools(agent: AgentDefinition, scripts: Readonly<Record<string, ToolScript>>): AgentDefinition {
-    const ids = new Set(agent.tools.map((tool) => tool.id));
+    const scriptTools = agent.scriptTools ?? [];
+    const ids = new Set([...agent.tools, ...scriptTools].map((tool) => tool.id));
     const unknown = Object.keys(scripts).filter((id) => !ids.has(id));
     if (unknown.length > 0) throw new Error(`the agent ${agent.id} has no tool ${unknown.join(", ")}`);
-    return { ...agent, tools: agent.tools.map((tool) => scriptedTool(tool, scripts[tool.id])) };
+    return {
+        ...agent,
+        tools: agent.tools.map((tool) => scriptedTool(tool, scripts[tool.id])),
+        scriptTools: scriptTools.map((tool) => scriptedTool(tool, scripts[tool.id])),
+    };
 }

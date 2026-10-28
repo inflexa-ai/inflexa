@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { all, atMostWith, callsAny, decides, inputMatches, never, type Trial, type TrialCall } from "../lib/case.js";
+import { all, atMostWith, callsAny, decides, inputMatches, never, trialOf, type Trial, type TrialCall } from "../lib/case.js";
 
 function trial(...calls: readonly Omit<TrialCall, "refused">[]): Trial {
     return { calls: calls.map((call) => ({ ...call, refused: false })), asks: [], text: "", finishReason: "stop" };
@@ -71,6 +71,43 @@ describe("never, atMostWith, all", () => {
     test("all gives the detail of the first failure", () => {
         const grade = all(atMostWith("inspect_run", "runId", 5), never(["inspect_run"]))(trial({ step: 0, tool: "inspect_run", input: {} }));
         expect(grade).toEqual({ pass: false, detail: "called inspect_run" });
+    });
+});
+
+describe("trialOf", () => {
+    test("follows a run_script call with the tool calls of its script", () => {
+        const trial = trialOf(
+            [
+                {
+                    finishReason: "tool-calls",
+                    calls: [
+                        {
+                            toolCallId: "c1",
+                            toolName: "run_script",
+                            input: { code: "..." },
+                            output: {
+                                outcome: "ok",
+                                value: {
+                                    ok: true,
+                                    output: "",
+                                    calls: [
+                                        { tool: "search_gene", ok: true },
+                                        { tool: "pubmed", ok: true },
+                                    ],
+                                },
+                            },
+                            refused: false,
+                            answered: true,
+                        },
+                    ],
+                },
+            ],
+            [],
+            "",
+            "stop",
+        );
+        expect(trial.calls.map((call) => call.tool)).toEqual(["run_script", "search_gene", "pubmed"]);
+        expect(callsAny(["pubmed"])(trial).pass).toBe(true);
     });
 });
 
