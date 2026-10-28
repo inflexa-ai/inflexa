@@ -14,7 +14,7 @@ Two images, two roles. No variant exists, and no image layers on another.
 
 | Image | Role | Who runs it |
 |-|-|-|
-| [`sandbox-base/`](./sandbox-base) | The ONE runtime image: R 4.6.0, Python 3.12, Node 20, Chromium, the bioconda command-line tools at `/opt/conda`, the Node packages at `/opt/node`, and the Go `sandbox-server` that speaks the harness exec protocol. It bakes NO analysis package. | Every sandbox. The packages come from the package store, mounted read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`. |
+| [`sandbox-base/`](./sandbox-base) | The ONE runtime image: R 4.6.0, Python 3.12, Node 24, Chromium, the bioconda command-line tools at `/opt/conda`, the Node packages at `/opt/node`, and the Go `sandbox-server` that speaks the harness exec protocol. It bakes NO analysis package. | Every sandbox. The packages come from the package store, mounted read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`. |
 | [`sandbox-provisioner/`](./sandbox-provisioner) | The network-enabled builder. It holds the compilers, uv, pak, and an egress allowlist, and it writes the pool and the farms. It never sees user data. | The store build workflow, and the acquisition flights of the host (`inflexa store add`). |
 
 The two images build from one digest-pinned base (`base_image` in the

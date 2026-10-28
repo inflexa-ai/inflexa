@@ -5,7 +5,7 @@ The change `add-matched-negative-gene-set` gave the harness a method that six op
 The current state:
 
 - A skill names the datasets of a method by what each one is. Only a sandbox step agent reads a skill (`src/tools/sandbox/skills.ts`).
-- The prompt of the conversation agent carries no agent catalog and no skill. It forbids a report of an environment gap as permanent, and it tells the agent to offer a provisioning route (`src/prompts/conversation.ts:374`).
+- The prompt of the conversation agent carries no agent catalog and no skill. It forbids a report of an environment gap as permanent, and it tells the agent to offer a provisioning route (`src/prompts/conversation.ts`, an item of "Ground Rules").
 - The cli gives that agent the tool that drives its own command surface (`cli/src/modules/harness/runtime.ts:1186`). The `refs download` command is approval-gated (`cli/src/cli/index.ts:917`), thus the user confirms each fetch.
 - A plan step declares its packages (`src/schemas/workflow-state.ts:88`). The pre-launch link pass refuses a plan whose packages cannot link, with `PlanPackagesMissingError` naming each absent package (`src/tools/execute-analysis.ts:111`). The remedy belongs to the embedder.
 - A capability phrase names the data classes of a capability. The planner reads it from the rendered catalog (`src/agents/sandbox-catalog.ts:54`).
