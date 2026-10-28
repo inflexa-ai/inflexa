@@ -225,6 +225,10 @@ function markdownProse(source: string): string[] {
         .replace(/`[^`]*`/g, " `X`")
         .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
         .replace(/https?:\/\/\S+/g, "X")
+        // The placeholder keeps its quote marks, which the splitter reads as the end
+        // of a word before a terminator.
+        .replace(/"[^"]*"/g, '"X"')
+        .replace(/“[^”]*”/g, "“X”")
         // The standard regulates content, not formatting, so emphasis markers are
         // noise here — and worse, a sentence wrapped as **… .** hides its own
         // terminator behind the asterisks, so two sentences would be counted as one.
@@ -256,7 +260,7 @@ function markdownProse(source: string): string[] {
 /** Rule 8.4: a colon that introduces a vertical list ends the sentence, like a period. */
 function splitSentences(block: string): string[] {
   return block
-    .split(/(?<=[a-zA-Z0-9`)"'”])[.!?:](?=\s|$)/)
+    .split(/(?<=[a-zA-Z0-9`)\]"'”])[.!?:](?=\s|$)/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
