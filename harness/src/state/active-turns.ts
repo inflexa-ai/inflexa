@@ -73,6 +73,23 @@ export function turnOfAsk(pool: Querier, askId: string): ResultAsync<string | un
     });
 }
 
+const TurnOfThreadRowSchema = z.object({ thread_id: z.string(), active_turn_id: z.string() });
+
+/** The turn that holds each live thread of an analysis. A claim can outlive its turn, thus a caller checks that the turn runs. */
+export function queryTurnsOfAnalysis(pool: Querier, analysisId: string): ResultAsync<{ readonly threadId: string; readonly turnId: string }[], DbError> {
+    return tryQuery("activeTurns.ofAnalysis", async () => {
+        const { rows } = await pool.query(
+            `SELECT thread_id, active_turn_id FROM cortex_analysis_threads
+              WHERE analysis_id = $1 AND active_turn_id IS NOT NULL AND deleted_at IS NULL`,
+            [analysisId],
+        );
+        return rows.map((row) => {
+            const parsed = TurnOfThreadRowSchema.parse(row);
+            return { threadId: parsed.thread_id, turnId: parsed.active_turn_id };
+        });
+    });
+}
+
 /** Release the thread, when the turn still holds it. A second release changes nothing. */
 export function releaseThreadOfTurn(pool: Querier, threadId: string, turnId: string): ResultAsync<void, DbError> {
     return tryMutation("activeTurns.release", () =>

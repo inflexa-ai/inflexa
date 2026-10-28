@@ -825,8 +825,9 @@ not fail ([work-pause](openspec/specs/work-pause/spec.md)).
   runs again. After the last delay, and for each other cause, the wait is
   `paused`, and only a resume or a stop ends it.
 - Each waiting workflow writes a row in `cortex_paused_work` and a `data-pause`
-  part in the stream of its work. A host lists and resumes the work with
-  `CoreRuntime.pausedWork`. Only a client resumes paused work.
+  part in the stream of its work. A host lists the active work, stops it, and
+  resumes or holds paused work with `CoreRuntime.work`. A stop ends a turn, a run,
+  or a data profile in each state. Only a client resumes paused work.
 - A paused step keeps its run `running`, and the other steps go on. Work inside a
   step cannot wait, thus a derivation gives the refusal of its spawn as a value.
 - DBOS runs with patching enabled, thus a host that gives no version keeps one

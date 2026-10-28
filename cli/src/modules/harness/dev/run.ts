@@ -42,7 +42,7 @@ import {
     type PackageQuery,
     type ParseQueryError,
     type PausedWorkflow,
-    type PausedWorkSurface,
+    type WorkSurface,
     type Pool,
     type Provenance,
     type RunAuthorizer,
@@ -565,7 +565,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     log.info("Ctrl+C detaches; the run resumes on the next `inflexa run`/`inflexa profile` boot — check it with `inflexa run --status`");
     s.start("Running");
     const runId = outcome.runId;
-    const final = await waitForRunTerminal(runtime.pool, runId, s, () => readRunWaits(runtime.pausedWork, analysis.id, runId));
+    const final = await waitForRunTerminal(runtime.pool, runId, s, () => readRunWaits(runtime.work, analysis.id, runId));
     await reportTerminal(runtime.pool, final, s);
 }
 
@@ -593,10 +593,10 @@ export function renderRunProgress(
  * The waits of the run: each of its workflows that waits in a pause. A best-effort progress read, thus a failed read
  * gives no wait and never aborts the wait for the terminal status.
  */
-async function readRunWaits(pausedWork: PausedWorkSurface, analysisId: string, runId: string): Promise<readonly PausedWorkflow[]> {
-    const listed = await ResultAsync.fromPromise(pausedWork.list(analysisId), (cause) => cause);
+async function readRunWaits(work: WorkSurface, analysisId: string, runId: string): Promise<readonly PausedWorkflow[]> {
+    const listed = await ResultAsync.fromPromise(work.list(analysisId), (cause) => cause);
     return listed.match(
-        (works) => works.find((work) => work.kind === "run" && work.workId === runId)?.waiting ?? [],
+        (works) => works.find((candidate) => candidate.kind === "run" && candidate.workId === runId)?.waiting ?? [],
         () => [],
     );
 }

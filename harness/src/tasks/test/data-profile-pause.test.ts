@@ -19,8 +19,8 @@ import type { Pool } from "pg";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
-import { createPausedWork } from "../../app/paused-work.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
+import { createWork } from "../../app/work.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import type { PausePart } from "../../contracts/chat-parts.js";
@@ -31,7 +31,15 @@ import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-pro
 import { queryPausesOfWork, type PauseRecord } from "../../state/paused-work.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { runDataProfileBody, type DataProfileDeps, type DataProfileWorkflowInput } from "../data-profile.js";
+import { DATA_PROFILE_STOPPED, runDataProfileBody, stopDataProfile, type DataProfileDeps, type DataProfileWorkflowInput } from "../data-profile.js";
+
+/** The deps of a work surface in this file: a local run authorizer, and the stops that a test does not reach. */
+const WORK_DEPS = {
+    runAuthorizer: createLocalRunAuthorizer(),
+    stopTurn: () => Promise.reject(new Error("no turn stops in this file")),
+    runCanceler: { cancel: () => Promise.reject(new Error("no run stops in this file")) },
+    stopProfile: () => Promise.reject(new Error("no profile stops in this file")),
+};
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -217,7 +225,7 @@ describe("the data profile inside a workflow — a refused spawn with the suspen
         expect(await analysisStatus(analysisId)).toBe("active");
         expect(revoked).toEqual([]);
 
-        const surface = createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() });
+        const surface = createWork({ pool, ...WORK_DEPS });
         expect(await surface.list(analysisId)).toMatchObject([{ workId: workflowId, kind: "profile", analysisId, waiting: [{ workflowId, state: "paused" }] }]);
         const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const, analysisId }, auth: makeLocalAuth() };
         expect(await surface.resume(session, workflowId)).toEqual({ kind: "resumed", workflows: 1 });
@@ -246,6 +254,34 @@ describe("the data profile inside a workflow — a refused spawn with the suspen
     }, 30_000);
 });
 
+describe("the data profile inside a workflow — a stop", () => {
+    it("ends a paused profile: the workflow is cancelled, the row fails, and its pause rows go", async () => {
+        const analysisId = await seedProfile();
+        const sandbox = refusesFirstSpawn("account_frozen");
+        const { provider } = scriptedModel([reply([text("unused")])]);
+        const revoked: string[] = [];
+        cases.set(analysisId, { input: { analysisId, runSession: runSession(analysisId), stagedInputs }, deps: depsFor(sandbox.client, provider, revoked) });
+        const workflowId = rig.nextWorkflowId("profile-stop-");
+        const handle = await DBOS.startWorkflow(profileWorkflow, { workflowID: workflowId })(analysisId);
+        await waitForPause(analysisId, workflowId);
+
+        const surface = createWork({ pool, ...WORK_DEPS, stopProfile: (id, workflow) => stopDataProfile({ pool }, id, workflow) });
+        const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const, analysisId }, auth: makeLocalAuth() };
+        const elsewhere = { ...session, scope: { kind: "analysis" as const, analysisId: "a-other" } };
+        expect(await surface.stop(elsewhere, workflowId)).toEqual({ kind: "not_found" });
+        expect(await surface.stop(session, workflowId)).toMatchObject({ kind: "stopped", work: { workId: workflowId, kind: "profile" } });
+
+        await expect(handle.getResult()).rejects.toThrow("has been cancelled");
+        expect((await DBOS.getWorkflowStatus(workflowId))?.status).toBe("CANCELLED");
+        const settled = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
+        expect(settled).toMatchObject({ status: "failed", error: DATA_PROFILE_STOPPED });
+        expect((await queryPausesOfWork(pool, analysisId, workflowId))._unsafeUnwrap()).toEqual([]);
+        expect(await surface.list(analysisId)).toEqual([]);
+        expect(sandbox.made()).toBe(0);
+        expect(revoked).toEqual(["data-profile-stopped"]);
+    }, 30_000);
+});
+
 describe("the data profile inside a workflow — a suspend error of the profiler model", () => {
     it("waits in place with its row running, and sends the request again after a resume", async () => {
         const analysisId = await seedProfile();
@@ -268,10 +304,7 @@ describe("the data profile inside a workflow — a suspend error of the profiler
         expect(revoked).toEqual([]);
 
         const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const, analysisId }, auth: makeLocalAuth() };
-        expect(await createPausedWork({ pool, runAuthorizer: createLocalRunAuthorizer() }).resume(session, workflowId)).toEqual({
-            kind: "resumed",
-            workflows: 1,
-        });
+        expect(await createWork({ pool, ...WORK_DEPS }).resume(session, workflowId)).toEqual({ kind: "resumed", workflows: 1 });
         await handle.getResult();
 
         expect(model.calls).toHaveLength(3);

@@ -53,6 +53,7 @@ import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { keepSuspendingRefusal, SandboxFailure, type SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { workPause } from "../workflows/pause.js";
+import { clearPausesOfWork } from "../state/paused-work.js";
 import type { SandboxRef } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -864,7 +865,11 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
-        if (isWorkflowCancellation(err)) throw err;
+        if (isWorkflowCancellation(err)) {
+            // `stopDataProfile` writes the row, but only the body holds the run session.
+            await revoke("data-profile-stopped");
+            throw err;
+        }
         // A failure with a cause of a pause waited in the loop, thus this one fails the profile.
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
@@ -1204,6 +1209,34 @@ async function failClaimedProfile(deps: DataProfileTriggerDeps, analysisId: stri
  */
 export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): ResultAsync<void, DataProfileStartError> {
     return new ResultAsync(dispatchClaimedProfile(deps, params, "Retry"));
+}
+
+/** The ledger error of a profile that a stop ended. A client shows it, and a retry can follow it. */
+export const DATA_PROFILE_STOPPED = "Data profiling was stopped";
+
+/** What the stop of a data profile reaches: the ledger pool, and the notice of a settled profile. */
+export type DataProfileStopDeps = {
+    readonly pool: Querier;
+    readonly logger?: Logger;
+    readonly notifyDataProfileSettled?: NotifyDataProfileSettled;
+};
+
+/**
+ * Stop the profile workflow of an analysis, and fail its row. The body passes a cancel through its failure path,
+ * thus the row, the rows of its pauses, and the settled notice converge here. The revoke of the mandate and the
+ * teardown of the sandbox stay in the body, which runs them on its way out. The `running` guard of the row write keeps a profile that settled first.
+ */
+export async function stopDataProfile(deps: DataProfileStopDeps, analysisId: string, workflowId: string): Promise<void> {
+    const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
+    await DBOS.cancelWorkflow(workflowId);
+    const cleared = await clearPausesOfWork(deps.pool, workflowId);
+    if (cleared.isErr()) logger.warn("the pauses of a stopped profile did not clear", { op: cleared.error.op });
+    const failed = await failDataProfile(deps.pool, analysisId, DATA_PROFILE_STOPPED);
+    if (failed.isErr()) {
+        logger.error("the row of a stopped profile did not fail", { op: failed.error.op });
+        return;
+    }
+    await settleTerminalWrite(logger, analysisId, failed.value, "failed", deps.notifyDataProfileSettled);
 }
 
 /**

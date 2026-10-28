@@ -28,12 +28,13 @@ import { errAsync, okAsync } from "neverthrow";
 
 import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 import { makeFakeWorkspaceFs } from "../../../../agents/sandbox/__fixtures__/deps.js";
-import { createPausedWork } from "../../../../app/paused-work.js";
 import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.js";
+import { createWork } from "../../../../app/work.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
 import type { RunChargeOutcome } from "../../../../billing/run-charge.js";
 import { unusedCitationResolver } from "../../../../citations/__fixtures__/resolver.js";
 import type { ArtifactRegistry } from "../../../../execution/artifact-registry.js";
+import { createRunCanceler } from "../../../../execution/run-canceler.js";
 import type { GateFailure } from "../../../../lib/hooks.js";
 import { inProcessSubAgent } from "../../../../loop/sub-agent.js";
 import { createWorkingMemory } from "../../../../memory/working-memory.js";
@@ -48,6 +49,14 @@ import { createLiteratureReviewerTool } from "../../../../tools/research/literat
 import { createSubmitFileMetadataTool } from "../../../../tools/sandbox/submit-file-metadata.js";
 import { runExecuteAnalysisBody, type ExecuteAnalysisDeps, type ExecuteAnalysisResult } from "../../../execute-analysis.js";
 import { runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../../../sandbox-step.js";
+
+/** The deps of a work surface in this file: a local run authorizer, and the stops that a test does not reach. */
+const WORK_DEPS = {
+    runAuthorizer: createLocalRunAuthorizer(),
+    stopTurn: () => Promise.reject(new Error("no turn stops in this file")),
+    runCanceler: { cancel: () => Promise.reject(new Error("no run stops in this file")) },
+    stopProfile: () => Promise.reject(new Error("no profile stops in this file")),
+};
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine: a plain shutdown (no `deregister`) keeps every
@@ -301,18 +310,43 @@ async function analysisStatus(analysisId: string): Promise<string | undefined> {
     return rows[0]?.status;
 }
 
-function sessionOf(analysisId: string): Parameters<ReturnType<typeof createPausedWork>["resume"]>[0] {
+function sessionOf(analysisId: string): Parameters<ReturnType<typeof createWork>["resume"]>[0] {
     return { identity: { user: "u-1" }, scope: { kind: "analysis", analysisId }, auth: makeLocalAuth() };
 }
 
 async function resume(current: RunCase, runId: string): Promise<void> {
-    expect(await createPausedWork({ pool: rig.pool, runAuthorizer: createLocalRunAuthorizer() }).resume(sessionOf(current.analysisId), runId)).toEqual({
-        kind: "resumed",
-        workflows: 1,
-    });
+    expect(await createWork({ pool: rig.pool, ...WORK_DEPS }).resume(sessionOf(current.analysisId), runId)).toEqual({ kind: "resumed", workflows: 1 });
 }
 
 describe("the pause of a run", () => {
+    it("lists a running run with no waits as active work", async () => {
+        const runId = rig.nextWorkflowId("run-active-");
+        const analysisId = `a-${runId}`;
+        (await upsertAnalysis(rig.pool, analysisId, null))._unsafeUnwrap();
+        (await insertRun(rig.pool, { runId, analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        expect(await createWork({ pool: rig.pool, ...WORK_DEPS }).list(analysisId)).toEqual([{ workId: runId, kind: "run", analysisId, waiting: [] }]);
+    });
+
+    it("a stop of a paused run cancels it, and the run leaves the active work", async () => {
+        const { runId, planId, current } = await prepareRun("run-pause-stop", {
+            scripts: { S1: [failedRequest(402, "Payment Required"), ...completesStep()] },
+        });
+        const handle = await DBOS.startWorkflow(parent, { workflowID: runId })({ analysisId: current.analysisId, planId });
+        const row = await waitForPause(current, runId);
+
+        const runCanceler = createRunCanceler({ pool: rig.pool, runCharge: current.runCharge, runAuthorizer: createLocalRunAuthorizer() });
+        const surface = createWork({ pool: rig.pool, ...WORK_DEPS, runCanceler });
+        expect(await surface.list(current.analysisId)).toMatchObject([
+            { workId: runId, kind: "run", waiting: [{ workflowId: row.workflowId, state: "paused" }] },
+        ]);
+        expect(await surface.stop(sessionOf(current.analysisId), runId)).toMatchObject({ kind: "stopped", work: { workId: runId, kind: "run" } });
+
+        await expect(handle.getResult()).rejects.toThrow("has been cancelled");
+        expect((await queryRun(rig.pool, runId))._unsafeUnwrap()?.status).toBe("canceled");
+        expect((await queryPausesOfWork(rig.pool, current.analysisId, runId))._unsafeUnwrap()).toEqual([]);
+        expect(await surface.list(current.analysisId)).toEqual([]);
+    });
+
     it("a step whose model request fails with a 402 pauses, its sibling completes, and a resume completes the run", async () => {
         const { runId, planId, current } = await prepareRun("run-pause-step", {
             scripts: { S1: [failedRequest(402, "Payment Required"), ...completesStep()], S2: completesStep() },

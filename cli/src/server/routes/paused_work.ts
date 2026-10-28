@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ResultAsync } from "neverthrow";
-import type { ChatTurnSession, PausedWork as HarnessPausedWork, PausedWorkHold, PausedWorkResume } from "@inflexa-ai/harness";
+import type { ChatTurnSession, Work, WorkHold, WorkResume } from "@inflexa-ai/harness";
 
 import type { HeldWork, PausedWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
@@ -38,13 +38,14 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
     routes.get("/", runtime, async (c) => {
         const analysisId = c.req.param("analysisId") ?? "";
         const page = parsePage(c.req.query("page"), c.req.query("perPage"));
-        const listed = await ResultAsync.fromPromise(c.get("runtime").pausedWork.list(analysisId), (cause) => cause);
+        const listed = await ResultAsync.fromPromise(c.get("runtime").work.list(analysisId), (cause) => cause);
         return listed.match(
             (works) => {
                 // The connection is read one time, and only when an item needs the remedy.
                 let remedy: string | undefined;
                 const remedyOf = (): string => (remedy ??= credentialRemedy(opts.connection()).message);
-                const items = works.map((work) => withRemedy(work, remedyOf));
+                // The runtime lists each active work, and this route gives the work that waits.
+                const items = works.filter((work) => work.waiting.length > 0).map((work) => withRemedy(work, remedyOf));
                 const start = page.page * page.perPage;
                 return c.json<PausedWorkList>(listEnvelope("pausedWork", items.slice(start, start + page.perPage), items.length, page));
             },
@@ -55,9 +56,9 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
     routes.post("/:workId/resume", runtime, async (c) => {
         const analysisId = c.req.param("analysisId") ?? "";
         const workId = c.req.param("workId");
-        const resumed = await ResultAsync.fromPromise(c.get("runtime").pausedWork.resume(opts.session(analysisId), workId), (cause) => cause);
+        const resumed = await ResultAsync.fromPromise(c.get("runtime").work.resume(opts.session(analysisId), workId), (cause) => cause);
         return resumed.match(
-            (outcome: PausedWorkResume) => {
+            (outcome: WorkResume) => {
                 switch (outcome.kind) {
                     case "resumed":
                         noteAnalysisActivity(analysisId, Date.now());
@@ -79,9 +80,9 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
     routes.post("/:workId/hold", runtime, async (c) => {
         const analysisId = c.req.param("analysisId") ?? "";
         const workId = c.req.param("workId");
-        const held = await ResultAsync.fromPromise(c.get("runtime").pausedWork.hold(opts.session(analysisId), workId), (cause) => cause);
+        const held = await ResultAsync.fromPromise(c.get("runtime").work.hold(opts.session(analysisId), workId), (cause) => cause);
         return held.match(
-            (outcome: PausedWorkHold) => {
+            (outcome: WorkHold) => {
                 switch (outcome.kind) {
                     case "held":
                         return c.json<HeldWork>({ workId, workflows: outcome.workflows });
@@ -101,6 +102,6 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
 }
 
 /** The work on the wire: the remedy rides an item that a waiting workflow with the cause `credential` holds. */
-function withRemedy(work: HarnessPausedWork, remedyOf: () => string): PausedWork {
+function withRemedy(work: Work, remedyOf: () => string): PausedWork {
     return work.waiting.some((waiting) => waiting.cause.kind === "credential") ? { ...work, remedy: remedyOf() } : work;
 }

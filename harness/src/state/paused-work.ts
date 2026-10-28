@@ -8,7 +8,7 @@ import type { QueryConfig } from "pg";
 import { z } from "zod";
 
 import type { RunSession } from "../auth/types.js";
-import type { PauseCause, PausedWorkKind } from "../contracts/chat-parts.js";
+import type { PauseCause, WorkKind } from "../contracts/chat-parts.js";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 
@@ -16,7 +16,7 @@ import type { Querier } from "./db.js";
 export type PauseRecord = {
     readonly workflowId: string;
     readonly workId: string;
-    readonly workKind: PausedWorkKind;
+    readonly workKind: WorkKind;
     readonly analysisId: string;
     readonly threadId?: string;
     readonly state: "retrying" | "paused";
