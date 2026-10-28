@@ -61,6 +61,7 @@ import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
 import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
+import { planCardOf } from "../../memory/card-builders.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
@@ -1447,13 +1448,22 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "record more faithfully than the record itself. Pass only what the profile cannot hold: the research " +
             "question, facts the user told you (analystNotes), prior run results, and their constraints. " +
             "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
-            "The result carries an `event`: `plan_complete` with {planId, plan} — the plan is saved and ready for show_plan and " +
-            "execute_analysis plan mode, and this call neither shows nor runs it; `clarification_needed` with {question, questionContext?} " +
+            "The result carries an `event`: `plan_complete` with {planId, plan} — the plan is saved, the call shows its plan card to the user, " +
+            "and it does not run it (execute_analysis plan mode does, after the approval); `clarification_needed` with {question, questionContext?} " +
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
         inputSchema: generatePlanInputSchema,
         describeCall: ({ researchQuestion }) => researchQuestion,
         startsWorkflow: true,
-        execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => ok(await plan(input, ctx)),
+        execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
+            const output = await plan(input, ctx);
+            // The card comes from the result of the planner, with no read of the store, thus a replay of the body
+            // gives the same card under the same id, and a reader keeps one card.
+            if (output.event === "plan_complete" && output.planId !== undefined && output.plan !== undefined) {
+                const card = planCardOf({ planId: output.planId, plan: hydratePlanSteps(output.plan), parentPlanId: input.parentPlanId ?? null });
+                if (card !== null) await ctx.emit({ type: "data-plan", source: ctx.session.provenance, data: card });
+            }
+            return ok(output);
+        },
     });
 }

@@ -34,8 +34,8 @@ export function createShowPlanTool(pool: PlanRowQuerier): Tool<z.infer<typeof Sh
         id: "show_plan",
         description:
             "Display a STORED plan in chat by its planId. The plan is loaded from storage and embedded in the card, " +
-            "so the UI renders it directly. Use it to present the plan `generate_plan` just produced, and when the user " +
-            "asks to see an earlier plan again. " +
+            "so the UI renders it directly. Use it when the user asks to see an earlier plan again: `generate_plan` shows the card " +
+            "of the plan that it makes. " +
             "Pick this tool by what you are referencing, not by how the output looks: " +
             "NOT for a plan you are drafting in conversation (that is `generate_plan`), NOT for other synthesized content " +
             "(`show_user`), NOT for analysis files (`show_file`). Never re-type a plan's steps into a `show_user` markdown " +

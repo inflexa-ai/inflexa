@@ -65,7 +65,7 @@ function presentationId(input: Record<string, unknown>): string {
 
 /** Build the `data-plan` payload of a stored plan record. `null` when the
  *  document no longer parses. An explicit `title` overrides the plan title. */
-export function planCardOf(record: PlanRecord, title?: string): PlanCardData | null {
+export function planCardOf(record: Pick<PlanRecord, "planId" | "plan" | "parentPlanId">, title?: string): PlanCardData | null {
     const parsed = AnalysisPlanSchema.safeParse(record.plan);
     if (!parsed.success) return null;
 

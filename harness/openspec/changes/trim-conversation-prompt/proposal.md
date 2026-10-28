@@ -37,6 +37,10 @@ The paired mean difference is 0 points for each step, in each set. These cases t
 - `report-on-request` and `summary-no-report`: one report path, and a report only on request.
 - `write-derived-file` and `trivial-question-no-run`: a file write or a lookup is not a run.
 
+### The plan card
+
+The order "generate a plan, then show it with `show_plan`" was a rule of the prompt. `generate_plan` now emits the card of the plan that it makes, thus the rule is code, and the prompt and `show_plan` drop it. No `DBOS.patch` keeps the old order, because nothing runs in production yet.
+
 ## Capabilities
 
 ### New Capabilities
@@ -44,6 +48,8 @@ The paired mean difference is 0 points for each step, in each set. These cases t
 None.
 
 ### Modified Capabilities
+
+- `planning-enhancements`: an added requirement, `generate_plan` shows the card of the plan that it makes.
 
 - `structure-presentation`: "The agent is told where a structure is shown". The `show_user` description names the structure card, and the `show_file` description keeps a `.pdb` or `.cif` that a step wrote. The prompt section "Showing Things to the User" no longer exists.
 - `conversation-run-awareness`: "Launch and prompt contracts prevent inspect polling loops". The `inspect_run` description teaches the one bounded wait. The prompt says only that runs are asynchronous and that their results are read on a later turn.
