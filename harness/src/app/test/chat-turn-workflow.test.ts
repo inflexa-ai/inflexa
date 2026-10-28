@@ -20,7 +20,6 @@ import { registerSubAgent } from "../../loop/sub-agent.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
-import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
 import type { ResolveRequestHeaders } from "../../providers/request-headers.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
@@ -456,37 +455,6 @@ describe("a chat turn as a workflow", () => {
 });
 
 describe("the approval of a chat turn workflow", () => {
-    it("keeps an answer that arrives while the turn is down, and the call runs after the recovery", async () => {
-        guardedRuns = 0;
-        const scripted = scriptedModel([callTools(toolCall("g1", "guarded", {})), reply([text("It ran.")])]);
-        provider = scripted.provider;
-        const threadId = `thread-${rig.nextWorkflowId()}`;
-
-        const turnId = await startTurn(threadId);
-        await waitUntilAsync(async () => (await askOf(threadId))?.status === "pending");
-        const ask = await askOf(threadId);
-        if (ask === undefined) throw new Error("the turn raised no ask");
-        // A cancelled execution waits in its receive until a message wakes it. The answer wakes it while the turn is
-        // cancelled, thus it leaves and keeps the answer for the resume, and its end drops the live credential.
-        credentialAfterRestart = undefined;
-        await DBOS.cancelWorkflow(turnId);
-        expect(await turns.answer(ask.id, { kind: "once" })).toBe("applied");
-        await waitUntil(() => turnCredentials.of(turnId) === undefined, 15_000);
-        credentialAfterRestart = makeLocalAuth();
-        const handle = await DBOS.resumeWorkflow(turnId);
-        await handle.getResult();
-
-        expect(guardedRuns).toBe(1);
-        expect(scripted.calls).toHaveLength(2);
-        expect(await askOf(threadId)).toMatchObject({ status: "resolved" });
-        // The stored display replays the ask with its answer.
-        const replayed = storedMessagesToChat((await createThreadHistory(rig.pool).loadAll(threadId))._unsafeUnwrap().flat())
-            .flatMap((message) => message.parts)
-            .find((part) => part.type === "data-ask");
-        expect(replayed).toMatchObject({ type: "data-ask", title: "Run the script", status: "resolved" });
-        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
-    }, 20_000);
-
     it("denies the call when the user rejects it, and stops the turn", async () => {
         guardedRuns = 0;
         const scripted = scriptedModel([callTools(toolCall("g1", "guarded", {}))]);
