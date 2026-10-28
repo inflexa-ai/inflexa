@@ -87,8 +87,8 @@ key into the **same** space, thus a read of a prior run's output resolves to
 the entity that the write generated.
 
 A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
-`inflexa:hash`, `inflexa:size`, and `inflexa:producer` (`command` or
-`file_tool`). A read input carries `inflexa:path`, `inflexa:hash`,
+`inflexa:hash`, `inflexa:size`, and `inflexa:producer` (`command`,
+`file_tool`, or `script`). A read input carries `inflexa:path`, `inflexa:hash`,
 `inflexa:source` (`data`, `upstream`, or `prior`), and optional
 `inflexa:fileId`, with no `prov:type`.
 
@@ -102,6 +102,7 @@ A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
 | step | `inflexa:step-{runId}-{stepId}` | end from `completedAtMs` |
 | command | `inflexa:cmd-{runId}-{stepId}-{groupDigest}` | none |
 | call | `inflexa:call-{callDigest}` | none |
+| script run | `inflexa:script-{scriptDigest}` | none |
 
 `mintActionId` mints one fresh id per genuine user action. The default minter
 is a random UUID. The model clock (`now`) defaults to the wall clock. Both are
@@ -143,6 +144,20 @@ the digest mixes in a scope disambiguator. The call activity carries
 `prov:type` `inflexa:FileToolWrite`, `inflexa:tool`, `inflexa:invocationId`,
 and the optional `inflexa:threadId`. A call activity carries **no formal
 time**, for the same reason as a command activity.
+
+A script run activity records one script that an agent ran in a session
+(`run_script`). The script digest is:
+
+```
+scriptDigest = digest( "{threadId}|{invocationId}" )
+```
+
+An absent thread id contributes the empty string. The activity carries
+`prov:type` `inflexa:ScriptRun`, `inflexa:invocationId`, the optional
+`inflexa:threadId`, one `inflexa:tool` value for each tool that the script
+called, in call order, and `inflexa:ok`. It carries no `inflexa:tool` when the
+script called no tool. It carries **no formal time**, for the same reason as a
+command activity.
 
 Run and step activities carry terminal attributes on completion:
 `inflexa:status` and optional `inflexa:durationMs`. A run also carries
@@ -188,10 +203,10 @@ PROV-JSON attribute values encode per JSON type of the supplied value:
 | Value type | Encoding | Dialect attributes |
 |-|-|-|
 | string | plain JSON string | `inflexa:path`, `inflexa:hash`, `inflexa:name`, `inflexa:slug`, `inflexa:command`, `inflexa:args`, `inflexa:tool`, `inflexa:source`, `inflexa:fileId`, `inflexa:status`, `inflexa:runId`, `inflexa:stepId`, `inflexa:planSummary`, `inflexa:unresolvedScript`, `inflexa:invocationId`, `inflexa:email`, `inflexa:version`, `inflexa:commit`, `inflexa:model`, `inflexa:threadId`, `inflexa:parentThreadId`, `inflexa:sessionKind`, `inflexa:blockId`, `inflexa:blockKind`, `inflexa:title`, `inflexa:outputPath`, `inflexa:outputHash`, `inflexa:scriptHash`, `inflexa:pagePath`, `inflexa:documentHash`, `inflexa:versionId`, `prov:label`, `prov:type` (the type name is a plain string) |
-| boolean | plain JSON boolean | `inflexa:isDir`, `inflexa:replaced` |
+| boolean | plain JSON boolean | `inflexa:isDir`, `inflexa:replaced`, `inflexa:ok` |
 | integral number | `{"$": n, "type": "xsd:int"}` | `inflexa:size`, `inflexa:exitCode`, `inflexa:durationMs` |
 | non-integral number | `{"$": n, "type": "xsd:double"}` | none in the dialect |
-| multiple values | JSON array of the encoded values | the model agent's `prov:type`, a derivation's `inflexa:source` |
+| multiple values | JSON array of the encoded values | the model agent's `prov:type`, a derivation's `inflexa:source`, a script run's `inflexa:tool` |
 
 Every numeric dialect attribute is integral, thus each one serializes as an
 `xsd:int` typed literal. The integral test is on the value, not on a declared
@@ -213,6 +228,8 @@ the formal time argument. `aDigest = digest(agentQName)`.
 | command associated with agent | `inflexa:assoc-cmd-{runId}-{stepId}-{groupDigest}-{aDigest}` |
 | call informed by step | `inflexa:informed-call-{callDigest}` |
 | call associated with agent | `inflexa:assoc-call-{callDigest}-{aDigest}` |
+| script run associated with agent | `inflexa:assoc-script-{scriptDigest}-{aDigest}` |
+| script run used file | `inflexa:used-script-{scriptDigest}-{fileDigest}` |
 | run informed by plan approval | `inflexa:informed-approval-{runId}` |
 | model delegation | `inflexa:delegation-{digest(modelQn)}-{digest(responsibleQn)}` |
 | model association | `{assocIdBase}-{digest(modelQn)}` |
@@ -229,8 +246,9 @@ one activity share one base and differ in the agent digest.
 Exactly **one generation edge exists per file entity**. A file that a command
 produced gets its `inflexa:gen-{fileDigest}` edge from the command activity. A
 file that a file-tool call wrote gets the same id from its call activity. A
+file that a script wrote gets the same id from its script run activity. A
 leaf file with no producing activity gets the same id from its step activity.
-The three authorities write the same identifier, thus re-emission merges.
+The four authorities write the same identifier, thus re-emission merges.
 
 A lifecycle relation (creation, input add, input remove) carries no explicit
 identifier, and neither does a relation of the session and report family. Only
@@ -264,8 +282,8 @@ event except `run_completed` first declares (re-declares) the actor agent per
 the agent table, before its own statements. Re-declaration is harmless:
 `unified()` collapses same-QName records.
 
-A model-driven event (`step_completed`, `command_executed`, and a
-`file_written` with the `call` authority) also appends the model-agent
+A model-driven event (`step_completed`, `command_executed`, `script_run`, and
+a `file_written` with the `call` authority) also appends the model-agent
 statements, after the actor association of its activity:
 
 1. the agent `inflexa:agent-model-{digest(model)}`
@@ -438,6 +456,46 @@ Payload: the step ref and the used-input ref.
 
 The event declares the actor agent too, although its own statements carry no
 agent reference.
+
+### script_run
+
+Payload: the model id and the script run ref: the invocation id, the optional
+thread id, the optional saved script (path, hash, size), the files that the
+script read (path, hash), the files that it wrote (path, hash, size), the
+tools that it called, and `ok`.
+
+1. the script run activity `inflexa:script-{scriptDigest}` with the script
+   run attributes and no formal time
+2. `wasAssociatedWith(scriptRun, actor)`, id
+   `inflexa:assoc-script-{scriptDigest}-{aDigest}`
+3. the model-agent statements, with
+   `assocIdBase = inflexa:assoc-script-{scriptDigest}`
+
+Only when the payload holds the saved script:
+
+4. the file entity of the script, `prov:type` `inflexa:File`,
+   `inflexa:path`, `inflexa:hash`, `inflexa:size`, `inflexa:producer`
+   `file_tool`
+5. `wasAttributedTo(script, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
+6. `wasDerivedFrom(script, analysis)`, id `inflexa:deriv-{fileDigest}`
+7. `used(scriptRun, script)`, id `inflexa:used-script-{scriptDigest}-{fileDigest}`
+
+For each file that the script read, in payload order:
+
+8. `used(scriptRun, file)`, id `inflexa:used-script-{scriptDigest}-{fileDigest}`
+
+For each file that the script wrote, in payload order:
+
+9. the file entity, `prov:type` `inflexa:File`, `inflexa:path`,
+   `inflexa:hash`, `inflexa:size`, `inflexa:producer` `script`
+10. `wasGeneratedBy(file, scriptRun)`, id `inflexa:gen-{fileDigest}`
+11. `wasAttributedTo(file, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
+12. `wasDerivedFrom(file, analysis)`, id `inflexa:deriv-{fileDigest}`
+
+A read keys into the shared file space and declares no entity, the same as a
+command input. Thus a read of a run output resolves to the entity that the run
+generated. The script entity has no generation edge: the agent wrote the code
+in the call itself.
 
 ### The session and report family
 

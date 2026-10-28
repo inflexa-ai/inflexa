@@ -52,7 +52,7 @@ export type LineageFileNode = {
     fileId?: string;
 };
 
-export type LineageActivityKind = "run" | "step" | "command" | "file_tool" | "action";
+export type LineageActivityKind = "run" | "step" | "command" | "file_tool" | "script" | "action";
 
 export type LineageActivityNode = {
     kind: "activity";
@@ -220,12 +220,14 @@ function activityKindOf(types: string[], qn: string): { activity: LineageActivit
     if (types.includes("Step")) return { activity: "step" };
     if (types.includes("Command")) return { activity: "command" };
     if (types.includes("FileToolWrite")) return { activity: "file_tool" };
+    if (types.includes("ScriptRun")) return { activity: "script" };
     const local = localpart(qn);
     if (local.startsWith("action-")) return { activity: "action", actionType: types[0] };
     if (local.startsWith("run-")) return { activity: "run" };
     if (local.startsWith("step-")) return { activity: "step" };
     if (local.startsWith("cmd-")) return { activity: "command" };
     if (local.startsWith("call-")) return { activity: "file_tool" };
+    if (local.startsWith("script-")) return { activity: "script" };
     // A lifecycle action is the only remaining dialect activity kind.
     return { activity: "action", actionType: types[0] };
 }

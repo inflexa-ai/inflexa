@@ -257,6 +257,28 @@ export type ProvCallRef = {
 };
 
 /**
+ * One script that an agent ran in a session (`run_script`) and that read or wrote a file. Recorded as a PROV
+ * **activity** that uses the script and each file it read, and that generates each file it wrote. Each file keys
+ * into the shared `(path, hash)` space, thus a derived file chains to the run outputs and inputs it came from.
+ */
+export type ProvScriptRunRef = {
+    /** The loop's tool-call id of the script — replay-stable, unique within one agent loop only. */
+    invocationId: string;
+    /** The thread of the session that ran the script. Absent when the host scoped no thread. */
+    threadId?: string;
+    /** The saved source of the script. Absent when the session kept no copy. */
+    script?: { path: string; hash: string; size: number };
+    /** Each file the script read. */
+    reads: readonly ProvFileKey[];
+    /** Each file the script wrote. */
+    writes: readonly { path: string; hash: string; size: number }[];
+    /** The tools the script called, in call order — an OPEN vocabulary. */
+    tools: readonly string[];
+    /** The script ran to its end. A failed script keeps the files it wrote before the failure. */
+    ok: boolean;
+};
+
+/**
  * A started agent session of an analysis. One shape carries both kinds, because to start a session
  * is one action and the kind is data of that action. Recorded as a PROV **activity**; a `report`
  * session also mints the report entity every later act operates on.

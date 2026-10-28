@@ -21,6 +21,7 @@ import type {
     ProvReportTitleRef,
     ProvReportVersionRef,
     ProvCallRef,
+    ProvScriptRunRef,
     ProvSessionRef,
 } from "./types.js";
 
@@ -122,6 +123,7 @@ export type ProvDocumentModelInternal = {
         step?: ProvStepRef,
     ): void;
     appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void;
+    appendScriptRun(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvScriptRunRef, model: ProvModelId): void;
     appendSessionCreated(doc: ProvDocument, analysisId: string, actor: ProvActor, session: ProvSessionRef, model: ProvModelId): void;
     appendReportBlockAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void;
     appendReportBlockChanged(doc: ProvDocument, analysisId: string, actor: ProvActor, block: ProvReportBlockRef, model: ProvModelId): void;
@@ -692,6 +694,63 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}): Prov
     }
 
     /**
+     * Append the records of one script run: a deterministic `inflexa:ScriptRun` activity
+     * (`inflexa:script-{scriptDigest}`), associated with the actor's agent and the model agent, with no
+     * formal time; the script entity, `used` by the activity; a `used` edge for each file the script
+     * read; and for each file it wrote, the file entity and its one generation edge under the shared
+     * `gen-{fileDigest}` id. The digest keys on the thread and the invocation id, as a session call
+     * does, thus a durable re-emission dedupes.
+     */
+    function appendScriptRun(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvScriptRunRef, model: ProvModelId): void {
+        const { analysisQn, agentQn } = recordPreamble(doc, analysisId, actor);
+        const sDigest = digest(`${run.threadId ?? ""}|${run.invocationId}`);
+        const sQn = `${NS_PREFIX}:script-${sDigest}`;
+        doc.activity(sQn, undefined, undefined, {
+            "prov:type": "inflexa:ScriptRun",
+            "inflexa:invocationId": run.invocationId,
+            "inflexa:threadId": run.threadId,
+            "inflexa:tool": run.tools.length > 0 ? [...run.tools] : undefined,
+            "inflexa:ok": run.ok,
+        });
+        const assocIdBase = `${NS_PREFIX}:assoc-script-${sDigest}`;
+        doc.wasAssociatedWith(sQn, agentQn, undefined, `${assocIdBase}-${agentDigest(agentQn)}`);
+        appendModelAgent(doc, model, agentQn, sQn, assocIdBase);
+
+        const usedId = (key: ProvFileKey): string => `${NS_PREFIX}:used-script-${sDigest}-${fileDigest(key)}`;
+        if (run.script !== undefined) {
+            const scriptQn = fileQName(run.script);
+            const suffix = fileDigest(run.script);
+            doc.entity(scriptQn, {
+                "prov:type": "inflexa:File",
+                "inflexa:path": run.script.path,
+                "inflexa:hash": run.script.hash,
+                "inflexa:size": run.script.size,
+                "inflexa:producer": "file_tool",
+            });
+            doc.wasAttributedTo(scriptQn, agentQn, `${NS_PREFIX}:attr-${suffix}-${agentDigest(agentQn)}`);
+            doc.wasDerivedFrom(scriptQn, analysisQn, undefined, undefined, undefined, `${NS_PREFIX}:deriv-${suffix}`);
+            doc.used(sQn, scriptQn, undefined, usedId(run.script));
+        }
+        for (const read of run.reads) {
+            doc.used(sQn, fileQName(read), undefined, usedId(read));
+        }
+        for (const write of run.writes) {
+            const fQn = fileQName(write);
+            const suffix = fileDigest(write);
+            doc.entity(fQn, {
+                "prov:type": "inflexa:File",
+                "inflexa:path": write.path,
+                "inflexa:hash": write.hash,
+                "inflexa:size": write.size,
+                "inflexa:producer": "script",
+            });
+            doc.wasGeneratedBy(fQn, sQn, undefined, `${NS_PREFIX}:gen-${suffix}`);
+            doc.wasAttributedTo(fQn, agentQn, `${NS_PREFIX}:attr-${suffix}-${agentDigest(agentQn)}`);
+            doc.wasDerivedFrom(fQn, analysisQn, undefined, undefined, undefined, `${NS_PREFIX}:deriv-${suffix}`);
+        }
+    }
+
+    /**
      * Append the input-read records: an entity for the file the step consumed, `used` by the
      * reading step activity. The entity is keyed in the SAME `(path, hash)` space as outputs (via
      * {@link fileQName}), which is the load-bearing choice — a `source: "prior"` read of
@@ -931,6 +990,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}): Prov
         appendCommandExecuted,
         appendFileWritten,
         appendInputUsed,
+        appendScriptRun,
         appendSessionCreated,
         appendReportBlockAdded,
         appendReportBlockChanged,
