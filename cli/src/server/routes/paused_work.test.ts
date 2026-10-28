@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import type { ChatTurnSession, PausedWork, PausedWorkSurface } from "@inflexa-ai/harness";
+import type { ChatTurnSession, Work, WorkSurface } from "@inflexa-ai/harness";
 
 import type { HeldWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
 import type { ServerBootState } from "../../api/server.ts";
@@ -17,7 +17,7 @@ const A = "analysis-1";
 const PAUSED_AT = "2026-10-27T10:00:00.000Z";
 
 /** A turn whose model endpoint refused the credential. */
-const CREDENTIAL_TURN: PausedWork = {
+const CREDENTIAL_TURN: Work = {
     workId: "turn-1",
     kind: "turn",
     analysisId: A,
@@ -26,7 +26,7 @@ const CREDENTIAL_TURN: PausedWork = {
 };
 
 /** A run whose two steps wait: one on a refusal of the host, one on the timer of an outage. */
-const PAUSED_RUN: PausedWork = {
+const PAUSED_RUN: Work = {
     workId: "run-1",
     kind: "run",
     analysisId: A,
@@ -37,9 +37,7 @@ const PAUSED_RUN: PausedWork = {
 };
 
 /** A fake of the paused work of the runtime, with each resume that it got. */
-function fakePausedWork(
-    items: PausedWork[],
-): PausedWorkSurface & { resumed: { session: ChatTurnSession; workId: string }[]; held: string[]; listed: string[] } {
+function fakePausedWork(items: Work[]): WorkSurface & { resumed: { session: ChatTurnSession; workId: string }[]; held: string[]; listed: string[] } {
     const resumed: { session: ChatTurnSession; workId: string }[] = [];
     const held: string[] = [];
     const listed: string[] = [];
@@ -51,6 +49,7 @@ function fakePausedWork(
             listed.push(analysisId);
             return items.filter((work) => work.analysisId === analysisId);
         },
+        stop: async () => ({ kind: "not_found" }),
         resume: async (session, workId) => {
             resumed.push({ session, workId });
             const work = items.find((item) => item.workId === workId && item.analysisId === session.scope.analysisId);
@@ -65,9 +64,9 @@ function fakePausedWork(
 }
 
 /** A boot whose runtime is ready. The routes read only the paused work of the runtime. */
-function readyBoot(pausedWork: PausedWorkSurface): ServerBoot {
+function readyBoot(work: WorkSurface): ServerBoot {
     // The cast is sound for the reason above: no route under test reads another field of the runtime.
-    const runtime = { pausedWork } as unknown as HarnessRuntime;
+    const runtime = { work } as unknown as HarnessRuntime;
     const state: ServerBootState = {
         version: "0.0.0-test",
         apiVersion: 1,
@@ -89,8 +88,9 @@ function appWith(boot: ServerBoot, over: Partial<PausedWorkRouteOpts> = {}): { r
 }
 
 describe("GET {A}/paused-work", () => {
-    test("gives the paused work of the analysis, and the remedy of a failed turn on an item with the cause `credential`", async () => {
-        const paused = fakePausedWork([CREDENTIAL_TURN, PAUSED_RUN, { ...PAUSED_RUN, workId: "run-elsewhere", analysisId: "analysis-2" }]);
+    test("gives the paused work of the analysis and not the work that runs, and the remedy of a failed turn on an item with the cause `credential`", async () => {
+        const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
+        const paused = fakePausedWork([CREDENTIAL_TURN, running, PAUSED_RUN, { ...PAUSED_RUN, workId: "run-elsewhere", analysisId: "analysis-2" }]);
         const response = await appWith(readyBoot(paused)).request("");
 
         expect(response.status).toBe(200);
@@ -116,8 +116,9 @@ describe("GET {A}/paused-work", () => {
     });
 
     test("a failed list gives 500 `internal_error`", async () => {
-        const failing: PausedWorkSurface = {
+        const failing: WorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
+            stop: async () => ({ kind: "not_found" }),
             resume: async () => ({ kind: "not_found" }),
             hold: async () => ({ kind: "not_found" }),
         };
@@ -140,8 +141,9 @@ describe("POST {A}/paused-work/:workId/resume", () => {
     });
 
     test("a renewal that the host refuses gives 403 `forbidden` with its reason", async () => {
-        const refusing: PausedWorkSurface = {
+        const refusing: WorkSurface = {
             list: async () => [PAUSED_RUN],
+            stop: async () => ({ kind: "not_found" }),
             resume: async () => ({ kind: "refused", reason: "only the subject can renew" }),
             hold: async () => ({ kind: "not_found" }),
         };

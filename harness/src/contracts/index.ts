@@ -43,7 +43,7 @@ export type {
     ReportRenderedPart,
     CompactionPart,
     PauseCause,
-    PausedWorkKind,
+    WorkKind,
     PausePart,
     ModelRetryPart,
     ChatPart,

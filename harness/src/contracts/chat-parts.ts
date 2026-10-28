@@ -571,8 +571,8 @@ export type ModelRetryPart = {
     status?: number;
 };
 
-/** The kind of the work that a pause belongs to. A sub-agent belongs to its turn, and a sandbox step to its run. */
-export type PausedWorkKind = "turn" | "run" | "profile";
+/** The kind of a durable work, and of the work that a pause belongs to. A sub-agent belongs to its turn, and a sandbox step to its run. */
+export type WorkKind = "turn" | "run" | "profile";
 
 /**
  * The state of one waiting workflow of paused work. Re-emitted under the same `id` when the wait ends, with the
@@ -584,7 +584,7 @@ export type PausePart = {
     id: string;
     /** The id of the work: the turn, the run, or the profile workflow. A resume names it. */
     workId: string;
-    workKind: PausedWorkKind;
+    workKind: WorkKind;
     /** `retrying`: the system sends the request again at `retryAt`. `paused`: only a resume ends the wait. */
     state: "retrying" | "paused" | "running";
     /** Absent for the state `running`. */

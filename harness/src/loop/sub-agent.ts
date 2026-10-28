@@ -23,7 +23,7 @@ import { closeDurableStream } from "@dbos-inc/vercel-ai";
 
 import type { AgentSession, AuthContext, Identity, Provenance, RunFrame, RunSession, Scope } from "../auth/types.js";
 import type { ChatFrame, ChatPartFrame } from "../contracts/chat-events.js";
-import type { PausedWorkKind, PausePart } from "../contracts/chat-parts.js";
+import type { WorkKind, PausePart } from "../contracts/chat-parts.js";
 import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { ToolContext } from "../tools/define-tool.js";
@@ -77,7 +77,7 @@ type ChildEnd<R> = {
 /** The work that a child belongs to: the turn of a chat turn, or the run of a step or a synthesis. */
 export type SubAgentWork = {
     readonly workId: string;
-    readonly workKind: PausedWorkKind;
+    readonly workKind: WorkKind;
     readonly analysisId: string;
     readonly threadId?: string;
     /** The run session of a child of a run, whose credential the pause suspends and the resume renews. */

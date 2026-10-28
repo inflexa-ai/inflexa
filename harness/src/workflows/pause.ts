@@ -15,7 +15,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { z } from "zod";
 
 import type { RunSession } from "../auth/types.js";
-import type { PauseCause, PausedWorkKind, PausePart } from "../contracts/chat-parts.js";
+import type { PauseCause, WorkKind, PausePart } from "../contracts/chat-parts.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
@@ -73,7 +73,7 @@ export type PauseScope = {
     readonly pool: Querier;
     /** The turn id, the run id, or the id of the profile workflow. A sub-agent names its turn, and a step its run. */
     readonly workId: string;
-    readonly workKind: PausedWorkKind;
+    readonly workKind: WorkKind;
     readonly analysisId: string;
     readonly threadId?: string;
     /** Writes the part of the pause to the stream of the work. */

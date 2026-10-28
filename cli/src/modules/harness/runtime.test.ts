@@ -195,7 +195,12 @@ function recordingSeams(calls: string[]): BootSeams {
                     askGateway,
                     chatTurns,
                     // The offline boot never pauses work, thus the list is empty and no work resumes.
-                    pausedWork: { list: async () => [], resume: async () => ({ kind: "not_found" }), hold: async () => ({ kind: "not_found" }) },
+                    work: {
+                        list: async () => [],
+                        stop: async () => ({ kind: "not_found" }),
+                        resume: async () => ({ kind: "not_found" }),
+                        hold: async () => ({ kind: "not_found" }),
+                    },
                     // The offline boot never drives a report turn, thus this anchor never runs. A
                     // failed arm is the minimal stand-in — a ready arm would build a full durable
                     // session-state row that no assertion here reads.

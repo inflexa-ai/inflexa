@@ -23,7 +23,7 @@ The pause of a run, of a step of a run, of a sub-agent of a run, and of a profil
 
 ### Requirement: A resume renews the run credential first
 
-When a host resumes work whose rows hold a run session, `PausedWorkSurface.resume` SHALL call `RunAuthorizer.renew` one time for the work, with that run session and the `auth` of the session of the resume, before it sends a message. When the gate refuses, the resume SHALL give `{ kind: "refused", reason }` with the reason of the host, SHALL send no message, and the work SHALL stay paused.
+When a host resumes work whose rows hold a run session, `WorkSurface.resume` SHALL call `RunAuthorizer.renew` one time for the work, with that run session and the `auth` of the session of the resume, before it sends a message. When the gate refuses, the resume SHALL give `{ kind: "refused", reason }` with the reason of the host, SHALL send no message, and the work SHALL stay paused.
 
 #### Scenario: A renewal opens the way
 

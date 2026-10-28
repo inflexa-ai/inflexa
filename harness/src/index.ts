@@ -325,11 +325,12 @@ export type { ProviderError } from "./providers/errors.js";
 // host. A map from the host replaces `DEFAULT_SUSPEND_ON`, which holds `402`.
 export { DEFAULT_SUSPEND_ON } from "./providers/errors.js";
 export type { SuspendOn } from "./providers/errors.js";
-// The pause of durable work. A host lists the paused work of an analysis and
-// resumes it with `CoreRuntime.pausedWork`, and it reads the `data-pause` part
-// of each waiting workflow in the stream of the work.
+// The durable work of an analysis. A host lists the active work, stops it, and
+// resumes or holds paused work with `CoreRuntime.work`, and it reads the
+// `data-pause` part of each waiting workflow in the stream of the work.
 export { DEFAULT_PAUSE_RETRY_DELAYS_MS } from "./workflows/pause.js";
-export type { PausedWork, PausedWorkflow, PausedWorkHold, PausedWorkResume, PausedWorkSurface } from "./app/paused-work.js";
+export type { PausedWorkflow, Work, WorkHold, WorkResume, WorkStop, WorkSurface } from "./app/work.js";
+export { DATA_PROFILE_STOPPED } from "./tasks/data-profile.js";
 // Conversation turn + thread memory. A host opens a chat turn with the `open`
 // of `CoreRuntime.chatTurns`, which starts the workflow of the turn, and reads
 // its frames with `read`, live or again after a lost connection. The harness
@@ -465,7 +466,7 @@ export type {
     RunFailedPart,
     CompactionPart,
     PauseCause,
-    PausedWorkKind,
+    WorkKind,
     PausePart,
     ModelRetryPart,
     AskPart,

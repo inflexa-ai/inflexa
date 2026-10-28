@@ -11,7 +11,7 @@ The work has no time limit. Its state is in the database and in the files. The p
 - The `RunSession` is a durable reference to the run credential, not a time-bound secret. The harness forwards it as before, and the host resolves it.
 - **BREAKING** `RunAuthorizer` gets `suspend(runSession, reason)`, a notice, and `renew(runSession, auth)`, a gate.
 - A pause in the state `paused` of a run, a step, a sub-agent of a run, or a profile suspends the run credential. The pause row keeps the run session.
-- `PausedWorkSurface.resume` renews the run credential under the session of the resume before it sends a message. A refusal gives `{ kind: "refused", reason }` and keeps the work paused.
+- `WorkSurface.resume` renews the run credential under the session of the resume before it sends a message. A refusal gives `{ kind: "refused", reason }` and keeps the work paused.
 - **BREAKING** `RunAuthorization` and its `ownsMandate` go away. `authorize` gives the `RunSession`, and `revoke` takes the `RunSession`. The work that holds a mandate ends it, thus the terminal path always revokes.
 - **BREAKING** `revokeByJti` becomes `revokeByMandateId`, and `RevokeByJtiRef` becomes `RevokeByMandateRef`.
 - **BREAKING** `cortex_runs.mandate_jti` becomes `mandate_id`, and `mandate_expires_at` goes away. `setRunMandate` takes the mandate id only.

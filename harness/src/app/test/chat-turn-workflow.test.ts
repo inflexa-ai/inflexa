@@ -29,7 +29,15 @@ import { defineTool } from "../../tools/define-tool.js";
 import { workPause } from "../../workflows/pause.js";
 import { registerChatTurns } from "../chat-turn-workflow.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import { createPausedWork, type PausedWork } from "../paused-work.js";
+import { createWork, type Work } from "../work.js";
+
+/** The deps of a work surface in this file: a local run authorizer, and the stops that a test does not reach. */
+const WORK_DEPS = {
+    runAuthorizer: createLocalRunAuthorizer(),
+    stopTurn: () => Promise.reject(new Error("no turn stops in this file")),
+    runCanceler: { cancel: () => Promise.reject(new Error("no run stops in this file")) },
+    stopProfile: () => Promise.reject(new Error("no profile stops in this file")),
+};
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -333,7 +341,7 @@ describe("a chat turn as a workflow", () => {
         expect(scripted.calls).toHaveLength(1);
         expect((await turnRecords(threadId)).map((record) => record.status)).toEqual(["open"]);
 
-        expect(await pausedWork.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
         await handle.getResult();
 
         expect(scripted.calls).toHaveLength(2);
@@ -345,8 +353,29 @@ describe("a chat turn as a workflow", () => {
             expect.objectContaining({ state: "paused", cause: { kind: "credential" } }),
             expect.objectContaining({ state: "running" }),
         ]);
-        expect(await pausedWork.list(ANALYSIS)).toEqual([]);
+        expect(await work.list(ANALYSIS)).toEqual([]);
         credentialAfterRestart = makeLocalAuth();
+    }, 30_000);
+
+    it("stops a paused turn through the work surface, and the turn leaves the active work", async () => {
+        const scripted = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }]);
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+        const stopping = createWork({
+            get pool() {
+                return rig.pool;
+            },
+            ...WORK_DEPS,
+            stopTurn: (turnId) => turns.stop(turnId),
+        });
+
+        const turnId = await startTurn(threadId);
+        await pausedWorkOf(turnId);
+        expect(await stopping.stop(sessionWithSecret(), turnId)).toMatchObject({ kind: "stopped", work: { workId: turnId, kind: "turn", threadId } });
+        await DBOS.retrieveWorkflow(turnId).getResult();
+
+        expect(await turnRecords(threadId)).toEqual([{ status: "aborted", reason: null }]);
+        expect(await stopping.list(ANALYSIS)).toEqual([]);
     }, 30_000);
 
     it("closes a paused turn as aborted on a stop, and frees its thread", async () => {
@@ -360,7 +389,7 @@ describe("a chat turn as a workflow", () => {
         await DBOS.retrieveWorkflow(turnId).getResult();
 
         expect(await turnRecords(threadId)).toEqual([{ status: "aborted", reason: null }]);
-        expect(await pausedWork.list(ANALYSIS)).toEqual([]);
+        expect(await work.list(ANALYSIS)).toEqual([]);
         const next = await turns.open(sessionWithSecret(), { analysisId: ANALYSIS, threadId, userInput: "again" });
         expect(next.kind).toBe("started");
         if (next.kind === "started") {
@@ -491,7 +520,7 @@ describe("the sub-agents of a chat turn workflow", () => {
             threadId,
             waiting: [{ workflowId: childId, state: "paused", cause: { kind: "host", reason: "payment_required" } }],
         });
-        expect(await pausedWork.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
 
         const frames = await readAll(turnId);
         expect(textOf(frames)).toBe("Done.");
@@ -501,7 +530,9 @@ describe("the sub-agents of a chat turn workflow", () => {
             `conversation-agent/${PAUSING_RESEARCHER}`,
             `conversation-agent/${PAUSING_RESEARCHER}`,
         ]);
-        expect(await pausedWork.list(ANALYSIS)).toEqual([]);
+        // The stream closes before the last steps of the turn, and the turn is active work until its workflow ends.
+        await DBOS.retrieveWorkflow(turnId).getResult();
+        expect(await work.list(ANALYSIS)).toEqual([]);
     });
 
     it("runs the sub-agents of one reply as child workflows at the same time, and adds their usage to the turn", async () => {
@@ -573,18 +604,18 @@ describe("the sub-agents of a chat turn workflow", () => {
     });
 });
 
-const pausedWork = createPausedWork({
+const work = createWork({
     get pool() {
         return rig.pool;
     },
-    runAuthorizer: createLocalRunAuthorizer(),
+    ...WORK_DEPS,
 });
 
 /** The paused work of a turn, when the turn waits in a pause. */
-async function pausedWorkOf(turnId: string, timeoutMs = 15_000): Promise<PausedWork> {
-    let found: PausedWork | undefined;
+async function pausedWorkOf(turnId: string, timeoutMs = 15_000): Promise<Work> {
+    let found: Work | undefined;
     await waitUntilAsync(async () => {
-        found = (await pausedWork.list(ANALYSIS)).find((work) => work.workId === turnId);
+        found = (await work.list(ANALYSIS)).find((candidate) => candidate.workId === turnId && candidate.waiting.length > 0);
         return found !== undefined;
     }, timeoutMs);
     if (found === undefined) throw new Error(`the turn ${turnId} did not pause`);

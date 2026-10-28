@@ -21,7 +21,8 @@ import { createConversationAgent, type ConversationAgentDeps } from "../agents/c
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { approvePlan, type ApprovePlanInput, type ApprovePlanRefusal, type PlanApproval } from "../app/approve-plan.js";
 import { registerChatTurns, type ChatTurns } from "../app/chat-turn-workflow.js";
-import { createPausedWork, type PausedWorkSurface } from "../app/paused-work.js";
+import { createWork, type WorkSurface } from "../app/work.js";
+import { createRunCanceler } from "../execution/run-canceler.js";
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -35,7 +36,7 @@ import type { DomainError } from "../lib/result.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
-import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
+import { registerDataProfileWorkflow, stopDataProfile, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
 import { createExtractionArm, runExtraction } from "../tasks/extract-values.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
@@ -313,10 +314,10 @@ export type CoreRuntime = {
      */
     readonly chatTurns: ChatTurns;
     /**
-     * The paused work of an analysis: `list` gives each turn, run, and data profile that waits in a pause, and
-     * `resume` ends each wait of one work. Only a client resumes paused work.
+     * The durable work of an analysis: `list` gives each active turn, run, and data profile with its waits, `stop`
+     * ends one work in each state, and `resume` and `hold` reach the waits of one work. Only a client resumes paused work.
      */
-    readonly pausedWork: PausedWorkSurface;
+    readonly work: WorkSurface;
     /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
@@ -514,7 +515,26 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         agents: agentResolver,
         askGateway,
         chatTurns,
-        pausedWork: createPausedWork({ pool: conversation.pool, runAuthorizer: conversation.runAuthorizer, logger: conversation.logger }),
+        work: createWork({
+            pool: conversation.pool,
+            runAuthorizer: conversation.runAuthorizer,
+            logger: conversation.logger,
+            stopTurn: (turnId) => chatTurns.stop(turnId),
+            runCanceler: createRunCanceler({
+                pool: conversation.pool,
+                runCharge: executeAnalysisDeps.runCharge,
+                runAuthorizer: conversation.runAuthorizer,
+                // The end of a canceled run goes where the run engine emits the rest of the run.
+                provenance: executeAnalysisDeps.provenance,
+                logger: conversation.logger,
+            }),
+            stopProfile: (analysisId, workflowId) =>
+                stopDataProfile(
+                    { pool: conversation.pool, logger: conversation.logger, notifyDataProfileSettled: wf.dataProfile.notifyDataProfileSettled },
+                    analysisId,
+                    workflowId,
+                ),
+        }),
         reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
             executeAnalysis,

@@ -40,7 +40,7 @@ import {
     type ResolvePageAsset,
     type RunAuthorizer,
     type ChatTurns,
-    type PausedWorkSurface,
+    type WorkSurface,
     type RunLauncher,
     type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
@@ -184,10 +184,10 @@ export type HarnessRuntime = {
      */
     readonly chatTurns: ChatTurns;
     /**
-     * The paused work of the runtime: `list` gives the paused turns, runs, and data profiles of an analysis, and
-     * `resume` ends each wait of one work. Only a client resumes paused work, through the local server.
+     * The durable work of the runtime: `list` gives the active turns, runs, and data profiles of an analysis with
+     * their waits, and `resume` ends each wait of one work. Only a client resumes paused work, through the local server.
      */
-    readonly pausedWork: PausedWorkSurface;
+    readonly work: WorkSurface;
     /**
      * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
      * status surface renders beside the per-agent models. Stamped once
@@ -1341,7 +1341,7 @@ async function bootHarnessRuntimeOnce(
             agents: core.agents,
             approvePlan: core.approvePlan,
             chatTurns: core.chatTurns,
-            pausedWork: core.pausedWork,
+            work: core.work,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a
             // model), so `provider`/`mode` are read straight off the connection.

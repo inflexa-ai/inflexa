@@ -383,7 +383,7 @@ is an embedder concern.
   credential of a turn that a recovery runs, and the turn reads it before each
   model request. A turn with no credential pauses until a resume gives one. A
   failure that a person or time can repair pauses the turn, and
-  `CoreRuntime.pausedWork` lists and resumes it. The body runs `runOpenTurn`: the
+  `CoreRuntime.work` lists, stops, and resumes it. The body runs `runOpenTurn`: the
   root loop runs with a round sink that stores each round in a keyed step, and
   the turn closes with its outcome. The root loop compacts its view at the
   conversation budget. The host wraps this in its own request handler, because
