@@ -198,6 +198,7 @@ function createWriteDerivedTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof 
         id: "write_derived",
         description:
             "Save a file that the script derived, in the derived directory of this conversation, and show it to the user. " +
+            "The file lands in that directory only, never at a path that the user names: for such a path, return the content and write it with `write_file`. " +
             "A name holds one file: a second write of the name with other content is refused.",
         inputSchema: writeDerivedInput,
         describeCall: ({ name }) => name,
