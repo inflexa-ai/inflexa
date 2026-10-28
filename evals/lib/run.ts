@@ -13,13 +13,18 @@ import { renderRunActivity } from "@inflexa-ai/harness/app/run-activity.js";
 import { allWithConcurrency } from "@inflexa-ai/harness/lib/async-utils.js";
 import { makeSession } from "@inflexa-ai/harness/providers/__fixtures__/session.js";
 import type { AgentRunUsage } from "@inflexa-ai/harness/loop/metrics.js";
-import { runLoop, withRunScript } from "@inflexa-ai/harness/loop/run-loop.js";
+import { maskExcept } from "@inflexa-ai/harness/loop/call-policy.js";
+import { runLoop, withRunScript, type LoopStep } from "@inflexa-ai/harness/loop/run-loop.js";
+import type { KeptToolOutput, ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
+import { blockerOf } from "@inflexa-ai/harness/tools/sandbox/report-blocker.js";
+import { SUBMIT_FILE_METADATA_TOOL_ID } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
 import type { AgentDefinition, LoopMessage } from "@inflexa-ai/harness/loop/types.js";
 import type { WorkingMemoryStore } from "@inflexa-ai/harness/memory/working-memory.js";
 import type { ChatProvider } from "@inflexa-ai/harness/providers/types.js";
 import type { CortexRunRow } from "@inflexa-ai/harness/state/schema.js";
 import { errorMessageOf } from "@inflexa-ai/harness/lib/thrown.js";
-import { withScriptedTools, type AgentKind } from "./agent.js";
+import { withSandboxScripts, withScriptedTools, type StaticAgentKind } from "./agent.js";
+import { openSandboxTrial, type SandboxTrial } from "./sandbox.js";
 import { trialOf, type EvalCase, type Grade, type RunningRun, type TrialAsk, type TrialCall } from "./case.js";
 
 const ANALYSIS_ID = "analysis-001";
@@ -32,14 +37,21 @@ export type TrialResult =
           readonly text: string;
           readonly finishReason: string;
           readonly stepFinishes: readonly string[];
+          readonly capped: boolean;
+          /** A sandbox trial: the files under the working directory at the end. */
+          readonly files?: readonly string[];
+          /** A sandbox trial: each command that no exec rule answered. */
+          readonly unscripted?: readonly string[];
           readonly usage?: AgentRunUsage;
       } & Grade)
     | { readonly kind: "error"; readonly error: string };
 
 export type RunOptions = {
     /** The agent of each kind that a case can name. */
-    readonly agents: Readonly<Record<AgentKind, AgentDefinition>>;
+    readonly agents: Readonly<Record<StaticAgentKind, AgentDefinition>>;
     readonly provider: ChatProvider;
+    /** The provider of the sandbox cases. Absent: `provider`. */
+    readonly sandboxProvider?: ChatProvider;
     readonly trials: number;
     readonly concurrency: number;
     /** The bound of one trial, in milliseconds. */
@@ -52,9 +64,9 @@ export type RunOptions = {
  * A digest of what the model sees before the turn: the system prompt and each
  * tool definition of each agent. Two runs with the same digest ran the same prompt variant.
  */
-export function promptDigest(agents: Readonly<Record<AgentKind, AgentDefinition>>): string {
+export function promptDigest(agents: Readonly<Record<StaticAgentKind, AgentDefinition>>, sandboxAgents: readonly AgentDefinition[] = []): string {
     const hash = createHash("sha256");
-    for (const agent of Object.values(agents)) {
+    for (const agent of [...Object.values(agents), ...sandboxAgents]) {
         hash.update(agent.systemPrompt);
         // The loop declares `run_script`, whose description holds the catalog of the script tools, thus the digest reads
         // the tools that a request declares, and each script tool too.
@@ -106,7 +118,7 @@ function workingMemoryOf(render: string): WorkingMemoryStore {
  */
 export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMessage[]): Promise<LoopMessage[]> {
     const kind = evalCase.agent ?? "conversation";
-    if (kind === "planner" || kind === "analogy") return [{ role: "user", content: evalCase.user }];
+    if (kind === "planner" || kind === "analogy" || kind === "sandbox") return [{ role: "user", content: evalCase.user }];
     const state = evalCase.state ?? {};
     const runs = (state.runningRuns ?? []).map(runningRow);
     const records = await contextRecordsFor(
@@ -122,25 +134,77 @@ export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMess
     return [sanitizedUserMessage(evalCase.user), ...records];
 }
 
-export async function runTrial(evalCase: EvalCase, options: Pick<RunOptions, "agents" | "provider" | "trialTimeoutMs">): Promise<TrialResult> {
-    const agent = withScriptedTools(options.agents[evalCase.agent ?? "conversation"], evalCase.tools ?? {});
+/** A store of the cut texts of tool results, for `read_tool_output`, that lives for one trial. */
+function memoryToolOutputStore(): ToolOutputStore {
+    const kept = new Map<string, KeptToolOutput>();
+    return {
+        put: (output) => {
+            kept.set(`${output.analysisId}/${output.ref}`, output);
+            return okAsync(undefined);
+        },
+        get: (analysisId, ref) => okAsync(kept.get(`${analysisId}/${ref}`) ?? null),
+    };
+}
+
+/** The agent of a trial. A sandbox case gets its own tree, which the trial disposes of at its end. */
+async function trialAgentOf(
+    evalCase: EvalCase,
+    agents: RunOptions["agents"],
+    store: ToolOutputStore,
+): Promise<{ readonly agent: AgentDefinition; readonly sandbox?: SandboxTrial }> {
+    const kind = evalCase.agent ?? "conversation";
+    if (kind !== "sandbox") return { agent: withScriptedTools(agents[kind], evalCase.tools ?? {}) };
+    if (evalCase.sandbox === undefined) throw new Error(`the sandbox case ${evalCase.id} has no sandbox setup`);
+    const sandbox = await openSandboxTrial(evalCase.sandbox, { toolOutputStore: store, label: evalCase.id });
+    return { agent: withSandboxScripts(sandbox.agent, evalCase.tools ?? {}), sandbox };
+}
+
+export async function runTrial(
+    evalCase: EvalCase,
+    options: Pick<RunOptions, "agents" | "provider" | "sandboxProvider" | "trialTimeoutMs">,
+): Promise<TrialResult> {
     const history = evalCase.history ?? [];
+    const store = memoryToolOutputStore();
+    let sandbox: SandboxTrial | undefined;
     try {
+        const built = await trialAgentOf(evalCase, options.agents, store);
+        const { agent } = built;
+        sandbox = built.sandbox;
         const asks: TrialAsk[] = [];
         const decision = evalCase.approve ?? "approve";
+        // A step agent declares the output tool of its file-metadata request from the first request, and the task
+        // masks it; a blocker ends the step. Both as `sandbox-step.ts` runs the task.
+        const stepRules =
+            sandbox === undefined
+                ? {}
+                : {
+                      policy: {
+                          mask: maskExcept(
+                              agent.tools.map((tool) => tool.id),
+                              [SUBMIT_FILE_METADATA_TOOL_ID],
+                          ),
+                      },
+                      toolOutputStore: store,
+                  };
+        const stop = (steps: readonly LoopStep[]): boolean => steps.length >= evalCase.maxSteps || (sandbox !== undefined && blockerOf(steps) !== null);
         const result = await runLoop(agent, history, makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_ID } }), {
-            provider: options.provider,
-            signal: AbortSignal.timeout(options.trialTimeoutMs),
+            provider: sandbox === undefined ? options.provider : (options.sandboxProvider ?? options.provider),
+            signal: AbortSignal.timeout(evalCase.timeoutMs ?? options.trialTimeoutMs),
             emit: () => undefined,
-            turnInput: await turnInputOf(evalCase, history),
-            stopWhen: (steps) => steps.length >= evalCase.maxSteps,
+            turnInput: sandbox?.seed === undefined ? await turnInputOf(evalCase, history) : [{ role: "user", content: sandbox.seed }],
+            stopWhen: stop,
             approve: (request, call) => {
                 asks.push({ tool: call.toolName, command: request.command });
                 return Promise.resolve(decision === "approve" ? { kind: "approved" } : { kind: "denied" });
             },
+            ...stepRules,
         });
         const text = replyText(result.messages.slice(history.length));
-        const trial = trialOf(result.steps, asks, text, result.finish.reason);
+        const trial = trialOf(result.steps, asks, text, result.finish.reason, {
+            maxSteps: evalCase.maxSteps,
+            files: sandbox?.files(),
+            unscripted: sandbox?.unscripted,
+        });
         const grade = evalCase.grade(trial);
         return {
             kind: "graded",
@@ -150,10 +214,15 @@ export async function runTrial(evalCase: EvalCase, options: Pick<RunOptions, "ag
             text,
             finishReason: trial.finishReason,
             stepFinishes: trial.stepFinishes,
+            capped: trial.capped,
+            files: trial.files === undefined ? undefined : Object.keys(trial.files),
+            unscripted: trial.unscripted === undefined || trial.unscripted.length === 0 ? undefined : [...trial.unscripted],
             usage: result.finish.usage,
         };
     } catch (cause) {
         return { kind: "error", error: errorMessageOf(cause) ?? "the trial failed with no message" };
+    } finally {
+        sandbox?.dispose();
     }
 }
 

@@ -6,6 +6,9 @@ import { asked, decides, never, plans, type EvalCase } from "../lib/case.js";
 import { allCases } from "../cases/index.js";
 import { withRunScript } from "@inflexa-ai/harness/loop/run-loop.js";
 import { promptDigest, runTrial, turnInputOf } from "../lib/run.js";
+import { openSandboxTrial } from "../lib/sandbox.js";
+import type { Tool } from "@inflexa-ai/harness/tools/define-tool.js";
+import { okAsync } from "neverthrow";
 
 const agents = evalAgents();
 const agent = agents.conversation;
@@ -104,6 +107,7 @@ describe("the agent of a case", () => {
             text: "",
             finishReason: "stop",
             stepFinishes: ["tool-calls"],
+            capped: false,
         });
         const grade = plans("a DE step", (steps) => steps.some((step) => step.agent === "bulk-transcriptomics-agent"));
 
@@ -149,22 +153,30 @@ describe("the CLI host tools", () => {
     });
 });
 
+/** The tools of the agent of a case. A sandbox case builds its agent over a tree that the helper removes again. */
+async function toolsOf(c: EvalCase): Promise<readonly Tool[]> {
+    const kind = c.agent ?? "conversation";
+    if (kind !== "sandbox") return [...agents[kind].tools, ...(agents[kind].scriptTools ?? [])];
+    if (c.sandbox === undefined) throw new Error(`the sandbox case ${c.id} has no setup`);
+    const trial = await openSandboxTrial(c.sandbox, { toolOutputStore: { put: () => okAsync(undefined), get: () => okAsync(null) }, label: "tools" });
+    trial.dispose();
+    return trial.agent.tools;
+}
+
 describe("the cases", () => {
-    test("have unique ids, and each script names a tool of the agent", () => {
+    test("have unique ids, and each script names a tool of the agent", async () => {
         const ids = allCases.map((c) => c.id);
         expect(new Set(ids).size).toBe(ids.length);
         for (const c of allCases) {
-            const own = agents[c.agent ?? "conversation"];
-            const toolIds = new Set([...own.tools, ...(own.scriptTools ?? [])].map((tool) => tool.id));
+            const toolIds = new Set((await toolsOf(c)).map((tool) => tool.id));
             for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
         }
     });
 
-    test("each fixed ok result has the result shape that its tool declares", () => {
+    test("each fixed ok result has the result shape that its tool declares", async () => {
         const failures: string[] = [];
         for (const c of allCases) {
-            const own = agents[c.agent ?? "conversation"];
-            const byId = new Map([...own.tools, ...(own.scriptTools ?? [])].map((tool) => [tool.id, tool]));
+            const byId = new Map((await toolsOf(c)).map((tool) => [tool.id, tool]));
             for (const [id, script] of Object.entries(c.tools ?? {})) {
                 const schema = byId.get(id)?.outputSchema;
                 if (schema === undefined || typeof script !== "object" || !("ok" in script)) continue;

@@ -16,6 +16,7 @@ import { modelViewOf } from "@inflexa-ai/harness/loop/tool-adapter.js";
 import type { LoopMessage } from "@inflexa-ai/harness/loop/types.js";
 import { syntheticRecordMessage } from "@inflexa-ai/harness/memory/ai-sdk-message-storage.js";
 import type { AgentKind, ToolScript } from "./agent.js";
+import type { SandboxSetup } from "./sandbox.js";
 
 /** One call that the model made in a trial. */
 export type TrialCall = {
@@ -23,6 +24,10 @@ export type TrialCall = {
     readonly tool: string;
     readonly input: unknown;
     readonly refused: boolean;
+    /** The call ran, and its result is ok. Absent for a nested call of a script. */
+    readonly ok?: boolean;
+    /** The ok value of a terminal `submit_` call, which a grader reads. Absent for each other call. */
+    readonly value?: unknown;
 };
 
 /** One approval that a call asked the user for, before the call ran. */
@@ -40,6 +45,12 @@ export type Trial = {
     readonly finishReason: string;
     /** The finish of each model request, in order, with the raw reason of the provider when it differs. */
     readonly stepFinishes: readonly string[];
+    /** The trial reached its `maxSteps` with a request that still called a tool. */
+    readonly capped: boolean;
+    /** A sandbox trial: the text of each file under the working directory at the end, by relative path. */
+    readonly files?: Readonly<Record<string, string>>;
+    /** A sandbox trial: each command that no exec rule answered. */
+    readonly unscripted?: readonly string[];
 };
 
 export type Grade = { readonly pass: boolean; readonly detail: string };
@@ -75,6 +86,10 @@ export type EvalCase = {
     readonly tools?: Readonly<Record<string, ToolScript>>;
     /** The model requests of a trial. A trial also ends when a reply calls no tool. */
     readonly maxSteps: number;
+    /** The tree, the farm, and the exec rules of a sandbox case. */
+    readonly sandbox?: SandboxSetup;
+    /** The bound of one trial, in milliseconds. Absent: the bound of the run. */
+    readonly timeoutMs?: number;
     /** The answer of the user to each approval that a call asks for. Absent: the user approves. */
     readonly approve?: "approve" | "deny";
     readonly grade: Grader;
@@ -118,10 +133,24 @@ const ScriptCallsSchema = z.object({ calls: z.array(z.object({ tool: z.string() 
  * The calls of a trial, in the order that the model made them. A call of `run_script` is followed by the tool calls of
  * its script, with no input, thus a grader counts a lookup the same in a script and in a direct call.
  */
-export function trialOf(steps: readonly LoopStep[], asks: readonly TrialAsk[], text: string, finishReason: string): Trial {
+export function trialOf(
+    steps: readonly LoopStep[],
+    asks: readonly TrialAsk[],
+    text: string,
+    finishReason: string,
+    extra: Pick<Trial, "files" | "unscripted"> & { readonly maxSteps?: number } = {},
+): Trial {
     const calls = steps.flatMap((step, index) =>
         step.calls.flatMap((call) => {
-            const own: TrialCall = { step: index, tool: call.toolName, input: call.input, refused: call.refused };
+            const ok = call.output?.outcome === "ok";
+            const own: TrialCall = {
+                step: index,
+                tool: call.toolName,
+                input: call.input,
+                refused: call.refused,
+                ok,
+                value: ok && call.toolName.startsWith("submit_") && call.output?.outcome === "ok" ? call.output.value : undefined,
+            };
             const script = call.toolName === "run_script" && call.output?.outcome === "ok" ? ScriptCallsSchema.safeParse(call.output.value) : undefined;
             const nested =
                 script?.success === true ? script.data.calls.map((inner) => ({ step: index, tool: inner.tool, input: undefined, refused: false })) : [];
@@ -131,7 +160,8 @@ export function trialOf(steps: readonly LoopStep[], asks: readonly TrialAsk[], t
     const stepFinishes = steps.map((step) =>
         step.rawFinishReason === undefined || step.rawFinishReason === step.finishReason ? step.finishReason : `${step.finishReason} (${step.rawFinishReason})`,
     );
-    return { calls, asks, text, finishReason, stepFinishes };
+    const capped = extra.maxSteps !== undefined && steps.length >= extra.maxSteps && (steps.at(-1)?.calls.length ?? 0) > 0;
+    return { calls, asks, text, finishReason, stepFinishes, capped, files: extra.files, unscripted: extra.unscripted };
 }
 
 /** An input matches when each key of `expected` has the same value in the input. Other keys are free. */
@@ -264,11 +294,189 @@ export function plans(describe: string, check: (steps: readonly PlanStepView[]) 
     };
 }
 
-/** The text of the replies holds `text`, for example the count that a question asks for. */
+/** Each grader passes. The detail is the detail of the first failure, or of each pass. */
 export function all(...graders: readonly Grader[]): Grader {
     return (trial) => {
         const grades = graders.map((grader) => grader(trial));
         const failed = grades.find((grade) => !grade.pass);
         return failed ?? { pass: true, detail: grades.map((grade) => grade.detail).join("; ") };
+    };
+}
+
+/** One grader passes. */
+export function anyOf(...graders: readonly Grader[]): Grader {
+    return (trial) => {
+        const grades = graders.map((grader) => grader(trial));
+        return grades.find((grade) => grade.pass) ?? { pass: false, detail: grades.map((grade) => grade.detail).join(" / ") };
+    };
+}
+
+/** The text of the replies does not hold `text`. */
+export function notMentions(text: string): Grader {
+    return (trial) => (trial.text.includes(text) ? { pass: false, detail: `the reply mentions ${text}` } : { pass: true, detail: `no mention of ${text}` });
+}
+
+const CommandInputSchema = z.object({ command: z.array(z.string()) });
+
+/** The command line of an `execute_command` call, or `undefined` for another call. */
+function commandOf(call: TrialCall): string | undefined {
+    if (call.tool !== "execute_command") return undefined;
+    const parsed = CommandInputSchema.safeParse(call.input);
+    return parsed.success ? parsed.data.command.join(" ") : undefined;
+}
+
+/** Some `execute_command` call runs a command line that matches `pattern`. */
+export function execs(pattern: RegExp): Grader {
+    return (trial) => {
+        const lines = trial.calls.map(commandOf).filter((line) => line !== undefined);
+        const hit = lines.find((line) => pattern.test(line));
+        return hit === undefined
+            ? { pass: false, detail: `no command matches ${String(pattern)} (${lines.join(" | ") || "no command"})` }
+            : { pass: true, detail: `ran ${hit}` };
+    };
+}
+
+/** No `execute_command` call runs a command line that matches `pattern`. */
+export function neverExec(pattern: RegExp): Grader {
+    return (trial) => {
+        const hit = trial.calls.map(commandOf).find((line) => line !== undefined && pattern.test(line));
+        return hit === undefined ? { pass: true, detail: `no command matches ${String(pattern)}` } : { pass: false, detail: `ran ${hit}` };
+    };
+}
+
+/** A call that a grader looks for: a tool, and a test of its input. */
+export type CallMatch = { readonly tool: string; readonly input?: (input: unknown) => boolean };
+
+function matches(call: TrialCall, match: CallMatch): boolean {
+    return call.tool === match.tool && (match.input === undefined || match.input(call.input));
+}
+
+/** The first call that matches `first` comes before the first call that matches `then`, and both happen. */
+export function before(first: CallMatch, then: CallMatch): Grader {
+    return (trial) => {
+        const a = trial.calls.findIndex((call) => matches(call, first));
+        const b = trial.calls.findIndex((call) => matches(call, then));
+        if (a === -1) return { pass: false, detail: `no ${first.tool} (calls: ${describeCalls(trial.calls)})` };
+        if (b === -1) return { pass: false, detail: `no ${then.tool} (calls: ${describeCalls(trial.calls)})` };
+        return a < b ? { pass: true, detail: `${first.tool} before ${then.tool}` } : { pass: false, detail: `${then.tool} before ${first.tool}` };
+    };
+}
+
+/** At most `limit` calls match `match`. */
+export function atMost(match: CallMatch, limit: number): Grader {
+    return (trial) => {
+        const count = trial.calls.filter((call) => matches(call, match)).length;
+        return { pass: count <= limit, detail: `${count} calls of ${match.tool}` };
+    };
+}
+
+const BlockerInputSchema = z.object({ reason: z.string() });
+
+function blockerReason(trial: Trial): string | undefined {
+    const call = trial.calls.find((c) => c.tool === "report_blocker" && c.ok !== false);
+    const parsed = BlockerInputSchema.safeParse(call?.input);
+    return parsed.success ? parsed.data.reason : undefined;
+}
+
+/** The reason of the first `report_blocker` call holds each of `words`, with no regard to case. */
+export function blockerSays(words: readonly string[]): Grader {
+    return (trial) => {
+        const reason = blockerReason(trial);
+        if (reason === undefined) return { pass: false, detail: `no report_blocker (calls: ${describeCalls(trial.calls)})` };
+        const missing = words.filter((word) => !reason.toLowerCase().includes(word.toLowerCase()));
+        return missing.length === 0
+            ? { pass: true, detail: `blocker: ${reason}` }
+            : { pass: false, detail: `the blocker does not name ${missing.join(", ")}: ${reason}` };
+    };
+}
+
+/** No `report_blocker` call has a reason that matches `pattern`. */
+export function blockerNot(pattern: RegExp): Grader {
+    return (trial) => {
+        const reason = blockerReason(trial);
+        return reason !== undefined && pattern.test(reason) ? { pass: false, detail: `blocker: ${reason}` } : { pass: true, detail: "no such blocker" };
+    };
+}
+
+const PathInputSchema = z.object({ path: z.string().optional(), pattern: z.string().optional() });
+
+/** No call of `tools` names a path under `prefix`, and no command lists or searches it with `ls`, `find`, or `tree`. */
+export function noCallUnder(tools: readonly string[], prefix: string): Grader {
+    return (trial) => {
+        const hit = trial.calls.find((call) => {
+            if (tools.includes(call.tool)) {
+                const parsed = PathInputSchema.safeParse(call.input);
+                return parsed.success && (parsed.data.path ?? "").startsWith(prefix);
+            }
+            const line = commandOf(call);
+            return (
+                line !== undefined && ["ls ", "find ", "tree "].some((word) => line.startsWith(word) || line.includes(`&& ${word}`)) && line.includes(prefix)
+            );
+        });
+        return hit === undefined ? { pass: true, detail: `no search under ${prefix}` } : { pass: false, detail: `${hit.tool} ${JSON.stringify(hit.input)}` };
+    };
+}
+
+/** The working directory holds `path` at the end of the trial. */
+export function hasFile(path: string): Grader {
+    return (trial) =>
+        trial.files?.[path] !== undefined
+            ? { pass: true, detail: `wrote ${path}` }
+            : { pass: false, detail: `no ${path} (files: ${Object.keys(trial.files ?? {}).join(", ") || "none"})` };
+}
+
+/** The working directory holds a file under `dir` whose text matches `pattern`, or any file under it with no pattern. */
+export function wroteUnder(dir: string, pattern?: RegExp): Grader {
+    return (trial) => {
+        const hit = Object.entries(trial.files ?? {}).find(([path, text]) => path.startsWith(dir) && (pattern === undefined || pattern.test(text)));
+        return hit === undefined
+            ? {
+                  pass: false,
+                  detail: `no file under ${dir}${pattern === undefined ? "" : ` that matches ${String(pattern)}`} (files: ${Object.keys(trial.files ?? {}).join(", ") || "none"})`,
+              }
+            : { pass: true, detail: `wrote ${hit[0]}` };
+    };
+}
+
+/** No file of the working directory has a text that matches `pattern`. */
+export function noFileMatches(pattern: RegExp): Grader {
+    return (trial) => {
+        const hit = Object.entries(trial.files ?? {}).find(([, text]) => pattern.test(text));
+        return hit === undefined
+            ? { pass: true, detail: `no file matches ${String(pattern)}` }
+            : { pass: false, detail: `${hit[0]} matches ${String(pattern)}` };
+    };
+}
+
+/** The trial did not stop at its `maxSteps` with a call still open, thus the agent decided within its budget. */
+export const settled: Grader = (trial) => (trial.capped ? { pass: false, detail: "the trial reached maxSteps" } : { pass: true, detail: "settled" });
+
+const AcceptedSchema = z.object({ status: z.literal("accepted") });
+
+/** The last `submit_profile` call that the tool accepted has an input that meets `check`. */
+export function acceptedProfile(describe: string, check: (input: unknown) => boolean): Grader {
+    return (trial) => {
+        const accepted = trial.calls.filter((call) => call.tool === "submit_profile" && AcceptedSchema.safeParse(call.value).success);
+        const last = accepted.at(-1);
+        if (last === undefined) {
+            const submits = trial.calls.filter((call) => call.tool === "submit_profile").length;
+            return { pass: false, detail: `no accepted submit_profile (${submits} submits; calls: ${describeCalls(trial.calls)})` };
+        }
+        return check(last.input) ? { pass: true, detail: describe } : { pass: false, detail: `not ${describe}: ${JSON.stringify(last.input).slice(0, 300)}` };
+    };
+}
+
+/** At most `limit` distinct paths that match `pattern` appear in the read calls and in the commands of a trial. */
+export function distinctPaths(pattern: RegExp, limit: number): Grader {
+    const global = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+    return (trial) => {
+        const seen = new Set<string>();
+        for (const call of trial.calls) {
+            if (call.tool === "submit_profile") continue;
+            for (const hit of JSON.stringify(call.input ?? "").matchAll(global)) seen.add(hit[0]);
+        }
+        return seen.size <= limit
+            ? { pass: true, detail: `${seen.size} distinct paths` }
+            : { pass: false, detail: `${seen.size} distinct paths: ${[...seen].slice(0, 6).join(", ")}` };
     };
 }
