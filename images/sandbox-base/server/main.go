@@ -10,11 +10,14 @@
 // publishes the port on 127.0.0.1 only and the entrypoint denies egress
 // (SANDBOX_EGRESS_FIREWALL=1); K8s admits the host through a NetworkPolicy.
 //
-// Exec entries live in memory for the life of the process.
+// The exec table is the live source of the exec records. The server writes
+// each record to EXEC_RECORD_DIR too, and it reads them again at start. A
+// record that was still running then becomes lost. Each exec gets its own
+// TMPDIR, which goes when the exec ends.
 //
 // Endpoints:
 //
-//	GET  /health          → readiness probe
+//	GET  /health          → readiness probe: `{status, runningExecs}`
 //	POST /exec            → submit a command (returns 202)
 //	GET  /exec/{execId}   → `{status, events, cursor, truncated?, result?}` with
 //	                        the events past `?since={cursor}` (absent reads as 0)
@@ -23,6 +26,7 @@
 //
 // Env:
 //
+//	EXEC_RECORD_DIR                directory of the exec records (required)
 //	SANDBOX_SERVER_PORT            listen port (default 8765)
 //	SANDBOX_EGRESS_FIREWALL        `1` when the entrypoint installed the egress
 //	                               firewall; the server then refuses to run as root
@@ -302,9 +306,17 @@ func previewNotConfiguredHandler(w http.ResponseWriter, r *http.Request) {
 
 // ── Handlers ────────────────────────────────────────────────────────
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	writeBody(w, []byte(`{"status":"ok"}`))
+type healthBody struct {
+	Status       string `json:"status"`
+	RunningExecs int    `json:"runningExecs"`
+}
+
+// healthHandler answers the readiness probe. The count of running execs tells
+// the host that a machine with no recent poll still runs a command.
+func healthHandler(table *execTable) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSONResponse(w, http.StatusOK, healthBody{Status: "ok", RunningExecs: table.runningCount()})
+	}
 }
 
 // pollResponseBody is the body of `GET /exec/{execId}?since={cursor}`: the
@@ -442,12 +454,22 @@ func main() {
 		port = defaultPort
 	}
 
+	records, err := openRecordStore(os.Getenv(envExecRecordDir))
+	if err != nil {
+		log.Fatalf("startup error: %v", err)
+	}
+	restored, err := records.load()
+	if err != nil {
+		log.Fatalf("startup error: %v", err)
+	}
+
 	pt := newProcessTable()
 	table := newExecTable()
-	exe := newExecutor(table, pt)
+	table.restore(restored)
+	exe := newExecutor(table, pt, records)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", healthHandler)
+	mux.Handle("/health", healthHandler(table))
 	mux.Handle("/exec", http.HandlerFunc(exe.handle))
 	mux.Handle("/exec/", execResultHandler(table))
 
