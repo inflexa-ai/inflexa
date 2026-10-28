@@ -20,8 +20,15 @@ import { plugin } from "bun";
 const HARNESS = "@inflexa-ai/harness";
 const SOURCE = join(import.meta.dir, "..", "harness", "src");
 
+const DIST = join(import.meta.dir, "..", "harness", "dist");
+
+/** An asset of the package, which no `.ts` file holds. */
+const ASSET_EXTENSIONS = [".wasm"];
+
 function sourceOf(subpath: string): string {
     if (subpath === "") return join(SOURCE, "index.ts");
+    // An asset has no source, thus it resolves to the copy that the build of the harness writes into `dist/`.
+    if (ASSET_EXTENSIONS.some((extension) => subpath.endsWith(extension))) return join(DIST, subpath);
     const stem = subpath.endsWith(".js") ? subpath.slice(0, -".js".length) : subpath;
     const file = join(SOURCE, `${stem}.ts`);
     return existsSync(file) ? file : join(SOURCE, stem, "index.ts");

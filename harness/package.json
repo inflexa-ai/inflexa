@@ -11,6 +11,7 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js"
         },
+        "./tools/script/quickjs.wasm": "./dist/tools/script/quickjs.wasm",
         "./*.js": {
             "types": "./dist/*.d.ts",
             "import": "./dist/*.js"

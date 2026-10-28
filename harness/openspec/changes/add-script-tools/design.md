@@ -72,8 +72,8 @@ A script ends at 180 seconds, for each call in it together. The heap of the VM s
 
 ## Risks / Trade-offs
 
-- [The CLI binary cannot run a script] → Release blocker for the CLI. The CLI is a Bun single-file binary. `CodemodeSandbox` loads its QuickJS wasm and its worker file from `node_modules` by default, and the binary has neither on disk. The embedder must embed the worker entry and the wasm, and give `wasm` and `workerUrl` to the sandbox. The harness has no option for that yet. Under `bun run dev` and under Node, `run_script` works. Refer to tasks.md, section 3.
-- [The model reads a result without a type] → The script tools declare no output schema. The model calls `describe` first and reads the result defensively. Output schemas are a follow-up.
+- [A bundled host has no VM files on disk] → `CodemodeSandbox` loads its QuickJS wasm and its worker file from `node_modules` by default. A Bun single-file binary has neither on disk. The harness ships both in `dist/` (`tools/script/quickjs.wasm`, `tools/script/codemode-worker.js`), and `ScriptRuntime` takes their embedded paths. The CLI build embeds both and gives the paths. A host that runs from `node_modules` (Cortex under Node and `tsx`, the CLI under `bun run dev`) gives nothing.
+- [The model reads a result without a type] → The script tools declare no output schema. The catalog gives each input signature, but no result type, thus the model reads the result defensively. Output schemas are a follow-up.
 - [The user sees one call] → A nested call emits no tool event of its own. The user sees one `run_script` call, with a result detail that lists the nested tools. A lookup no longer shows to the user at the time it completes.
 - [A rule past the first sentence of a description] → The model reads it only through `describe`. An example is the rule of the structure card in the description of `alphafold_prediction` (the structure-presentation capability).
 - [A crash reruns each lookup of a script] → The lookups are read-only, thus the cost is time and API quota.

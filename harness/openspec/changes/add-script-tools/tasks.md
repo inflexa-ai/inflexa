@@ -14,8 +14,8 @@
 
 ## 3. The CLI embedding
 
-- [ ] 3.1 Add a harness option that gives `wasm` and `workerUrl` to each `CodemodeSandbox` that `run_script` makes.
-- [ ] 3.2 Embed the worker entry and the QuickJS wasm in the CLI binary, and give them to the harness through that option. Make sure that `run_script` runs in the compiled binary.
+- [x] 3.1 Add a harness option that gives `wasm` and `workerUrl` to each `CodemodeSandbox` that `run_script` makes: `ScriptRuntime` (`wasmPath`, `workerUrl`) on the conversation agent deps and on `AgentDefinition.scriptRuntime`. The harness ships the worker entry `tools/script/codemode-worker.js` and the wasm `tools/script/quickjs.wasm` (an explicit `exports` entry) in `dist/`.
+- [x] 3.2 Embed the worker entry and the QuickJS wasm in the CLI binary, and give them to the harness through that option: `cli/scripts/build.ts` adds the worker entry and bakes its embedded path (`__INFLEXA_CODEMODE_WORKER__`), and `cli/src/modules/harness/runtime.ts` imports the wasm `with { type: "file" }`. A compiled check binary ran `run_script` from an empty directory, under the harness link. Cortex runs the harness under Node with `node_modules`, thus it gives no runtime; `run_script` ran from the built `dist/` under plain Node and under the `tsx` of Cortex.
 
 ## 4. The documents
 

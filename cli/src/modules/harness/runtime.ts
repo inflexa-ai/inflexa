@@ -86,6 +86,11 @@ import { createManageInputsTool } from "./inputs_tool.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
+// The QuickJS VM of `run_script`. A compiled binary has no node_modules on disk, thus it embeds this wasm, and the build
+// embeds the worker entry of the harness (scripts/build.ts). A source run gives no runtime, and the VM loads from
+// node_modules.
+import quickjsWasm from "@inflexa-ai/harness/tools/script/quickjs.wasm" with { type: "file" };
+import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.js";
 import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch, type AgentSelection } from "./agent_switch.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -114,6 +119,17 @@ import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installA
  * `executePlan` flow needs, and nothing that would require it to reach into the
  * durability engine directly.
  */
+
+// `declare const` lets TypeScript see the global that the build bakes (scripts/build.ts). It is safe, because the one
+// read is behind `typeof`: a source run, where no define runs, reads `"undefined"` and not a ReferenceError.
+declare const __INFLEXA_CODEMODE_WORKER__: string | undefined;
+
+/** The embedded VM files of `run_script` in a compiled binary, and nothing in a source run. */
+function codemodeRuntime(): ScriptRuntime | undefined {
+    if (typeof __INFLEXA_CODEMODE_WORKER__ === "undefined") return undefined;
+    return { wasmPath: quickjsWasm, workerUrl: __INFLEXA_CODEMODE_WORKER__ };
+}
+
 export type RunTriggerDeps = {
     /** App pool — dedup pre-check, run reservation, status/step ledger reads. */
     readonly pool: Pool;
@@ -1247,6 +1263,7 @@ async function bootHarnessRuntimeOnce(
             // mutates under the chat's own lock and its provenance/parity events stay on this bus.
             // `knowledge_recommend` rides the same `hostTools` list when the knowledge plane is bound, thus the
             // conversation agent can orient a method question before it plans, with no harness change.
+            scriptRuntime: codemodeRuntime(),
             hostTools: [
                 createRunInflexaTool(),
                 createLaunchDirTool(),
