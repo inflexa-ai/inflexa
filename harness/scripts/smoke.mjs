@@ -24,7 +24,6 @@ try {
     "createConversationAgent",
     "createDbosRunLauncher",
     "defineTool",
-    "runChatTurn",
   ];
   const missing = required.filter((name) => typeof mod[name] !== "function");
   if (missing.length > 0) {
