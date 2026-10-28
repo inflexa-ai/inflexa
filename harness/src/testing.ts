@@ -11,6 +11,7 @@ import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart, SharedV4Pro
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 
 import { createAiSdkProvider } from "./providers/ai-sdk.js";
+import type { ResolveRequestHeaders } from "./providers/request-headers.js";
 
 export { inProcessChatTurns } from "./app/in-process-turn.js";
 import type { ChatProvider, ChatUsage, ProviderCapabilities } from "./providers/types.js";
@@ -112,7 +113,11 @@ function streamOf(entry: ScriptedReply, index: number): LanguageModelV4StreamPar
 /** Build a provider over a scripted model. A request past the end of the script fails the test that made it. */
 export function scriptedModel(
     script: readonly ScriptStep[],
-    options: { readonly capabilities?: Partial<ProviderCapabilities>; readonly maxRetries?: number } = {},
+    options: {
+        readonly capabilities?: Partial<ProviderCapabilities>;
+        readonly maxRetries?: number;
+        readonly resolveRequestHeaders?: ResolveRequestHeaders;
+    } = {},
 ): ScriptedModel {
     const calls: LanguageModelV4CallOptions[] = [];
     const model = new MockLanguageModelV4({
@@ -137,6 +142,11 @@ export function scriptedModel(
             return { stream: convertArrayToReadableStream(streamOf(entry, index)) };
         },
     });
-    const provider = createAiSdkProvider({ model, capabilities: options.capabilities, maxRetries: options.maxRetries ?? 0 });
+    const provider = createAiSdkProvider({
+        model,
+        capabilities: options.capabilities,
+        maxRetries: options.maxRetries ?? 0,
+        resolveRequestHeaders: options.resolveRequestHeaders,
+    });
     return { provider, calls };
 }

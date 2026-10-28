@@ -504,7 +504,7 @@ After its opening, a chat turn MUST run as a DBOS workflow. The workflow id MUST
 
 ### Requirement: A turn reads the live credential of its host
 
-The harness MUST get the credential of a turn from a function that the host gives, by the turn id. The turn MUST ask before each model request. A sub-agent of the turn MUST ask for the credential of its root turn. When the function gives no credential, the request MUST NOT run, and the turn MUST pause with the cause `credential` (see the `work-pause` capability). After the resume, each later call of the turn MUST use the credential that the resume put.
+The harness MUST get the credential of a turn from a function that the host gives, by the turn id. The turn MUST ask before each model request. A sub-agent of the turn MUST ask for the credential of its root turn. When the function gives no credential, the request MUST NOT run, and the turn MUST pause with the cause `credential` (see the `work-pause` capability). After the resume, each later call of the turn MUST use the credential that the resume put. The `auth` of the session of a turn or of a sub-agent MUST read the credential at each read, also through a copy of the session. Thus a session that a loop or a sub-agent body copied before the resume also reads the credential that the resume put.
 
 #### Scenario: A recovered turn of a host with a fixed credential
 
@@ -523,6 +523,18 @@ The harness MUST get the credential of a turn from a function that the host give
 - **GIVEN** a turn that waits in `paused` with the cause `credential`
 - **WHEN** a host resumes the turn with a session that holds a credential
 - **THEN** the turn sends its model request with that credential, and it ends with one outcome
+
+#### Scenario: A resume gives the credential to a recovered sub-agent
+
+- **GIVEN** a sub-agent of a turn that recovered with no credential, and that waits in `paused` with the cause `credential`
+- **WHEN** a host resumes the turn with a session that holds a credential
+- **THEN** the sub-agent sends its model request with that credential, and the turn ends with one outcome
+
+#### Scenario: A resume replaces an expired credential
+
+- **GIVEN** a turn whose request headers hook refuses the expired credential of the turn, and that waits in `paused` with the cause `credential`
+- **WHEN** a host resumes the turn with a session that holds a new credential
+- **THEN** the next model request of the turn uses the new credential
 
 ### Requirement: One turn runs on a thread at a time
 

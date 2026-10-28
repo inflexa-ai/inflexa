@@ -20,6 +20,13 @@ describe("passGate", () => {
         expect(refusal).toEqual({ kind: "suspended", gate: "RunAuthorizer.authorize", reason: "r" });
     });
 
+    it("turns a gate err with credential into a credential refusal, which a person repairs", async () => {
+        const refusal = (
+            await passGate("resolveRequestHeaders", errAsync<never, GateFailure>({ reason: "expired", suspend: false, credential: true }))
+        )._unsafeUnwrapErr();
+        expect(refusal).toEqual({ kind: "credential", gate: "resolveRequestHeaders", reason: "expired" });
+    });
+
     it("does not catch a gate whose promise rejects", async () => {
         await expect(
             passGate("RunCharge.open", new ResultAsync<void, GateFailure>(Promise.reject(new Error("host defect")))).match(
