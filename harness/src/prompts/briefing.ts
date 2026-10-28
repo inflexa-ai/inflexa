@@ -25,14 +25,18 @@
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
 import { WORKING_MEMORY_LIMITS, type WorkingMemory } from "../memory/working-memory.js";
 import type { DataProfileResult } from "../state/data-profile.js";
+import type { ResourceSpec } from "../config/resource-limits.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBindingValue } from "../tools/knowledge/template.js";
 
 // ── Bounds ────────────────────────────────────────────────────────────
 
-/** Completed dependencies rendered as upstream blocks; the tail is counted, not rendered. */
+/** Completed dependencies rendered as upstream blocks; the tail is listed by its paths. */
 export const MAX_UPSTREAM_DEPS = 5;
+
+/** Completed dependencies past the blocks, listed one line each by their paths; the tail is counted. */
+export const MAX_LISTED_UPSTREAM_DEPS = 20;
 
 /** Characters of each dependency's summary carried in the seed — the gist, not the document. */
 export const UPSTREAM_SUMMARY_MAX_CHARS = 500;
@@ -183,10 +187,7 @@ function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, cont
 
 // ── (1b) Analysis memory ──────────────────────────────────────────────
 
-/**
- * The heading of the analysis-memory section. The orient core of the sandbox
- * prompt names this same text, thus a test pins the two together.
- */
+/** The heading of the analysis-memory section. */
 export const ANALYSIS_MEMORY_HEADING = "Analysis memory (read only)";
 
 /**
@@ -343,11 +344,7 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
     }
 
     if (brief.bound.length > 0) {
-        blocks.push(
-            `Bound by the plan (send each value as it is, or add an \`overrides\` entry with the slot and the reason for the change; a changed value without an override is refused):\n${bullets(
-                brief.bound.map((setting) => `\`${setting.name}\` = ${slotValue(setting.value)} (${setting.source})`),
-            )}`,
-        );
+        blocks.push(`Bound by the plan:\n${bullets(brief.bound.map((setting) => `\`${setting.name}\` = ${slotValue(setting.value)} (${setting.source})`))}`);
     }
 
     if (brief.unbound_settings.length > 0) {
@@ -386,10 +383,32 @@ export function renderWorkspace(frame: WorkspaceFrame): string {
     return section(
         "Workspace",
         bullets([
-            `Working directory (writable, your cwd): \`${frame.workingDir}\` — write outputs to \`output/\`, \`figures/\`, \`scripts/\`, \`logs/\` under it.`,
+            `Working directory (writable, your cwd): \`${frame.workingDir}\``,
             `Analysis root (read-only): \`${analysisRoot}\` — inputs at \`${analysisRoot}/data/inputs/\`, prior runs at \`${analysisRoot}/runs/\`.`,
         ]),
     );
+}
+
+// ── (2b) Resources ────────────────────────────────────────────────────
+
+/**
+ * The cpu and memory budget of the step, with the one rule that keeps a
+ * parallel workload inside it. The mounted cpu files make `detectCores()` and
+ * `os.cpu_count()` report the quota, thus the fork count is right by default.
+ * The thread pools default to one thread (see `sandbox/thread-env.ts`), and
+ * only the agent knows when a step is thread-parallel. Thus the briefing names
+ * the budget and the rule with its number. The thread defaults and the way to
+ * raise a pool are in the system prompt, because they are the same for each step.
+ */
+export function renderResources(resources: ResourceSpec | undefined): string {
+    if (!resources) return "";
+    const cores = Math.max(1, Math.floor(resources.cpu));
+    const items = [
+        `CPU: ${resources.cpu} ${resources.cpu === 1 ? "core" : "cores"} (hard quota). Memory: ${resources.memoryGb} GB (hard limit — exceeding it kills the process).`,
+        `The one rule: workers × threads-per-worker must stay ≤ ${cores}. A mix is fine while the product holds.`,
+    ];
+    if (resources.gpu) items.push(`GPU: ${resources.gpu.count}.`);
+    return section("Resources (hard limits)", bullets(items));
 }
 
 // ── (3) Data orientation ──────────────────────────────────────────────
@@ -432,9 +451,21 @@ export function renderUpstream(handoffs: readonly UpstreamHandoff[]): string {
     const shown = handoffs.slice(0, MAX_UPSTREAM_DEPS);
     const blocks = shown.map(renderHandoff);
 
-    const omitted = handoffs.length - shown.length;
-    if (omitted > 0) {
-        blocks.push(`(+${omitted} more completed ${omitted === 1 ? "dependency" : "dependencies"} — \`inspect_run\` lists every step of this run.)`);
+    const listed = handoffs.slice(MAX_UPSTREAM_DEPS, MAX_UPSTREAM_DEPS + MAX_LISTED_UPSTREAM_DEPS);
+    if (listed.length > 0) {
+        blocks.push(
+            `More completed dependencies:\n${bullets(listed.map((h) => `\`${h.stepId}\` (${h.agentId}): summary \`${h.summaryPath}\`, outputs \`${h.outputDir}\``))}`,
+        );
+    }
+
+    // The run is still running while this step runs, and a run-level lookup gives
+    // step paths only for a finished run. Thus the tail is found on disk: each
+    // step directory of the run is a sibling of the working directory.
+    const counted = handoffs.length - shown.length - listed.length;
+    if (counted > 0) {
+        blocks.push(
+            `(+${counted} more completed ${counted === 1 ? "dependency" : "dependencies"}, not listed. The directory of each step of this run is beside your working directory, and it holds the summary of that step at \`output/summary.md\`.)`,
+        );
     }
 
     return section("Upstream results (these already ran — build on them, do not redo them)", blocks.join("\n\n"));

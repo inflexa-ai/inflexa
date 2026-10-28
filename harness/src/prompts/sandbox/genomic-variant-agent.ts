@@ -56,9 +56,6 @@ Your skills: \`genomic-variants\`, \`shared/omics-general\`.
 
 ## Domain Anti-Patterns
 
-- Attempting to call variants — from BAM, CRAM, or reads. There is no
-  caller here and a hand-rolled pileup threshold is not one. Report what
-  the called input would need to contain.
 - GWAS without PCA covariates — omitting population structure is the
   single most common source of false positives.
 - Mixing GRCh37 and GRCh38 coordinates. Verify reference build of ALL

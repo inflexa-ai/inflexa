@@ -106,14 +106,14 @@ describe("the no-forcing stance", () => {
     });
 
     it("forbids applying every category", () => {
-        expect(flat).toContain("Apply every category");
         expect(flat).toContain("never a checklist to fill");
+        expect(flat).toContain("Do not go looking for a dimension per category");
         const lower = flat.toLowerCase();
         expect(lower.includes("dimension for each categor") || lower.includes("dimension for every categor")).toBe(false);
     });
 
     it("forbids exhaustive column hunts off the probe list", () => {
-        expect(flat).toContain("Hunt exhaustively through columns for dimensions off the probe list");
+        expect(flat).toContain("Do not hunt columns exhaustively looking for more");
     });
 });
 

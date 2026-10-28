@@ -49,8 +49,8 @@ const ExecuteCommandInputSchema = z.object({
         .min(1)
         .describe(
             "argv array — e.g. ['python', 'scripts/run.py'] or ['head', '-n', '50', 'data/inputs/x.csv']. " +
-                "A one-element array runs through `sh -c`, so pipes, `&&`, quoting, and globbing work; " +
-                "an array of two or more elements runs directly, with no shell, and nothing is expanded.",
+                "A one-element array runs through `sh -c`, so pipes, `&&`, quoting, and globbing work, and a path that holds a space " +
+                "needs double quotes there; an array of two or more elements runs directly, with no shell, and nothing is expanded.",
         ),
     cwd: z
         .string()
@@ -58,7 +58,8 @@ const ExecuteCommandInputSchema = z.object({
         .describe(
             "Working directory inside the sandbox. Defaults to your working " +
                 "directory; a relative value is resolved against it, an absolute " +
-                "'/<analysisId>/...' value is used as-is.",
+                "'/<analysisId>/...' value is used as-is. Each call starts here: a `cd` in an earlier call " +
+                "does not carry over, thus pass `cwd` or chain the commands with `&&` in one call.",
         ),
     env: z.record(z.string(), z.string()).optional().describe("Extra environment variables for this command."),
     timeoutSeconds: z.number().int().positive().optional().describe("Per-command timeout in seconds. Default 3600."),

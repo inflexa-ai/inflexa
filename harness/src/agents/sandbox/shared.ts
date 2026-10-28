@@ -10,7 +10,7 @@
  * `allowedWritePrefix` through the host-side `WorkspaceMutator` —,
  * the workspace read tools (`read_file`, `grep`) over the shared
  * `WorkspaceFilesystem`, `inspect_data_profile` over the shared `Pool`, and the
- * bio/literature/context7/run-inspection tools its `meta.tools` allowlist names.
+ * bio/literature/context7 tools its `meta.tools` allowlist names.
  *
  * Tool resolution is a single registry lookup — every name in `meta.tools`
  * must map to a concrete `Tool`; unknown names throw at composition time
@@ -29,7 +29,7 @@ import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
 
-import { sandboxOrientCorePromptFor, sandboxPackageLinkPrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
+import { sandboxOrientCorePromptFor, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
 import { composeSystemPrompt } from "../system-prompt.js";
 
 // Sandbox-environment introspection, plus the farm-extension seam face.
@@ -37,9 +37,6 @@ import { createLinkPackagesTool, createListAvailablePackagesTool, createListAvai
 
 // Context7 docs (pure leaves).
 import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/context7-docs.js";
-
-// Run-inspection (dependency-bearing).
-import { createInspectRunTool } from "../../tools/research/inspect-run.js";
 
 // Data-profile retrieval (dependency-bearing) — always-on, see `createSandboxAgent`.
 import { createInspectDataProfileTool } from "../../tools/research/inspect-data-profile.js";
@@ -88,7 +85,7 @@ import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 
 /**
  * Tools every sandbox agent receives — sandbox-environment introspection,
- * library docs, run inspection, and the knowledge template. Spread into each
+ * library docs, and the knowledge template. Spread into each
  * agent's `meta.tools` so planner-facing metadata and the resolved tool record
  * stay in sync. Keep minimal — only tools every agent genuinely needs.
  *
@@ -104,7 +101,6 @@ export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = [
     "listAvailableRefs",
     "resolveLibraryId",
     "queryDocs",
-    "inspectRun",
     "knowledgeTemplate",
 ];
 
@@ -167,8 +163,9 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     readonly toolOutputStore?: ToolOutputStore;
     /**
      * The farm-extension seam of the embedder. When it is bound, every
-     * sandbox agent gets the `link_packages` tool in its always-on substrate,
-     * and the package-link prompt layer appends. Without it, neither exists.
+     * sandbox agent gets the `link_packages` tool in its always-on substrate.
+     * The system prompt is the same with and without it: the descriptions of
+     * `link_packages` and `list_available_packages` carry the link rules.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
     /**
@@ -221,7 +218,6 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,
-        inspectRun: createInspectRunTool(deps.pool),
         pubmed: ncbi.pubmed,
         resolve_citation: deps.citationResolver === undefined ? undefined : createResolveCitationTool(deps.citationResolver),
         searchGene: searchGeneTool,
@@ -331,7 +327,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
  *
  * The composed `systemPrompt` is a **pure function of the agent type** — nothing
  * from `deps.step` reaches it, so two steps of one run, and two runs of one
- * analysis, send a byte-identical ~20k-char prefix that the provider's prompt
+ * analysis, send a byte-identical prefix that the provider's prompt
  * cache can actually reuse. Keep it that way: a single interpolated id or path
  * makes every step's prefix unique again, and each step pays a full cache write
  * and reads nothing back. Per-step values belong in the step's briefing (its
@@ -341,16 +337,12 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
 export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body: string, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
     const appendStandards = opts.appendAnalysisStepStandards ?? true;
     // The layer order is fixed by the harness-sandbox-agents spec: the agent
-    // body, the orient core keyed on the toolchain of the sandbox client, the
-    // package-link layer only when the seam is bound, then the step standards.
+    // body, the orient core keyed on the toolchain of the sandbox client, then
+    // the step standards.
     // The client is the one declaration: the environment it provisions and the
     // text that describes it come from the same value, thus a bag cannot
     // describe a toolchain the sandbox does not have.
-    const sandboxLayer = [
-        sandboxOrientCorePromptFor(deps.toolchainSource),
-        ...(deps.extendAnalysisFarm ? [sandboxPackageLinkPrompt] : []),
-        ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
-    ];
+    const sandboxLayer = [sandboxOrientCorePromptFor(deps.toolchainSource), ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : [])];
     const agentBody = [body, ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
     const systemPrompt = composeSystemPrompt(agentBody);

@@ -167,7 +167,7 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
             "Verbose fields (`includeAttributes`, `includeDrugRecord`) are off by default — both cost a lot of context and are rarely what the question needs.\n" +
             "`perSource` gives the outcome of each corpus, and a conclusion that an interaction is unknown rests on it: 'no_data' means that corpus " +
             "has nothing; 'unavailable' means it could " +
-            "not be reached (a missing DRUGBANK_API_KEY lands here — tell the user and proceed with DGIdb). A `found: false` entry means the identifier " +
+            "not be reached (a missing DRUGBANK_API_KEY lands here — state that the key is missing, and proceed with DGIdb). A `found: false` entry means the identifier " +
             "is not in DGIdb at all, usually a non-HUGO symbol or a brand name. Neither is worth retrying unchanged.",
         inputSchema,
         describeCall: "none",

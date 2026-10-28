@@ -49,7 +49,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool, type ToolError } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import { renderWorkspace } from "../prompts/briefing.js";
+import { renderResources, renderWorkspace } from "../prompts/briefing.js";
 import type { BoundLease, SandboxLeases } from "../sandbox/leases.js";
 import { workPause } from "../workflows/pause.js";
 import { clearPausesOfWork } from "../state/paused-work.js";
@@ -669,6 +669,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const acquired = await lease.acquire(estimateDataProfileResources(stagedInputs));
         if (acquired.kind === "refused") throw new Error(acquired.reason);
         if (acquired.kind === "failed") throw new Error(`the profiler sandbox did not start: ${acquired.detail}`);
+        const resources = acquired.size;
 
         try {
             const headers = await readSetHeaders({
@@ -684,8 +685,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // The profiler runs outside `executeAnalysis`, so no scheduler composes a
             // briefing for it — this prompt IS its briefing, and the sandbox system
             // prompt names no paths (it is static per agent type, for the prompt cache).
-            // Its workspace frame therefore has to be stated here, in the same words the
-            // step briefing uses.
+            // Its workspace frame and its resource budget therefore have to be stated here,
+            // in the same words the step briefing uses.
             const prompt = [
                 `Profile the input data for this analysis: say what the dataset IS, so planning can proceed.`,
                 ``,
@@ -694,7 +695,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
                 }),
                 ``,
-                `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "/${analysisId}/data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
+                renderResources(resources),
                 ``,
                 renderSetMenu(briefingMenu, STAGED_INPUT_ROOT),
                 ``,
@@ -704,7 +705,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                           `Author the dataset's groups as operations on this menu: \`use\` a set, \`split\` one by a slot or by a`,
                           `value mapping, \`merge\` several, or \`group\` explicit paths the scan left over. Membership and counts`,
                           `are computed from your operations — you do not state them. Inspect ONE example file per group where a`,
-                          `description needs content the scan did not capture, then call \`submit_profile\` once.`,
+                          `description needs content the scan did not capture, then deliver the groups with \`submit_profile\`.`,
                       ]),
             ].join("\n");
 

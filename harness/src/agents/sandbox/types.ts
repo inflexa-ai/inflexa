@@ -22,8 +22,6 @@ export type SandboxToolName =
     // Context7 library docs.
     | "resolveLibraryId"
     | "queryDocs"
-    // Run inspection.
-    | "inspectRun"
     // Literature (search / details / fulltext behind one action).
     | "pubmed"
     // Bibliographic verification (tool id is the same snake-case value).

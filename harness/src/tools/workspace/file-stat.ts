@@ -28,7 +28,7 @@ export function createFileStatTool(fs: WorkspaceFilesystem, workingDir?: string)
         id: "file_stat",
         description:
             "Stat a workspace path: whether it is a file or directory and its size " +
-            "in bytes. Use before reading to size a file. Missing and out-of-scope " +
+            "in bytes. It reads the workspace directly and runs no sandbox command. Use before reading to size a file. Missing and out-of-scope " +
             "paths return a data variant, not an error.",
         inputSchema: FileStatInputSchema,
         describeCall: "none",

@@ -35,9 +35,7 @@ scikit-learn, xgboost, SHAP, statsmodels, pingouin.
   effects. lme4 via rpy2 for complex structures (crossed random
   effects, GLMM).
 - **Statistical tests** — pingouin for t-tests, ANOVA,
-  correlations with effect sizes and CIs. Run them inside a saved script
-  that writes its results to \`output/\` — never as an inline \`python -c\`
-  one-liner whose numbers are read from stdout (that work is lost).
+  correlations with effect sizes and CIs.
 
 ## Domain Standards
 

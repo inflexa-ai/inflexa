@@ -152,7 +152,7 @@ export function createComptoxTool(deps: { apiKey: string }): Tool<z.infer<typeof
             "products). See `dataset` for what each returns; all four resolve `query` to a DTXSID first.\n" +
             "ACCEPTED IDENTIFIERS, for every dataset: a DTXSID ('DTXSID7020182') used directly, or a CASRN ('80-05-7'), a chemical name " +
             "('bisphenol A') or an InChIKey, each resolved by EXACT match.\n" +
-            "Requires EPA_CCTE_API_KEY — a missing key fails terminally: do NOT retry, tell the user the key needs configuring and proceed without EPA data.\n" +
+            "Requires EPA_CCTE_API_KEY — a missing key fails terminally: do NOT retry; state that the key is not configured, and proceed without EPA data.\n" +
             "found: false means the query did not resolve to a chemical; a present-but-empty section is likewise valid no-data. Do not retry either.\n" +
             "This is environmental/industrial-chemical data: for drug-like compounds prefer PubChem or ChEMBL — dataset 'chemical' returns " +
             "`detail.pubchemCid` to bridge back.",

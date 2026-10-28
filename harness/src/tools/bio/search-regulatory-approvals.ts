@@ -140,7 +140,7 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }): T
             "ANDA), emaProductNumber, ndc (product or package code) or splSetId.\n" +
             "status 'not_found' is a valid no-data answer and status 'ambiguous' lists the candidate amassIds of an identifier that matches more " +
             "than one record — call 'details' again with one of them. An empty search is also valid no-data. Do not retry any of these unchanged.\n" +
-            "Requires AMASS_API_KEY — a missing key fails terminally: do NOT retry, tell the user the key needs configuring and proceed without " +
+            "Requires AMASS_API_KEY — a missing key fails terminally: do NOT retry; state that the key is not configured, and proceed without " +
             "Amass regulatory data. Every call spends the user's Amass credits.",
         inputSchema,
         describeCall: "none",

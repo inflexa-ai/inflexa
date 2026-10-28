@@ -5,14 +5,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ANALYSIS_MEMORY_HEADING } from "../../../prompts/briefing.js";
 import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../../../prompts/SOUL.js";
-import {
-    sandboxOrientCorePrompt,
-    sandboxOrientCorePromptFor,
-    sandboxPackageLinkPrompt,
-    sandboxAnalysisStepStandardsPrompt,
-} from "../../../prompts/sandbox-standards.js";
+import { sandboxOrientCorePrompt, sandboxOrientCorePromptFor, sandboxAnalysisStepStandardsPrompt } from "../../../prompts/sandbox-standards.js";
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecRequest } from "../../../sandbox/types.js";
@@ -114,12 +108,14 @@ describe("createSandboxAgent", () => {
         expect(toolIds).toContain("edit_file");
         expect(toolIds).toContain("read_file");
         expect(toolIds).toContain("grep");
-        // BASE_SANDBOX_TOOLS: listAvailablePackages, listAvailableRefs, resolveLibraryId, queryDocs, inspectRun.
+        // BASE_SANDBOX_TOOLS: listAvailablePackages, listAvailableRefs, resolveLibraryId, queryDocs.
         expect(toolIds).toContain("list_available_packages");
         expect(toolIds).toContain("list_available_refs");
         expect(toolIds).toContain("resolve_library_id");
         expect(toolIds).toContain("query_docs");
-        expect(toolIds).toContain("inspect_run");
+        // A step runs inside its own run, and the run inspection gives step
+        // paths only for a finished run, thus a sandbox agent has no use for it.
+        expect(toolIds).not.toContain("inspect_run");
         // Plus the two declared bio tools.
         expect(toolIds).toContain("pubmed");
         expect(toolIds).toContain("search_gene");
@@ -262,35 +258,23 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, bare, body);
 
         expect(def.tools.map((t) => t.id)).toContain("link_packages");
-        expect(def.systemPrompt).toContain(sandboxPackageLinkPrompt.trim());
     });
 
-    it("an unbound seam means no tool and no prompt layer, and the composition does not throw", () => {
+    it("with no farm extension bound, the agent gets no link tool, and the composition does not throw", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
 
         expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
-        expect(def.systemPrompt).not.toContain(sandboxPackageLinkPrompt.trim());
     });
 
-    it("the layer teaches the absent-lookup trigger and gates the missing report on the link answer", () => {
-        // The spec scenario "An absent lookup routes through the link tool": a
-        // negative listing must route to `link_packages` BEFORE a missing
-        // report — the pool can hold what the farm lock does not.
+    it("the description names the failed-import trigger, and an unavailable answer is no absence", () => {
+        // A false absence sends the agent to report a package that the pool
+        // holds, thus `unavailable` must never read as a reason for a missing report.
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+        const description = presentFind(def.tools, (tool) => tool.id === "link_packages").description;
 
-        expect(def.systemPrompt).toContain("After a failed import, and when `list_available_packages`");
-        expect(def.systemPrompt).toContain("Report a package as missing only after");
-    });
-
-    it("the layer teaches the prefixed retry after a two-track collision", () => {
-        // The spec scenario "The layer teaches the prefixed retry": a
-        // collision of one spelling that both tracks hold has a remedy, thus
-        // the agent must retry with the prefix before it drops the package.
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
-
-        expect(def.systemPrompt).toContain("call `link_packages` again for that package");
-        expect(def.systemPrompt).toContain("with the prefixed form, `python:<name>` or `r:<name>`");
-        expect(def.systemPrompt).toContain("Drop the package only after that second call also refuses");
+        expect(description).toContain("so an import that failed works without a restart");
+        expect(description).toContain("it says nothing about the package's presence, so report the reason");
+        expect(description).toContain("report the package as missing, do not retry");
     });
 
     it("the description names the prefixed retry", () => {
@@ -316,7 +300,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(descriptionOf(bound)).toContain("call `link_packages` before treating it as missing");
     });
 
-    it("the layer follows the seam, and each composition stays byte-stable across its own steps", () => {
+    it("a bound farm extension changes the tools and not the system prompt, which stays byte-stable across steps", () => {
         const boundOne = createSandboxAgent(
             { ...makeFakeSandboxAgentDeps({ allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/s1" }), extendAnalysisFarm },
             meta,
@@ -330,7 +314,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
 
         expect(boundTwo.systemPrompt).toBe(boundOne.systemPrompt);
-        expect(boundOne.systemPrompt).not.toBe(unbound.systemPrompt);
+        expect(boundOne.systemPrompt).toBe(unbound.systemPrompt);
     });
 
     it("an err of the realization reads as unavailable per request, never as a raw tool error", async () => {
@@ -423,13 +407,6 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
     });
 });
 
-describe("the orient core and the analysis-memory section of the briefing", () => {
-    it("names the heading that the briefing renders, in each toolchain variant", () => {
-        expect(sandboxOrientCorePromptFor("store")).toContain(`"${ANALYSIS_MEMORY_HEADING}"`);
-        expect(sandboxOrientCorePromptFor("image")).toContain(`"${ANALYSIS_MEMORY_HEADING}"`);
-    });
-});
-
 describe("createSandboxAgent — the toolchain keying of the orient core", () => {
     it("the store toolchain keeps the legacy orient core byte-identical", () => {
         expect(sandboxOrientCorePromptFor("store")).toBe(sandboxOrientCorePrompt);
@@ -444,7 +421,9 @@ describe("createSandboxAgent — the toolchain keying of the orient core", () =>
         const image = sandboxOrientCorePromptFor("image");
         expect(image).not.toBe(sandboxOrientCorePrompt);
         expect(image).toContain("An acquisition of a new package is a host action");
-        expect(image).toContain("report it as missing");
+        // With a farm extension bound, a package absent from the farm can
+        // still be linked, thus the toolchain text must not order a missing report.
+        expect(image).not.toContain("report it as missing");
 
         // The bag carries the toolchain of the sandbox module, which is the value of the client, thus the text and
         // the environment cannot disagree.
