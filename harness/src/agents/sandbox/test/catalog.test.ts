@@ -40,7 +40,8 @@ describe("createSandboxAgents", () => {
         const ALWAYS_ON_LEASE = ["acquire_sandbox", "release_sandbox"];
         for (const [id, def] of Object.entries(agents)) {
             const meta = presentGet(SANDBOX_AGENT_META, id);
-            const toolIds = new Set(def.tools.map((t) => t.id));
+            const all = [...def.tools, ...(def.scriptTools ?? [])];
+            const toolIds = new Set(all.map((t) => t.id));
 
             for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE, ...ALWAYS_ON_LEASE]) {
                 expect(toolIds.has(required), `${id} should have ${required}`).toBe(true);
@@ -58,13 +59,20 @@ describe("createSandboxAgents", () => {
             declared.delete("knowledgeTemplate");
             const expected = alwaysOnCount + declared.size;
             expect(toolIds.has("knowledge_template"), `${id} knowledge_template without a client`).toBe(false);
-            expect(def.tools.length, `${id} tool count`).toBe(expected);
+            expect(all.length, `${id} tool count`).toBe(expected);
+            // The lookups of outside sources run in a script, and the environment of the step stays direct.
+            for (const tool of def.scriptTools ?? []) {
+                expect(
+                    ["list_available_packages", "list_available_refs", "scan_inputs", "execute_command"].includes(tool.id),
+                    `${id} ${tool.id} in a script`,
+                ).toBe(false);
+            }
         }
     });
 
     it("gives the Amass regulatory tool to the drug-repurposing agent only, and the patent tool to no sandbox agent", () => {
         for (const [id, def] of Object.entries(agents)) {
-            const toolIds = new Set(def.tools.map((t) => t.id));
+            const toolIds = new Set([...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id));
             expect(toolIds.has("search_regulatory_approvals"), `${id} search_regulatory_approvals`).toBe(id === "drug-repurposing-agent");
             expect(toolIds.has("search_patents"), `${id} search_patents`).toBe(false);
         }

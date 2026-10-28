@@ -180,7 +180,7 @@ export async function runTrial(
                 : {
                       policy: {
                           mask: maskExcept(
-                              agent.tools.map((tool) => tool.id),
+                              withRunScript(agent).tools.map((tool) => tool.id),
                               [SUBMIT_FILE_METADATA_TOOL_ID],
                           ),
                       },
