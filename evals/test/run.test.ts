@@ -122,7 +122,7 @@ describe("the cases", () => {
     test("have unique ids, and each script names a tool of the agent", () => {
         const ids = allCases.map((c) => c.id);
         expect(new Set(ids).size).toBe(ids.length);
-        const toolIds = new Set(agent.tools.map((tool) => tool.id));
+        const toolIds = new Set([...agent.tools, ...(agent.scriptTools ?? [])].map((tool) => tool.id));
         for (const c of allCases) for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
     });
 
