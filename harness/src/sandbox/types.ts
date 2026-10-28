@@ -158,6 +158,13 @@ export type BuildExecResult = {
 export type BuildCommitResult =
     { readonly kind: "committed"; readonly pin: string; readonly storeDir: string } | { readonly kind: "failed"; readonly reason: string };
 
+/** The input of one commit: the build script, and the directory of the source tree that holds the R `DESCRIPTION` when it is not the root. */
+export type BuildCommitRequest = {
+    readonly script: string;
+    /** A relative path inside the source tree, with no `..` segment. The clean run resolves the R dependencies from this directory. */
+    readonly packageDir?: string;
+};
+
 /**
  * The build-session interface of the embedder, behind the `install_from_source`
  * conversation tool. The embedder owns the container the build runs in, the
@@ -175,11 +182,18 @@ export type BuildCommitResult =
  * `commit` runs the script in one new container over the pristine snapshot, and
  * that run alone writes the store. A `stop`, and a `commit` that answers
  * `committed`, end the session; the realization removes the container.
+ *
+ * `start`, `exec`, and `commit` take the abort signal of the turn. When it
+ * fires, the realization stops the work of the call and the promise rejects:
+ * an aborted `exec` stops its command inside the container, an aborted
+ * `commit` stops the clean-run container, and an aborted `start` removes what
+ * it made. The session of an aborted `exec` or `commit` stays open. `stop`
+ * takes no signal, because it is short and it must finish.
  */
 export type BuildSession = {
-    start(source: BuildSource, analysisId: string): Promise<BuildSessionHandle>;
-    exec(handle: string, command: BuildSessionCommand): Promise<BuildExecResult>;
-    commit(handle: string, script: string): Promise<BuildCommitResult>;
+    start(source: BuildSource, analysisId: string, signal: AbortSignal): Promise<BuildSessionHandle>;
+    exec(handle: string, command: BuildSessionCommand, signal: AbortSignal): Promise<BuildExecResult>;
+    commit(handle: string, request: BuildCommitRequest, signal: AbortSignal): Promise<BuildCommitResult>;
     stop(handle: string): Promise<void>;
 };
 

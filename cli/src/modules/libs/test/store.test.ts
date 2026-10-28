@@ -102,6 +102,18 @@ describe("collectStoreDebris", () => {
         expect(invocations).toEqual([["reclaim", "--debris"]]);
     });
 
+    test("a source-build report left by a stopped host alone starts the pass and counts as a stale report", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+        writeFileSync(join(root, ".inflexa-download", "source-4242-x.json"), "{}\n");
+        const invocations: (readonly string[])[] = [];
+
+        const outcome = (await collectStoreDebris(root, { run: countingRunner(invocations) }))._unsafeUnwrap();
+
+        expect(outcome).toEqual({ swept: true, dirs: [], reports: 1 });
+        expect(invocations).toEqual([["reclaim", "--debris"]]);
+    });
+
     test("a quiet store starts no container", async () => {
         const root = tempStore();
         const invocations: (readonly string[])[] = [];

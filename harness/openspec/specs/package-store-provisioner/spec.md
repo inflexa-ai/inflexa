@@ -279,9 +279,10 @@ link can land.
 touch the pool. No lease guards a removal: the host gates its own delete
 flow on live work.
 
-`reclaim --debris` MUST also remove the stale acquire reports under
-`.inflexa-download/`, and it MUST NOT change the graph. The host owns the
-triggers of the debris pass, and it gates them on live work.
+`reclaim --debris` MUST also remove the stale reports under
+`.inflexa-download/`: the acquire reports and the source-build reports.
+It MUST NOT change the graph. The host owns the triggers of the debris
+pass, and it gates them on live work.
 
 #### Scenario: An advertised directory survives reclamation
 
@@ -312,27 +313,45 @@ triggers of the debris pass, and it gates them on live work.
 - **GIVEN** an acquire report file that an ended flush left behind
 - **WHEN** `reclaim --debris` runs
 - **THEN** the report file is gone
+
+#### Scenario: The debris pass removes a stale source report
+
+- **GIVEN** a `source-*.json` report that a stopped host process left behind
+- **WHEN** `reclaim --debris` runs
+- **THEN** the report file is gone
+
 ### Requirement: A source build runs one script over one snapshot
 
 `acquire-source` MUST accept a pristine source snapshot (a git work tree
 at the pinned commit, or a copy of a local folder) and one build script.
-The script contract is fixed: the script MUST build exactly one root
-artifact — one installed R package directory with its `DESCRIPTION`, or
-one built wheel — into a named output directory of the container, and it
-MUST NOT install the dependencies of the package. The dependency order
-follows the track, because each ecosystem builds differently: for R, the
-run MUST resolve the dependencies of the snapshot tree first — a pak
-lockfile resolve of the local tree — and install them before it runs the
-script, because `R CMD INSTALL` refuses a package whose imports are
-absent; for Python, the script builds the wheel first (a wheel build
-needs no runtime dependencies), and the run then resolves the wheel's
-requirements and installs them through the hash-pinned path. The run
-refuses a script whose output directory holds no artifact or more than
-one. The name and the version of the root MUST come from the package
-metadata: `Package` and `Version` of the DESCRIPTION for R, and the
-`.dist-info` of the wheel for Python. Each edge of the new node MUST
-point to a pool node or to an image-owned name, or the run refuses, and
-the root's own name MUST NOT enter the staged dependency set.
+The script contract is fixed. The script MUST build exactly one root
+artifact into a named output directory of the container. The artifact is
+one installed R package directory with its `DESCRIPTION`, or one built
+wheel. The script MUST NOT install the dependencies of the package.
+
+The dependency order follows the track, because each ecosystem builds
+differently. For R, the run MUST resolve the dependencies of the package
+tree first, with a pak lockfile resolve. It MUST install them before it
+runs the script. `R CMD INSTALL` refuses a package whose imports are absent.
+The package tree is the snapshot root, or the package directory that the
+run receives. For Python, the script builds the wheel first, and the run
+then resolves the wheel's requirements and installs them through the
+hash-pinned path.
+
+The run MUST refuse a package directory that is absolute, that holds a
+`..` segment, that resolves outside the snapshot, or that holds no
+`DESCRIPTION`.
+
+The run MUST refuse a script whose output directory holds no artifact or
+more than one. The name and the version of the root MUST come from the
+package metadata: `Package` and `Version` of the DESCRIPTION for R, and
+the `.dist-info` of the wheel for Python. Each edge of the new node MUST
+point to a pool node or to an image-owned name, or the run refuses. The
+root's own name MUST NOT enter the staged dependency set.
+
+A failure of a dependency install MUST refuse the run, for each track.
+The refusal MUST remove each store directory that the run made, and the
+run MUST write its report with the reason.
 
 #### Scenario: A clean script builds what the session built
 
@@ -345,6 +364,18 @@ the root's own name MUST NOT enter the staged dependency set.
 - **GIVEN** an R source package whose imports CRAN serves
 - **WHEN** `acquire-source` runs
 - **THEN** the pak lockfile resolve of the snapshot tree installs the imports first, and the script's install of the root then succeeds
+
+#### Scenario: The package directory feeds the R resolve
+
+- **GIVEN** a snapshot whose R package lives under `pkg/`, and the package directory `pkg`
+- **WHEN** `acquire-source` runs
+- **THEN** the pak resolve reads `pkg/DESCRIPTION`, and the imports install before the script runs
+
+#### Scenario: A package directory outside the snapshot is refused
+
+- **GIVEN** the package directory `../etc`
+- **WHEN** `acquire-source` runs
+- **THEN** the run refuses before any install, and the report names the directory
 
 #### Scenario: The run refuses a script that builds nothing
 
@@ -369,6 +400,62 @@ the root's own name MUST NOT enter the staged dependency set.
 - **GIVEN** a pool that already holds the index build of the root's name
 - **WHEN** `acquire-source` resolves the dependencies of the snapshot tree
 - **THEN** the staged set holds the dependencies alone, and the index build of the root's name joins no stage
+
+#### Scenario: A failed Python dependency install refuses with a report
+
+- **GIVEN** a built wheel whose second requirement fails to install, after the first one installed
+- **WHEN** `acquire-source` installs the requirements
+- **THEN** the run refuses with the reason in its report, and the store directory of the first requirement is gone
+
+### Requirement: The build script runs unprivileged
+
+`acquire-source` MUST install the apt packages of the plan itself, as
+root, after the apt pin and before the script. Each apt package name MUST
+be a Debian package name: a lowercase letter or a digit first, then
+lowercase letters, digits, `+`, `-`, or `.`. The run refuses each other
+name before any install.
+
+The run MUST then execute the script as uid 1000 and gid 1000, through
+`setpriv`. The script process MUST have an empty capability set, an empty
+bounding set, and `no-new-privs`. The output directory MUST be writable
+by uid 1000.
+
+The script MUST NOT reach the read-write store mount. The run makes the
+parent directory of the store mount readable by root alone before the
+script starts. The run refuses when that parent is `/`. The script reads its R dependency library through the
+read-only view of the store that the host launch mounts. The path of
+that view is a required argument of the run. The links of
+that library are relative.
+
+The run MUST execute a copy of the approved script that root owns and
+that uid 1000 cannot change. The run MUST write the output of the script
+to a file and read only its tail, never the whole output in memory.
+After the script returns, the run MUST kill each remaining process of
+uid 1000 before root reads the output directory.
+
+#### Scenario: The script cannot delete the wall
+
+- **GIVEN** an approved script that runs `nft delete table ip inflexa-egress`
+- **WHEN** `acquire-source` runs the script
+- **THEN** the command fails with a permission error, and the wall stays
+
+#### Scenario: The script cannot write the store
+
+- **GIVEN** an approved script that writes a file under `/mnt/libs`
+- **WHEN** `acquire-source` runs the script
+- **THEN** the write fails, and the store is unchanged
+
+#### Scenario: The plan's apt packages install before the script
+
+- **GIVEN** a plan that names the apt package `libcurl4-openssl-dev`
+- **WHEN** `acquire-source` runs
+- **THEN** the package installs as root before the script, and the script needs no root
+
+#### Scenario: An option is not an apt package
+
+- **GIVEN** an apt package name `-oAPT::Get::AllowUnauthenticated=true`
+- **WHEN** `acquire-source` runs
+- **THEN** the run refuses before any install, and the report names the value
 
 ### Requirement: The source pin carries a qualifier and the match is exact
 
@@ -407,16 +494,20 @@ qualified pin reuses the held directory.
 
 Each source-built store directory MUST carry a build record beside the pin
 and hash markers, for example `.inflexa-build.json`. The record MUST hold
-the source (the URL and the full commit sha, or the tree hash of the
-folder), the digest of the provisioner image and the digest of the base
-image (both passed to the run by the host launch, because a process in the
-container cannot read its own image digest), the date of the apt snapshot
-and the apt packages with their versions, the versions of the compilers,
-`cmake`, R, Python, `uv`, and `pak`, the build script and its sha256, and
-the arch. The record MUST NOT hold a credential of the source. The record
-MUST stay out of the content hash and out of every farm link, exactly like
-the other markers. A local folder MUST hash through the tree-hash function
-of the provisioner, because the bytes of an archive change with file times.
+the source: the URL and the full commit sha, or the tree hash of the
+folder, and the package directory when the run received one. The record
+MUST hold the digest of the provisioner image and the digest of the base
+image. The host launch passes both to the run, because a process in the
+container cannot read its own image digest.
+
+The record MUST also hold the date of the apt snapshot and the apt
+packages with their versions. It MUST hold the versions of the
+compilers, `cmake`, R, Python, `uv`, and `pak`. It MUST hold the build
+script, its sha256, and the arch.
+The record MUST NOT hold a credential of the source. The record MUST stay
+out of the content hash and out of every farm link, exactly like the
+other markers. A local folder MUST hash through the tree-hash function of
+the provisioner, because the bytes of an archive change with file times.
 
 #### Scenario: The record names the commit
 
@@ -429,6 +520,12 @@ of the provisioner, because the bytes of an archive change with file times.
 - **GIVEN** a source build of a local folder
 - **WHEN** the store directory is inspected
 - **THEN** its build record holds the tree hash of the folder, and no credential
+
+#### Scenario: The record names the package directory
+
+- **GIVEN** a source build whose package directory is `pkg`
+- **WHEN** the store directory is inspected
+- **THEN** its build record holds `pkg` beside the source
 
 #### Scenario: The record stays out of the content address
 

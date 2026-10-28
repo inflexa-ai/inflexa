@@ -17,7 +17,7 @@ import { createInstallFromSourceTool } from "../install-from-source.js";
 import { AskRejectedError, type AskApproval, type AskRequest } from "../approval/contract.js";
 import type { ToolContext } from "../define-tool.js";
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
-import type { BuildCommitResult, BuildExecResult, BuildSession, BuildSessionCommand, BuildSource } from "../../sandbox/types.js";
+import type { BuildCommitRequest, BuildCommitResult, BuildExecResult, BuildSession, BuildSessionCommand, BuildSource } from "../../sandbox/types.js";
 import { createConversationAgent } from "../../agents/conversation-agent.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
@@ -33,14 +33,25 @@ const SHA = "2fc0c4f7d2be974cd8fa4f2a55a71c1a63d38b1e";
 const PIN = `SeedMatchR==2.0.0@git:${SHA}`;
 const STORE_DIR = "/pool/seedmatchr-2.0.0-1e2b3d";
 
-/** An `ask` that records each request and plays back a scripted reply per call. */
-function askRecording(replies: readonly ("once" | "always" | "reject")[]): { requests: AskRequest[]; ctx: ToolContext } {
+const START_ASK_TITLE = "Approve the source-build session";
+
+/**
+ * An `ask` that records each request and plays back a scripted reply per call.
+ * The start ask approves itself and stays out of `requests` and `replies`, so a
+ * test of the plan, command, and commit asks starts its sessions with no extra
+ * script; `recordStartAsks` puts the start ask under the script like any other.
+ */
+function askRecording(
+    replies: readonly ("once" | "always" | "reject")[],
+    opts: { readonly recordStartAsks?: boolean; readonly signal?: AbortSignal } = {},
+): { requests: AskRequest[]; ctx: ToolContext } {
     const requests: AskRequest[] = [];
-    const base = makeToolContext();
+    const base = makeToolContext(opts.signal);
     let next = 0;
     const ctx: ToolContext = {
         ...base.ctx,
         ask: (request): Promise<AskApproval> => {
+            if (request.title === START_ASK_TITLE && opts.recordStartAsks !== true) return Promise.resolve({ kind: "once" });
             requests.push(request);
             const reply = replies[next];
             next += 1;
@@ -54,7 +65,7 @@ function askRecording(replies: readonly ("once" | "always" | "reject")[]): { req
 type StubCall =
     | { readonly op: "start"; readonly source: BuildSource; readonly analysisId: string }
     | { readonly op: "exec"; readonly handle: string; readonly command: BuildSessionCommand }
-    | { readonly op: "commit"; readonly handle: string; readonly script: string }
+    | { readonly op: "commit"; readonly handle: string; readonly request: BuildCommitRequest }
     | { readonly op: "stop"; readonly handle: string };
 
 type StubDeps = {
@@ -65,12 +76,14 @@ type StubDeps = {
     readonly classHosts?: readonly string[];
 };
 
-/** A `BuildSession` that records every call and answers from small scripted results. */
-function stubBuildSession(stub: StubDeps = {}): { calls: StubCall[]; buildSession: BuildSession } {
+/** A `BuildSession` that records every call, and the signal each long call received, and answers from small scripted results. */
+function stubBuildSession(stub: StubDeps = {}): { calls: StubCall[]; signals: Record<"start" | "exec" | "commit", AbortSignal[]>; buildSession: BuildSession } {
     const calls: StubCall[] = [];
+    const signals: Record<"start" | "exec" | "commit", AbortSignal[]> = { start: [], exec: [], commit: [] };
     let started = 0;
     const buildSession: BuildSession = {
-        start: (source, analysisId) => {
+        start: (source, analysisId, signal) => {
+            signals.start.push(signal);
             calls.push({ op: "start", source, analysisId });
             started += 1;
             return Promise.resolve({
@@ -80,12 +93,14 @@ function stubBuildSession(stub: StubDeps = {}): { calls: StubCall[]; buildSessio
                 classHosts: stub.classHosts,
             });
         },
-        exec: (handle, command) => {
+        exec: (handle, command, signal) => {
+            signals.exec.push(signal);
             calls.push({ op: "exec", handle, command });
             return Promise.resolve({ execId: command.execId, exitCode: 0, stdout: "", stderr: "", timedOut: false, ...stub.exec?.(command) });
         },
-        commit: (handle, script) => {
-            calls.push({ op: "commit", handle, script });
+        commit: (handle, request, signal) => {
+            signals.commit.push(signal);
+            calls.push({ op: "commit", handle, request });
             return Promise.resolve(stub.commit?.() ?? { kind: "committed" as const, pin: PIN, storeDir: STORE_DIR });
         },
         stop: (handle) => {
@@ -93,7 +108,7 @@ function stubBuildSession(stub: StubDeps = {}): { calls: StubCall[]; buildSessio
             return Promise.resolve();
         },
     };
-    return { calls, buildSession };
+    return { calls, signals, buildSession };
 }
 
 function recordingStore(): { puts: KeptToolOutput[]; store: ToolOutputStore } {
@@ -154,6 +169,72 @@ describe("install_from_source — the input schema", () => {
         expect(tool.inputSchema.safeParse({ ...FIRST_BUILD, aptPackages: undefined }).success).toBe(false);
         expect(tool.inputSchema.safeParse({ ...FIRST_BUILD, strategy: undefined }).success).toBe(false);
     });
+
+    describe("plan hosts", () => {
+        it.each([
+            "com",
+            "pypi.org/evil.example",
+            "10.0.0.1",
+            "pypi.org,evil.example",
+            "https://pypi.org",
+            "pypi.org:443",
+            "-bad.example.org",
+            "example.org.",
+            "a b.org",
+        ])("refuses %p before any ask and names the value", (host) => {
+            const parsed = tool.inputSchema.safeParse({ ...FIRST_BUILD, hosts: ["github.com", host] });
+            expect(parsed.success).toBe(false);
+            if (parsed.success) return;
+            expect(parsed.error.issues.map((i) => i.message).join("\n")).toContain(`${host.toLowerCase()} is not a host name`);
+        });
+
+        it("accepts a host name and gives it in lower case, whatever the case of the input", () => {
+            const parsed = tool.inputSchema.safeParse({
+                ...FIRST_BUILD,
+                hosts: ["PyPI.org", "files.pythonhosted.org", "packagemanager.posit.co", "Snapshot.Ubuntu.com"],
+            });
+            expect(parsed.success).toBe(true);
+            if (!parsed.success) return;
+            expect(parsed.data.hosts).toEqual(["pypi.org", "files.pythonhosted.org", "packagemanager.posit.co", "snapshot.ubuntu.com"]);
+        });
+    });
+
+    describe("the git URL", () => {
+        it.each([
+            "file:///etc/passwd",
+            "ssh://git@github.com/o/r",
+            "https://com/o/r",
+            "https://10.0.0.1/o/r",
+            "https://[::1]/o/r",
+            "github.com/o/r",
+            "not a url",
+        ])("refuses %p", (gitUrl) => {
+            const parsed = tool.inputSchema.safeParse({ op: "start", gitUrl });
+            expect(parsed.success).toBe(false);
+            if (parsed.success) return;
+            expect(parsed.error.issues.map((i) => i.message).join("\n")).toContain(`${gitUrl} is not a git URL`);
+        });
+
+        it.each(["https://gitlab.com/group/project.git", "http://git.example.org/o/r", "https://GitHub.com/o/r", "https://user@codeberg.org/o/r"])(
+            "accepts %p",
+            (gitUrl) => {
+                expect(tool.inputSchema.safeParse({ op: "start", gitUrl }).success).toBe(true);
+            },
+        );
+    });
+
+    describe("the package directory", () => {
+        it.each(["../other", "a/../b", "..", "/abs/path", "\\share\\dir", "C:\\dir", "pkg\\..\\x"])("refuses %p and names the value", (packageDir) => {
+            const parsed = tool.inputSchema.safeParse({ op: "commit", sessionId: "sess-1", script: "true", packageDir });
+            expect(parsed.success).toBe(false);
+            if (parsed.success) return;
+            expect(parsed.error.issues.map((i) => i.message).join("\n")).toContain(`${packageDir} is not a directory inside the source tree`);
+        });
+
+        it.each(["pkg", "packages/pkg", ".", "my..pkg"])("accepts %p", (packageDir) => {
+            expect(tool.inputSchema.safeParse({ op: "commit", sessionId: "sess-1", script: "true", packageDir }).success).toBe(true);
+        });
+    });
 });
 
 describe("install_from_source — the description", () => {
@@ -163,7 +244,7 @@ describe("install_from_source — the description", () => {
         expect(description).toContain("FRESH shell");
         expect(description).toContain("absolute paths");
         expect(description).toContain("`cd <dir> && <command>`");
-        expect(description).toContain("the tree ROOT must hold the DESCRIPTION");
+        expect(description).not.toContain("the tree ROOT must hold the DESCRIPTION");
         expect(description).toContain("the default working directory is the working-copy root");
     });
 
@@ -184,6 +265,28 @@ describe("install_from_source — the description", () => {
         expect(description).toContain("READ-ONLY /work/src");
         expect(description).toContain("copies it first");
         expect(description).toContain("/work/out");
+    });
+
+    it("tells the agent that a restart keeps /work alone", () => {
+        expect(description).toContain("RESTARTS the session container and keeps /work alone");
+        expect(description).toContain("each change outside /work is gone");
+        expect(description).toContain("install them again");
+    });
+
+    it("tells the agent what the clean run installs and as whom it runs", () => {
+        expect(description).toContain("installs the apt packages of the plan itself");
+        expect(description).toContain("non-root user with no capability");
+        expect(description).toContain("no `apt-get` and no root step");
+    });
+
+    it("names the package directory for an R package in a subdirectory, and no custom script for it", () => {
+        expect(description).toContain("`packageDir`");
+        expect(description).toContain("when the DESCRIPTION is not at the tree root");
+        expect(description).not.toContain("needs a custom script that builds from there");
+    });
+
+    it("tells the agent that each start asks the user", () => {
+        expect(description).toContain("the user approves each start");
     });
 
     it("carries the stop rule and the excerpt note", () => {
@@ -267,8 +370,7 @@ describe("install_from_source — start", () => {
     it("start carries the analysis id of the conversation session, so the commit extends the farm of that analysis", async () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
-        const base = makeToolContext();
-        const ctx = { ...base.ctx, session: makeSession({ scope: { kind: "analysis", analysisId: "analysis-7f" } }) };
+        const ctx = { ...askRecording([]).ctx, session: makeSession({ scope: { kind: "analysis", analysisId: "analysis-7f" } }) };
 
         const result = (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
@@ -276,16 +378,106 @@ describe("install_from_source — start", () => {
         expect(stub.calls).toEqual([{ op: "start", source: { kind: "git", url: "https://github.com/tacazares/SeedMatchR" }, analysisId: "analysis-7f" }]);
     });
 
-    it("a folder source starts with no commit and no ask", async () => {
+    it("a folder source starts with no commit", async () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
-        const { requests, ctx } = askRecording(["reject"]);
+        const { ctx } = askRecording([]);
 
         const result = (await tool.execute({ op: "start", folder: "/home/me/localpkg" }, ctx))._unsafeUnwrap();
 
         if (result.status !== "started") throw new Error("expected a started result");
         expect(result.commit).toBeUndefined();
-        expect(requests).toEqual([]);
+    });
+
+    it("a folder start asks with the path and says that the session reads the whole folder, before any read", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { requests, ctx } = askRecording(["once"], { recordStartAsks: true });
+
+        const result = (await tool.execute({ op: "start", folder: "/Users/me/.ssh" }, ctx))._unsafeUnwrap();
+
+        expect(result.status).toBe("started");
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.title).toBe(START_ASK_TITLE);
+        expect(requests[0]?.command).toContain("/Users/me/.ssh");
+        expect(requests[0]?.detail).toContain("/Users/me/.ssh");
+        expect(requests[0]?.detail).toContain("whole folder");
+        expect(requests[0]?.grantKey).toBeUndefined();
+    });
+
+    it("a rejected folder start rethrows, calls no start, and leaves no session", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { ctx } = askRecording(["reject"], { recordStartAsks: true });
+
+        await expect(tool.execute({ op: "start", folder: "/Users/me/.ssh" }, ctx)).rejects.toBeInstanceOf(AskRejectedError);
+
+        expect(stub.calls).toEqual([]);
+        const after = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, askRecording([]).ctx))._unsafeUnwrap();
+        expect(after).toEqual({ status: "unknown_session", sessionId: "sess-1" });
+    });
+
+    it("a git start asks with the URL and the ref, before the clone", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { requests, ctx } = askRecording(["once", "once"], { recordStartAsks: true });
+
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR", gitRef: "v2.0.0" }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        expect(requests[0]?.detail).toContain("https://github.com/tacazares/SeedMatchR");
+        expect(requests[0]?.detail).toContain("ref v2.0.0");
+        expect(requests[1]?.detail).toContain("head of the default branch");
+    });
+
+    it("a rejected git start rethrows, calls no start, and leaves no session", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { requests, ctx } = askRecording(["reject"], { recordStartAsks: true });
+
+        await expect(tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx)).rejects.toBeInstanceOf(AskRejectedError);
+
+        expect(requests).toHaveLength(1);
+        expect(stub.calls).toEqual([]);
+    });
+
+    it("start, exec, and commit receive the abort signal of the tool context", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const controller = new AbortController();
+        const { ctx } = askRecording(["once", "once", "once"], { signal: controller.signal });
+
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute(FIRST_BUILD, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." }, ctx))._unsafeUnwrap();
+
+        expect(stub.signals.start).toEqual([controller.signal]);
+        expect(stub.signals.exec).toEqual([controller.signal]);
+        expect(stub.signals.commit).toEqual([controller.signal]);
+    });
+
+    it("an aborted exec answers failed with the reason, and the session stays open", async () => {
+        const inner = stubBuildSession();
+        const controller = new AbortController();
+        const buildSession: BuildSession = {
+            ...inner.buildSession,
+            exec: (_handle, _command, signal) =>
+                new Promise((_resolve, reject) => {
+                    if (signal.aborted) reject(new Error("the turn was canceled"));
+                    signal.addEventListener("abort", () => reject(new Error("the turn was canceled")));
+                }),
+        };
+        const tool = createInstallFromSourceTool({ buildSession });
+        const { ctx } = askRecording([], { signal: controller.signal });
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        const pending = tool.execute({ op: "exec", sessionId: "sess-1", command: "sleep 600" }, ctx);
+        controller.abort();
+        const result = (await pending)._unsafeUnwrap();
+
+        expect(result).toEqual({ status: "failed", reason: "the turn was canceled" });
+        const stopped = (await tool.execute({ op: "stop", sessionId: "sess-1" }, ctx))._unsafeUnwrap();
+        expect(stopped).toEqual({ status: "stopped", sessionId: "sess-1" });
     });
 
     it("a failed start answers failed with the reason, and no session exists", async () => {
@@ -522,6 +714,45 @@ describe("install_from_source — rejections end the session with no store chang
     });
 });
 
+describe("install_from_source — an abort during an ask keeps the session", () => {
+    const cancel = new Error("turn cancelled");
+
+    /** A context whose ask of the named title rejects with the abort reason, as a cancel of a pending ask does; every other ask is approved once. */
+    function askAbortingAt(title: string): ToolContext {
+        const base = askRecording([]).ctx;
+        return { ...base, ask: (request) => (request.title === title ? Promise.reject(cancel) : Promise.resolve({ kind: "once" })) };
+    }
+
+    const cases: ReadonlyArray<{ readonly name: string; readonly title: string; readonly prepare: "none" | "plan"; readonly call: ExecInput }> = [
+        { name: "the plan ask", title: "Approve the source-build plan", prepare: "none", call: FIRST_BUILD },
+        { name: "the command ask", title: "Run build-session command", prepare: "plan", call: { op: "exec", sessionId: "sess-1", command: "make" } },
+        {
+            name: "the commit ask",
+            title: "Approve the source-build commit",
+            prepare: "plan",
+            call: { op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." },
+        },
+    ];
+
+    for (const entry of cases) {
+        it(`an abort of ${entry.name} rethrows the reason, stops nothing, and a later exec on the session still runs`, async () => {
+            const stub = stubBuildSession();
+            const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+            const approving: ToolContext = { ...askRecording([]).ctx, ask: () => Promise.resolve({ kind: "once" }) };
+            (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, approving))._unsafeUnwrap();
+            if (entry.prepare === "plan") (await tool.execute(FIRST_BUILD, approving))._unsafeUnwrap();
+
+            await expect(tool.execute(entry.call, askAbortingAt(entry.title))).rejects.toBe(cancel);
+
+            expect(stub.calls.some((c) => c.op === "stop")).toBe(false);
+            const execsBefore = stub.calls.filter((c) => c.op === "exec").length;
+            const later = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, approving))._unsafeUnwrap();
+            expect(later.status).toBe("ran");
+            expect(stub.calls.filter((c) => c.op === "exec")).toHaveLength(execsBefore + 1);
+        });
+    }
+});
+
 describe("install_from_source — exec semantics", () => {
     it("each exec derives its id from the session id and a per-session sequence", async () => {
         const stub = stubBuildSession();
@@ -623,7 +854,9 @@ describe("install_from_source — commit semantics", () => {
         expect(result).toMatchObject({ status: "committed", pin: PIN, storeDir: STORE_DIR });
         if (result.status !== "committed") throw new Error("expected a committed result");
         expect(typeof result.note).toBe("string");
-        expect(stub.calls.filter((c) => c.op === "commit")).toEqual([{ op: "commit", handle: "sess-1", script: "R CMD INSTALL --library=/work/out ." }]);
+        expect(stub.calls.filter((c) => c.op === "commit")).toEqual([
+            { op: "commit", handle: "sess-1", request: { script: "R CMD INSTALL --library=/work/out ." } },
+        ]);
         const after = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, askRecording([]).ctx))._unsafeUnwrap();
         expect(after).toEqual({ status: "session_ended", sessionId: "sess-1" });
     });
@@ -657,6 +890,34 @@ describe("install_from_source — commit semantics", () => {
         expect(stub.calls.filter((c) => c.op === "stop")).toEqual([]);
     });
 
+    it("the request carries the package directory, and the ask shows it", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { requests, ctx } = await sessionInBuildPhase(tool);
+
+        (await tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL .", packageDir: "pkg" }, ctx))._unsafeUnwrap();
+
+        expect(requests.at(-1)?.title).toBe("Approve the source-build commit");
+        expect(requests.at(-1)?.detail).toContain("Package directory: pkg");
+        expect(stub.calls.filter((c) => c.op === "commit")).toEqual([
+            { op: "commit", handle: "sess-1", request: { script: "R CMD INSTALL .", packageDir: "pkg" } },
+        ]);
+    });
+
+    it("a commit with no package directory shows none in the ask and sends none", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const { requests, ctx } = await sessionInBuildPhase(tool);
+
+        (await tool.execute({ op: "commit", sessionId: "sess-1", script: "R CMD INSTALL ." }, ctx))._unsafeUnwrap();
+
+        expect(requests.at(-1)?.detail).not.toContain("Package directory");
+        const commit = stub.calls.find((c) => c.op === "commit");
+        if (commit?.op !== "commit") throw new Error("expected a commit call");
+        expect(commit.request).toEqual({ script: "R CMD INSTALL ." });
+        expect("packageDir" in commit.request).toBe(false);
+    });
+
     it("stop removes the container and the id answers session_ended", async () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
@@ -680,8 +941,7 @@ describe("install_from_source — a live engine throw", () => {
         const failFirst = { on: true };
         const buildSession: BuildSession = {
             ...inner.buildSession,
-            exec: (handle, command) =>
-                failFirst.on ? Promise.reject(new Error("engine gone")) : inner.buildSession.exec(handle, command),
+            exec: (handle, command, signal) => (failFirst.on ? Promise.reject(new Error("engine gone")) : inner.buildSession.exec(handle, command, signal)),
         };
         const tool = createInstallFromSourceTool({ buildSession });
         const { ctx } = askRecording([]);
@@ -728,5 +988,143 @@ describe("install_from_source — a live engine throw", () => {
         stub.buildSession.stop = () => Promise.resolve();
         const again = (await tool.execute({ op: "stop", sessionId: "sess-1" }, ctx))._unsafeUnwrap();
         expect(again).toEqual({ status: "stopped", sessionId: "sess-1" });
+    });
+});
+
+/** A promise whose settlement the test controls. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: Error) => void } {
+    let resolve: (value: T) => void = () => undefined;
+    let reject: (reason: Error) => void = () => undefined;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+/** Let every continuation that waits on an already settled promise run. */
+async function settle(): Promise<void> {
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+}
+
+/** A gate that a test opens by hand. */
+function gate(): { promise: Promise<unknown>; open: () => void } {
+    const d = deferred<true>();
+    return { promise: d.promise, open: () => d.resolve(true) };
+}
+
+describe("install_from_source — one lock for each session", () => {
+    /** A stub whose exec holds each call until the test releases it, and records the order of starts and ends. */
+    function gatedSession() {
+        const inner = stubBuildSession();
+        const events: string[] = [];
+        const gates = new Map<string, ReturnType<typeof gate>>();
+        const buildSession: BuildSession = {
+            ...inner.buildSession,
+            exec: async (handle, command, signal) => {
+                events.push(`start ${command.command}`);
+                const held = gate();
+                gates.set(command.command, held);
+                await held.promise;
+                events.push(`end ${command.command}`);
+                return inner.buildSession.exec(handle, command, signal);
+            },
+        };
+        return { inner, events, gates, buildSession };
+    }
+
+    it("two calls on one session run in sequence", async () => {
+        const g = gatedSession();
+        const tool = createInstallFromSourceTool({ buildSession: g.buildSession });
+        const { ctx } = askRecording([]);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        const first = tool.execute({ op: "exec", sessionId: "sess-1", command: "first" }, ctx);
+        const second = tool.execute({ op: "exec", sessionId: "sess-1", command: "second" }, ctx);
+        await settle();
+        expect(g.events).toEqual(["start first"]);
+
+        g.gates.get("first")?.open();
+        await settle();
+        expect(g.events).toEqual(["start first", "end first", "start second"]);
+
+        g.gates.get("second")?.open();
+        expect((await first)._unsafeUnwrap().status).toBe("ran");
+        expect((await second)._unsafeUnwrap().status).toBe("ran");
+        expect(g.events).toEqual(["start first", "end first", "start second", "end second"]);
+    });
+
+    it("calls on two sessions do not wait for each other", async () => {
+        const g = gatedSession();
+        const tool = createInstallFromSourceTool({ buildSession: g.buildSession });
+        const { ctx } = askRecording([]);
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/other/pkg" }, ctx))._unsafeUnwrap();
+
+        const one = tool.execute({ op: "exec", sessionId: "sess-1", command: "one" }, ctx);
+        const two = tool.execute({ op: "exec", sessionId: "sess-2", command: "two" }, ctx);
+        await settle();
+
+        expect(g.events).toEqual(["start one", "start two"]);
+        g.gates.get("two")?.open();
+        g.gates.get("one")?.open();
+        await Promise.all([one, two]);
+    });
+
+    it("a call waits for the ask of the earlier call on its session, and a stop waits for a running exec", async () => {
+        const g = gatedSession();
+        const tool = createInstallFromSourceTool({ buildSession: g.buildSession });
+        const askGate = deferred<AskApproval>();
+        const asked: string[] = [];
+        const base = askRecording([]).ctx;
+        const ctx: ToolContext = {
+            ...base,
+            ask: (request) => {
+                asked.push(request.title);
+                return request.title === "Approve the source-build plan" ? askGate.promise : Promise.resolve({ kind: "once" });
+            },
+        };
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        const planCall = tool.execute({ ...FIRST_BUILD, command: "build" }, ctx);
+        const exploration = tool.execute({ op: "exec", sessionId: "sess-1", command: "later" }, ctx);
+        await settle();
+        expect(asked).toContain("Approve the source-build plan");
+        expect(g.events).toEqual([]);
+
+        askGate.resolve({ kind: "once" });
+        await settle();
+        expect(g.events).toEqual(["start build"]);
+
+        const stop = tool.execute({ op: "stop", sessionId: "sess-1" }, ctx);
+        await settle();
+        expect(g.inner.calls.some((c) => c.op === "stop")).toBe(false);
+
+        g.gates.get("build")?.open();
+        await settle();
+        g.gates.get("later")?.open();
+        await Promise.all([planCall, exploration]);
+        expect((await stop)._unsafeUnwrap()).toEqual({ status: "stopped", sessionId: "sess-1" });
+        expect(g.events).toEqual(["start build", "end build", "start later", "end later"]);
+    });
+
+    it("a call queued behind a rejected ask sees the ended session", async () => {
+        const stub = stubBuildSession();
+        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
+        const askGate = deferred<AskApproval>();
+        const base = askRecording([]).ctx;
+        const ctx: ToolContext = {
+            ...base,
+            ask: (request) => (request.title === "Approve the source-build plan" ? askGate.promise : Promise.resolve({ kind: "once" })),
+        };
+        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
+
+        const planCall = tool.execute(FIRST_BUILD, ctx);
+        const queued = tool.execute({ op: "exec", sessionId: "sess-1", command: "ls" }, ctx);
+        await settle();
+        askGate.reject(new AskRejectedError("denied in test"));
+        await expect(planCall).rejects.toBeInstanceOf(AskRejectedError);
+
+        expect((await queued)._unsafeUnwrap()).toEqual({ status: "session_ended", sessionId: "sess-1" });
     });
 });
