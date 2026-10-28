@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import { callTools, reply, scriptedModel, text, toolCall } from "@inflexa-ai/harness/testing.js";
-import { conversationAgent, UNSCRIPTED_ERROR } from "../lib/agent.js";
-import { asked, decides, never, type EvalCase } from "../lib/case.js";
+import { evalAgents, UNSCRIPTED_ERROR } from "../lib/agent.js";
+import { asked, decides, never, plans, type EvalCase } from "../lib/case.js";
 import { allCases } from "../cases/index.js";
 import { withRunScript } from "@inflexa-ai/harness/loop/run-loop.js";
 import { promptDigest, runTrial, turnInputOf } from "../lib/run.js";
 
-const agent = conversationAgent();
+const agents = evalAgents();
+const agent = agents.conversation;
 
 function evalCase(overrides: Partial<EvalCase>): EvalCase {
     return { id: "case", set: "dev", source: "test", user: "Run a differential expression analysis.", maxSteps: 3, grade: never([]), ...overrides };
@@ -24,7 +25,7 @@ describe("runTrial", () => {
                 tools: { execute_analysis: { ok: { runId: "r1", started: true } } },
                 grade: decides("execute_analysis", ["generate_plan"], { mode: "adhoc" }),
             }),
-            { agent, provider: model.provider, trialTimeoutMs: 10_000 },
+            { agents, provider: model.provider, trialTimeoutMs: 10_000 },
         );
         expect(result).toMatchObject({ kind: "graded", pass: true, text: "Started.", finishReason: "stop" });
         const request = model.calls[0];
@@ -38,7 +39,7 @@ describe("runTrial", () => {
 
     test("stops at maxSteps, and an unscripted tool gives an error result", async () => {
         const model = scriptedModel([callTools(toolCall("c1", "inspect_run", {})), callTools(toolCall("c2", "inspect_run", {}))]);
-        const result = await runTrial(evalCase({ maxSteps: 1 }), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
+        const result = await runTrial(evalCase({ maxSteps: 1 }), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
         expect(model.calls).toHaveLength(1);
         expect(result).toMatchObject({ kind: "graded", calls: [{ step: 0, tool: "inspect_run" }] });
         expect(JSON.stringify(model.calls)).not.toContain(UNSCRIPTED_ERROR);
@@ -46,13 +47,13 @@ describe("runTrial", () => {
 
     test("feeds the error of an unscripted tool to the next request", async () => {
         const model = scriptedModel([callTools(toolCall("c1", "inspect_run", {})), reply([text("No.")])]);
-        await runTrial(evalCase({ maxSteps: 2 }), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
+        await runTrial(evalCase({ maxSteps: 2 }), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
         expect(JSON.stringify(model.calls[1]?.prompt)).toContain(UNSCRIPTED_ERROR);
     });
 
     test("reports a failed model call as an error, not as a grade", async () => {
         const model = scriptedModel([{ fail: new Error("the endpoint is down") }]);
-        const result = await runTrial(evalCase({}), { agent, provider: model.provider, trialTimeoutMs: 10_000 });
+        const result = await runTrial(evalCase({}), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
         expect(result.kind).toBe("error");
     });
 });
@@ -81,6 +82,35 @@ describe("turnInputOf", () => {
     });
 });
 
+describe("the agent of a case", () => {
+    test("a planner case gives the seed alone, and a report case reads no working memory", async () => {
+        const planner = await turnInputOf(evalCase({ agent: "planner", user: "## Research Question\nWhich genes change?" }), []);
+        const report = await turnInputOf(evalCase({ agent: "report", user: "# Report Brief" }), []);
+
+        expect(planner).toEqual([{ role: "user", content: "## Research Question\nWhich genes change?" }]);
+        expect(report.map((message) => message.content)).toEqual(["# Report Brief", "[Run Activity]\nNo runs are currently running."]);
+    });
+
+    test("the planner holds the terminal tools, and a case keeps the real check of submit_plan", () => {
+        const ids = agents.planner.tools.map((tool) => tool.id);
+
+        expect(ids).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker", "pubmed"]));
+    });
+
+    test("plans grades the last submitted plan", () => {
+        const trial = (steps: unknown[]) => ({
+            calls: [{ step: 0, tool: "submit_plan", input: { plan: { steps } }, refused: false }],
+            asks: [],
+            text: "",
+            finishReason: "stop",
+        });
+        const grade = plans("a DE step", (steps) => steps.some((step) => step.agent === "bulk-transcriptomics-agent"));
+
+        expect(grade(trial([{ id: "T1S1", agent: "bulk-transcriptomics-agent" }])).pass).toBe(true);
+        expect(grade(trial([{ id: "T1S1", agent: "enrichment-agent" }])).pass).toBe(false);
+    });
+});
+
 describe("the CLI host tools", () => {
     test("the agent holds them", () => {
         const ids = agent.tools.map((tool) => tool.id);
@@ -98,7 +128,7 @@ describe("the CLI host tools", () => {
                 grade: asked("run_inflexa", ["refs", "download", "GRCh38"]),
             }),
             {
-                agent,
+                agents,
                 provider: model.provider,
                 trialTimeoutMs: 10_000,
             },
@@ -110,7 +140,7 @@ describe("the CLI host tools", () => {
     test("a denied ask reaches the model as a denial", async () => {
         const model = scriptedModel([callTools(toolCall("c1", "manage_inputs", { action: "add", paths: ["notes.txt"] })), reply([text("Not added.")])]);
         const result = await runTrial(evalCase({ approve: "deny", tools: { manage_inputs: { ok: { status: "added", added: ["notes.txt"] } } } }), {
-            agent,
+            agents,
             provider: model.provider,
             trialTimeoutMs: 10_000,
         });
@@ -122,8 +152,11 @@ describe("the cases", () => {
     test("have unique ids, and each script names a tool of the agent", () => {
         const ids = allCases.map((c) => c.id);
         expect(new Set(ids).size).toBe(ids.length);
-        const toolIds = new Set([...agent.tools, ...(agent.scriptTools ?? [])].map((tool) => tool.id));
-        for (const c of allCases) for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
+        for (const c of allCases) {
+            const own = agents[c.agent ?? "conversation"];
+            const toolIds = new Set([...own.tools, ...(own.scriptTools ?? [])].map((tool) => tool.id));
+            for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
+        }
     });
 
     test("each held-out case paraphrases a dev case", () => {
@@ -132,6 +165,6 @@ describe("the cases", () => {
     });
 
     test("the prompt digest is stable for one composition", () => {
-        expect(promptDigest(conversationAgent())).toBe(promptDigest(agent));
+        expect(promptDigest(evalAgents())).toBe(promptDigest(agents));
     });
 });

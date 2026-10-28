@@ -19,7 +19,7 @@ import type { WorkingMemoryStore } from "@inflexa-ai/harness/memory/working-memo
 import type { ChatProvider } from "@inflexa-ai/harness/providers/types.js";
 import type { CortexRunRow } from "@inflexa-ai/harness/state/schema.js";
 import { errorMessageOf } from "@inflexa-ai/harness/lib/thrown.js";
-import { withScriptedTools } from "./agent.js";
+import { withScriptedTools, type AgentKind } from "./agent.js";
 import { trialOf, type EvalCase, type Grade, type RunningRun, type TrialAsk, type TrialCall } from "./case.js";
 
 const ANALYSIS_ID = "analysis-001";
@@ -36,7 +36,8 @@ export type TrialResult =
     | { readonly kind: "error"; readonly error: string };
 
 export type RunOptions = {
-    readonly agent: AgentDefinition;
+    /** The agent of each kind that a case can name. */
+    readonly agents: Readonly<Record<AgentKind, AgentDefinition>>;
     readonly provider: ChatProvider;
     readonly trials: number;
     readonly concurrency: number;
@@ -48,14 +49,17 @@ export type RunOptions = {
 
 /**
  * A digest of what the model sees before the turn: the system prompt and each
- * tool definition. Two runs with the same digest ran the same prompt variant.
+ * tool definition of each agent. Two runs with the same digest ran the same prompt variant.
  */
-export function promptDigest(agent: AgentDefinition): string {
+export function promptDigest(agents: Readonly<Record<AgentKind, AgentDefinition>>): string {
     const hash = createHash("sha256");
-    hash.update(agent.systemPrompt);
-    // The loop declares `run_script`, whose description holds the catalog of the script tools, thus the digest reads
-    // the tools that a request declares, and each script tool too.
-    for (const tool of [...withRunScript(agent).tools, ...(agent.scriptTools ?? [])]) hash.update(JSON.stringify([tool.id, tool.description, tool.jsonSchema]));
+    for (const agent of Object.values(agents)) {
+        hash.update(agent.systemPrompt);
+        // The loop declares `run_script`, whose description holds the catalog of the script tools, thus the digest reads
+        // the tools that a request declares, and each script tool too.
+        for (const tool of [...withRunScript(agent).tools, ...(agent.scriptTools ?? [])])
+            hash.update(JSON.stringify([tool.id, tool.description, tool.jsonSchema]));
+    }
     return hash.digest("hex").slice(0, 16);
 }
 
@@ -94,13 +98,19 @@ function workingMemoryOf(render: string): WorkingMemoryStore {
     return { load: unused, updateSection: unused, render: () => okAsync(render) };
 }
 
-/** The input of a chat turn: the sanitized user message, then the context records that the harness adds (`app/chat-turn.ts`). */
+/**
+ * The input of a turn. A chat turn gives the sanitized user message, then the context records that the harness adds
+ * (`app/chat-turn.ts`); a report thread reads no working memory. A planner gets its seed alone, as `generate_plan`
+ * gives it.
+ */
 export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMessage[]): Promise<LoopMessage[]> {
+    const kind = evalCase.agent ?? "conversation";
+    if (kind === "planner") return [{ role: "user", content: evalCase.user }];
     const state = evalCase.state ?? {};
     const runs = (state.runningRuns ?? []).map(runningRow);
     const records = await contextRecordsFor(
         {
-            threadType: "conversation",
+            threadType: kind,
             analysisId: ANALYSIS_ID,
             analysisContext: state.analysisContext ?? null,
             runActivityContext: renderRunActivity({ runs, total: runs.length }),
@@ -111,8 +121,8 @@ export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMess
     return [sanitizedUserMessage(evalCase.user), ...records];
 }
 
-export async function runTrial(evalCase: EvalCase, options: Pick<RunOptions, "agent" | "provider" | "trialTimeoutMs">): Promise<TrialResult> {
-    const agent = withScriptedTools(options.agent, evalCase.tools ?? {});
+export async function runTrial(evalCase: EvalCase, options: Pick<RunOptions, "agents" | "provider" | "trialTimeoutMs">): Promise<TrialResult> {
+    const agent = withScriptedTools(options.agents[evalCase.agent ?? "conversation"], evalCase.tools ?? {});
     const history = evalCase.history ?? [];
     try {
         const asks: TrialAsk[] = [];
