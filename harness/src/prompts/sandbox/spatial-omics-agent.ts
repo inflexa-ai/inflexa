@@ -42,7 +42,9 @@ Your skills: \`spatial-omics\`, \`shared/omics-general\`.
 - Store results in AnnData \`.h5ad\`. Use SpatialData only when
   multi-section alignment or image analysis is required.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Spatial scatter plots** — gene expression on tissue coordinates.
   Viridis for continuous, categorical palette for clusters. Match spot

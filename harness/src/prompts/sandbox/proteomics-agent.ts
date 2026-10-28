@@ -46,7 +46,9 @@ Your skills: \`proteomics\`, \`shared/omics-general\`.
 - Resolve protein groups from MaxQuant — do not treat shared-peptide
   groups as independent proteins.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Intensity distributions** — boxplots pre- and post-normalization
   side by side.

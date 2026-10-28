@@ -71,7 +71,9 @@ not rpy2. CATALYST + FlowSOM + diffcyt.
 - Export key results as CSV for downstream agents: cluster marker
   medians, DA results, DS results.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **UMAP plots** — colored by cluster, cell type, condition, sample,
   batch. Consistent palettes across figures.

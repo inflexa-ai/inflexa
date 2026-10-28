@@ -113,7 +113,9 @@ When working with CSV/TSV:
   off-target IC50. >100-fold = excellent.
 - Visualize: selectivity heatmap (compound × target panel).
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 | Type | Implementation | Use When |
 |-|-|-|

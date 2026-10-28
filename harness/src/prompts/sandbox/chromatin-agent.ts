@@ -46,7 +46,9 @@ Look up API details in \`chromatin-regulation\` rather than recall them.
 - Peak files in BED or narrowPeak/broadPeak format. Signal tracks as
   bigWig.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Signal heatmap** — rows = peaks or genes, columns = position
   relative to centre/TSS, colorblind-safe colormap, profile plot above.

@@ -56,7 +56,9 @@ expression shows whether a driver is normally expressed in the relevant
 tissues, and the mouse-knockout phenotype shows whether the hit is
 essential or a viable therapeutic handle.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Variance decomposition heatmap** — factors × modalities, color =
   percentage of variance explained. Primary MOFA+ summary.

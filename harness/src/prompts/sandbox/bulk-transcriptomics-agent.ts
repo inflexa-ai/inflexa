@@ -45,7 +45,9 @@ Check contrast syntax in \`bulk-transcriptomics\` before you write it.
   DESeq2/edgeR/voom.
 - Always inspect library sizes and PCA by batch before DE.
 
-## Required Figures (DE analysis)
+## Figures (DE analysis)
+
+Select from this list the figures that show the findings of the step.
 
 - **PCA** — sample-level, top 500 variable genes. Color by condition,
   shape by batch if present. The single most important QC figure.

@@ -52,7 +52,9 @@ scale. Ground IO findings in PubMed studies for the tumor type, and use
 Open Targets for the disease evidence and tractability of a target the
 profile surfaces.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Deconvolution heatmap** — cell types x samples, annotated by
   condition.

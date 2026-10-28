@@ -67,7 +67,9 @@ limitations.
   A complete-penetrance lethal mouse KO is a hard tractability flag. A clean
   viable KO with no organ-system phenotype is a positive tractability signal.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Candidate ranking bar chart** — top candidates by composite
   score, colored by number of evidence lines.

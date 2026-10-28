@@ -56,7 +56,9 @@ scikit-learn, xgboost, SHAP, statsmodels, pingouin.
   PH). Tree ensembles overfit on small datasets.
 - Save model outputs as AnnData when per-sample scores are produced.
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Kaplan-Meier curves** — with risk table, log-rank p-value, median
   survival, and confidence bands.

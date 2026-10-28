@@ -257,6 +257,9 @@ its results in those containers:
 
 ## Figure Standards
 
+Make a figure when it shows a finding of the step or the step asks for one.
+Each figure obeys these standards:
+
 - **PNG at 300 DPI** for preview AND **PDF (vector)** for publication,
   same base filename with different extensions.
 - **Colorblind-safe palettes** — viridis family as default. Never use
@@ -288,63 +291,13 @@ long-running commands, redirect stdout/stderr to a file in \`logs/\`:
 subprocess.run(cmd, stdout=open("logs/deseq2_run.log", "w"), stderr=subprocess.STDOUT)
 \`\`\`
 
-## Code Quality
-
-**Functions** for any non-trivial logic. Each logical operation
-(load, QC, fit, plot) gets its own function with a docstring. Top-level
-script flow should read like an outline — call functions, not inline
-logic.
-
-\`\`\`python
-# %% [markdown]
-# ## Differential Expression
-
-# %%
-def run_deseq2(counts: pd.DataFrame, metadata: pd.DataFrame, design: str) -> pd.DataFrame:
-    """Run DESeq2 via rpy2 and return results as a DataFrame."""
-    ...
-
-de_results = run_deseq2(counts, metadata, "~ condition + batch")
-\`\`\`
-
-**Structured logging**, not \`print()\`:
-
-- Python — \`logging.getLogger()\`:
-  \`logger.info("Loaded %d samples, %d genes", n_samples, n_genes)\`
-- R — \`message()\` / \`warning()\`:
-  \`message(sprintf("Loaded %d samples", n_samples))\`
-
-Reserve \`print()\` / \`cat()\` for intentional data display in notebook
-cells only.
-
-**Validate at function boundaries**. Fail fast with clear messages.
-Use \`try/except\` only when recovery is meaningful.
-
-**Type hints** on Python function signatures. Add them — they document
-intent and catch mistakes early.
-
-**Named constants** for thresholds, cutoffs, parameters in the first
-code cell:
-\`\`\`python
-# %% Parameters
-RANDOM_SEED = 42
-FDR_THRESHOLD = 0.05
-MIN_LOG2FC = 1.0
-\`\`\`
-
-**R specifics**: load packages at the top (never inside functions).
-Use \`<-\` for assignment. Use \`message()\` / \`warning()\` not \`cat()\` /
-\`print()\`.
-
 ## Scripts
 
-- Start with a header comment (title + description).
-- Parameters go in the first code block.
-- Set random seeds for reproducibility.
-- Scripts must be independently re-runnable.
-- **Lint Python scripts with \`ruff check <script.py>\`** via
-  \`execute_command\` before executing. \`ruff\` is pre-installed. This
-  catches import errors, undefined names, and common bugs early.
+Write the script that does the work of the step, and no more. A short, direct
+script that runs is the goal: parameters and the random seed at the top, then
+the load, the method, and the writes of \`output/\`. One script holds the step
+unless its work has parts that run apart. A script must run again from a clean
+working directory with the same result.
 
 ## Interpretation & Literature Grounding
 
@@ -367,10 +320,8 @@ The step summary is written after you finish, from your transcript and
 your persisted files. State each assessment and its citations in your work,
 so the summary can carry them.
 
-## Analysis-Step Anti-Patterns
+## Script Errors
 
-- **Ignoring script errors.** Read the error, diagnose the root
-  cause, fix the script. Do not move on.
-- **Monolithic scripts.** Keep scripts under 300 lines. Split into
-  logical sections with markdown annotations.
+Read the error of a failed script, find its cause, and fix the script before
+you continue.
 `;

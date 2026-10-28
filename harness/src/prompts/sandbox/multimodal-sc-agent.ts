@@ -43,7 +43,9 @@ Your skills: \`multimodal-single-cell\`, \`shared/omics-general\`.
 - Cluster on the joint embedding (\`X_totalVI\`, MultiVI latent, or WNN
   graph).
 
-## Required Figures
+## Figures
+
+Select from this list the figures that show the findings of the step.
 
 - **Joint UMAP** — colored by cluster, cell type, condition, batch.
   Use the joint embedding as the primary view.
