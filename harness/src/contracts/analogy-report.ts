@@ -37,10 +37,10 @@ export const AnalogyReportSchema = z.object({
                 z.object({
                     title: z.string(),
                     sourceDomain: z.string(),
-                    description: z.string(),
+                    description: z.string().describe("Two or three sentences: the technical essentials of the method."),
                     keyConcepts: z.array(z.string()),
-                    relevance: z.string(),
-                    sources: z.array(z.object({ url: z.url(), title: z.string() })),
+                    relevance: z.string().describe("How the method transfers back to the source problem."),
+                    sources: z.array(z.object({ url: z.url(), title: z.string().describe("The exact title as the search result gives it.") })),
                     githubRepos: z.array(
                         z.object({
                             url: z.url(),

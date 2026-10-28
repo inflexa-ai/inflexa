@@ -5,7 +5,7 @@ import { okAsync } from "neverthrow";
 import { Pool } from "pg";
 
 import type { ToolOutputStore } from "../../loop/tool-output.js";
-import { createReportSessionAgent, REPORT_SESSION_AGENT_ID } from "../report-session-agent.js";
+import { createReportSessionAgent, REPORT_SESSION_AGENT_ID, REPORT_SESSION_PROVIDER_OPTIONS } from "../report-session-agent.js";
 import { runLoop } from "../../loop/run-loop.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { reply, scriptedModel, text } from "../../testing.js";
@@ -394,6 +394,11 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("before the sentence that tells the reader what to see");
         expect(reportSessionPrompt).toContain("The evidence illustrates the prose");
         expect(reportSessionPrompt).toContain("The angle of the brief decides the order of the findings");
+    });
+
+    test("the prompt asks for no batch of calls, because the provider options allow one call for each reply", () => {
+        expect(REPORT_SESSION_PROVIDER_OPTIONS).toMatchObject({ anthropic: { disableParallelToolUse: true }, openai: { parallelToolCalls: false } });
+        expect(reportSessionPrompt).not.toContain("together in one reply");
     });
 
     test("the prompt divides a derivation from a chart knob", () => {

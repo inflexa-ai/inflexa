@@ -172,31 +172,33 @@ export type GenerateAnalogyReportDeps = {
 };
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
+/** The analogical reasoner over its search tools, its submit tool, and its blocker tool. */
+export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" | "model" | "toolOutputStore">): AgentDefinition {
+    const ncbi = createNcbiTools(deps.bioKeys);
+    return {
+        id: AGENT_ID,
+        systemPrompt: composeSystemPrompt(analogicalReasonerPrompt),
+        model: deps.model,
+        // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
+        tools: [
+            createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
+            searchArxivTool,
+            createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
+            ncbi.pubmed,
+            ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
+            createSubmitAnalogyReportTool(),
+            createAnalogyBlockerTool(),
+        ],
+        maxIterations: RESEARCH_MAX_ITERATIONS,
+    };
+}
+
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
-    const ncbi = createNcbiTools(deps.bioKeys);
-    const searchTools: readonly Tool[] = [
-        createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
-        searchArxivTool,
-        createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
-        ncbi.pubmed,
-        ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
-    ];
-    const systemPrompt = composeSystemPrompt(analogicalReasonerPrompt);
 
     const research = registerSubAgent<GenerateAnalogyReportInput, AnalogicalReasonerOutput>(AGENT_ID, async ({ payload: input, ctx, loop }) => {
         const childSession = forSubAgent(ctx.session, AGENT_ID);
-
-        // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
-        const submitReportTool = createSubmitAnalogyReportTool();
-        const blockerTool = createAnalogyBlockerTool();
-        const agent: AgentDefinition = {
-            id: AGENT_ID,
-            systemPrompt,
-            model: deps.model,
-            tools: [...searchTools, submitReportTool, blockerTool],
-            maxIterations: RESEARCH_MAX_ITERATIONS,
-        };
+        const agent = analogyAgentOf(deps);
 
         let steps: readonly LoopStep[];
         try {
