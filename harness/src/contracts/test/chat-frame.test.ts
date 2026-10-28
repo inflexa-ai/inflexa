@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ChatDataPart, EmitEvent } from "../../loop/types.js";
 import type { ChatStreamEvent } from "../../providers/types.js";
-import type { ChatPartFrame } from "../chat-events.js";
+import type { ChatFrame, ChatPartFrame } from "../chat-events.js";
 import { applyChatFrame, checkChatPart, isRootFrame, toChatFrame } from "../chat-frame.js";
 import type { ChatMessage } from "../message.js";
 import { ChatEventSchema } from "../schemas/chat-events.js";
@@ -19,16 +19,24 @@ describe("toChatFrame", () => {
     });
 
     test("gives a message-start unchanged, as a root frame that the wire schema accepts", () => {
-        const ev: EmitEvent = { type: "message-start", source: topLevel, messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30", role: "user" };
+        const ev: EmitEvent = {
+            type: "message-start",
+            source: topLevel,
+            messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30",
+            role: "user",
+            text: "Compare the groups.",
+        };
         const frame = toChatFrame(ev, fallback);
-        expect(frame).toEqual({ type: "message-start", messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30", role: "user", source: topLevel });
-        expect(frame !== null && isRootFrame(frame)).toBe(true);
-        expect(ChatEventSchema.parse(frame)).toEqual({
+        const expected: ChatFrame = {
             type: "message-start",
             messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30",
             role: "user",
+            text: "Compare the groups.",
             source: topLevel,
-        });
+        };
+        expect(frame).toEqual(expected);
+        expect(frame !== null && isRootFrame(frame)).toBe(true);
+        expect(ChatEventSchema.parse(frame)).toEqual(expected);
     });
 
     test("gives the frame of an iteration of a sub-agent, with its source only", () => {
@@ -167,6 +175,29 @@ function applyMany(start: ChatMessage[], frames: Parameters<typeof applyChatFram
 }
 
 describe("applyChatFrame", () => {
+    const USER_ID = "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30";
+
+    test("adds the user message of a turn from its message-start, before the reply", () => {
+        const { messages } = applyMany(
+            [],
+            [
+                { type: "message-start", messageId: USER_ID, role: "user", text: "Compare the groups.", source: SOURCE },
+                { type: "message-start", messageId: ASSISTANT_ID, role: "assistant", source: SOURCE },
+                { type: "text-delta", text: "Done.", source: SOURCE },
+            ],
+        );
+        expect(messages).toEqual([
+            { id: USER_ID, role: "user", parts: [{ type: "text", text: "Compare the groups." }] },
+            { id: ASSISTANT_ID, role: "assistant", parts: [{ type: "text", text: "Done." }] },
+        ]);
+    });
+
+    test("keeps a user message that the messages already hold under the id of the message-start", () => {
+        const stored: ChatMessage = { id: USER_ID, role: "user", parts: [{ type: "text", text: "Compare the groups." }] };
+        const { messages } = applyMany([stored], [{ type: "message-start", messageId: USER_ID, role: "user", text: "Compare the groups.", source: SOURCE }]);
+        expect(messages).toEqual([stored]);
+    });
+
     test("merges sequential text-delta into one text part", () => {
         const { messages } = applyMany(
             [],

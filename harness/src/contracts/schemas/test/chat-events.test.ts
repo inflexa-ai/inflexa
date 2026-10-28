@@ -108,9 +108,16 @@ describe("MessageStartEventSchema", () => {
         source,
     };
 
+    const userStart: z.infer<typeof MessageStartEventSchema> = { ...messageStart, role: "user", text: "Compare the groups." };
+
     it("accepts each role through the chat event union", () => {
         expect(ChatEventSchema.parse(messageStart)).toEqual(messageStart);
-        expect(ChatEventSchema.parse({ ...messageStart, role: "user" })).toEqual({ ...messageStart, role: "user" });
+        expect(ChatEventSchema.parse(userStart)).toEqual(userStart);
+    });
+
+    it("rejects the start of a user message with no text", () => {
+        const { text: _missing, ...noText } = userStart;
+        expect(ChatEventSchema.safeParse(noText).success).toBe(false);
     });
 
     it("rejects a frame with a missing field", () => {

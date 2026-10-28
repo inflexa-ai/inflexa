@@ -346,14 +346,15 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
     // The rows up to the turn never change, thus a replay reads the same view, and no checkpoint holds the thread.
     const view = await loadHistoryView({ threadId: input.threadId, threadType: input.threadType, history, logger: deps.logger, throughSeq: opening.endSeq });
 
+    const userText = userTextOf(opening.userMessage);
     const recorder = createConversationDisplayRecorder({
-        userText: userTextOf(opening.userMessage),
+        userText,
         agentId: agent.value.id,
         sink: () => undefined,
         messageIds: { user: stepUuid(`${input.turnId}:user`), assistant: (index) => stepUuid(`${input.turnId}:assistant:${index}`) },
     });
     const writer = createTurnStreamWriter(rootSource, (frame) => recorder.observe(frame));
-    await writer.write({ type: "message-start", messageId: recorder.userMessageId(), role: "user", source: rootSource });
+    await writer.write({ type: "message-start", messageId: recorder.userMessageId(), role: "user", text: userText, source: rootSource });
     await writer.write({ type: "message-start", messageId: recorder.assistantMessageId(), role: "assistant", source: rootSource });
 
     const transport: TurnTransport = {

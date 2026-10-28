@@ -102,7 +102,14 @@ export type EmitEvent =
           readonly type: "message-start";
           readonly source: EventSource;
           readonly messageId: string;
-          readonly role: "user" | "assistant";
+          readonly role: "user";
+          readonly text: string;
+      }
+    | {
+          readonly type: "message-start";
+          readonly source: EventSource;
+          readonly messageId: string;
+          readonly role: "assistant";
       };
 
 /**

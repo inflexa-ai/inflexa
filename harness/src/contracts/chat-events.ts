@@ -156,14 +156,23 @@ export type ChatErrorEvent = {
 
 /**
  * The id that the stored display gives a message of the turn. The frames after it belong to that message, up to
- * the next `message-start` of the same role.
+ * the next `message-start` of the same role. The user message carries its text, because the turn stores it only
+ * with its first round, and a reader of the stream before that round has no other source of it.
  */
-export type MessageStartEvent = {
-    type: "message-start";
-    messageId: string;
-    role: "user" | "assistant";
-    source: EventSource;
-};
+export type MessageStartEvent =
+    | {
+          type: "message-start";
+          messageId: string;
+          role: "user";
+          text: string;
+          source: EventSource;
+      }
+    | {
+          type: "message-start";
+          messageId: string;
+          role: "assistant";
+          source: EventSource;
+      };
 
 /** The discriminated union of all chat-stream events. */
 export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent | MessageStartEvent;
