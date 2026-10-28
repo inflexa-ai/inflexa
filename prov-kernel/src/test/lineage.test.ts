@@ -875,3 +875,32 @@ describe("deriveLineageModel — a thread-scoped file-tool call", () => {
         expect(findFileEntity(derived, noteKey)?.qn).toBe(fileQn(noteKey));
     });
 });
+
+describe("computeLineage — a script run", () => {
+    const deKey = { path: "runs/run-001/step-de/output/de.csv", hash: "sha256:de" };
+    const derivedKey = { path: "conversation-sessions/t-1/derived/top.csv", hash: "sha256:top" };
+    const doc = provModel.freshDocument({ analysisId: "a1" });
+    applyProvEvent(provModel, doc, {
+        type: "script_run",
+        analysisId: "a1",
+        actor: system,
+        model,
+        script: {
+            invocationId: "toolu_9",
+            threadId: "t-1",
+            reads: [deKey],
+            writes: [{ ...derivedKey, size: 5 }],
+            tools: ["read_table", "write_derived"],
+            ok: true,
+        },
+    });
+    const walk = computeLineage(modelFrom(doc), [fileQn(derivedKey)], { direction: "backward" });
+    const scriptQn = `inflexa:script-${defaultProvDigest("t-1|toolu_9")}`;
+
+    test("walks a derived file back through its script to the table that the script read", () => {
+        expect(qns(walk).sort()).toEqual([fileQn(derivedKey), scriptQn, fileQn(deKey)].sort());
+        expect(hasEdge(walk.edges, "generated", fileQn(derivedKey), scriptQn)).toBe(true);
+        expect(hasEdge(walk.edges, "used", scriptQn, fileQn(deKey))).toBe(true);
+        expect(walk.nodes.find((node) => node.qn === scriptQn)).toMatchObject({ kind: "activity", activity: "script" });
+    });
+});

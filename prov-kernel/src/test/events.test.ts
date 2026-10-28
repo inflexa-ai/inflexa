@@ -482,3 +482,50 @@ describe("applyProvEvent — the call generation arm", () => {
         }
     });
 });
+
+describe("a script run", () => {
+    const run: ProvEvent = {
+        type: "script_run",
+        analysisId: "a1",
+        actor,
+        model: "anthropic/test-model",
+        script: {
+            invocationId: "toolu_1",
+            threadId: "t-chat",
+            script: { path: "conversation-sessions/t-chat/scripts/toolu_1.js", hash: "sha256:s", size: 40 },
+            reads: [{ path: "runs/r1/s1/output/de.csv", hash: "sha256:in" }],
+            writes: [{ path: "conversation-sessions/t-chat/derived/top.csv", hash: "sha256:out", size: 12 }],
+            tools: ["read_table", "write_derived"],
+            ok: true,
+        },
+    };
+    const sDigest = defaultProvDigest("t-chat|toolu_1");
+    const scriptQn = `inflexa:script-${sDigest}`;
+    const fileQn = (path: string, hash: string): string => `inflexa:file-${defaultProvDigest(`${path}|${hash}`)}`;
+
+    test("records a deterministic activity that uses the script and each read, and generates each write", () => {
+        const doc = serialize(makeModel(), [run]);
+
+        expect(doc.activity?.[scriptQn]).toEqual({
+            "prov:type": "inflexa:ScriptRun",
+            "inflexa:invocationId": "toolu_1",
+            "inflexa:threadId": "t-chat",
+            "inflexa:tool": ["read_table", "write_derived"],
+            "inflexa:ok": true,
+        });
+        const written = fileQn("conversation-sessions/t-chat/derived/top.csv", "sha256:out");
+        expect(doc.entity?.[written]).toMatchObject({ "prov:type": "inflexa:File", "inflexa:producer": "script" });
+        expect(doc.wasGeneratedBy?.[`inflexa:gen-${defaultProvDigest("conversation-sessions/t-chat/derived/top.csv|sha256:out")}`]).toMatchObject({
+            "prov:entity": written,
+            "prov:activity": scriptQn,
+        });
+        expect(Object.values(doc.used ?? {})).toMatchObject([
+            { "prov:activity": scriptQn, "prov:entity": fileQn("conversation-sessions/t-chat/scripts/toolu_1.js", "sha256:s") },
+            { "prov:activity": scriptQn, "prov:entity": fileQn("runs/r1/s1/output/de.csv", "sha256:in") },
+        ]);
+    });
+
+    test("a re-emission merges into the same records", () => {
+        expect(serialize(makeModel(), [run, run])).toEqual(serialize(makeModel(), [run]));
+    });
+});
