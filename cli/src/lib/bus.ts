@@ -83,6 +83,17 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 ...(event.call !== undefined ? { tool: event.call.tool } : {}),
                 model: event.model,
             };
+        case "prov.script_run":
+            // The paths of the derived files identify the act; the hashes and the read paths stay out of telemetry.
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.script.threadId,
+                readCount: event.script.reads.length,
+                writePaths: event.script.writes.map((write) => write.path),
+                ok: event.script.ok,
+                model: event.model,
+            };
         case "prov.input_used":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.input.path, source: event.input.source };
         // The report family projects its identifying fields only: the thread, plus the block and its

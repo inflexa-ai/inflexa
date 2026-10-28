@@ -679,6 +679,33 @@ describe("createSessionEmit", () => {
         expect(event.call!.invocationId).toBe("call-2");
     });
 
+    test("a script run maps onto prov.script_run with its script, its reads, and its writes", () => {
+        emitSession({
+            type: "run-script",
+            analysisId: sessionAnalysisId,
+            threadId: "thread-conv-1",
+            invocationId: "toolu_1",
+            script: { path: "conversation-sessions/thread-conv-1/scripts/toolu_1.js", hash: "h-s", size: 40 },
+            reads: [{ path: "runs/r1/s1/output/de.csv", hash: "h-in" }],
+            writes: [{ path: "conversation-sessions/thread-conv-1/derived/top.csv", hash: "h-out", size: 12 }],
+            tools: ["read_table", "write_derived"],
+            ok: true,
+        });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.script_run") throw new Error(`expected prov.script_run, got ${event.type}`);
+        expect(event.model).toBe(sessionModelId);
+        expect(event.script).toEqual({
+            invocationId: "toolu_1",
+            threadId: "thread-conv-1",
+            script: { path: "conversation-sessions/thread-conv-1/scripts/toolu_1.js", hash: "h-s", size: 40 },
+            reads: [{ path: "runs/r1/s1/output/de.csv", hash: "h-in" }],
+            writes: [{ path: "conversation-sessions/thread-conv-1/derived/top.csv", hash: "h-out", size: 12 }],
+            tools: ["read_table", "write_derived"],
+            ok: true,
+        });
+    });
+
     test("a derivation carries its chain, restated pair by pair", () => {
         const sources = [
             { path: "data/inputs/f1/counts.csv", hash: "h1" },
