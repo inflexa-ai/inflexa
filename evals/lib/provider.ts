@@ -70,16 +70,19 @@ export function identityOf(file: ProviderFile): ProviderIdentity {
     return { kind: file.kind, baseURL: file.baseURL, model: file.model, reasoning: file.reasoning };
 }
 
-/** The conversation provider as the CLI configures it, and the facts of it that a report names. */
-export async function cliProvider(logger: Logger): Promise<{ readonly provider: ChatProvider; readonly identity: ProviderIdentity }> {
+/** The provider of one agent role as the CLI configures it, and the facts of it that a report names. */
+export async function cliProvider(
+    logger: Logger,
+    role: "conversation" | "sandbox" = "conversation",
+): Promise<{ readonly provider: ChatProvider; readonly identity: ProviderIdentity }> {
     const connection = resolveModelConnection();
     if (connection.configError !== undefined) throw new Error(`the models block of the CLI config is not valid: ${connection.configError.issues}`);
     const credential = await resolveChatCredential(connection, { readKey: readApiKey, readModelApiKey: resolveModelApiKey });
     if (credential.isErr()) throw new Error(`the CLI has no chat credential: ${JSON.stringify(credential.error)}`);
     const resolveAgentModel = createAgentModelResolver(connection, resolveHarnessConfig().model, credential.value.apiKey, resolveModelId);
-    const model = await resolveAgentModel("conversation");
-    if (model.isErr()) throw new Error(`the CLI resolves no conversation model: ${JSON.stringify(model.error)}`);
-    const effort = resolveAgentEfforts().conversation;
+    const model = await resolveAgentModel(role);
+    if (model.isErr()) throw new Error(`the CLI resolves no ${role} model: ${JSON.stringify(model.error)}`);
+    const effort = resolveAgentEfforts()[role];
     const source = credential.value.source;
     const config = agentProviderConfig({
         connection,

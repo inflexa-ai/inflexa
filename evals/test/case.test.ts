@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { all, atMostWith, callsAny, decides, inputMatches, never, trialOf, type Trial, type TrialCall } from "../lib/case.js";
 
 function trial(...calls: readonly Omit<TrialCall, "refused">[]): Trial {
-    return { calls: calls.map((call) => ({ ...call, refused: false })), asks: [], text: "", finishReason: "stop", stepFinishes: ["stop"] };
+    return { calls: calls.map((call) => ({ ...call, refused: false })), asks: [], text: "", finishReason: "stop", stepFinishes: ["stop"], capped: false };
 }
 
 describe("decides", () => {

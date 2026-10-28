@@ -51,8 +51,11 @@ export const REAL_TOOL = "real";
 /** The scripted result of a call, from its input. A tool with no script gives {@link UNSCRIPTED_ERROR}. */
 export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult) | typeof REAL_TOOL;
 
-/** The agents that a case can run. */
-export type AgentKind = "conversation" | "planner" | "report" | "analogy";
+/** The agents that a case can run. A sandbox agent is built for each trial, over the tree of the trial. */
+export type AgentKind = "conversation" | "planner" | "report" | "analogy" | "sandbox";
+
+/** The agents that one composition serves for the whole run. */
+export type StaticAgentKind = Exclude<AgentKind, "sandbox">;
 
 export const UNSCRIPTED_ERROR = "This tool is not available now.";
 
@@ -160,7 +163,7 @@ export function analogyAgent(): AgentDefinition {
 }
 
 /** The agent of each kind. */
-export function evalAgents(): Readonly<Record<AgentKind, AgentDefinition>> {
+export function evalAgents(): Readonly<Record<StaticAgentKind, AgentDefinition>> {
     return { conversation: conversationAgent(), planner: plannerAgent(), report: reportAgent(), analogy: analogyAgent() };
 }
 
@@ -191,6 +194,41 @@ function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
             const result = script === undefined ? { error: UNSCRIPTED_ERROR } : typeof script === "function" ? script(input) : script;
             return Promise.resolve("ok" in result ? ok(result.ok) : err({ error: result.error, retryable: false }));
         },
+    };
+}
+
+/**
+ * The tools of a sandbox agent that stay real in a trial. They read and write the tree of the trial, the lock of its
+ * farm, and the skills of the repository, and an exec reaches only the scripted client. Each other tool reads a
+ * database or the network, thus it is scripted.
+ */
+const SANDBOX_REAL_TOOLS = new Set([
+    "execute_command",
+    "write_file",
+    "edit_file",
+    "read_file",
+    "list_files",
+    "file_stat",
+    "grep",
+    "list_available_packages",
+    "link_packages",
+    "skill_search",
+    "skill_read",
+    "report_blocker",
+    "read_tool_output",
+    "submit_file_metadata",
+    "scan_inputs",
+    "submit_profile",
+]);
+
+/** A sandbox agent with each tool that the case scripts, and each tool outside {@link SANDBOX_REAL_TOOLS}, scripted. */
+export function withSandboxScripts(agent: AgentDefinition, scripts: Readonly<Record<string, ToolScript>>): AgentDefinition {
+    const ids = new Set(agent.tools.map((tool) => tool.id));
+    const unknown = Object.keys(scripts).filter((id) => !ids.has(id));
+    if (unknown.length > 0) throw new Error(`the agent ${agent.id} has no tool ${unknown.join(", ")}`);
+    return {
+        ...agent,
+        tools: agent.tools.map((tool) => (scripts[tool.id] === undefined && SANDBOX_REAL_TOOLS.has(tool.id) ? tool : scriptedTool(tool, scripts[tool.id]))),
     };
 }
 

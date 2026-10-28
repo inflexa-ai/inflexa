@@ -26,6 +26,9 @@ import type { EvalCase } from "./lib/case.js";
 import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/provider.js";
 import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
 import { promptDigest, runCases } from "./lib/run.js";
+import { openSandboxTrial } from "./lib/sandbox.js";
+import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
+import { okAsync } from "neverthrow";
 
 const USAGE = `usage:
   bun run evals run [--provider <file>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--out <file>]
@@ -91,14 +94,20 @@ async function run(args: readonly string[]): Promise<void> {
         values.provider === undefined
             ? await cliProvider(logger)
             : await readProviderFile(values.provider).then((file) => ({ provider: providerOf(file, process.env, logger), identity: identityOf(file) }));
+    // A sandbox case runs on the sandbox model of the CLI. A provider file serves each case.
+    const sandboxCases = cases.filter((c) => c.agent === "sandbox");
+    const sandbox = sandboxCases.length === 0 || values.provider !== undefined ? undefined : await cliProvider(logger, "sandbox");
     const agents = evalAgents();
     const startedAt = new Date().toISOString();
-    const digest = promptDigest(agents);
+    const digest = promptDigest(agents, await sandboxAgentsOf(sandboxCases));
 
-    process.stderr.write(`${cases.length} cases x ${trials} trials on ${identity.model}, prompt ${digest}\n`);
+    process.stderr.write(
+        `${cases.length} cases x ${trials} trials on ${identity.model}${sandbox === undefined ? "" : ` (sandbox ${sandbox.identity.model})`}, prompt ${digest}\n`,
+    );
     const results = await runCases(cases, {
         agents,
         provider,
+        sandboxProvider: sandbox?.provider,
         trials,
         concurrency: positiveInt(values.concurrency, 4, "concurrency"),
         trialTimeoutMs: positiveInt(values.timeout, 180, "timeout") * 1000,
@@ -106,11 +115,27 @@ async function run(args: readonly string[]): Promise<void> {
     });
     process.stderr.write("\n");
 
-    const report = buildReport({ startedAt, commit: commitOf(), promptDigest: digest, provider: identity, trialsPerCase: trials, k }, cases, results);
+    const report = buildReport(
+        { startedAt, commit: commitOf(), promptDigest: digest, provider: identity, sandboxProvider: sandbox?.identity, trialsPerCase: trials, k },
+        cases,
+        results,
+    );
     const out = values.out ?? join(import.meta.dirname, "..", "tmp", "evals", `${startedAt.replaceAll(":", "-")}-${digest}.json`);
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, `${JSON.stringify(report, null, 2)}\n`);
     process.stdout.write(`${reportTable(report)}\n\nreport: ${out}\n`);
+}
+
+/** One composition of each sandbox agent that a case names, for the prompt digest. */
+async function sandboxAgentsOf(cases: readonly EvalCase[]): Promise<AgentDefinition[]> {
+    const setups = new Map(cases.flatMap((c) => (c.sandbox === undefined ? [] : [[c.sandbox.agentId, c.sandbox] as const])));
+    const agents: AgentDefinition[] = [];
+    for (const setup of setups.values()) {
+        const trial = await openSandboxTrial(setup, { toolOutputStore: { put: () => okAsync(undefined), get: () => okAsync(null) }, label: "digest" });
+        trial.dispose();
+        agents.push(trial.agent);
+    }
+    return agents;
 }
 
 async function readReport(path: string): Promise<Report> {

@@ -27,13 +27,17 @@ const CaseReportSchema = z.object({
     results: z.array(z.json()),
 });
 
+const ProviderSchema = z.object({ kind: z.string(), baseURL: z.string().optional(), model: z.string(), reasoning: z.string().optional() });
+
 export const ReportSchema = z.object({
     version: z.literal(1),
     startedAt: z.string(),
     commit: z.string().optional(),
     /** The digest of the system prompt and the tool definitions. */
     promptDigest: z.string(),
-    provider: z.object({ kind: z.string(), baseURL: z.string().optional(), model: z.string(), reasoning: z.string().optional() }),
+    provider: ProviderSchema,
+    /** The provider of the sandbox cases, when it differs from `provider`. */
+    sandboxProvider: ProviderSchema.optional(),
     trialsPerCase: z.number(),
     k: z.number(),
     cases: z.array(CaseReportSchema),
@@ -47,6 +51,7 @@ export type ReportMeta = {
     readonly commit?: string;
     readonly promptDigest: string;
     readonly provider: ProviderIdentity;
+    readonly sandboxProvider?: ProviderIdentity;
     readonly trialsPerCase: number;
     readonly k: number;
 };
