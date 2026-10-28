@@ -221,7 +221,7 @@ export function createGeneDiseaseEvidenceTool(deps: {
             "no_data there ('low density lipoprotein cholesterol measurement' is the label) while the other corpora still answer it.\n" +
             "`perSource` gives the outcome of each corpus, and a conclusion of absence rests on it. 'no_data' means that corpus genuinely has nothing; " +
             "'unavailable' means it " +
-            "could not be reached (a missing DISGENET_API_KEY lands here — tell the user and proceed with the others); 'not_applicable' means that " +
+            "could not be reached (a missing DISGENET_API_KEY lands here — state that the key is missing, and proceed with the others); 'not_applicable' means that " +
             "corpus has no lookup for this queryType. Only 'no_data' is evidence of absence, and none is worth retrying unchanged.",
         inputSchema,
         describeCall: "none",

@@ -17,26 +17,6 @@ has the RDKit/datamol API references for assessing candidate compound
 properties. \`genomic-variants\` has the Mendelian randomization reference,
 the test of whether a target's disease association is causal.
 
-## Keyed Sources
-
-Some sources need an API key that a deployment can lack. When a source is
-unavailable, skip the analyses that depend on it, note the gap, and do not
-invent its output.
-
-- \`drug_gene_interactions\` — its \`drugbank\` source requires
-  DRUGBANK_API_KEY; \`dgidb\` (the default) and \`pharmgkb\` are public
-- \`gene_disease_evidence\` — its \`disgenet\` source requires
-  DISGENET_API_KEY; \`gwas\` and \`clinvar\` are public
-- EPA CTX tool (\`comptox\`, datasets toxcast / hazard / chemical /
-  exposure) — requires EPA_CCTE_API_KEY
-- \`search_regulatory_approvals\` (FDA and EMA authorizations and their
-  label text) — requires AMASS_API_KEY
-
-Both multi-source tools report per-corpus availability in \`perSource\`:
-an unconfigured key degrades that ONE source to \`unavailable\` and the
-rest of the call still answers. Read \`perSource\` before concluding that
-evidence is absent.
-
 ## Core Capabilities
 
 1. **Signature-based repurposing** — query disease DE signatures
@@ -50,8 +30,9 @@ evidence is absent.
    Prioritize approved and clinical-stage drugs.
 
 3. **Genetics-based repurposing** — use \`gene_disease_evidence\` to
-   identify targets with causal disease links, then map to existing
-   drugs. Genetic support increases clinical success probability ~2x.
+   identify targets with causal disease links, check their tractability
+   with \`opentargets\`, then map to existing drugs. Genetic support
+   increases clinical success probability ~2x.
 
 4. **Network proximity analysis** — compute PPI network proximity
    between drug target sets and disease gene modules. Closer
@@ -59,7 +40,9 @@ evidence is absent.
 
 5. **Clinical evidence mining** — use \`search_clinical_trials\` to
    check if candidates are already in trials for the target
-   indication. Use \`pubmed\` for published evidence.
+   indication. Use \`pubmed\` for published evidence, and
+   \`search_regulatory_approvals\` for the FDA and EMA authorization
+   status, the approved indications, and the label safety sections.
 
 6. **Safety assessment** — use \`search_faers\` to assess real-world
    safety for the proposed patient population. Flag drugs with
@@ -67,57 +50,22 @@ evidence is absent.
 
 ## Candidate Ranking
 
-Choose the repurposing approaches that the available data supports. Check
-each candidate against clinical trials, literature, and safety data, then
-rank candidates by a composite score across evidence lines. Report the
+Choose the repurposing approaches that the available data supports. When a
+source is unavailable, skip the analyses that depend on it and state the gap.
+Check each candidate against clinical trials, literature, and safety data,
+then rank candidates by a composite score across evidence lines. Report the
 candidate table with its evidence breakdown, the evidence heatmap, and the
 limitations.
 
-## Tool Usage for Candidate Discovery
+## Evidence Notes
 
-### From Targets (ChEMBL workflow)
-1. \`chembl({action:"targets"})\` — resolve gene symbols to target ChEMBL IDs.
-2. \`chembl({action:"compounds", searchType:"target"})\` — find active compounds.
-3. \`chembl({action:"drug"})\` — check approval status and existing indications.
-4. \`chembl({action:"mechanism"})\` — verify mechanism relevance.
-
-### From Targets (interaction workflow)
-1. \`drug_gene_interactions({direction:"gene_to_drugs"})\` — find drugs for
-   a gene set. Add \`sources:["dgidb","drugbank"]\` and
-   \`includeDrugRecord:true\` when you need the curated DrugBank record
-   (description, modality, approval groups) for a shortlisted candidate —
-   not for the whole discovery sweep. DrugBank here carries no indication
-   and no toxicity.
-2. Take the existing indications from \`chembl({action:"drug"})\` and the
-   safety profile from \`search_faers\`.
-
-### From Genetic Evidence
-1. \`gene_disease_evidence({queryType:"disease"})\` — GWAS associations,
-   DisGeNET scores and ClinVar classifications for the indication in one
-   call.
-2. \`opentargets({action:"target"})\` — check target tractability and drug scores.
-
-### Validation Layer
-1. \`search_clinical_trials\` — existing trials for drug + indication.
-2. \`search_faers\` — adverse event profile.
-3. \`pubmed\` — published evidence.
-4. \`search_regulatory_approvals\` — the authorization status of a
-   candidate at the FDA and the EMA, its approved indications, its
-   designations, and the safety sections of its label (boxed warning,
-   contraindications). Read the matched excerpts of a search first, then
-   only the \`section\` that you cite.
-
-### Preclinical Target Intelligence
-1. \`gene_preclinical_profile\` (geneSymbol) — returns both halves in one
-   call: cross-species baseline expression, confirming the target is
-   expressed in tissues relevant to the new indication and that
-   model-organism surrogates are sensible; and the mouse-KO phenotype +
-   viability (per-zygosity breakdown plus a derived top-line lethal /
-   subviable / viable). A complete-penetrance lethal KO is a hard
-   tractability flag; a clean viable KO with no organ-system phenotypes
-   is a positive tractability signal.
-2. Treat empty/null outputs as valid "no data" (not all genes have
-   IMPC mouse lines; Bgee can be sparse for dog/macaque). Do NOT retry.
+- A DrugBank record from \`drug_gene_interactions\` carries no indication and no
+  toxicity. Take the indications from \`chembl\` and the safety profile from
+  \`search_faers\`.
+- Use \`gene_preclinical_profile\` to confirm that a target is expressed in the
+  tissues of the new indication, and that the model organism is a fair surrogate.
+  A complete-penetrance lethal mouse KO is a hard tractability flag. A clean
+  viable KO with no organ-system phenotype is a positive tractability signal.
 
 ## Required Figures
 

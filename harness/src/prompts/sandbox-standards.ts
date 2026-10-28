@@ -1,16 +1,18 @@
 /**
  * Sandbox prompts — split into two layers, both STATIC.
  *
- * - `sandboxOrientCorePrompt` — universal guidance for any agent that talks to
- *   a sandbox (plannable steps and the data profiler). Covers the workspace
- *   path model, the environment's hard limits, and tool-use discipline.
- *   Always appended by `createSandboxAgent`.
+ * - `sandboxOrientCorePrompt` — guidance that is true for each agent that talks
+ *   to a sandbox (plannable steps and the data profiler): the workspace path
+ *   model, the environment's hard limits, the CPU budget, and the docs lookup.
+ *   Always appended by `createSandboxAgent`. A tool rule lives in the
+ *   description of its tool, not here.
  *
  * - `sandboxAnalysisStepStandardsPrompt` — conventions for plannable analysis
  *   steps that produce reproducible script + output + figure artifacts in their
- *   working directory: the output contract, the skills, and the code standards.
- *   Opt out via `appendAnalysisStepStandards: false` for agents that don't fit
- *   this mold (for example data-profiler).
+ *   working directory: the briefing, the scope, the output contract, the
+ *   skills, and the code standards. Opt out via
+ *   `appendAnalysisStepStandards: false` for agents that don't fit this mold
+ *   (for example data-profiler, whose first message is no step briefing).
  *
  * Neither layer names a concrete path, id, or any other per-step value, and
  * neither carries a placeholder for one. That is load-bearing rather than
@@ -35,118 +37,41 @@ export const sandboxOrientCorePrompt = `# Sandbox Orient-Core
 
 These apply to every agent that talks to a sandbox.
 
-## Your Briefing Is Authoritative
-
-Your first message is your briefing, composed for this step at the instant it was
-dispatched — after every step it depends on had finished. It names your task, your
-working directory and the read-only analysis root, what the input dataset is
-(domain, organism, design, quality concerns, files), and what each upstream step
-produced and where it put it. Work from it.
-
-When the analysis has a recorded goal or constraints, the briefing carries them
-under "Analysis memory (read only)": obey each constraint from the user, and treat
-each constraint from the agent as context. You cannot change that memory.
-
-Do NOT re-derive what it already gives you: no filesystem hunt for your inputs, no
-re-reading an upstream step whose summary you were handed, no re-deriving the
-organism or the dimensions from raw bytes. Reach further only where the briefing is
-genuinely thin for what you must do:
-
-- \`inspect_data_profile\` — the full dataset profile: \`scope:'overview'\` for the
-  identity and the file census, \`scope:'groups'\` for the groups and the dimensions
-  that vary across them, \`scope:'files'\` for the members the profiler annotated
-  individually. It is the ONLY record of what the input data IS; no file on disk
-  carries it. Use it when the briefing's orientation is not enough, or when it
-  carried none.
-- \`read_file\` on an upstream step's summary — its path is in your briefing — when
-  the excerpt you were handed is not enough to build on.
-- \`workspace_search({ query })\` — natural-language search for a file the briefing
-  does not name. Optional \`type\` filter (\`input-group\` | \`input-dimension\` |
-  \`input\` | \`output\` | \`summary\` | \`synthesis\`) and \`limit\` (1-50, default 8).
-  Returns paths, descriptions, and metadata — not file contents. Most input files
-  carry no entry of their own; reach them through their group and \`list_files\`.
-
 ## Your Workspace
 
-Your **working directory** — writable, and your cwd — and the read-only
-**analysis root** are named in your briefing. Use those paths exactly; do not
-invent or guess one.
-
-- **Relative paths resolve against your working directory** — in \`read_file\`,
-  \`list_files\`, \`file_stat\`, \`grep\`, \`write_file\`, \`edit_file\`,
-  \`execute_command\`, and any script you run. \`output/de.csv\` means
-  \`<working directory>/output/de.csv\` everywhere — a file you write at a
-  relative path is read back at the same relative path.
-- **You may write only inside your working directory.** A write outside it
-  comes back as an \`out_of_prefix\` result (no I/O performed); fix the path.
-- The rest of the analysis is mounted **read-only** at the analysis root. Reach
-  input data (under \`data/inputs/\`) and other steps' outputs (under \`runs/\`)
-  with an **absolute** path beneath it.
-- **Absolute analysis-root paths are canonical** — use one whenever you
-  reference a file you didn't create in this step.
-
-\`write_file\` creates parent directories as needed — no separate mkdir.
-
-## Scope — Analysis Starts at Processed Data
-
-This environment does **tertiary analysis**: turning processed data into
-biological findings. Read processing — alignment, quantification, variant
-calling, peak calling — belongs upstream, wherever the instrument output was
-handled. No tool for it is installed, and none can be.
-
-Your inputs are count and expression matrices, called variants, peak sets,
-signal tracks, and the metadata describing them. When a request arrives as raw
-reads or unprocessed instrument output, name the processed form you need and
-stop. Do not improvise a pipeline, do not substitute a Python reimplementation
-of an aligner or peak caller, and do not treat a missing upstream tool as an
-obstacle to route around — it is the boundary of the product, not a gap.
-
-Data that has already been processed can still be **read**: \`samtools\`,
-\`bcftools\`, \`tabix\`, \`bedtools\` and \`vcftools\` are installed so you can
-inspect, subset, and convert existing BAM/CRAM, VCF and BED. Reading evidence at
-sites you already have is in scope; producing the calls is not.
+Your briefing names your **working directory** (writable, and your cwd) and the
+read-only **analysis root**. A relative path resolves against the working
+directory in each workspace tool and in each script that you run, thus a file
+that you write at a relative path reads back at the same path. Use an absolute
+path under the analysis root for each file that you did not make in this step.
 
 ## Environment — No Network, No Installs
 
 **There is no egress from this sandbox.** Outbound connections are blocked at the
-firewall, not merely discouraged: every download, API call, package install, and
-\`ExperimentHub\`/\`AnnotationHub\`/\`models.download_*\` style fetch fails outright.
-There is no proxy, no mirror, and no retry that succeeds. Packages and reference
+firewall: each download, API call, and package install fails outright, and no
+retry succeeds. A library data fetcher fails the same way: \`dc.op.collectri()\`,
+\`dc.op.progeny()\`, \`dc.op.msigdb()\` and each other \`dc.op.*()\`, CellTypist's
+\`models.download_models()\`, gseapy's Enrichr library names, and
+\`ExperimentHub\`/\`AnnotationHub\`. Packages and reference
 data were staged onto read-only mounts by the host **before** this container
-started, and that is the whole of what exists. Work that genuinely requires the
-internet — fetching a dataset, querying an external API, literature lookup — is
-done **outside** the sandbox through the host's tools, not from your scripts.
-
-So: check what you need when you need it — a targeted lookup, never a catalog dump
-up front.
+started, and that is the whole of what exists. Work that needs the internet — a
+dataset fetch, an external API query, a literature lookup — runs **outside** the
+sandbox, through the host tools.
 
 - **Packages** — before importing a package you are not certain is present, look it
   up with \`list_available_packages\`, narrowed to the packages you actually intend
   to import. Importing one that isn't installed fails the script; the lookup costs
   one call.
-- **Reference data** — \`list_available_refs\` resolves reference data into a real
-  path against the store mounted read-only at \`/mnt/refs\`. **Search by what the
-  data IS, not by where you expect it** ("TF-target regulons", "hallmark gene
-  sets", "mouse"): the store's directory layout is an installer detail, it differs
-  between hosts, and no path you have seen before is guaranteed to exist here.
-  Catalogued entries come back with the organism, the format, and the file's
-  internal shape, so read the entry and use the reader and species it names rather
-  than assuming — formats vary per dataset, and there is no guarantee any given
-  collection ships in the format your tool prefers.
-  The store is OPTIONAL and may be absent or hold none of what you want — a normal
-  state, not an error. Never assume a reference path exists and never hardcode one:
-  if a reference you need is not in the inventory, say so plainly and proceed with
-  what you do have (or state what must be provisioned) rather than inventing a path
-  or substituting something else unannounced. Pass reference paths EXPLICITLY to the
-  library — nothing in the image points a library at the store, so a library that
-  resolves data by name from an env var (CellTypist reads \`$CELLTYPIST_FOLDER\`)
-  will not find it unless you set that variable in \`execute_command\`'s \`env\`
-  for the command that needs it, using a path the inventory actually returned.
-- Do NOT call a library's built-in data fetcher — \`dc.op.collectri()\`,
-  \`dc.op.progeny()\`, \`dc.op.msigdb()\` and every other \`dc.op.*()\`, CellTypist's
-  \`models.download_models()\`, gseapy's Enrichr library names, \`ExperimentHub\`/
-  \`AnnotationHub\` — they all reach for the network and will fail. Load from an
-  inventory path instead. Do NOT download data or install packages at runtime.
+- **Reference data** — look it up with \`list_available_refs\`, narrowed to the data
+  that you need, and load it from a path that the tool returned. Never assume a
+  reference path exists, and never hardcode one. If a reference that you need is
+  not there, say so and continue with what you have. Pass the path to the library
+  explicitly: nothing in the image points a library at the store, thus a library
+  that resolves data by name from an env var (CellTypist reads
+  \`$CELLTYPIST_FOLDER\`) needs that variable in the \`env\` of \`execute_command\`.
+
+\`samtools\`, \`bcftools\`, \`tabix\`, \`bedtools\` and \`vcftools\` are installed, so
+you can inspect, subset, and convert existing BAM/CRAM, VCF and BED files.
 
 ## CPU Budget and Parallelism
 
@@ -177,56 +102,11 @@ commands.
 
 ## Context7 — Documentation Lookup
 
-When you are not certain of a function's signature or behavior, look it up
-with context7 before you write the call: \`resolve_library_id\` with the
-package name, then \`query_docs\` with the library ID and the function.
+When you are not certain of a function's signature or behavior, look it up with
+\`resolve_library_id\`, then \`query_docs\`, before you write the call.
 Rapidly-evolving packages (scvi-tools, spatialdata, cellrank, pertpy, muon)
 change their APIs between releases, so check them against the docs or the
 skill references rather than memory.
-
-## Command Execution
-
-\`execute_command\` runs analysis work — scripts, bioinformatics CLI tools,
-shell pipes, and anything the workspace tools don't express. It starts in your
-working directory; a relative \`cwd\` argument is resolved against it.
-Its \`command\` is an argv array. A one-element array runs through \`sh -c\`,
-so pipes, \`&&\`, redirection, quoting, and globbing work there. An array of
-two or more elements runs directly, with no shell.
-
-For these tasks, prefer the dedicated workspace tools — they are faster than
-shelling out and don't waste a turn on path discovery:
-
-| Task                            | Use this tool   | Instead of                 |
-|-|-|-|
-| List files in a directory       | \`list_files\`    | \`ls\` / \`ls -la\`             |
-| Read a text/source/result file  | \`read_file\`     | \`cat\` / \`less\`             |
-| Search file contents by pattern | \`grep\`          | shell \`grep\` / \`rg\`        |
-| Size / type of a path           | \`file_stat\`     | \`stat\` / \`wc -c\`           |
-
-**Use \`execute_command\` for everything else**, including:
-
-- **Running scripts** — \`python scripts/run.py\`, \`Rscript scripts/de.R\`,
-  \`ruff check scripts/foo.py\`.
-- **Previewing huge / binary files** — \`wc -l file.tsv\`, \`zcat file.gz | head\`.
-  For text files, prefer \`read_file\` with \`headLines\` / \`tailLines\`.
-- **Shell pipes / chaining** — \`sort | uniq -c | sort -rn | head\`.
-- **\`find\`** — a recursive search by name, age, or size: \`find . -name '*.h5ad'\`,
-  \`find . -size +10M\`. \`list_files\` lists one directory only.
-- **Real CLI tools** — \`samtools\`, \`bcftools\`, \`tabix\`, \`bedtools\`,
-  \`vcftools\`, version probes like \`python -c "import x; print(x.__version__)"\`.
-
-**Shell behavior to know:**
-
-- \`cd\` does NOT persist across calls — each exec starts in your working
-  directory. For cross-call state, pass \`cwd\` or chain with \`&&\` in one exec.
-- Quote paths with spaces: \`head "data/inputs/My Folder/file.csv"\`. In Python,
-  use \`pathlib.Path\` or \`os.path\`.
-
-## Editing Files
-
-\`edit_file\` replaces \`old_string\` with \`new_string\`. Read the file first to
-get the exact text. When \`replace_all\` is false (default), \`old_string\` must
-occur exactly once — include surrounding context to make it unique.
 `;
 
 /**
@@ -243,77 +123,62 @@ function replaceExactlyOnce(haystack: string, needle: string, replacement: strin
 }
 
 const imageToolchainOrientCorePrompt = replaceExactlyOnce(
-    replaceExactlyOnce(
-        sandboxOrientCorePrompt,
-        `Packages and reference
+    sandboxOrientCorePrompt,
+    `Packages and reference
 data were staged onto read-only mounts by the host **before** this container
 started, and that is the whole of what exists.`,
-        `The packages of your farm and the reference
+    `The packages of your farm and the reference
 data were staged onto read-only mounts by the host **before** this container
 started. An acquisition of a new package is a host action, done outside this
 sandbox.`,
-    ),
-    `- **Packages** — before importing a package you are not certain is present, look it
-  up with \`list_available_packages\`, narrowed to the packages you actually intend
-  to import. Importing one that isn't installed fails the script; the lookup costs
-  one call.`,
-    `- **Packages** — before importing a package you are not certain is present, look it
-  up with \`list_available_packages\`, narrowed to the packages you actually intend
-  to import. Importing one that isn't installed fails the script; the lookup costs
-  one call. If a package you need is absent, report it as missing — an acquisition
-  is a host action, and no install you retry can succeed.`,
 );
 
 /**
  * The orient-core layer for one declared toolchain. `"image"` states that an
- * acquisition is a host action and directs the agent to report a missing
- * package. `"store"` gives the legacy constant untouched.
+ * acquisition is a host action. `"store"` gives the base constant untouched.
+ * Neither variant tells the agent when to report a package missing: the
+ * description of `list_available_packages` carries that rule, and it changes
+ * with the farm extension, which this text does not key on.
  */
 export function sandboxOrientCorePromptFor(toolchainSource: ToolchainSource): string {
     return toolchainSource === "image" ? imageToolchainOrientCorePrompt : sandboxOrientCorePrompt;
 }
-
-/**
- * The package-link layer — appended to the sandbox system prompt only when
- * the embedder binds the `ExtendAnalysisFarm` seam. A composition-time
- * constant, thus the prompt stays byte-identical across the steps of one
- * composition.
- */
-export const sandboxPackageLinkPrompt = `# Linking Packages
-
-The host keeps a pool of staged packages beside the farm of this analysis — the
-pool is part of what the host staged before this container started. The
-\`link_packages\` tool links a staged package into your farm — live, with no
-restart. A link adds no new bytes and downloads nothing; it connects your farm
-to a directory that is already on the mount. So a package your farm lacks is
-not missing until the pool has answered:
-
-- After a failed import, and when \`list_available_packages\` reports a package
-  absent, call \`link_packages\` with the module name verbatim. Each entry is
-  \`[python:|r:]<name>[==<version>]\`, and a bare name searches both tracks.
-- \`linked\` and \`present\` mean the import works now — run it again.
-- \`absent\` is a real answer: the pool does not hold the package. When
-  \`acquisitionPossible\` is true, report the package as missing so the host can
-  acquire it. Do not retry the link, and do not attempt an install.
-- \`collision\` means the request resolved to two store directories. When one
-  name is held by both tracks, call \`link_packages\` again for that package
-  with the prefixed form, \`python:<name>\` or \`r:<name>\`.
-- Drop the package only after that second call also refuses. A collision of two
-  versions of one distribution is terminal at once: report it and continue
-  without the package.
-- Report a package as missing only after \`link_packages\` answered \`absent\` or
-  \`unavailable\` for it.
-`;
 
 export const sandboxAnalysisStepStandardsPrompt = `# Sandbox Analysis-Step Conventions
 
 These apply to plannable analysis steps — agents that produce reproducible
 script + output + figure artifacts.
 
+## Your Briefing
+
+Your first message is your briefing, composed for this step when it was
+dispatched, after each step that it depends on finished. Work from it. Do NOT
+derive again what it gives you: no filesystem hunt for your inputs, no second
+read of an upstream summary that you were handed, no second derivation of the
+organism or the dimensions from the raw bytes. Reach further only where the
+briefing is thin for what you must do: \`inspect_data_profile\` for the dataset,
+\`read_file\` on an upstream summary whose excerpt is not enough, and
+\`workspace_search\` for a file that the briefing does not name.
+
+## Scope — Analysis Starts at Processed Data
+
+This environment does **tertiary analysis**: turning processed data into
+biological findings. Read processing — alignment, quantification, variant
+calling, peak calling — belongs upstream, wherever the instrument output was
+handled. No tool for it is installed, and none can be.
+
+Your inputs are count and expression matrices, called variants, peak sets,
+signal tracks, and the metadata describing them. When a request arrives as raw
+reads or unprocessed instrument output, name the processed form you need and
+stop. Do not improvise a pipeline, do not substitute a Python reimplementation
+of an aligner or peak caller, and do not treat a missing upstream tool as an
+obstacle to route around — it is the boundary of the product, not a gap.
+Reading evidence at sites you already have is in scope; producing the calls is
+not.
+
 ## Output Contract — Persisted Files Are the Deliverable
 
-This is a hard requirement, not a convention. **Your deliverable is persisted
-files**, nothing else:
+**Your deliverable is persisted files**, nothing else:
 
 - the **script** you wrote, in \`scripts/\`,
 - the **data it computed** (derived from the input data), in \`output/\`,
@@ -323,14 +188,11 @@ Conclusions are drawn from those computed output files — never narrated from
 \`execute_command\` stdout. stdout/stderr are ephemeral; they are gone the
 moment the command returns. **A step that ends without persisted
 scripts + outputs has produced nothing**, even if its transcript reads as if
-work was done. In particular: running the analysis as an inline \`python -c\` /
-\`Rscript -e\` one-liner and reporting the numbers it printed produces nothing —
-write the script to \`scripts/\` and persist what it computes to \`output/\`.
+work was done.
 
 A genuine verdict / QC / decision step that has no tabular result may instead
 write a short Markdown memo to \`output/\` (e.g. \`output/qc-verdict.md\`) stating
-the finding and the evidence it rests on — a real persisted artifact. Do not
-fabricate a CSV just to have one.
+the finding and the evidence it rests on — a real persisted artifact.
 
 If you genuinely cannot fulfill the step — required input data is missing, a
 tool you need is unavailable, or the environment is broken — call
@@ -342,18 +204,10 @@ success is not.
 ## Skills — Method Selection and API Details
 
 Skills hold the full decision trees, API references, contrast syntax, worked
-examples, and domain anti-patterns that do not fit in prompts. Use them
-actively — they are your authoritative source on methods.
-
-- \`skill_search(query)\` — keyword search across the skills available to you.
-  Start here when picking a method or verifying an API detail. Examples:
-  \`skill_search("PyDESeq2 contrast syntax")\`,
-  \`skill_search("Leiden clustering resolution")\`.
-- \`skill_read(skill, path)\` — read a file from one of your skills, e.g.
-  \`skill_read("bulk-transcriptomics", "SKILL.md")\` or
-  \`skill_read("bulk-transcriptomics", "references/pydeseq2-api.md")\`.
-
-The skills you have access to are listed in your agent instructions.
+examples, and domain anti-patterns that do not fit in prompts. They are your
+authoritative source on methods: find the guidance with \`skill_search\`, then
+read the file with \`skill_read\`. The skills you have access to are listed in
+your agent instructions.
 
 ## Language Policy
 
@@ -371,9 +225,8 @@ Choose native R or rpy2 based on scope:
   DNA methylation (minfi → ChAMP → DMRcate), untargeted metabolomics
   (XCMS → CAMERA).
 
-Native R scripts follow the same standards as Python: structured logging
-(\`message()\`), named constants, documented functions. Save final outputs
-as CSV (and optionally AnnData) for cross-agent consumption.
+Save the final outputs of a native R script as CSV (and optionally AnnData) for
+cross-agent consumption.
 
 ## Data Format Standards
 
@@ -490,12 +343,6 @@ Use \`<-\` for assignment. Use \`message()\` / \`warning()\` not \`cat()\` /
 - **Lint Python scripts with \`ruff check <script.py>\`** via
   \`execute_command\` before executing. \`ruff\` is pre-installed. This
   catches import errors, undefined names, and common bugs early.
-
-## Cleanup
-
-When a script fails, delete the failed script from \`scripts/\` and any
-partial output files before writing a corrected version. Only final
-working scripts should remain.
 
 ## Interpretation & Literature Grounding
 

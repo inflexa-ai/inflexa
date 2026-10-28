@@ -140,6 +140,7 @@ describe("knowledge_template with a binding", () => {
         expect(issue.slot).toBe("lfc_shrink");
         expect(issue.message).toContain('"apeglm"');
         expect(issue.message).toContain("doi:10.1093/bioinformatics/bty895");
+        expect(issue.message).toContain("name the slot in overrides with the reason");
         expect(issue.permitted).toEqual(['"apeglm"']);
         expect(calls.render).toHaveLength(0);
         expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);

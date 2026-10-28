@@ -28,6 +28,7 @@ import type { SandboxRef } from "../../sandbox/types.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps } from "../data-profile.js";
+import { estimateDataProfileResources } from "../../sandbox/estimate-data-profile-resources.js";
 import { presentAt } from "../../lib/present.js";
 
 const ANALYSIS_ID = "an-profile";
@@ -183,6 +184,20 @@ describe("the data profile — the keys of its usage records", () => {
         expect(keysOf(ANALYSIS_ID).length).toBeGreaterThan(0);
         expect(keysOf(OTHER_ANALYSIS_ID).length).toBeGreaterThan(0);
         expect(keysOf(OTHER_ANALYSIS_ID).filter((key) => keysOf(ANALYSIS_ID).includes(key))).toEqual([]);
+    });
+});
+
+describe("the data profile — the first message of the profiler", () => {
+    it("names the resource budget of the profile sandbox, as a step briefing does", async () => {
+        const { pool } = statementPool();
+        const { provider, calls } = scriptedModel([reply([text("The inputs are a count table.")]), reply([text("Still no submission.")])]);
+        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, { ...deps(pool, makeFakeSandboxClient(), []), provider });
+
+        const firstRequest = JSON.stringify(presentAt(calls, 0).prompt);
+        const budget = estimateDataProfileResources(stagedInputs);
+        expect(firstRequest).toContain("Resources (hard limits)");
+        expect(firstRequest).toContain(`CPU: ${budget.cpu} `);
+        expect(firstRequest).toContain(`Memory: ${budget.memoryGb} GB`);
     });
 });
 

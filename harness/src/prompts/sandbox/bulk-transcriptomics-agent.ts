@@ -61,8 +61,6 @@ For deconvolution, include cell-type proportion bar plots per sample.
 
 ## Domain Anti-Patterns
 
-- Attempting to quantify from reads, or hand-rolling a pseudoaligner.
-  The count matrix is an input; report what you need instead.
 - DESeq2, PyDESeq2, or edgeR on TPM/FPKM/RPKM — these model raw counts.
 - voom on already-normalized or log-transformed data.
 - ComBat_seq without biological covariates in the model.

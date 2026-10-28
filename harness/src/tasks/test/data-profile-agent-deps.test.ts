@@ -25,7 +25,6 @@ const unusedEmbedding: EmbeddingProvider = {
         throw new Error("not used at composition time");
     },
 };
-import { sandboxPackageLinkPrompt } from "../../prompts/sandbox-standards.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
 import { profilerSandboxAgentDeps, type DataProfileDeps } from "../data-profile.js";
 
@@ -51,16 +50,16 @@ describe("profilerSandboxAgentDeps — the farm-extension seam", () => {
     const step = makeFakeSandboxAgentDeps().step;
     const extendAnalysisFarm: ExtendAnalysisFarm = () => okAsync([]);
 
-    it("a bound seam gives the profiler roster link_packages, with the link prompt layer", () => {
-        const def = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps({ extendAnalysisFarm }), step));
-        expect(def.tools.map((t) => t.id)).toContain("link_packages");
-        expect(def.systemPrompt).toContain(sandboxPackageLinkPrompt.trim());
+    it("a bound farm extension gives the profiler roster link_packages, and the system prompt does not change", () => {
+        const bound = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps({ extendAnalysisFarm }), step));
+        const unbound = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps(), step));
+        expect(bound.tools.map((t) => t.id)).toContain("link_packages");
+        expect(bound.systemPrompt).toBe(unbound.systemPrompt);
     });
 
-    it("an unbound seam gives no link tool and no prompt layer, and the composition does not throw", () => {
+    it("with no farm extension bound, the profiler gets no link tool, and the composition does not throw", () => {
         const def = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps(), step));
         expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
-        expect(def.systemPrompt).not.toContain(sandboxPackageLinkPrompt.trim());
     });
 });
 

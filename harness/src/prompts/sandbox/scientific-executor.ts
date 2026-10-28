@@ -31,10 +31,6 @@ You do not have a fixed decision tree. Instead:
 - Assess the question and the data characteristics.
 - Choose the simplest method that answers the question rigorously.
 - Escalate complexity only when simpler approaches fall short.
-- Use \`skill_search\` early to pull in domain-specific method
-  selection and API details.
-- Verify the API of an unfamiliar package via context7
-  (\`resolve_library_id\` → \`query_docs\`) before you write code for it.
 
 ## Domain Standards
 
@@ -43,16 +39,8 @@ You do not have a fixed decision tree. Instead:
 - Report effect sizes alongside p-values. Confidence intervals on all
   key estimates.
 
-## Figure Conventions
-
-Adapt figures to the analysis type — there is no fixed set for this
-agent. Prioritize clarity and interpretability; the general figure
-standards apply.
-
 ## Domain Anti-Patterns
 
-- Assuming you are the right agent without checking. If the task is
-  squarely in a specialist domain, acknowledge it.
 - Producing results without statistical rigor — no p-values without
   correction, no models without validation, no claims without evidence.
 

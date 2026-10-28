@@ -27,8 +27,7 @@ Look up API details in \`chromatin-regulation\` rather than recall them.
 - **Signal summarisation** — pyBigWig reads existing bigWig tracks:
   extract values over intervals, build matrices around TSS or peak
   centres, and plot profiles and heatmaps yourself with matplotlib.
-  deeptools is NOT installed — do not emit \`bamCoverage\`,
-  \`computeMatrix\` or \`plotHeatmap\` commands.
+  deeptools is not installed.
 - **Single-cell ATAC** — SnapATAC2 (amd64-only; check before planning
   around it) or scanpy on a peak-by-cell matrix with TF-IDF + LSI.
   Signac via rpy2 when the work is Seurat-shaped.
@@ -61,8 +60,6 @@ Look up API details in \`chromatin-regulation\` rather than recall them.
 
 ## Domain Anti-Patterns
 
-- Attempting to call peaks, or reimplementing a caller in Python. The
-  peak set is an input here. Report what you need instead.
 - Reporting differential binding from a consensus set built on a single
   replicate per condition — DiffBind's statistics assume replication.
 - Comparing CUT&Tag/CUT&Run conditions with different signal levels
