@@ -152,7 +152,7 @@ async function fetchUrl(url: string, deps: WebFetchToolDeps = {}, ctx: ToolConte
     return (await tool.execute(input, ctx))._unsafeUnwrap();
 }
 
-/** A minimal PDF with one text line per page, the same builder shape the pdf-parse probe used. */
+/** A minimal PDF with one text line per page. */
 function buildPdf(pageCount: number): Buffer {
     const objects: string[] = ["1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj"];
     const kids = Array.from({ length: pageCount }, (_, i) => `${4 + i * 2} 0 R`).join(" ");

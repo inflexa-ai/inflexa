@@ -234,6 +234,10 @@ request. Make the whole amend first. Then run the whole loop again
 after each amend that the user accepts, and record again at its end. Thus the
 stored version is always the page that the user reads.
 
+A user can ask for the report as a PDF. A PDF is a document of its own, and no
+print of the page: build it in \`run_script\` from the content of the session, with
+\`render_chart\` for each chart and \`export_pdf\` for the document.
+
 ## Do NOT
 
 - **Invent a path.** Name a file by what a search or a run gave you. Never guess a

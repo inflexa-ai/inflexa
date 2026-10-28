@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { computeSha256 } from "../../../lib/fs-helpers.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
@@ -49,6 +51,51 @@ beforeEach(() => {
 
 afterEach(() => {
     rmSync(root, { recursive: true, force: true });
+});
+
+/** A minimal PDF with one text line per page. */
+function buildPdf(pageCount: number): Buffer {
+    const objects: string[] = ["1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj"];
+    const kids = Array.from({ length: pageCount }, (_, i) => `${4 + i * 2} 0 R`).join(" ");
+    objects.push(`2 0 obj<</Type/Pages/Kids[${kids}]/Count ${pageCount}>>endobj`, `3 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj`);
+    for (let i = 0; i < pageCount; i++) {
+        const content = `BT /F1 12 Tf 72 720 Td (Page ${i + 1} body text) Tj ET`;
+        objects.push(
+            `${4 + i * 2} 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents ${5 + i * 2} 0 R/Resources<</Font<</F1 3 0 R>>>>>>endobj`,
+            `${5 + i * 2} 0 obj<</Length ${content.length}>>stream\n${content}\nendstream endobj`,
+        );
+    }
+    return Buffer.from(`%PDF-1.4\n${objects.join("\n")}\ntrailer<</Size ${3 + pageCount * 2}/Root 1 0 R>>`, "latin1");
+}
+
+describe("read_pdf", () => {
+    test("reads the text of the asked pages, gives the page count, and records the read", async () => {
+        mkdirSync(join(root, "data/inputs/f1"), { recursive: true });
+        const bytes = buildPdf(3);
+        writeFileSync(join(root, "data/inputs/f1/paper.pdf"), bytes);
+
+        const result = (await tool("read_pdf").execute({ path: "data/inputs/f1/paper.pdf", firstPage: 2 }, ctx()))._unsafeUnwrap();
+
+        expect(result).toMatchObject({
+            path: "data/inputs/f1/paper.pdf",
+            totalPages: 3,
+            pages: [
+                { page: 2, text: "Page 2 body text" },
+                { page: 3, text: "Page 3 body text" },
+            ],
+        });
+        expect(readToolCallRecord(result)).toEqual({ reads: [{ path: "data/inputs/f1/paper.pdf", hash: computeSha256(bytes) }] });
+    });
+
+    test("refuses a file that is not a PDF, and a file that does not open as one", async () => {
+        writeFileSync(join(root, "runs/r1/s1/output/fake.pdf"), "not a pdf");
+
+        const notPdf = await tool("read_pdf").execute({ path: "runs/r1/s1/output/de.csv" }, ctx());
+        const broken = await tool("read_pdf").execute({ path: "runs/r1/s1/output/fake.pdf" }, ctx());
+
+        expect(notPdf._unsafeUnwrapErr().error).toContain("is not a PDF");
+        expect(broken._unsafeUnwrapErr().error).toContain("did not open as a PDF");
+    });
 });
 
 describe("read_table", () => {
@@ -168,6 +215,25 @@ describe("render_chart", () => {
         const result = await tool("render_chart").execute({ name: "cloud.svg", spec }, ctx());
 
         expect(result._unsafeUnwrapErr().error).toContain("the chart draws 10001 points");
+    });
+});
+
+describe("export_pdf", () => {
+    test("writes a PDF with a chart of render_chart, and records the chart that it read and the PDF that it wrote", async () => {
+        const spec = { xAxis: { type: "category" }, yAxis: { type: "value" }, dataset: { source: [{ g: "TNF-α", v: 1 }] }, series: [{ type: "bar" }] };
+        const chart = z.object({ path: z.string() }).parse((await tool("render_chart").execute({ name: "bars", spec }, ctx()))._unsafeUnwrap());
+        const markdown = `# Response\n\nISG15 rises.\n\n![The bars](${chart.path})\n\n![Gone](missing.png)`;
+
+        const result = (await tool("export_pdf").execute({ name: "summary", markdown, title: "Summary" }, ctx("call-2")))._unsafeUnwrap();
+
+        expect(result).toMatchObject({ path: `${DERIVED}/summary.pdf`, missingImages: ["missing.png"] });
+        const pdf = readFileSync(join(root, DERIVED, "summary.pdf"));
+        expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+        const record = readToolCallRecord(result);
+        expect(record).toMatchObject({
+            reads: [{ path: chart.path }],
+            writes: [{ path: `${DERIVED}/summary.pdf`, hash: computeSha256(pdf), size: pdf.length }],
+        });
     });
 });
 
