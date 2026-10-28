@@ -367,12 +367,16 @@ is an embedder concern.
   (`write_file`, `edit_file`), `inspectRun`,
   `inspectDataProfile`, `updateWorkingMemory`, `generatePlan`, `executePlan`,
   `runEphemeral`, `startReportSession`, `generateAnalogyReport`, and `showUser`.
-  Its bio-lookup tools are script tools (`AgentDefinition.scriptTools`). The
-  agent calls them from one JavaScript script through `run_script`
+  Its bio-lookup tools and its table tools (`read_table`, `write_derived`,
+  `render_chart`) are script tools (`AgentDefinition.scriptTools`). The agent
+  calls them from one JavaScript script through `run_script`
   (`tools/script/run-script.ts`), and no request declares them. The loop throws
   for a script tool that asks an approval or starts a workflow, because a script
-  is one durable step. `createConversationAgent(deps)` is the composition root
-  that wires the deps of each tool.
+  is one durable step. A script writes only into the scratch directory of its
+  conversation (`tools/script/scratch.ts`), and each script that read or wrote
+  a file emits one `run-script` provenance session event.
+  `createConversationAgent(deps)` is the composition root that wires the deps
+  of each tool.
 - **Sub-agent tools** (`generatePlan`, `generateAnalogyReport`): a sub-agent that
   is a tool. It runs its loop under a child session (`forSubAgent`). Inside the
   body of a workflow, the call starts a child workflow (`loop/sub-agent.ts`). Thus
@@ -555,6 +559,7 @@ bind mount decouples the two.
 |       +-- notebooks/           # Generated notebooks
 +-- reports/{reportId}/          # Report output
 +-- report-sessions/{threadId}/  # The page of a report session
++-- conversation-sessions/{threadId}/  # The scripts of a conversation, and their derived files
 ```
 
 The file scratch of the data profiler is under `runs/data-profile/`, and it is

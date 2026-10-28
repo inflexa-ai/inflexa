@@ -441,15 +441,15 @@ type Conversation = {
  * The agent with the `run_script` tool over its script tools, after its own tools. The tool is a pure function of
  * the script tools, thus each request of a conversation declares the same tool, and the prompt cache holds.
  */
-export function withRunScript(agent: AgentDefinition): AgentDefinition {
+export function withRunScript(agent: AgentDefinition, logger?: Logger): AgentDefinition {
     const scriptTools = agent.scriptTools ?? [];
     if (scriptTools.length === 0) return agent;
     const asking = scriptTools.find((tool) => tool.approval !== undefined || tool.startsWorkflow === true);
     if (asking !== undefined) throw new Error(`the script tool ${asking.id} of agent ${agent.id} asks an approval or starts a workflow`);
-    // The VM gives a script the JSON of a result, thus a call record of the tool would be lost.
+    // `run_script` keeps only the files of the call records of a script, and runs no fold of a script tool.
     const recording = scriptTools.find((tool) => tool.foldCallRecord !== undefined);
     if (recording !== undefined) throw new Error(`the script tool ${recording.id} of agent ${agent.id} keeps a call record, which a script drops`);
-    return { ...agent, tools: [...agent.tools, createRunScriptTool(scriptTools, agent.scriptRuntime)] };
+    return { ...agent, tools: [...agent.tools, createRunScriptTool(scriptTools, agent.scriptRuntime, { scratch: agent.scriptScratch, logger })] };
 }
 
 /**
@@ -463,7 +463,7 @@ function openConversation(
     opts: LoopOptions,
     metricAgentId: string,
 ): Conversation {
-    const agent = withRunScript(declared);
+    const agent = withRunScript(declared, opts.logger);
     const { provider, emit } = opts;
     if (agent.tools.length > 0 && !provider.capabilities.toolCalling) {
         throw new Error(`Provider/model cannot run tool-required agent "${agent.id}"`);

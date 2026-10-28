@@ -253,7 +253,7 @@ async function stageBytes(stagingPath: string, bytes: Buffer, replacedMode: numb
 }
 
 /** One landed confined write: the paths in both frames, and the exact bytes on disk. */
-type ConfinedWriteOk = {
+export type ConfinedWriteOk = {
     readonly status: "ok";
     /** Analysis-root-relative, forward-slashed — the provenance-facing form. */
     readonly relative: string;
@@ -269,7 +269,7 @@ type ConfinedWriteOk = {
  * analysis-relative path and the exact bytes that landed. `beforeLand` gets
  * the same ok while the bytes wait in the temporary file.
  */
-async function confinedWrite(args: {
+export async function confinedWrite(args: {
     readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly workingDir: string;
