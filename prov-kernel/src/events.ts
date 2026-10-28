@@ -15,6 +15,7 @@ import type {
     ProvReportVersionRef,
     ProvRunOutcome,
     ProvRunRef,
+    ProvScriptRunRef,
     ProvSessionRef,
     ProvStepOutcome,
     ProvStepRef,
@@ -70,6 +71,7 @@ export type ProvEvent =
           step?: ProvStepRef;
       }
     | { type: "input_used"; analysisId: string; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef }
+    | { type: "script_run"; analysisId: string; actor: ProvActor; model: ProvModelId; script: ProvScriptRunRef }
     | { type: "session_created"; analysisId: string; actor: ProvActor; model: ProvModelId; session: ProvSessionRef }
     | { type: "report_block_added"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "report_block_changed"; analysisId: string; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
@@ -140,6 +142,9 @@ export function applyProvEvent(model: ProvDocumentModel, doc: ProvDocument, even
             return;
         case "input_used":
             m.appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
+            return;
+        case "script_run":
+            m.appendScriptRun(doc, event.analysisId, event.actor, event.script, event.model);
             return;
         case "session_created":
             m.appendSessionCreated(doc, event.analysisId, event.actor, event.session, event.model);
