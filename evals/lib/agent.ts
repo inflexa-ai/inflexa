@@ -10,6 +10,7 @@
  * or the network.
  */
 
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import { err, ok, okAsync } from "neverthrow";
@@ -53,11 +54,27 @@ const unusedRunLauncher: RunLauncher = { launch: refuse };
 const unusedWebSearch: WebSearchEngine = { search: refuse };
 const unusedToolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
 
+const REPO = join(import.meta.dir, "..", "..");
+
+/**
+ * Refuse a CLI that resolves a harness other than the one of this checkout. The host tools import the bare
+ * `@inflexa-ai/harness`, which no plugin maps (see `harness-source.ts`), and the npm release of the
+ * CLI install drops their approval hooks. Thus each approval case would grade a tool that never asks.
+ */
+function assertCliLinksWorkingHarness(): void {
+    const resolved = realpathSync(Bun.resolveSync("@inflexa-ai/harness", join(REPO, "cli", "src")));
+    const harness = realpathSync(join(REPO, "harness"));
+    if (!resolved.startsWith(`${harness}/`)) {
+        throw new Error(`the CLI resolves @inflexa-ai/harness to ${resolved}, not to the harness of this checkout. Run \`bun run harness:local\` in cli/.`);
+    }
+}
+
 /**
  * The host tools of the CLI (`cli/src/modules/harness/runtime.ts`, `hostTools`), minus
  * `knowledge_recommend`, which the CLI attaches only when a knowledge endpoint is configured.
  */
 function cliHostTools(): Tool[] {
+    assertCliLinksWorkingHarness();
     // Each factory gives a `Tool` of its own input type. The loop reads a tool through the erased
     // `Tool` shape only, the same as the `hostTools` list of the CLI.
     return [createRunInflexaTool(), createLaunchDirTool(), createManageInputsTool()] as unknown as Tool[];

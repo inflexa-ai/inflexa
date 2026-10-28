@@ -119,6 +119,8 @@ export type CaseComparison = {
     readonly set: CaseSet;
     readonly baseline: number;
     readonly candidate: number;
+    /** The trials that failed with an error, which the rates do not count. */
+    readonly errors: { readonly baseline: number; readonly candidate: number };
     readonly difference: Interval & { readonly estimate: number };
     /** The interval of the difference is below zero. */
     readonly regressed: boolean;
@@ -131,6 +133,8 @@ export type Comparison = {
     readonly sets: Readonly<Record<string, Interval & { readonly estimate: number }>>;
     /** The cases of one report that the other report does not hold. */
     readonly unpaired: readonly string[];
+    /** The cases of the candidate with a trial that failed with an error, thus with fewer graded trials than the run asked for. */
+    readonly incomplete: readonly { readonly id: string; readonly errors: number }[];
 };
 
 export function compareReports(baseline: Report, candidate: Report): Comparison {
@@ -141,7 +145,16 @@ export function compareReports(baseline: Report, candidate: Report): Comparison 
         const base = byId.get(c.id);
         if (base === undefined || base.trials === 0 || c.trials === 0) continue;
         const difference = rateDifference({ passes: base.passes, trials: base.trials }, { passes: c.passes, trials: c.trials });
-        cases.push({ id: c.id, set: c.set, baseline: base.rate, candidate: c.rate, difference, regressed: difference.high < 0, improved: difference.low > 0 });
+        cases.push({
+            id: c.id,
+            set: c.set,
+            baseline: base.rate,
+            candidate: c.rate,
+            errors: { baseline: base.errors, candidate: c.errors },
+            difference,
+            regressed: difference.high < 0,
+            improved: difference.low > 0,
+        });
     }
     const sets: Record<string, Interval & { readonly estimate: number }> = {};
     for (const set of new Set(cases.map((c) => c.set))) {
@@ -149,7 +162,24 @@ export function compareReports(baseline: Report, candidate: Report): Comparison 
     }
     const paired = new Set(cases.map((c) => c.id));
     const unpaired = [...new Set([...byId.keys(), ...candidateIds])].filter((id) => !paired.has(id));
-    return { cases, sets, unpaired };
+    const incomplete = candidate.cases.filter((c) => c.errors > 0).map((c) => ({ id: c.id, errors: c.errors }));
+    return { cases, sets, unpaired, incomplete };
+}
+
+/**
+ * Why a candidate fails the gate of a step: each case that regressed, each set whose paired mean difference is below
+ * zero, each case of the baseline that the candidate did not grade, and each case with a trial that failed with an
+ * error. A set catches a small drop over many cases that no single case shows. An error is no measurement, thus a run
+ * with errors gates nothing, whatever its rates say.
+ */
+export function regressions(comparison: Comparison): string[] {
+    const cases = comparison.cases.filter((c) => c.regressed).map((c) => `case ${c.id} regressed`);
+    const sets = Object.entries(comparison.sets)
+        .filter(([, d]) => d.high < 0)
+        .map(([set]) => `set ${set} regressed`);
+    const unpaired = comparison.unpaired.map((id) => `case ${id} is not graded in both reports`);
+    const incomplete = comparison.incomplete.map((c) => `case ${c.id} has ${c.errors} trials that failed with an error`);
+    return [...cases, ...sets, ...unpaired, ...incomplete];
 }
 
 export function comparisonTable(comparison: Comparison, baseline: Report, candidate: Report): string {
@@ -160,6 +190,7 @@ export function comparisonTable(comparison: Comparison, baseline: Report, candid
         percent(c.candidate),
         signed(c.difference.estimate),
         `${signed(c.difference.low)}..${signed(c.difference.high)}`,
+        c.errors.baseline === 0 && c.errors.candidate === 0 ? "" : `${c.errors.baseline}/${c.errors.candidate}`,
         c.regressed ? "REGRESSED" : c.improved ? "improved" : "",
     ]);
     const head = `baseline ${baseline.promptDigest} (${baseline.provider.model}) -> candidate ${candidate.promptDigest} (${candidate.provider.model})`;
@@ -167,5 +198,5 @@ export function comparisonTable(comparison: Comparison, baseline: Report, candid
         ([set, d]) => `${set}: mean difference ${signed(d.estimate)} points, 95% CI ${signed(d.low)}..${signed(d.high)}`,
     );
     const unpaired = comparison.unpaired.length === 0 ? [] : [`unpaired cases: ${comparison.unpaired.join(", ")}`];
-    return [head, table(["case", "set", "base", "cand", "diff", "95% CI", ""], rows), ...sets, ...unpaired].join("\n");
+    return [head, table(["case", "set", "base", "cand", "diff", "95% CI", "errors", ""], rows), ...sets, ...unpaired].join("\n");
 }

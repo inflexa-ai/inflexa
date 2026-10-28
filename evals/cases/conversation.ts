@@ -9,9 +9,11 @@
  * cases, not the behavior.
  */
 
-import { all, assistantText, atMost, decides, firstCallOneOf, never, priorCall, threadRecord, userMessage, type EvalCase } from "../lib/case.js";
+import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
-const LITERATURE_TOOLS = ["pubmed", "search_semantic_scholar"];
+import { all, assistantText, atMostWith, callsAny, decides, never, priorCall, threadRecord, userMessage, type EvalCase, type TurnState } from "../lib/case.js";
+
+const LITERATURE_TOOLS = ["pubmed", "search_semantic_scholar", "search_arxiv"];
 const RUN_TOOLS = ["execute_analysis", "generate_plan"];
 
 const PROFILE = {
@@ -55,6 +57,14 @@ const RUN_IN_PROGRESS = {
         inspectionState: "in_progress",
         run: { runId: "0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11", status: "running", steps: [{ stepId: "differential-expression", status: "running" }] },
     },
+};
+
+/** The differential expression run of {@link RUN_STARTED_HISTORY}, running at the turn. */
+const DE_RUN_RUNNING: TurnState = { runningRuns: [{ runId: "0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11", startedAt: "2026-10-27T09:12:04.000Z" }] };
+
+/** The run of the approved plan of {@link PLAN_APPROVED_HISTORY}, running at the turn. */
+const PLAN_RUN_RUNNING: TurnState = {
+    runningRuns: [{ runId: "0193f7a2-7d2f-7b00-8c2b-3a5d9e0f1b22", planId: "pln-1a2b3c4d", startedAt: "2026-10-27T09:20:41.000Z" }],
 };
 
 /** A differential expression run that started on an earlier turn. */
@@ -116,6 +126,60 @@ const REPORT_TOOLS = {
     start_report_session: { ok: { outcome: "started", threadId: "0193f7b0-1111-7c00-8d3c-4b6e0f1a2c33" } },
 };
 
+/** The tools of a file whose content comes from the results of a run that completed. */
+const DE_RESULTS_PATH = "/analysis-001/runs/0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11/differential-expression/output/de_results.csv";
+
+/** The 610 significant genes that the synthesis counts: 412 up and 198 down, ranked by adjusted p-value. */
+function deResultsCsv(): string {
+    const named = ["ISG15", "MX1", "IFIT1"];
+    const rows = ["gene_id,symbol,log2FoldChange,padj"];
+    for (let i = 0; i < 610; i += 1) {
+        const up = i < 3 || i % 3 !== 2;
+        const symbol = named[i] ?? `LOC${105_000 + i * 7}`;
+        const lfc = (up ? 1 : -1) * (i < 3 ? 4 - i * 0.45 : 1.1 + ((i * 37) % 200) / 100);
+        rows.push(`ENSG${String(100_000 + i * 13).padStart(11, "0")},${symbol},${lfc.toFixed(2)},${(1e-38 * 1.12 ** i).toExponential(2)}`);
+    }
+    return rows.join("\n");
+}
+
+/** The tools of a file whose content comes from the results of a run that completed. */
+const DERIVED_FILE_TOOLS = {
+    inspect_run: RUN_DONE,
+    read_file: (input: unknown) => {
+        const path = String(parseUnknownRecord(input)?.path ?? "");
+        if (path.endsWith("synthesis.json")) return SYNTHESIS;
+        if (path.endsWith("de_results.csv")) return { ok: { path: DE_RESULTS_PATH, content: deResultsCsv(), totalLines: 611 } };
+        return { error: `No file at ${path}.` };
+    },
+    list_files: {
+        ok: {
+            entries: [
+                { path: "runs/0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11/synthesis.json", type: "file" },
+                { path: "runs/0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11/differential-expression/output/de_results.csv", type: "file" },
+                { path: "runs/0193f7a2-6c1e-7a00-9b1a-2f4c8d9e0a11/differential-expression/output/summary.md", type: "file" },
+            ],
+        },
+    },
+    workspace_search: {
+        ok: {
+            results: [
+                {
+                    path: DE_RESULTS_PATH,
+                    type: "output",
+                    description: "DESeq2 results of treated against control: the 610 genes at FDR 0.05, with log2 fold change and adjusted p-value",
+                },
+            ],
+        },
+    },
+    write_file: (input: unknown) => ({ ok: { path: `/analysis-001/${String(parseUnknownRecord(input)?.path ?? "file")}`, bytes: 180 } }),
+};
+
+const PLAN_TOOLS = {
+    ...PROFILE_TOOLS,
+    generate_plan: { ok: { status: "plan_complete", planId: "pln-5e6f7a8b", steps: ["quality-control", "differential-expression", "pathway-enrichment"] } },
+    show_plan: { ok: { shown: true } },
+};
+
 /** The agent offered a computation and asked for consent. The user message of the case gives the consent. */
 function offered(question: string, offer: string): EvalCase["history"] {
     return [...PROFILED, userMessage(question), assistantText(offer)];
@@ -127,8 +191,8 @@ export const conversationCases: readonly EvalCase[] = [
         set: "dev",
         source: "brief: a literature question gets a literature tool call, not an answer from memory",
         user: "What papers exist on TP53 in AML?",
-        maxSteps: 1,
-        grade: firstCallOneOf(LITERATURE_TOOLS),
+        maxSteps: 2,
+        grade: callsAny(LITERATURE_TOOLS),
     },
     {
         id: "write-file",
@@ -187,16 +251,18 @@ export const conversationCases: readonly EvalCase[] = [
         set: "dev",
         source: "issue #520: the agent polls inspect_run for the life of a run",
         history: RUN_STARTED_HISTORY,
+        state: DE_RUN_RUNNING,
         user: "Wait for it to finish and tell me the result.",
         maxSteps: 5,
         tools: { ...PROFILE_TOOLS, inspect_run: RUN_IN_PROGRESS },
-        grade: all(atMost("inspect_run", 1), never(RUN_TOOLS)),
+        grade: all(atMostWith("inspect_run", "waitForTerminalSeconds", 1), never(RUN_TOOLS)),
     },
     {
         id: "approved-plan-no-relaunch",
         set: "dev",
         source: "conversation prompt: an approval record means that the run of the plan started",
         history: PLAN_APPROVED_HISTORY,
+        state: PLAN_RUN_RUNNING,
         user: "Great. What happens now?",
         maxSteps: 2,
         tools: { ...PROFILE_TOOLS, inspect_run: RUN_IN_PROGRESS },
@@ -223,12 +289,32 @@ export const conversationCases: readonly EvalCase[] = [
         grade: never(["start_report_session", ...RUN_TOOLS]),
     },
     {
+        id: "write-derived-file",
+        set: "dev",
+        source: "complaint: the agent starts an analysis run to write a file whose content it can read",
+        history: RUN_DONE_HISTORY,
+        user: "Save the top genes of this run to notes/top-genes.md.",
+        maxSteps: 5,
+        tools: DERIVED_FILE_TOOLS,
+        grade: all(decides("write_file", RUN_TOOLS), never(RUN_TOOLS)),
+    },
+    {
+        id: "plan-request-no-run",
+        set: "dev",
+        source: "conversation prompt: a plan request gets a plan, and its run waits for the approval of the user",
+        history: PROFILED,
+        user: "Plan a full analysis of this data: quality control, differential expression, then pathway enrichment.",
+        maxSteps: 3,
+        tools: PLAN_TOOLS,
+        grade: all(decides("generate_plan", ["execute_analysis"]), never(["execute_analysis"])),
+    },
+    {
         id: "literature-search-held-out",
         set: "held-out",
         source: "paraphrase of literature-search",
         user: "Is there any recent research on FLT3 inhibitor resistance?",
-        maxSteps: 1,
-        grade: firstCallOneOf(LITERATURE_TOOLS),
+        maxSteps: 2,
+        grade: callsAny(LITERATURE_TOOLS),
     },
     {
         id: "write-file-held-out",
@@ -287,16 +373,18 @@ export const conversationCases: readonly EvalCase[] = [
         set: "held-out",
         source: "paraphrase of run-in-progress-one-wait",
         history: RUN_STARTED_HISTORY,
+        state: DE_RUN_RUNNING,
         user: "Is it done yet? Keep checking until it is.",
         maxSteps: 5,
         tools: { ...PROFILE_TOOLS, inspect_run: RUN_IN_PROGRESS },
-        grade: all(atMost("inspect_run", 1), never(RUN_TOOLS)),
+        grade: all(atMostWith("inspect_run", "waitForTerminalSeconds", 1), never(RUN_TOOLS)),
     },
     {
         id: "approved-plan-no-relaunch-held-out",
         set: "held-out",
         source: "paraphrase of approved-plan-no-relaunch",
         history: PLAN_APPROVED_HISTORY,
+        state: PLAN_RUN_RUNNING,
         user: "Thanks. Anything I need to do now?",
         maxSteps: 2,
         tools: { ...PROFILE_TOOLS, inspect_run: RUN_IN_PROGRESS },
@@ -321,5 +409,25 @@ export const conversationCases: readonly EvalCase[] = [
         maxSteps: 3,
         tools: REPORT_TOOLS,
         grade: never(["start_report_session", ...RUN_TOOLS]),
+    },
+    {
+        id: "write-derived-file-held-out",
+        set: "held-out",
+        source: "paraphrase of write-derived-file",
+        history: RUN_DONE_HISTORY,
+        user: "Put the genes that the run found into genes.txt, I want to send them to a collaborator.",
+        maxSteps: 5,
+        tools: DERIVED_FILE_TOOLS,
+        grade: all(decides("write_file", RUN_TOOLS), never(RUN_TOOLS)),
+    },
+    {
+        id: "plan-request-no-run-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-request-no-run",
+        history: PROFILED,
+        user: "Design a multi-step analysis for my data, from QC through to pathways.",
+        maxSteps: 3,
+        tools: PLAN_TOOLS,
+        grade: all(decides("generate_plan", ["execute_analysis"]), never(["execute_analysis"])),
     },
 ];
