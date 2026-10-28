@@ -89,7 +89,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
             return { type: "text-delta", text: event.text, source: toSource(fallbackSource) };
 
         case "message-start":
-            return { type: "message-start", messageId: event.messageId, role: event.role, source: toSource(event.source) };
+            return event.role === "user"
+                ? { type: "message-start", messageId: event.messageId, role: "user", text: event.text, source: toSource(event.source) }
+                : { type: "message-start", messageId: event.messageId, role: "assistant", source: toSource(event.source) };
 
         default: {
             const part = flattenDataPart(event);
@@ -160,7 +162,11 @@ export function applyChatFrame(messages: ChatMessage[], frame: ChatFrame, assist
     if (frame.type === "error") {
         return { messages, terminal: { error: frame } };
     }
-    if (frame.type === "iteration" || frame.type === "message-start") return { messages, terminal: null };
+    if (frame.type === "message-start") {
+        if (frame.role === "assistant" || messages.some((message) => message.id === frame.messageId)) return { messages, terminal: null };
+        return { messages: [...messages, { id: frame.messageId, role: "user", parts: [{ type: "text", text: frame.text }] }], terminal: null };
+    }
+    if (frame.type === "iteration") return { messages, terminal: null };
 
     const partFrame = frame;
     const next = updateAssistant(messages, assistantId, (parts) => applyPartFrame(parts, partFrame));

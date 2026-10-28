@@ -436,7 +436,9 @@ describe("conversation display recorder — message ids", () => {
 
     function messageStart(messageId: string | undefined, role: "user" | "assistant"): TurnEvent {
         if (messageId === undefined) throw new Error(`the stream announced no ${role} id`);
-        return { type: "message-start", messageId, role, source: TOP };
+        return role === "user"
+            ? { type: "message-start", messageId, role, text: "question", source: TOP }
+            : { type: "message-start", messageId, role, source: TOP };
     }
 
     it("announces the user id and the assistant id immediately before the first event, and stores the turn under them", async () => {

@@ -168,8 +168,12 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         apply(frame);
     }
 
-    function messageStart(messageId: string, role: "user" | "assistant"): EmitEvent {
-        return { type: "message-start", messageId, role, source: rootSource };
+    function userMessageStart(): EmitEvent {
+        return { type: "message-start", messageId: userMessageId, role: "user", text: options.userText, source: rootSource };
+    }
+
+    function assistantMessageStart(messageId: string): EmitEvent {
+        return { type: "message-start", messageId, role: "assistant", source: rootSource };
     }
 
     /** The `message-start` of each id that the sink did not get yet. */
@@ -177,11 +181,11 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         const starts: EmitEvent[] = [];
         if (!userAnnounced) {
             userAnnounced = true;
-            starts.push(messageStart(userMessageId, "user"));
+            starts.push(userMessageStart());
         }
         if (announcedAssistantId !== assistantMessageId) {
             announcedAssistantId = assistantMessageId;
-            starts.push(messageStart(assistantMessageId, "assistant"));
+            starts.push(assistantMessageStart(assistantMessageId));
         }
         return starts;
     }
