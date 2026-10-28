@@ -15,6 +15,7 @@
  * a `skipped` phase.
  */
 
+import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import type { Querier } from "../state/db.js";
@@ -60,6 +61,8 @@ export type SynthesizeRunDeps = {
     readonly synthesisModel: string;
     /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). */
     readonly synthesisLookups: readonly Tool[];
+    /** Where the VM of `run_script` comes from, for the lookups of the synthesizer. */
+    readonly scriptRuntime?: ScriptRuntime;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer loop and of its read tool. */
@@ -127,6 +130,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             session: synthesizerSession,
             model: synthesisModel,
             synthesisLookups,
+            scriptRuntime: deps.scriptRuntime,
             usageRecorder,
             toolOutputStore: deps.toolOutputStore,
             summaries,

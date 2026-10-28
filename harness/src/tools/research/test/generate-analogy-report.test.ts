@@ -44,7 +44,7 @@ const PROBLEM = { ...EXTRACTION, plannedAnalogies: [{ analogyTitle: ANALOGY.anal
 
 const VALID_ENVELOPE = { schemaVersion: "1", ...EXTRACTION, analogies: [ANALOGY] };
 
-const REASONER_TOOLS = ["search_semantic_scholar", "search_arxiv", "search_github_repos", "pubmed", "record_problem", "record_analogy", "report_blocker"];
+const REASONER_TOOLS = ["record_problem", "record_analogy", "report_blocker", "run_script"];
 
 const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
 
@@ -119,23 +119,14 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(ctx.session.provenance.callPath).toEqual(["conversation-agent"]);
     });
 
-    it("declares read_tool_output after the search tools and before the terminal tools when it has a tool output store", async () => {
+    it("declares read_tool_output before the terminal tools when it has a tool output store, and runs the searches in a script", async () => {
         const { provider, calls } = scriptedModel([recordAll("t1")]);
         const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
         const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, toolOutputStore }, inProcessSubAgent);
 
         (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctxFor()))._unsafeUnwrap();
 
-        expect(toolNamesOf(presentAt(calls, 0))).toEqual([
-            "search_semantic_scholar",
-            "search_arxiv",
-            "search_github_repos",
-            "pubmed",
-            "read_tool_output",
-            "record_problem",
-            "record_analogy",
-            "report_blocker",
-        ]);
+        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["read_tool_output", "record_problem", "record_analogy", "report_blocker", "run_script"]);
     });
 
     it("gives a planned analogy with no record as not loaded, and keeps the analogies that arrived", async () => {
@@ -205,7 +196,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
     it("salvages a run that ends on prose, and the mask of the salvage lets only the terminal tools run", async () => {
         const { provider, calls } = scriptedModel([
             reply([text("## Analogy report\n\nSome free-text prose...")]),
-            callTools(toolCall("s1", "search_arxiv", { query: "adaptive control" })),
+            callTools(toolCall("s1", "run_script", { code: 'return await tools.search_arxiv({ query: "adaptive control" });' })),
             recordAll("t1"),
             done,
         ]);
@@ -223,7 +214,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(toolResultIn(presentAt(calls, 2), "s1")).toEqual({
             type: "error-text",
             value: JSON.stringify({
-                error: "The tool search_arxiv is not available for this request, thus it did not run. The tools that can run now: record_problem, record_analogy, report_blocker.",
+                error: "The tool run_script is not available for this request, thus it did not run. The tools that can run now: record_problem, record_analogy, report_blocker.",
                 retryable: false,
             }),
         });

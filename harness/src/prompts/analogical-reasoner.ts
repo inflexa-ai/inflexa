@@ -36,14 +36,13 @@ Record the first four, and the title and target domain of each analogy, with
 
 For each analogy from phase 1, search the *target* domain (right side of
 object mappings) for real, existing solutions that address the
-\`sharedRelations\`. \`search_semantic_scholar\` is the primary search and covers
-each science, and \`search_github_repos\` finds an implementation of a method.
-
-Note on overlap: \`search_semantic_scholar\` and \`search_arxiv\` may surface
-the same paper. Dedupe by checking \`search_semantic_scholar\` result's
-\`externalIds.ArXiv\` against \`search_arxiv\` result's \`id\` with any
-trailing version suffix stripped — Semantic Scholar reports the bare
-id (\`2305.12345\`) while arXiv may return \`2305.12345v2\`.
+\`sharedRelations\`. The searches run in \`run_script\`: run the searches of one
+analogy, or of all of them, in one script, and print the results that you keep.
+\`search_semantic_scholar\` is the primary search and covers each science, and
+\`search_github_repos\` finds an implementation of a method. A paper that
+\`search_semantic_scholar\` and \`search_arxiv\` both give is one paper: its
+Semantic Scholar \`externalIds.ArXiv\` is the arXiv \`id\` without the version
+suffix.
 
 Trace each solution to a specific paper or documented method, so that the
 user can investigate it from that source. When no implementation turns up,
@@ -51,9 +50,8 @@ leave \`githubRepos\` empty.
 
 Time and tool budget:
 
-- Your loop ends after 40 model turns, and a turn can hold several
-  parallel tool calls. Spread the turns across the analogies so that each
-  one gets searched.
+- Your loop ends after 40 model turns. Spread the turns across the analogies
+  so that each one gets searched.
 - An analogy that you planned and did not record arrives in the report as not
   loaded. Don't compensate by skipping the citation rules above.
 

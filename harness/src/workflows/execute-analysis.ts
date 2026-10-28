@@ -63,6 +63,7 @@
  *       via `inspectRun`)
  */
 
+import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
@@ -261,6 +262,8 @@ export type ExecuteAnalysisDeps = {
     readonly synthesisModel: string;
     /** The lookup tools of the synthesis (`createSynthesisLookupTools`). */
     readonly synthesisLookups: readonly Tool[];
+    /** Where the VM of `run_script` comes from, for the lookups of the synthesizer. */
+    readonly scriptRuntime?: ScriptRuntime;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
     readonly runCharge: RunCharge;
     /** The delays of the timer of an outage. Absent: the default of the pause. */
@@ -867,6 +870,7 @@ export function synthesizeFindings(args: {
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             synthesisModel: deps.synthesisModel,
             synthesisLookups: deps.synthesisLookups,
+            scriptRuntime: deps.scriptRuntime,
             usageRecorder: deps.usageRecorder,
             toolOutputStore: deps.toolOutputStore,
         },
