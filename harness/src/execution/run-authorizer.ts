@@ -1,17 +1,17 @@
 /**
- * RunAuthorizer — the async-edge run-authorization seam.
+ * RunAuthorizer — run authorization at the async edge.
  *
  * Every async edge that starts durable work (`execute_analysis`,
  * data-profile) must turn the caller's opaque auth into a durable `RunSession`
  * before dispatching a workflow. That turning is the ONE place the credential
- * kind matters (a live caller credential → mint a fresh run credential Cortex
- * owns; an existing run credential → reuse it, caller-owned) — so it lives
- * behind this seam, not in the harness tools. The managed impl owns the
- * mint/reuse + revoke against the host authority; an OSS impl issues a local
- * `RunSession` with no host call, no jti, no revoke. The harness's tools depend only on
- * this interface and never read a credential.
+ * kind matters (a live caller credential → create a run credential; a run
+ * credential handed over by the caller → take it) — so it lives in this
+ * interface, not in the harness tools. Either way the work owns the credential.
+ * An OSS impl issues a local `RunSession` with no host call and nothing to
+ * revoke. The harness's tools depend only on this interface and never read a
+ * credential.
  *
- * Mirrors the `SessionPagePublisher` seam: a narrow interface in the harness, the managed
+ * Mirrors `SessionPagePublisher`: a narrow interface in the harness, the managed
  * realization injected at the composition root.
  */
 
@@ -21,7 +21,7 @@ import type { AuthContext, Provenance, RunFrame, RunSession, Scope } from "../au
 import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
 /**
- * Locates a run credential when no `RunAuthorization` exists: the persisted
+ * Locates a run credential when no `RunSession` exists: the persisted
  * mandate id from `cortex_runs` plus the revoking caller's opaque `auth` — the
  * sole carrier of credential/org behind a session, downcast only by managed
  * realizations.
@@ -40,20 +40,11 @@ export type AuthorizeRunInput = {
     readonly frame: RunFrame;
 };
 
-export type RunAuthorization = {
-    readonly runSession: RunSession;
-    /**
-     * True when this authorizer minted the run credential and therefore owns its
-     * lifecycle — the run's terminal path must `revoke`. False when an existing
-     * run credential was reused (the caller owns it; `revoke` is a no-op).
-     */
-    readonly ownsMandate: boolean; // oss-core-managed-ok
-};
-
 /**
  * Authorize durable work at the async edge. `authorize` produces the durable
- * `RunSession`; `revoke` releases a self-minted run credential on the terminal
- * path (a no-op for reused or local authorizations).
+ * `RunSession`. The terminal path of the work revokes the mandate that the work
+ * holds, whoever created it; a realization with no mandate does nothing in
+ * `revoke`.
  *
  * The `RunSession` is a durable reference to the run credential, not a
  * time-bound secret: the work has no time limit, and a pause can last days. A
@@ -61,11 +52,11 @@ export type RunAuthorization = {
  * calls its host, and `suspend` and `renew` follow the pause of the work.
  */
 export type RunAuthorizer = {
-    authorize(input: AuthorizeRunInput): ResultAsync<RunAuthorization, GateFailure>;
-    revoke(authorization: RunAuthorization, reason: string): ResultAsync<void, NoticeFailure>;
+    authorize(input: AuthorizeRunInput): ResultAsync<RunSession, GateFailure>;
+    revoke(runSession: RunSession, reason: string): ResultAsync<void, NoticeFailure>;
     /**
-     * Out-of-band revocation for paths holding no `RunAuthorization`. Normal
-     * terminal paths use `revoke(authorization, reason)` under the run
+     * Out-of-band revocation for paths holding no `RunSession`. Normal
+     * terminal paths use `revoke(runSession, reason)` under the run
      * credential; `revokeByMandateId` covers external cancellation, where only
      * the reference on `cortex_runs` survives. Local/OSS authorizers no-op —
      * they record no reference.
@@ -80,7 +71,7 @@ export type RunAuthorizer = {
     /**
      * A person resumes paused work: renew the run credential under the opaque
      * `auth` of that person. A gate — a refusal keeps the work paused and sends
-     * no resume. Ownership does not matter here; it governs `revoke` only.
+     * no resume.
      */
     renew(runSession: RunSession, auth: AuthContext): ResultAsync<void, GateFailure>;
 };

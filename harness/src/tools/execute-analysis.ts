@@ -352,7 +352,6 @@ function workflowInput(
         analysisId: string;
         threadId: string | null;
         runSession: ExecuteAnalysisInput["runSession"];
-        ownsMandate: boolean;
         budget: ExecuteAnalysisInput["budget"];
         synthesisEnabled: boolean;
         resourcesByStepId: ExecuteAnalysisInput["resourcesByStepId"];
@@ -370,7 +369,6 @@ function workflowInput(
         timeoutByStepId: Object.fromEntries(plan.steps.flatMap((step): [string, number][] => (step.timeout === undefined ? [] : [[step.id, step.timeout]]))),
         budget: args.budget,
         runSession: args.runSession,
-        ownsMandate: args.ownsMandate,
         synthesisEnabled: args.synthesisEnabled,
     };
 }
@@ -587,13 +585,12 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
         );
         return err(kind === "suspended" ? { type: "suspended", reason } : { type: "not_authorized", reason });
     }
-    const authorization = authorized.value;
+    const runSession = authorized.value;
 
     const wfInput = workflowInput(planId, plan, {
         analysisId,
         threadId,
-        runSession: authorization.runSession,
-        ownsMandate: authorization.ownsMandate,
+        runSession,
         budget: deps.resourcePolicy?.budget,
         synthesisEnabled: args.mode === "plan",
         resourcesByStepId: resources.value,
@@ -601,7 +598,7 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
     try {
         await deps.runLauncher.launch(deps.executeAnalysisWorkflow, { workflowId: runId }, wfInput);
     } catch (cause) {
-        await deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, "workflow-start-failed"));
+        await deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(runSession, "workflow-start-failed"));
         // A failed write leaves the row `running` with no workflow. The boot repair (`reconcileOrphanedRuns`) fails it.
         await updateRunStatus(deps.pool, runId, "failed", "workflow start failed").match(
             () => {},

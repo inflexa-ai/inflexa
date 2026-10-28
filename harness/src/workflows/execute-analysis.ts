@@ -78,7 +78,7 @@ import type { Querier } from "../state/db.js";
 import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
-import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { RUN_END_EVENT_KEY, type RecordedRunEnd } from "../execution/run-end-record.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
@@ -195,16 +195,6 @@ export type ExecuteAnalysisInput = {
      * resume — no DB read, no in-process cache.
      */
     readonly runSession: RunSession;
-    /**
-     * True when Cortex owns the run-authorization lifecycle and therefore must
-     * revoke it on the terminal path. The ownership decision is made by the
-     * `RunAuthorizer` seam at the async edge (`executePlan`).
-     *
-     * Optional because a workflow persisted before this field existed (recovered
-     * across the deploy that added it) deserializes without it; the body defaults
-     * absent → true, matching the prior Cortex-owned behavior.
-     */
-    readonly ownsMandate?: boolean; // oss-core-managed-ok
 };
 
 /**
@@ -1702,12 +1692,6 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
             input.runSession,
         );
 
-    // Ownership defaults to true for inputs persisted before the field existed (a
-    // workflow recovered across this deploy) — those were always Cortex-owned.
-    const authorization: RunAuthorization = {
-        runSession: input.runSession,
-        ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
-    };
     const closeCharge = (): Promise<boolean> =>
         deliverNotice(
             logger.with({ chargeOutcome: chargeOutcome.kind }),
@@ -1720,7 +1704,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
             }),
         );
     const revokeAuthorization = (): Promise<boolean> =>
-        deliverNotice(logger.with({ revokeReason }), "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, revokeReason));
+        deliverNotice(logger.with({ revokeReason }), "RunAuthorizer.revoke", deps.runAuthorizer.revoke(input.runSession, revokeReason));
 
     // The writer that wins the row owns the run end: the `run_completed` emit, the charge close,
     // and the revoke. The step does all three when its write changes the row. An engine cancel

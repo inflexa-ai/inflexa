@@ -130,7 +130,7 @@ function makeSeams(
             authorize: () => {
                 rec.authorize++;
                 if (behavior.authorizeRefusal !== undefined) return errAsync({ reason: behavior.authorizeRefusal, suspend: false });
-                return okAsync({ runSession: RUN_SESSION, ownsMandate: true });
+                return okAsync(RUN_SESSION);
             },
             revoke: () => {
                 rec.revoke++;
@@ -255,7 +255,6 @@ describe("triggerAnalysisRun — happy path", () => {
         // Only the step that declared a timeout appears.
         expect(input.timeoutByStepId).toEqual({ T1S1: 120 });
         expect(input.runSession).toBe(RUN_SESSION);
-        expect(input.ownsMandate).toBe(true);
     });
 });
 

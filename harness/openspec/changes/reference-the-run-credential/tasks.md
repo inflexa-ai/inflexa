@@ -5,6 +5,7 @@
 - [x] 1.1 `RunAuthorizer`: add `suspend` and `renew`; rename `revokeByJti` to `revokeByMandateId`
 - [x] 1.2 Local authorizer: no-op the new methods
 - [x] 1.3 Hook names: `RunAuthorizer.renew` gate, `RunAuthorizer.suspend` and `revokeByMandateId` notices
+- [x] 1.4 Remove `RunAuthorization` and `ownsMandate`: `authorize` gives the `RunSession`, `revoke` takes it, and the terminal path always revokes
 
 ## 2. Pause and resume
 

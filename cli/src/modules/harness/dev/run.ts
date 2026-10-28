@@ -45,8 +45,8 @@ import {
     type PausedWorkSurface,
     type Pool,
     type Provenance,
-    type RunAuthorization,
     type RunAuthorizer,
+    type RunSession,
     type RunStatus,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
@@ -83,7 +83,7 @@ export type RunTriggerSeams = {
     readonly insertRun: (input: InsertRunInput) => ReturnType<typeof insertRun>;
     /** Mark the reserved row on the authorize/launch failure paths (releases the dedup slot). */
     readonly updateRunStatus: (runId: string, status: RunStatus, error: string) => ReturnType<typeof updateRunStatus>;
-    /** Authorize the run at the async edge; `revoke` releases a self-minted mandate on launch failure. */
+    /** Authorize the run at the async edge; `revoke` ends the mandate of the run on launch failure. */
     readonly runAuthorizer: RunAuthorizer;
     /** Launch `executeAnalysis` under `workflowId = runId` — fire-and-forget. */
     readonly launch: (input: ExecuteAnalysisInput, runId: string) => Promise<void>;
@@ -158,7 +158,7 @@ function isDedupCollision(cause: unknown): boolean {
  * Build the workflow input from the plan exactly as `execute-plan.ts` does: the
  * step DATA / agent / resources map per step, timeouts only for steps that
  * declare one, and `steps` reduced to the scheduler's `{ id, depends_on }` shape.
- * The `runSession` + `ownsMandate` come from the authorization.
+ * The `runSession` comes from the authorization.
  *
  * `planStepById` carries each step's instruction data, NOT a prompt string: the
  * harness composes a step's seed at dispatch, when its dependencies have actually
@@ -166,7 +166,7 @@ function isDedupCollision(cause: unknown): boolean {
  * embedder supplies values (the plan, the budget, the seams), it does not render
  * the core's prompts.
  */
-function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunTriggerSeams, authorization: RunAuthorization): ExecuteAnalysisInput {
+function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunTriggerSeams, runSession: RunSession): ExecuteAnalysisInput {
     const { analysisId, planId, planSummary, plan } = params;
     return {
         analysisId,
@@ -193,8 +193,7 @@ function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunT
         // narrow through `.filter`; the cast is sound by that filter.
         timeoutByStepId: Object.fromEntries(plan.steps.filter((s) => s.timeout !== undefined).map((s) => [s.id, s.timeout as number])),
         budget: seams.budget,
-        runSession: authorization.runSession,
-        ownsMandate: authorization.ownsMandate,
+        runSession,
     };
 }
 
@@ -259,20 +258,20 @@ export async function triggerAnalysisRun(
         );
         return err({ type: "authorize_failed", runId, cause: authorized.error });
     }
-    const authorization = authorized.value;
+    const runSession = authorized.value;
 
     // (4)+(5) Build the workflow input and launch under `workflowId = runId`. Any
     // throw here — the defensive resources guard or the launcher — compensates:
     // revoke the just-issued authorization and mark the row failed so a retry can
     // re-run.
     try {
-        const input = buildExecuteAnalysisInput(params, seams, authorization);
+        const input = buildExecuteAnalysisInput(params, seams, runSession);
         await seams.launch(input, runId);
     } catch (cause) {
         // Best-effort revoke on the failure path; the local authorizer's revoke
         // is a no-op anyway, and a revoke that itself fails must not mask the
         // launch failure we are about to report.
-        await seams.runAuthorizer.revoke(authorization, "workflow-start-failed").match(
+        await seams.runAuthorizer.revoke(runSession, "workflow-start-failed").match(
             () => {},
             () => {},
         );

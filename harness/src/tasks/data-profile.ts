@@ -30,7 +30,7 @@ import { presentFirst } from "../lib/present.js";
 import { collapseWhitespace } from "../lib/text.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
-import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
@@ -227,18 +227,6 @@ export type DataProfileWorkflowInput = {
      * DBOS workflow input and survives recovery.
      */
     readonly stagedInputs: readonly StagedInput[];
-    /**
-     * True when Cortex owns the run-authorization lifecycle and therefore must
-     * revoke it on every terminal path. False when the caller supplied its own
-     * authorization: the caller owns the lifecycle, so the body must NOT revoke
-     * it. The ownership decision is made by the `RunAuthorizer` seam — see
-     * `authorizeDataProfile`.
-     *
-     * Optional because a workflow persisted before this field existed (recovered
-     * across the deploy that added it) deserializes without it; the body defaults
-     * absent → true, matching the prior Cortex-owned behavior.
-     */
-    readonly ownsMandate?: boolean; // oss-core-managed-ok
 };
 
 /** Build the canonical artifact path for a staged input file. */
@@ -503,12 +491,8 @@ export function registerDataProfileWorkflow(deps: DataProfileDeps): (input: Data
  */
 export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: DataProfileDeps): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId: input.analysisId });
-    // Ownership defaults to true for inputs persisted before the field existed
-    // (a #247 workflow recovered across this deploy): those were always
-    // Cortex-owned and must be revoked here.
-    const { analysisId, runSession, ownsMandate = true, stagedInputs } = input; // oss-core-managed-ok
-    const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
-    const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
+    const { analysisId, runSession, stagedInputs } = input;
+    const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(runSession, reason));
 
     // The profile's activity channel. The write to the stream is bound here, while every phase and
     // phrase lives in the emitter — the phrases are the observable contract of
@@ -998,11 +982,10 @@ export type DataProfileTriggerParams = {
 
 /**
  * Resolve the `RunSession` the workflow runs under. Whether the authorization
- * is freshly minted (Cortex-owned) or reused (caller-owned) is decided by the
- * `RunAuthorizer` seam from the opaque auth; this passes that auth straight
- * through and never inspects it.
+ * is freshly minted or reused is decided by the `RunAuthorizer` seam from the
+ * opaque auth; this passes that auth straight through and never inspects it.
  */
-export function authorizeDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): ResultAsync<RunAuthorization, GateRefusal> {
+export function authorizeDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): ResultAsync<RunSession, GateRefusal> {
     const { auth, analysisId } = params;
     return passGate(
         "RunAuthorizer.authorize",
@@ -1038,8 +1021,7 @@ export function dataProfileWorkflowId(analysisId: string, nonce: string): string
  * supplied the manifest in `params.stagedInputs`; this forwards it into the
  * workflow input. The handle result is not awaited.
  */
-async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, authorization: RunAuthorization): Promise<void> {
-    const { runSession, ownsMandate } = authorization; // oss-core-managed-ok
+async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, runSession: RunSession): Promise<void> {
     const attemptNonce = randomUUID();
     await deps.runLauncher.launch(
         deps.workflow,
@@ -1047,7 +1029,6 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
         {
             analysisId: params.analysisId,
             runSession,
-            ownsMandate, // oss-core-managed-ok
             stagedInputs: params.stagedInputs,
         },
     );

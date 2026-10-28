@@ -16,8 +16,11 @@ Nexus splits a mandate (a persisted delegation with a 7-day window that the subj
 
 ## Decisions
 
-### `suspend` and `renew` take the run session, not the authorization
-Ownership decides only who revokes at the end. A step of a run holds no `ownsMandate`, and a sub-agent of a run holds only the `auth`. Each can build the run session, thus the methods take it.
+### The work that holds a mandate ends it
+The work that holds a run mandate ends it, whoever made the mandate. A realization that makes a mandate from a passport owns it. A realization that gets a mandate from its caller owns it too. Thus the terminal path of the work always calls `revoke`, and a realization with no mandate, for example the local authorizer, does nothing in `revoke`. `RunAuthorization` and its `ownsMandate` go away: `authorize` gives the `RunSession`, and `revoke` takes it.
+
+### `revoke`, `suspend`, and `renew` take the run session
+A step of a run and a sub-agent of a run hold no authorization. Each can build the run session, thus the methods take it.
 
 ### Suspend only for a wait that a person ends
 A wait in `retrying` ends on its timer. A suspended credential would fail the retry, and no person would come to renew it. Thus only the state `paused` suspends, in a durable step, so a recovery does not suspend again.
@@ -31,4 +34,5 @@ Each waiting workflow of one work holds the same credential, thus the resume ren
 ## Risks / Trade-offs
 
 - [A member who did not start a run resumes it] → The host can refuse the renewal. Nexus refuses a renewal by anyone but the subject, so only the person who started a run can resume it. The resume then answers `refused`, and the work stays paused.
+- [A workflow input from an earlier version carries `ownsMandate`] → DBOS gives the stored input to the body with no schema parse, thus the body ignores the extra field. A run that got its mandate from its caller then revokes that mandate at its end, as the decision above states.
 - [A failed suspend] → The suspend is a notice. The work waits whatever the outcome, and the window of the credential still bounds it.
