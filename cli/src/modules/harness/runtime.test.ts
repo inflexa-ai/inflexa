@@ -1006,17 +1006,15 @@ describe("bootHarnessRuntime — the web-search engine", () => {
     });
 });
 
-// The build-session binding behind `install_from_source`. The harness adds the tool
-// to the conversation roster through the `BuildSession` interface alone, thus the
-// CLI binds its realization in the conversation deps and passes NOTHING through
-// `hostTools` — one tool of one name must not register twice. The gate is the
-// boot's engine resolution itself: the session holds containers on the pinned
-// runtime, and a boot with no working engine fails before the conversation
-// composes, so the tool lands on no roster at all. Both phases share one boot
-// sequence, which is why they share one test: the roster is a fact of the whole
-// composition, not of a field.
+// The build-session binding behind `install_from_source`. The CLI adds the tool to the
+// conversation agent through `hostTools`, with the build-session realization behind it.
+// The gate is the boot's engine resolution itself: the session holds containers on the
+// pinned runtime, and a boot with no working engine fails before the conversation
+// composes, so the tool lands on no roster at all. Both phases share one boot sequence,
+// which is why they share one test: the roster is a fact of the whole composition, not
+// of a field.
 describe("bootHarnessRuntime — the build-session binding", () => {
-    test("an unresolvable engine composes no conversation at all; a resolved engine binds the interface and the roster holds the tool exactly once", async () => {
+    test("an unresolvable engine composes no conversation at all; a resolved engine puts the tool on the host tool list and the roster holds it exactly once", async () => {
         // The dead engine runs FIRST: a successful boot memoizes the runtime on
         // `active`, and a second boot call would short-circuit on it.
         const deadEngine: BootSeams = {
@@ -1039,14 +1037,9 @@ describe("bootHarnessRuntime — the build-session binding", () => {
 
         const conversation = lastCore?.conversation;
         expect(conversation).toBeDefined();
-        // The binding is the session realization: the four operations of the
-        // interface, over the store root the flights share.
-        expect(conversation?.buildSession?.start).toBeInstanceOf(Function);
-        expect(conversation?.buildSession?.exec).toBeInstanceOf(Function);
-        expect(conversation?.buildSession?.commit).toBeInstanceOf(Function);
-        expect(conversation?.buildSession?.stop).toBeInstanceOf(Function);
         // The roster over the SAME deps the assembly receives holds the tool
-        // exactly once, and no host tool duplicates it.
+        // exactly once: the host tool list carries it, and nothing else registers it.
+        expect((conversation?.hostTools ?? []).filter((tool) => tool.id === "install_from_source")).toHaveLength(1);
         const agent = createConversationAgent({
             ...conversation!,
             executeAnalysisWorkflow: () => Promise.reject(new Error("not used at composition time")),
@@ -1057,7 +1050,6 @@ describe("bootHarnessRuntime — the build-session binding", () => {
         });
         const ids = agent.tools.map((tool) => tool.id);
         expect(ids.filter((id) => id === "install_from_source")).toHaveLength(1);
-        expect((conversation?.hostTools ?? []).map((tool) => tool.id)).not.toContain("install_from_source");
     });
 });
 

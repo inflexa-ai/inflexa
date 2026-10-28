@@ -1,39 +1,40 @@
 /**
- * Unit tests for `install_from_source` — the four-operation input, the roster
- * gating, and the whole ask flow over a stubbed `BuildSession`: the plan ask
- * after exploration, the per-command ask with its session-scoped grant key, the
- * commit ask, the rejections that end a session with no store change, and the
- * exec/commit result semantics (fresh-shell ids, the excerpt cap, the
+ * Unit tests for `install_from_source` — the four-operation input and the whole
+ * ask flow over a stubbed `BuildSession`: the plan ask after exploration, the
+ * per-command ask with its session-scoped grant key, the commit ask, the
+ * rejections that end a session with no store change, and the exec/commit
+ * result semantics (fresh-shell ids, the whole combined output, the
  * retry-in-session path).
  */
 
 import { describe, expect, it } from "bun:test";
-import { join } from "node:path";
-import { okAsync } from "neverthrow";
-import { Pool } from "pg";
 
-import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createInstallFromSourceTool } from "../install-from-source.js";
-import { AskRejectedError, type AskApproval, type AskRequest } from "../approval/contract.js";
-import type { ToolContext } from "../define-tool.js";
-import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
-import type { BuildCommitRequest, BuildCommitResult, BuildExecResult, BuildSession, BuildSessionCommand, BuildSource } from "../../sandbox/types.js";
-import { createConversationAgent } from "../../agents/conversation-agent.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
-import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
-import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { EmbeddingProvider } from "../../providers/types.js";
-import type { ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
-import type { EnsureSessionStateResult } from "../../app/report-session-runtime.js";
-import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import type { RunLauncher } from "../../execution/run-launcher.js";
-import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
+import { AskRejectedError, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
+
+import { createInstallFromSourceTool } from "./source_build_tool.ts";
+import type { BuildCommitRequest, BuildCommitResult, BuildExecResult, BuildSession, BuildSessionCommand, BuildSource } from "../libs/build-session.ts";
 
 const SHA = "2fc0c4f7d2be974cd8fa4f2a55a71c1a63d38b1e";
 const PIN = `SeedMatchR==2.0.0@git:${SHA}`;
 const STORE_DIR = "/pool/seedmatchr-2.0.0-1e2b3d";
 
 const START_ASK_TITLE = "Approve the source-build session";
+
+/** The tool reads only `session.scope.analysisId`, so a cast avoids constructing the full value object. */
+function sessionFor(analysisId: string): AgentSession {
+    return { scope: { kind: "analysis", analysisId } } as unknown as AgentSession;
+}
+
+/** A `ToolContext` for the analysis `analysis-001` whose ask denies every request. */
+function makeToolContext(signal?: AbortSignal): ToolContext {
+    return {
+        invocationId: "test-tool-call",
+        session: sessionFor("analysis-001"),
+        signal: signal ?? new AbortController().signal,
+        emit: () => {},
+        ask: () => Promise.reject(new AskRejectedError("denied in test")),
+    };
+}
 
 /**
  * An `ask` that records each request and plays back a scripted reply per call.
@@ -49,7 +50,7 @@ function askRecording(
     const base = makeToolContext(opts.signal);
     let next = 0;
     const ctx: ToolContext = {
-        ...base.ctx,
+        ...base,
         ask: (request): Promise<AskApproval> => {
             if (request.title === START_ASK_TITLE && opts.recordStartAsks !== true) return Promise.resolve({ kind: "once" });
             requests.push(request);
@@ -72,7 +73,7 @@ type StubDeps = {
     /** Each started session gets its own id; defaults to `sess-1`, `sess-2`, ... */
     readonly exec?: (command: BuildSessionCommand) => Partial<BuildExecResult>;
     readonly commit?: () => BuildCommitResult;
-    /** The fixed hosts of the class the embedder's start reports; absent stands for an embedder that names none. */
+    /** The fixed hosts of the class that the start of the realization reports; absent stands for a realization that names none. */
     readonly classHosts?: readonly string[];
 };
 
@@ -109,20 +110,6 @@ function stubBuildSession(stub: StubDeps = {}): { calls: StubCall[]; signals: Re
         },
     };
     return { calls, signals, buildSession };
-}
-
-function recordingStore(): { puts: KeptToolOutput[]; store: ToolOutputStore } {
-    const puts: KeptToolOutput[] = [];
-    return {
-        puts,
-        store: {
-            put: (output) => {
-                puts.push(output);
-                return okAsync(undefined);
-            },
-            get: () => okAsync(null),
-        },
-    };
 }
 
 type ExecInput = Parameters<ReturnType<typeof createInstallFromSourceTool>["execute"]>[0];
@@ -296,55 +283,6 @@ describe("install_from_source — the description", () => {
     });
 });
 
-describe("install_from_source — the roster gating", () => {
-    const unusedEmbedding: EmbeddingProvider = {
-        dimensions: 1536,
-        embed() {
-            throw new Error("not used at composition time");
-        },
-    };
-    const refuseExecuteAnalysis = (): Promise<ExecuteAnalysisResult> => Promise.reject(new Error("not used at composition time"));
-    const refuseAnchorReportSession: (threadId: string) => Promise<EnsureSessionStateResult> = () => {
-        throw new Error("not used at composition time");
-    };
-    const refuseRunLauncher: RunLauncher = {
-        launch() {
-            throw new Error("not used at composition time");
-        },
-    };
-
-    function buildAgent(buildSession?: BuildSession) {
-        return createConversationAgent({
-            provider: unusedChatProvider(),
-            utilityProvider: unusedChatProvider(),
-            pool: new Pool(),
-            embedding: unusedEmbedding,
-            workspaceFs: makeFakeWorkspaceFs(),
-            model: "anthropic/claude-opus-4-7",
-            utilityModel: "anthropic/claude-haiku-4-5",
-            executeAnalysisWorkflow: refuseExecuteAnalysis,
-            anchorReportSession: refuseAnchorReportSession,
-            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
-            runAuthorizer: createLocalRunAuthorizer(),
-            runLauncher: refuseRunLauncher,
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            skillsDir: "/skills",
-            chrome: {},
-            citationResolver: unusedCitationResolver,
-            buildSession,
-        });
-    }
-
-    it("an unbound interface leaves the tool off the roster", () => {
-        expect(buildAgent().tools.map((t) => t.id)).not.toContain("install_from_source");
-    });
-
-    it("a bound interface adds exactly one tool to the conversation roster", () => {
-        const ids = buildAgent(stubBuildSession().buildSession).tools.map((t) => t.id);
-        expect(ids.filter((id) => id === "install_from_source")).toHaveLength(1);
-    });
-});
-
 describe("install_from_source — start", () => {
     it("starts the exploration phase and reports the resolved source", async () => {
         const stub = stubBuildSession();
@@ -370,7 +308,7 @@ describe("install_from_source — start", () => {
     it("start carries the analysis id of the conversation session, so the commit extends the farm of that analysis", async () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
-        const ctx = { ...askRecording([]).ctx, session: makeSession({ scope: { kind: "analysis", analysisId: "analysis-7f" } }) };
+        const ctx: ToolContext = { ...askRecording([]).ctx, session: sessionFor("analysis-7f") };
 
         const result = (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
@@ -589,7 +527,7 @@ describe("install_from_source — the ask flow", () => {
         expect(result.status).toBe("ran");
         const [planAsk] = requests;
         expect(planAsk?.detail).toContain("Egress hosts of the session: github.com, snapshot.ubuntu.com, pypi.org, packagemanager.posit.co");
-        // The plan the embedder receives carries the same complete list, so the
+        // The plan the realization receives carries the same complete list, so the
         // wall it builds equals the list the user approved.
         expect(stub.calls.at(-1)).toMatchObject({
             op: "exec",
@@ -769,55 +707,21 @@ describe("install_from_source — exec semantics", () => {
         expect(execIds).toEqual(["sess-1-1", "sess-2-1", "sess-1-2"]);
     });
 
-    it("a short log returns whole, with no kept reference", async () => {
-        const stub = stubBuildSession({ exec: () => ({ stdout: "built ok", stderr: "" }) });
-        const recorder = recordingStore();
-        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession, toolOutputStore: recorder.store });
-        const { ctx } = askRecording([]);
-        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
-
-        const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "R CMD build ." }, ctx))._unsafeUnwrap();
-
-        expect(result).toMatchObject({ status: "ran", execId: "sess-1-1", exitCode: 0, timedOut: false, output: "built ok" });
-        if (result.status !== "ran") throw new Error("expected a ran result");
-        expect(result.kept).toBeUndefined();
-        expect(recorder.puts).toEqual([]);
-    });
-
-    it("a long log is cut under the tool-result cap and the whole text is kept for read_tool_output", async () => {
+    it("an exec returns the whole combined output past the tool-result cap, with no kept reference", async () => {
         const long = "x".repeat(64 * 1024);
+        const full = `${long}\n--- stderr ---\ntail error`;
         const stub = stubBuildSession({ exec: () => ({ stdout: long, stderr: "tail error" }) });
-        const recorder = recordingStore();
-        const tool = createInstallFromSourceTool({ buildSession: stub.buildSession, toolOutputStore: recorder.store });
-        const { ctx } = askRecording([]);
-        (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
-
-        const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "make" }, ctx))._unsafeUnwrap();
-
-        if (result.status !== "ran") throw new Error("expected a ran result");
-        expect(result.output.length).toBeGreaterThan(0);
-        expect(result.output.length).toBeLessThan(long.length);
-        expect(JSON.stringify(result).length).toBeLessThanOrEqual(32 * 1024);
-        expect(result.kept).toBeDefined();
-        const put = recorder.puts[0];
-        expect(put?.toolName).toBe("install_from_source");
-        expect(put?.content).toBe(`${long}\n--- stderr ---\ntail error`);
-        expect(put?.totalLength).toBe(`${long}\n--- stderr ---\ntail error`.length);
-        expect(put?.ref).toBe(result.kept?.ref);
-    });
-
-    it("a long log without a store is cut and carries no reference", async () => {
-        const long = "y".repeat(64 * 1024);
-        const stub = stubBuildSession({ exec: () => ({ stdout: long, stderr: "" }) });
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
         const { ctx } = askRecording([]);
         (await tool.execute({ op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
         const result = (await tool.execute({ op: "exec", sessionId: "sess-1", command: "make" }, ctx))._unsafeUnwrap();
 
+        expect(result).toMatchObject({ status: "ran", execId: "sess-1-1", exitCode: 0, timedOut: false });
         if (result.status !== "ran") throw new Error("expected a ran result");
-        expect(result.output.length).toBeLessThan(long.length);
-        expect(result.kept).toBeUndefined();
+        expect(result.output).toBe(full);
+        expect(result.output.length).toBeGreaterThan(32768);
+        expect("kept" in result).toBe(false);
     });
 });
 

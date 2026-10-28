@@ -82,6 +82,7 @@ import { createEphemeralEyes } from "./eyes.ts";
 import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
+import { createInstallFromSourceTool } from "./source_build_tool.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
@@ -1251,30 +1252,29 @@ async function bootHarnessRuntimeOnce(
                         return query === undefined ? outcome : withPoolMissRemedy(outcome, query);
                     }),
                 ),
-            // The build-session binding behind the harness `install_from_source`
-            // tool. The session realization holds its own containers on the engine
-            // the boot pinned above, thus the engine gate of the boot IS the gate of
-            // the tool: a boot with no working engine fails before this composition
-            // runs, and the roster then holds no `install_from_source` at all. The
-            // harness adds the tool through this interface alone — nothing rides
-            // `hostTools` below, because one tool of one name must not register
-            // twice. The analysis arrives per start call, read from the session
-            // scope of the tool, and the commit extends the farm of that analysis.
-            buildSession: seams.createBuildSession(env.packageStoreDir, {
-                limits: { cpu: cfg.resourcePolicy.perStep.maxCpu, memoryGb: cfg.resourcePolicy.perStep.maxMemoryGb },
-            }),
             chrome: {},
+            scriptRuntime: codemodeRuntime(),
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
             // this analysis's inputs in-process (manage_inputs) — the last must be in-process so it
             // mutates under the chat's own lock and its provenance/parity events stay on this bus.
             // `knowledge_recommend` rides the same `hostTools` list when the knowledge plane is bound, thus the
             // conversation agent can orient a method question before it plans, with no harness change.
-            scriptRuntime: codemodeRuntime(),
+            // `install_from_source` rides the list with the build-session realization behind it. That
+            // realization holds its own containers on the engine the boot pinned above, thus the engine
+            // gate of the boot IS the gate of the tool: a boot with no working engine fails before this
+            // composition runs, and the roster then holds no `install_from_source` at all. The analysis
+            // arrives per start call, read from the session scope of the tool, and the commit extends the
+            // farm of that analysis.
             hostTools: [
                 createRunInflexaTool(),
                 createLaunchDirTool(),
                 createManageInputsTool(),
+                createInstallFromSourceTool({
+                    buildSession: seams.createBuildSession(env.packageStoreDir, {
+                        limits: { cpu: cfg.resourcePolicy.perStep.maxCpu, memoryGb: cfg.resourcePolicy.perStep.maxMemoryGb },
+                    }),
+                }),
                 ...(knowledge ? [createKnowledgeRecommendTool({ client: knowledge })] : []),
             ],
         };
