@@ -109,6 +109,15 @@ describe("run_script", () => {
         expect(rejected instanceof DOMException ? rejected.name : "").toBe("AbortError");
     });
 
+    test("a script runtime with a wasm path loads the VM from that path", async () => {
+        const tool = createRunScriptTool([pubmed], { wasmPath: "/no/such/dir/quickjs.wasm" });
+
+        const result = (await tool.execute({ code: "return 1;" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain("/no/such/dir/quickjs.wasm");
+    });
+
     test("an uncaught error ends the script and reports its kind", async () => {
         const result = await run(`throw new Error("no answer");`);
 

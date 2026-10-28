@@ -10,7 +10,14 @@
  * cached result and runs no lookup again.
  */
 
-import { CodemodeSandbox, renderToolSample, renderToolSignature, type CodemodeTool } from "@earendil-works/pi-codemode";
+import {
+    CodemodeSandbox,
+    loadQuickJSWasm,
+    renderToolSample,
+    renderToolSignature,
+    type CodemodeSandboxOptions,
+    type CodemodeTool,
+} from "@earendil-works/pi-codemode";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -37,6 +44,17 @@ const inputSchema = z.object({
             "The body of an async JavaScript function. Call a tool as `await tools.<name>({...})`, print with `text(value)` or `console.log`, and `return` a value.",
         ),
 });
+
+/**
+ * Where the VM of a script comes from. A host that runs the harness from `node_modules` gives nothing, and the VM loads
+ * its wasm and its worker from there. A bundled host, for example a Bun single-file binary, has no such files on disk:
+ * it embeds `tools/script/quickjs.wasm` and the entry `tools/script/codemode-worker.js` of the harness, and gives their
+ * embedded paths.
+ */
+export type ScriptRuntime = {
+    readonly wasmPath?: string;
+    readonly workerUrl?: string | URL;
+};
 
 export type ScriptCall = { readonly tool: string; readonly ok: boolean };
 
@@ -136,8 +154,16 @@ function descriptionOf(tools: readonly Tool[]): string {
     );
 }
 
+function sandboxRuntimeOf(runtime: ScriptRuntime): Pick<CodemodeSandboxOptions, "wasm" | "workerUrl"> {
+    const options: Pick<CodemodeSandboxOptions, "wasm" | "workerUrl"> = {};
+    if (runtime.wasmPath !== undefined) options.wasm = loadQuickJSWasm(runtime.wasmPath);
+    if (runtime.workerUrl !== undefined) options.workerUrl = runtime.workerUrl;
+    return options;
+}
+
 /** The `run_script` tool over the script tools of an agent. */
-export function createRunScriptTool(scriptTools: readonly Tool[]): Tool<z.infer<typeof inputSchema>, RunScriptOutput> {
+export function createRunScriptTool(scriptTools: readonly Tool[], runtime: ScriptRuntime = {}): Tool<z.infer<typeof inputSchema>, RunScriptOutput> {
+    const vm = sandboxRuntimeOf(runtime);
     const byId = new Map(scriptTools.map((tool) => [tool.id, tool]));
     return defineTool({
         id: RUN_SCRIPT_TOOL_ID,
@@ -163,6 +189,7 @@ export function createRunScriptTool(scriptTools: readonly Tool[]): Tool<z.infer<
                 ],
                 timeoutMs: SCRIPT_TIMEOUT_MS,
                 memoryLimitBytes: SCRIPT_MEMORY_BYTES,
+                ...vm,
             });
             try {
                 const result = await sandbox.execute(code, { signal: ctx.signal });

@@ -9,6 +9,7 @@ import type { ToolCallDetail, ToolOutcome } from "../contracts/chat-events.js";
 import type { ChatStreamEvent, ProviderOptions } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { CompactionRules } from "./compaction.js";
+import type { ScriptRuntime } from "../tools/script/run-script.js";
 
 /**
  * A loop message. The harness's working message array is AI SDK-shaped
@@ -33,6 +34,8 @@ export type AgentDefinition = {
      * one step. Absent or empty: the agent has no `run_script`.
      */
     readonly scriptTools?: readonly Tool[];
+    /** Where the VM of `run_script` comes from. Absent: the VM loads from `node_modules`. */
+    readonly scriptRuntime?: ScriptRuntime;
     /** Runaway guard: the cap of model requests of one run. The run ends at the cap. */
     readonly maxIterations: number;
     /** The compaction rules of an agent that a chat thread runs. Absent: the conversation never compacts. */
