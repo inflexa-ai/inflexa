@@ -267,11 +267,7 @@ export type ExecuteAnalysisDeps = {
     readonly pauseRetryDelaysMs?: readonly number[];
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
     readonly runAuthorizer: RunAuthorizer;
-    /**
-     * LLM usage-accounting seam for the in-body synthesizer loop (and the
-     * literature reviewer it delegates to); omitted falls back to the no-op
-     * recorder.
-     */
+    /** LLM usage-accounting seam for the in-body synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the loops of the run synthesis and of their read tools. */
     readonly toolOutputStore?: ToolOutputStore;
@@ -829,8 +825,8 @@ export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: s
  * quick-display findings for the run-completed card; empty when synthesis is
  * skipped or produced no synthesizable content. A genuine failure re-throws,
  * failing the run (D10). It runs in the body of the run workflow: each read and
- * write is a step, each model call is a step, and each reviewer call starts a
- * child workflow. Exported so integration tests can drive the wired synthesis
+ * write is a step, each model call is a step, and each lookup call is a step.
+ * Exported so integration tests can drive the wired synthesis
  * without a full parent body.
  */
 export function synthesizeFindings(args: {
