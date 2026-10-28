@@ -23,7 +23,8 @@ const PAPERS: readonly Paper[] = [
     {
         title: "Resilience of complex networks to targeted node removal",
         url: "https://www.semanticscholar.org/paper/network-resilience",
-        abstract: "Scale-free networks keep their function under random failure, and degree-targeted attacks break them; rerouting through parallel paths restores flow.",
+        abstract:
+            "Scale-free networks keep their function under random failure, and degree-targeted attacks break them; rerouting through parallel paths restores flow.",
     },
     {
         title: "Integrated pest management and the evolution of insecticide resistance",
@@ -39,15 +40,46 @@ const PAPERS: readonly Paper[] = [
 
 const TITLES = new Set(PAPERS.map((paper) => paper.title));
 
-const SEARCH: ToolScript = {
-    ok: { total: PAPERS.length, results: PAPERS.map((paper) => ({ paperId: paper.url, title: paper.title, abstract: paper.abstract, year: 2019, url: paper.url })) },
+const SEMANTIC_SCHOLAR: ToolScript = {
+    ok: {
+        success: true,
+        papers: PAPERS.map((paper) => ({ id: paper.url, title: paper.title, abstract: paper.abstract, year: 2019, url: paper.url, authors: [] })),
+    },
+};
+
+const ARXIV: ToolScript = {
+    ok: {
+        success: true,
+        papers: PAPERS.map((paper) => ({
+            id: paper.url,
+            title: paper.title,
+            abstract: paper.abstract,
+            authors: [],
+            published: "2019-06-01",
+            categories: ["eess.SY"],
+            url: paper.url,
+        })),
+    },
 };
 
 const ANALOGY_TOOLS: Readonly<Record<string, ToolScript>> = {
-    search_semantic_scholar: SEARCH,
-    search_arxiv: SEARCH,
-    pubmed: { ok: { totalFound: 1, results: [{ pmid: "29662146", title: "Mechanisms of resistance to kinase inhibitors in cancer" }] } },
-    search_github_repos: { ok: { results: [] } },
+    search_semantic_scholar: SEMANTIC_SCHOLAR,
+    search_arxiv: ARXIV,
+    pubmed: {
+        ok: {
+            totalFound: 1,
+            results: [
+                {
+                    pmid: "29662146",
+                    title: "Mechanisms of resistance to kinase inhibitors in cancer",
+                    journal: "Nature Reviews Cancer",
+                    year: "2018",
+                    authors: "Doe J",
+                },
+            ],
+        },
+    },
+    search_github_repos: { ok: { success: true, repos: [] } },
     submit_analogy_report: REAL_TOOL,
     report_blocker: REAL_TOOL,
 };
