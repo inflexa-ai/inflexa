@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
-import { cancelRunningStepExecutions, insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "../step-executions.js";
+import {
+    cancelRunningStepExecutions,
+    countStepsByRuns,
+    insertStepExecution,
+    queryStepsByRun,
+    seedStepExecutions,
+    updateStepExecution,
+} from "../step-executions.js";
 import type { LoopStep, LoopToolCall } from "../../loop/run-loop.js";
 import { blockerOf, createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
@@ -171,6 +178,44 @@ describe("step-executions: pending seeding", () => {
         expect(synth?.status).toBe("running");
         expect(synth?.agentId).toBe("run-synthesizer");
         expect(synth?.startedAt).not.toBeNull();
+    });
+});
+
+describe("step-executions: step counts of a list of runs", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("step_exec_counts");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("counts the completed, the running, and each row of each run of the list, in one entry for each run with a row", async () => {
+        const rows = ["s1", "s2", "s3", "s4", "synthesis"].map((stepId) => ({
+            runId: "r1",
+            stepId,
+            analysisId: "a1",
+            wave: 0,
+            agentId: "scientific-executor",
+        }));
+        (await seedStepExecutions(pool, rows))._unsafeUnwrap();
+        for (const stepId of ["s1", "s2", "s3"]) {
+            (await insertStepExecution(pool, { runId: "r1", stepId, analysisId: "a1", wave: 0, agentId: "scientific-executor" }))._unsafeUnwrap();
+        }
+        for (const stepId of ["s1", "s2"]) (await updateStepExecution(pool, "r1", stepId, { status: "completed" }))._unsafeUnwrap();
+        (await insertStepExecution(pool, { runId: "r9", stepId: "s1", analysisId: "a9", wave: 0, agentId: "scientific-executor" }))._unsafeUnwrap();
+
+        const counts = (await countStepsByRuns(pool, "a1", ["r1", "r2", "r9"]))._unsafeUnwrap();
+        expect(counts).toEqual([{ runId: "r1", doneSteps: 2, runningSteps: 1, totalSteps: 5 }]);
+    });
+
+    it("gives no entry for an empty list", async () => {
+        expect((await countStepsByRuns(pool, "a1", []))._unsafeUnwrap()).toEqual([]);
     });
 });
 

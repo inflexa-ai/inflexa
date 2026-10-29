@@ -62,8 +62,15 @@ export {
 } from "./runs.js";
 export type { InsertRunInput, RunPage, RunReservation } from "./runs.js";
 
-export { insertStepExecution, seedStepExecutions, sweepPendingStepExecutions, updateStepExecution, queryStepsByRun } from "./step-executions.js";
-export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutionInput } from "./step-executions.js";
+export {
+    insertStepExecution,
+    seedStepExecutions,
+    sweepPendingStepExecutions,
+    updateStepExecution,
+    queryStepsByRun,
+    countStepsByRuns,
+} from "./step-executions.js";
+export type { InsertStepExecutionInput, RunStepCounts, SeedStepExecutionRow, UpdateStepExecutionInput } from "./step-executions.js";
 
 export { insertPlan, upsertPlan, loadPlan, loadPlanRecord } from "./plans.js";
 export type { InsertPlanInput, UpsertPlanInput, PlanRecord, PlanRowQuerier } from "./plans.js";

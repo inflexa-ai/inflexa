@@ -237,6 +237,36 @@ export function queryStepsByRun(pool: StepRowQuerier, runId: string): ResultAsyn
     });
 }
 
+/** The step counts of one run, from {@link countStepsByRuns}. */
+export type RunStepCounts = {
+    runId: string;
+    doneSteps: number;
+    runningSteps: number;
+    totalSteps: number;
+};
+
+/**
+ * The step counts of each run of a list, in one statement. `totalSteps` counts each row, the `synthesis` row
+ * included, and `doneSteps` counts the `completed` rows: the rule of the analysis summary reads. A step that
+ * waits counts in `totalSteps` only. A run with no row has no entry, and a caller reads it as 0.
+ */
+export function countStepsByRuns(pool: Querier, analysisId: string, runIds: readonly string[]): ResultAsync<RunStepCounts[], DbError> {
+    return tryQuery("stepExecutions.countStepsByRuns", async () => {
+        if (runIds.length === 0) return [];
+        const result = await pool.query<{ run_id: string; done: number; running: number; total: number }>({
+            text: `SELECT run_id,
+                 COUNT(*) FILTER (WHERE status = 'completed')::int AS done,
+                 COUNT(*) FILTER (WHERE status = 'running')::int AS running,
+                 COUNT(*)::int AS total
+          FROM cortex_step_executions
+          WHERE analysis_id = $1 AND run_id = ANY($2::text[])
+          GROUP BY run_id`,
+            values: [analysisId, [...runIds]],
+        });
+        return result.rows.map((r) => ({ runId: r.run_id, doneSteps: r.done, runningSteps: r.running, totalSteps: r.total }));
+    });
+}
+
 function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
     return StepExecutionRowSchema.parse({
         runId: row.run_id,
