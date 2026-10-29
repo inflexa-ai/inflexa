@@ -160,6 +160,8 @@ export type ExecuteAnalysisInput = {
      * plan row (a mid-run plan edit cannot change a running run's instructions).
      */
     readonly planStepById: Readonly<Record<string, AnalysisStep>>;
+    /** The request that the plan answers, which the seed of each step renders. Absent when the plan stores none. */
+    readonly request?: string;
     /** Per-step agent id (sandbox catalog entry). */
     readonly agentByStepId: Readonly<Record<string, string>>;
     /**
@@ -571,6 +573,7 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
             profile: profile?.result ?? null,
             upstream,
             memory: { goal: memory.goal, constraints: memory.constraints },
+            request: input.request,
             ...contract.briefing,
         },
         templateBinding: contract.binding,

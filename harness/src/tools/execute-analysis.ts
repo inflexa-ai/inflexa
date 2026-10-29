@@ -340,6 +340,7 @@ function workflowInput(
         threadId: args.threadId,
         steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
+        request: plan.request,
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? "unknown"])),
         runSession: args.runSession,
         synthesisEnabled: args.synthesisEnabled,

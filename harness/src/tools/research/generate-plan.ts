@@ -247,6 +247,8 @@ type PlannerOutcome =
 type PersistContext = {
     analysisId: string;
     parentPlanId: string | null;
+    /** The request of the call, which the stored plan carries to the briefing of each step. */
+    request: string;
     /** The id of the `generate_plan` call: a rerun of the call gives it again, thus the persist gives one plan. */
     invocationId: string;
 };
@@ -485,7 +487,7 @@ async function persistPlan(
             await upsertPlan(pool, {
                 planId,
                 analysisId: ctx.analysisId,
-                plan: hydratePlanSteps(plan),
+                plan: { ...hydratePlanSteps(plan), request: ctx.request },
                 parentPlanId: ctx.parentPlanId,
             }),
         );
@@ -1149,7 +1151,11 @@ export function composePlannerSeed(parts: {
 }
 
 const generatePlanInputSchema = z.object({
-    researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),
+    researchQuestion: z
+        .string()
+        .describe(
+            "The request of the user, in the words of the user: the goal, the questions, and each deliverable that the user named, with its format. The plan stores it, and each step of the run reads it.",
+        ),
     analystNotes: z
         .string()
         .optional()
@@ -1344,6 +1350,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             analysisId,
             parentPlanId: input.parentPlanId ?? null,
             invocationId: ctx.invocationId,
+            request: input.researchQuestion,
         };
         // The last recommend answer of this invocation, thus `submit_plan`
         // stamps the snapshot digest, restores a template the model dropped,
