@@ -16,6 +16,7 @@
 import { ok, err, type Result } from "neverthrow";
 import { z } from "zod";
 
+import type { AgentSession } from "../../auth/types.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import { detectFormat, parseTable, type Row } from "../../report-model/production-resolver.js";
 import { CHART_EXPORT_SIZES, SCATTER_CROWD_ROWS } from "../../report-render/design.js";
@@ -66,6 +67,57 @@ function numericCell(text: string): string | number {
     return value;
 }
 
+/** The rows of one table, the bytes that they came from, and the columns that they keep. */
+export type TableRows = { readonly content: Buffer; readonly columns: string[]; readonly rows: Row[] };
+
+/**
+ * Read one table through the read seam, parse it on the host, and keep the named columns. A refusal is the line
+ * that the script reads. `tooLarge` names where a table over the cap goes instead.
+ */
+export async function readTableRows(args: {
+    readonly workspaceFs: WorkspaceFilesystem;
+    readonly session: AgentSession;
+    readonly path: string;
+    readonly columns: readonly string[] | undefined;
+    readonly tooLarge: string;
+}): Promise<Result<TableRows, string>> {
+    const { path, columns } = args;
+    const format = detectFormat(path);
+    if (format === undefined) {
+        recordReadRefusal("unsupported_format");
+        return err(`${path} has no table format that a script reads (csv, tsv, json, parquet); an analysis run reads it`);
+    }
+    const read = await args.workspaceFs.readFile({ session: args.session, path, maxBytes: TABLE_READ_CAP_BYTES });
+    if (read.isErr()) return err(`${path} could not be read`);
+    const file = read.value;
+    if (file.kind === "not_found") return err(`${path} does not exist; find the path with workspace_search or list_files`);
+    if (file.kind === "out_of_scope") return err(`${path} is outside this analysis`);
+    if (file.kind === "truncated") {
+        recordReadRefusal("too_large");
+        return err(`${path} is ${String(file.totalSize)} bytes, over the 16 MiB cap of a script read; ${args.tooLarge}`);
+    }
+    const parsed = await parseTable(format, file.content);
+    if (parsed === undefined) {
+        recordReadRefusal("unparsable");
+        return err(`${path} did not parse as ${format}: a ragged row, a repeated header, or a nested JSON value`);
+    }
+    recordReadBytes(file.content.length);
+
+    const header = [...new Set(parsed.flatMap((row) => Object.keys(row)))];
+    const missing = (columns ?? []).filter((column) => !header.includes(column));
+    if (missing.length > 0) return err(`${path} has no column ${missing.join(", ")}; its columns are ${header.join(", ")}`);
+    const kept = columns === undefined ? header : [...columns];
+    const rows = parsed.map((row) => {
+        const out: Row = {};
+        for (const column of kept) {
+            const cell = row[column];
+            if (cell !== undefined) out[column] = typeof cell === "string" ? numericCell(cell) : cell;
+        }
+        return out;
+    });
+    return ok({ content: file.content, columns: kept, rows });
+}
+
 const readTableInput = z.object({
     path: z.string().min(1).describe("Analysis-rooted path of the table, for example 'runs/<runId>/<stepId>/output/de_results.csv'."),
     columns: z.array(z.string()).min(1).optional().describe("Keep only these columns. Absent: each column."),
@@ -87,45 +139,14 @@ function createReadTableTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof rea
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
         execute: async ({ path, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
-            const format = detectFormat(path);
-            if (format === undefined) {
-                recordReadRefusal("unsupported_format");
-                return refused(`${path} has no table format that a script reads (csv, tsv, json, parquet); an analysis run reads it`);
-            }
-            const read = await deps.workspaceFs.readFile({ session: ctx.session, path, maxBytes: TABLE_READ_CAP_BYTES });
-            if (read.isErr()) return refused(`${path} could not be read`);
-            const file = read.value;
-            if (file.kind === "not_found") return refused(`${path} does not exist; find the path with workspace_search or list_files`);
-            if (file.kind === "out_of_scope") return refused(`${path} is outside this analysis`);
-            if (file.kind === "truncated") {
-                recordReadRefusal("too_large");
-                return refused(`${path} is ${String(file.totalSize)} bytes, over the 16 MiB cap of a script read; an analysis run reads it`);
-            }
-            const parsed = await parseTable(format, file.content);
-            if (parsed === undefined) {
-                recordReadRefusal("unparsable");
-                return refused(`${path} did not parse as ${format}: a ragged row, a repeated header, or a nested JSON value`);
-            }
-            recordReadBytes(file.content.length);
-
-            const header = [...new Set(parsed.flatMap((row) => Object.keys(row)))];
-            const missing = (columns ?? []).filter((column) => !header.includes(column));
-            if (missing.length > 0) return refused(`${path} has no column ${missing.join(", ")}; its columns are ${header.join(", ")}`);
-            const kept = columns ?? header;
-            const rows = parsed.map((row) => {
-                const out: Row = {};
-                for (const column of kept) {
-                    const cell = row[column];
-                    if (cell !== undefined) out[column] = typeof cell === "string" ? numericCell(cell) : cell;
-                }
-                return out;
-            });
-
+            const table = await readTableRows({ workspaceFs: deps.workspaceFs, session: ctx.session, path, columns, tooLarge: "an analysis run reads it" });
+            if (table.isErr()) return refused(table.error);
+            const { content, rows } = table.value;
             const { analysisId } = ctx.session.scope;
             const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
             const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
-            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(file.content) }] };
-            return ok(withToolCallRecord({ path: relative, columns: kept, rowCount: rows.length, rows }, effect));
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(content) }] };
+            return ok(withToolCallRecord({ path: relative, columns: table.value.columns, rowCount: rows.length, rows }, effect));
         },
     });
 }
@@ -138,7 +159,7 @@ function delimitedCell(value: string | number | boolean | null | undefined, deli
     return `"${text.replaceAll('"', '""')}"`;
 }
 
-type Cell = string | number | boolean | null;
+export type Cell = string | number | boolean | null;
 
 /** The rows as CSV or TSV: the header is each key in the order of its first row, then one line for each row. */
 function delimitedText(rows: readonly Record<string, Cell>[], delimiter: string): string {
@@ -149,7 +170,7 @@ function delimitedText(rows: readonly Record<string, Cell>[], delimiter: string)
 }
 
 /** The text of `rows` in the format that the extension of `name` names, or `undefined` for another extension. */
-function rowsText(name: string, rows: readonly Record<string, Cell>[]): string | undefined {
+export function rowsText(name: string, rows: readonly Record<string, Cell>[]): string | undefined {
     const lower = name.toLowerCase();
     if (lower.endsWith(".csv")) return delimitedText(rows, ",");
     if (lower.endsWith(".tsv")) return delimitedText(rows, "\t");

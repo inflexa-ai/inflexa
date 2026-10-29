@@ -470,6 +470,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         gateway: reportSession.gateway,
         resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
         store: reportVersionStore,
+        derivations: reportSession.derivations,
         threads: reportThreads,
         chrome: conversation.chrome,
         makeResolver: makeReportResolver,
@@ -480,6 +481,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         provenance: deps.provenance,
         logger: conversation.logger,
         toolOutputStore,
+        scriptRuntime: conversation.scriptRuntime,
     });
 
     // The single registration point for every typed agent. A future thread type's

@@ -14,6 +14,10 @@
  * roster omits those tools, and no runtime guard blocks them. No tool runs a
  * container.
  *
+ * A derivation of a table runs in a script (`run_script`), and it changes no
+ * analysis: it mints no run id, it registers no artifact, and it writes under the
+ * directory of the session alone.
+ *
  * The definition carries no per-session value. The system prompt composes through
  * `composeSystemPrompt` with the identity part and the conversational part, the
  * same composition as the conversation agent. Thus the prompt prefix stays constant
@@ -27,10 +31,11 @@ import type { CompactionRules } from "../loop/compaction.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
+import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider, ProviderOptions } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { reportSessionDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
@@ -53,6 +58,9 @@ import { createFileStatTool, createGrepTool, createListFilesTool, createReadFile
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
 import { reportSessionPrompt } from "../prompts/report-session.js";
 import { composeSystemPrompt } from "./system-prompt.js";
+import { createReportScriptTools } from "../tools/report-session/script-tools.js";
+import type { ScriptRuntime } from "../tools/script/run-script.js";
+import { createScriptScratch } from "../tools/script/scratch.js";
 
 /** Canonical agent id -- distinct from the id of the old templating agent. */
 export const REPORT_SESSION_AGENT_ID = "report-session" as const;
@@ -97,6 +105,8 @@ export type ReportSessionAgentDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Append-only version store -- the record tool gates the whole document first, then records one version. */
     readonly store: ReportVersionStore;
+    /** Derivation ledger -- `write_derived` appends one record for each derived table. */
+    readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     /** Thread store -- the record tool reads the anchor of the report thread, and the preview tool names it. */
     readonly threads: Pick<ThreadStore, "getThread" | "setAutoTitle">;
     /** Headless-Chrome config -- the eyes tool opens the rendered page. */
@@ -145,12 +155,14 @@ export type ReportSessionAgentDeps = {
     readonly logger?: Logger;
     /** Adds `read_tool_output`. The loop of a report turn must keep its texts in the same store. */
     readonly toolOutputStore?: ToolOutputStore;
+    /** Where the VM of `run_script` comes from. A bundled host gives the embedded paths; see `ScriptRuntime`. */
+    readonly scriptRuntime?: ScriptRuntime;
 };
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { makeSessionPages, resolvePageUrl, provenance } = deps;
+    const { derivations, makeSessionPages, resolvePageUrl, provenance } = deps;
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
     const observation = provenance ? { provenance } : {};
@@ -218,11 +230,19 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         }),
     ];
 
+    // A derivation of a table of up to the read cap runs in a script, thus it starts no container. The scripts
+    // of a session stay beside its page.
+    const scriptTools = createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, logger });
+    const scriptScratch = createScriptScratch({ resolveWorkspaceRoot, sessionDir: reportSessionDir, provenance, logger });
+
     return {
         id: REPORT_SESSION_AGENT_ID,
         systemPrompt: composeSystemPrompt(reportSessionPrompt, { identity: true, conversational: true }),
         model,
         tools,
+        scriptTools,
+        scriptRuntime: deps.scriptRuntime,
+        scriptScratch,
         maxIterations: REPORT_SESSION_MAX_ITERATIONS,
         compaction: REPORT_SESSION_COMPACTION,
         providerOptions: REPORT_SESSION_PROVIDER_OPTIONS,

@@ -13,6 +13,7 @@ import { reportSessionPrompt } from "../../prompts/report-session.js";
 import { createRegistry } from "../../tools/registry.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
+import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../../tools/report-authoring/authoring-tools.js";
 import { makeFakeWorkspaceFs } from "../sandbox/__fixtures__/deps.js";
@@ -60,6 +61,12 @@ const refuseThreads: Pick<ThreadStore, "getThread" | "setAutoTitle"> = {
     },
 };
 
+const refuseDerivations: Pick<ReportSessionStateStore, "appendDerivation"> = {
+    appendDerivation() {
+        throw new Error("not used at composition time");
+    },
+};
+
 function buildAgent(toolOutputStore?: ToolOutputStore) {
     return createReportSessionAgent({
         model: "anthropic/claude-opus-4-8",
@@ -69,6 +76,7 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         gateway: refuseGateway,
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         store: refuseStore,
+        derivations: refuseDerivations,
         threads: refuseThreads,
         chrome: {},
         toolOutputStore,
@@ -151,6 +159,13 @@ describe("createReportSessionAgent", () => {
         // The roster is the whole guarantee — assert the exact set, so a later
         // wiring that adds a run starter or a mutate tool fails here.
         expect(new Set(ids)).toEqual(new Set([...READ_SURFACE, ...COMPOSITION_SURFACE]));
+    });
+
+    test("a derivation of a small table runs in a script: the script tools read the pinned evidence and pin a derived table", () => {
+        const agent = buildAgent();
+
+        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived"]);
+        expect(agent.scriptScratch).toBeDefined();
     });
 
     test("a tool output store adds read_tool_output after grep, and no store leaves it out", () => {
@@ -381,10 +396,20 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("The angle of the brief decides the order of the findings");
     });
 
-    test("the prompt serves a per-row transform with a chart knob, and names an absent table", () => {
-        expect(reportSessionPrompt).toContain("thus a knob of the chart serves a per-row transform");
-        expect(reportSessionPrompt).toContain("tell the user which table is absent");
+    test("the prompt divides a derivation from a chart knob", () => {
+        // The tool name, the three reshaping cases, and the per-row bound are stable
+        // substrings, thus the assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("derive the table in `run_script`");
         expect(reportSessionPrompt).not.toContain("derive_table");
+        expect(reportSessionPrompt).toContain("a pivot, and an aggregate are such reshaping");
+        // The exclusion is chart-scoped. A table carries no knob, thus its composed
+        // display column derives and the two paragraphs agree. Each substring sits on
+        // one line of the prompt, thus a line wrap cuts none of them.
+        expect(reportSessionPrompt).toContain("transform of a chart is not: a chart block reads the column that it needs");
+        expect(reportSessionPrompt).toContain("A table carries no such knob");
+        expect(reportSessionPrompt).toContain("column of a table derives");
+        // A derived table is evidence of the session, thus it binds like a pinned one.
+        expect(reportSessionPrompt).toContain("binds like any pinned artifact");
     });
 
     test("the prompt carries the chart-first rule", () => {
