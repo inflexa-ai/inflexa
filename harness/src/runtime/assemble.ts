@@ -532,6 +532,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
                 // The end of a canceled run goes where the run engine emits the rest of the run.
                 provenance: executeAnalysisDeps.provenance,
                 logger: conversation.logger,
+                releaseLeasesOf: (workflowIds) => leases.releaseOwnedBy(workflowIds),
             }),
             stopProfile: (analysisId, workflowId) =>
                 stopDataProfile(

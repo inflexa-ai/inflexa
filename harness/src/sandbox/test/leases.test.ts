@@ -231,6 +231,26 @@ describe("a lease", () => {
         ).toBe("absent");
     }, 60_000);
 
+    it("ends the leases of an owner that a host cancels, while the owner still runs", async () => {
+        let resume = (): void => {};
+        const gate = new Promise<void>((resolve) => {
+            resume = resolve;
+        });
+        const run = start(rig.nextWorkflowId("an-"), async (lease) => {
+            await lease.acquire(SMALL);
+            await gate;
+            return "done";
+        });
+        await until(async () => ((await leaseOf(run.caseId))?.machine === undefined ? undefined : true), "the machine of the lease");
+
+        await leases.releaseOwnedBy([run.caseId]);
+
+        await until(() => Promise.resolve(backend.torn.length === 1 ? true : undefined), "the teardown of the machine");
+        expect(await leaseOf(run.caseId)).toBeUndefined();
+        resume();
+        expect(await run.result).toBe("done");
+    }, 60_000);
+
     it("gives no_lease to an exec before the acquire", async () => {
         const run = start(rig.nextWorkflowId("an-"), async (lease) => {
             const result = await lease.exec({ command: ["echo"] }, () => {});

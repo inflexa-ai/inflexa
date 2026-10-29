@@ -278,6 +278,52 @@ describe("createRunCanceler", () => {
         expect(revoked).toEqual([{ mandateId: "mandate-1", reason: "external_cancel" }]);
     });
 
+    it("ends the sandbox leases of the canceled workflows before the pauses clear", async () => {
+        const pause = (workflowId: string, workId: string): Row => ({ workflow_id: workflowId, work_id: workId, state: "paused" });
+        const db = fakeDb(runRow(), [[stepRow("s1", "wf-child-1")]], { pauses: [pause("lease-1", "run-1")] });
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const released: string[][] = [];
+        const pausesAtRelease: unknown[][] = [];
+        const canceler = createRunCanceler({
+            pool: db.pool,
+            runCharge: charge,
+            runAuthorizer: authorizer,
+            cancelWorkflows,
+            releaseLeasesOf: (ids) => {
+                released.push([...ids]);
+                pausesAtRelease.push(db.state.pauses.map((row) => row.workflow_id));
+                return Promise.resolve();
+            },
+        });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result.finalStatus).toBe("canceled");
+        expect(released).toEqual([["run-1", "wf-child-1"]]);
+        expect(pausesAtRelease).toEqual([["lease-1"]]);
+    });
+
+    it("converges the cancel when the lease release fails", async () => {
+        const db = fakeDb(runRow(), [[stepRow("s1", "wf-child-1")]]);
+        const { charge, closes } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const canceler = createRunCanceler({
+            pool: db.pool,
+            runCharge: charge,
+            runAuthorizer: authorizer,
+            cancelWorkflows,
+            releaseLeasesOf: () => Promise.reject(new Error("the engine is down")),
+        });
+
+        const result = await canceler.cancel("run-1", session);
+
+        expect(result).toMatchObject({ outcome: "canceled", finalStatus: "canceled", converged: { steps: true, charge: true } });
+        expect(closes).toHaveLength(1);
+    });
+
     it("clears each row of a pause of the run after the engine cancel, and keeps the rows of other work", async () => {
         const pause = (workflowId: string, workId: string): Row => ({ workflow_id: workflowId, work_id: workId, state: "paused" });
         const db = fakeDb(runRow(), [[stepRow("s1", "wf-child-1"), stepRow("s2", "wf-child-2")]], {

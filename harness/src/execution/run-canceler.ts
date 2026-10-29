@@ -98,6 +98,8 @@ export type RunCancelerDeps = {
     /** The run end that the body recorded: `null` when it recorded none, a rejection when the read fails.
      * The value is unchecked engine data. Production default: `DBOSClient.getEvent` with a zero timeout. */
     readonly readRecordedRunEnd?: (runId: string) => Promise<unknown>;
+    /** End the sandbox leases of the canceled workflows now, thus their machines and commands stop at once. */
+    readonly releaseLeasesOf?: (workflowIds: readonly string[]) => Promise<void>;
 };
 
 export type RunCanceler = {
@@ -179,6 +181,14 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 if (late.length > 0) await cancelWorkflows(late);
             } catch (err) {
                 logger.error("late-child cancel sweep failed", { runId, ...logger.errorFields(err) });
+            }
+            // Before the pauses clear: a lease workflow that waits in a pause is ended through its pause row.
+            if (deps.releaseLeasesOf !== undefined) {
+                try {
+                    await deps.releaseLeasesOf([...new Set([workflowId, ...knownChildren, ...childIds(cutSteps ?? [])])]);
+                } catch (err) {
+                    logger.error("the sandbox leases of the run did not end; each ends at its next owner check", { runId, ...logger.errorFields(err) });
+                }
             }
             // The cancel ended each wait of a paused step, and no workflow of the run deletes its row again.
             const cleared = await clearPausesOfWork(pool, runId);
