@@ -142,6 +142,11 @@ export type ChatDataPart = {
      * routing envelopes).
      */
     readonly source?: EventSource;
+    /**
+     * Live only. Inside a tool step the chat stream writes the part as progress: a live reader gets it, and the step
+     * does not checkpoint it. Give it to a copy that a later part of the same reconciling id replaces.
+     */
+    readonly transient?: boolean;
 };
 
 /**

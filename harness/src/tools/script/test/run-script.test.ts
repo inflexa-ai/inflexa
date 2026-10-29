@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { err, ok } from "neverthrow";
 import { z } from "zod";
@@ -139,6 +140,41 @@ describe("run_script", () => {
         expect(result.value).toContain("identifiers: Array<string>");
     });
 
+    test("a nested call that outlasts the interval shows live before it ends", async () => {
+        const slow = defineTool({
+            id: "slow_lookup",
+            description: "A lookup that takes longer than the interval of the live copies.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => {
+                await sleep(800);
+                return ok({ done: true });
+            },
+        });
+        const { ctx, emitted } = makeToolContext();
+        const live = () =>
+            emitted.flatMap((event) => {
+                const part = z
+                    .object({
+                        type: z.literal("data-subagent-activity"),
+                        transient: z.literal(true),
+                        data: z.object({ entries: z.array(z.object({ tool: z.string() })) }),
+                    })
+                    .safeParse(event);
+                return part.success ? [part.data.data.entries.map((entry) => entry.tool)] : [];
+            });
+
+        (
+            await createRunScriptTool([pubmed, slow]).execute(
+                { code: `await tools.pubmed({ query: "x" }); await tools.slow_lookup({});` },
+                { ...ctx, invocationId: "toolu_1" },
+            )
+        )._unsafeUnwrap();
+
+        // The first copy holds pubmed in flight. The copy that the interval held back goes while slow_lookup runs.
+        expect(live()).toEqual([["pubmed"], ["pubmed", "slow_lookup"]]);
+    });
+
     test("each call of a script gets its own invocation id, also two calls in parallel", async () => {
         const echo = defineTool({
             id: "echo_id",
@@ -273,7 +309,10 @@ describe("run_script with a scratch directory", () => {
         expect(emitted).toContainEqual(
             expect.objectContaining({ type: "tool-finished", source, toolUseId: "toolu_1:2", name: "write_derived", outcome: "ok" }),
         );
-        const parts = emitted.filter((event) => z.object({ type: z.string() }).safeParse(event).data?.type.startsWith("data-") === true);
+        const parts = emitted.filter((event) => {
+            const part = z.object({ type: z.string(), transient: z.boolean().optional() }).safeParse(event).data;
+            return part?.type.startsWith("data-") === true && part.transient !== true;
+        });
         const dir = conversationSessionDir(THREAD);
         expect(parts).toMatchObject([
             { type: "data-subagent-activity", data: { toolCallId: "toolu_1", entries: [{ tool: "read_table" }, { tool: "write_derived" }] } },
@@ -282,6 +321,23 @@ describe("run_script with a scratch directory", () => {
                 data: { title: "Significant genes", files: [{ path: `${dir}/derived/top.csv` }, { path: `${dir}/scripts/toolu_1.js` }] },
             },
         ]);
+    });
+
+    test("a live copy of the nested calls goes at the first call, and the stored part goes at the end", async () => {
+        const { tool, ctx, emitted } = setup();
+
+        (await tool.execute({ code }, ctx))._unsafeUnwrap();
+
+        const Activity = z.object({ type: z.literal("data-subagent-activity"), transient: z.boolean().optional() });
+        const copies = emitted.flatMap((event) => {
+            const part = Activity.safeParse(event);
+            return part.success ? [part.data] : [];
+        });
+        // Both nested calls end inside one interval, thus one live copy goes, and the stored part closes the call.
+        expect(copies).toEqual([{ type: "data-subagent-activity", transient: true }, { type: "data-subagent-activity" }]);
+        expect(emitted[emitted.findIndex((event) => Activity.safeParse(event).success)]).toMatchObject({
+            data: { toolCallId: "toolu_1", entries: [{ tool: "read_table" }] },
+        });
     });
 
     test("the fold of the call record gives provenance the script, the table it read, and the file it derived", async () => {
