@@ -792,7 +792,9 @@ export {
     RunIdentityCollisionError,
 } from "./state/runs.js";
 export type { InsertRunInput, RunReservation } from "./state/runs.js";
-export { queryStepsByRun } from "./state/step-executions.js";
+// The step ledger reads of a run, and the step counts of each run of a list in one statement.
+export { queryStepsByRun, countStepsByRuns } from "./state/step-executions.js";
+export type { RunStepCounts } from "./state/step-executions.js";
 export type { CortexRunRow, StepExecutionRow, RunStatus, TerminalRunStatus } from "./state/schema.js";
 // The storage-layer error every `state/` Result fails with. Embedders that
 // surface a trigger or ledger failure need it by name to map the `cause`;

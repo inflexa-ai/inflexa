@@ -96,7 +96,7 @@ It MUST define no `execId` and no `sandboxRef`.
 
 ### Requirement: Step execution query helpers
 
-`src/state/step-executions.ts` SHALL export, each taking a `Querier` first and
+`src/state/step-executions.ts` MUST export, each taking a `Querier` first and
 returning `ResultAsync<…, DbError>`:
 
 - `seedStepExecutions(pool, rows)`: inserts many rows in one statement with `status="pending"` and `started_at=NULL`, using `ON CONFLICT (run_id, step_id) DO NOTHING` (see the run-start seeding requirement). Each row carries `{ runId, stepId, analysisId, wave, agentId }`.
@@ -105,8 +105,9 @@ returning `ResultAsync<…, DbError>`:
 - `insertStepExecution(pool, { runId, stepId, analysisId, wave, agentId, childWorkflowId? })`: inserts with `status="running"` and `started_at` using `ON CONFLICT (run_id, step_id) DO UPDATE`.
 - `updateStepExecution(pool, runId, stepId, { status, durationMs?, error?, attempts?, lastErrorClass?, blockedReason?, finishReason?, hitMaxSteps? })`: builds the SET clause dynamically so retries bump telemetry without clobbering timing; stamps `completed_at` only for non-`running` statuses; binds `hit_max_steps` as an integer; writes `blocked_reason` when `blockedReason` is supplied.
 - `queryStepsByRun(pool, runId)`: returns all rows for a run ordered by `wave`, then `started_at` with an explicit `NULLS LAST` (unstarted steps trail started ones within a wave), then `step_id` as a deterministic tiebreaker for the all-NULL pending group.
+- `countStepsByRuns(pool, analysisId, runIds)`: gives `{ runId, doneSteps, runningSteps, totalSteps }` for each run of the list that has a row, in one statement. `doneSteps` counts the `completed` rows, `runningSteps` the `running` rows, and `totalSteps` each row of the run, the `synthesis` row included. A run with no row has no entry. An empty list gives `[]` and sends no statement.
 
-There SHALL be NO `queryStepByChildWorkflowId` helper — the `(child_workflow_id)`
+There MUST be NO `queryStepByChildWorkflowId` helper — the `(child_workflow_id)`
 index exists for future lookups but no query-by-child-workflow-id helper is
 shipped.
 
@@ -137,6 +138,12 @@ shipped.
 - **WHEN** `cancelRunningStepExecutions(pool, runId, "external_cancel")` is called
 - **THEN** only the `running` row becomes `canceled`, with `completed_at`, `duration_ms`, and `error` = `"external_cancel"`
 - **AND** the `pending` row and the `completed` row do not change
+
+#### Scenario: Count the steps of each run of a list
+
+- **GIVEN** run `r1` of analysis `a1` with two `completed` rows, one `running` row, and two `pending` rows, and run `r2` with no row
+- **WHEN** `countStepsByRuns(pool, "a1", ["r1", "r2"])` is called
+- **THEN** it gives one entry, `{ runId: "r1", doneSteps: 2, runningSteps: 1, totalSteps: 5 }`
 
 ### Requirement: hit_max_steps is bound as an integer
 
