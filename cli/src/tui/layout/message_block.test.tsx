@@ -5,6 +5,7 @@ import type { CompactionPart } from "@inflexa-ai/harness/contracts/index.js";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { MessageBlock } from "./message_block.tsx";
+import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import type { LiveTextPart, Part } from "../../types/session.ts";
 
 // Guards the streaming-vs-finalized markdown bug: @opentui/core's `<markdown streaming={false}>`
@@ -221,5 +222,23 @@ describe("MessageBlock nested calls", () => {
         expect(frame).toContain("get_pubmed_articles GSE12345");
         expect(frame).toContain("400ms");
         expect(frame).not.toContain("part:data-subagent-activity");
+    });
+});
+
+describe("MessageBlock report render", () => {
+    test("a render of the page shows as one line that names the document", async () => {
+        const ws = { analysis: null, sessionId: "thread-r", workingDir: "/work" } as unknown as Workspace;
+        const parts: Part[] = [{ type: "data-report-rendered", id: "render-1", renderedAt: new Date().toISOString(), title: "Interferon response" }];
+        const frame = await frameWith(
+            () => (
+                <WorkspaceContext.Provider value={ws}>
+                    <MessageBlock index={1} role="assistant" parts={parts} streamPartId={() => null} streamText={() => ""} />
+                </WorkspaceContext.Provider>
+            ),
+            "Page rendered",
+            { width: 80, height: 6 },
+        );
+        expect(frame).toContain("Page rendered: Interferon response");
+        expect(frame).not.toContain("part:data-report-rendered");
     });
 });

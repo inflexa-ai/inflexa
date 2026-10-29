@@ -16,6 +16,7 @@ import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock, type OpenableRowView } from "../components/openable_card_block.tsx";
 import { ReportSessionBlock } from "../components/report_session_block.tsx";
 import { CompactionBlock } from "../components/compaction_block.tsx";
+import { ReportRenderedBlock } from "../components/report_rendered_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
@@ -311,9 +312,9 @@ export function MessageBlock(props: MessageBlockProps) {
                     // The tool block of the root call draws these. See `nestedCallsByCall`.
                     case "data-subagent-activity":
                         return null;
-                    // The parts that the conversation has no first-class renderer for: the sidebar parts
-                    // of a run, and the record of a report render.
                     case "data-report-rendered":
+                        return <ReportRenderedEntry title={part.title} renderedAt={part.renderedAt} />;
+                    // The parts that the conversation has no first-class renderer for: the sidebar parts of a run.
                     case "data-run-started":
                     case "data-dag-state":
                     case "data-step-activity":
@@ -385,6 +386,19 @@ export function MessageBlock(props: MessageBlockProps) {
             </Show>
         </box>
     );
+}
+
+/**
+ * A render of the page of the open report session. A click opens the page through the same flow as the
+ * "Open report page" command, which asks the server for a fresh grant. The flow is imported at the click,
+ * because the command module reaches this layout through the design gallery.
+ */
+function ReportRenderedEntry(props: { title?: string; renderedAt: string }) {
+    const ws = useWorkspace();
+    const open = (): void => {
+        void import("../commands.tsx").then((commands) => commands.openReportPage(ws));
+    };
+    return <ReportRenderedBlock title={props.title} renderedLabel={Date.relativeAge(Date.parse(props.renderedAt))} onOpen={open} />;
 }
 
 /**
