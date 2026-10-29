@@ -56,6 +56,14 @@ export type ReportMeta = {
     readonly k: number;
 };
 
+/** A passing trial keeps its grade and its usage. The calls and the text only explain a failure. */
+function trialRecord(
+    result: TrialResult,
+): TrialResult | Pick<Extract<TrialResult, { kind: "graded" }>, "kind" | "pass" | "detail" | "finishReason" | "capped" | "usage"> {
+    if (result.kind === "error" || !result.pass) return result;
+    return { kind: result.kind, pass: result.pass, detail: result.detail, finishReason: result.finishReason, capped: result.capped, usage: result.usage };
+}
+
 function caseReport(evalCase: EvalCase, results: readonly TrialResult[], k: number): CaseReport {
     const graded = results.filter((result) => result.kind === "graded");
     const passes = graded.filter((result) => result.pass).length;
@@ -69,7 +77,7 @@ function caseReport(evalCase: EvalCase, results: readonly TrialResult[], k: numb
         rate: graded.length === 0 ? 0 : passes / graded.length,
         interval: wilson(passes, graded.length),
         passHatK: passHatK(passes, graded.length, k),
-        results: results.map((result) => parseJsonAs(JSON.stringify(result), z.json())),
+        results: results.map((result) => parseJsonAs(JSON.stringify(trialRecord(result)), z.json())),
     };
 }
 
