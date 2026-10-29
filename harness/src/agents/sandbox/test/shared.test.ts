@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,11 @@ import type { AgentMeta } from "../types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "../types.js";
 import type { CitationResolver } from "../../../citations/types.js";
 import { presentFind, presentLast } from "../../../lib/present.js";
+import { computeSha256 } from "../../../lib/fs-helpers.js";
+import { ProvenanceCollector } from "../../../provenance/collector.js";
+import { feedExecFrame } from "../../../provenance/exec-frame.js";
+import { readToolCallRecord } from "../../../tools/define-tool.js";
+import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 
 const meta: AgentMeta = {
     id: "test-agent",
@@ -463,5 +469,132 @@ describe("createSandboxAgent — the read tool of a kept text", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, { readOnly: true });
 
         expect(def.tools.map((t) => t.id)).not.toContain("read_tool_output");
+    });
+});
+
+describe("createSandboxAgent — the lineage of the workspace reads", () => {
+    const COUNTS = "gene,count\nTP53,10\nKIT,4\n";
+    const QC = "sample,ok\ns1,true\ns2,true\n";
+    const SIBLING = "partial,scratch\n";
+    const META = "sample,group\ns1,a\n";
+
+    let root: string;
+
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), "step-reads-"));
+        for (const dir of ["data/inputs/f1", "runs/run-001/qc/output", "runs/run-001/sibling/output", "runs/run-001/step-001"]) {
+            mkdirSync(join(root, dir), { recursive: true });
+        }
+        writeFileSync(join(root, "data/inputs/f1/counts.csv"), COUNTS);
+        writeFileSync(join(root, "data/inputs/f1/meta.csv"), META);
+        writeFileSync(join(root, "runs/run-001/qc/output/qc.csv"), QC);
+        writeFileSync(join(root, "runs/run-001/sibling/output/x.csv"), SIBLING);
+    });
+
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    function setup(): { def: ReturnType<typeof createSandboxAgent>; collector: ProvenanceCollector } {
+        const collector = new ProvenanceCollector({ stepId: "step-001", runId: "run-001", dependsOn: ["qc"] });
+        const base = makeFakeSandboxAgentDeps({ allowedWritePrefix: join(root, "runs/run-001/step-001") });
+        const def = createSandboxAgent(
+            {
+                ...base,
+                workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: () => Promise.resolve(root) }),
+                lineageCollector: collector,
+                step: { ...base.step, workspaceRoot: root },
+            },
+            meta,
+            body,
+        );
+        return { def, collector };
+    }
+
+    /** Run one call of a tool of the agent, and fold its record as the loop does after the round. */
+    async function call(def: ReturnType<typeof createSandboxAgent>, id: string, input: unknown): Promise<unknown> {
+        const tool = presentFind(def.tools, (t) => t.id === id);
+        const result = (await tool.execute(input, makeToolContext().ctx))._unsafeUnwrap();
+        tool.foldCallRecord?.(readToolCallRecord(result));
+        return result;
+    }
+
+    function inputs(collector: ProvenanceCollector): { path: string; hash: string; source: string; stepId?: string }[] {
+        return collector.getTrackedInputs().map((ref) => ({ path: ref.path, hash: ref.hash, source: ref.source, stepId: ref.stepId }));
+    }
+
+    it("a whole-file read_file of a data file records a data input with the hash of the bytes that it read", async () => {
+        const { def, collector } = setup();
+
+        await call(def, "read_file", { path: "/analysis-001/data/inputs/f1/counts.csv" });
+
+        expect(inputs(collector)).toEqual([{ path: "/analysis-001/data/inputs/f1/counts.csv", hash: computeSha256(Buffer.from(COUNTS)), source: "data" }]);
+    });
+
+    it("a window read of a declared dependency records an upstream input, and leaves its hash to the reconcile", async () => {
+        const { def, collector } = setup();
+
+        await call(def, "read_file", { path: "/analysis-001/runs/run-001/qc/output/qc.csv", headLines: 1 });
+
+        expect(inputs(collector)).toEqual([{ path: "/analysis-001/runs/run-001/qc/output/qc.csv", hash: "", source: "upstream", stepId: "qc" }]);
+    });
+
+    it("a read of an undeclared sibling returns its content and records no input", async () => {
+        const { def, collector } = setup();
+
+        const result = await call(def, "read_file", { path: "/analysis-001/runs/run-001/sibling/output/x.csv" });
+
+        expect(result).toMatchObject({ status: "ok", content: SIBLING });
+        expect(inputs(collector)).toEqual([]);
+    });
+
+    it("grep records each file whose lines its result returns, and no file that it searched with no match", async () => {
+        const { def, collector } = setup();
+
+        await call(def, "grep", { pattern: "TP53", path: "/analysis-001/data" });
+
+        expect(inputs(collector)).toEqual([{ path: "/analysis-001/data/inputs/f1/counts.csv", hash: computeSha256(Buffer.from(COUNTS)), source: "data" }]);
+    });
+
+    it("a file that read_file and execute_command read is one input, under one key", async () => {
+        const { def, collector } = setup();
+
+        await call(def, "read_file", { path: "/analysis-001/data/inputs/f1/counts.csv" });
+        feedExecFrame({
+            collector,
+            mountRoot: "/analysis-001",
+            command: ["python3", "scripts/de.py"],
+            exitCode: 0,
+            durationMs: 1,
+            provenance: { disabled: false, reads: [{ path: "/analysis-001/data/inputs/f1/counts.csv", layers: [] }], writes: [], deletes: [] },
+        });
+
+        expect(collector.getTrackedInputs()).toHaveLength(1);
+    });
+
+    it("the read_pdf script tool of the agent folds its reads into the collector", () => {
+        const { def, collector } = setup();
+        const readPdf = presentFind(def.scriptTools ?? [], (t) => t.id === "read_pdf");
+
+        readPdf.foldCallRecord?.({ reads: [{ path: "data/inputs/f1/paper.pdf", hash: computeSha256(Buffer.from("%PDF-1.4")) }] });
+
+        expect(inputs(collector)).toEqual([{ path: "/analysis-001/data/inputs/f1/paper.pdf", hash: computeSha256(Buffer.from("%PDF-1.4")), source: "data" }]);
+    });
+
+    it("an agent with no collector attaches no read record", async () => {
+        const base = makeFakeSandboxAgentDeps({ allowedWritePrefix: join(root, "runs/run-001/step-001") });
+        const def = createSandboxAgent(
+            {
+                ...base,
+                workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: () => Promise.resolve(root) }),
+                step: { ...base.step, workspaceRoot: root },
+            },
+            meta,
+            body,
+        );
+
+        const result = await call(def, "read_file", { path: "/analysis-001/data/inputs/f1/counts.csv" });
+
+        expect(readToolCallRecord(result)).toBeUndefined();
     });
 });

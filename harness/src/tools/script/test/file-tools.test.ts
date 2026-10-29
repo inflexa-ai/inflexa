@@ -12,7 +12,10 @@ import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { conversationSessionDir } from "../../../workspace/paths.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readToolCallRecord, type Tool, type ToolContext } from "../../define-tool.js";
-import { createScriptFileTools } from "../file-tools.js";
+import { ProvenanceCollector } from "../../../provenance/collector.js";
+import { createWorkspaceReadLineage } from "../../../provenance/workspace-reads.js";
+import { createReadPdfTool, createScriptFileTools } from "../file-tools.js";
+import { createRunScriptTool } from "../run-script.js";
 import { createScriptScratch, type ScriptScratch } from "../scratch.js";
 
 const ANALYSIS = "analysis-001";
@@ -95,6 +98,27 @@ describe("read_pdf", () => {
 
         expect(notPdf._unsafeUnwrapErr().error).toContain("is not a PDF");
         expect(broken._unsafeUnwrapErr().error).toContain("did not open as a PDF");
+    });
+
+    test("in a script of a step, records its read in the lineage of the step", async () => {
+        mkdirSync(join(root, "data/inputs/f1"), { recursive: true });
+        const bytes = buildPdf(1);
+        writeFileSync(join(root, "data/inputs/f1/paper.pdf"), bytes);
+        const collector = new ProvenanceCollector({ stepId: "s1", runId: "r1" });
+        const resolveWorkspaceRoot = (): Promise<string> => Promise.resolve(root);
+        const lineage = createWorkspaceReadLineage({ collector, workspaceRoot: root, analysisId: ANALYSIS, workingDir: join(root, "runs/r1/s1") });
+        const script = createRunScriptTool([
+            createReadPdfTool({ workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }), resolveWorkspaceRoot, lineage }),
+        ]);
+
+        const code = 'return (await tools.read_pdf({ path: "data/inputs/f1/paper.pdf" })).totalPages;';
+        const result = (await script.execute({ code }, ctx()))._unsafeUnwrap();
+        script.foldCallRecord?.(readToolCallRecord(result));
+
+        expect(result).toMatchObject({ ok: true, value: 1 });
+        expect(collector.getTrackedInputs().map(({ path, hash, source }) => ({ path, hash, source }))).toEqual([
+            { path: `/${ANALYSIS}/data/inputs/f1/paper.pdf`, hash: computeSha256(bytes), source: "data" },
+        ]);
     });
 });
 

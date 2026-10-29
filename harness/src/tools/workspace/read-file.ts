@@ -11,8 +11,9 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import type { WorkspaceReadLineage, WorkspaceReadRecord } from "../../provenance/workspace-reads.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 /** Default cap — large enough for typical CSV/MD/JSON, small enough to keep tool results out of context-blowing territory. */
@@ -80,7 +81,20 @@ const ReadFileInputSchema = z.object({
         ),
 });
 
-export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof ReadFileInputSchema>, ReadFileOutput> {
+type ReadFileToolOutput = ReadFileOutput | WithToolCallRecord<ReadFileOutput, WorkspaceReadRecord>;
+
+/** `lineage` records each read that gave text to the agent in the lineage of a step. */
+export function createReadFileTool(
+    fs: WorkspaceFilesystem,
+    workingDir?: string,
+    lineage?: WorkspaceReadLineage,
+): Tool<z.infer<typeof ReadFileInputSchema>, ReadFileToolOutput> {
+    /** The output, with the read of `path` as its call record when a lineage records it. */
+    function withRead(output: ReadFileOutput, path: string, wholeFile: Buffer | null): ReadFileToolOutput {
+        const read = lineage?.readOf(path, wholeFile);
+        return read === undefined ? output : withToolCallRecord(output, { reads: [read] });
+    }
+
     return defineTool({
         id: "read_file",
         description:
@@ -100,7 +114,8 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
             if (tailLines !== undefined) return `${path} (last ${tailLines} lines)`;
             return path;
         },
-        execute: async ({ path, headLines, tailLines }, ctx): Promise<Result<ReadFileOutput, ToolError>> => {
+        foldCallRecord: lineage === undefined ? undefined : (record: WorkspaceReadRecord) => lineage.track(record.reads),
+        execute: async ({ path, headLines, tailLines }, ctx): Promise<Result<ReadFileToolOutput, ToolError>> => {
             if (headLines !== undefined && tailLines !== undefined) {
                 return ok({
                     status: "invalid_input" as const,
@@ -125,22 +140,30 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
             switch (result.kind) {
                 case "ok":
                     if (looksBinary(result.content)) return ok({ status: "binary" as const, path, mode });
-                    return ok({
-                        status: "ok" as const,
-                        path,
-                        mode,
-                        content: result.content.toString("utf8"),
-                    });
+                    return ok(
+                        withRead(
+                            { status: "ok" as const, path, mode, content: result.content.toString("utf8") },
+                            path,
+                            // A line window is a part of the file, even when the window holds each line.
+                            mode === "full" ? result.content : null,
+                        ),
+                    );
                 case "truncated":
                     if (looksBinary(result.content)) return ok({ status: "binary" as const, path, mode, totalSize: result.totalSize });
-                    return ok({
-                        status: "truncated" as const,
-                        path,
-                        mode,
-                        content: result.content.toString("utf8"),
-                        totalSize: result.totalSize,
-                        returnedBytes: result.content.length,
-                    });
+                    return ok(
+                        withRead(
+                            {
+                                status: "truncated" as const,
+                                path,
+                                mode,
+                                content: result.content.toString("utf8"),
+                                totalSize: result.totalSize,
+                                returnedBytes: result.content.length,
+                            },
+                            path,
+                            null,
+                        ),
+                    );
                 case "not_found":
                     return ok({ status: "not_found" as const, path });
                 case "out_of_scope":
