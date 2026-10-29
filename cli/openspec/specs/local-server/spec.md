@@ -1262,6 +1262,14 @@ The response MUST have these headers:
 - `Cache-Control: no-cache`, thus a browser asks again with the tag before it uses a copy
 - `Content-Length`
 
+The server MUST give a protein structure file a type of its format, thus a client can tell a structure from other data. A text format MUST get a `text/` type, thus a browser can show it. The types are:
+
+| Extension | `Content-Type` |
+| --- | --- |
+| `.pdb`, `.ent` | `text/x-pdb; charset=utf-8` |
+| `.cif`, `.mmcif` | `text/x-mmcif; charset=utf-8` |
+| `.bcif` | `application/x-bcif` |
+
 A type that a browser runs as a document with script MUST also get `Content-Security-Policy: sandbox`. These types are HTML, XHTML, SVG, and XML. Thus a script in such a file cannot use the session of the browser on the origin of the server. Without this header, a script in a file can read each file on the machine through this route.
 
 The query value `download=1` MUST add `Content-Disposition: attachment` with the last part of the requested path as the file name.
@@ -1347,6 +1355,11 @@ The route accepts the bearer token or the session cookie of a browser sign-in, a
 
 - **WHEN** a client sends `HEAD` for a file
 - **THEN** the server answers 200 with the headers of the `GET`, and no body
+
+#### Scenario: A protein structure file gets the type of its format
+
+- **WHEN** a client reads a file with each of the extensions `.pdb`, `.ent`, `.cif`, `.mmcif`, and `.bcif`
+- **THEN** each response has the `Content-Type` that the table gives for the extension, and no `Content-Security-Policy`
 
 ### Requirement: The read route refuses a bad request with a named error
 

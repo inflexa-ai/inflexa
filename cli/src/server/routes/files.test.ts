@@ -278,6 +278,21 @@ describe("the headers", () => {
         expect((await getAt("paper.pdf")).headers.get("Content-Security-Policy")).toBeNull();
     });
 
+    test("a protein structure file gets the type of its format, a text type for a text format, and no sandbox", async () => {
+        for (const [name, type] of [
+            ["model.pdb", "text/x-pdb; charset=utf-8"],
+            ["pdb1abc.ent", "text/x-pdb; charset=utf-8"],
+            ["model.cif", "text/x-mmcif; charset=utf-8"],
+            ["model.mmcif", "text/x-mmcif; charset=utf-8"],
+            ["model.bcif", "application/x-bcif"],
+        ] as const) {
+            workspaceFile(name, "ATOM");
+            const response = await getAt(name);
+            expect(response.headers.get("Content-Type")).toBe(type);
+            expect(response.headers.get("Content-Security-Policy")).toBeNull();
+        }
+    });
+
     test("`download=1` adds an attachment with the last part of the requested path, also when the name is not ASCII", async () => {
         workspaceFile("runs/R/A/output/de.csv", "a\n");
         const plain = await getAt("runs/R/A/output/de.csv", undefined, "&download=1");

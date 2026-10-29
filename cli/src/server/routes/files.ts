@@ -3,7 +3,7 @@ import { open, type FileHandle } from "node:fs/promises";
 import { basename } from "node:path";
 
 import type { Context } from "hono";
-import { getMimeType } from "hono/utils/mime";
+import { getMimeType, mimes } from "hono/utils/mime";
 import { err, ok, ResultAsync, type Result } from "neverthrow";
 
 import { errnoCode } from "../../lib/fs.ts";
@@ -27,6 +27,19 @@ const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants
 
 /** The types that a browser runs as a document with script. They get `Content-Security-Policy: sandbox`. */
 const SANDBOXED_TYPES: ReadonlySet<string> = new Set(["text/html", "application/xhtml+xml", "image/svg+xml", "application/xml", "text/xml"]);
+
+/**
+ * The hono types plus the protein structure formats, which hono does not know. A text format gets a `text/` type,
+ * thus a client reads it as text under `nosniff`. The structure entries come last, thus they win over a later hono entry.
+ */
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+    ...mimes,
+    pdb: "text/x-pdb; charset=utf-8",
+    ent: "text/x-pdb; charset=utf-8",
+    cif: "text/x-mmcif; charset=utf-8",
+    mmcif: "text/x-mmcif; charset=utf-8",
+    bcif: "application/x-bcif",
+};
 
 type ByteRange = { start: number; end: number };
 
@@ -164,7 +177,7 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
 
     // The requested name, not the name of the real path, gives the type and the download name.
     const name = basename(path);
-    const type = getMimeType(name) ?? "application/octet-stream";
+    const type = getMimeType(name, CONTENT_TYPES) ?? "application/octet-stream";
     headers.set("Content-Type", type);
     headers.set("X-Content-Type-Options", "nosniff");
     headers.set("Accept-Ranges", "bytes");
