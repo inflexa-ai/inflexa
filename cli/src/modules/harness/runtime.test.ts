@@ -201,6 +201,7 @@ function recordingSeams(calls: string[]): BootSeams {
                         resume: async () => ({ kind: "not_found" }),
                         hold: async () => ({ kind: "not_found" }),
                     },
+                    runCanceler: { cancel: () => Promise.reject(new Error("the offline boot cancels no run")) },
                     // The offline boot never drives a report turn, thus this anchor never runs. A
                     // failed arm is the minimal stand-in — a ready arm would build a full durable
                     // session-state row that no assertion here reads.

@@ -6,9 +6,6 @@ import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
 import {
-    createLocalRunAuthorizer,
-    createNoopRunCharge,
-    createRunCanceler,
     countArtifactsByRuns,
     countRunsByAnalysis,
     createRunEventStream,
@@ -35,8 +32,6 @@ import {
     type Pool,
     type PlanApproval,
     type PlanRecord,
-    type RunCanceler,
-    type RunCancelerDeps,
     type RunArtifactCount,
     type RunEventSubscribeOptions,
     type StepExecutionRow,
@@ -86,7 +81,6 @@ import { getLogger } from "../../lib/log.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
-import { provenanceSeam } from "../../modules/harness/prov_bridge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { buildChatSession } from "../../modules/harness/turn.ts";
 import { analysisFarmPath, catalogFarmPath, composeFullFarm, describeFarmCompositionError } from "../../modules/libs/composition.ts";
@@ -151,7 +145,7 @@ export type RunRoutesOpts = {
     /** Deliver each part of the run, and of its children, until the run is terminal or the signal aborts. */
     readonly subscribeRun: (pool: Pool, options: RunEventSubscribeOptions) => Promise<void>;
     /** Cancel the run and its children, and converge the ledgers. Rejects with {@link UnknownRunError} for an unknown run. */
-    readonly cancelRun: (pool: Pool, runId: string, session: AgentSession) => Promise<CancelRunResult>;
+    readonly cancelRun: (runtime: HarnessRuntime, runId: string, session: AgentSession) => Promise<CancelRunResult>;
     /** The parity drive of a chat open. */
     readonly ensureParity: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** The deliberate re-profile. */
@@ -165,27 +159,6 @@ export type RunRoutesOpts = {
     /** Compose the farm of the analysis from the catalog closure, when the farm is missing. */
     readonly healFarm: (analysisId: string) => Promise<FarmHealOutcome>;
 };
-
-/** One canceler for each pool: a canceler makes its engine client at the first cancel, and the client registers handlers on the pool. */
-const cancelers = new WeakMap<Pool, RunCanceler>();
-
-/**
- * The deps of the production run canceler for a pool: the noop run charge, the local run authorizer, and the
- * provenance binding that the boot installed.
- *
- * The canceler emits the end of a run that it cancels through that binding, thus the signed document of the
- * analysis records the abort. While no boot has installed one the deps carry none, and the cancel
- * converges with no provenance.
- */
-export function productionCancelerDeps(pool: Pool): RunCancelerDeps {
-    const provenance = provenanceSeam();
-    return {
-        pool,
-        runCharge: createNoopRunCharge(),
-        runAuthorizer: createLocalRunAuthorizer(),
-        ...(provenance ? { provenance } : {}),
-    };
-}
 
 /** The production {@link RunRoutesOpts}. */
 export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
@@ -205,11 +178,7 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     listPlanRunIds: (pool, analysisId, planId, limit) => queryRunIdsByPlan(pool, { analysisId, planId, limit }),
     loadProfile: loadDataProfileStatus,
     subscribeRun: (pool, options) => createRunEventStream({ pool }).subscribe(options),
-    cancelRun: (pool, runId, session) => {
-        const canceler = cancelers.get(pool) ?? createRunCanceler(productionCancelerDeps(pool));
-        cancelers.set(pool, canceler);
-        return canceler.cancel(runId, session);
-    },
+    cancelRun: (runtime, runId, session) => runtime.runCanceler.cancel(runId, session),
     ensureParity: ensureProfileAtParity,
     forceReprofile,
     readiness: readSandboxReadiness,
@@ -376,7 +345,7 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
             auth: makeLocalAuth(),
         };
         // `cancel` rejects: on an unknown run, and when the engine cancel fails, which is safe to retry.
-        const canceled = await ResultAsync.fromPromise(opts.cancelRun(pool, runId, session), (cause) => cause);
+        const canceled = await ResultAsync.fromPromise(opts.cancelRun(c.get("runtime"), runId, session), (cause) => cause);
         return canceled.match(
             (result) => c.json(result),
             (cause) => (cause instanceof UnknownRunError ? runNotFound(c, runId) : internalError(c, cause, "cancel the run")),
