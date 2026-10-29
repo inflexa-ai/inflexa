@@ -232,6 +232,25 @@ export function renderMemory(memory: StepMemory): string {
     return section(ANALYSIS_MEMORY_HEADING, parts.join("\n\n"));
 }
 
+/** The most characters of the request that a seed carries. A request above it keeps its head. */
+export const REQUEST_CHARS = 8000;
+
+/**
+ * The request of the analysis, as the planner received it. A step agent never sees the conversation, thus
+ * this is its one source for what the user asked in the words of the user: a file name, a field, an allowed
+ * value, or the shape of an entry of a deliverable that the plan only names.
+ */
+export function renderRequest(request: string | undefined): string {
+    const text = clamp((request ?? "").trim(), REQUEST_CHARS);
+    if (text.length === 0) return "";
+    return section(
+        "The request of the analysis",
+        "This step is one part of the plan that answers this request. Do the task of this step. " +
+            "When this step writes a deliverable that the request describes, the deliverable obeys the format of the request.\n\n" +
+            text,
+    );
+}
+
 // ── (1c) Template contract ────────────────────────────────────────────
 
 /** A file the script of the template reads. `path` names the slot that gives it, for example `{{counts_path}}`. */
@@ -501,6 +520,8 @@ export type StepBriefing = {
     readonly upstream: readonly UpstreamHandoff[];
     /** The goal and the constraints of the analysis, read from the working memory at dispatch. */
     readonly memory: StepMemory;
+    /** The request that the plan answers. Absent on an ad hoc plan, whose task is the request. */
+    readonly request?: string;
     /** The contract of the template the step renders, with the plan settings bound to it. Absent when none was retrieved. */
     readonly template?: TemplateBrief;
     /**
@@ -522,6 +543,7 @@ export type StepBriefing = {
 export function composeStepBriefing(briefing: StepBriefing): string {
     return [
         renderTask(briefing.step, briefing),
+        renderRequest(briefing.request),
         renderTemplateContract(briefing.template),
         renderMemory(briefing.memory),
         renderWorkspace(briefing.workspace),

@@ -139,6 +139,12 @@ export const AnalysisPlanSchema = z.object({
     created_at: z.string().describe("ISO-8601 timestamp for when the plan was created."),
     omicsType: z.string().optional().describe("Omics data type detected from the data context (e.g. transcriptomics, proteomics, metabolomics)."),
     omicsSubtype: z.string().optional().describe("Subtype detected from the data context (e.g. bulk-rna-seq, single-cell, microarray)."),
+    request: z
+        .string()
+        .optional()
+        .describe(
+            "The request that the plan answers, as `generate_plan` received it. The briefing of each step renders it. Absent on an ad hoc plan and on a historical plan.",
+        ),
 });
 
 // ── Suspension Payload ──────────────────────────────────────────────

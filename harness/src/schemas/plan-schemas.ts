@@ -29,7 +29,7 @@ export type PlanStep = z.infer<typeof PlanStepSchema>;
 
 /** Plan schema for planner output — uses PlanStepSchema for steps and requires
  *  a concise title (optional on the persistence schema for historical plans). */
-export const PlannerPlanSchema = AnalysisPlanSchema.extend({
+export const PlannerPlanSchema = AnalysisPlanSchema.omit({ request: true }).extend({
     title: z
         .string()
         .min(1)

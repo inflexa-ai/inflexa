@@ -250,6 +250,21 @@ describe("composeStepSeed", () => {
         expect(seed.templateBinding).toBeUndefined();
     });
 
+    it("carries the request of the plan into the seed of each step", async () => {
+        const root = await makeWorkspace();
+        const request = "Write `answer.json` with `verdict` one of `answer`, `insufficient`.";
+
+        const { prompt } = await composeStepSeed({
+            input: { ...input([planStep("T1S1")]), request },
+            stepId: "T1S1",
+            runId: RUN_ID,
+            deps: deps(root),
+        });
+
+        expect(prompt).toContain("## The request of the analysis");
+        expect(prompt).toContain(request);
+    });
+
     it("gives an independent step no upstream block", async () => {
         const root = await makeWorkspace();
         await writeStepSummary(root, "T1S1", "irrelevant sibling summary");

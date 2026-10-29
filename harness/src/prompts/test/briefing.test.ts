@@ -16,6 +16,7 @@ import {
     MAX_TEMPLATE_SLOTS,
     MAX_UPSTREAM_ARTIFACTS,
     MAX_UPSTREAM_DEPS,
+    REQUEST_CHARS,
     STEP_NON_TASK_FIELDS,
     STEP_TASK_FIELDS,
     TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS,
@@ -24,6 +25,7 @@ import {
     emptyStepMemory,
     renderMemory,
     renderOrientation,
+    renderRequest,
     renderTask,
     renderTemplateContract,
     renderUpstream,
@@ -157,6 +159,38 @@ describe("renderTask", () => {
 });
 
 // ── renderTemplateContract ───────────────────────────────────────────
+
+describe("renderRequest", () => {
+    it("renders the request in the words of the user", () => {
+        const request = "Write `answer.json` with `verdict` one of `answer`, `insufficient`.";
+        const rendered = renderRequest(request);
+        expect(rendered).toStartWith("## The request of the analysis");
+        expect(rendered).toContain(request);
+    });
+
+    it("renders nothing for an absent or blank request", () => {
+        expect(renderRequest(undefined)).toBe("");
+        expect(renderRequest("   ")).toBe("");
+    });
+
+    it("keeps the head of a request above the bound", () => {
+        const rendered = renderRequest(`HEAD ${"x".repeat(REQUEST_CHARS * 2)}`);
+        expect(rendered).toContain("HEAD");
+        expect(rendered.length).toBeLessThan(REQUEST_CHARS + 500);
+    });
+
+    it("sits after the task in the seed", () => {
+        const seed = composeStepBriefing({
+            step: fullyPopulatedStep(),
+            workspace: WORKSPACE,
+            profile: null,
+            upstream: [],
+            memory: emptyStepMemory(),
+            request: "the words of the user",
+        });
+        expect(seed.indexOf("## The request of the analysis")).toBeGreaterThan(seed.indexOf("## Task"));
+    });
+});
 
 describe("renderTemplateContract", () => {
     it("renders every adaptable slot by name and never the pinned one", () => {

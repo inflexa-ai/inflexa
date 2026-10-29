@@ -18,7 +18,7 @@ import { SANDBOX_AGENT_META } from "../../../agents/sandbox/index.js";
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
-import { PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
+import { PlannerPlanSchema, PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
 import { loadPlan, type DataProfileResult } from "../../../state/index.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
 import type { Tool, ToolContext } from "../../define-tool.js";
@@ -420,6 +420,20 @@ describe("generatePlan loop-driving tool", () => {
         const blockedEvents: unknown[] = [];
         (await toolFor(blockImmediately().provider).execute(INPUT, toolContext(analysisId, { emitted: blockedEvents })))._unsafeUnwrap();
         expect(blockedEvents.filter((event) => parseUnknownRecord(event)?.type === "data-plan")).toHaveLength(0);
+    });
+
+    it("stores the request of the call with the plan, and the planner does not write it", async () => {
+        const analysisId = "an-request";
+        await seedAnalysis(pool, analysisId, { dpStatus: null });
+        const model = scriptedModel([callTools(submitPlan("t1", validCandidate())), submitted]);
+
+        const result = planResultOf((await toolFor(model.provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+
+        const stored = z.object({ request: z.string() }).parse((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
+        expect(stored.request).toBe(INPUT.researchQuestion);
+        expect(Object.keys(z.object({ properties: z.record(z.string(), z.json()) }).parse(z.toJSONSchema(PlannerPlanSchema)).properties)).not.toContain(
+            "request",
+        );
     });
 
     it("persists one plan when the persist of the same call runs again, and a new call persists a new plan", async () => {
