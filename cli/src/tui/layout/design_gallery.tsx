@@ -777,7 +777,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         onOpen={noop}
                     />
                 </State>
-                <State n="21" label="approval prompt & ask cards — docked ctx.ask surface + reconciled transcript cards">
+                <State n="21" label="approval prompt & ask cards — docked approval surface + reconciled transcript cards">
                     {/* The docked AskPrompt as it sits above the chat bar, rendered inert. No onFocusReady
                         handle is passed, so no host ever focuses the box: its y/a/n KEY layer is gated on
                         that box's own focus target (and on MODE_BASE, suspended under this dialog), so it can

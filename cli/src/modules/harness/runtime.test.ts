@@ -21,6 +21,7 @@ import {
     type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
 import { inProcessChatTurns } from "@inflexa-ai/harness/testing";
+import { inProcessSubAgent } from "@inflexa-ai/harness/loop/sub-agent.js";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { createBuildSession, type BuildSessionHost } from "../libs/build-session.ts";
@@ -1047,6 +1048,7 @@ describe("bootHarnessRuntime — the build-session binding", () => {
                 throw new Error("not used at composition time");
             },
             citationResolver: createCitationResolver(),
+            registerSubAgent: inProcessSubAgent,
         });
         const ids = agent.tools.map((tool) => tool.id);
         expect(ids.filter((id) => id === "install_from_source")).toHaveLength(1);

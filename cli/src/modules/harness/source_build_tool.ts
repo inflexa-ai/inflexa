@@ -14,17 +14,17 @@
  * cuts a result over the tool-result cap and keeps its text for
  * `read_tool_output`, thus the tool keeps no output itself.
  *
- * A rejection of any ask ends the session and rethrows `AskRejectedError`
- * (deliberately not caught, matching `run_inflexa`): the loop maps the throw to
- * an execution-denied result and ends the turn. Any other throw of an ask — the
- * abort of a turn that waits on the user — rethrows with the session kept,
- * because the user refused nothing and a later call continues the session.
+ * Every ask rides the `approval` hook: the loop asks the user before `execute`
+ * runs, and a denied call never reaches `execute`. Thus a denial runs nothing
+ * and leaves the session open; the agent stops it when the user refuses to
+ * continue.
  */
 
-import { AskRejectedError, defineTool, type Tool, type ToolContext, type ToolError } from "@inflexa-ai/harness";
+import { defineTool, type AskRequest, type Tool, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { sha256Text } from "../../lib/hash.ts";
 import type { BuildCommitRequest, BuildExecResult, BuildPlan, BuildSession, BuildSource } from "../libs/build-session.ts";
 
 /** The dependencies of the tool: the session realization that the CLI binds. */
@@ -32,7 +32,7 @@ export type InstallFromSourceDeps = {
     readonly buildSession: BuildSession;
 };
 
-/** One live session of this process. A session ends at its stop, at a completed commit, or at a rejection. */
+/** One live session of this process. A session ends at its stop, at a completed commit, or at the end of the host process. */
 type SessionState = {
     readonly source: BuildSource;
     readonly commit?: string;
@@ -40,7 +40,18 @@ type SessionState = {
     readonly classHosts?: readonly string[];
     seq: number;
     plan?: BuildPlan;
+    /** The ask that the approval of each pending call answered, by the invocation id of the call. `execute` takes its entry and decides again. */
+    readonly approvals: Map<string, Ask>;
 };
+
+/** The ask that one call on a live session needs, decided from the session and the input alone. */
+type Ask =
+    | { readonly kind: "none" }
+    | { readonly kind: "plan"; readonly plan: BuildPlan; readonly command: string; readonly root: boolean; readonly grantKey: string }
+    | { readonly kind: "command"; readonly command: string; readonly root: boolean; readonly grantKey: string }
+    | { readonly kind: "commit"; readonly request: BuildCommitRequest; readonly grantKey: string };
+
+const NO_ASK: Ask = { kind: "none" };
 
 /** The result of one call, one member for each outcome the agent reads. */
 export type InstallFromSourceResult =
@@ -63,6 +74,7 @@ export type InstallFromSourceResult =
     | { readonly status: "committed"; readonly pin: string; readonly storeDir: string; readonly note: string }
     | { readonly status: "clean_run_failed"; readonly sessionId: string; readonly reason: string; readonly note: string }
     | { readonly status: "plan_required"; readonly sessionId: string; readonly note: string }
+    | { readonly status: "approval_stale"; readonly sessionId: string; readonly note: string }
     | { readonly status: "stopped"; readonly sessionId: string }
     | { readonly status: "session_ended"; readonly sessionId: string }
     | { readonly status: "unknown_session"; readonly sessionId: string }
@@ -85,6 +97,10 @@ const PLAN_REQUIRED_NOTE = "A commit needs an approved plan first: send the firs
 const EXPLORATION_ROOT_NOTE =
     "Root is a build-phase capability: no exploration command runs as root. Approve the plan first — send the first build " +
     "command with `hosts`, `aptPackages`, and `strategy` — then re-run the command with `root: true`.";
+
+const APPROVAL_STALE_NOTE =
+    "This call ran nothing: an earlier call of the session bound or changed the plan after the user answered this call, " +
+    "so the approval no longer covers it. Send the call again; it asks under the current plan.";
 
 /** Two or more DNS labels of letters, digits, and hyphens, and a last label of letters alone: no IP literal, no top-level domain alone, no `/`, no `,`. */
 const HOST_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]+$/;
@@ -237,6 +253,99 @@ function samePlan(a: BuildPlan, b: BuildPlan): boolean {
     return a.strategy === b.strategy && sameLines(a.hosts, b.hosts) && sameLines(a.aptPackages, b.aptPackages);
 }
 
+/** The "always" key of the plain build commands of one session. */
+function commandGrantKey(sessionId: string): string {
+    return `install_from_source:${sessionId}`;
+}
+
+/** The plan that an exec carries, with the complete host list the session will carry, or `undefined` for an exec with no plan fields. */
+function planOf(
+    state: SessionState,
+    input: { readonly hosts?: readonly string[]; readonly aptPackages?: readonly string[]; readonly strategy?: string },
+): BuildPlan | undefined {
+    if (input.hosts === undefined || input.aptPackages === undefined || input.strategy === undefined) return undefined;
+    return { hosts: completeHosts(state, input.hosts), aptPackages: input.aptPackages, strategy: input.strategy };
+}
+
+/** The commit request of a commit input; a commit with no package directory sends none. */
+function commitRequestOf(input: { readonly script?: string; readonly packageDir?: string }): BuildCommitRequest {
+    return input.packageDir === undefined ? { script: input.script ?? "" } : { script: input.script ?? "", packageDir: input.packageDir };
+}
+
+/**
+ * The ask that one call on a live session needs. The `approval` hook and `execute` both call it, thus the two
+ * cannot disagree on a session that did not change. A call that `execute` refuses (a root exploration exec, a
+ * commit with no plan) needs no ask, because it runs nothing.
+ *
+ * The plan and commit keys hold a digest of exactly what the ask shows, because the gateway grants an "always"
+ * on a matching key in silence: an "always" on one plan or one script never approves a different one, and the
+ * session key of the plain commands never answers a plan or a commit.
+ */
+function askOf(
+    sessionId: string,
+    state: SessionState,
+    input: {
+        readonly op: "start" | "exec" | "commit" | "stop";
+        readonly command?: string;
+        readonly root?: boolean;
+        readonly hosts?: readonly string[];
+        readonly aptPackages?: readonly string[];
+        readonly strategy?: string;
+        readonly script?: string;
+        readonly packageDir?: string;
+    },
+): Ask {
+    switch (input.op) {
+        case "exec": {
+            const plan = planOf(state, input);
+            if (state.plan === undefined && plan === undefined) return NO_ASK;
+            const command = input.command ?? "";
+            const root = input.root === true;
+            if (plan !== undefined && (state.plan === undefined || !samePlan(plan, state.plan))) {
+                const digest = sha256Text(
+                    JSON.stringify({ hosts: [...plan.hosts].sort(), aptPackages: [...plan.aptPackages].sort(), strategy: plan.strategy, command, root }),
+                );
+                return { kind: "plan", plan, command, root, grantKey: `${commandGrantKey(sessionId)}:plan:${digest}` };
+            }
+            return { kind: "command", command, root, grantKey: commandGrantKey(sessionId) };
+        }
+        case "commit": {
+            if (state.plan === undefined) return NO_ASK;
+            const request = commitRequestOf(input);
+            // The commit ask shows the plan beside the script, and the clean run uses its hosts and apt packages.
+            const digest = sha256Text(
+                JSON.stringify({
+                    script: request.script,
+                    packageDir: request.packageDir ?? null,
+                    hosts: [...state.plan.hosts].sort(),
+                    aptPackages: [...state.plan.aptPackages].sort(),
+                }),
+            );
+            return { kind: "commit", request, grantKey: `${commandGrantKey(sessionId)}:commit:${digest}` };
+        }
+        case "start":
+        case "stop":
+            return NO_ASK;
+    }
+}
+
+/**
+ * Whether the ask that the user answered covers the ask the call needs now. A plan approval covers the plain
+ * command it carried, because the user saw that command inside the plan ask; a plan or a commit must match
+ * exactly, because a different digest is a different action.
+ */
+function covers(approved: Ask, needed: Ask): boolean {
+    switch (needed.kind) {
+        case "none":
+            return true;
+        case "command":
+            return approved.kind === "command" || approved.kind === "plan";
+        case "plan":
+        case "commit":
+            return approved.kind === needed.kind && approved.grantKey === needed.grantKey;
+    }
+}
+
 /** The own string `message` of a thrown value of any object type, not only of an `Error`. */
 function messageOf(value: unknown): string | undefined {
     if (typeof value !== "object" || value === null || !("message" in value)) return undefined;
@@ -273,10 +382,10 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
     const failureOf = (cause: unknown): string => messageOf(cause) ?? textOf(cause);
 
     // The loop runs the calls of one round in parallel and a host can run two turns at once, thus
-    // the body of each exec, commit, and stop (its asks included) runs behind the earlier call of
-    // its session. Otherwise a plan restart removes the container under a running command, and a
-    // call changes the session between an ask and its approved action. Every chain stored here
-    // settles without a rejection, and an idle entry is removed.
+    // the body of each exec, commit, and stop runs behind the earlier call of its session. Otherwise a
+    // plan restart removes the container under a running command. The loop asks for the approval of a
+    // call outside this chain, thus each body decides its ask again and refuses a stale approval.
+    // Every chain stored here settles without a rejection, and an idle entry is removed.
     const chains = new Map<string, Promise<void>>();
 
     function inSessionChain<T>(sessionId: string, body: () => Promise<T>): Promise<T> {
@@ -293,13 +402,20 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
         return run;
     }
 
+    /** The approval that the user gave this call, taken out of the session entry: absent stands for no ask. */
+    function takeApproval(state: SessionState, invocationId: string): Ask {
+        const approved = state.approvals.get(invocationId) ?? NO_ASK;
+        state.approvals.delete(invocationId);
+        return approved;
+    }
+
     /** Each start asks first: the session reads the source into the model context, and a folder start reads a host directory with no other approval. */
-    async function askStart(ctx: ToolContext, source: BuildSource): Promise<void> {
+    function startRequest(source: BuildSource): AskRequest {
         const shown =
             source.kind === "folder"
                 ? `the local folder ${source.path}`
                 : `${source.url} (${source.ref === undefined ? "the head of the default branch" : `ref ${source.ref}`})`;
-        await ctx.ask({
+        return {
             title: "Approve the source-build session",
             command: `start a build session that reads ${shown}`,
             detail:
@@ -308,76 +424,48 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                     ? "The session copies and reads the whole folder, and its commands can print any file in it.\n"
                     : "The session clones this repository, and its commands can print any file in it.\n") +
                 "Approving starts the exploration phase; the plan and each build command ask on their own.",
-        });
+        };
     }
 
-    /** A session the user refused to continue ends here: the container must not outlive the refusal. */
-    async function stopAfterRejection(sessionId: string): Promise<void> {
-        sessions.delete(sessionId);
-        ended.add(sessionId);
-        try {
-            await deps.buildSession.stop(sessionId);
-        } catch {
-            // The denial the user sees outranks a cleanup failure; a stopped host process cleans the container as debris.
-        }
-    }
-
-    /** An ask threw: only the denial of the user ends the session. An abort or another throw leaves the session open, and the throw goes to the loop. */
-    async function endOnRejection(sessionId: string, cause: unknown): Promise<never> {
-        if (cause instanceof AskRejectedError) await stopAfterRejection(sessionId);
-        // The loop maps a throw of `execute` to an execution-denied result that ends the turn. Only that
-        // throw carries the denial, and the session must stop first, thus the same value passes on.
-        throw cause;
-    }
-
-    /** Ask the plan, then bind it. A rejection ends the session and leaves the throw to the loop. */
-    async function askPlan(ctx: ToolContext, sessionId: string, state: SessionState, plan: BuildPlan): Promise<void> {
-        const amended = state.plan !== undefined;
-        try {
-            await ctx.ask({
-                title: amended ? "Approve the amended source-build plan" : "Approve the source-build plan",
-                command: `${amended ? "restart" : "start"} the build phase of ${renderSource(state.source, state.commit)} under hosts: ${plan.hosts.join(", ")}`,
-                detail:
-                    `Source: ${renderSource(state.source, state.commit)}\n` +
-                    `Egress hosts of the session: ${plan.hosts.join(", ")}\n` +
-                    `apt packages: ${plan.aptPackages.length > 0 ? plan.aptPackages.join(", ") : "none"}\n` +
-                    `Strategy: ${plan.strategy}\n` +
-                    `Approving ${amended ? "restarts the session container under this host list" : "moves the session to its build phase under this host list"}; each command still asks on its own.`,
-            });
-        } catch (cause) {
-            return endOnRejection(sessionId, cause);
-        }
-        state.plan = plan;
-    }
-
-    async function askCommand(ctx: ToolContext, sessionId: string, command: string, root: boolean): Promise<void> {
-        try {
-            await ctx.ask({
-                title: "Run build-session command",
-                command,
-                detail: `${root ? "This command runs as root in the build session. " : ""}Approving "always" runs the remaining commands of THIS session without asking each time.`,
-                grantKey: `install_from_source:${sessionId}`,
-            });
-        } catch (cause) {
-            return endOnRejection(sessionId, cause);
-        }
-    }
-
-    async function askCommit(ctx: ToolContext, sessionId: string, state: SessionState, request: BuildCommitRequest): Promise<void> {
-        try {
-            await ctx.ask({
-                title: "Approve the source-build commit",
-                command: `run one clean build of ${renderSource(state.source, state.commit)} from the pristine snapshot`,
-                detail:
-                    `Build script:\n${request.script}\n\n` +
-                    (request.packageDir === undefined ? "" : `Package directory: ${request.packageDir}\n`) +
-                    `Build record preview — source: ${renderSource(state.source, state.commit)}; ` +
-                    `egress hosts: ${state.plan?.hosts.join(", ") ?? "none"}; ` +
-                    `apt packages: ${state.plan?.aptPackages.join(", ") || "none"}. ` +
-                    "The committed record also holds the image digests, the apt snapshot date, and the tool versions of the clean run.",
-            });
-        } catch (cause) {
-            return endOnRejection(sessionId, cause);
+    /** The request that one ask of a live session shows the user. */
+    function requestOf(state: SessionState, ask: Exclude<Ask, { readonly kind: "none" }>): AskRequest {
+        switch (ask.kind) {
+            case "plan": {
+                const amended = state.plan !== undefined;
+                return {
+                    title: amended ? "Approve the amended source-build plan" : "Approve the source-build plan",
+                    command: `${amended ? "restart" : "start"} the build phase of ${renderSource(state.source, state.commit)} under hosts: ${ask.plan.hosts.join(", ")}, then run: ${ask.command}`,
+                    detail:
+                        `Source: ${renderSource(state.source, state.commit)}\n` +
+                        `Egress hosts of the session: ${ask.plan.hosts.join(", ")}\n` +
+                        `apt packages: ${ask.plan.aptPackages.length > 0 ? ask.plan.aptPackages.join(", ") : "none"}\n` +
+                        `Strategy: ${ask.plan.strategy}\n` +
+                        `Command: ${ask.command}\n` +
+                        (ask.root ? "This command runs as root in the build session.\n" : "") +
+                        `Approving ${amended ? "restarts the session container under this host list" : "moves the session to its build phase under this host list"} and runs this command; each later command asks on its own.`,
+                    grantKey: ask.grantKey,
+                };
+            }
+            case "command":
+                return {
+                    title: "Run build-session command",
+                    command: ask.command,
+                    detail: `${ask.root ? "This command runs as root in the build session. " : ""}Approving "always" runs the remaining commands of THIS session without asking each time.`,
+                    grantKey: ask.grantKey,
+                };
+            case "commit":
+                return {
+                    title: "Approve the source-build commit",
+                    command: `run one clean build of ${renderSource(state.source, state.commit)} from the pristine snapshot`,
+                    detail:
+                        `Build script:\n${ask.request.script}\n\n` +
+                        (ask.request.packageDir === undefined ? "" : `Package directory: ${ask.request.packageDir}\n`) +
+                        `Build record preview — source: ${renderSource(state.source, state.commit)}; ` +
+                        `egress hosts: ${state.plan?.hosts.join(", ") ?? "none"}; ` +
+                        `apt packages: ${state.plan?.aptPackages.join(", ") || "none"}. ` +
+                        "The committed record also holds the image digests, the apt snapshot date, and the tool versions of the clean run.",
+                    grantKey: ask.grantKey,
+                };
         }
     }
 
@@ -405,8 +493,10 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
             '`op: "commit"` with `sessionId`, the build `script`, and `packageDir` when the R DESCRIPTION is not at the tree root; ' +
             '`op: "stop"` with `sessionId`. ' +
             "THE FLOW: the user approves each start, and the ask shows the source. A start begins an EXPLORATION phase — the session network holds the host of the source alone, so read the repository (the README, the file layout, the DESCRIPTION or pyproject, the build files) and install nothing. " +
-            "When you know the build, send the FIRST build command with the plan fields `hosts`, `aptPackages`, and `strategy`: the user approves the plan (the source, the commit, the hosts, the apt packages, the strategy), " +
-            'and each further command asks on its own; an "always" covers the commands of THIS session only. ' +
+            "When you know the build, send the FIRST build command with the plan fields `hosts`, `aptPackages`, and `strategy`: the user approves the plan (the source, the commit, the hosts, the apt packages, the strategy) and that command in one ask, " +
+            'and each further command asks on its own; an "always" covers the plain commands of THIS session only. ' +
+            "A call that the user denies ran nothing and the session stays open: read the reason, then continue as the user says, or stop the session. " +
+            "A call that answers `approval_stale` ran nothing, because an earlier call of the session bound or changed the plan after the user answered it: send it again. " +
             "Pass `root: true` only for a command that needs it (for example apt-get); its approval says that the command runs as root. " +
             "Every plan approval RESTARTS the session container and keeps /work alone: each change outside /work is gone, for example the apt packages and the user libraries, so install them again after a restart. " +
             "When a command fails at the egress wall for a host the plan did not name, add the host to `hosts` and send the amended plan with the next command — the user approves the wider list and the session restarts under it. " +
@@ -423,6 +513,21 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
             'STOP the session (`op: "stop"`) when the build is done or the user refuses to continue. ' +
             "Exec output obeys the tool-result cap; a longer log comes back cut with a reference you read through `read_tool_output`.",
         inputSchema: InstallFromSourceInputSchema,
+        // The loop asks the user before a call runs. The hook records the ask that the user answers on the session
+        // entry, under the id of the call, and `execute` decides again inside the chain of the session.
+        approval: (input, ctx): AskRequest | undefined => {
+            if (input.op === "start") {
+                return startRequest(
+                    input.gitUrl !== undefined ? { kind: "git", url: input.gitUrl, ref: input.gitRef } : { kind: "folder", path: input.folder ?? "" },
+                );
+            }
+            const sessionId = input.sessionId ?? "";
+            const state = sessions.get(sessionId);
+            if (state === undefined) return undefined;
+            const ask = askOf(sessionId, state, input);
+            state.approvals.set(ctx.invocationId, ask);
+            return ask.kind === "none" ? undefined : requestOf(state, ask);
+        },
         describeCall: (input) => {
             switch (input.op) {
                 case "start":
@@ -440,10 +545,16 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                 case "start": {
                     const source: BuildSource =
                         input.gitUrl !== undefined ? { kind: "git", url: input.gitUrl, ref: input.gitRef } : { kind: "folder", path: input.folder ?? "" };
-                    await askStart(ctx, source);
                     try {
                         const handle = await deps.buildSession.start(source, ctx.session.scope.analysisId, ctx.signal);
-                        sessions.set(handle.sessionId, { source, commit: handle.commit, workingDir: handle.workingDir, classHosts: handle.classHosts, seq: 0 });
+                        sessions.set(handle.sessionId, {
+                            source,
+                            commit: handle.commit,
+                            workingDir: handle.workingDir,
+                            classHosts: handle.classHosts,
+                            seq: 0,
+                            approvals: new Map(),
+                        });
                         return ok({
                             status: "started",
                             sessionId: handle.sessionId,
@@ -463,35 +574,31 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                         if (state === undefined) {
                             return ok(ended.has(sessionId) ? { status: "session_ended", sessionId } : { status: "unknown_session", sessionId });
                         }
+                        const approved = takeApproval(state, ctx.invocationId);
                         // Root is a build-phase capability: the exploration
                         // container walls the source host alone and runs reads,
                         // thus a root marker with no plan riding the call and none
                         // approved asks for a phase the session never reached. A
                         // call that carries the plan fields may be root — the first
                         // build command is usually a root apt-get.
-                        const plan: BuildPlan | undefined =
-                            input.hosts !== undefined && input.aptPackages !== undefined && input.strategy !== undefined
-                                ? { hosts: completeHosts(state, input.hosts), aptPackages: input.aptPackages, strategy: input.strategy }
-                                : undefined;
-                        if (state.plan === undefined && plan === undefined && input.root === true) {
+                        if (state.plan === undefined && planOf(state, input) === undefined && input.root === true) {
                             return ok({ status: "plan_required", sessionId, note: EXPLORATION_ROOT_NOTE });
                         }
-                        // The plan ask precedes every build command; an unchanged plan asks nothing and restarts nothing.
-                        const planToAsk = plan !== undefined && (state.plan === undefined || !samePlan(plan, state.plan)) ? plan : undefined;
-                        if (planToAsk !== undefined) {
-                            await askPlan(ctx, sessionId, state, planToAsk);
-                        }
-                        // A command of the build phase asks on its own; an exploration read needs no ask,
-                        // because its container holds no store mount and its egress holds the source host alone.
-                        if (state.plan !== undefined) {
-                            await askCommand(ctx, sessionId, input.command ?? "", input.root === true);
-                        }
+                        // An exploration read needs no ask, because its container holds no store mount and
+                        // its egress holds the source host alone; a new or changed plan rides the ask of its
+                        // command; an unchanged plan asks for the command alone and restarts nothing.
+                        const needed = askOf(sessionId, state, input);
+                        if (!covers(approved, needed)) return ok({ status: "approval_stale", sessionId, note: APPROVAL_STALE_NOTE });
+                        // The plan binds before the restart: a failed restart keeps the list the user approved,
+                        // and the realization retries the start under it on the next exec.
+                        const planToRun = needed.kind === "plan" ? needed.plan : undefined;
+                        if (planToRun !== undefined) state.plan = planToRun;
                         state.seq += 1;
                         const execId = `${sessionId}-${state.seq}`;
                         try {
                             const r = await deps.buildSession.exec(
                                 sessionId,
-                                { command: input.command ?? "", execId, root: input.root, plan: planToAsk },
+                                { command: input.command ?? "", execId, root: input.root, plan: planToRun },
                                 ctx.signal,
                             );
                             return ok(renderExec(sessionId, r));
@@ -507,12 +614,12 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                         if (state === undefined) {
                             return ok(ended.has(sessionId) ? { status: "session_ended", sessionId } : { status: "unknown_session", sessionId });
                         }
+                        const approved = takeApproval(state, ctx.invocationId);
                         if (state.plan === undefined) {
                             return ok({ status: "plan_required", sessionId, note: PLAN_REQUIRED_NOTE });
                         }
-                        const request: BuildCommitRequest =
-                            input.packageDir === undefined ? { script: input.script ?? "" } : { script: input.script ?? "", packageDir: input.packageDir };
-                        await askCommit(ctx, sessionId, state, request);
+                        if (!covers(approved, askOf(sessionId, state, input))) return ok({ status: "approval_stale", sessionId, note: APPROVAL_STALE_NOTE });
+                        const request = commitRequestOf(input);
                         try {
                             const outcome = await deps.buildSession.commit(sessionId, request, ctx.signal);
                             if (outcome.kind === "committed") {

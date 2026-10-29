@@ -11,7 +11,7 @@ import type { Command } from "commander";
  *   only escalate" — an out-of-set flag can push an `auto` invocation up to a prompt,
  *   never down past one, because "not known read-only" is exactly what the prompt
  *   boundary exists for.
- * - `approval` — the default: the tool pauses on `ctx.ask` for the user's approval,
+ * - `approval` — the default: the tool asks for the user's approval before it runs,
  *   which is grantable per analysis. The prompt is the security boundary here.
  * - `blocked` — never runs, not even with approval; the mandatory `reason` is handed
  *   verbatim to the model so it can explain to the user why and stop retrying.

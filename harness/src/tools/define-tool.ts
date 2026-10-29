@@ -8,7 +8,7 @@
  * captures its deps and calls `defineTool`.
  *
  * `ToolContext` carries only request-scoped values every tool may need
- * (`invocationId`, `session`, `signal`, `emit`, `ask`, `turnUsage`) — no pool, no sandbox, no
+ * (`invocationId`, `session`, `signal`, `emit`, `turnUsage`, `script`) — no pool, no sandbox, no
  * logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`

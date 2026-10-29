@@ -55,7 +55,7 @@ export type AskPromptProps = {
 };
 
 /**
- * The docked approval prompt for a pending `ctx.ask`: a full-width, non-collapsing row painted with
+ * The docked approval prompt for a pending tool approval: a full-width, non-collapsing row painted with
  * the panel background so it can sit directly below the chat's flexGrow scrollbox (the 1-cell
  * scrollbox-bleed rule) without transcript content bleeding through its gaps.
  *
