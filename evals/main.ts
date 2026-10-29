@@ -52,7 +52,8 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
 function commitOf(): string | undefined {
     try {
         const head = execFileSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim();
-        const dirty = execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim().length > 0;
+        // An untracked file runs only through a tracked import, which shows as a change, thus it does not mark the run.
+        const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim().length > 0;
         return dirty ? `${head}-dirty` : head;
     } catch {
         return undefined;
@@ -120,7 +121,8 @@ async function run(args: readonly string[]): Promise<void> {
         cases,
         results,
     );
-    const out = values.out ?? join(import.meta.dirname, "..", "tmp", "evals", `${startedAt.replaceAll(":", "-")}-${digest}.json`);
+    // Kept beside the cases under the commit that ran, thus a later measure reuses the report of a commit.
+    const out = values.out ?? join(import.meta.dirname, "results", `${report.commit ?? "unknown"}-${startedAt.replaceAll(":", "-")}-${digest}.json`);
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, `${JSON.stringify(report, null, 2)}\n`);
     process.stdout.write(`${reportTable(report)}\n\nreport: ${out}\n`);

@@ -132,16 +132,20 @@ export function priorCall(toolName: string, input: unknown, value: unknown, text
 
 const ScriptCallsSchema = z.object({ calls: z.array(z.object({ tool: z.string() })) });
 
+/** The calls of each script of a trial, by the id of its `run_script` call, from the frames that the script emitted. */
+export type ScriptCallInputs = ReadonlyMap<string, ReadonlyArray<{ readonly tool: string; readonly input: unknown }>>;
+
 /**
  * The calls of a trial, in the order that the model made them. A call of `run_script` is followed by the tool calls of
- * its script, with no input, thus a grader counts a lookup the same in a script and in a direct call.
+ * its script, with the input that the script gave each one, thus a grader reads a call the same in a script and in a
+ * direct call.
  */
 export function trialOf(
     steps: readonly LoopStep[],
     asks: readonly TrialAsk[],
     text: string,
     finishReason: string,
-    extra: Pick<Trial, "files" | "unscripted"> & { readonly maxSteps?: number } = {},
+    extra: Pick<Trial, "files" | "unscripted"> & { readonly maxSteps?: number; readonly scriptCalls?: ScriptCallInputs } = {},
 ): Trial {
     const calls = steps.flatMap((step, index) =>
         step.calls.flatMap((call) => {
@@ -155,8 +159,13 @@ export function trialOf(
                 value: ok && call.toolName.startsWith("submit_") && call.output?.outcome === "ok" ? call.output.value : undefined,
             };
             const script = call.toolName === "run_script" && call.output?.outcome === "ok" ? ScriptCallsSchema.safeParse(call.output.value) : undefined;
+            const started = call.toolName === "run_script" ? extra.scriptCalls?.get(call.toolCallId) : undefined;
             const nested =
-                script?.success === true ? script.data.calls.map((inner) => ({ step: index, tool: inner.tool, input: undefined, refused: false })) : [];
+                started !== undefined
+                    ? started.map((inner) => ({ step: index, tool: inner.tool, input: inner.input, refused: false }))
+                    : script?.success === true
+                      ? script.data.calls.map((inner) => ({ step: index, tool: inner.tool, input: undefined, refused: false }))
+                      : [];
             return [own, ...nested];
         }),
     );

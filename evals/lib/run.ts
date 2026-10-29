@@ -15,6 +15,8 @@ import { makeSession } from "@inflexa-ai/harness/providers/__fixtures__/session.
 import type { AgentRunUsage } from "@inflexa-ai/harness/loop/metrics.js";
 import { maskExcept } from "@inflexa-ai/harness/loop/call-policy.js";
 import { runLoop, withRunScript, type LoopStep } from "@inflexa-ai/harness/loop/run-loop.js";
+import type { EmitFn } from "@inflexa-ai/harness/loop/types.js";
+import { RUN_SCRIPT_TOOL_ID } from "@inflexa-ai/harness/tools/script/run-script.js";
 import type { KeptToolOutput, ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
 import { blockerOf } from "@inflexa-ai/harness/tools/sandbox/report-blocker.js";
 import { SUBMIT_FILE_METADATA_TOOL_ID } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
@@ -200,11 +202,19 @@ export async function runTrial(
                       },
                       toolOutputStore: store,
                   };
+        // A script emits a `tool-started` frame for each of its calls, with the input, one level below its call.
+        const scriptCalls = new Map<string, Array<{ tool: string; input: unknown }>>();
+        const emit: EmitFn = (event) => {
+            if (event.type !== "tool-started" || event.source.agentId !== RUN_SCRIPT_TOOL_ID || event.source.invocationId === undefined) return;
+            const calls = scriptCalls.get(event.source.invocationId) ?? [];
+            calls.push({ tool: event.name, input: event.input });
+            scriptCalls.set(event.source.invocationId, calls);
+        };
         const stop = (steps: readonly LoopStep[]): boolean => steps.length >= evalCase.maxSteps || (sandbox !== undefined && blockerOf(steps) !== null);
         const result = await runLoop(agent, history, makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_ID } }), {
             provider: sandbox === undefined ? options.provider : (options.sandboxProvider ?? options.provider),
             signal: AbortSignal.timeout(evalCase.timeoutMs ?? options.trialTimeoutMs),
-            emit: () => undefined,
+            emit,
             turnInput: sandbox?.seed === undefined ? await turnInputOf(evalCase, history) : [{ role: "user", content: sandbox.seed }],
             stopWhen: stop,
             approve: (request, call) => {
@@ -218,6 +228,7 @@ export async function runTrial(
             maxSteps: evalCase.maxSteps,
             files: sandbox?.files(),
             unscripted: sandbox?.unscripted,
+            scriptCalls,
         });
         const grade = evalCase.grade(trial);
         return {
