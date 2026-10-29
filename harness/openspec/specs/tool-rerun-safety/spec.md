@@ -35,16 +35,6 @@ A tool that writes MUST key its write by the step of its call. A second run of t
 - **WHEN** a `record_report_version` call runs again after a crash
 - **THEN** it gives the same version, and the result does not say `replaced`
 
-### Requirement: A derivation runs inside its tool call
-
-A derivation of a table and an extraction of values MUST run their sandbox command inside the step of their tool call. The sandbox and the command MUST take their identity from the step. Thus a rerun adopts the same sandbox, and the sandbox server gives the record of the same command. A derivation MUST NOT mint a mandate.
-
-#### Scenario: A rerun of derive_table
-
-- **GIVEN** a `derive_table` call whose command completed, and then the host stopped
-- **WHEN** the call runs again
-- **THEN** the command does not run again, and the call gives the same table
-
 ### Requirement: A cut tool output and a usage record of a turn have stable keys
 
 A workflow can run with no run frame. Then the reference of a cut tool output and the key of a usage record MUST come from the id of the workflow. A rerun of the call MUST give the same reference and the same key.

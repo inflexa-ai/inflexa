@@ -41,29 +41,11 @@ The realization MUST parse CSV, TSV, JSON, and parquet in process for a file at 
 - **THEN** a 10 MiB file takes the fall-through
 
 ### Requirement: The fall-through takes every doubt
-An over-cap file, an unknown format, and a host parse fault MUST take the sandbox fall-through. The host arm MUST NOT give a partial or guessed answer. Thus correctness never depends on the host parser.
+An over-cap file, an unknown format, and a host parse fault MUST take the fall-through. The host arm MUST NOT give a partial or guessed answer. Thus correctness never depends on the host parser. The realization has no sandbox arm, thus the fall-through gives a typed failure and no value.
 
 #### Scenario: A parse fault falls through
 - **WHEN** the host parser fails on an odd CSV dialect
-- **THEN** the realization sends the file to the sandbox arm, and no refusal comes from the host fault
-
-### Requirement: The sandbox arm submits one fixed script
-The sandbox arm MUST run as a one-shot workflow with the shape of the data profile. The authorization MUST mint at the async edge and ride in the workflow input. The workflow MUST run only the one extraction script that the harness ships as an asset, and no agent loop runs in the container. The input MUST be a JSON list of path and locator pairs. The output MUST be one JSON value map. One submission MUST cover every fall-through file of one document pass.
-
-#### Scenario: One pass makes one submission
-- **WHEN** a document pass meets three over-cap files
-- **THEN** the arm makes one submission that covers the three files
-
-#### Scenario: No agent script enters the arm
-- **WHEN** any caller resolves through the realization
-- **THEN** the submitted script is the shipped asset, byte for byte
-
-### Requirement: An absent sandbox arm is a typed failure
-While no sandbox realization is wired, a reference on the fall-through path MUST fail with the reason `extraction-unavailable`. The detail MUST name the absent arm. The host arm MUST keep serving the under-cap files.
-
-#### Scenario: The under-cap majority survives an absent arm
-- **WHEN** no sandbox arm is wired, and a document holds one over-cap reference and nine under-cap references
-- **THEN** the nine resolve, and the one fails with `extraction-unavailable`
+- **THEN** the reference fails with `extraction-unavailable`, and the failure gives no guessed value from the host fault
 
 ### Requirement: One assert semantics for each realization
 The assert rules MUST live in shared functions, and both realizations MUST call them. The rules are the tolerance compare, the percent-fraction rule, and the citation assert. Thus the fixture stays the executable specification of the value tier.
@@ -127,3 +109,11 @@ The value bridge MUST map the resolved values onto the render value of the chart
 #### Scenario: The render value carries the trees
 - **WHEN** the bridge maps a chart with a resolved tree on each axis
 - **THEN** the render value holds the rows of each tree under its axis
+
+### Requirement: A reference on the fall-through is a typed failure
+A reference on the fall-through path MUST fail with the reason `extraction-unavailable`. The detail MUST state that the realization reads no file outside the host arm. The host arm MUST keep serving the under-cap files. No sandbox starts for a reference.
+
+#### Scenario: The under-cap majority survives the fall-through
+- **WHEN** a document holds one over-cap reference and nine under-cap references
+- **THEN** the nine resolve, and the one fails with `extraction-unavailable`
+- **AND** no sandbox starts

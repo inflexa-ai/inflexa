@@ -2,7 +2,9 @@
 
 ## Purpose
 How the conversation agent launches an analysis through the one `execute_analysis` tool, from an approved plan or from an ad hoc request. An ad hoc request becomes an internal plan of one step, with a specialist and resources that a utility router selects. The stable tool invocation id names the run, thus a second delivery of one invocation starts no second run.
+
 ## Requirements
+
 ### Requirement: Unified analysis tool selects plan or ad hoc execution
 
 The conversation-agent roster SHALL expose `execute_analysis` as the sole
@@ -51,37 +53,32 @@ calling `execute_analysis`; the tool SHALL NOT be invoked speculatively.
 - **WHEN** the conversation agent believes a computation would improve the answer
 - **THEN** it asks for consent before calling ad hoc `execute_analysis`
 
-### Requirement: Utility router selects a specialist and resources
+### Requirement: Utility router selects a specialist
 
 Before the harness constructs a new ad hoc plan, it MUST make one structured
 call through its required utility provider/model. The deadline of the call MUST
 be the maximum of the 10-second default and the advertised `requestTimeoutMs`
 of the utility provider. An explicit `timeoutMs` dep, when set, overrides the
 derived deadline. The call MUST receive the request, the data-profile
-orientation that the server loads, the plannable specialist catalog, and the
-explicit resource bounds (lower, default, upper). It MUST have no workspace
-tools and no execution tools.
+orientation that the server loads, and the plannable specialist catalog. It
+MUST receive no resource bounds. It MUST have no workspace tools and no
+execution tools.
 
-Its result can recommend a specialist id, and it can recommend a resource
-specification. But the result MUST NOT change the requested execution mode,
-make a DAG, or reject the request as plan-only.
+Its result can recommend a specialist id. It MUST NOT recommend a resource
+specification, because the step agent selects the size of its sandbox. The
+result MUST NOT change the requested execution mode, make a DAG, or reject the
+request as plan-only.
 
 The harness MUST accept only an id in the plannable catalog as a routed
 specialist. `scientific-executor` MUST NOT be a candidate. It MUST serve only
 as the deterministic agent fallback when the selection is absent, invalid,
 timed out, or failed.
 
-The router MUST validate the resource output independently. Absent, malformed,
-or out-of-bounds resources MUST use the ordinary default. A resource failure
-MUST NOT discard a valid agent selection. An agent failure MUST NOT discard
-valid resources.
-
 The result can recommend the packages that the step imports, each entry in
 the one package grammar. The router prompt MUST teach that grammar through
 the same section that the planner prompt uses. The router MUST validate each
-entry independently from the agent and the resources. An entry that does not
-parse MUST be dropped, and a package failure MUST NOT change the agent or the
-resources. When a resolution of the names is bound, a name that the pool does
+entry independently from the agent. An entry that does not
+parse MUST be dropped, and a package failure MUST NOT change the agent. When a resolution of the names is bound, a name that the pool does
 not hold MUST be dropped. A name with a known spelling MUST take that
 spelling. A name that both tracks hold MUST stay as written. When no
 resolution is bound, or the inventory is unavailable, each entry that parses
@@ -90,8 +87,8 @@ MUST stay. The router MUST record each dropped entry with its reason.
 #### Scenario: Targeted request selects a specialist
 
 - **GIVEN** the request and data profile clearly match a plannable specialist
-- **WHEN** the utility call returns that specialist and valid resources
-- **THEN** the internal step stores and uses both recommendations
+- **WHEN** the utility call returns that specialist
+- **THEN** the internal step stores and uses that recommendation
 
 #### Scenario: Router cannot select an agent
 
@@ -107,9 +104,15 @@ MUST stay. The router MUST record each dropped entry with its reason.
 
 #### Scenario: Invalid resources do not erase a valid route
 
-- **GIVEN** the router returns a valid specialist and resources above the stated ceiling
+- **GIVEN** the router returns a valid specialist and an extra resource field
 - **WHEN** the result is validated
-- **THEN** the specialist is retained and resources use the bounded default
+- **THEN** the specialist is retained, the resource field is dropped, and the step carries no resources
+
+#### Scenario: The router gets no resource bounds
+
+- **GIVEN** an embedder with a `ResourcePolicy`
+- **WHEN** the router makes its structured call
+- **THEN** the call holds no resource bounds, and the internal step carries no resources
 
 #### Scenario: Router does not overrule ad hoc mode
 
@@ -147,35 +150,11 @@ MUST stay. The router MUST record each dropped entry with its reason.
 - **WHEN** the launch runs the link pass with a bound seam
 - **THEN** the launch refuses with the two prefixed forms, and no run reserves
 
-### Requirement: Ad hoc resources use normal policy and scheduler enforcement
-
-When a `ResourcePolicy` exists, routing bounds SHALL use positive CPU and memory
-lower bounds no greater than their configured ceilings, the
-`perStep` values as upper bounds, zero through `maxGpuCount` GPUs, and defaults
-of `min(4, maxCpu)` CPU and `min(8, maxMemoryGb)` memory with no GPU. Without a
-policy, the conservative bounds/default SHALL be 4 CPU, 8 GB memory, and no
-GPU. The generated step SHALL carry the validated resource value, and the
-ordinary snapshotted machine budget and sandbox limits SHALL enforce it exactly
-as for a planned step. There SHALL be no ad hoc-specific resource
-configuration.
-
-#### Scenario: Utility estimate is within configured bounds
-
-- **GIVEN** a policy whose per-step ceiling is 8 CPU, 16 GB, and 1 GPU
-- **WHEN** the utility model recommends 2 CPU, 4 GB, and no GPU
-- **THEN** the generated step carries that recommendation and the normal scheduler accounts for it
-
-#### Scenario: Utility result has no resources
-
-- **GIVEN** a policy whose per-step ceiling is 2 CPU and 6 GB
-- **WHEN** the utility result omits resources
-- **THEN** the generated step uses 2 CPU, 6 GB, and no GPU
-
 ### Requirement: Internal plan is mechanical and not an approval artifact
 
 Ad hoc mode MUST persist an `AnalysisPlan` with one step and no dependencies.
 The step MUST carry the request as the analytical question, the selected
-agent and resources, and the packages that the router validated. It MUST
+agent, and the packages that the router validated. It MUST carry no resources. It MUST
 carry the ordinary iteration limit of the selected agent, and the acceptance
 criteria for reproducible script and result artifacts and a direct answer. The caveats of the step MUST name each dropped package entry
 with its reason. When the step declares no packages, the caveats MUST say so,
@@ -199,7 +178,7 @@ reload the stored plan so the first persisted routing decision wins.
 
 - **GIVEN** two deliveries of the same invocation race before its internal plan exists
 - **WHEN** both attempt insert-if-absent
-- **THEN** exactly one plan row survives and both deliveries reload that same stored agent/resource decision
+- **THEN** exactly one plan row survives and both deliveries reload that same stored agent decision
 
 #### Scenario: The step carries the validated packages
 
@@ -213,17 +192,21 @@ reload the stored plan so the first persisted routing decision wins.
 
 ### Requirement: Ad hoc runs use the ordinary one-step lifecycle without synthesis
 
-An ad hoc launch SHALL pass its internal plan through `executeAnalysis` and the
-ordinary writable sandbox-step workflow. It SHALL use normal authorization,
-billing, recovery, cancellation, machine-budget admission, step briefing,
-summary and metadata interpretation, artifact registration, sync/indexing, run
-cards, run/step ledgers, and pull-based inspection. A successful step SHALL
+An ad hoc launch MUST pass its internal plan through `executeAnalysis` and the
+ordinary writable sandbox-step workflow. It MUST use the normal parts of a run:
+
+- authorization, billing, recovery, and cancellation
+- the lease admission of its sandbox, and the step briefing
+- summary and metadata interpretation, artifact registration, and sync/indexing
+- run cards, run/step ledgers, and pull-based inspection
+
+A successful step MUST
 persist reproducible script and result files even when its answer is a single
 scalar.
 
-The workflow input SHALL set `synthesisEnabled = false`; no synthesis ledger row
-or synthesis call SHALL exist for the run, and successful completion of the one
-step SHALL allow the run to complete.
+The workflow input MUST set `synthesisEnabled = false`. The run MUST have no
+synthesis ledger row and no synthesis call. The successful completion of the one
+step MUST let the run complete.
 
 #### Scenario: Scalar computation remains reproducible
 
@@ -235,6 +218,11 @@ step SHALL allow the run to complete.
 
 - **WHEN** the run and step ledgers are inspected after ad hoc launch
 - **THEN** they contain the one normal analysis step and no synthesis row
+
+#### Scenario: The ad hoc step acquires its own sandbox
+
+- **WHEN** the agent of an ad hoc step calls `acquire_sandbox`
+- **THEN** the lease of the step waits in the same queue as the lease of a planned step
 
 ### Requirement: Invocation identity distinguishes delivery retry from re-execution
 
@@ -256,4 +244,3 @@ request text equals an earlier request.
 - **GIVEN** an earlier ad hoc invocation used request text `R`
 - **WHEN** the agent issues a later tool call with a new invocation id and the same text `R`
 - **THEN** the later call creates a new run
-

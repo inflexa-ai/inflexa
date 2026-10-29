@@ -560,33 +560,6 @@ The references MUST list at the end of the page in one appendix, titled "Referen
 - **WHEN** the caller renders a document with both reference kinds
 - **THEN** every marker is a bracket number, and no superscript marker renders
 
-### Requirement: Every evidentiary binding joins the References appendix
-The binding of each evidentiary block MUST join the ladder: the metric value, the table, the chart, and the figure beside the claim and the citation. The card shows the marker, and the appendix entry names the path in its entry form.
-
-A chart MUST also mark its track and each of its statistics. The title line of the chart carries one marker for each reference, in block order: the binding, the track, then each statistic. The appendix lists each one, and a statistic lists with its path and its locator.
-
-The appendix entry of a derived path MUST add the chain of its record: each source path with its hash prefix, and the script hash prefix. The chain MUST link the staged script asset of the record, and it MUST link the derived output file. Thus the chain walks offline, from the chart to the sources and the script that made the table. The derivation records ride the render call, exactly as the citation records do, and the renderer stays pure.
-
-#### Scenario: A bound table gains its appendix entry
-- **WHEN** the caller renders a table block over a pinned artifact
-- **THEN** the card carries a marker, and the appendix names the path
-
-#### Scenario: A chart marks its track and its statistics
-- **WHEN** the caller renders a chart with a track and two statistics
-- **THEN** the title line carries four markers in block order, and the appendix holds four entries
-
-#### Scenario: A derived chart states its chain
-- **WHEN** the caller renders a chart over a derived path whose record names two sources and a script
-- **THEN** the appendix entry carries the two source paths with hash prefixes, and the script hash prefix
-
-#### Scenario: The chain links the script and the output
-- **WHEN** the caller renders a document whose binding names a derived path with a staged script asset
-- **THEN** the chain entry links the script file and the derived output, as relative paths
-
-#### Scenario: A document with no derivation renders as before
-- **WHEN** the caller renders a document whose bindings name no derived path
-- **THEN** no chain line renders, and the appendix holds the plain entries
-
 ### Requirement: The citation card is a bibliography entry
 The citation card MUST render the short citation of its pinned record, the note of the block, and the citation key. A `pmid:` key MUST also render a PubMed link, built deterministically from the id. The link is a navigation and it loads nothing, thus the stand-alone rule holds. A key with no pinned record renders the key and the note alone, because absence is a normal condition. The marker of the card joins the one reference ladder, and the entry of the key joins the References appendix.
 
@@ -2222,3 +2195,16 @@ The capture of one block reads the union of the marked boxes (see the report-ver
 
 - **WHEN** the caller renders a text block with two paragraphs and a list
 - **THEN** each paragraph and the list carry the mark, and the markup holds no added element
+
+### Requirement: Each evidentiary binding joins the References appendix
+The binding of each evidentiary block MUST join the ladder: the metric value, the table, the chart, and the figure beside the claim and the citation. The card shows the marker, and the appendix entry names the path in its entry form.
+
+A chart MUST also mark its track and each of its statistics. The title line of the chart carries one marker for each reference, in block order: the binding, the track, then each statistic. The appendix lists each one, and a statistic lists with its path and its locator.
+
+#### Scenario: A bound table gains its appendix entry
+- **WHEN** the caller renders a table block over a pinned artifact
+- **THEN** the card carries a marker, and the appendix names the path
+
+#### Scenario: A chart marks its track and its statistics
+- **WHEN** the caller renders a chart with a track and two statistics
+- **THEN** the title line carries four markers in block order, and the appendix holds four entries

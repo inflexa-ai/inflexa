@@ -16,7 +16,8 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 - A `data-*` part goes at the end. A part of a type that the registry marks `reconciling` replaces the part with the same type and id, in the position of that part.
 - The source of a `data-*` frame MUST NOT go into the part.
 - An `iteration` changes nothing, and it does not end the turn.
-- A `message-start` changes nothing, and it does not end the turn. It does not make a part.
+- A `message-start` of the assistant changes nothing, and it does not end the turn. It does not make a part.
+- A `message-start` of the user adds the user message `{ id: messageId, role: "user", parts: [{ type: "text", text }] }` at the end, when no message has that id. When a message has that id, the frame changes nothing. The frame does not end the turn.
 - A `finish` ends the turn. It puts `turnUsage` on the assistant message when the frame has one.
 - An `error` ends the turn with the error.
 
@@ -45,8 +46,21 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 
 #### Scenario: A message-start frame makes no part
 
-- **WHEN** `applyChatFrame` applies a `message-start` frame with the source of the root agent
+- **WHEN** `applyChatFrame` applies a `message-start` frame of the assistant with the source of the root agent
 - **THEN** the messages do not change, and the turn does not end
+
+#### Scenario: A user message-start frame adds the user message
+
+- **GIVEN** an empty message list
+- **WHEN** `applyChatFrame` applies a `message-start` frame of the user with the text `Compare the groups.`, and then a `text-delta` of the reply
+- **THEN** the first message is the user message with the id of the frame and one text part `Compare the groups.`
+- **AND** the reply comes after it, and the turn does not end
+
+#### Scenario: A user message-start frame keeps a message with the same id
+
+- **GIVEN** a message list that holds a user message with the id of the frame
+- **WHEN** `applyChatFrame` applies the `message-start` frame of the user
+- **THEN** the messages do not change
 
 ### Requirement: The display of a tool call holds its duration
 
@@ -160,7 +174,7 @@ The harness MUST export `toChatFrame(event, fallbackSource)`. The function takes
 - A `tool-started` gives the call id, the tool name, the detail when there is one, and a copy of the source.
 - A `tool-finished` gives the same fields, the outcome, and `durationMs` when the event has one.
 - A `text-delta` gives the text and `fallbackSource`, because a provider event has no source.
-- A `message-start` gives the message id, the role, and a copy of the source.
+- A `message-start` gives the message id, the role, the text of a user message, and a copy of the source.
 - A `data-*` part gives a flat frame, `{ type, ...data }`, and a copy of the source when the emitter gave one.
 
 A copy of a source MUST hold the `agentId`, the `callPath`, and the `invocationId` when the source has one. A source with no `invocationId` MUST give a copy with no `invocationId` key.
@@ -169,7 +183,7 @@ The function MUST keep each event and each part of a sub-agent, with its source.
 
 `IterationEvent` MUST be a member of the `ChatEvent` union, and `IterationEventSchema` MUST be a member of `ChatEventSchema`. The package MUST export the two. A host reads the frame as "the sub-agent thinks".
 
-`MessageStartEvent` MUST be a member of the `ChatEvent` union, and `MessageStartEventSchema` MUST be a member of `ChatEventSchema`. The package MUST export the two. The frame has the fields `messageId`, `role`, and `source`, and each field is necessary. The schema MUST accept only a UUID as `messageId`, and only `user` or `assistant` as `role`.
+`MessageStartEvent` MUST be a member of the `ChatEvent` union, and `MessageStartEventSchema` MUST be a member of `ChatEventSchema`. The package MUST export the two. `MessageStartEvent` is a union by `role`. Each variant has the fields `messageId`, `role`, and `source`. The `user` variant also has `text`, and the `assistant` variant has no text. Each field is necessary. The schema MUST accept only a UUID as `messageId`, and only `user` or `assistant` as `role`. The schema MUST refuse a `user` frame with no `text`.
 
 The module of the function MUST import only types from outside `src/contracts/`. Thus a browser can load it.
 
@@ -207,9 +221,21 @@ The module of the function MUST import only types from outside `src/contracts/`.
 - **WHEN** `ChatEventSchema` parses `{ type: "iteration", source }` with a valid source of a sub-agent
 - **THEN** the parse gives the same frame
 
+#### Scenario: A user message-start keeps its text
+
+- **GIVEN** a `message-start` event of the user with the text `Compare the groups.`
+- **WHEN** `toChatFrame` translates the event
+- **THEN** the frame holds the message id, the role `user`, the text, and the source
+- **AND** `ChatEventSchema` parses the frame to the same value
+
 #### Scenario: The schema refuses a message-start with no UUID
 
 - **WHEN** `ChatEventSchema` parses a `message-start` frame whose `messageId` is not a UUID, or a frame with no `role`
+- **THEN** the parse fails
+
+#### Scenario: The schema refuses a user message-start with no text
+
+- **WHEN** `ChatEventSchema` parses a `message-start` frame of the user with no `text`
 - **THEN** the parse fails
 
 ### Requirement: A tracker gives the sub-agent activity of each root tool call
@@ -299,7 +325,7 @@ The display recorder MUST make the id of the user message and the id of each ass
 
 ### Requirement: The display recorder announces an id immediately before an event
 
-The recorder MUST give its sink a `message-start` event for each id, with the source of the root agent. Immediately before the first event that it forwards, it forwards the `message-start` of the user id, and then of the current assistant id. After a marker round gives a new assistant id, it forwards the `message-start` of that id immediately before the next event that it forwards. It forwards one `message-start` for each id, and no more.
+The recorder MUST give its sink a `message-start` event for each id, with the source of the root agent. Immediately before the first event that it forwards, it forwards the `message-start` of the user id, and then of the current assistant id. The `message-start` of the user id MUST carry the user text of the recorder. After a marker round gives a new assistant id, it forwards the `message-start` of that id immediately before the next event that it forwards. It forwards one `message-start` for each id, and no more.
 
 #### Scenario: A compaction announces the second assistant id
 
@@ -307,6 +333,12 @@ The recorder MUST give its sink a `message-start` event for each id, with the so
 - **WHEN** the marker round gives a new assistant id
 - **THEN** the sink gets the `message-start` of the new id immediately before the next event
 - **AND** the stored assistant messages carry the two announced ids
+
+#### Scenario: The user message-start carries the user text
+
+- **GIVEN** a recorder with the user text `question`
+- **WHEN** the recorder forwards its first event
+- **THEN** the `message-start` of the user id holds the text `question`
 
 ### Requirement: The display recorder announces nothing before the first event
 

@@ -44,11 +44,11 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 
 `purgeAnalysis` MUST remove this footprint:
 
-- the analysis rows of `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_report_versions`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, `cortex_ask_grants`, and `cortex_tool_outputs`
+- the analysis rows of `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_report_versions`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, `cortex_ask_grants`, `cortex_tool_outputs`, and `cortex_sandbox_leases`
 - the `messages` rows of each thread of the analysis
 - the `cortex_thread_turns` rows of each thread of the analysis
 - the dynamic pgvector table with the shared `searchIndexName(analysisId)` name
-- the DBOS workflow footprint of the analysis
+- the DBOS workflow footprint of the analysis, which includes the lease workflows of its sandboxes
 
 The purge reaches the turn records through the thread rows, the same as the messages. Thus it MUST delete them before it deletes the thread rows, for the reason that the delete order of the messages gives.
 
@@ -99,9 +99,21 @@ Coverage of the workflow footprint is normative, and it is not optional. The DBO
 - **WHEN** `purgeAnalysis` completes successfully
 - **THEN** no `cortex_report_versions` row remains for the analysis
 
+#### Scenario: The leases are removed
+
+- **GIVEN** an analysis whose run step holds a lease, and whose data profile released a lease
+- **WHEN** `purgeAnalysis` completes successfully
+- **THEN** no `cortex_sandbox_leases` row remains for the analysis, and the two lease workflows are gone from the DBOS ledger
+
 ### Requirement: Purge collects workflow identity before deleting the rows that carry it
 
-`purgeAnalysis` SHALL read the analysis's workflow identifiers before deleting the ledger rows that record them, because those rows are the only mapping from an analysis to its workflows. It SHALL resolve the run workflows from `cortex_runs.run_id` (which is the parent workflow id directly) together with their descendants, and the data-profile workflows from the `dataprofile:{analysisId}:` id namespace. Deleting `cortex_runs` before capturing its `run_id` values SHALL be treated as a defect, since it strands the largest part of the footprint permanently out of reach.
+`purgeAnalysis` MUST read the workflow ids of the analysis before it deletes the ledger rows that record them. Those rows are the only map from an analysis to its workflows. The purge MUST resolve these workflows:
+
+- the run workflows from `cortex_runs.run_id`, which is the id of the parent workflow, with their descendants
+- the data-profile workflows from the `dataprofile:{analysisId}:` id namespace
+- the lease workflows from the `sandboxlease:{analysisId}:` id namespace
+
+A lease workflow is not a descendant of its consumer, thus only its namespace reaches it. A delete of `cortex_runs` before the purge reads its `run_id` values is a defect. It puts the largest part of the footprint out of reach for all time.
 
 #### Scenario: Run identity is captured before the ledger is deleted
 
@@ -114,6 +126,12 @@ Coverage of the workflow footprint is normative, and it is not optional. The DBO
 - **GIVEN** an analysis that was profiled, producing workflows in the `dataprofile:{analysisId}:` id namespace
 - **WHEN** `purgeAnalysis` completes successfully
 - **THEN** those workflows and their dependent rows are gone
+
+#### Scenario: Lease workflows are reclaimed by their namespace
+
+- **GIVEN** an analysis whose step holds a lease, with its lease workflow in the `sandboxlease:{analysisId}:` id namespace
+- **WHEN** `purgeAnalysis` completes successfully
+- **THEN** the purge canceled the lease workflow before it deleted the rows, and the workflow and its dependent rows are gone
 
 ### Requirement: The workflow footprint is reached through an injected seam
 
@@ -220,13 +238,16 @@ The validated shape SHALL serve two purposes, and the requirement SHALL state bo
 Its contract MUST state those exclusions, thus nobody mistakes an absent
 coverage for a delivered coverage. It MUST NOT touch these items:
 
-- the scheduled operational workflows (the sandbox reaper and the notification
-  sweep). They belong to no analysis, and they accumulate independently of each
-  purge.
+- the scheduled operational workflows (the sandbox reconciler and the
+  notification sweep). They belong to no analysis, and they accumulate
+  independently of each purge.
 - the `messages` rows whose thread row is gone already. They carry no analysis
   attribution, and by construction nothing can reach them.
 - the shared regulatory corpus.
-- the workspace files on disk. The embedder owns their disposal.
+- the workspace files on disk, with the exec records of the sandboxes. The
+  embedder owns their disposal.
+- the sandbox machines. A canceled lease workflow cannot remove its machine, thus
+  the sandbox reconciler removes each machine whose lease workflow is terminal.
 
 #### Scenario: Scheduled workflows survive a purge
 
@@ -245,6 +266,12 @@ coverage for a delivered coverage. It MUST NOT touch these items:
 - **GIVEN** an analysis with files in its workspace tree
 - **WHEN** `purgeAnalysis` completes
 - **THEN** the files on disk are unchanged and the host remains responsible for their disposal
+
+#### Scenario: The reconciler removes the machine of a purged lease
+
+- **GIVEN** an analysis whose step holds a lease with a live machine
+- **WHEN** `purgeAnalysis` cancels the lease workflow, and the sandbox reconciler then runs
+- **THEN** the reconciler removes the machine, because its lease workflow is terminal
 
 ### Requirement: The message delete runs ahead of the thread delete that can cascade
 

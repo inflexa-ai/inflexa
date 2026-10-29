@@ -14,39 +14,6 @@ visual judgment itself stays with the agent, and it stays advisory.
 
 ## Requirements
 
-### Requirement: The gate runs before the store
-The record tool MUST run the full validation before `store.record`, on every record — the first and each later one alike. The validation MUST cover the finish, the resolution of every reference, the chart-encoding match, and the assert match. Only a pass MUST reach the store. A later record replaces the one version through the store contract. Thus a version state that the gate did not accept never lands. A failed gate on a later record MUST leave the stored version as it was. The record MUST write the document value that the gate validated. The one-per-thread rule of the store bounds a concurrent race.
-
-The record MUST prune the output file of each derivation that the recorded document does not reference, after the version lands, on every record. The prune reaches only a path under the session `derived/` directory. The records stay append-only, because the bytes are reproducible from the script and the sources. A failed removal logs, and it changes no outcome.
-
-#### Scenario: A failed gate records nothing
-- **WHEN** one reference of the document fails its assert
-- **THEN** the record refuses, and the store holds no new row
-
-#### Scenario: A pass records one version
-- **WHEN** the gate passes and the thread holds no version
-- **THEN** the store records the version, and the tool gives the version id
-
-#### Scenario: A re-record runs the gate again
-- **WHEN** the agent amends a block after a record, previews, looks, and records again
-- **THEN** the gate validates the amended document, and the one version carries it on a pass
-
-#### Scenario: A failed re-record keeps the stored version
-- **WHEN** a later record fails its gate
-- **THEN** the stored version stays as the earlier record left it
-
-#### Scenario: The record prunes the unused outputs
-- **WHEN** the record lands a version whose document names one of two derivation outputs
-- **THEN** the unused output file goes, the used one stays, and both records stay
-
-#### Scenario: A dropped derivation prunes on the re-record
-- **WHEN** an amend drops the one binding of a derivation output, and the agent records again
-- **THEN** that output file goes at the re-record, and the derivation record stays
-
-#### Scenario: A failed prune keeps the version
-- **WHEN** the removal of an unused output throws
-- **THEN** the version stands, and the log names the failed removal
-
 ### Requirement: A failure names its block
 Each gate failure MUST carry the `id` of the block that holds the failed part. Thus the agent repairs one block, and not the report at large.
 
@@ -64,15 +31,6 @@ The record MUST refuse until the eyes ran against the current document state. Th
 #### Scenario: A stale look does not count
 - **WHEN** the eyes ran, and the agent then changed a block
 - **THEN** the record refuses until a new preview and a new look run
-
-### Requirement: A derivation is repeatable
-The derivation record MUST hold what a second run needs: the script text, the script hash, the source paths with their hashes, and the output hash. A verifier can run the recorded script over the analysis tree and compare the output hash. The record is immutable, thus the chain from a derived cell to the pinned evidence stays whole.
-
-The record states two bounds honestly. The record pins the declared sources, and the read reach of the script is the whole tree. The record pins no image reference, thus a different sandbox image can give a different hash. The declared-input wall and the image pin are later hardenings.
-
-#### Scenario: The record admits a re-run
-- **WHEN** a verifier reads a derivation record
-- **THEN** the record names the script, the sources with their hashes, and the expected output hash
 
 ### Requirement: The eyes seam
 The composition MUST give the eyes through one provisioning seam. The acquire operation takes a scope and returns a lease. The scope carries the analysis id and the workspace root, thus a realization can mount the root for a `file://` navigation. The lease carries a browser endpoint and a release operation.
@@ -247,3 +205,22 @@ An injected capture seam MUST win over the eyes seam, because it replaces the wh
 #### Scenario: A composition with no eyes reports the condition
 - **WHEN** the composition binds no capture seam, no eyes seam, and no browser endpoint
 - **THEN** the tool reports the no-browser condition as a typed outcome
+
+### Requirement: The gate runs before each record
+The record tool MUST run the full validation before `store.record`, on every record — the first and each later one alike. The validation MUST cover the finish, the resolution of every reference, the chart-encoding match, and the assert match. Only a pass MUST reach the store. A later record replaces the one version through the store contract. Thus a version state that the gate did not accept never lands. A failed gate on a later record MUST leave the stored version as it was. The record MUST write the document value that the gate validated. The one-per-thread rule of the store bounds a concurrent race.
+
+#### Scenario: A failed gate records nothing
+- **WHEN** one reference of the document fails its assert
+- **THEN** the record refuses, and the store holds no new row
+
+#### Scenario: A pass records one version
+- **WHEN** the gate passes and the thread holds no version
+- **THEN** the store records the version, and the tool gives the version id
+
+#### Scenario: A re-record runs the gate again
+- **WHEN** the agent amends a block after a record, previews, looks, and records again
+- **THEN** the gate validates the amended document, and the one version carries it on a pass
+
+#### Scenario: A failed re-record keeps the stored version
+- **WHEN** a later record fails its gate
+- **THEN** the stored version stays as the earlier record left it
