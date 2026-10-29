@@ -23,7 +23,7 @@ are:
 - the sandbox submit and poll protocol
 - the memory
 - the storage layout
-- the four capability **seams** and the two optional hooks that the harness
+- the four capability **seams** and the three optional hooks that the harness
   declares, plus the shared `RunLauncher` seam.
 
 An embedder gives its own composition root. It can also swap a local seam
@@ -45,7 +45,8 @@ that an embedder faces:
   `RunAuthorizer`/`createLocalRunAuthorizer`,
   `ArtifactRegistry`/`createNoopArtifactRegistry`, `RunCharge`/`createNoopRunCharge`,
   `UsageRecorder`/`createNoopUsageRecorder`
-- the two optional hooks `ResolveRequestHeaders` and `ResolveSandboxLabels`, and
+- the three optional hooks `ResolveRequestHeaders`, `ResolveSandboxLabels`, and
+  `SyncSessionFile`, and
   the failure types of a hook, `GateFailure` and `NoticeFailure`
 - `RunLauncher`/`createDbosRunLauncher`
 - the `Logger` seam and its realizations (`createConsoleLogger`,
@@ -238,7 +239,7 @@ harness only ever sees the interface, and it never branches on which realization
 is bound.**
 
 Each seam, its path, and its OSS realization are in [`CONTEXT.md`](CONTEXT.md),
-under `The four seams and the two hooks`. Each method of a seam, and each hook,
+under `The four seams and the three hooks`. Each method of a seam, and each hook,
 is a gate or a notice (`src/lib/hooks.ts`), and its type shows its kind.
 
 ### Sandbox Architecture

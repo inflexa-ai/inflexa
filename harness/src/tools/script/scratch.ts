@@ -22,6 +22,7 @@ import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { isSafeId, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { syncWrittenFile, type SyncSessionFile } from "../../workspace/session-files.js";
 import { confinedWrite } from "../workspace/mutator.js";
 
 /** The cap of one derived file. It matches the cap of a table read, thus a script can read back what it wrote. */
@@ -84,6 +85,8 @@ export type ScriptScratchDeps = {
     readonly sessionDir: (threadId: string) => string;
     /** The provenance seam. An unbound session emit records nothing, and the scripts run the same. */
     readonly provenance?: ProvenanceSeam;
+    /** The host copy of each file that lands, owned by the thread of the session. */
+    readonly syncSessionFile?: SyncSessionFile;
     readonly logger?: Logger;
 };
 
@@ -129,6 +132,7 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
 
     async function land(
         session: AgentSession,
+        threadId: string,
         dir: string,
         name: string,
         content: string | Uint8Array,
@@ -147,14 +151,16 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
             refuseStagedInputs: true,
         });
         if (landed.status !== "ok") return { refused: `the write of ${dir}/${name} was refused (${landed.status})` };
-        return { path: landed.relative, hash: computeSha256(landed.bytes), size: landed.bytes.length };
+        const file: ScratchFile = { path: landed.relative, hash: computeSha256(landed.bytes), size: landed.bytes.length };
+        await syncWrittenFile(deps.syncSessionFile, logger, { session, owner: { kind: "thread", threadId }, ...file, content: landed.bytes });
+        return file;
     }
 
     return {
         async saveScript({ session, invocationId, code }) {
             const { threadId } = session.scope;
             if (threadId === undefined) return undefined;
-            const saved = await land(session, `${deps.sessionDir(threadId)}/scripts`, scriptFileName(invocationId), code, invocationId);
+            const saved = await land(session, threadId, `${deps.sessionDir(threadId)}/scripts`, scriptFileName(invocationId), code, invocationId);
             if ("refused" in saved) throw new Error(saved.refused);
             return saved;
         },
@@ -189,7 +195,7 @@ export function createScriptScratch(deps: ScriptScratchDeps): ScriptScratch {
             if (used + bytes > DERIVED_SESSION_CAP_BYTES) {
                 return { status: "refused", reason: `the derived files of this session would pass the cap of ${String(DERIVED_SESSION_CAP_BYTES)} bytes` };
             }
-            const landed = await land(session, dir, name, content, invocationId);
+            const landed = await land(session, threadId, dir, name, content, invocationId);
             if ("refused" in landed) return { status: "refused", reason: landed.refused };
             return { status: "written", file: landed };
         },

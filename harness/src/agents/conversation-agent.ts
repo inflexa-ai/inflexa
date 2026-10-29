@@ -94,6 +94,7 @@ import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
+import type { SyncSessionFile } from "../workspace/session-files.js";
 import { createStartReportSessionTool } from "../tools/start-report-session.js";
 import type { Logger } from "../lib/logger.js";
 import type { CompactionRules } from "../loop/compaction.js";
@@ -210,6 +211,11 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
      */
     readonly provenance?: ProvenanceSeam;
     /**
+     * The host copy of each file that the agent writes: a derived file or a script of `run_script`, owned by the
+     * thread, and a `write_file` or `edit_file` write, owned by the analysis. See `SyncSessionFile`.
+     */
+    readonly syncSessionFile?: SyncSessionFile;
+    /**
      * Embedder-contributed conversation-tool seam — additional tools the host
      * supplies, appended after the built-in roster. The harness stays agnostic to
      * what they do; each receives the same `ToolContext` (including `ask`) as any
@@ -262,6 +268,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     const mutator = createSessionWorkspaceMutator({
         resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
         provenance: deps.provenance,
+        syncSessionFile: deps.syncSessionFile,
         logger: deps.logger,
     });
 
@@ -270,6 +277,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
         sessionDir: conversationSessionDir,
         provenance: deps.provenance,
+        syncSessionFile: deps.syncSessionFile,
         logger: deps.logger,
     });
 

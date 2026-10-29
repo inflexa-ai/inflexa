@@ -51,6 +51,7 @@ import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
+import type { SyncSessionFile } from "../workspace/session-files.js";
 import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
@@ -104,9 +105,9 @@ export type RegisteredWorkflows = {
 
 /**
  * Conversation-agent deps minus the workflow callable, the resource policy, the
- * usage recorder, the report-session anchor, the eyes, and the tool output store.
- * `assembleCoreRuntime` supplies each of those itself. Thus a caller cannot wire
- * one of these six values:
+ * usage recorder, the report-session anchor, the eyes, the tool output store, and the
+ * file sync. `assembleCoreRuntime` supplies each of those itself. Thus a caller cannot wire
+ * one of these values:
  *
  * - a stale callable
  * - a policy that diverges from the one the workflows see
@@ -114,6 +115,7 @@ export type RegisteredWorkflows = {
  * - an anchor over a different session runtime
  * - a seam that only half the agent tree looks through
  * - a store that only half the agent tree keeps its texts in
+ * - a file sync that only half the agent tree writes through
  *
  * The assembly resolves the eyes one time, from `CoreRuntimeDeps.eyes` and the
  * chrome config. A caller that bound the eyes here would give the conversation
@@ -121,7 +123,14 @@ export type RegisteredWorkflows = {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    "executeAnalysisWorkflow" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes" | "toolOutputStore" | "registerSubAgent"
+    | "executeAnalysisWorkflow"
+    | "usageRecorder"
+    | "citationResolver"
+    | "anchorReportSession"
+    | "eyes"
+    | "toolOutputStore"
+    | "registerSubAgent"
+    | "syncSessionFile"
 >;
 
 /**
@@ -227,6 +236,13 @@ export type CoreRuntimeDeps = {
      * which an embedder calls on its own. Thus that composition binds the seam there as well.
      */
     readonly provenance?: ProvenanceSeam;
+    /**
+     * The host copy of each file that a chat thread or a report session writes outside a run. A host that keeps the
+     * files of an analysis in its own store binds it, and each write reaches it with its bytes and its owner: the
+     * thread for the scratch files of a session, and the analysis for a `write_file` or `edit_file` write. Absent,
+     * the files stay in the workspace tree alone, which is the whole local path.
+     */
+    readonly syncSessionFile?: SyncSessionFile;
     /**
      * The credential of a chat turn that this process did not open, for example a turn that a recovery runs after a
      * restart. The workflow input of a turn holds no credential. Absent, or `undefined` for a turn: the turn pauses
@@ -436,6 +452,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         // The start tool passes it to the spawn, which emits the creation of a
         // report session. The same seam reaches the report agent below.
         provenance: deps.provenance,
+        syncSessionFile: deps.syncSessionFile,
         registerSubAgent: registerPausingSubAgent,
     });
 
@@ -481,6 +498,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         makeSessionPages: deps.makeSessionPagePublisher,
         resolvePageUrl: deps.resolveReportPageUrl,
         provenance: deps.provenance,
+        syncSessionFile: deps.syncSessionFile,
         logger: conversation.logger,
         toolOutputStore,
         scriptRuntime: conversation.scriptRuntime,

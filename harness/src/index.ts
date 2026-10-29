@@ -94,6 +94,7 @@ export type { RunAuthorizer, AuthorizeRunInput, RevokeByMandateRef } from "./exe
 // harness logs its err, and the outcome stays. The type of each hook shows its
 // kind, and the harness reads no reason of the host.
 export type { GateFailure, NoticeFailure } from "./lib/hooks.js";
+export type { SessionFileOwner, SessionFileWrite, SyncSessionFile } from "./workspace/session-files.js";
 
 // Hook: model request headers. An optional gate on each provider. The provider
 // calls it before each attempt of a model request and adds the headers as the
