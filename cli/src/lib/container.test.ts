@@ -449,9 +449,11 @@ describe("capture bounds", () => {
     });
 
     test("an abort kills the child, and an already aborted signal kills it at once", async () => {
+        // `exec` makes `sleep` the child itself. Without it, the dash `/bin/sh` of Linux forks `sleep`, which
+        // survives the kill of the shell and holds both pipes open for its 30 s.
         const controller = new AbortController();
         const started = Date.now();
-        const pending = capture(shell, ["-c", "sleep 30"], { signal: controller.signal });
+        const pending = capture(shell, ["-c", "exec sleep 30"], { signal: controller.signal });
         setTimeout(() => controller.abort(), 50);
 
         const killed = await pending;
@@ -460,7 +462,7 @@ describe("capture bounds", () => {
         expect(killed.code).not.toBe(0);
 
         const early = Date.now();
-        const stopped = await capture(shell, ["-c", "sleep 30"], { signal: AbortSignal.abort() });
+        const stopped = await capture(shell, ["-c", "exec sleep 30"], { signal: AbortSignal.abort() });
         expect(Date.now() - early).toBeLessThan(10_000);
         expect(stopped.code).not.toBe(0);
     });
