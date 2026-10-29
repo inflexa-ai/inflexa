@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
+import { z } from "zod";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { ResourceSpec } from "../../config/resource-limits.js";
@@ -81,6 +82,18 @@ describe("one active lease for each key", () => {
 
         expect((await activeLease(pool, "k"))._unsafeUnwrap()?.leaseWorkflowId).toBe("lw-2");
         expect((await latestGeneration(pool, "k"))._unsafeUnwrap()).toBe(2);
+    });
+
+    it("gives each generation its own exec salt", async () => {
+        await request("lw-1", "k", { cpu: 1, memoryGb: 2 });
+        (await releaseLease(pool, "lw-1", "released"))._unsafeUnwrap();
+        await request("lw-2", "k", { cpu: 1, memoryGb: 2 }, 2);
+
+        const first = (await readLease(pool, "lw-1"))._unsafeUnwrap()?.execSalt;
+        const second = (await readLease(pool, "lw-2"))._unsafeUnwrap()?.execSalt;
+        expect(z.uuid().safeParse(first).success).toBe(true);
+        expect(z.uuid().safeParse(second).success).toBe(true);
+        expect(second).not.toBe(first);
     });
 });
 

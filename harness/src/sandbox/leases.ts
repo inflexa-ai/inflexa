@@ -51,6 +51,7 @@ import { pauseAtGate, workPause } from "../workflows/pause.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { SandboxClient } from "./client.js";
 import { noteExecOutcome, summarizeExec } from "./exec-outcome.js";
+import { saltedStepExecId } from "./exec.js";
 import { keyedSandboxIdentity } from "./identity.js";
 import { leaseRecordTail, leaseWorkflowIdOf } from "./lease-names.js";
 import { registerSandboxReconciler } from "./reconciler.js";
@@ -614,7 +615,13 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
                 machineGeneration += 1;
             }
             const timeoutSeconds = request.timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_SECONDS;
-            const result = await client.exec(machine, { ...request, timeoutSeconds }, emit, Date.now() + timeoutSeconds * 1000 + POLL_GRACE_MS);
+            const result = await client.exec(
+                machine,
+                { ...request, timeoutSeconds },
+                emit,
+                Date.now() + timeoutSeconds * 1000 + POLL_GRACE_MS,
+                saltedStepExecId(lease.execSalt),
+            );
             noteExecOutcome(leaseKey, summarizeExec(result));
             const failure = result.syntheticFailure;
             if (failure === undefined) return ok(result);

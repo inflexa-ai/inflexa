@@ -15,6 +15,7 @@
 
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
+import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS, Error as DBOSErrors, StatusString } from "@dbos-inc/dbos-sdk";
@@ -100,6 +101,14 @@ export function stepExecId(): string {
         throw new Error("a sandbox exec runs inside a DBOS workflow, and none is active");
     }
     return `${workflowId}:${stepId}`;
+}
+
+/**
+ * The exec id of a step under a salt that no machine receives. The id is the same on each run of the step, but the
+ * ids that a command can read in the exec records do not give the id of a later exec.
+ */
+export function saltedStepExecId(salt: string): string {
+    return createHash("sha256").update(`${salt}:${stepExecId()}`).digest("hex");
 }
 
 /**

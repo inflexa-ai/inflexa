@@ -68,9 +68,8 @@ export type SandboxClient = {
      * same step gets the same id, and the sandbox gives it the result of the
      * first. Outside a workflow it throws.
      *
-     * `execId` replaces that id. A caller that runs more than one exec in one
-     * step, or an exec outside a workflow, gives its own id
-     * (`sandbox/step-sandbox.ts`).
+     * `execId` replaces that id. The sandbox leases give an id under the salt
+     * of the lease (`sandbox/leases.ts`).
      *
      * A recovered step submits again under the same id. The sandbox dedups the
      * submit on the id, thus the poll attaches to the exec that already ran or
