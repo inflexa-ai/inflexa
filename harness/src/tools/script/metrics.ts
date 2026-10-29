@@ -9,7 +9,8 @@
  *   - cortex.harness.script.read_refusals — counter, one for each table read that a script tool refused, with
  *     `reason` (`too_large`, `unsupported_format`, or `unparsable`). A rise of `too_large` and `unsupported_format`
  *     says that the work wants the tables that only a sandbox reads.
- *   - cortex.harness.script.read_bytes — histogram of the bytes of each table that a script read.
+ *   - cortex.harness.script.read_bytes — histogram of the bytes of each table or PDF that a script read, in buckets
+ *     from 1 KiB up to the PDF read cap.
  *
  * A recovery replays the cached result of a script and runs no body, thus a replay never counts again. The
  * instruments are made on the first use, thus they bind to whatever provider the host registers.
@@ -27,6 +28,13 @@ type Instruments = {
     readonly readBytes: Histogram;
 };
 
+/**
+ * Bucket bounds for the bytes of one read: 1 KiB to 64 MiB, a factor of 4 apart. The top bound is the PDF read cap,
+ * thus the overflow bucket stays empty. Without them the default bounds stop at 10000, and each larger read lands in
+ * the overflow bucket.
+ */
+export const SCRIPT_READ_BOUNDS_BYTES: readonly number[] = [1_024, 4_096, 16_384, 65_536, 262_144, 1_048_576, 4_194_304, 16_777_216, 67_108_864];
+
 let instruments: Instruments | undefined;
 
 function getInstruments(): Instruments {
@@ -35,7 +43,11 @@ function getInstruments(): Instruments {
         instruments = {
             runs: meter.createCounter("cortex.harness.script.runs", { description: "Scripts that run_script ran" }),
             readRefusals: meter.createCounter("cortex.harness.script.read_refusals", { description: "Table reads of a script that a script tool refused" }),
-            readBytes: meter.createHistogram("cortex.harness.script.read_bytes", { description: "Bytes of each table that a script read", unit: "By" }),
+            readBytes: meter.createHistogram("cortex.harness.script.read_bytes", {
+                description: "Bytes of each table or PDF that a script read",
+                unit: "By",
+                advice: { explicitBucketBoundaries: [...SCRIPT_READ_BOUNDS_BYTES] },
+            }),
         };
     }
     return instruments;
@@ -51,4 +63,9 @@ export function recordReadRefusal(reason: ReadRefusal): void {
 
 export function recordReadBytes(bytes: number): void {
     getInstruments().readBytes.record(bytes);
+}
+
+/** Drop the instruments, thus the next record binds to the provider that a test registered. */
+export function __resetScriptMetricsForTest(): void {
+    instruments = undefined;
 }
