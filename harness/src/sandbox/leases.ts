@@ -35,6 +35,7 @@ import { queryPausesOfWork } from "../state/paused-work.js";
 import {
     activeLease,
     clearIdleMachine,
+    leasesOwnedBy,
     clearMachine,
     latestGeneration,
     oldestWaiting,
@@ -130,6 +131,11 @@ export type SandboxLeases = {
     readonly toolchainSource: ToolchainSource;
     acquire(binding: LeaseBinding, size: ResourceSpec): Promise<AcquireOutcome>;
     release(leaseKey: string): Promise<void>;
+    /**
+     * End each lease of the given owner workflows, and do not wait for the lease workflows. A host that cancels
+     * work calls it, thus the machines go now and not at the next tick of each lease workflow.
+     */
+    releaseOwnedBy(ownerWorkflowIds: readonly string[]): Promise<void>;
     exec(leaseKey: string, request: ExecRequest, emit: ExecEmit, mirror?: LeaseBinding["emit"]): Promise<Result<ExecResult, NoLease>>;
     bind(binding: LeaseBinding): BoundLease;
 };
@@ -526,9 +532,8 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
         );
     };
 
-    const release = async (leaseKey: string): Promise<void> => {
-        const lease = unwrapOrThrow(await activeLease(pool, leaseKey));
-        if (lease === undefined) return;
+    /** Tell the lease workflow to end. A lease workflow in a pause reads no message, thus this ends it here. */
+    const stopLease = async (lease: LeaseRecord): Promise<"ended" | "told"> => {
         const dbos = await engine();
         const pauses = unwrapOrThrow(await queryPausesOfWork(pool, lease.analysisId, lease.workId));
         if (pauses.some((row) => row.workflowId === lease.leaseWorkflowId)) {
@@ -536,12 +541,20 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             // resume. Thus the release ends it here.
             await dbos.cancelWorkflow(lease.leaseWorkflowId);
             unwrapOrThrow(await releaseLease(pool, lease.leaseWorkflowId, "released"));
-            await removeRecords(lease.analysisId, leaseKey);
+            await removeRecords(lease.analysisId, lease.leaseKey);
             const next = unwrapOrThrow(await oldestWaiting(pool));
             if (next !== undefined) await dbos.send(next, { kind: "capacity" } satisfies LeaseMessage, LEASE_TOPIC);
-            return;
+            return "ended";
         }
         await dbos.send(lease.leaseWorkflowId, { kind: "release", reason: "released" } satisfies LeaseMessage, LEASE_TOPIC, `${lease.leaseWorkflowId}:release`);
+        return "told";
+    };
+
+    const release = async (leaseKey: string): Promise<void> => {
+        const lease = unwrapOrThrow(await activeLease(pool, leaseKey));
+        if (lease === undefined) return;
+        if ((await stopLease(lease)) === "ended") return;
+        const dbos = await engine();
         for (;;) {
             const handle = await dbos.getWorkflow(lease.leaseWorkflowId);
             if (handle === undefined || TERMINAL_STATUSES.has(handle.status)) return;
@@ -654,6 +667,9 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
                 }
             }),
         release: (leaseKey) => durably("sandbox.release", () => release(leaseKey)),
+        releaseOwnedBy: async (ownerWorkflowIds) => {
+            for (const lease of unwrapOrThrow(await leasesOwnedBy(pool, ownerWorkflowIds))) await stopLease(lease);
+        },
         exec,
         bind: (binding) => ({
             acquire: (size) => leases.acquire(binding, size),

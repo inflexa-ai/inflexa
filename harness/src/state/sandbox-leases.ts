@@ -286,6 +286,17 @@ export function releaseLease(pool: Querier, leaseWorkflowId: string, reason: str
     });
 }
 
+/** Each lease of the given owner workflows that is not released. */
+export function leasesOwnedBy(pool: Querier, ownerWorkflowIds: readonly string[]): ResultAsync<LeaseRecord[], DbError> {
+    return tryQuery("sandboxLeases.ownedBy", async () => {
+        const { rows } = await pool.query({
+            text: `SELECT ${COLUMNS} FROM cortex_sandbox_leases WHERE owner_workflow_id = ANY($1::text[]) AND state <> 'released'`,
+            values: [[...ownerWorkflowIds]],
+        });
+        return rows.map(recordOf);
+    });
+}
+
 /** Each lease that is not released, for the sweep of the reconciler. */
 export function openLeases(pool: Querier): ResultAsync<LeaseRecord[], DbError> {
     return tryQuery("sandboxLeases.open", async () => {

@@ -16,6 +16,7 @@ import {
     latestGeneration,
     oldestWaiting,
     openLeases,
+    leasesOwnedBy,
     readLease,
     releaseLease,
     requestLease,
@@ -94,6 +95,19 @@ describe("one active lease for each key", () => {
         expect(z.uuid().safeParse(first).success).toBe(true);
         expect(z.uuid().safeParse(second).success).toBe(true);
         expect(second).not.toBe(first);
+    });
+});
+
+describe("the leases of an owner", () => {
+    it("gives each lease of the owners that is not released", async () => {
+        await request("lw-a", "owner-a", { cpu: 1, memoryGb: 2 });
+        await request("lw-b", "owner-b", { cpu: 1, memoryGb: 2 });
+        await request("lw-c", "owner-c", { cpu: 1, memoryGb: 2 });
+        (await releaseLease(pool, "lw-b", "released"))._unsafeUnwrap();
+
+        const owned = (await leasesOwnedBy(pool, ["owner-a", "owner-b"]))._unsafeUnwrap();
+
+        expect(owned.map((lease) => lease.leaseWorkflowId)).toEqual(["lw-a"]);
     });
 });
 
