@@ -50,6 +50,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
+import type { ResourceSpec } from "../config/resource-limits.js";
 import { renderResources, renderWorkspace } from "../prompts/briefing.js";
 import type { BoundLease, SandboxLeases } from "../sandbox/leases.js";
 import { workPause } from "../workflows/pause.js";
@@ -62,7 +63,6 @@ import { generateExecutionId } from "../sandbox/execution-id.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { z } from "zod";
 
-import type { AnalysisStep } from "../schemas/workflow-state.js";
 import { ProfileSubmissionSchema, type ProfileSubmission } from "../schemas/data-profile-schemas.js";
 import { computeInputSignature } from "../execution/input-signature.js";
 import { readHeaders } from "../input-scan/enrich.js";
@@ -127,7 +127,7 @@ export function composeProfilerSeed(args: {
     readonly analysisId: string;
     /** The in-sandbox working directory of the profiler. */
     readonly workingDir: string;
-    readonly resources: AnalysisStep["resources"];
+    readonly resources: ResourceSpec;
     readonly menu: SetMenu;
     readonly absorb: AbsorbOutcome;
 }): string {

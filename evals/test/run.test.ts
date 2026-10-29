@@ -169,7 +169,7 @@ describe("the cases", () => {
         expect(new Set(ids).size).toBe(ids.length);
         for (const c of allCases) {
             const toolIds = new Set((await toolsOf(c)).map((tool) => tool.id));
-            for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id)).toBe(true);
+            for (const id of Object.keys(c.tools ?? {})) expect(toolIds.has(id), `${c.id} scripts ${id}`).toBe(true);
         }
     });
 
