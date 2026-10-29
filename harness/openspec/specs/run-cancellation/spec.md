@@ -35,7 +35,7 @@ After a successful engine cancel, the canceler MUST converge the ledgers in this
 2. the conditional terminal write of the run row
 3. the settle of the step rows
 4. the close of the running charge, with `reason: "canceled"`, only when the terminal write changed the row and the body recorded no run end
-5. the out-of-band revoke of the mandate, only on the condition of phase 4, and only when the row carries a jti.
+5. the out-of-band revoke of the mandate, only on the condition of phase 4, and only when the row carries a mandate id.
 
 Each phase MUST have its own guard, so that one failure does not skip the phases after it. A failed read of the recorded run end is the one exception: the canceler then MUST NOT do the terminal write.
 
@@ -43,11 +43,11 @@ The writer that wins the run row owns the charge close and the mandate revoke. W
 
 The settle of the step rows MUST sweep the still-`pending` rows of the run to `skipped`. It MUST also change the still-`running` rows of the run to `canceled`. A row that the running settle changes MUST get `completed_at`, a duration from its `started_at`, and the reason `external_cancel`. Each of the two step writes MUST have its own guard, so that a failure of one does not skip the other. The running settle MUST be conditional on the row status `running`. Thus it never overwrites a terminal status that a child wrote first.
 
-The `converged` flags of the result MUST show what really occurred. `converged.steps` MUST be true only when the two step writes succeed. `converged.mandate` MUST be true for a row with no persisted jti, because no mandate needs a revoke. When the terminal write is refused, `converged.charge` and `converged.mandate` MUST be true, because the canceler has no charge and no mandate to converge. When the terminal write fails, `converged.charge` MUST be false, and `converged.mandate` MUST be false for a row with a persisted jti. A failed read of the recorded run end MUST give the same flags as a failed terminal write. When the body recorded a run end, `converged.charge` and `converged.mandate` MUST come from the record, as "The canceler repairs the row of a run whose body recorded its end" states.
+The `converged` flags of the result MUST show what really occurred. `converged.steps` MUST be true only when the two step writes succeed. `converged.mandate` MUST be true for a row with no persisted mandate id, because no mandate needs a revoke. When the terminal write is refused, `converged.charge` and `converged.mandate` MUST be true, because the canceler has no charge and no mandate to converge. When the terminal write fails, `converged.charge` MUST be false, and `converged.mandate` MUST be false for a row with a persisted mandate id. A failed read of the recorded run end MUST give the same flags as a failed terminal write. When the body recorded a run end, `converged.charge` and `converged.mandate` MUST come from the record, as "The canceler repairs the row of a run whose body recorded its end" states.
 
 #### Scenario: Full convergence
 
-- **WHEN** every phase succeeds for a running run carrying a mandate jti
+- **WHEN** every phase succeeds for a running run carrying a mandate id
 - **THEN** the result is `outcome: "canceled"`, `finalStatus: "canceled"`, and `converged` all true
 
 #### Scenario: A step cut mid-flight settles as canceled
@@ -74,12 +74,12 @@ The `converged` flags of the result MUST show what really occurred. `converged.s
 
 #### Scenario: No mandate to revoke
 
-- **WHEN** the run row carries no `mandate_jti`
+- **WHEN** the run row carries no `mandate_id`
 - **THEN** no revoke is attempted and `converged.mandate` is true
 
 #### Scenario: A failed terminal write closes no charge
 
-- **GIVEN** a running run that carries a mandate jti
+- **GIVEN** a running run that carries a mandate id
 - **WHEN** the conditional terminal write fails
 - **THEN** the canceler does not close the charge and does not revoke the mandate
 - **AND** the step rows still settle, `converged.charge` and `converged.mandate` are false, and `cancel` resolves
@@ -172,7 +172,7 @@ In each of the three results, `outcome` MUST be `canceled`.
 
 #### Scenario: A recorded run end repairs the row
 
-- **GIVEN** a running run that carries a mandate jti, and whose body recorded its run end with the status `completed`, no error, a successful charge close, and a successful revoke
+- **GIVEN** a running run that carries a mandate id, and whose body recorded its run end with the status `completed`, no error, a successful charge close, and a successful revoke
 - **WHEN** `cancel` runs
 - **THEN** the run row holds `completed`, with `completed_at` set and no error
 - **AND** the canceler emits no event, closes no charge, and revokes no mandate
@@ -198,14 +198,14 @@ In each of the three results, `outcome` MUST be `canceled`.
 
 #### Scenario: A record with a wrong shape counts as a failed read
 
-- **GIVEN** a running run that carries a mandate jti, and a recorded value with no `status`
+- **GIVEN** a running run that carries a mandate id, and a recorded value with no `status`
 - **WHEN** `cancel` runs
 - **THEN** the run row stays `running`, the canceler emits no event, closes no charge, and revokes no mandate
 - **AND** `converged.charge` and `converged.mandate` are false
 
 #### Scenario: A failed read of the recorded run end writes nothing
 
-- **GIVEN** a running run that carries a mandate jti
+- **GIVEN** a running run that carries a mandate id
 - **WHEN** the read of the recorded run end fails
 - **THEN** the run row stays `running`
 - **AND** the canceler emits no event, closes no charge, and revokes no mandate

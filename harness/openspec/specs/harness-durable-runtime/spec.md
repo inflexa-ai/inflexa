@@ -111,8 +111,8 @@ Core SHALL declare its external capabilities as injected seams and ship trivial
 local realizations, so it runs with filesystem/no-op defaults and no
 hosted-service dependency. The external seams MUST be these:
 
-- `RunAuthorizer`: the only constructor of a `RunSession`. `authorize` is a gate. `revoke` and `revokeByJti` are
-  notices. The OSS realization is `createLocalRunAuthorizer`.
+- `RunAuthorizer`: the only constructor of a `RunSession`. `authorize` and `renew` are gates. `revoke`,
+  `revokeByMandateId`, and `suspend` are notices. The OSS realization is `createLocalRunAuthorizer`.
 - `ArtifactRegistry`: the post-step record of the artifacts of a step. `register` is a gate, and `sync` is a notice.
   The OSS realization `createNoopArtifactRegistry` registers nothing outside the harness, and it reports zero
   failures. The harness itself writes the local `cortex_artifacts` ledger around the seam. An embedder without an
@@ -166,14 +166,13 @@ SHALL be the only way tools start durable runs. Core SHALL NOT branch on which r
 
 ### Requirement: The scheduler replays deterministically
 
-The parent workflow body SHALL reach the same durable operations in the same
-order on replay. The "which child finished first" decision SHALL use
+The parent workflow body MUST reach the same durable operations in the same
+order on replay. The "which child finished first" decision MUST use
 `DBOS.waitFirst` (a checkpointed step), NOT `Promise.race` over `getResult`.
-Budget admission decisions SHALL derive only from the workflow input (the
-snapshotted budget, the plan's declared step resources) and checkpointed
-completion state, so every replay admits the same steps in the same order. UI
-emits from the workflow body SHALL be awaited in loop order, and any conditional
-post-step emit driven by a non-deterministic producer SHALL gate on a value
+Dispatch decisions MUST derive only from the plan in the workflow input and the
+checkpointed completion state. Thus every replay dispatches the same steps in the
+same order. The body MUST await its UI emits in loop order. A conditional
+post-step emit from a non-deterministic producer MUST gate on a value
 checkpointed in `DBOS.runStep`.
 
 #### Scenario: The completion order is checkpointed
@@ -184,9 +183,9 @@ checkpointed in `DBOS.runStep`.
 
 #### Scenario: Admission decisions replay identically
 
-- **GIVEN** a recovered parent workflow whose original execution held a step for capacity
+- **GIVEN** a recovered parent workflow whose original execution dispatched steps as their dependencies completed
 - **WHEN** the scheduler loop replays from the checkpointed completion sequence
-- **THEN** the same admission decisions are recomputed and the same child workflows are dispatched in the same order
+- **THEN** the same dispatch decisions are recomputed and the same child workflows are dispatched in the same order
 
 ### Requirement: DBOS launches with a stable executor identity and recovers under it
 
@@ -274,79 +273,6 @@ connection footprint fits inside Postgres `max_connections`.
 - **GIVEN** Postgres exposes a known `max_connections`
 - **WHEN** the application pool `max` is configured
 - **THEN** the guard checks one process's footprint and reports available headroom
-
-### Requirement: Step scheduling is dependency-gated and failure-isolated
-
-`executeAnalysis` SHALL start each step's child workflow when all of its
-`depends_on` steps have completed AND the machine resource budget admits it
-(see the resource-budgeted-scheduling capability), with no wave barrier. When
-the workflow input carries no budget, dependency satisfaction alone SHALL start
-the step. A computed topological level MAY be persisted and emitted for UI
-layout but SHALL NOT gate execution.
-
-A step can settle as `failed` or as `blocked`, or its child can throw for a cause that is not a suspension. Such a
-settlement MUST NOT cancel the in-flight siblings, and it MUST NOT stop the scheduler. The parent MUST record the step
-as failed. It MUST continue to await the in-flight children, and it MUST dispatch each step that becomes
-dependency-satisfied.
-
-Only the failed step's transitive dependents are affected — they can never become
-dependency-satisfied (a failed step never enters the completed set) and SHALL
-never be dispatched. The parent SHALL run a dispatch round after every child
-settlement, not only after completions. The run-level `failureReason` SHALL
-record the first failure in checkpointed settlement order; per-step errors ride
-on the step ledger and the DAG snapshot.
-
-The halt cascade cancels each in-flight child with an explicit `DBOS.cancelWorkflow`, and it stops the scheduler. The
-parent MUST start the halt cascade only on these paths:
-
-- A child settles as a suspension, as a result or as a throw. The parent knows this from the typed suspension message
-  of the child (see the workflow-suspension spec).
-- The `neverFits` plan-validation guard finds a step that can never fit the budget. The resource-budgeted-scheduling
-  capability owns the semantics of this guard.
-- An external cancel stops the run.
-
-#### Scenario: A ready step starts without waiting for an unrelated sibling
-
-- **GIVEN** a step whose single dependency has just completed and a budget with sufficient remaining capacity
-- **WHEN** the scheduler recomputes the ready set
-- **THEN** that step starts immediately even if an unrelated step is still running
-
-#### Scenario: A ready step is held while the budget is exhausted
-
-- **GIVEN** a step whose dependencies have all completed and in-flight siblings whose declared resources consume the full budget
-- **WHEN** the scheduler recomputes the ready set
-- **THEN** the step is not started until an in-flight sibling settles and frees capacity
-
-#### Scenario: A failure dooms only its transitive dependents
-
-- **GIVEN** a plan `A → B → D` and `A → C → E` where B and C run concurrently after A completes
-- **WHEN** B settles as `failed` while C is still running
-- **THEN** C keeps running, E is dispatched when C completes, and D is never dispatched
-- **AND** the run finalises `partial` with per-step errors on the ledger and `failureReason` recording B's failure
-
-#### Scenario: A thrown child is treated exactly like a failed step
-
-- **GIVEN** two independent in-flight steps
-- **WHEN** one child workflow throws for a cause that is not a suspension
-- **THEN** its step is recorded failed with the thrown error, the sibling is not cancelled, and scheduling continues
-
-#### Scenario: A blocker is treated exactly like a failed step
-
-- **GIVEN** a plan with a blocked step and an independent ready sibling
-- **WHEN** the step settles `blocked`
-- **THEN** only the blocked step's transitive dependents are never dispatched and the independent sibling still runs
-
-#### Scenario: A suspension still halts the run
-
-- **GIVEN** three in-flight children
-- **WHEN** one child settles as a suspension
-- **THEN** the parent cancels the other in-flight children with `DBOS.cancelWorkflow`, and it dispatches no more steps
-
-#### Scenario: A suspension that comes as a throw halts the run
-
-- **GIVEN** a child that sent a typed suspension message and then canceled itself
-- **WHEN** `getResult` of that child throws `DBOSWorkflowCancelledError`
-- **THEN** the parent identifies the settlement as a suspension, and it starts the halt cascade
 
 ### Requirement: Unreachable dependents are visible as skipped in the DAG stream
 
@@ -611,3 +537,75 @@ The chat turn MUST give its root loop a store over the pool of its deps. `prepar
 - **GIVEN** a chat turn whose tool gives a result of 50,000 characters
 - **WHEN** the turn runs
 - **THEN** the stored round holds the excerpt, and `cortex_tool_outputs` holds the whole text under the reference of the excerpt
+
+### Requirement: Step scheduling is dependency-gated, failure-isolated, and free of a budget
+
+`executeAnalysis` MUST start each step's child workflow when all of its
+`depends_on` steps have completed, with no wave barrier. The scheduler admits
+no step against a resource budget. The step agent acquires its sandbox, and the
+sandbox-leases capability admits each lease against the budget. A computed
+topological level can be persisted and emitted for UI layout, but it MUST NOT
+gate execution.
+
+A step can settle as `failed` or as `blocked`, or its child can throw for a cause that is not a suspension. Such a
+settlement MUST NOT cancel the in-flight siblings, and it MUST NOT stop the scheduler. The parent MUST record the step
+as failed. It MUST continue to await the in-flight children, and it MUST dispatch each step that becomes
+dependency-satisfied.
+
+Only the failed step's transitive dependents are affected — they can never become
+dependency-satisfied (a failed step never enters the completed set) and MUST
+never be dispatched. The parent MUST run a dispatch round after every child
+settlement, not only after completions. The run-level `failureReason` MUST
+record the first failure in checkpointed settlement order. The per-step errors ride
+on the step ledger and the DAG snapshot.
+
+The halt cascade cancels each in-flight child with an explicit `DBOS.cancelWorkflow`, and it stops the scheduler. The
+parent MUST start the halt cascade only on these paths:
+
+- A child settles as a suspension, as a result or as a throw. The parent knows this from the typed suspension message
+  of the child (see the workflow-suspension spec).
+- An external cancel stops the run.
+
+#### Scenario: A ready step starts without waiting for an unrelated sibling
+
+- **GIVEN** a step whose single dependency has just completed
+- **WHEN** the scheduler recomputes the ready set
+- **THEN** that step starts immediately even if an unrelated step is still running
+
+#### Scenario: A ready step starts while the leases hold the budget
+
+- **GIVEN** a budget of `{ cpu: 4, memoryGb: 8 }`, and two in-flight steps whose leases hold the full budget
+- **WHEN** a third step becomes dependency-satisfied
+- **THEN** the scheduler starts the third step at once
+- **AND** the `acquire_sandbox` call of the step waits for a grant until a lease frees capacity
+
+#### Scenario: A failure dooms only its transitive dependents
+
+- **GIVEN** a plan `A → B → D` and `A → C → E` where B and C run concurrently after A completes
+- **WHEN** B settles as `failed` while C is still running
+- **THEN** C keeps running, E is dispatched when C completes, and D is never dispatched
+- **AND** the run finalizes `partial` with per-step errors on the ledger and `failureReason` recording B's failure
+
+#### Scenario: A thrown child is treated exactly like a failed step
+
+- **GIVEN** two independent in-flight steps
+- **WHEN** one child workflow throws for a cause that is not a suspension
+- **THEN** its step is recorded failed with the thrown error, the sibling is not canceled, and scheduling continues
+
+#### Scenario: A blocker is treated exactly like a failed step
+
+- **GIVEN** a plan with a blocked step and an independent ready sibling
+- **WHEN** the step settles `blocked`
+- **THEN** only the blocked step's transitive dependents are never dispatched and the independent sibling still runs
+
+#### Scenario: A suspension still halts the run
+
+- **GIVEN** three in-flight children
+- **WHEN** one child settles as a suspension
+- **THEN** the parent cancels the other in-flight children with `DBOS.cancelWorkflow`, and it dispatches no more steps
+
+#### Scenario: A suspension that comes as a throw halts the run
+
+- **GIVEN** a child that sent a typed suspension message and then canceled itself
+- **WHEN** `getResult` of that child throws `DBOSWorkflowCancelledError`
+- **THEN** the parent identifies the settlement as a suspension, and it starts the halt cascade

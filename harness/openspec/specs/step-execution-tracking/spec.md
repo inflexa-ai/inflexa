@@ -25,17 +25,19 @@ clears the handle. The row holds no exec id.
 
 ### Requirement: cortex_step_executions table schema
 
-The system MUST maintain a `cortex_step_executions` table with: `run_id` (TEXT,
-NOT NULL), `step_id` (TEXT, NOT NULL), `analysis_id` (TEXT, NOT NULL), `wave`
-(INTEGER, NOT NULL — topological level for UI layout, not a scheduling barrier),
-`agent_id` (TEXT, NOT NULL), `status` (TEXT, NOT NULL), `started_at` (TEXT,
-nullable), `completed_at` (TEXT, nullable), `duration_ms` (BIGINT, nullable),
-`error` (TEXT, nullable), `attempts` (INTEGER NOT NULL DEFAULT 1),
-`last_error_class` (TEXT, nullable), `finish_reason` (TEXT, nullable),
-`hit_max_steps` (INTEGER NOT NULL DEFAULT 0), `blocked_reason` (TEXT, nullable),
-`sandbox_ref` (JSONB, nullable), and `child_workflow_id` (TEXT, nullable).
+The system MUST maintain a `cortex_step_executions` table with these columns:
+
+- `run_id` (TEXT, NOT NULL), `step_id` (TEXT, NOT NULL), and `analysis_id` (TEXT, NOT NULL)
+- `wave` (INTEGER, NOT NULL), the topological level for the UI layout, not a scheduling barrier
+- `agent_id` (TEXT, NOT NULL) and `status` (TEXT, NOT NULL)
+- `started_at` (TEXT, nullable), `completed_at` (TEXT, nullable), and `duration_ms` (BIGINT, nullable)
+- `error` (TEXT, nullable), `attempts` (INTEGER NOT NULL DEFAULT 1), and `last_error_class` (TEXT, nullable)
+- `finish_reason` (TEXT, nullable), `hit_max_steps` (INTEGER NOT NULL DEFAULT 0), and `blocked_reason` (TEXT, nullable)
+- `child_workflow_id` (TEXT, nullable)
+
 Primary key MUST be `(run_id, step_id)`. The table MUST have no `exec_id`
-column.
+column and no `sandbox_ref` column. The lease table of the sandbox module
+records the machine of a step (see the sandbox-leases spec).
 
 Indexes MUST exist on `(analysis_id)` and `(child_workflow_id)`. There MUST be
 no index on `(status) WHERE sandbox_ref IS NOT NULL`, and no composite
@@ -63,16 +65,24 @@ no index on `(status) WHERE sandbox_ref IS NOT NULL`, and no composite
 - **WHEN** the migration `20261005120000_drop_the_active_exec_tracking` runs
 - **THEN** the table has no `exec_id` column and no `idx_cortex_step_exec_active_sandbox` index, and each other column keeps its data
 
+#### Scenario: The sandbox reference column is dropped
+
+- **GIVEN** a database whose `cortex_step_executions` has the `sandbox_ref` column
+- **WHEN** the migration `20261030120000_lease_the_sandboxes` runs
+- **THEN** the table has no `sandbox_ref` column, and each other column keeps its data
+
 ### Requirement: StepExecutionRow schema
 
-The `StepExecutionRow` Zod schema MUST define: `runId`, `stepId`, `analysisId`,
-`wave` (number), `agentId`, `status` (enum: `"pending"`, `"running"`,
-`"completed"`, `"failed"`, `"skipped"`, `"canceled"`, `"blocked"`), `startedAt`
-(nullable), `completedAt` (nullable), `durationMs` (nullable), `error`
-(nullable), `attempts` (number, default 1), `lastErrorClass` (nullable),
-`finishReason` (nullable), `hitMaxSteps` (boolean, default false),
-`blockedReason` (nullable, default null), `sandboxRef` (`PersistedSandboxRef`,
-nullable), and `childWorkflowId` (nullable). It MUST define no `execId`.
+The `StepExecutionRow` Zod schema MUST define these fields:
+
+- `runId`, `stepId`, `analysisId`, `wave` (number), and `agentId`
+- `status`: one of `"pending"`, `"running"`, `"completed"`, `"failed"`, `"skipped"`, `"canceled"`, and `"blocked"`
+- `startedAt`, `completedAt`, `durationMs`, and `error`, each nullable
+- `attempts` (number, default 1), `lastErrorClass` (nullable), and `finishReason` (nullable)
+- `hitMaxSteps` (boolean, default false) and `blockedReason` (nullable, default null)
+- `childWorkflowId` (nullable)
+
+It MUST define no `execId` and no `sandboxRef`.
 
 #### Scenario: StepExecutionRow includes blocked status and reason
 
@@ -159,12 +169,15 @@ defaults, and the migration MUST be safe to run again. The migration
 `DROP COLUMN IF EXISTS`, and the `idx_cortex_step_exec_active_sandbox` index with
 `DROP INDEX IF EXISTS`.
 
+The migration `20261030120000_lease_the_sandboxes` MUST drop the `sandbox_ref`
+column with `DROP COLUMN IF EXISTS`.
+
 #### Scenario: First startup adds columns and indexes
 
 - **GIVEN** a fresh Postgres without the new columns
 - **WHEN** the state module initialises
-- **THEN** the columns above exist and the `idx_cortex_step_exec_child_workflow` index exists
-- **AND** no `exec_id` column and no `idx_cortex_step_exec_active_sandbox` index exist
+- **THEN** the columns of the table schema exist and the `idx_cortex_step_exec_child_workflow` index exists
+- **AND** no `exec_id` column, no `sandbox_ref` column, and no `idx_cortex_step_exec_active_sandbox` index exist
 
 #### Scenario: Re-running startup is a no-op
 
@@ -308,30 +321,3 @@ pre-existing wedge class `inflexa run` already detects.
 - **WHEN** the run finalizes
 - **THEN** the `synthesis` row is `skipped` (via the terminal sweep), never
   `running`
-
-### Requirement: sandbox_ref tracks the live-sandbox registry
-
-`cortex_step_executions` MUST keep `sandbox_ref` (JSONB) as the live-sandbox
-registry of the step. `sandbox_ref` carries the serialized handle
-`{ sandboxId, host, port, backend }`. It MUST be NULL when no sandbox is live.
-
-The sandbox client MUST write `sandbox_ref` in `createSandbox(session, spec, identity)`. The client MUST
-select the row from the session. The run id is `session.runFrame.runId`, and the step id is
-`session.runFrame.stepId`. The spec holds no run id and no step id. The `teardown` MUST clear
-`sandbox_ref`, and the reaper MUST clear it when it reconciles the row of a machine that it removed.
-
-#### Scenario: createSandbox populates the registry row
-
-- **WHEN** the sandbox-step child runs `createSandbox(session, spec, identity)` in its durable step, with its step session
-- **THEN** the client writes `sandbox_ref` on the row of `session.runFrame.runId` and `session.runFrame.stepId`
-- **AND** the `status` of that row is `"running"`
-
-#### Scenario: teardown clears the registry row
-
-- **WHEN** the `teardown` step of the child runs (on success, fail, or cancel)
-- **THEN** `sandbox_ref` is set to NULL
-
-#### Scenario: The handle holds no secret
-
-- **WHEN** `sandbox_ref` is serialized to the database
-- **THEN** the JSONB holds only `sandboxId`, `host`, `port`, and `backend`

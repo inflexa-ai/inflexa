@@ -1,10 +1,9 @@
-# Spec Delta
+# sandbox-leases Specification
 
 ## Purpose
-
 Define the sandbox module of the harness. A consumer holds a sandbox through a lease. The module owns the admission, the spawn, the replacement, the idle removal, and the teardown.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: A consumer reaches a sandbox only through a lease
 

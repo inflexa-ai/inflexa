@@ -57,11 +57,17 @@ the composition root as a construction-time dependency. A caller MUST NOT import
 a backend implementation directly, and the client type MUST NOT leak a
 backend-specific type.
 
+Only the sandbox module calls the client (see the sandbox-leases spec). A consumer of a sandbox
+MUST NOT call the client. It holds a lease, and the module calls the client for it.
+
 `createSandbox` MUST take the `SpawnSession` of the work, a `RunSession` whose
 `runFrame.stepId` is present. Thus a spawn without a session does not compile. The client MUST
 read the analysis id from `session.scope.analysisId`, the run id from `session.runFrame.runId`,
-and the step id from `session.runFrame.stepId`. `SandboxSpec` holds the other fields of the
-spawn: `childWorkflowId`, `image`, `extraEnv`, `resources`, `readOnly`, and `writableTail`.
+and the step id from `session.runFrame.stepId`.
+
+`SandboxSpec` holds the other fields of the
+spawn: `ownerWorkflowId`, `image`, `extraEnv`, `resources`, `readOnly`, and `writableTail`.
+`ownerWorkflowId` is the id of the lease workflow that spawns the machine.
 `SandboxSpec` carries no label, because the client gets the host labels from its
 label hook (see the sandbox-labels spec). `SandboxSpec` carries no exec id.
 
@@ -101,7 +107,7 @@ its DBOS step throws the error through `unwrapOrThrow`.
 - **GIVEN** a `SpawnSession` for the analysis `an-1`, the run `run-1`, and the step `step-a`
 - **WHEN** a caller runs `createSandbox(session, spec, identity)`
 - **THEN** the sandbox holds the step directory of `an-1`, `run-1`, and `step-a` as its writable mount
-- **AND** the active-sandbox registry records the sandbox under `run-1` and `step-a`
+- **AND** the sandbox records `spec.ownerWorkflowId` as its owner workflow
 
 #### Scenario: A session with no step id does not compile
 
@@ -173,112 +179,6 @@ liveness, not readiness: a starting sandbox is alive.
 - **WHEN** `isAlive(ref)` is called
 - **THEN** it SHALL throw the API error and SHALL NOT silently report the machine dead
 
-### Requirement: teardown and teardownById are idempotent
-
-`teardown(ref)` MUST run as a DBOS step that deletes the K8s Job (or stops and
-removes the Docker container) and clears the active-sandbox registry row. It MUST
-be idempotent: "already gone" is a successful teardown and MUST NOT throw.
-
-`teardownById(sandboxId)` MUST delete a machine by id alone. This is the path of
-the reaper, which holds a `sandboxId` but no full `SandboxRef`. It MUST NOT touch
-the registry, because the reaper reconciles the row itself. It too MUST be
-idempotent. `isAliveById(sandboxId)` MUST answer liveness on the same id-only
-terms, with the semantics and throwing contract of `isAlive`, which MUST
-delegate to it.
-
-#### Scenario: Teardown removes the machine and clears the row
-
-- **GIVEN** a K8s sandbox recorded in the active-sandbox registry
-- **WHEN** `teardown(ref)` is called
-- **THEN** the Job is deleted and the `sandbox_ref` of the step row is cleared
-
-#### Scenario: Teardown of a missing sandbox is a no-op success
-
-- **GIVEN** a sandbox whose backing machine has already been deleted
-- **WHEN** `teardown(ref)` is called
-- **THEN** the call returns success without throwing
-
-#### Scenario: teardownById deletes by id without registry touch
-
-- **GIVEN** the reaper holding only a `sandboxId`
-- **WHEN** `teardownById(sandboxId)` is called
-- **THEN** the backend machine is deleted
-- **AND** the call does not clear any registry row itself
-
-### Requirement: Recovery re-checks liveness before continuing a step
-
-After `sandbox.create`, the step body SHALL re-check `isAlive(ref)` in a DBOS step
-before continuing. On first execution this is a cheap no-op; on replay it catches
-a sandbox that died between checkpoints. If `isAlive` returns `false`, the step
-SHALL throw so it fails and DBOS retry restarts it from a fresh sandbox, rather
-than resuming against a dead machine.
-
-#### Scenario: Live sandbox continues normally
-
-- **GIVEN** a recovered step whose `isAlive(ref)` returns `true`
-- **WHEN** the body resumes
-- **THEN** it SHALL continue into the agent loop as normal
-
-#### Scenario: Dead sandbox on recovery fails the step
-
-- **GIVEN** a recovered step whose `isAlive(ref)` returns `false`
-- **WHEN** the re-check step runs
-- **THEN** it SHALL throw so the step fails and DBOS retry restarts it from a fresh sandbox
-
-### Requirement: A scheduled reaper is the sole orphan cleanup
-
-The harness SHALL register a separate scheduled `registerSandboxReaper`
-workflow (~5-minute cadence, unsharded) as the only garbage collector for
-orphaned sandbox machines and stale registry rows. One sweep SHALL run as a
-single DBOS step: `listManagedSandboxes`, then for each machine read its
-owner-workflow status. A machine whose owner is in `{PENDING, ENQUEUED, RUNNING}`
-SHALL be left alone; one whose owner is terminal (`SUCCESS`/`ERROR`/`CANCELLED`)
-SHALL be reaped via `teardownById`, and the stuck step row SHALL be reconciled to
-the workflow's terminal status.
-
-A machine whose owner does **not** resolve to a workflow at all — it records no
-owner, or the id it records names no `dbos.workflow_status` row — SHALL NOT be
-reaped on age alone. Age cannot distinguish a genuine orphan from a live machine
-whose owner id failed to resolve, and DBOS records the owner's status at enqueue,
-*before* the machine exists, so a missing status is never evidence that the work
-has finished. Past a creation-time grace (~10 minutes) the sweep SHALL instead
-probe `isAliveById` and reap only an observably dead machine. A machine still
-alive SHALL be left standing and counted in the sweep summary, so an
-unattributable machine is a reported leak rather than a silent teardown of live
-work. A probe that throws SHALL leave the machine for the next sweep.
-
-#### Scenario: Terminal-owner machine is reaped and its row reconciled
-
-- **GIVEN** a managed machine whose owning workflow status is `CANCELLED`
-- **WHEN** the reaper sweep runs
-- **THEN** `teardownById` SHALL delete the machine
-- **AND** the stuck `status='running'` step row SHALL be reconciled to `canceled`
-
-#### Scenario: In-flight-owner machine is left alone
-
-- **GIVEN** a managed machine whose owning workflow status is `RUNNING`
-- **WHEN** the reaper sweep runs
-- **THEN** the machine SHALL NOT be torn down
-
-#### Scenario: Unresolvable-owner machine is left alone within the grace
-
-- **GIVEN** a managed machine whose owner does not resolve to a workflow
-- **WHEN** the reaper sweep runs before the creation-time grace elapses
-- **THEN** the machine SHALL be left alone, and SHALL NOT be probed
-
-#### Scenario: Unresolvable-owner machine past the grace is reaped only when dead
-
-- **GIVEN** a managed machine past the grace whose owner does not resolve to a workflow
-- **WHEN** the reaper sweep runs and `isAliveById` reports the machine dead
-- **THEN** `teardownById` SHALL delete the machine
-
-#### Scenario: A live machine is never reaped for being unattributable
-
-- **GIVEN** a managed machine past the grace whose owner does not resolve to a workflow
-- **WHEN** the reaper sweep runs and `isAliveById` reports the machine alive
-- **THEN** the machine SHALL NOT be torn down
-- **AND** the sweep summary SHALL count it as live-unattributed
-
 ### Requirement: The host keeps each exec stream up to the maximum of the tool output store
 
 The submit of each exec MUST carry `stdoutByteCap` and `stderrByteCap`, with the value `EXEC_STREAM_BYTE_CAP`. `runExec` attaches them to each request, and a caller of `exec` gives no budget.
@@ -287,7 +187,7 @@ The submit of each exec MUST carry `stdoutByteCap` and `stderrByteCap`, with the
 
 `EXEC_STREAM_BYTE_CAP` MUST be 1,048,576 bytes, the maximum of a kept text of the tool output store (refer to the harness-agent-loop capability). Thus the host gets each stream that the store can keep, and the loop decides what the model sees. An embedder can give a different value with `execStreamByteCap` of the client configuration.
 
-Each caller of the client gets the same bound: the step agent, the data profile, a session derivation, and a value extraction.
+Each caller of the client gets the same bound: the step agent and the data profile.
 
 #### Scenario: A submit carries the budget
 
@@ -451,8 +351,9 @@ with no frame parses, for example a synthetic failure.
 A DBOS step does not see a cancel of its workflow. Thus the exec MUST read the
 status of its workflow during the poll loop, at most one time in each 10 s. When
 the status is `CANCELLED`, the exec MUST throw `DBOSWorkflowCancelledError`. The
-command in the sandbox continues until the reaper removes the machine, because
-sandbox-server has no kill route.
+command in the sandbox continues until the lease of the consumer ends, because
+sandbox-server has no kill route. The lease workflow ends the lease when it finds
+its owner terminal (see the sandbox-leases spec).
 
 #### Scenario: A cancel stops the poll loop
 
@@ -460,6 +361,12 @@ sandbox-server has no kill route.
 - **WHEN** its workflow is canceled
 - **THEN** the next status read finds `CANCELLED`, and the exec throws `DBOSWorkflowCancelledError`
 - **AND** the exec sends no more polls
+
+#### Scenario: The lease removes the machine of a canceled exec
+
+- **GIVEN** an exec whose workflow was canceled while its command runs
+- **WHEN** the lease workflow finds the owner terminal
+- **THEN** the lease workflow removes the machine, and the command stops with it
 
 ### Requirement: Sustained unavailability escalates to a liveness probe
 
@@ -574,53 +481,6 @@ from the exec endpoints of a sandbox.
 - **WHEN** a pod that is not a Cortex pod connects to the exec port
 - **THEN** the policy refuses the connection
 
-### Requirement: The active-sandbox registry records the machine, not the exec
-
-The active-sandbox registry MUST be the `cortex_step_executions` rows with a
-non-null `sandbox_ref` and `status='running'`. The `sandbox.create` step MUST
-write `sandbox_ref`, and `teardown` MUST clear it. The reaper MUST clear it when
-it reconciles the row of a machine that it removed. The row MUST hold no exec
-id. The exec id is the id of a DBOS step, and nothing outside that step reads
-it.
-
-#### Scenario: A step row holds no exec id
-
-- **GIVEN** a step whose agent runs some execs
-- **WHEN** a reader reads the row while the step runs
-- **THEN** the row holds the `sandbox_ref` of the machine, and it holds no exec id
-
-### Requirement: The sandbox spawn is a checkpoint-idempotent two-step sequence
-
-The spawn MUST run as two DBOS steps. Step 1 (`sandbox.mint`) MUST checkpoint a
-`SandboxIdentity` `{ sandboxId }`, a `sbx-{run8}-{rand8}` name. Thus the name is
-durable before a machine exists. Step 2 (`sandbox.create`) MUST spawn the
-`sandbox-base` machine under that identity and wait for `/health`. Then it MUST
-record the machine in the active-sandbox registry and return the `SandboxRef`
-`{ sandboxId, host, port, backend }`. The machine gets no secret.
-
-The idempotency MUST come from the step-1 checkpoint, not from the name. A
-recovery run of step 2 whose machine exists already MUST adopt that machine
-under the same name, and it MUST NOT leak a second machine.
-
-#### Scenario: Identity is durable before the machine exists
-
-- **WHEN** the `sandbox.mint` step runs
-- **THEN** `{ sandboxId }` is checkpointed as the output of that step
-- **AND** no sandbox machine exists yet
-
-#### Scenario: The identity persists across replay
-
-- **GIVEN** a workflow that ran the mint step and the spawn step on process A
-- **WHEN** the workflow recovers on process B
-- **THEN** the cached step outputs are returned, and no new name is minted
-
-#### Scenario: Recovery adopts an already-spawned machine
-
-- **GIVEN** a process restart between the backend spawn and the step-2 checkpoint
-- **WHEN** `sandbox.create` runs again on recovery and the backend reports that the machine exists
-- **THEN** it adopts that machine under the step-1 identity
-- **AND** it does not make a second machine
-
 ### Requirement: A scheduled sweep clears the unconsumed DBOS sends
 
 The harness MUST register a `@DBOS.scheduled` sweep that runs about each 5
@@ -643,3 +503,69 @@ row count.
 - **GIVEN** a `dbos.notifications` row with `consumed=false` whose workflow status is `PENDING`
 - **WHEN** the sweep runs
 - **THEN** the row is not deleted
+
+### Requirement: teardown removes only the machine, and it is idempotent
+
+`teardown(ref)` MUST run as a DBOS step that deletes the K8s Job (or stops and removes the Docker container). It MUST touch no row of the database. It MUST be idempotent: "already gone" is a successful teardown and MUST NOT throw.
+
+#### Scenario: Teardown removes the machine
+
+- **GIVEN** a K8s sandbox of a lease
+- **WHEN** `teardown(ref)` is called
+- **THEN** the Job is deleted, and no row of the database changes
+
+#### Scenario: Teardown of a missing sandbox is a no-op success
+
+- **GIVEN** a sandbox whose backing machine has already been deleted
+- **WHEN** `teardown(ref)` is called
+- **THEN** the call returns success without throwing
+
+### Requirement: teardownById removes a machine by id alone
+
+`teardownById(sandboxId)` MUST delete a machine by id alone. This is the path of the reconciler, which holds a `sandboxId` but no full `SandboxRef`. It MUST be idempotent. `isAliveById(sandboxId)` MUST answer liveness on the same id-only terms, with the semantics and the throw contract of `isAlive`, which MUST delegate to it.
+
+#### Scenario: teardownById deletes by id
+
+- **GIVEN** the reconciler that holds only a `sandboxId`
+- **WHEN** `teardownById(sandboxId)` is called
+- **THEN** the backend machine is deleted
+
+#### Scenario: teardownById of a missing machine succeeds
+
+- **GIVEN** a `sandboxId` whose machine is already gone
+- **WHEN** `teardownById(sandboxId)` is called
+- **THEN** the call returns success without throwing
+
+### Requirement: The sandbox spawn is idempotent on a keyed identity
+
+The lease workflow MUST spawn each machine in a DBOS step, under a `SandboxIdentity` `{ sandboxId }` that comes from a key. The key is the id of the lease workflow and the machine generation, and the name has the form `sbx-{run8}-{hash12}`. The step MUST wait for `/health` and return the `SandboxRef` `{ sandboxId, host, port, backend }`. A rerun MUST adopt a machine that exists already. The machine gets no secret.
+
+#### Scenario: The same key gives the same name
+
+- **GIVEN** a lease workflow `sandboxlease:an-1:run-1-2:1` at the machine generation 1
+- **WHEN** its spawn step runs two times
+- **THEN** each run gives the same `sandboxId`, and no step mints a name before the spawn
+
+#### Scenario: Recovery adopts an already-spawned machine
+
+- **GIVEN** a process restart between the backend spawn and the checkpoint of the spawn step
+- **WHEN** the spawn step runs again on recovery and the backend reports that the machine exists
+- **THEN** it adopts that machine under the same name
+- **AND** it does not make a second machine
+
+#### Scenario: A new machine of the lease gets a new name
+
+- **GIVEN** a lease whose machine went away at the machine generation 1
+- **WHEN** the lease workflow spawns the machine of the generation 2
+- **THEN** the new machine has a `sandboxId` that differs from the first
+
+### Requirement: A record that a new machine lost gives a synthetic failure
+
+A poll can give a result that carries the lost reason of sandbox-server. Then the exec MUST return a synthetic-failure `ExecResult` with the reason `"sandbox-replaced"` and no exit code. The exec MUST NOT submit the command again. A lost record shows that the machine of the lease changed while the command ran.
+
+#### Scenario: A recovered exec meets a lost record
+
+- **GIVEN** a command that ran when its machine went away, and a new machine of the same lease that marked its record lost
+- **WHEN** the recovered exec submits the same exec id and polls
+- **THEN** the exec returns a synthetic failure with the reason `"sandbox-replaced"`
+- **AND** the command does not run again

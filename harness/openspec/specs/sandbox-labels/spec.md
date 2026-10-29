@@ -23,13 +23,16 @@ and no spawn path has label code of its own.
 If the hook gives an `err`, the client MUST refuse the spawn with the `SandboxError` variant
 `labels_refused`. The variant MUST carry the reason and the suspend flag of the `GateFailure`.
 The client MUST NOT make the step tree, and it MUST NOT call a backend. `createSandbox` MUST
-give the refusal as an `err` value, the same as each other `SandboxError` of the client seam. If
-the suspend flag is true, a caller inside a workflow pauses the work (see the work-pause spec).
+give the refusal as an `err` value, the same as each other `SandboxError` of the client seam.
+
+The lease workflow is the only caller of `createSandbox` (see the sandbox-leases spec). If the
+suspend flag is true, the lease workflow pauses under the work of its consumer (see the
+work-pause spec).
 
 #### Scenario: A spawn path with no label code gets the host labels
 
 - **GIVEN** a sandbox client whose hook gives `{ "example.com/tenant": "acme" }`
-- **WHEN** the derivation of `derive_table` makes a sandbox
+- **WHEN** the lease workflow of a step spawns the machine of the lease
 - **THEN** the sandbox carries the label `example.com/tenant=acme`
 
 #### Scenario: The hook gets the session of the spawn
@@ -53,6 +56,12 @@ the suspend flag is true, a caller inside a workflow pauses the work (see the wo
 - **AND** the variant carries the reason `no_funds` and the suspend flag `true`
 - **AND** the client makes no step tree and calls no backend
 
+#### Scenario: A refusal with the suspend flag pauses the lease workflow
+
+- **GIVEN** a hook that gives `err({ reason: "no_funds", suspend: true })` for the spawn of a lease of a run step
+- **WHEN** the lease workflow spawns the machine
+- **THEN** the lease workflow pauses under the run, and no machine starts
+
 ### Requirement: Each sandbox carries the harness label set on both backends
 
 Each sandbox MUST carry the harness labels in this table, on the Docker backend and on the K8s
@@ -71,24 +80,25 @@ On Docker, the container MUST carry the labels. On K8s, the Job metadata and the
 metadata MUST both carry the labels. A cost reconciler of a host reads the labels of a pod. Thus
 a label on the Job only is not visible to that reconciler.
 
-The owner workflow id (`spec.childWorkflowId`) MUST be the label `cortex/owner-workflow-id` on
-Docker. On K8s, the owner workflow id MUST be the Job annotation `cortex/owner-workflow-id`. A
+The owner workflow id (`spec.ownerWorkflowId`) MUST be the label `cortex/owner-workflow-id` on
+Docker. On K8s, the owner workflow id MUST be the Job annotation `cortex/owner-workflow-id`. The
+owner workflow is the lease workflow that spawns the machine. A
 DBOS workflow id can be longer than 63 characters, and it can hold `:`. Thus it is not a valid
 K8s label value, but an annotation holds it with no change.
 
 #### Scenario: A Docker container carries the label set
 
-- **GIVEN** a `SpawnSession` for the analysis `an-1`, the run `run-1`, and the step `step-a`, and the sandbox id `sbx-run1-0a1b2c3d`
+- **GIVEN** a `SpawnSession` for the analysis `an-1`, the run `run-1`, and the step `step-a`, and the sandbox id `sbx-run1-0a1b2c3d4e5f`
 - **WHEN** the Docker backend makes the container
-- **THEN** the container carries `app.kubernetes.io/managed-by=cortex`, `role=sandbox`, `cortex/sandbox-id=sbx-run1-0a1b2c3d`, `cortex/analysis-id=an-1`, `cortex/run-id=run-1`, and `cortex/step-id=step-a`
-- **AND** the container carries the label `cortex/owner-workflow-id` with the value of `spec.childWorkflowId`
+- **THEN** the container carries `app.kubernetes.io/managed-by=cortex`, `role=sandbox`, `cortex/sandbox-id=sbx-run1-0a1b2c3d4e5f`, `cortex/analysis-id=an-1`, `cortex/run-id=run-1`, and `cortex/step-id=step-a`
+- **AND** the container carries the label `cortex/owner-workflow-id` with the value of `spec.ownerWorkflowId`
 
 #### Scenario: A K8s Job and its pod template carry the same label set
 
 - **GIVEN** a `SpawnSession` for the analysis `an-1`, the run `run-1`, and the step `step-a`, on the K8s backend
 - **WHEN** the K8s backend makes the Job
 - **THEN** the Job metadata and the pod template metadata each carry the six harness labels
-- **AND** the Job annotation `cortex/owner-workflow-id` holds `spec.childWorkflowId` with no change
+- **AND** the Job annotation `cortex/owner-workflow-id` holds `spec.ownerWorkflowId` with no change
 
 ### Requirement: The host labels merge under the harness labels with no rewrite
 
@@ -134,11 +144,10 @@ digits, `.`, `_`, and `-`, and it starts and ends with a letter or a digit.
 The format of each harness value:
 
 - `app.kubernetes.io/managed-by` and `role` hold the constants `cortex` and `sandbox`.
-- `cortex/sandbox-id` holds the sandbox id that the harness makes, in the form `sbx-{run8}-{rand8}`.
+- `cortex/sandbox-id` holds the sandbox id that the harness makes, in the form `sbx-{run8}-{hash12}`.
 - `cortex/run-id` holds a UUID, or a short literal of the harness, for example `data-profile`.
 - `cortex/step-id` holds a step id that obeys the step-id rule of the workspace-layout spec.
-  Each literal step id of the harness (`synthesis`, `profile`, `derive`, and `extract`) obeys
-  the same rule.
+  Each literal step id of the harness (`synthesis` and `profile`) obeys the same rule.
 - `cortex/analysis-id` holds the analysis id that the host gives. On K8s, the host MUST give an
   analysis id that is a valid label value.
 
