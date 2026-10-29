@@ -246,7 +246,8 @@ export function renderRequest(request: string | undefined): string {
     return section(
         "The request of the analysis",
         "This step is one part of the plan that answers this request. Do the task of this step. " +
-            "When this step writes a deliverable that the request describes, the deliverable obeys the format of the request.\n\n" +
+            "When this step writes a deliverable that the request describes, the deliverable keeps the file name, the fields, and the values of the request. " +
+            "It goes to `output/` of your working directory, with the other results of the step, whatever directory the request names.\n\n" +
             text,
     );
 }
