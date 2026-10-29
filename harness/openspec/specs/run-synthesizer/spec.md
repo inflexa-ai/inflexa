@@ -28,7 +28,7 @@ The synthesizer MUST declare `submit_synthesis` and `report_blocker`, then `read
 - **GIVEN** a synthesizer with a tool output store, no embedding provider, and the lookup `pubmed`
 - **WHEN** its first request is sent
 - **THEN** the request declares `read_file`, `list_files`, `file_stat`, `grep`, `inspect_data_profile`, `submit_synthesis`, `report_blocker`, `read_tool_output`, and `run_script`, in that order
-- **AND** the script tools are `pubmed`, `read_table`, and `read_pdf`
+- **AND** the script tools are `pubmed`, `read_table`, `read_pdf`, and `list_archive`
 
 #### Scenario: The synthesizer reads a long lookup result again
 
@@ -38,7 +38,7 @@ The synthesizer MUST declare `submit_synthesis` and `report_blocker`, then `read
 
 ### Requirement: The synthesizer reads the workspace and writes nothing
 
-The synthesizer MUST declare the read tools of the workspace before its terminal tools: `read_file`, `list_files`, `file_stat`, `grep`, `workspace_search` when an embedding provider is bound, and `inspect_data_profile`. `read_table` and `read_pdf` MUST be script tools. The synthesizer MUST hold no tool that writes. A step summary can omit a fact that a file of the run holds.
+The synthesizer MUST declare the read tools of the workspace before its terminal tools: `read_file`, `list_files`, `file_stat`, `grep`, `workspace_search` when an embedding provider is bound, and `inspect_data_profile`. `read_table`, `read_pdf`, and `list_archive` MUST be script tools. The synthesizer MUST hold no tool that writes. A step summary can omit a fact that a file of the run holds.
 
 #### Scenario: No write tool
 
