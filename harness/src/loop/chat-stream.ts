@@ -145,7 +145,8 @@ export function createTurnStreamWriter(rootSource: EventSource, observe: (frame:
         if (frame === null) return;
         // A tool step gives its frames to the library, which checkpoints each one that is not progress.
         if (DBOS.isInStep()) {
-            toolWriter().write(chunkOfFrame(frame, isProgressFrame(frame)));
+            const liveOnly = "transient" in event && event.transient === true;
+            toolWriter().write(chunkOfFrame(frame, liveOnly || isProgressFrame(frame)));
             return;
         }
         await write(frame);

@@ -62,6 +62,9 @@ const SCRIPT_MEMORY_BYTES = 256 * 1024 * 1024;
 /** The text of a result that reaches the model. A longer output keeps its head and its tail. */
 const MAX_RESULT_CHARS = 24_000;
 
+/** The least time between two live copies of the nested calls of a script. */
+const LIVE_ACTIVITY_INTERVAL_MS = 500;
+
 const inputSchema = z.object({
     description: z.string().max(200).optional().describe("One short line that tells the user what the script does, for example 'Top 20 genes by padj'."),
     code: z
@@ -155,6 +158,57 @@ type ScriptState = {
     readonly source: EventSource;
     readonly observe: (frame: ChatFrame) => void;
 };
+
+type LiveActivity = {
+    /** Take the newest activity part of the script. */
+    update(part: ChatPartFrame): void;
+    /** Send nothing more, and wait for each copy in flight. */
+    close(): Promise<void>;
+};
+
+/**
+ * The live copies of the activity part of one script, so a reader sees each nested call while the script runs. A copy
+ * is transient, and the part that the call emits at its end is the one that a stored display keeps. Each copy holds
+ * each entry so far, thus at most one copy goes in each interval. A copy that the interval holds back goes at the end
+ * of the interval, thus a long nested call shows before it ends.
+ */
+function createLiveActivity(emit: ToolContext["emit"], log: Logger, intervalMs: number): LiveActivity {
+    let latest: ChatPartFrame | null = null;
+    let lastSentMs = Number.NEGATIVE_INFINITY;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let closed = false;
+    const inFlight = new Set<Promise<void>>();
+    const send = (): void => {
+        timer = undefined;
+        if (closed || latest === null) return;
+        lastSentMs = Date.now();
+        const part = latest;
+        const sent = (async () => {
+            try {
+                await emit({ type: part.type, data: part, transient: true });
+            } catch (err) {
+                log.warn("a live copy of the nested calls did not reach the stream", log.errorFields(err));
+            }
+        })();
+        inFlight.add(sent);
+        void sent.finally(() => inFlight.delete(sent));
+    };
+    return {
+        update(part) {
+            latest = part;
+            if (closed || timer !== undefined) return;
+            const wait = lastSentMs + intervalMs - Date.now();
+            if (wait <= 0) send();
+            // oxlint-disable-next-line eslint-js/no-restricted-syntax -- `close` clears it, and the call runs `close` in its `finally`, thus it ends with the call.
+            else timer = setTimeout(send, wait);
+        },
+        async close() {
+            closed = true;
+            clearTimeout(timer);
+            await Promise.all(inFlight);
+        },
+    };
+}
 
 /** Keep the files of the call record of one nested call. A record of another shape carries no file. */
 function collectEffect(state: ScriptState, value: unknown): void {
@@ -349,6 +403,7 @@ export function createRunScriptTool(
                 Date.now(),
             );
             const tracked: { part: ChatPartFrame | null } = { part: null };
+            const live = createLiveActivity(ctx.emit, log, LIVE_ACTIVITY_INTERVAL_MS);
             let started = 0;
             const state: ScriptState = {
                 code,
@@ -359,7 +414,10 @@ export function createRunScriptTool(
                 nextInvocationId: () => `${ctx.invocationId}:${++started}`,
                 source: { agentId: RUN_SCRIPT_TOOL_ID, callPath: [...caller.callPath, RUN_SCRIPT_TOOL_ID], invocationId: ctx.invocationId },
                 observe: (frame) => {
-                    tracked.part = tracker.track(frame, Date.now()) ?? tracked.part;
+                    const part = tracker.track(frame, Date.now());
+                    if (part === null) return;
+                    tracked.part = part;
+                    live.update(part);
                 },
             };
             // The VM calls a tool from a message event of its worker, and such an event runs outside the async context
@@ -403,6 +461,7 @@ export function createRunScriptTool(
                     writes: state.writes.length,
                 });
 
+                await live.close();
                 if (tracked.part !== null) await ctx.emit({ type: tracked.part.type, data: tracked.part });
                 if (state.writes.length > 0) {
                     const card = filesCard(description, state.writes, script);
@@ -434,6 +493,7 @@ export function createRunScriptTool(
                 const record: RunScriptRecord = { run: scratch === undefined ? undefined : run, nested: state.nested };
                 return ok(record.run === undefined && record.nested.length === 0 ? outcome : withToolCallRecord(outcome, record));
             } finally {
+                await live.close();
                 await sandbox.close();
             }
         },
