@@ -101,8 +101,8 @@ over the registered callables. The local seam realizations have no dependencies,
 and `index.ts` exports them: `createLocalRunAuthorizer`, `createNoopRunCharge`,
 `createNoopUsageRecorder`, `createNoopArtifactRegistry`, and `makeLocalAuth`.
 An embedder constructs them, or its own realizations, and passes them into
-`assembleCoreRuntime` at its composition root. The local sandbox path makes an
-ephemeral Docker container for each analysis step. The session data, the package
+`assembleCoreRuntime` at its composition root. The local sandbox path makes a
+Docker container for each lease of a sandbox. The session data, the package
 store, and the ref store are host directories, bind-mounted into them.
 
 **LLM backend** is whatever the wired `ChatProvider` and `EmbeddingProvider` point
@@ -245,7 +245,14 @@ is a gate or a notice (`src/lib/hooks.ts`), and its type shows its kind.
 ```
 Harness host process
   |
-  +- createSandboxClient (sandbox/create-sandbox.ts)
+  +- the sandbox module (sandbox/leases.ts)
+  |   +- acquire / release / exec, by lease key (a tool gives its workflow id)
+  |   +- lease workflow (one for each generation of a lease, detached)
+  |   |     grant against one budget -> label gate -> keyed spawn
+  |   |     -> tick: owner test, idle removal -> release -> teardown
+  |   +- reconciler (sandbox/reconciler.ts), each 5 minutes
+  |
+  +- createSandboxClient (sandbox/create-sandbox.ts), called only by the module
   |   +- Shared: exec step (sandbox/exec.ts), provenance, liveness probe
   |   |
   |   +- Docker backend                         K8s backend
@@ -264,7 +271,7 @@ Harness host process
   |   |
   |   +- result -> the step cache
   |
-  +- Container removed on completion
+  +- Machine removed at the release, the idle removal, or the end of the owner
 ```
 
 The submit and poll protocol
@@ -285,8 +292,17 @@ for each id. Thus a repeated event does no harm.
 
 The step reads the cancel state of its workflow each 10 s. After consecutive
 failed polls, it probes the liveness of the machine with `isAlive`. A dead
-machine ends the exec with a synthetic failure. Otherwise the step ends on the
-result or on the deadline.
+machine ends the exec with a synthetic failure, and the next exec of the lease
+gets a new machine. Otherwise the step ends on the result or on the deadline,
+which is the timeout of the command plus a grace.
+
+A consumer holds a sandbox only through a lease
+([sandbox-leases](openspec/specs/sandbox-leases/spec.md)). The step agent
+acquires its size with `acquire_sandbox`, and it can release the lease early
+with `release_sandbox`. A machine is replaceable: the state of the work is the
+files, the exec records of the lease, and the DBOS checkpoints. Thus the
+module removes the machine of an idle or paused lease, and the next exec gets a
+new one.
 
 The two distinct lifetimes (an exec command against a sandbox machine) are in
 [`CONTEXT.md`](CONTEXT.md), under `Sandbox exec`. **Do not conflate the two
@@ -307,9 +323,11 @@ read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`.
   `status` is `running`, `completed`, or `failed`. `result` is present when the
   exec is terminal.
 
-sandbox-server keeps each exec record in memory for the life of its process,
-with no TTL. There is no `kill` route. The endpoints carry no credential, thus
-confinement is the boundary:
+sandbox-server keeps each exec record in memory, and it writes each record to
+the records directory of the lease (`EXEC_RECORD_DIR`). A new machine of the
+lease reads them at its start. Each exec gets its own `TMPDIR`. There is no
+`kill` route. The endpoints carry no credential, thus confinement is the
+boundary:
 
 - On Docker, the exec port is published on `127.0.0.1` only. The root
   entrypoint installs an egress-deny firewall, and then it drops to uid 1000.

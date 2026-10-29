@@ -3150,7 +3150,7 @@ export const commands: Command[] = [
     {
         id: "plan.explore-steps",
         title: "Explore plan steps…",
-        description: "Inspect the latest plan's questions, constraints, and resources",
+        description: "Inspect the latest plan's questions and constraints",
         category: "View",
         keybind: keybindLabel("plan.explore-steps"),
         enabled: () => latestPlanCard() !== null,

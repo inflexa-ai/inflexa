@@ -71,12 +71,33 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   (`sandbox/exec.ts`). The exec id is `${workflowId}:${stepId}`, from the step
   that runs the exec, thus one step holds one exec. The step submits the command,
   polls until the result or the deadline, and emits the sandbox events from
-  inside the step. It reads the cancel state of its workflow each 10 s.
+  inside the step. It reads the cancel state of its workflow each 10 s. The
+  deadline is the timeout of the command plus a grace. A command with no timeout
+  gets 3600 s, and a step has no deadline of its own.
 
   Sustained `unavailable` polls escalate to an `isAlive` probe
   (`sandbox/liveness.ts`). A dead machine gives the synthetic-failure result with
-  no wait for `step.timeout`. A step that runs again on recovery submits the same
+  no wait for the deadline. A step that runs again on recovery submits the same
   exec id, and sandbox-server gives the existing record.
+- **Lease** — How a consumer holds a sandbox (`sandbox/leases.ts`). The consumer
+  binds a lease key (a tool gives the id of its workflow), acquires a size, runs
+  its execs on the lease, and releases it. One key holds at most one active
+  lease. The lease table `cortex_sandbox_leases` has one row for each generation
+  of a lease: the request, the grant, the current machine, and the release.
+- **Lease workflow** — The one detached DBOS workflow of a generation of a lease,
+  with the id `sandboxlease:{analysisId}:{leaseKey}:{generation}`. The consumer
+  enqueues it through a `DBOSClient`, thus it is not a child of the consumer, and a
+  cancel of the consumer does not stop it. It takes the grant against the one
+  budget, runs the label gate and the spawn, removes the machine of an idle lease,
+  gives a new machine after a death, and removes the machine at the release or at
+  the end of its owner. A refused spawn with the suspend flag pauses it under the
+  work of the consumer.
+- **Replaceable machine** — A machine of a lease holds no state of the work. The
+  state is the files, the exec records in the records directory of the lease
+  (`.sandbox/exec-records/` under the workspace root, which no workspace tool
+  shows), and the checkpoints of the consumer. Each exec gets its own `TMPDIR`.
+  Thus the module removes an idle machine, and the next exec gets a new one with
+  no note to the agent.
 - **Sandbox confinement** — The sandbox has no egress, and only the host reaches
   its exec port. On Docker, an in-container `iptables -P OUTPUT DROP` firewall
   confines it: a root entrypoint with `CAP_NET_ADMIN` installs the rule, and then
@@ -84,29 +105,12 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   K8s, a NetworkPolicy of the deployment admits only Cortex to the sandbox port,
   and it denies each egress. There is no gateway sidecar and no `--internal`
   network.
-- **Active-sandbox registry** — The set of sandbox machines that are bound to a
-  running step at this time. It is a projection over `cortex_step_executions`: the
-  rows with a non-null `sandbox_ref` and `status='running'`. `state/active-sandboxes.ts`
-  has it. `sandbox/create-sandbox.ts` writes a row when it mints a machine, and
-  the teardown clears it. The row holds the machine, not the exec.
-- **Orphaned sandbox** — A sandbox machine that runs in a configured backend, but
-  nothing in the harness refers to it: no registry row, and no DBOS step-cache
-  entry. It comes from a process that dies after the backend creation but before
-  the `sandbox.create` step checkpoint. Only a backend inventory sweep finds it.
-- **Stale registry row** — A `cortex_step_executions` row that is still
-  `status='running'` with a `sandbox_ref`, but the workflow that owns it is
-  terminal. This is usually a sibling that fail-fast canceled, because a
-  cancellation runs no teardown, thus the machine can still run too. The
-  **sandbox reaper** clears it.
-- **Sandbox reaper** — A `@DBOS.scheduled` workflow (`sandbox/reaper.ts`) that
-  cleans up an orphaned sandbox and a stale registry row. It sweeps
-  **backend→registry**. It is unsharded, and it runs each 5 minutes. It lists the sandbox machines with
-  `SandboxClient.listManagedSandboxes()`, and it reads the workflow metadata of the
-  owner. On a terminal or missing workflow status it tears the machine down and it
-  reconciles the row. It keys off the workflow status, which is written at enqueue
-  before the machine exists. Thus a creation that is in flight is never an orphan.
-  The cleanup is separate because DBOS does not permit a teardown step in a
-  canceled workflow ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
+- **Sandbox reconciler** — A `@DBOS.scheduled` workflow (`sandbox/reconciler.ts`)
+  that each 5 minutes covers the ends that a lease workflow cannot see. It removes
+  each managed machine whose lease workflow is terminal, marks `released` each
+  lease row whose lease workflow ended, and cancels each lease workflow whose owner
+  ended. A machine whose owner does not resolve goes away only when a liveness
+  probe finds it dead ([sandbox-leases](openspec/specs/sandbox-leases/spec.md)).
 - **Workspace** — The analysis file tree and the vector index under one consistent
   path model that each agent shares (refer to **Workspace path model** below). The
   host root of the tree comes from the `resolveWorkspaceRoot(resourceId)` seam of
@@ -131,7 +135,7 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
 - **Workspace working directory** — Each agent run has one writable **working
   directory** that the composition root supplies. A plannable step gets
   `runs/{runId}/{stepId}`. The data profiler gets `runs/data-profile/profile`. A
-  report-session derivation gets `report-sessions/{threadId}/derived`. The conversation agent gets the analysis
+  The conversation agent gets the analysis
   root. Thus a chat turn can write each file of its own analysis tree, and
   each successful write emits one `write-file` provenance session event. The
   working directory is the `cwd` of `execute_command` for that agent, and it
@@ -461,14 +465,15 @@ Two distinct lifetimes. Do not conflate them:
   (`sandbox.exec`). There are many for each sandbox, and most are near-instant
   (`ls`, `find`). The exec id is `${workflowId}:${stepId}`, from the step that
   runs the exec. sandbox-server runs the command in the background, and it dedups
-  a repeated submit on the exec id. The step polls for the result, bounded by
-  `step.timeout`, because one command can legitimately run for hours. **There are
-  no per-exec heartbeats.**
-- **Sandbox machine** — one for each step, and long-lived. The sandbox-agent loop
-  issues many commands into the *same* container. Its concerns are machine-level:
-  did it **start**, and is it still **alive** (not crashed, not OOMKilled, not
-  node-lost). The child workflow has the lifecycle (the creation and the teardown)
-  as DBOS steps.
+  a repeated submit on the exec id. The step polls for the result, bounded by the
+  timeout of the command, because one command can legitimately run for hours.
+  **There are no per-exec heartbeats.**
+- **Sandbox machine** — the machine of a lease. The sandbox-agent loop issues many
+  commands into the *same* machine. Its concerns are machine-level: did it
+  **start**, and is it still **alive** (not crashed, not OOMKilled, not
+  node-lost). The lease workflow has the lifecycle (the spawn, the replacement,
+  and the teardown), and the step agent acquires and releases the lease with
+  `acquire_sandbox` and `release_sandbox`.
 
 Other facts:
 
@@ -494,29 +499,29 @@ Other facts:
   `walkArtifacts` tree reconciles onto the same file-tree id at the end of the
   step.
 - **Completion** — sandbox-server keeps the completion payload in the record of
-  the exec, and the next poll returns it as `result`. The record lives for the
-  life of the sandbox-server process, with no TTL. Thus a recovered step that
-  submits again gets the first result, and the command does not run again.
+  the exec, and the next poll returns it as `result`. It also writes each record
+  to the records directory of the lease, and a new machine of the lease reads them
+  at its start. Thus a recovered step that submits again gets the first result,
+  also on a new machine, and the command does not run again. A record that was
+  `running` when its machine went away becomes a synthetic failure with the
+  reason `sandbox-replaced`.
 - **Liveness is per-sandbox-machine, not per-exec.** The oracle is the backend
   inspect (`SandboxClient.isAlive(sandboxRef)`). The exec step is its own
   fail-fast: sustained `unavailable` polls escalate to an `isAlive` probe
   (`sandbox/liveness.ts`), and a dead machine gives the synthetic failure in the
-  step. Recovery also checks the liveness again before a recovered child
-  continues a step. The deadline that `step.timeout` gives is the backstop, and
-  the liveness verdict is the fail-fast.
+  step, with the memory limit of the grant. The exec forgets the dead machine, thus
+  the next exec gets a new machine. Nothing runs the exec again.
 - **A cancel reaches the exec step through a status read.** A DBOS step does not
   see a cancel of its workflow. Thus the exec step reads the status of its
   workflow each 10 s, and it throws on `CANCELLED`. The command in the sandbox
-  runs on until the reaper removes the machine.
-- **The creation is two durable steps, and the cleanup is a separate reaper.**
-  `sandbox.mint` checkpoints the machine identity (`sbx-{run8}-{uuid4}`) before
-  `sandbox.create` spawns it. Thus a crash in the middle of the creation runs the
-  spawn again. The spawn **adopts** the existing machine, and it does not leak a
-  second one
+  runs on until the lease ends: the lease workflow finds its owner terminal at
+  its next tick.
+- **The spawn is keyed, and the lease workflow cleans up.** The name of a machine
+  comes from the lease workflow id and the machine generation. Thus a rerun of the
+  spawn step adopts the existing machine, and it does not leak a second one
   ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)). The
-  **sandbox reaper** is the sole cleanup for the machines that this does not
-  cover: a cancellation leak and a scale-down orphan. Refer to its glossary entry
-  above.
+  lease workflow removes its machine at each normal end, and the **sandbox
+  reconciler** covers each other end. Refer to its glossary entry above.
 
 ### Stream model
 
@@ -824,8 +829,10 @@ not fail ([work-pause](openspec/specs/work-pause/spec.md)).
   part in the stream of its work. A host lists the active work, stops it, and
   resumes or holds paused work with `CoreRuntime.work`. A stop ends a turn, a run,
   or a data profile in each state. Only a client resumes paused work.
-- A paused step keeps its run `running`, and the other steps go on. Work inside a
-  step cannot wait, thus a derivation gives the refusal of its spawn as a value.
+- A paused step keeps its run `running`, and the other steps go on. Its lease
+  stays, and the idle removal takes the machine of a long pause. A refused spawn
+  pauses the lease workflow under the work of the consumer, and the wait of the
+  `acquire_sandbox` call writes the pause part to the stream of the step.
 - DBOS runs with patching enabled, thus a host that gives no version keeps one
   version across upgrades, and paused work recovers after an upgrade. A change
   of the operations of a workflow body goes behind `DBOS.patch`.

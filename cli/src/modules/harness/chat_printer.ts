@@ -96,8 +96,6 @@ export function readPlanCard(part: PlanPart): { planId: string; title: string; s
             constraints: [...(step.constraints ?? [])],
             caveats: [...(step.caveats ?? [])],
             depends_on: [...step.depends_on],
-            resources:
-                step.resources === undefined ? null : { cpu: step.resources.cpu, memoryGb: step.resources.memoryGb, gpuCount: step.resources.gpu?.count ?? 0 },
             track: step.track ?? "",
             step_type: step.step_type ?? "",
         })),

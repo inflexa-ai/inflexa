@@ -70,8 +70,8 @@
 
 ## 10. The documents and the CLI
 
-- [ ] 10.1 Update the sandbox sections of `harness/CLAUDE.md`, `harness/CONTEXT.md`, and `harness/README.md`: the lease, the lease workflow, the reconciler, and the records. Remove the registry and the reaper.
-- [ ] 10.2 Adapt the CLI: remove `registerSandboxReaper`, the budget of the run trigger, the resource validation of `dev/run.ts`, and the render of `queued`. Run the CLI typecheck and the CLI tests with the linked harness.
+- [x] 10.1 Update the sandbox sections of `harness/CLAUDE.md`, `harness/CONTEXT.md`, and `harness/README.md`: the lease, the lease workflow, the reconciler, and the records. Remove the registry and the reaper.
+- [x] 10.2 Adapt the CLI: remove `registerSandboxReaper`, the budget of the run trigger, the resource validation of `dev/run.ts`, and the render of `queued`. Run the CLI typecheck and the CLI tests with the linked harness.
 
 ## 11. Verification
 

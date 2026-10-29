@@ -151,7 +151,7 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
     const deps: SandboxAgentDeps = {
         provider: comp.sandbox.provider,
         pool: comp.pool,
-        sandboxClient: comp.sandboxClient,
+        toolchainSource: comp.sandboxClient.toolchainSource,
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
         lineageCollector: ctx.lineageCollector,
@@ -167,11 +167,10 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         fileMetadata: ctx.fileMetadata,
         ...(ctx.toolOutputStore ? { toolOutputStore: ctx.toolOutputStore } : {}),
         step: {
-            sandbox: ctx.sandbox,
+            lease: ctx.lease,
             workspaceRoot: await comp.resolveWorkspaceRoot(ctx.input.analysisId),
             analysisId: ctx.input.analysisId,
             allowedWritePrefix: ctx.stepWritePrefix,
-            deadlineMs: ctx.deadlineMs,
             ...(ctx.input.templateBinding ? { templateBinding: ctx.input.templateBinding } : {}),
         },
     };
@@ -223,7 +222,6 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
         logger: comp.logger,
         provider: comp.sandbox.provider,
         embedding: comp.embedding,
-        sandboxClient: comp.sandboxClient,
         artifactRegistry: comp.sandboxEmitters.artifactRegistry,
         workspaceFs: comp.workspaceFs,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,

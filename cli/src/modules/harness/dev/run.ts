@@ -38,7 +38,6 @@ import {
     type DbError,
     type ExecuteAnalysisInput,
     type InsertRunInput,
-    type MachineBudget,
     type PackageQuery,
     type ParseQueryError,
     type PausedWorkflow,
@@ -89,8 +88,6 @@ export type RunTriggerSeams = {
     readonly launch: (input: ExecuteAnalysisInput, runId: string) => Promise<void>;
     /** Mint the run id — the bare UUID that IS the DBOS workflowId (see below). Injected so tests pin it. */
     readonly newRunId: () => string;
-    /** The harness machine budget to supply on `ExecuteAnalysisInput.budget`. */
-    readonly budget: MachineBudget;
 };
 
 /**
@@ -109,7 +106,6 @@ export function defaultRunTriggerSeams(deps: RunTriggerDeps): RunTriggerSeams {
         runAuthorizer: deps.runAuthorizer,
         launch: (input, runId) => deps.runLauncher.launch(deps.executeAnalysis, { workflowId: runId }, input),
         newRunId: () => randomUUIDv7(),
-        budget: deps.budget,
     };
 }
 
@@ -156,17 +152,17 @@ function isDedupCollision(cause: unknown): boolean {
 
 /**
  * Build the workflow input from the plan exactly as `execute-plan.ts` does: the
- * step DATA / agent / resources map per step, timeouts only for steps that
- * declare one, and `steps` reduced to the scheduler's `{ id, depends_on }` shape.
+ * step DATA and agent map per step, and `steps` reduced to the scheduler's
+ * `{ id, depends_on }` shape.
  * The `runSession` comes from the authorization.
  *
  * `planStepById` carries each step's instruction data, NOT a prompt string: the
  * harness composes a step's seed at dispatch, when its dependencies have actually
  * produced something to tell it about. Prompt composition is the harness's — an
- * embedder supplies values (the plan, the budget, the seams), it does not render
+ * embedder supplies values (the plan and the seams), it does not render
  * the core's prompts.
  */
-function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunTriggerSeams, runSession: RunSession): ExecuteAnalysisInput {
+function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, runSession: RunSession): ExecuteAnalysisInput {
     const { analysisId, planId, planSummary, plan } = params;
     return {
         analysisId,
@@ -176,23 +172,6 @@ function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunT
         steps: plan.steps.map((s) => ({ id: s.id, depends_on: s.depends_on ?? [] })),
         planStepById: Object.fromEntries(plan.steps.map((s) => [s.id, s])),
         agentByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.agent ?? "unknown"])),
-        resourcesByStepId: Object.fromEntries(
-            plan.steps.map((s) => {
-                if (!s.resources) {
-                    // Defense-in-depth: `validatePlan` (run at plan intake) already
-                    // rejects any step without resources, so this is unreachable on
-                    // the intake path. Mirrors `execute-plan.ts`'s guard; the
-                    // surrounding try in `triggerAnalysisRun` bridges the throw into
-                    // the Result channel and compensates the reserved row.
-                    throw new Error(`Step "${s.id}" has no resources — validatePlan should have rejected this plan`);
-                }
-                return [s.id, s.resources];
-            }),
-        ),
-        // `s.timeout` is defined for every element the filter kept, but TS cannot
-        // narrow through `.filter`; the cast is sound by that filter.
-        timeoutByStepId: Object.fromEntries(plan.steps.filter((s) => s.timeout !== undefined).map((s) => [s.id, s.timeout as number])),
-        budget: seams.budget,
         runSession,
     };
 }
@@ -265,7 +244,7 @@ export async function triggerAnalysisRun(
     // revoke the just-issued authorization and mark the row failed so a retry can
     // re-run.
     try {
-        const input = buildExecuteAnalysisInput(params, seams, runSession);
+        const input = buildExecuteAnalysisInput(params, runSession);
         await seams.launch(input, runId);
     } catch (cause) {
         // Best-effort revoke on the failure path; the local authorizer's revoke
@@ -402,7 +381,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     // post-boot `persistPlan` so the file is read exactly once and its deterministic
     // id cannot shift if the file is edited mid-run. (`planPath` is narrowed to a
     // string by the `!planPath` guard above, whose `fail` returns `never`.)
-    const intake = validatePlanFile(analysis.id, planPath, cfg.resourcePolicy.perStep).match(
+    const intake = validatePlanFile(analysis.id, planPath).match(
         (i) => i,
         (e) => fail(describePlanIntakeError(e)),
     );

@@ -15,7 +15,6 @@ import {
     makeLocalAuth,
     PAGE_ASSETS,
     registerNotificationSweep,
-    registerSandboxReaper,
     sweepEphemeralWorkflows,
     IMAGE_PACKAGES_FILE,
     type AgentSession,
@@ -30,13 +29,11 @@ import {
     type EmbeddingProvider,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
-    type MachineBudget,
     type MakeSessionPagePublisher,
     type PackageQuery,
     type PackageRequestOutcome,
     type Pool,
     type RegisterNotificationSweepDeps,
-    type RegisterReaperDeps,
     type ResolvePageAsset,
     type RunAuthorizer,
     type ChatTurns,
@@ -123,12 +120,6 @@ export type RunTriggerDeps = {
     readonly runLauncher: RunLauncher;
     /** Local run-authorization seam — mints/revokes the durable `RunSession` at the async edge. */
     readonly runAuthorizer: RunAuthorizer;
-    /**
-     * The harness machine budget (`resourcePolicy.budget`), supplied on every
-     * launched run's `ExecuteAnalysisInput` — its meaning and enforcement are
-     * the harness's contract.
-     */
-    readonly budget: MachineBudget;
 };
 
 /** The booted runtime — everything the launch command needs to trigger and observe runs. */
@@ -431,8 +422,6 @@ export type BootSeams = {
      * {@link AskGateway.sweepExpired} query.
      */
     readonly sweepAsks: (gateway: AskGateway) => Promise<number>;
-    /** Register the orphaned-container reaper scheduled workflow. */
-    readonly registerReaper: (deps: RegisterReaperDeps) => void;
     /** Register the stale-notification sweep scheduled workflow. */
     readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
     readonly probeEmbedding: typeof probeEmbeddingProvider;
@@ -450,7 +439,6 @@ const realSeams: BootSeams = {
     boot: bootHarness,
     sweepEphemeral: sweepEphemeralWorkflows,
     sweepAsks: (gateway) => gateway.sweepExpired(),
-    registerReaper: registerSandboxReaper,
     registerNotificationSweep,
     probeEmbedding: probeEmbeddingProvider,
 };
@@ -963,7 +951,6 @@ async function bootHarnessRuntimeOnce(
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
         const utilityBackend: AgentBackend = { provider: utilityProvider, model: utilityModel };
         const sandboxClient = seams.createSandbox({
-            pool,
             // Podman speaks the Docker API, so the harness's dockerode-based `docker`
             // backend drives it unchanged — the only divergence is the *socket* it
             // dials (supplied below), not the backend kind. (`k8s` is a managed-embedder
@@ -1129,7 +1116,6 @@ async function bootHarnessRuntimeOnce(
             dataProfile: {
                 provider: sandboxProvider,
                 pool,
-                sandboxClient,
                 workspaceFs,
                 resolveWorkspaceRoot,
                 model: sandboxModel,
@@ -1263,7 +1249,6 @@ async function bootHarnessRuntimeOnce(
                 modelProvider: connection.provider,
                 initialSelections: { conversation: conversationSelection, sandbox: sandboxSelection, utility: utilitySelection },
             });
-            seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
             seams.registerNotificationSweep({ pool: composition.pool, logger });
         };
 
@@ -1281,6 +1266,9 @@ async function bootHarnessRuntimeOnce(
             core: {
                 conversation,
                 workflows,
+                // The one backend client of the runtime. The harness builds its sandbox module over it: the leases,
+                // the lease workflow, and the reconciler.
+                sandbox: { client: sandboxClient },
                 resourcePolicy: cfg.resourcePolicy,
                 usageRecorder,
                 ...(assetsDir ? { resolveReportPageAsset: makeReportPageAssetLookup(assetsDir) } : {}),
@@ -1337,7 +1325,7 @@ async function bootHarnessRuntimeOnce(
             pool,
             askGateway: core.askGateway,
             triggerDeps: { pool, runAuthorizer, runLauncher, workflow: core.workflows.dataProfile },
-            runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
+            runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer },
             agents: core.agents,
             approvePlan: core.approvePlan,
             chatTurns: core.chatTurns,

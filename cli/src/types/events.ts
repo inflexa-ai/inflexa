@@ -15,7 +15,6 @@ import type {
     ProvSessionRef,
     ProvReportBlockRef,
     ProvReportTitleRef,
-    ProvReportDerivationRef,
     ProvReportPreviewRef,
     ProvReportVersionRef,
 } from "./prov.ts";
@@ -149,7 +148,6 @@ export type BusEvent =
     | { type: "prov.report_block_removed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "prov.report_block_moved"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; block: ProvReportBlockRef }
     | { type: "prov.report_title_set"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; title: ProvReportTitleRef }
-    | { type: "prov.report_derivation_run"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; derivation: ProvReportDerivationRef }
     | { type: "prov.report_previewed"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; preview: ProvReportPreviewRef }
     | { type: "prov.report_version_recorded"; analysisId: AnalysisId; actor: ProvActor; model: ProvModelId; version: ProvReportVersionRef };
 

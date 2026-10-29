@@ -140,7 +140,6 @@ function stepRow(overrides: Partial<StepExecutionRow> & Pick<StepExecutionRow, "
         finishReason: null,
         hitMaxSteps: false,
         blockedReason: null,
-        sandboxRef: null,
         childWorkflowId: null,
         ...overrides,
     };

@@ -24,7 +24,6 @@ function validStep(overrides: PlanDoc = {}): PlanDoc {
         acceptance_criteria: ["produces a ranked table of features"],
         depends_on: [],
         maxSteps: 10,
-        resources: { cpu: 2, memoryGb: 4 },
         agent: "scientific-executor",
         ...overrides,
     };
@@ -245,19 +244,6 @@ describe("intakePlan — rejections persist nothing", () => {
         expect(e.type).toBe("plan_invalid");
         if (e.type === "plan_invalid") {
             expect(e.errors).toContain('Step "T1S1" assigns unknown agent "no-such-agent" — not found in agent catalog');
-        }
-        expect(calls.length).toBe(0);
-    });
-
-    test("step without resources → plan_invalid with the verbatim error, seam never called", async () => {
-        const { deps, calls } = recordingSeam();
-        const doc = validPlan({ steps: [validStep({ resources: undefined })] });
-
-        const e = await intakeErr("a1", writePlanJson("plan.json", doc), deps);
-
-        expect(e.type).toBe("plan_invalid");
-        if (e.type === "plan_invalid") {
-            expect(e.errors).toContain('Step "T1S1" has no resources defined — cpu and memoryGb are required');
         }
         expect(calls.length).toBe(0);
     });

@@ -13,7 +13,6 @@ const detailStep: PlanCardStepView = {
     constraints: ["Preserve contrasts"],
     caveats: ["Small cohort"],
     depends_on: ["T1S1"],
-    resources: { cpu: 4, memoryGb: 8, gpuCount: 0 },
     track: "expression",
     step_type: "analysis",
 };
@@ -21,7 +20,7 @@ const detailStep: PlanCardStepView = {
 describe("PlanStepDetailDialog", () => {
     test("composes every carried detail field", () => {
         const lines = planStepDetailLines(detailStep).join("\n");
-        for (const expected of ["deseq2", "Which genes differ?", "Adjusted p-values", "Preserve contrasts", "Small cohort", "T1S1", "4 CPU", "8 GB"]) {
+        for (const expected of ["deseq2", "Which genes differ?", "Adjusted p-values", "Preserve contrasts", "Small cohort", "T1S1"]) {
             expect(lines).toContain(expected);
         }
     });

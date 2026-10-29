@@ -199,25 +199,9 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         expect((provn.match(new RegExp(`used\\(inflexa:action-[\\w-]+, ${reportQn}`, "g")) ?? []).length).toBe(4);
     });
 
-    test("the title, the derivation, and the preview each land one typed action with the data of their act", async () => {
+    test("the title and the preview each land one typed action with the data of their act", async () => {
         emitReportSessionCreated(conversationThread);
         Bus.emit("inflexa", { type: "prov.report_title_set", analysisId: "a1", actor: system, model, title: { threadId: reportThread, title: "DE results" } });
-        Bus.emit("inflexa", {
-            type: "prov.report_derivation_run",
-            analysisId: "a1",
-            actor: system,
-            model,
-            derivation: {
-                threadId: reportThread,
-                outputPath: "reports/r1/table.csv",
-                outputHash: "hashOut001",
-                scriptHash: "hashScr001",
-                sources: [
-                    { path: "runs/run-001/step-de/output/de.csv", hash: "hashDe0001" },
-                    { path: "data/inputs/counts.csv", hash: "hashCount1" },
-                ],
-            },
-        });
         Bus.emit("inflexa", {
             type: "prov.report_previewed",
             analysisId: "a1",
@@ -230,15 +214,6 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         const title = oneActivityOfType(json, "inflexa:SetReportTitle");
         expect(attrValues(title["inflexa:threadId"])).toEqual([reportThread]);
         expect(attrValues(title["inflexa:title"])).toEqual(["DE results"]);
-
-        const derivation = oneActivityOfType(json, "inflexa:RunReportDerivation");
-        expect(attrValues(derivation["inflexa:outputPath"])).toEqual(["reports/r1/table.csv"]);
-        expect(attrValues(derivation["inflexa:outputHash"])).toEqual(["hashOut001"]);
-        expect(attrValues(derivation["inflexa:scriptHash"])).toEqual(["hashScr001"]);
-        // The `path|hash` encoding keeps each source paired; two parallel attributes would not.
-        expect(attrValues(derivation["inflexa:source"]).sort()).toEqual(
-            ["data/inputs/counts.csv|hashCount1", "runs/run-001/step-de/output/de.csv|hashDe0001"].sort(),
-        );
 
         const preview = oneActivityOfType(json, "inflexa:PreviewReport");
         expect(attrValues(preview["inflexa:pagePath"])).toEqual(["report-sessions/t1/index.html"]);
