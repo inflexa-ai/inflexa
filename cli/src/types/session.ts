@@ -63,7 +63,6 @@ export type PlanCardStepView = {
     constraints: string[];
     caveats: string[];
     depends_on: string[];
-    resources: { cpu: number; memoryGb: number; gpuCount: number } | null;
     track: string;
     step_type: string;
 };

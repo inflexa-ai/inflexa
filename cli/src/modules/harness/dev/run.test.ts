@@ -36,9 +36,7 @@ const PLAN = AnalysisPlanSchema.parse({
             acceptance_criteria: ["a"],
             depends_on: [],
             maxSteps: 8,
-            resources: { cpu: 2, memoryGb: 4 },
             agent: "scientific-executor",
-            timeout: 120,
         },
         {
             id: "T1S2",
@@ -49,7 +47,6 @@ const PLAN = AnalysisPlanSchema.parse({
             acceptance_criteria: ["b"],
             depends_on: ["T1S1"],
             maxSteps: 8,
-            resources: { cpu: 1, memoryGb: 2 },
         },
     ],
 });
@@ -146,7 +143,6 @@ function makeSeams(
             rec.launched = { input, runId };
         },
         newRunId: () => "run-fixed",
-        budget: { cpu: 4, memoryGb: 8 },
     };
     return { seams, rec };
 }
@@ -251,9 +247,6 @@ describe("triggerAnalysisRun — happy path", () => {
         expect(input).not.toHaveProperty("promptByStepId");
         // T1S2 declares no agent → the "unknown" default.
         expect(input.agentByStepId).toEqual({ T1S1: "scientific-executor", T1S2: "unknown" });
-        expect(input.resourcesByStepId).toEqual({ T1S1: { cpu: 2, memoryGb: 4 }, T1S2: { cpu: 1, memoryGb: 2 } });
-        // Only the step that declared a timeout appears.
-        expect(input.timeoutByStepId).toEqual({ T1S1: 120 });
         expect(input.runSession).toBe(RUN_SESSION);
     });
 });

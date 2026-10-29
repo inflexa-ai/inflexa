@@ -246,9 +246,6 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("sweepAsks");
             return 0;
         },
-        registerReaper: () => {
-            calls.push("registerReaper");
-        },
         registerNotificationSweep: () => {
             calls.push("registerNotificationSweep");
         },
@@ -298,7 +295,6 @@ describe("bootHarnessRuntime", () => {
             "boot",
             "sweepEphemeral",
             "sweepAsks",
-            "registerReaper",
             "registerNotificationSweep",
         ]);
         // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it.
@@ -348,23 +344,17 @@ describe("bootHarnessRuntime", () => {
         // registration and before launch) sweeps legacy stale rows FIRST, then
         // registers the sandbox-hygiene crons — all after `boot` is entered.
         expect(boot).toBeLessThan(sweep);
-        for (const name of ["registerReaper", "registerNotificationSweep"]) {
-            expect(sweep).toBeLessThan(calls.indexOf(name));
-        }
+        expect(sweep).toBeLessThan(calls.indexOf("registerNotificationSweep"));
     });
 
-    test("its beforeLaunch hook registers each sandbox-hygiene scheduled workflow", async () => {
+    test("its beforeLaunch hook registers the notification sweep", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
-        expect(calls).toContain("registerReaper");
-        expect(calls).toContain("registerNotificationSweep");
-        // The crons register inside `beforeLaunch`, which `bootHarness` runs before
-        // it launches DBOS — so each records after `boot` is entered.
-        const boot = calls.indexOf("boot");
-        for (const name of ["registerReaper", "registerNotificationSweep"]) {
-            expect(calls.indexOf(name)).toBeGreaterThan(boot);
-        }
+        // The cron registers inside `beforeLaunch`, which `bootHarness` runs before
+        // it launches DBOS — so it records after `boot` is entered. The sandbox
+        // reconciler registers with the harness runtime, not here.
+        expect(calls.indexOf("registerNotificationSweep")).toBeGreaterThan(calls.indexOf("boot"));
     });
 
     test("a failed prereq fires no workflow or scheduled registration", async () => {
@@ -381,7 +371,7 @@ describe("bootHarnessRuntime", () => {
         expect(result.isErr()).toBe(true);
         // A failed prereq short-circuits before the harness boot is even entered, so
         // neither `bootHarness` nor anything its `beforeLaunch` hook drives runs.
-        for (const name of ["boot", "sweepEphemeral", "registerReaper", "registerNotificationSweep"]) {
+        for (const name of ["boot", "sweepEphemeral", "registerNotificationSweep"]) {
             expect(calls).not.toContain(name);
         }
     });

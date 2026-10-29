@@ -13,15 +13,11 @@ function section(lines: string[], title: string, values: readonly string[]): voi
 /** Compose the copied primitive step fields into the read-only detail dialog's rows. */
 export function planStepDetailLines(step: PlanCardStepView): string[] {
     const dependsOn = step.depends_on.length > 0 ? step.depends_on.join(", ") : GLYPHS.emDash;
-    const resources = step.resources
-        ? `${step.resources.cpu} CPU ${GLYPHS.middot} ${step.resources.memoryGb} GB memory ${GLYPHS.middot} ${step.resources.gpuCount} GPU`
-        : GLYPHS.emDash;
     const lines = [
         `agent: ${step.agent || GLYPHS.emDash}`,
         `track: ${step.track || GLYPHS.emDash}`,
         `type: ${step.step_type || GLYPHS.emDash}`,
         `depends on: ${dependsOn}`,
-        `resources: ${resources}`,
         "",
         "question:",
         `  ${step.question || GLYPHS.emDash}`,

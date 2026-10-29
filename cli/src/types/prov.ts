@@ -32,8 +32,6 @@ export type {
     ProvSessionRef,
     ProvReportBlockRef,
     ProvReportTitleRef,
-    ProvReportDerivationSourceRef,
-    ProvReportDerivationRef,
     ProvReportPreviewRef,
     ProvReportVersionRef,
     VerifyResult,

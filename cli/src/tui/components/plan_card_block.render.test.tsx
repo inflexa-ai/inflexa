@@ -14,7 +14,6 @@ function step(id: string, depends_on: string[] = [], name = id): PlanCardStepVie
         constraints: [],
         caveats: [],
         depends_on,
-        resources: null,
         track: "track",
         step_type: "analysis",
     };

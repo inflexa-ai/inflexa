@@ -68,7 +68,6 @@ describe("readPlanCard", () => {
                     constraints: ["paired-end"],
                     caveats: ["reference bias"],
                     depends_on: ["S0"],
-                    resources: { cpu: 4, memoryGb: 8, gpu: { count: 1 } },
                     maxSteps: 30,
                     track: "alignment",
                     step_type: "analysis",
@@ -88,7 +87,6 @@ describe("readPlanCard", () => {
                     constraints: ["paired-end"],
                     caveats: ["reference bias"],
                     depends_on: ["S0"],
-                    resources: { cpu: 4, memoryGb: 8, gpuCount: 1 },
                     track: "alignment",
                     step_type: "analysis",
                 },
@@ -116,7 +114,6 @@ describe("readPlanCard", () => {
                     constraints: [],
                     caveats: [],
                     depends_on: [],
-                    resources: null,
                     track: "",
                     step_type: "",
                 },
@@ -138,7 +135,6 @@ describe("readPlanCard", () => {
                     question: "q",
                     depends_on: ["S0"],
                     constraints: ["fast"],
-                    resources: { cpu: 2, memoryGb: 4 },
                     maxSteps: 30,
                 },
             ],
@@ -148,11 +144,9 @@ describe("readPlanCard", () => {
         step.name = "MUTATED";
         step.depends_on[0] = "MUTATED";
         step.constraints![0] = "MUTATED";
-        step.resources!.cpu = 99;
         expect(card.steps[0]!.name).toBe("one");
         expect(card.steps[0]!.depends_on).toEqual(["S0"]);
         expect(card.steps[0]!.constraints).toEqual(["fast"]);
-        expect(card.steps[0]!.resources).toEqual({ cpu: 2, memoryGb: 4, gpuCount: 0 });
     });
 });
 

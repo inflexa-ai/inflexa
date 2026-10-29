@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { ok, err, type Result, type ResultAsync } from "neverthrow";
-import { AnalysisPlanSchema, validatePlan, upsertPlan, type AnalysisPlan, type DbError, type ResourceLimits, type UpsertPlanInput } from "@inflexa-ai/harness";
+import { AnalysisPlanSchema, validatePlan, upsertPlan, type AnalysisPlan, type DbError, type UpsertPlanInput } from "@inflexa-ai/harness";
 
 /**
  * The real `upsertPlan(pool, input)` return, captured by `ReturnType` so the
@@ -138,7 +138,7 @@ function derivePlanId(analysisId: string, fileBytes: Buffer): string {
  * "rejected before any side effect" gate). {@link persistPlan} does the pool-backed
  * write afterward, from the {@link PlanIntake} this returns.
  */
-export function validatePlanFile(analysisId: string, path: string, perStepCeiling?: ResourceLimits): Result<PlanIntake, PlanIntakeError> {
+export function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, PlanIntakeError> {
     return readPlanBytes(path).andThen((bytes) =>
         parsePlanJson(path, bytes)
             .andThen((raw): Result<AnalysisPlan, PlanIntakeError> => {
@@ -153,10 +153,7 @@ export function validatePlanFile(analysisId: string, path: string, perStepCeilin
                 if (plan.steps.length === 0) {
                     return err({ type: "plan_invalid", path, errors: ["Plan has no steps — add at least one analysis step to run."] });
                 }
-                // The ceiling makes an over-sized step a loud pre-boot rejection —
-                // the same loud-at-plan-time gate the harness planner applies —
-                // instead of a run that fails at its first scheduling round.
-                const structural = validatePlan(plan, { perStepCeiling });
+                const structural = validatePlan(plan);
                 return structural.valid ? ok(plan) : err({ type: "plan_invalid", path, errors: structural.errors });
             })
             .map((plan): PlanIntake => ({
@@ -191,14 +188,12 @@ export function persistPlan(analysisId: string, path: string, intake: PlanIntake
  * gate failure rejects with the file path and the verbatim errors, having persisted
  * nothing. The run command splits these two halves across its runtime-boot boundary
  * (validate pre-boot, persist post-boot) to fail fast; this composed form is the
- * whole-intake contract for a caller that already holds a pool. Pass the resolved
- * policy's `perStep` as `perStepCeiling` to apply the same over-ceiling gate the
- * split path applies — omitting it skips that check, nothing else.
+ * whole-intake contract for a caller that already holds a pool.
  *
  * Idempotent by the id's determinism plus the seam's insert-if-absent semantics:
  * re-taking the same file under the same analysis re-derives the same id and the
  * seam no-ops, so a repeat intake reports success without a duplicate row.
  */
-export function intakePlan(analysisId: string, path: string, deps: PlanIntakeDeps, perStepCeiling?: ResourceLimits): ResultAsync<PlanIntake, PlanIntakeError> {
-    return validatePlanFile(analysisId, path, perStepCeiling).asyncAndThen((intake) => persistPlan(analysisId, path, intake, deps));
+export function intakePlan(analysisId: string, path: string, deps: PlanIntakeDeps): ResultAsync<PlanIntake, PlanIntakeError> {
+    return validatePlanFile(analysisId, path).asyncAndThen((intake) => persistPlan(analysisId, path, intake, deps));
 }

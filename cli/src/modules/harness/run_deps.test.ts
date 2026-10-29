@@ -48,7 +48,6 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         logger: createNoopLogger(),
         embedding: createEmbeddingProvider({ baseURL: "http://emb.test/v1", token: "t", model: "text-embedding-3-small" }),
         sandboxClient: createSandboxClient({
-            pool,
             env: { backend: "docker", namespace: "" },
             image: "img",
             farmSource: { kind: "fixed", location: { farmPath: "/tmp/farm" } },
