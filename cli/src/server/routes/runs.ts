@@ -229,16 +229,13 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         if (steps.isErr()) return internalError(c, steps.error, "read the steps of the run");
         const stepNames = planStepNames(planDoc);
 
-        const [artifactCounts, stepCounts] = await Promise.all([
-            readArtifactCounts(pool, analysisId, [runId], opts),
-            readStepCounts(pool, analysisId, [runId], opts),
-        ]);
+        const artifactCounts = await readArtifactCounts(pool, analysisId, [runId], opts);
         const stepUsage = listRunUsageByStep(analysisId, runId).unwrapOr([]);
         const usageByStep = new Map(stepUsage.flatMap((group) => (group.stepId === null ? [] : [[group.stepId, group.totals] as const])));
         const runUsage = getRunUsageTotals(analysisId, runId).unwrapOr(null);
 
         const detail: RunDetail = {
-            ...toRunSummary(run, planTitleOf(planDoc), runUsage, artifactCountOf(artifactCounts, runId), stepCountsOf(stepCounts, runId)),
+            ...toRunSummary(run, planTitleOf(planDoc), runUsage, artifactCountOf(artifactCounts, runId), countStepRows(steps.value)),
             steps: steps.value.map((step) => toStepSummary(step, stepNames.get(step.stepId), usageByStep.get(step.stepId))),
             plan: planOf(run.planId, planDoc),
             // SQLite groups the NULL step ids as one group: the calls of the run outside each step.
@@ -678,6 +675,18 @@ async function readStepCounts(pool: Pool, analysisId: string, runIds: readonly s
             return null;
         },
     );
+}
+
+/**
+ * The step counts of one run from its step rows, by the rule of `countStepsByRuns`: `completed` is done, `running` is
+ * running, and each row counts in the total. The detail counts the rows that it gives, thus its counts and its steps agree.
+ */
+function countStepRows(steps: readonly StepExecutionRow[]): StepCounts {
+    return {
+        doneSteps: steps.filter((step) => step.status === "completed").length,
+        runningSteps: steps.filter((step) => step.status === "running").length,
+        totalSteps: steps.length,
+    };
 }
 
 /** The counts of one run, 0 for each count of a run with no entry, and `null` when the read failed. */

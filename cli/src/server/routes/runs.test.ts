@@ -562,21 +562,23 @@ describe("GET {A}/run/:runId", () => {
         expect(reads).toEqual([["r1"]]);
     });
 
-    test("the run carries its step counts, from a read of the one run", async () => {
+    test("the run counts its steps from the step rows of the response, with no count read", async () => {
         const analysisId = seedAnalysis();
-        const reads: string[][] = [];
         const app = appWith({
             getRun: () => okAsync(runRow({ runId: "r1", analysisId })),
-            listSteps: () => okAsync([]),
-            countSteps: (_pool, _id, runIds) => {
-                reads.push([...runIds]);
-                return okAsync([{ runId: "r1", doneSteps: 1, runningSteps: 1, totalSteps: 3 }]);
-            },
+            listSteps: () =>
+                okAsync([
+                    stepRow({ runId: "r1", stepId: "s1", status: "completed" }),
+                    stepRow({ runId: "r1", stepId: "s2", status: "running" }),
+                    stepRow({ runId: "r1", stepId: "s3", status: "pending" }),
+                    stepRow({ runId: "r1", stepId: "synthesis", status: "pending" }),
+                ]),
+            countSteps: failing("countSteps"),
         });
         const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
 
-        expect([detail.doneSteps, detail.runningSteps, detail.totalSteps]).toEqual([1, 1, 3]);
-        expect(reads).toEqual([["r1"]]);
+        expect([detail.doneSteps, detail.runningSteps, detail.totalSteps]).toEqual([1, 1, 4]);
+        expect(detail.steps.map((step) => step.status)).toEqual(["completed", "running", "pending", "pending"]);
     });
 
     describe("the plan graph", () => {
