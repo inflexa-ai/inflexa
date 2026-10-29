@@ -28,6 +28,7 @@ import type { ExtendAnalysisFarm, ToolchainSource } from "../../sandbox/types.js
 import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
+import { createWorkspaceReadLineage, type WorkspaceReadLineage } from "../../provenance/workspace-reads.js";
 
 import { sandboxOrientCorePromptFor, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
 import { composeSystemPrompt } from "../system-prompt.js";
@@ -136,8 +137,9 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     readonly embedding?: EmbeddingProvider;
     /**
      * Step-scoped lineage collector fed by each `execute_command`'s
-     * `ExecResult.provenance` frame. Records the input/script edges post-step
-     * registration translates into provenance parents.
+     * `ExecResult.provenance` frame, and by the reads of `read_file`, `grep`, and
+     * `read_pdf`. Records the input/script edges post-step registration
+     * translates into provenance parents.
      */
     readonly lineageCollector?: LineageCollector;
     /** Model id provenance label — the provider owns the wire model. */
@@ -279,7 +281,11 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
 /** Build the workspace mutate + read tools every sandbox agent receives. In
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
-function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools: Tool[]; mutator: WorkspaceMutator | undefined } {
+function buildWorkspaceTools(
+    deps: SandboxAgentDeps,
+    readOnly: boolean,
+    readLineage: WorkspaceReadLineage | undefined,
+): { tools: Tool[]; mutator: WorkspaceMutator | undefined } {
     const { step, workspaceFs, pool, embedding, lineageCollector } = deps;
 
     // The agent's writable working directory: relative paths resolve here, and
@@ -317,10 +323,10 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
             mutator,
         }),
         ...mutateTools,
-        createReadFileTool(workspaceFs, hostWorkingDir),
+        createReadFileTool(workspaceFs, hostWorkingDir, readLineage),
         createListFilesTool(workspaceFs, hostWorkingDir),
         createFileStatTool(workspaceFs, hostWorkingDir),
-        createGrepTool(workspaceFs, hostWorkingDir),
+        createGrepTool(workspaceFs, hostWorkingDir, readLineage),
         ...(embedding ? [createWorkspaceSearchTool(pool, embedding)] : []),
     ];
     return { tools, mutator };
@@ -358,7 +364,17 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     const systemPrompt = composeSystemPrompt(agentBody);
 
     const skillTools = deps.skillsDir ? Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: meta.skills })) : [];
-    const workspace = buildWorkspaceTools(deps, opts.readOnly ?? false);
+    // The working directory is the one of the read tools, thus a relative path resolves to the same file.
+    const readLineage = deps.lineageCollector
+        ? createWorkspaceReadLineage({
+              collector: deps.lineageCollector,
+              workspaceRoot: deps.step.workspaceRoot,
+              analysisId: deps.step.analysisId,
+              workingDir: deps.step.allowedWritePrefix,
+              logger: deps.logger,
+          })
+        : undefined;
+    const workspace = buildWorkspaceTools(deps, opts.readOnly ?? false, readLineage);
     const allowlisted = resolveSandboxTools(deps, meta.tools, workspace.mutator);
     const tools: Tool[] = [
         ...workspace.tools,
@@ -387,7 +403,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         // A paper of the analysis is a PDF, and each step can need it, thus each agent reads PDFs in a script.
         scriptTools: [
             ...allowlisted.filter((tool) => !DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
-            createReadPdfTool({ workspaceFs: deps.workspaceFs, resolveWorkspaceRoot: () => Promise.resolve(deps.step.workspaceRoot) }),
+            createReadPdfTool({ workspaceFs: deps.workspaceFs, resolveWorkspaceRoot: () => Promise.resolve(deps.step.workspaceRoot), lineage: readLineage }),
         ],
         scriptRuntime: deps.scriptRuntime,
         maxIterations: meta.defaultMaxSteps ?? SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS,

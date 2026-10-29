@@ -24,6 +24,7 @@ import { detectFormat, parseTable, type Row } from "../../report-model/productio
 import { CHART_EXPORT_SIZES, SCATTER_CROWD_ROWS } from "../../report-render/design.js";
 import { loadChartRuntime, plottedPoints, renderChartSvg } from "../../report-render/chart-export.js";
 import { parseUnknownRecord, UnknownArraySchema } from "../../lib/unknown-containers.js";
+import type { WorkspaceReadLineage } from "../../provenance/workspace-reads.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
@@ -186,7 +187,11 @@ const ReadPdfOutputSchema = z.object({
 
 type ReadPdfOutput = WithToolCallRecord<z.infer<typeof ReadPdfOutputSchema>, ScriptFileEffect>;
 
-export function createReadPdfTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool<z.infer<typeof readPdfInput>, ReadPdfOutput> {
+/** `lineage` records each read in the lineage of a step. */
+export function createReadPdfTool(
+    deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot"> & { readonly lineage?: WorkspaceReadLineage },
+): Tool<z.infer<typeof readPdfInput>, ReadPdfOutput> {
+    const { lineage } = deps;
     return defineTool({
         id: "read_pdf",
         description:
@@ -198,6 +203,8 @@ export function createReadPdfTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" 
         describeCall: ({ path, firstPage, lastPage }) =>
             firstPage === undefined && lastPage === undefined ? path : `${path}, pages ${String(firstPage ?? 1)}-${String(lastPage ?? "")}`,
         describeResult: (_input, result) => `${String(result.pages.length)} of ${String(result.totalPages)} pages`,
+        // `run_script` folds the record of a nested call only into a tool that folds records.
+        foldCallRecord: lineage === undefined ? undefined : (effect: ScriptFileEffect) => lineage.track(effect.reads ?? []),
         execute: async ({ path, firstPage, lastPage }, ctx): Promise<Result<ReadPdfOutput, ToolError>> => {
             if (!path.toLowerCase().endsWith(".pdf")) {
                 recordReadRefusal("unsupported_format");

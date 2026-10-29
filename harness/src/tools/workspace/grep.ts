@@ -17,8 +17,9 @@ import { presentAt } from "../../lib/present.js";
 import { splitLines } from "../../lib/text.js";
 import { z } from "zod";
 
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import type { WorkspaceRead, WorkspaceReadLineage, WorkspaceReadRecord } from "../../provenance/workspace-reads.js";
 import type { ListEntry, ReadFileResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 const DEFAULT_MAX_MATCHES = 50;
@@ -62,7 +63,14 @@ type GrepOutput =
       }
     | { status: "ok"; path: string; pattern: string; matches: Match[] };
 
-export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof GrepInputSchema>, GrepOutput> {
+type GrepToolOutput = GrepOutput | WithToolCallRecord<GrepOutput, WorkspaceReadRecord>;
+
+/** `lineage` records each file whose lines the result returns in the lineage of a step. */
+export function createGrepTool(
+    fs: WorkspaceFilesystem,
+    workingDir?: string,
+    lineage?: WorkspaceReadLineage,
+): Tool<z.infer<typeof GrepInputSchema>, GrepToolOutput> {
     return defineTool({
         id: "grep",
         description:
@@ -77,7 +85,8 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
         // Both fields, because either alone loses the call: the same pattern over
         // two trees and two patterns over one tree are both ordinary sequences.
         describeCall: ({ pattern, path }) => `${pattern} in ${path}`,
-        execute: async ({ pattern, path, ignoreCase }, ctx): Promise<Result<GrepOutput, ToolError>> => {
+        foldCallRecord: lineage === undefined ? undefined : (record: WorkspaceReadRecord) => lineage.track(record.reads),
+        execute: async ({ pattern, path, ignoreCase }, ctx): Promise<Result<GrepToolOutput, ToolError>> => {
             let regex: RegExp;
             try {
                 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the caller-supplied grep pattern is the tool's input; the dynamic form is the feature, and an invalid pattern is the handled error below.
@@ -99,6 +108,7 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
             }
 
             const matches: Match[] = [];
+            const reads: WorkspaceRead[] = [];
             let truncated = false;
             const session = ctx.session;
 
@@ -122,10 +132,11 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
                 if (read.kind === "truncated") truncated = true;
 
                 const lines = splitLines(text);
+                const before = matches.length;
                 for (let i = 0; i < lines.length; i++) {
                     if (matches.length >= DEFAULT_MAX_MATCHES) {
                         truncated = true;
-                        return;
+                        break;
                     }
                     const line = presentAt(lines, i, "the scanned line");
                     if (regex.test(line)) {
@@ -136,6 +147,9 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
                         });
                     }
                 }
+                if (matches.length === before) return;
+                const noted = lineage?.readOf(filePath, read.kind === "ok" ? buf : null);
+                if (noted !== undefined) reads.push(noted);
             }
 
             async function walk(dirPath: string, depth: number): Promise<void> {
@@ -169,17 +183,17 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string): To
             if (matches.length === 0) {
                 return ok({ status: "no_matches" as const, path, pattern });
             }
-            // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the walk/searchFile closures that set truncated; the check is live (it returns the truncated result).
-            if (truncated) {
-                return ok({
-                    status: "truncated" as const,
-                    path,
-                    pattern,
-                    matches,
-                    cap: { maxMatches: DEFAULT_MAX_MATCHES, maxBytesPerLine: DEFAULT_MAX_MATCH_BYTES },
-                });
-            }
-            return ok({ status: "ok" as const, path, pattern, matches });
+            // oxlint-disable-next-line no-unnecessary-condition -- tsgolint cannot see the walk/searchFile closures that set truncated; the check is live (it selects the truncated result).
+            const output: GrepOutput = truncated
+                ? {
+                      status: "truncated" as const,
+                      path,
+                      pattern,
+                      matches,
+                      cap: { maxMatches: DEFAULT_MAX_MATCHES, maxBytesPerLine: DEFAULT_MAX_MATCH_BYTES },
+                  }
+                : { status: "ok" as const, path, pattern, matches };
+            return ok(reads.length === 0 ? output : withToolCallRecord(output, { reads }));
         },
     });
 }

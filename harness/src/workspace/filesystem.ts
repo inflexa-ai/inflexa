@@ -5,8 +5,8 @@
  *
  * Reads resolve from the analysis's workspace root when the file is present and
  * fall back to an embedder-supplied presigned URL otherwise. The seam writes no
- * provenance — reads don't produce lineage — and does not depend on any
- * sandbox.
+ * provenance — a read tool records its reads in the lineage of a step itself —
+ * and does not depend on any sandbox.
  *
  * Scoping is enforced once, here, by `resolveWorkspacePath`: any path that
  * escapes the analysis's resolved workspace root is rejected before any I/O.

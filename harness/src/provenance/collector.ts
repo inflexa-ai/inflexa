@@ -5,11 +5,8 @@
  * Integrates with:
  *   - K8sSandbox executeCommand provenance (script reads + writes via inotify)
  *   - Data-mount filesystem write tracking (agent file-tool outputs)
- *
- * Input attribution comes exclusively from sandbox exec inotify (the
- * authoritative record of what computation actually consumed). Agent
- * tool reads are not tracked here — they're exploratory and would
- * pollute the lineage graph.
+ *   - The workspace read tools of the agent (`provenance/workspace-reads.ts`),
+ *     whose host-side reads no exec frame names
  */
 
 import { presentFirst } from "../lib/present.js";
