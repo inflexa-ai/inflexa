@@ -21,6 +21,12 @@
  * document can be incomplete. A column that fails a parse reads as a typed error, and
  * it does not crash. An absent row reads as a normal absence.
  *
+ * The row also holds the derivation list of the session. One record chains a derived
+ * table to the evidence that made it: the output path, the output hash, the source
+ * paths with their hashes, the script hash, and the script text. A record is
+ * immutable, and the append refuses a repeated output path. A row that holds no list
+ * reads as an empty list.
+ *
  * A persist is a compare-and-swap. The load reads the prior document, and the persist
  * lands only when the row still holds it. Thus two concurrent turns cannot both land,
  * and the loser reads the state again.
@@ -34,6 +40,7 @@
 
 import { type Result, type ResultAsync, err, ok, okAsync } from "neverthrow";
 import type { Querier } from "../state/db.js";
+import { z } from "zod";
 
 import { type Connectable, type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
@@ -41,6 +48,53 @@ import type { DomainError } from "../lib/result.js";
 import { DraftDocumentSchema, type DraftDocument } from "../report-model/draft.js";
 import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 import { parseSnapshot, reduceIssues, type SchemaIssue } from "./snapshot-parse.js";
+
+/** One source of a derivation: the pinned path that the script read, and the hash of that path. */
+export type DerivationSource = {
+    readonly path: string;
+    readonly hash: string;
+};
+
+/**
+ * One derivation of a session.
+ *
+ * The record chains the derived table to the evidence that made it, thus a verifier mounts the same
+ * sources, runs the same script, and compares the output hash. The script text rides the record, thus the
+ * verifier needs no second store.
+ *
+ * `outputPath` is the workspace-root-relative path of the derived file, and it is the key that the served
+ * membership holds. A record is immutable, thus a new derivation takes a new output path.
+ *
+ * `toolCallId` names the call that made the record, thus a rerun of that call finds its own table. A stored
+ * record can lack it, and such a record matches no call.
+ */
+export type DerivationRecord = {
+    readonly outputPath: string;
+    readonly outputHash: string;
+    readonly sources: readonly DerivationSource[];
+    readonly scriptHash: string;
+    readonly script: string;
+    readonly toolCallId?: string;
+};
+
+const DerivationSourceSchema = z.object({ path: z.string(), hash: z.string() });
+
+const DerivationRecordSchema = z.object({
+    outputPath: z.string(),
+    outputHash: z.string(),
+    sources: z.array(DerivationSourceSchema),
+    scriptHash: z.string(),
+    script: z.string(),
+    toolCallId: z.string().optional(),
+});
+
+const DerivationListSchema = z.array(DerivationRecordSchema);
+
+/**
+ * The outcome of an append. `appended` landed the record. `duplicate` means that a record already holds the
+ * output path, thus the list stays as it is. `absent` means that no row holds the thread.
+ */
+export type AppendDerivationOutcome = "appended" | "duplicate" | "absent";
 
 /** The state of one report session, as the store gives it back. */
 export type ReportSessionState = {
@@ -50,6 +104,8 @@ export type ReportSessionState = {
     readonly document: DraftDocument | null;
     /** The pinned snapshot, or `null` before the pin writes it. */
     readonly snapshot: ReportSnapshot | null;
+    /** The derivations of the session, in the order that they landed. A row with no list reads as empty. */
+    readonly derivations: readonly DerivationRecord[];
     /** The hash of the draft that the last preview rendered, or `null` before the first preview. */
     readonly renderedDocumentHash: string | null;
     /** The hash that the last eyes capture saw, or `null` before the first look. */
@@ -120,7 +176,7 @@ export type SessionStateReadError = {
     readonly type: "corrupt_session_state";
     readonly op: string;
     readonly threadId: string;
-    readonly part: "document" | "snapshot";
+    readonly part: "document" | "snapshot" | "derivations";
     readonly issues: readonly SchemaIssue[];
 };
 
@@ -163,6 +219,12 @@ export type ReportSessionStateStore = {
      * one. `absent` means that no row holds the thread.
      */
     stampSeen(threadId: string): ResultAsync<SeenStampOutcome, DbError>;
+    /**
+     * Append one derivation record to the list of a thread. The output path is unique across the list,
+     * thus a repeated path refuses with `duplicate` and the stored list stays as it is. `absent` means
+     * that no row holds the thread.
+     */
+    appendDerivation(threadId: string, record: DerivationRecord): ResultAsync<AppendDerivationOutcome, DbError>;
 };
 
 export type ReportSessionStateStoreDeps = {
@@ -171,13 +233,14 @@ export type ReportSessionStateStoreDeps = {
 };
 
 /** The full row projection every read shares. */
-const STATE_COLUMNS = "thread_id, analysis_id, document, snapshot, rendered_document_hash, seen_document_hash, created_at";
+const STATE_COLUMNS = "thread_id, analysis_id, document, snapshot, derivations, rendered_document_hash, seen_document_hash, created_at";
 
 type SessionStateRow = {
     readonly thread_id: string;
     readonly analysis_id: string;
     readonly document: unknown;
     readonly snapshot: unknown;
+    readonly derivations: unknown;
     readonly rendered_document_hash: string | null;
     readonly seen_document_hash: string | null;
     readonly created_at: Date;
@@ -222,11 +285,28 @@ function rowToState(row: SessionStateRow): Result<ReportSessionState, SessionSta
         }
         snapshot = parsed.value;
     }
+    // A row that predates the list carries SQL NULL, and a session that derived nothing carries none
+    // either. Both read as an empty list, because a session with no derivation has none.
+    let derivations: readonly DerivationRecord[] = [];
+    if (row.derivations !== null && row.derivations !== undefined) {
+        const parsed = DerivationListSchema.safeParse(row.derivations);
+        if (!parsed.success) {
+            return err({
+                type: "corrupt_session_state",
+                op: "report-session-state.read",
+                threadId: row.thread_id,
+                part: "derivations",
+                issues: reduceIssues(parsed.error),
+            });
+        }
+        derivations = parsed.data;
+    }
     return ok({
         threadId: row.thread_id,
         analysisId: row.analysis_id,
         document,
         snapshot,
+        derivations,
         renderedDocumentHash: row.rendered_document_hash,
         seenDocumentHash: row.seen_document_hash,
         createdAt: row.created_at,
@@ -371,5 +451,40 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
         });
     }
 
-    return { readState, writeSnapshot, persistDocument, readCallResult, stampRendered, stampSeen };
+    function appendDerivation(threadId: string, record: DerivationRecord): ResultAsync<AppendDerivationOutcome, DbError> {
+        return tryMutation("report-session-state.appendDerivation", async () => {
+            // One statement tells a duplicate from an absence, the same way the persist does. `existed`
+            // counts the row, and `appended` counts the update.
+            //
+            // The name rule sits in the qualification of the UPDATE, over the row that the statement locks.
+            // A read of the CTE would test the list as it stood at the start of the statement: two
+            // concurrent appends of one name would each pass that test, and both would land. Postgres
+            // re-evaluates the qualification of an UPDATE against the row that it waited for, thus the
+            // loser of the race sees the list of the winner and it appends nothing.
+            const { rows } = await pool.query<{ existed: number; appended: number }>({
+                text: `WITH target AS (
+    SELECT thread_id
+      FROM cortex_report_session_state
+     WHERE thread_id = $1
+  ), appended AS (
+    UPDATE cortex_report_session_state AS s
+       SET derivations = COALESCE(s.derivations, '[]'::jsonb) || $2::jsonb
+     WHERE s.thread_id = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM jsonb_array_elements(COALESCE(s.derivations, '[]'::jsonb)) AS held WHERE held->>'outputPath' = $3
+       )
+    RETURNING 1
+  )
+  SELECT (SELECT COUNT(*) FROM target)::int AS existed, (SELECT COUNT(*) FROM appended)::int AS appended`,
+                // The record rides as a one-element array, thus the `||` operator appends one element and
+                // never merges the fields of an object into the list.
+                values: [threadId, JSON.stringify([record]), record.outputPath],
+            });
+            const row = rows[0];
+            if (row === undefined || row.existed === 0) return "absent";
+            return row.appended > 0 ? "appended" : "duplicate";
+        });
+    }
+
+    return { readState, writeSnapshot, persistDocument, readCallResult, stampRendered, stampSeen, appendDerivation };
 }

@@ -527,6 +527,22 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                     title: { threadId: event.threadId, title: event.title },
                 });
                 return;
+            case "run-derivation":
+                Bus.emit("inflexa", {
+                    type: "prov.report_derivation_run",
+                    analysisId,
+                    actor,
+                    model,
+                    derivation: {
+                        threadId: event.threadId,
+                        outputPath: event.outputPath,
+                        outputHash: event.outputHash,
+                        scriptHash: event.scriptHash,
+                        // Copied pair by pair, so nothing that the tool still holds reaches a subscriber.
+                        sources: event.sources.map((s) => ({ path: s.path, hash: s.hash })),
+                    },
+                });
+                return;
             case "preview":
                 Bus.emit("inflexa", {
                     type: "prov.report_previewed",

@@ -6,14 +6,18 @@
  * `cortex_analysis_state`, so every test seeds that row first.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
+import type { Connectable } from "../../lib/db-result.js";
+import type { Querier } from "../db.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
-import { createReportSessionStateStore, type ReportSessionStateStore } from "../report-session-state.js";
+import { createReportSessionStateStore, type DerivationRecord, type ReportSessionStateStore } from "../report-session-state.js";
 import { presentAt } from "../../lib/present.js";
 
 const validDraft: DraftDocument = {
@@ -230,10 +234,19 @@ describe("createReportSessionStateStore", () => {
         const threadId = "thread-purge-cascade";
 
         (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (
+            await store.appendDerivation(threadId, {
+                outputPath: `report-sessions/${threadId}/derived/a.csv`,
+                outputHash: "sha256:aaaaaa",
+                sources: [{ path: "runs/r1/output/de.csv", hash: "abc123" }],
+                scriptHash: "sha256:bbbbbb",
+                script: "import pandas\n",
+            })
+        )._unsafeUnwrap();
         expect((await store.readState(threadId))._unsafeUnwrap()).not.toBeNull();
 
         // The analysis_id foreign key cascades. A purge removes the analysis-state row,
-        // thus the session-state row goes with it.
+        // thus the session-state row and the derivations that it holds go with it.
         await pool.query({ text: "DELETE FROM cortex_analysis_state WHERE analysis_id = $1", values: [analysisId] });
 
         expect((await store.readState(threadId))._unsafeUnwrap()).toBeNull();
@@ -279,5 +292,159 @@ describe("createReportSessionStateStore", () => {
     it("gives an absence for a stamp against a thread with no row", async () => {
         expect((await store.stampRendered("thread-stamp-absent", "h"))._unsafeUnwrap()).toBe("absent");
         expect((await store.stampSeen("thread-stamp-absent"))._unsafeUnwrap()).toBe("absent");
+    });
+
+    /** One derivation record. Each test names its own output path, thus the name rule reads one case. */
+    function derivation(output: string, sourcePath = "runs/r1/output/de.csv"): DerivationRecord {
+        return {
+            outputPath: `report-sessions/thread-x/derived/${output}`,
+            outputHash: `sha256:${output}`,
+            sources: [{ path: sourcePath, hash: "abc123" }],
+            scriptHash: "sha256:script",
+            script: "import pandas\n",
+        };
+    }
+
+    it("appends each derivation, and the read gives them in the order that they landed", async () => {
+        const analysisId = "analysis-derivations";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivations";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // A fresh row holds no list at all, thus the read gives an empty list.
+        const empty = (await store.readState(threadId))._unsafeUnwrap();
+        if (empty === null) throw new Error("the state row is absent");
+        expect(empty.derivations).toEqual([]);
+
+        const first = derivation("a.csv");
+        const second = derivation("b.csv", "runs/r1/output/counts.csv");
+        expect((await store.appendDerivation(threadId, first))._unsafeUnwrap()).toBe("appended");
+        expect((await store.appendDerivation(threadId, second))._unsafeUnwrap()).toBe("appended");
+
+        // A second store instance reads the same durable list, with each record whole.
+        const read = (await createReportSessionStateStore({ pool }).readState(threadId))._unsafeUnwrap();
+        if (read === null) throw new Error("the state row is absent");
+        expect(read.derivations).toEqual([first, second]);
+        // The record carries what a second run needs: the script, the sources, and the output hash.
+        const landed = presentAt(read.derivations, 0, "the first derivation");
+        expect(landed.script).toBe("import pandas\n");
+        expect(landed.sources).toEqual([{ path: "runs/r1/output/de.csv", hash: "abc123" }]);
+    });
+
+    it("refuses a second record that holds an output path of the list", async () => {
+        const analysisId = "analysis-derivation-name";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-name";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        const landed = derivation("yield.csv");
+        expect((await store.appendDerivation(threadId, landed))._unsafeUnwrap()).toBe("appended");
+
+        // The output path is unique across the list, thus a second record of that path refuses.
+        const repeated: DerivationRecord = { ...landed, outputHash: "sha256:different", script: "import numpy\n" };
+        expect((await store.appendDerivation(threadId, repeated))._unsafeUnwrap()).toBe("duplicate");
+
+        // The stored list keeps the first record, thus the refusal changed nothing.
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        expect(read?.derivations).toEqual([landed]);
+    });
+
+    /**
+     * Wait until a backend blocks on a lock over the session-state table.
+     *
+     * The concurrency case must know that the second append reached the row lock before the first one
+     * commits. A `pg_stat_activity` read is that signal, thus the case drives a real wait and never a sleep
+     * that a slow machine turns into a pass.
+     */
+    async function waitForBlockedAppend(): Promise<void> {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+            const { rows } = await pool.query<{ waiting: number }>({
+                text: `SELECT COUNT(*)::int AS waiting FROM pg_stat_activity
+                        WHERE datname = current_database() AND wait_event_type = 'Lock'
+                          AND query LIKE '%cortex_report_session_state%'`,
+            });
+            if ((rows[0]?.waiting ?? 0) > 0) return;
+            await sleep(10);
+        }
+        throw new Error("the second append never blocked on the row lock");
+    }
+
+    it("lands one of two concurrent appends of the same output path", async () => {
+        const analysisId = "analysis-derivation-race";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-race";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // Two sessions, each on its own connection and inside its own transaction. The first append holds
+        // the row lock while the second one runs, thus the second one must re-read the list of the first
+        // before it decides. A name rule that read a snapshot of the list would let both records land.
+        const first = await pool.connect();
+        const second = await pool.connect();
+        try {
+            // The append calls `query` alone, thus a pooled client answers each statement here.
+            const onClient = (client: PoolClient): Querier & Connectable => {
+                const forward = client.query.bind(client);
+                const query: Querier["query"] = (textOrConfig, values) => forward(textOrConfig, values);
+                return { query, connect: () => pool.connect() };
+            };
+            const firstStore = createReportSessionStateStore({ pool: onClient(first) });
+            const secondStore = createReportSessionStateStore({ pool: onClient(second) });
+            const record = derivation("race.csv");
+
+            await first.query("BEGIN");
+            await second.query("BEGIN");
+
+            expect((await firstStore.appendDerivation(threadId, record))._unsafeUnwrap()).toBe("appended");
+            // The second append blocks on the row that the first one holds. It settles after the commit.
+            const blocked = secondStore.appendDerivation(threadId, { ...record, outputHash: "sha256:second" });
+            await waitForBlockedAppend();
+            await first.query("COMMIT");
+            expect((await blocked)._unsafeUnwrap()).toBe("duplicate");
+            await second.query("COMMIT");
+        } finally {
+            first.release();
+            second.release();
+        }
+
+        // The thread holds the record of the winner, and it holds it one time.
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        expect(read?.derivations).toEqual([derivation("race.csv")]);
+    });
+
+    it("gives an absence for an append against a thread with no row", async () => {
+        expect((await store.appendDerivation("thread-derivation-absent", derivation("a.csv")))._unsafeUnwrap()).toBe("absent");
+    });
+
+    it("reads a row whose list predates the column as an empty list", async () => {
+        const analysisId = "analysis-derivation-legacy";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-legacy";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // A row written before the column existed carries SQL NULL. The read gives an empty list, and it
+        // gives no error, because a session that derived nothing holds none.
+        await pool.query({ text: "UPDATE cortex_report_session_state SET derivations = NULL WHERE thread_id = $1", values: [threadId] });
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        expect(read?.derivations).toEqual([]);
+        expect(read?.snapshot).toEqual(snapshot);
+    });
+
+    it("reads a corrupted derivation list as a typed error", async () => {
+        const analysisId = "analysis-derivation-corrupt";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-corrupt";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        await pool.query({
+            text: `UPDATE cortex_report_session_state SET derivations = '[{"outputPath":1}]'::jsonb WHERE thread_id = $1`,
+            values: [threadId],
+        });
+
+        const failure = (await store.readState(threadId))._unsafeUnwrapErr();
+        expect(failure.type).toBe("corrupt_session_state");
+        if (failure.type === "corrupt_session_state") {
+            expect(failure.part).toBe("derivations");
+            expect(failure.issues.length).toBeGreaterThan(0);
+        }
     });
 });

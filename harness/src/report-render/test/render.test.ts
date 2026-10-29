@@ -1242,6 +1242,41 @@ describe("the page stands alone", () => {
     }
 
     /**
+     * A page whose appendix chain links the staged script of a derivation and the derived file itself.
+     *
+     * The derived file sits beside the page and not under `assets/`, thus this page is the one that proves
+     * the containment rule against a page-relative link.
+     */
+    async function pageWithADerivationChain(): Promise<string> {
+        const document: ReportDocument = {
+            title: "T",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "claim",
+                            id: "c1",
+                            content: { prose: "The derived table carries the counts." },
+                            bindings: [{ kind: "artifact-file", path: "derived/counts.csv", hash: "sha256:ccc" }],
+                        },
+                    ],
+                },
+            ],
+        };
+        const chain = {
+            outputPath: "derived/counts.csv",
+            sources: [{ path: "runs/r1/de.csv", hash: "sha256:aaa" }],
+            scriptHash: "sha256:bbb",
+            scriptSource: `${ASSETS_DIR}/d-bbb.py`,
+            outputSource: "derived/counts.csv",
+        };
+        return (await renderReportPage(document, {}, { derivations: [chain] }))._unsafeUnwrap().html;
+    }
+
+    /**
      * The rule reads the element and never the value. A navigation costs no request when the page opens,
      * thus an anchor admits a remote host. A `src`, a `srcset`, and a stylesheet source each fetch on
      * open, thus none of them admits one.
@@ -1254,8 +1289,8 @@ describe("the page stands alone", () => {
     /**
      * True when one reference resolves inside the page directory.
      *
-     * A value that names no scheme is relative, thus it resolves beside the page: a staged asset, or an
-     * anchor of the page itself. A leading slash and a parent
+     * A value that names no scheme is relative, thus it resolves beside the page: a staged asset, a derived
+     * file that the appendix chain links, or an anchor of the page itself. A leading slash and a parent
      * segment each leave that directory, thus neither one passes.
      *
      * A value that names a scheme resolves elsewhere. The inline data URI carries its own bytes, and the
@@ -1270,7 +1305,11 @@ describe("the page stands alone", () => {
     }
 
     it("names a remote host at a navigation anchor and at no other element", async () => {
-        for (const html of [(await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html, await pageWithACitation()]) {
+        for (const html of [
+            (await renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES))._unsafeUnwrap().html,
+            await pageWithACitation(),
+            await pageWithADerivationChain(),
+        ]) {
             const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
             expect(references.length).toBeGreaterThan(0);
 
@@ -1290,6 +1329,13 @@ describe("the page stands alone", () => {
         expect(insideThePage("file:///etc/passwd")).toBe(false);
         expect(insideThePage("derived/counts.csv")).toBe(true);
         expect(insideThePage(`${ASSETS_DIR}/echarts.min.js`)).toBe(true);
+    });
+
+    it("links the derived file of a chain as a page-relative path", async () => {
+        // The chain link is the one reference of the page that names no `assets/` prefix. Thus the fixture
+        // holds it, and the containment rule above reads it.
+        const html = await pageWithADerivationChain();
+        expect(attributeReferences(html)).toContain("derived/counts.csv");
     });
 
     it("names the brand host one time, thus no second surface fetches it", async () => {
@@ -1902,12 +1948,24 @@ describe("the References appendix", () => {
 
 describe("the evidentiary bindings in the appendix", () => {
     const PINNED = "runs/run-1/step-a/output/de.csv";
+    const DERIVED = "report-sessions/t1/derived/merged.csv";
     const PINNED_HASH = `sha256:${"a".repeat(64)}`;
+    const DERIVED_HASH = `sha256:${"d".repeat(64)}`;
+
+    /** The chain of the derived path: two sources with their hashes, and the script that made the table. */
+    const chain = {
+        outputPath: DERIVED,
+        sources: [
+            { path: "runs/run-1/step-a/output/de.csv", hash: `sha256:${"a".repeat(64)}` },
+            { path: "runs/run-1/step-b/output/counts.csv", hash: `sha256:${"b".repeat(64)}` },
+        ],
+        scriptHash: `sha256:${"c".repeat(64)}`,
+    };
 
     /** One page whose section holds the given blocks. */
-    async function pageOf(blocks: Block[], values: RenderValues): Promise<string> {
+    async function pageOf(blocks: Block[], values: RenderValues, derivations?: readonly (typeof chain)[]): Promise<string> {
         const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
-        return (await renderReportPage(document, values))._unsafeUnwrap().html;
+        return (await renderReportPage(document, values, { derivations }))._unsafeUnwrap().html;
     }
 
     /** One block of each evidentiary kind over the given artifact. Each one binds through its own kind. */
@@ -2061,9 +2119,14 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(page('.report-marker a[href="#ref-1"]').length).toBe(2);
     });
 
-    it("gives a marker and an entry to each evidentiary kind over one artifact", async () => {
-        const blocks = [metricBlock(PINNED, PINNED_HASH), tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH), figureBlock(PINNED, PINNED_HASH)];
-        const page = load(await pageOf(blocks, oneRow));
+    it("gives a marker and a chain entry to each evidentiary kind over one derived path", async () => {
+        const blocks = [
+            metricBlock(DERIVED, DERIVED_HASH),
+            tableBlock(DERIVED, DERIVED_HASH),
+            chartBlock(DERIVED, DERIVED_HASH),
+            figureBlock(DERIVED, DERIVED_HASH),
+        ];
+        const page = load(await pageOf(blocks, oneRow, [chain]));
 
         // Each of the four cards carries its marker, each on the line that names the card.
         expect(page(".stat-card-label .report-marker").length).toBe(1);
@@ -2079,6 +2142,31 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(targets.length).toBe(4);
         expect(targets.filter((target) => page(`li${String(target)}`).length === 1).length).toBe(4);
         expect(page("ol.report-references li").length).toBe(3);
+        // Every entry names the derived path, thus every entry states the chain of that path.
+        expect(page("ol.report-references li .report-ref-chain").length).toBe(3);
+    });
+
+    it("states the chain of a derived chart in its appendix entry", async () => {
+        const html = await pageOf([chartBlock(DERIVED, DERIVED_HASH)], oneRow, [chain]);
+        const entry = load(html)("li#ref-1").text();
+
+        // The entry carries each source with the head of its hash, and the head of the script hash.
+        expect(entry).toContain("runs/run-1/step-a/output/de.csv");
+        expect(entry).toContain("runs/run-1/step-b/output/counts.csv");
+        expect(entry).toContain("a".repeat(12));
+        expect(entry).toContain("b".repeat(12));
+        expect(entry).toContain("c".repeat(12));
+        // A whole hash never reaches the page.
+        expect(html).not.toContain("a".repeat(13));
+    });
+
+    it("renders a document with no derived path byte-identically with the records and without them", async () => {
+        const blocks = [tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)];
+
+        // The chain names a path that no binding of this document holds. Thus the page is a pure function
+        // of the document and the values, exactly as it was before the records rode the call.
+        expect(await pageOf(blocks, oneRow, [chain])).toBe(await pageOf(blocks, oneRow));
+        expect(load(await pageOf(blocks, oneRow))(".report-ref-chain").length).toBe(0);
     });
 });
 

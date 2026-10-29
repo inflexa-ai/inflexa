@@ -112,6 +112,15 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
         case "prov.report_title_set":
             // The title itself is authored report content, so only the thread it landed on rides.
             return { analysisId: event.analysisId, actorKind: event.actor.kind, threadId: event.title.threadId, model: event.model };
+        case "prov.report_derivation_run":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                threadId: event.derivation.threadId,
+                outputPath: event.derivation.outputPath,
+                sourceCount: event.derivation.sources.length,
+                model: event.model,
+            };
         case "prov.report_previewed":
             return {
                 analysisId: event.analysisId,
