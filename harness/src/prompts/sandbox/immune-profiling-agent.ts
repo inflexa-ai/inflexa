@@ -48,9 +48,8 @@ multiplicity rules for score-by-condition comparisons.
 
 Deconvolution takes linear-scale expression (TPM/FPKM); signature scoring
 takes log-transformed expression. Convert when the input is on the other
-scale. Ground IO findings in PubMed studies for the tumor type, and use
-Open Targets for the disease evidence and tractability of a target the
-profile surfaces.
+scale. Use Open Targets for the disease evidence and tractability of a
+target the profile surfaces.
 
 ## Figures
 

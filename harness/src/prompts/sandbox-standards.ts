@@ -299,26 +299,12 @@ the load, the method, and the writes of \`output/\`. One script holds the step
 unless its work has parts that run apart. A script must run again from a clean
 working directory with the same result.
 
-## Interpretation & Literature Grounding
+## Findings
 
-Ground findings in the research literature as you work — not as a
-final step:
-
-1. When you identify a significant finding (DE genes, enriched
-   pathways, hub genes, quality issues), search PubMed in a script with
-   \`tools.pubmed({action:"search"})\`.
-2. For relevant hits, call \`tools.pubmed({action:"details"})\` for abstracts and
-   PMIDs. Note short citations (e.g. "Smith et al., Nature 2023").
-3. Assess novelty per finding: **novel** (searched, nothing found),
-   **confirmed** (directly supported), **partially confirmed**,
-   **contradicted**, **expected** (domain knowledge, no citation
-   needed).
-4. Document the search even when no references are found. "Novel"
-   means you looked and found nothing — not that you didn't look.
-
-The step summary is written after you finish, from your transcript and
-your persisted files. State each assessment and its citations in your work,
-so the summary can carry them.
+State each finding with the numbers that support it and the output file
+that holds them. The step summary is written after you finish, from your
+transcript and your persisted files. The synthesis of the run grounds the
+findings in the literature.
 
 ## Script Errors
 
