@@ -58,7 +58,7 @@ export type BoundedExecResult = {
     readonly stderrTotalLength: number;
     readonly durationMs: number | null;
     readonly timedOut: boolean;
-    syntheticFailure?: { readonly reason: string };
+    syntheticFailure?: { readonly reason: string; readonly memoryLimitGb?: number };
 };
 
 function boundStream(stream: string, cap: number = EXEC_STREAM_BYTE_CAP): BoundedStream {

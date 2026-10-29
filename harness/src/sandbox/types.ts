@@ -1,9 +1,9 @@
 /**
  * Sandbox-client types — the wire/persistence shapes that cross the
- * submit/poll protocol (see the harness-sandbox-exec spec) and the active-sandbox registry.
+ * submit/poll protocol (see the harness-sandbox-exec spec) and the lease table.
  *
- * `SandboxRef` is the handle the harness uses to talk to a live sandbox. The
- * active-sandbox registry persists the same shape (`PersistedSandboxRef`, from
+ * `SandboxRef` is the handle the harness uses to talk to a live sandbox. A lease
+ * row persists the same shape (`PersistedSandboxRef`, from
  * `harness/state/schema.ts`).
  */
 
@@ -203,12 +203,18 @@ export const ExecResultSchema = z.object({
     stderrTruncated: z.boolean().optional(),
     stdoutTotalBytes: z.number().int().nonnegative().optional(),
     stderrTotalBytes: z.number().int().nonnegative().optional(),
-    /** Set when the liveness probe found the machine dead under the exec. */
+    /**
+     * Set when the machine died under the exec, or when a new machine of the lease found the exec lost. The sandbox
+     * module adds the memory limit of the grant, thus the agent can tell its own memory use from an outside cause.
+     */
     syntheticFailure: z
         .object({
             reason: z.string(),
+            memoryLimitGb: z.number().optional(),
         })
         .optional(),
+    /** Set by sandbox-server on the record of an exec that a restart of the machine cut. */
+    lost: z.object({ reason: z.string() }).optional(),
     /** Runtime file-I/O frame from sandbox-server. Absent from a synthetic failure. */
     provenance: ProvenanceFrameSchema.optional(),
     /**
@@ -282,10 +288,12 @@ export type SubmitExecBody = {
 
 /** What a spawn needs beside its session. */
 export type SandboxSpec = {
-    /** Owning DBOS child workflow id (`"${parentRunId}-${N}"`). Recorded verbatim
-     *  on the sandbox machine under `cortex/owner-workflow-id` so the reaper can
-     *  map a cluster-side machine back to its workflow and check liveness. */
-    childWorkflowId: string;
+    /** The id of the lease workflow that owns the machine. Recorded verbatim on the
+     *  machine under `cortex/owner-workflow-id`, thus the reconciler maps a machine
+     *  back to its lease workflow. */
+    ownerWorkflowId: string;
+    /** The workspace-relative directory of the exec records of the lease. */
+    recordTail: string;
     /** Backend-specific extras carried through to the per-backend impl. */
     image?: string;
     extraEnv?: Record<string, string>;
@@ -314,24 +322,21 @@ export type SandboxLabels = Readonly<Record<string, string>>;
 export type ResolveSandboxLabels = (session: RunSession) => ResultAsync<SandboxLabels, GateFailure>;
 
 /**
- * The identity minted for a sandbox machine *before* it is spawned — the
- * durable half of the two-step create (see the harness-sandbox-exec spec). Step 1 checkpoints this so a
- * recovery re-run of the spawn step adopts the already-created machine under
- * the same name instead of leaking a second one.
+ * The name of a sandbox machine. It comes from the lease workflow and the machine
+ * generation, thus a rerun of the spawn step adopts the machine of the earlier
+ * attempt instead of a second one.
  */
 export type SandboxIdentity = {
-    /** `sbx-{run8}-{uuid4}` — informative for `kubectl`, not load-bearing; the
-     *  checkpoint, not the name, is what makes create idempotent. */
+    /** `sbx-{run8}-{hash12}`. */
     sandboxId: string;
 };
 
 /**
  * A sandbox machine the backend is running that Cortex *manages*
- * (`app.kubernetes.io/managed-by=cortex`), enumerated by the reaper for the
- * cluster→registry sweep (see the harness-sandbox-exec spec). `ownerWorkflowId`
- * is the id as minted, so it is usable as a DBOS lookup key; null means the
- * machine records no owner, and such a machine is reaped only past a
- * creation-time grace and only when observably dead.
+ * (`app.kubernetes.io/managed-by=cortex`), enumerated by the reconciler.
+ * `ownerWorkflowId` is the id of the lease workflow as given, so it is usable as
+ * a DBOS lookup key; null means the machine records no owner, and such a machine
+ * is removed only past a creation-time grace and only when observably dead.
  */
 export type ManagedSandbox = {
     sandboxId: string;

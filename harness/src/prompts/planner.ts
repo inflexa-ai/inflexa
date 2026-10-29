@@ -1,33 +1,3 @@
-import type { ResourcePolicy } from "../config/resource-limits.js";
-
-/** The Resource Estimation planning rules — concrete host limits when a
- *  policy is supplied, the historical default guidance otherwise. */
-export function resourceEstimationSection(policy?: ResourcePolicy): string {
-    const base = `Use the data context to estimate cpu and memoryGb for each step. Consider
-total file size, per-file sizes, feature x sample dimensions, and what the
-step actually does in memory. Be conservative — a 14 MB dataset does not
-need 18 GB of RAM.`;
-    if (!policy) {
-        return `${base} If data size is unknown, default to cpu: 4, memoryGb: 8.`;
-    }
-    const { perStep, budget } = policy;
-    const defaultCpu = Math.min(4, perStep.maxCpu);
-    const defaultMemoryGb = Math.min(8, perStep.maxMemoryGb);
-    return `${base} If data size is unknown, default to cpu: ${defaultCpu}, memoryGb: ${defaultMemoryGb}.
-
-**This host enforces hard resource limits:**
-- Per-step ceiling: no step may declare more than cpu: ${perStep.maxCpu},
-  memoryGb: ${perStep.maxMemoryGb}. The validator rejects any step above it.
-- Machine budget: concurrently running steps share ${budget.cpu} CPU and
-  ${budget.memoryGb} GB in total. Independent steps whose combined resources
-  exceed the budget still run, but with limited parallelism — prefer fewer,
-  heavier-when-necessary steps chained via depends_on over a wide fan-out of
-  heavy steps that would just queue.
-- If the analysis genuinely cannot be performed within these limits — no
-  restructuring or downsizing yields a viable plan — call \`report_blocker\`
-  naming the resource shortfall as the reason.`;
-}
-
 /** The one grammar of a `packages` entry. Every surface that asks a model for
  *  that array teaches it from here: two texts of one grammar drift, and a
  *  spelling rule that only one surface states is a launch refusal on the other. */
@@ -50,7 +20,7 @@ Every step carries a \`packages\` array — the packages its scripts import.
   list defensively.`;
 }
 
-export function plannerPrompt(agentCatalog: string, resourcePolicy?: ResourcePolicy): string {
+export function plannerPrompt(agentCatalog: string): string {
     return `# Analysis Planner
 
 You are a bioinformatics analysis planner. Your job is to produce a
@@ -183,9 +153,6 @@ must act before the plan can proceed.
   only report failure.
 
 ${packagesSection()}
-
-### Resource Estimation
-${resourceEstimationSection(resourcePolicy)}
 
 ### Building on Prior Work
 If the context mentions prior run results, do NOT re-plan steps that already

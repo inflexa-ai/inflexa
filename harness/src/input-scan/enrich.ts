@@ -21,8 +21,7 @@ import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import type { EmitFn } from "../tools/define-tool.js";
-import type { SandboxClient } from "../sandbox/client.js";
-import type { SandboxRef } from "../sandbox/types.js";
+import type { BoundLease } from "../sandbox/leases.js";
 import { runSandboxExec } from "../tools/workspace/run-exec.js";
 import type { ExecResult } from "../sandbox/types.js";
 import type { ReadBytesResult, WorkspaceFilesystem } from "../workspace/filesystem.js";
@@ -69,12 +68,10 @@ export type ReadHeadersArgs = {
     readonly targets: readonly ReadoutTargetSpec[];
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
-    /** Omit the sandbox to skip container readouts; every other format still reads. */
-    readonly sandboxClient?: SandboxClient;
-    readonly sandbox?: SandboxRef;
+    /** Omit the lease to skip container readouts; every other format still reads. */
+    readonly lease?: BoundLease;
     /** Absolute in-sandbox path of the analysis root (`/{analysisId}`). */
     readonly mountRoot: string;
-    readonly deadlineMs: number;
     readonly emit: EmitFn;
 };
 
@@ -82,12 +79,10 @@ export type EnrichShapesArgs = {
     readonly shapes: readonly FileShape[];
     readonly session: AgentSession;
     readonly fs: WorkspaceFilesystem;
-    /** Omit the sandbox to skip container readouts; every other format still reads. */
-    readonly sandboxClient?: SandboxClient;
-    readonly sandbox?: SandboxRef;
+    /** Omit the lease to skip container readouts; every other format still reads. */
+    readonly lease?: BoundLease;
     /** Absolute in-sandbox path of the analysis root (`/{analysisId}`). */
     readonly mountRoot: string;
-    readonly deadlineMs: number;
     readonly emit: EmitFn;
 };
 
@@ -117,9 +112,9 @@ export async function readHeaders(args: ReadHeadersArgs): Promise<Map<string, He
         }),
     );
 
-    const { sandboxClient, sandbox } = args;
-    if (containers.length > 0 && sandboxClient && sandbox) {
-        for (const [path, readout] of await decodeContainers(args, { sandboxClient, sandbox }, containers)) readouts.set(path, readout);
+    const { lease } = args;
+    if (containers.length > 0 && lease) {
+        for (const [path, readout] of await decodeContainers(args, lease, containers)) readouts.set(path, readout);
     }
     return readouts;
 }
@@ -173,11 +168,7 @@ const ReadoutLineSchema = z.object({
     unavailable: z.string().optional(),
 });
 
-async function decodeContainers(
-    args: ReadHeadersArgs,
-    machine: { readonly sandboxClient: SandboxClient; readonly sandbox: SandboxRef },
-    containers: readonly ReadoutTargetSpec[],
-): Promise<Map<string, HeaderReadout>> {
+async function decodeContainers(args: ReadHeadersArgs, lease: BoundLease, containers: readonly ReadoutTargetSpec[]): Promise<Map<string, HeaderReadout>> {
     const readouts = new Map<string, HeaderReadout>();
     const source = await readFile(CONTAINER_DECODER, "utf8").catch(() => undefined);
     if (source === undefined) {
@@ -188,14 +179,17 @@ async function decodeContainers(
     const byAbsolute = new Map<string, ReadoutTargetSpec>();
     for (const target of containers) byAbsolute.set(`${args.mountRoot}/${target.path}`, target);
 
-    const result = await runSandboxExec({
-        sandboxClient: machine.sandboxClient,
-        sandbox: machine.sandbox,
+    const ran = await runSandboxExec({
+        lease,
         command: ["python3", "-c", source, ...byAbsolute.keys()],
         timeoutSeconds: ENRICH_TIMEOUT_SECONDS,
-        deadlineMs: args.deadlineMs,
         emit: args.emit,
     });
+    if (ran.isErr()) {
+        for (const { path } of containers) readouts.set(path, { path, fields: {}, unavailable: ran.error.error });
+        return readouts;
+    }
+    const result = ran.value;
 
     for (const line of result.stdout.split("\n")) {
         const trimmed = line.trim();

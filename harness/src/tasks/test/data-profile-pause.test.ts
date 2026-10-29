@@ -1,9 +1,9 @@
 /**
  * The pause of the data profile inside a DBOS workflow (data-profile-init and work-pause specs).
  *
- * A test-registered workflow runs the body of the profile. The label gate refuses the first spawn with the
- * suspend flag, thus the profile waits in place with its row `running`. A resume through the host surface ends
- * the wait, and the body spawns again and completes the profile.
+ * A test-registered workflow runs the body of the profile. A suspend error of the profiler model pauses the profile
+ * in place with its row `running`. A resume through the host surface ends the wait, and a stop ends the profile. A
+ * refused spawn pauses the lease workflow, not the profile; the tests of the sandbox module cover it.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import { errAsync, okAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
@@ -23,10 +23,8 @@ import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import { createWork } from "../../app/work.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
-import type { PausePart } from "../../contracts/chat-parts.js";
-import { PausePartSchema } from "../../contracts/schemas/chat-parts.js";
 import type { ChatProvider } from "../../providers/types.js";
-import type { SandboxClient } from "../../sandbox/client.js";
+import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-profile.js";
 import { queryPausesOfWork, type PauseRecord } from "../../state/paused-work.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
@@ -114,29 +112,14 @@ async function seedProfile(): Promise<string> {
     return analysisId;
 }
 
-/** A sandbox client whose label gate refuses the first spawn with the suspend flag, and makes each later sandbox. */
-function refusesFirstSpawn(reason: string): { client: SandboxClient; attempts: () => number; made: () => number } {
-    const fake = makeFakeSandboxClient();
-    let attempts = 0;
-    let made = 0;
-    const client: SandboxClient = {
-        ...fake,
-        createSandbox: (session, spec, identity) => {
-            attempts += 1;
-            if (attempts === 1) return errAsync({ type: "labels_refused", op: "createSandbox", reason, suspend: true });
-            made += 1;
-            return fake.createSandbox(session, spec, identity);
-        },
-    };
-    return { client, attempts: () => attempts, made: () => made };
-}
+const MACHINE = { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" as const };
 
-function depsFor(sandboxClient: SandboxClient, provider: ChatProvider, revoked: string[]): DataProfileDeps {
+function depsFor(provider: ChatProvider, revoked: string[]): DataProfileDeps {
     return {
         logger: silentLogger,
         provider,
         pool,
-        sandboxClient,
+        leases: fakeLeases(leaseOverClient(makeFakeSandboxClient(), MACHINE)),
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
         resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
         model: "test-model",
@@ -188,79 +171,12 @@ async function analysisStatus(analysisId: string): Promise<string | undefined> {
     return rows[0]?.status;
 }
 
-/** The pause parts in the stream of the profile workflow. Read it after the workflow ends, because the read waits for the close. */
-async function pauseParts(workflowId: string): Promise<PausePart[]> {
-    const parts: PausePart[] = [];
-    for await (const part of DBOS.readStream<unknown>(workflowId, "events")) {
-        const pause = PausePartSchema.safeParse(part);
-        if (pause.success) parts.push(pause.data);
-    }
-    return parts;
-}
-
-describe("the data profile inside a workflow — a refused spawn with the suspend flag", () => {
-    it("waits in place with its row running, and spawns again after a resume", async () => {
-        const analysisId = await seedProfile();
-        const sandbox = refusesFirstSpawn("account_frozen");
-        const revoked: string[] = [];
-        const { provider } = scriptedModel([callTools(toolCall("s1", "submit_profile", ACCEPTED_SUBMISSION)), reply([text("done")])]);
-        cases.set(analysisId, { input: { analysisId, runSession: runSession(analysisId), stagedInputs }, deps: depsFor(sandbox.client, provider, revoked) });
-        const workflowId = rig.nextWorkflowId("profile-pause-");
-        const handle = await DBOS.startWorkflow(profileWorkflow, { workflowID: workflowId })(analysisId);
-
-        const row = await waitForPause(analysisId, workflowId);
-        expect(row).toMatchObject({
-            workflowId,
-            workId: workflowId,
-            workKind: "profile",
-            analysisId,
-            state: "paused",
-            cause: { kind: "host", reason: "account_frozen" },
-            attempt: 0,
-        });
-        expect(sandbox.attempts()).toBe(1);
-        expect(sandbox.made()).toBe(0);
-        expect((await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap()?.status).toBe("running");
-        expect((await DBOS.getWorkflowStatus(workflowId))?.status).toBe("PENDING");
-        expect(await analysisStatus(analysisId)).toBe("active");
-        expect(revoked).toEqual([]);
-
-        const surface = createWork({ pool, ...WORK_DEPS });
-        expect(await surface.list(analysisId)).toMatchObject([{ workId: workflowId, kind: "profile", analysisId, waiting: [{ workflowId, state: "paused" }] }]);
-        const session = { identity: { user: "u-1" }, scope: { kind: "analysis" as const, analysisId }, auth: makeLocalAuth() };
-        expect(await surface.resume(session, workflowId)).toEqual({ kind: "resumed", workflows: 1 });
-
-        await handle.getResult();
-        expect(sandbox.attempts()).toBe(2);
-        expect(sandbox.made()).toBe(1);
-        const settled = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
-        expect(settled?.status).toBe("completed");
-        expect(settled?.result?.summary).toBe("the profile after the resume");
-        expect(revoked).toEqual(["data-profile-completed"]);
-        expect(await analysisStatus(analysisId)).toBe("active");
-        expect((await queryPausesOfWork(pool, analysisId, workflowId))._unsafeUnwrap()).toEqual([]);
-        expect(await pauseParts(workflowId)).toEqual([
-            {
-                type: "data-pause",
-                id: workflowId,
-                workId: workflowId,
-                workKind: "profile",
-                state: "paused",
-                cause: { kind: "host", reason: "account_frozen" },
-                attempt: 0,
-            },
-            { type: "data-pause", id: workflowId, workId: workflowId, workKind: "profile", state: "running" },
-        ]);
-    }, 30_000);
-});
-
 describe("the data profile inside a workflow — a stop", () => {
     it("ends a paused profile: the workflow is cancelled, the row fails, and its pause rows go", async () => {
         const analysisId = await seedProfile();
-        const sandbox = refusesFirstSpawn("account_frozen");
-        const { provider } = scriptedModel([reply([text("unused")])]);
+        const { provider } = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }, reply([text("unused")])]);
         const revoked: string[] = [];
-        cases.set(analysisId, { input: { analysisId, runSession: runSession(analysisId), stagedInputs }, deps: depsFor(sandbox.client, provider, revoked) });
+        cases.set(analysisId, { input: { analysisId, runSession: runSession(analysisId), stagedInputs }, deps: depsFor(provider, revoked) });
         const workflowId = rig.nextWorkflowId("profile-stop-");
         const handle = await DBOS.startWorkflow(profileWorkflow, { workflowID: workflowId })(analysisId);
         await waitForPause(analysisId, workflowId);
@@ -277,7 +193,6 @@ describe("the data profile inside a workflow — a stop", () => {
         expect(settled).toMatchObject({ status: "failed", error: DATA_PROFILE_STOPPED });
         expect((await queryPausesOfWork(pool, analysisId, workflowId))._unsafeUnwrap()).toEqual([]);
         expect(await surface.list(analysisId)).toEqual([]);
-        expect(sandbox.made()).toBe(0);
         expect(revoked).toEqual(["data-profile-stopped"]);
     }, 30_000);
 });
@@ -293,7 +208,7 @@ describe("the data profile inside a workflow — a suspend error of the profiler
         ]);
         cases.set(analysisId, {
             input: { analysisId, runSession: runSession(analysisId), stagedInputs },
-            deps: depsFor(makeFakeSandboxClient(), model.provider, revoked),
+            deps: depsFor(model.provider, revoked),
         });
         const workflowId = rig.nextWorkflowId("profile-model-pause-");
         const handle = await DBOS.startWorkflow(profileWorkflow, { workflowID: workflowId })(analysisId);

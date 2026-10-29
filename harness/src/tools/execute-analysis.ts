@@ -15,7 +15,6 @@ import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import type { AgentSession } from "../auth/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
-import type { ResourcePolicy } from "../config/resource-limits.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
@@ -83,7 +82,6 @@ export type ExecuteAnalysisToolDeps = Pick<EnvironmentStorePaths, "farmLockFile"
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
     readonly runLauncher: RunLauncher;
-    readonly resourcePolicy?: ResourcePolicy;
     readonly utilityProvider: ChatProvider;
     readonly utilityModel: string;
     readonly logger?: Logger;
@@ -176,7 +174,7 @@ export class PlanReferencesMissingError extends Error {
 /** The deps that start the run of a stored plan. */
 export type LaunchPlanRunDeps = Pick<
     ExecuteAnalysisToolDeps,
-    "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "resourcePolicy" | "extendAnalysisFarm" | "refStorePath" | "logger"
+    "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "extendAnalysisFarm" | "refStorePath" | "logger"
 >;
 
 /**
@@ -325,26 +323,6 @@ function planSummary(plan: AnalysisPlan): string {
     return plan.title?.trim() || plan.analytical_narrative.trim().slice(0, 280);
 }
 
-/**
- * The resources of each step. `validatePlan` refuses a step without them, thus
- * a missing entry here means that the two readers disagree.
- */
-function stepResources(planId: string, plan: AnalysisPlan): Result<ExecuteAnalysisInput["resourcesByStepId"], LaunchPlanRunRefusal> {
-    const byStepId: Record<string, ExecuteAnalysisInput["resourcesByStepId"][string]> = {};
-    for (const step of plan.steps) {
-        if (!step.resources) {
-            return err({
-                type: "plan_invalid",
-                planId,
-                malformed: false,
-                errors: [`Step "${step.id}" has no resources — validation should have rejected it`],
-            });
-        }
-        byStepId[step.id] = step.resources;
-    }
-    return ok(byStepId);
-}
-
 function workflowInput(
     planId: string,
     plan: AnalysisPlan,
@@ -352,9 +330,7 @@ function workflowInput(
         analysisId: string;
         threadId: string | null;
         runSession: ExecuteAnalysisInput["runSession"];
-        budget: ExecuteAnalysisInput["budget"];
         synthesisEnabled: boolean;
-        resourcesByStepId: ExecuteAnalysisInput["resourcesByStepId"];
     },
 ): ExecuteAnalysisInput {
     return {
@@ -365,9 +341,6 @@ function workflowInput(
         steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? "unknown"])),
-        resourcesByStepId: args.resourcesByStepId,
-        timeoutByStepId: Object.fromEntries(plan.steps.flatMap((step): [string, number][] => (step.timeout === undefined ? [] : [[step.id, step.timeout]]))),
-        budget: args.budget,
         runSession: args.runSession,
         synthesisEnabled: args.synthesisEnabled,
     };
@@ -447,7 +420,6 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
                 packages: [...route.packages],
                 depends_on: [],
                 status: "pending",
-                resources: route.resources,
                 agent: route.agentId,
                 capability: route.capability,
                 maxSteps: meta?.defaultMaxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
@@ -496,7 +468,6 @@ async function persistedAdHocPlan(
             provider: deps.utilityProvider,
             model: deps.utilityModel,
             pool: deps.pool,
-            resourcePolicy: deps.resourcePolicy,
             logger: deps.logger,
             resolvePackages,
             usageRecorder: deps.usageRecorder,
@@ -545,9 +516,6 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
     const analysisId = session.scope.analysisId;
     const threadId = session.scope.threadId ?? null;
 
-    const resources = stepResources(planId, plan);
-    if (resources.isErr()) return err(resources.error);
-
     // Reference data first: it is a read, so it costs nothing to learn before the farm link
     // writes. Both passes come before the run reserves anything, thus a miss of either leaves no
     // run row and no revoked authorization behind.
@@ -591,9 +559,7 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
         analysisId,
         threadId,
         runSession,
-        budget: deps.resourcePolicy?.budget,
         synthesisEnabled: args.mode === "plan",
-        resourcesByStepId: resources.value,
     });
     try {
         await deps.runLauncher.launch(deps.executeAnalysisWorkflow, { workflowId: runId }, wfInput);

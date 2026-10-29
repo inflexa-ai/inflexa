@@ -164,7 +164,6 @@ function planStep(id: string, dependsOn: readonly string[] = [], grounding?: Ana
         acceptance_criteria: [`CRITERION_${id}`],
         depends_on: [...dependsOn],
         status: "pending",
-        resources: { cpu: 2, memoryGb: 4 },
         agent: "bulk-transcriptomics-agent",
         maxSteps: 10,
         grounding,
@@ -212,12 +211,6 @@ function input(steps: readonly AnalysisStep[]): ExecuteAnalysisInput {
         steps: steps.map((s) => ({ id: s.id, depends_on: s.depends_on })),
         planStepById: Object.fromEntries(steps.map((s) => [s.id, s])),
         agentByStepId: Object.fromEntries(steps.map((s) => [s.id, s.agent ?? "unknown"])),
-        resourcesByStepId: Object.fromEntries(
-            steps.map((s) => {
-                if (s.resources === undefined) throw new Error(`step ${s.id} carries no resources`);
-                return [s.id, s.resources];
-            }),
-        ),
         runSession: {
             identity: { user: "u-1" },
             scope: { kind: "analysis", analysisId: ANALYSIS_ID },

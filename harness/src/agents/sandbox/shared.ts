@@ -23,8 +23,8 @@ import { createEditIntentStore } from "../../state/edit-intents.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { ExtendAnalysisFarm, SandboxRef } from "../../sandbox/types.js";
+import type { BoundLease } from "../../sandbox/leases.js";
+import type { ExtendAnalysisFarm, ToolchainSource } from "../../sandbox/types.js";
 import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
@@ -71,6 +71,7 @@ import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, c
 import { createSkillTools } from "../../tools/sandbox/skills.js";
 
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
+import { createAcquireSandboxTool, createReleaseSandboxTool } from "../../tools/sandbox/lease-tools.js";
 import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 
@@ -109,14 +110,13 @@ export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = [
 
 /** Per-step coordinates the composition root threads through every mutate tool. */
 export type SandboxStepCoords = {
-    readonly sandbox: SandboxRef;
+    /** The lease of the step. `acquire_sandbox` and `release_sandbox` drive it, and each command runs on it. */
+    readonly lease: BoundLease;
     /** Absolute host root of this analysis's workspace tree (resolved at the workflow body). */
     readonly workspaceRoot: string;
     readonly analysisId: string;
     /** Absolute writable artifact directory for this step (e.g. stepWritePrefix(...)). */
     readonly allowedWritePrefix: string;
-    /** Absolute unix-ms deadline of each exec. */
-    readonly deadlineMs: () => number;
     /**
      * The plan settings bound to the template of this step, from the durable
      * step input. Reaches `knowledge_template` alone. Absent when the step
@@ -131,7 +131,8 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Querier;
-    readonly sandboxClient: SandboxClient;
+    /** The toolchain of the sandboxes, as the sandbox client declares it. The orient-core prompt keys on it. */
+    readonly toolchainSource: ToolchainSource;
     readonly workspaceFs: WorkspaceFilesystem;
     /** Embedding provider for in-sandbox semantic `workspace_search`. Omit to skip that tool. */
     readonly embedding?: EmbeddingProvider;
@@ -216,9 +217,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         scanInputs: createScanInputsTool({
             workspaceFs: deps.workspaceFs,
             analysisId: deps.step.analysisId,
-            sandboxClient: deps.sandboxClient,
-            sandbox: deps.step.sandbox,
-            deadlineMs: deps.step.deadlineMs,
+            lease: deps.step.lease,
         }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,
@@ -275,7 +274,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
 function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools: Tool[]; mutator: WorkspaceMutator | undefined } {
-    const { step, sandboxClient, workspaceFs, pool, embedding, lineageCollector } = deps;
+    const { step, workspaceFs, pool, embedding, lineageCollector } = deps;
 
     // The agent's writable working directory: relative paths resolve here, and
     // writes are confined here. `allowedWritePrefix` is its host path; the
@@ -301,10 +300,10 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
         : [];
 
     const tools = [
+        createAcquireSandboxTool(step.lease),
+        createReleaseSandboxTool(step.lease),
         createExecuteCommandTool({
-            sandboxClient,
-            sandbox: step.sandbox,
-            deadlineMs: step.deadlineMs,
+            lease: step.lease,
             defaultCwd: sandboxWorkingDir,
             lineageCollector,
             mountRoot: `/${step.analysisId}`,
@@ -348,7 +347,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     // text that describes it come from the same value, thus a bag cannot
     // describe a toolchain the sandbox does not have.
     const sandboxLayer = [
-        sandboxOrientCorePromptFor(deps.sandboxClient.toolchainSource),
+        sandboxOrientCorePromptFor(deps.toolchainSource),
         ...(deps.extendAnalysisFarm ? [sandboxPackageLinkPrompt] : []),
         ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
     ];

@@ -18,7 +18,7 @@ import type { Scope } from "../../auth/types.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
-import { constructionWorkflows, refuse, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
+import { constructionSandbox, constructionWorkflows, refuse, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
 import { fakeLookBrowser } from "../../lib/__fixtures__/chrome.js";
 import { setBrowserConnector, type ChromeConfig } from "../../lib/chrome.js";
 import type { AcquireEyes, EyesScope } from "../../lib/eyes.js";
@@ -29,7 +29,6 @@ import { upsertAnalysis } from "../../state/analyses.js";
 import { upsertPlan } from "../../state/plans.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../../tools/report-authoring/authoring-tools.js";
@@ -242,10 +241,6 @@ function refuseThreadTitles(): Pick<ThreadStore, "getThread" | "setAutoTitle"> {
     return { getThread: () => refuse("threads.getThread"), setAutoTitle: () => refuse("threads.setAutoTitle") };
 }
 
-function refuseDerivations(): Pick<ReportSessionStateStore, "appendDerivation"> {
-    return { appendDerivation: () => refuse("derivations.appendDerivation") };
-}
-
 /** The arm one assertion reads off a roster tool outcome. */
 const OutcomeArmSchema = z.looseObject({ outcome: z.string() });
 
@@ -268,7 +263,6 @@ function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, ro
         store: refuseReportVersionStore(),
         threads: refuseThreadTitles(),
         chrome,
-        derivations: refuseDerivations(),
         eyes,
     });
 }
@@ -546,6 +540,7 @@ describe("the tool output store of the composition", () => {
         return {
             conversation,
             workflows: constructionWorkflows(),
+            sandbox: constructionSandbox(),
         };
     }
 
@@ -590,6 +585,7 @@ describe("the chat turns of the composition", () => {
                 chrome: {},
             },
             workflows: constructionWorkflows(),
+            sandbox: constructionSandbox(),
         };
     }
 
@@ -646,7 +642,6 @@ describe("the approval of the composition", () => {
                 acceptance_criteria: ["completes"],
                 depends_on: [],
                 agent: "bulk-transcriptomics-agent",
-                resources: { cpu: 1, memoryGb: 4 },
                 maxSteps: 30,
             },
         ],
@@ -705,6 +700,7 @@ describe("the approval of the composition", () => {
                 chrome: {},
             },
             workflows: constructionWorkflows(),
+            sandbox: constructionSandbox(),
         };
         const dbos = await import("@dbos-inc/dbos-sdk");
         const register = dbos.DBOS.registerWorkflow.bind(dbos.DBOS);

@@ -13,7 +13,6 @@ import { reportSessionPrompt } from "../../prompts/report-session.js";
 import { createRegistry } from "../../tools/registry.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
-import type { ReportSessionStateStore } from "../../state/report-session-state.js";
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../../tools/report-authoring/authoring-tools.js";
 import { makeFakeWorkspaceFs } from "../sandbox/__fixtures__/deps.js";
@@ -60,11 +59,6 @@ const refuseThreads: Pick<ThreadStore, "getThread" | "setAutoTitle"> = {
         throw new Error("not used at composition time");
     },
 };
-const refuseDerivations: Pick<ReportSessionStateStore, "appendDerivation"> = {
-    appendDerivation() {
-        throw new Error("not used at composition time");
-    },
-};
 
 function buildAgent(toolOutputStore?: ToolOutputStore) {
     return createReportSessionAgent({
@@ -77,7 +71,6 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         store: refuseStore,
         threads: refuseThreads,
         chrome: {},
-        derivations: refuseDerivations,
         toolOutputStore,
     });
 }
@@ -86,8 +79,8 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
 const READ_SURFACE = ["read_file", "list_files", "file_stat", "grep", "workspace_search", "inspect_run", "inspect_data_profile"] as const;
 
 // The composition surface: the eight authoring tools, the pinned-artifact listing
-// tool, the derivation tool, the render-and-preview tool, the eyes tool, and the
-// record tool. These thirteen ids are what makes the report path a report path.
+// tool, the render-and-preview tool, the eyes tool, and the record tool. These ids
+// are what makes the report path a report path.
 const COMPOSITION_SURFACE = [
     "add_block",
     "change_block",
@@ -98,7 +91,6 @@ const COMPOSITION_SURFACE = [
     "read_block",
     "finish_draft",
     "list_pinned_artifacts",
-    "derive_table",
     "preview_report",
     "examine_page",
     "record_report_version",
@@ -224,18 +216,17 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("The renderer writes the");
     });
 
-    test("the prompt teaches derive-and-chart as an obligation with its artifact test", () => {
-        // The rule and its two cases stay at the mechanism level, thus the assertion
-        // pins the preset and the orientation and never a dataset or a column.
-        expect(reportSessionPrompt).toContain("Derive that table and");
+    test("the prompt teaches the chart over a pinned table as an obligation with its artifact test", () => {
+        // The rule stays at the mechanism level, thus the assertion pins the orientation
+        // and never a dataset or a column.
+        expect(reportSessionPrompt).toContain("Bind the chart when it");
         // The pinned evidence decides the case, thus a figure image is not the test.
         expect(reportSessionPrompt).toContain("The test is the pinned evidence");
-        expect(reportSessionPrompt).toContain("A pinned ranked-set table takes the horizontal bar");
-        expect(reportSessionPrompt).toContain("Pinned survival columns take the");
-        expect(reportSessionPrompt).toContain("`km`");
-        // The two cases are obligations, and the busy category set is refused in words.
-        expect(reportSessionPrompt).toContain("Both cases are");
-        expect(reportSessionPrompt).toContain("a busy category set is not an exemption");
+        expect(reportSessionPrompt).toContain("A pinned ranked-set");
+        expect(reportSessionPrompt).toContain("takes the horizontal bar");
+        // The case is an obligation, and the busy category set is refused in words.
+        expect(reportSessionPrompt).toContain("This is an obligation");
+        expect(reportSessionPrompt).toContain("a busy category set is not");
     });
 
     test("the prompt makes the figure block the last choice, and names the chart plots through the block schema", () => {
@@ -269,13 +260,7 @@ describe("createReportSessionAgent", () => {
         expect(Array.from(paragraph).some((char) => char >= "0" && char <= "9")).toBe(false);
     });
 
-    test("the prompt teaches the headline derivation", () => {
-        // The derivation comes first, and the absence branch is the last resort.
-        expect(reportSessionPrompt).toContain("derive the headline table first");
-        expect(reportSessionPrompt).toContain("Report an absent value only when the derivation cannot give it");
-    });
-
-    test("the prompt teaches the declarations, the row bound, and the composed column", () => {
+    test("the prompt teaches the declarations and the row bound", () => {
         // The two declaration maps and the bound are stable substrings, thus a
         // binding that ships raw column names cannot pass as guidance.
         expect(reportSessionPrompt).toContain("Declare the column meanings and");
@@ -286,8 +271,6 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("A tight bound serves an evidence table");
         expect(reportSessionPrompt).toContain("A wide bound serves a browsable table");
         expect(reportSessionPrompt).toContain("a wide bound costs the page nothing");
-        // The composed display column is an offer, thus the agent proposes it.
-        expect(reportSessionPrompt).toContain("composed display column");
     });
 
     test("the prompt ends the probes at the block call", () => {
@@ -398,19 +381,10 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("The angle of the brief decides the order of the findings");
     });
 
-    test("the prompt divides a derivation from a chart knob", () => {
-        // The tool name, the three reshaping cases, and the per-row bound are stable
-        // substrings, thus the assertion does not couple to the full prose.
-        expect(reportSessionPrompt).toContain("derive_table");
-        expect(reportSessionPrompt).toContain("a pivot, and an aggregate are such reshaping");
-        // The exclusion is chart-scoped. A table carries no knob, thus its composed
-        // display column derives and the two paragraphs agree. Each substring sits on
-        // one line of the prompt, thus a line wrap cuts none of them.
-        expect(reportSessionPrompt).toContain("transform of a chart is not: a chart block reads the column that it needs");
-        expect(reportSessionPrompt).toContain("A table carries no such knob");
-        expect(reportSessionPrompt).toContain("column of a table derives");
-        // A derived table is evidence of the session, thus it binds like a pinned one.
-        expect(reportSessionPrompt).toContain("binds like any pinned artifact");
+    test("the prompt serves a per-row transform with a chart knob, and names an absent table", () => {
+        expect(reportSessionPrompt).toContain("thus a knob of the chart serves a per-row transform");
+        expect(reportSessionPrompt).toContain("tell the user which table is absent");
+        expect(reportSessionPrompt).not.toContain("derive_table");
     });
 
     test("the prompt carries the chart-first rule", () => {

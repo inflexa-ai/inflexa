@@ -232,7 +232,7 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
                 await emit(ev.payload);
             }
             if (resp.cursor > cursor) cursor = resp.cursor;
-            if (resp.result !== undefined) return resp.result;
+            if (resp.result !== undefined) return resp.result.lost === undefined ? resp.result : syntheticFailureResult(execId, "sandbox-replaced");
         }
 
         if (deps.isAlive && escalation.onPoll(polled.kind === "ok" ? "ok" : "unavailable")) {

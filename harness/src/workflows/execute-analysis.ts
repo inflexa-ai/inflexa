@@ -37,9 +37,6 @@
  *       part, and are never dispatched. In-flight siblings and independent
  *       ready steps continue; the loop drains and the run finalises (typically
  *       `partial`).
- *     - the halt cascade (cancel in-flight via
- *       `Promise.allSettled(handles.map(h => DBOS.cancelWorkflow(h.workflowID)))`,
- *       stop scheduling) survives only for the `neverFits` plan-validation guard.
  *  4. Pause (work-pause spec)
  *     - a step pauses in its own workflow, and the parent waits for its result as
  *       for a step that runs. The other steps go on, and the run row stays
@@ -75,7 +72,6 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Querier } from "../state/db.js";
 
-import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -102,7 +98,6 @@ import {
     updateStepExecution,
 } from "../state/index.js";
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
-import { clearPausesOfWork } from "../state/paused-work.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
@@ -130,7 +125,6 @@ import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toS
 import { isChatDataPart, synthesisEmission } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
-import { recordCancelledChild } from "./metrics.js";
 import { pauseAtGate, workPause, type WorkPause } from "./pause.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import { presentGet } from "../lib/present.js";
@@ -167,22 +161,6 @@ export type ExecuteAnalysisInput = {
     readonly planStepById: Readonly<Record<string, AnalysisStep>>;
     /** Per-step agent id (sandbox catalog entry). */
     readonly agentByStepId: Readonly<Record<string, string>>;
-    /** Per-step planner-estimated sandbox resource request. */
-    readonly resourcesByStepId: Readonly<Record<string, ResourceSpec>>;
-    /**
-     * Per-step execution timeout in seconds, from the plan's `step.timeout`.
-     * Only present for steps that declared one; the child falls back to
-     * `DEFAULT_STEP_TIMEOUT_SECONDS` when a step is absent here.
-     */
-    readonly timeoutByStepId?: Readonly<Record<string, number>>;
-    /**
-     * Machine resource budget snapshotted by `executePlan` at the async edge.
-     * The scheduler admits dependency-satisfied steps only while the declared
-     * resources of concurrently running steps fit within it. Absent (no policy
-     * configured, or a workflow persisted before this field existed), every
-     * dependency-satisfied step starts immediately — the legacy fan-out.
-     */
-    readonly budget?: MachineBudget;
     /**
      * Replay-stable run-level synthesis decision. Absent preserves the legacy
      * behavior for workflows persisted before this field existed.
@@ -216,12 +194,10 @@ export type ExecuteAnalysisResult = {
 // ── Dep injection ─────────────────────────────────────────────────────
 
 /**
- * A step's in-run display state. Wider than the ledger's `StepExecutionStatus`: `queued` is a
- * scheduler-only condition (dependency-satisfied but held for budget capacity) that never reaches a
- * database row, and `skipped` is asserted mid-run for a doomed dependent whose ledger row stays
- * `pending` until the terminal sweep.
+ * A step's in-run display state. Wider than the ledger's `StepExecutionStatus`: `skipped` is asserted
+ * mid-run for a doomed dependent whose ledger row stays `pending` until the terminal sweep.
  */
-export type StepRuntimeStatus = "pending" | "queued" | "running" | "completed" | "failed" | "skipped";
+export type StepRuntimeStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 /**
  * One step's state inside a {@link RunObservation}. `id` is the plan slug the ledger and the
@@ -460,7 +436,7 @@ function observeRunGuarded(deps: ExecuteAnalysisDeps, observation: RunObservatio
  * level computation and the seed (`prompt`, composed by `composeStepSeed` at
  * dispatch); the rest comes from `ExecuteAnalysisInput`. The body fills in
  * `runSession` via `forStep` after this returns. Exported for the
- * projection/timeout-propagation tests.
+ * projection tests.
  */
 export function buildChildInput(args: {
     input: ExecuteAnalysisInput;
@@ -471,10 +447,6 @@ export function buildChildInput(args: {
     templateBinding?: TemplateBinding;
 }): Omit<SandboxStepInput, "runSession"> {
     const { input, stepId, level, runId, prompt, templateBinding } = args;
-    const resources = input.resourcesByStepId[stepId];
-    if (!resources) {
-        throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
-    }
     const planStep = input.planStepById[stepId];
     if (!planStep) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from planStepById — every step must carry its plan data`);
@@ -497,8 +469,6 @@ export function buildChildInput(args: {
         templateBinding,
         level,
         prompt,
-        resources,
-        timeoutSeconds: input.timeoutByStepId?.[stepId],
     };
 }
 
@@ -1298,13 +1268,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     // no result and therefore contributes nothing — same rule as its duration.
     const runUsage: AgentRunUsage = {};
 
-    // Child workflow ids the parent itself cancelled (the neverFits halt cascade). Their `getResult`
-    // rejects with a DBOS cancellation error and lands in the settlement error branch — but the step was
-    // CANCELED by us, not failed on its own merits. Keyed here (deterministic: `cancelInFlight` runs the
-    // same way on a replay) so that branch records it as canceled everywhere, matching how a child that
-    // returns a graceful `{status:"canceled"}` is already handled.
-    const canceledByParent = new Set<string>();
-
     const stepRuntime: StepRuntimeMap = new Map();
     for (const step of input.steps) {
         stepRuntime.set(step.id, { status: "pending" });
@@ -1326,7 +1289,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
      * can never become dependency-satisfied and will never be dispatched.
      * Stream-only — ledger rows stay `pending` until the terminal sweep flips
      * them to `skipped`. Dependents of an unfinished step are necessarily
-     * `pending` (never queued/running); an already-`skipped` one is not
+     * `pending` (never running); an already-`skipped` one is not
      * re-walked.
      */
     const markDependentsSkipped = (failedStepId: string): void => {
@@ -1341,9 +1304,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         }
     };
 
-    // Halts scheduling entirely — reserved for the `neverFits` guard. An ordinary
-    // step failure does NOT set it: it dooms only that step's transitive dependents.
-    let halted = false;
     let failureReason: string | null = null;
 
     const stepIndexById = new Map(input.steps.map((s, i) => [s.id, i] as const));
@@ -1387,56 +1347,13 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     };
 
     const dispatchReady = async (): Promise<void> => {
-        if (halted) return;
         const inFlightStepIds = new Set([...inFlight.values()].map((h) => h.stepId));
         // A settled-but-not-completed step (failed / blocked / canceled) is not
         // in `completed` and not in flight, so `scheduleReady` would offer it
-        // again — filter it out of the candidate list. This also stops its
-        // declared resources from weighing against the budget: settled steps
-        // hold no capacity.
+        // again — filter it out of the candidate list.
         const candidates = input.steps.filter((s) => !failed.has(s.id) && !canceled.has(s.id));
-        let admit: readonly string[];
-        let queuedChanged = false;
-        if (input.budget) {
-            const scheduled = scheduleReady(candidates, completed, inFlightStepIds, {
-                budget: input.budget,
-                resourcesByStepId: input.resourcesByStepId,
-            });
-            if (scheduled.neverFits.length > 0) {
-                // An over-budget step can never be admitted — plan-time validation
-                // makes this unreachable for new plans; stored plans fail loudly
-                // instead of waiting forever. The stored plan is invalid against
-                // this machine, so the run halts outright — unlike an ordinary
-                // step failure, which dooms only its dependents.
-                for (const stepId of scheduled.neverFits) {
-                    const r = input.resourcesByStepId[stepId];
-                    const declared = r ? `${r.cpu} CPU / ${r.memoryGb} GB` : "undeclared";
-                    failed.add(stepId);
-                    stepRuntime.set(stepId, {
-                        status: "failed",
-                        error: `step resources (${declared}) exceed the machine budget (${input.budget.cpu} CPU / ${input.budget.memoryGb} GB)`,
-                    });
-                }
-                halted = true;
-                failureReason = `step "${String(scheduled.neverFits[0])}" exceeds the machine resource budget`;
-                await cancelInFlight(inFlight, "fail_fast", canceledByParent);
-                await emitDagSnapshot();
-                return;
-            }
-            for (const stepId of scheduled.heldForCapacity) {
-                if (presentGet(stepRuntime, stepId, "the runtime of the step").status !== "queued") {
-                    stepRuntime.set(stepId, { status: "queued" });
-                    queuedChanged = true;
-                }
-            }
-            admit = scheduled.admit;
-        } else {
-            admit = scheduleReady(candidates, completed, inFlightStepIds);
-        }
-        if (admit.length === 0) {
-            if (queuedChanged) await emitDagSnapshot();
-            return;
-        }
+        const admit = scheduleReady(candidates, completed, inFlightStepIds);
+        if (admit.length === 0) return;
         for (const stepId of admit) {
             const idx = presentGet(stepIndexById, stepId, "the index of the step");
             const childWorkflowId = `${workflowId}-${idx}`;
@@ -1530,8 +1447,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 // failed or blocked — a blocker (see the harness-sandbox-agents spec)
                 // is treated exactly like a failure: the step declared it cannot
                 // deliver, so only its transitive dependents can never run. In-flight
-                // siblings and independent ready steps continue; the dispatch round
-                // below also lets a budget-held step claim the freed capacity.
+                // siblings and independent ready steps continue.
                 failed.add(settled.stepId);
                 failureReason ??= r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
                 stepRuntime.set(settled.stepId, {
@@ -1545,25 +1461,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 await emitDagSnapshot();
                 await dispatchReady();
             }
-        } else if (canceledByParent.has(settled.childId)) {
-            // The child threw because the PARENT cancelled it (the neverFits halt cascade), not
-            // because it failed on its own — its `getResult` rejects with a DBOS cancellation error.
-            // Record it as canceled, mirroring the graceful `{status:"canceled"}` branch above so the
-            // `canceled` set, the terminal result, and the `step_completed` provenance all agree. No
-            // halt / cancel cascade here: the run is already halted (that is why this child was cancelled).
-            canceled.add(settled.stepId);
-            stepRuntime.set(settled.stepId, {
-                // `stepRuntime` (the DAG snapshot) has no canceled tier; the graceful-cancel branch above
-                // likewise renders canceled steps as "failed", so this stays consistent with it.
-                status: "failed",
-                error: errorMessageOf(settled.err) ?? textOf(settled.err),
-            });
-            stepStatus = "canceled";
-            stepDurationMs = undefined;
-            await emitDagSnapshot();
         } else {
-            // The child threw on its own (not a parent-driven cancel). A throw is
-            // treated exactly like a step failure:
+            // The child threw. A throw is treated exactly like a step failure:
             // dependents doomed, siblings continue.
             failed.add(settled.stepId);
             failureReason ??= errorMessageOf(settled.err) ?? textOf(settled.err);
@@ -1609,21 +1508,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         stepStates: stepRuntime,
         usage: hasReportedUsage(runUsage) ? { ...runUsage } : undefined,
     };
-}
-
-async function cancelInFlight(
-    inFlight: ReadonlyMap<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>,
-    cause: string,
-    canceledByParent: Set<string>,
-): Promise<void> {
-    const ids = [...inFlight.keys()];
-    // Record every id BEFORE the cancel so the settlement loop classifies the resulting
-    // DBOS-cancellation rejection as canceled rather than failed (see `canceledByParent`).
-    for (const childId of ids) canceledByParent.add(childId);
-    await Promise.allSettled(ids.map((childId) => DBOS.cancelWorkflow(childId)));
-    for (let i = 0; i < ids.length; i++) {
-        recordCancelledChild({ cause });
-    }
 }
 
 // ── (6) collectAndComplete ────────────────────────────────────────────
@@ -1814,8 +1698,6 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
 
     // Sweep never-started steps to `skipped`. Log-don't-rollback, like every other finalisation step here.
     await ledgerStep(logger, "sweep-pending-steps", () => sweepPendingStepExecutions(deps.pool, runId));
-    // A step that the neverFits halt canceled in its pause leaves its row, thus the end of the run clears each row of the run.
-    await ledgerStep(logger, "clear-run-pauses", () => clearPausesOfWork(deps.pool, runId));
 
     // The run end was emitted above. These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.

@@ -8,7 +8,7 @@ import { Pool } from "pg";
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import { constructionWorkflows, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
+import { constructionSandbox, constructionWorkflows, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import { bootHarness, type BootHarnessDeps } from "../boot.js";
 
@@ -42,6 +42,7 @@ function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
                 chrome: {},
             },
             workflows: constructionWorkflows(),
+            sandbox: constructionSandbox(),
         },
         pool: explodingPool(() => {}),
         skillsDir: "/definitely/not/a/real/skills/dir",

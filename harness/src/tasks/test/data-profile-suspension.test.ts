@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
-import { ResultAsync, errAsync, okAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
@@ -22,8 +22,8 @@ import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { SandboxError } from "../../sandbox/sandbox-error.js";
+import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
+import type { BoundLease } from "../../sandbox/leases.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
@@ -82,12 +82,14 @@ function runSession(analysisId = ANALYSIS_ID): RunSession {
     };
 }
 
-function deps(pool: Querier, sandboxClient: SandboxClient, revoked: string[]): DataProfileDeps {
+const MACHINE: SandboxRef = { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" };
+
+function deps(pool: Querier, lease: BoundLease, revoked: string[]): DataProfileDeps {
     return {
         logger: silentLogger,
         provider: unusedChatProvider(),
         pool,
-        sandboxClient,
+        leases: fakeLeases(lease),
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
         resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
         model: "test-model",
@@ -114,35 +116,31 @@ function writesAnalysisStatus(text: string): boolean {
     return ["SET status", ", status ="].some((write) => text.includes(write));
 }
 
-describe("the data profile — a refused spawn", () => {
-    for (const suspend of [true, false]) {
-        it(`with suspend ${String(suspend)}, fails the row with the reason, revokes, starts no pause, and does not mark the analysis`, async () => {
-            const { pool, statements } = statementPool();
-            const revoked: string[] = [];
-            const refusing = {
-                ...makeFakeSandboxClient(),
-                createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend }),
-            };
+describe("the data profile — a refused lease", () => {
+    it("fails the row with the reason of the host, revokes, starts no pause, and does not mark the analysis", async () => {
+        const { pool, statements } = statementPool();
+        const revoked: string[] = [];
+        const refusing = leaseOverClient(makeFakeSandboxClient(), MACHINE, { grant: () => ({ kind: "refused", reason: "account_frozen" }) });
 
-            await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
+        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
 
-            const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
-            expect(failed).toHaveLength(1);
-            expect(textOf(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("account_frozen")))).toContain("account_frozen");
-            expect(revoked).toEqual(["data-profile-failed"]);
-            expect(statements.some((q) => q.text.includes("cortex_paused_work"))).toBe(false);
-            expect(statements.some((q) => writesAnalysisStatus(q.text))).toBe(false);
-        });
-    }
+        const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
+        expect(failed).toHaveLength(1);
+        expect(textOf(presentAt(failed, 0).values.find((v) => typeof v === "string" && v.includes("account_frozen")))).toContain("account_frozen");
+        expect(revoked).toEqual(["data-profile-failed"]);
+        expect(statements.some((q) => q.text.includes("cortex_paused_work"))).toBe(false);
+        expect(statements.some((q) => writesAnalysisStatus(q.text))).toBe(false);
+    });
 
     it("passes a cancel from DBOS through with no change, revokes the mandate, and runs no failure path", async () => {
         const { pool, statements } = statementPool();
         const revoked: string[] = [];
         const cancel = new DBOSErrors.DBOSWorkflowCancelledError("wf-profile");
-        const cancelled = {
-            ...makeFakeSandboxClient(),
-            createSandbox: () => new ResultAsync<SandboxRef, SandboxError>(Promise.reject(cancel)),
-        };
+        const cancelled = leaseOverClient(makeFakeSandboxClient(), MACHINE, {
+            grant: () => {
+                throw cancel;
+            },
+        });
 
         const outcome = await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, cancelled, revoked)).then(
             () => "completed",
@@ -167,7 +165,7 @@ describe("the data profile — the keys of its usage records", () => {
             await runDataProfileBody(
                 { analysisId, runSession: runSession(analysisId), stagedInputs },
                 {
-                    ...deps(pool, makeFakeSandboxClient(), []),
+                    ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), []),
                     provider,
                     usageRecorder: {
                         record: (record) => {
@@ -236,7 +234,7 @@ describe("the data profile — the submission that it records", () => {
         const { provider, calls } = scriptedModel(script);
         await runDataProfileBody(
             { analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs },
-            { ...deps(pool, makeFakeSandboxClient(), revoked), provider },
+            { ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), revoked), provider },
         );
         return { statements, revoked, calls: calls.length };
     }

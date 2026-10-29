@@ -29,8 +29,10 @@
  * What it does not reach, so that absent coverage is never read as delivered:
  * scheduled operational workflows (they belong to no analysis and accumulate
  * independently of any purge), the shared regulatory corpus, `messages` rows whose
- * thread row is already gone (nothing attributes them to an analysis), and
- * workspace files on disk (the embedder owns their disposal).
+ * thread row is already gone (nothing attributes them to an analysis), the sandbox
+ * machines (the purge cancels their lease workflows, and the sandbox reconciler then
+ * removes each machine whose lease workflow ended), and workspace files on disk (the
+ * embedder owns their disposal).
  */
 
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
@@ -51,8 +53,9 @@ import { isSqlIdentifier } from "./vector-store.js";
  *    id and interpolated into `DROP TABLE`, because an identifier cannot be a bind
  *    parameter. Confining the id to `[a-z0-9_-]` is what makes that derived name an
  *    identifier at all.
- *  - An unambiguous `dataprofile:` namespace. Profile workflows are found by the id
- *    prefix `dataprofile:{analysisId}:`, matched with `starts_with` and no
+ *  - An unambiguous `dataprofile:` and `sandboxlease:` namespace. Profile workflows
+ *    and lease workflows are found by the id prefixes `dataprofile:{analysisId}:` and
+ *    `sandboxlease:{analysisId}:`, matched with `starts_with` and no
  *    delimiter check. An id holding a `:` makes analysis `a`'s prefix equally a
  *    prefix of every workflow id of an analysis named `a:x` — and each id that
  *    prefix returns is cancelled, then deleted with its descendants, taking another
@@ -84,6 +87,7 @@ function isPurgeableAnalysisIdShape(analysisId: string): boolean {
 const ANALYSIS_KEYED_DELETES: readonly { readonly op: string; readonly sql: string }[] = [
     { op: "purgeAnalysis.artifacts", sql: "DELETE FROM cortex_artifacts WHERE analysis_id = $1" },
     { op: "purgeAnalysis.stepExecutions", sql: "DELETE FROM cortex_step_executions WHERE analysis_id = $1" },
+    { op: "purgeAnalysis.sandboxLeases", sql: "DELETE FROM cortex_sandbox_leases WHERE analysis_id = $1" },
     { op: "purgeAnalysis.runs", sql: "DELETE FROM cortex_runs WHERE analysis_id = $1" },
     { op: "purgeAnalysis.workingMemory", sql: "DELETE FROM cortex_working_memory WHERE analysis_id = $1" },
     { op: "purgeAnalysis.asks", sql: "DELETE FROM cortex_asks WHERE analysis_id = $1" },
@@ -159,8 +163,10 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
     /**
      * Every workflow id the analysis can still be traced to, read while the rows
      * that record them are all still on disk. `cortex_runs.run_id` IS the parent
-     * workflow id, and those rows together with the `dataprofile:{analysisId}:` id
-     * namespace are the ONLY mapping from an analysis to its workflows: a delete
+     * workflow id, and those rows together with the `dataprofile:{analysisId}:` and the
+     * `sandboxlease:{analysisId}:` id namespaces are the ONLY mapping from an analysis to its
+     * workflows. A lease workflow is no descendant of its consumer, thus only its namespace
+     * reaches it. A delete
      * of `cortex_runs` that lands before this read completes strands the largest
      * part of the footprint permanently out of reach.
      */
@@ -172,12 +178,19 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
             });
             return rows.map((row) => row.run_id);
         }).andThen((runIds) =>
-            workflows.findByIdPrefix(`dataprofile:${analysisId}:`).map((profileIds) => {
-                logger.debug("collected workflow identity", { analysisId, runs: runIds.length, dataProfiles: profileIds.length });
-                // The two id sources cannot overlap, but collapsing duplicates keeps a
-                // repeated id out of the reclaimed count regardless.
-                return [...new Set([...runIds, ...profileIds])];
-            }),
+            workflows.findByIdPrefix(`dataprofile:${analysisId}:`).andThen((profileIds) =>
+                workflows.findByIdPrefix(`sandboxlease:${analysisId}:`).map((leaseIds) => {
+                    logger.debug("collected workflow identity", {
+                        analysisId,
+                        runs: runIds.length,
+                        dataProfiles: profileIds.length,
+                        sandboxLeases: leaseIds.length,
+                    });
+                    // The id sources cannot overlap, but collapsing duplicates keeps a
+                    // repeated id out of the reclaimed count regardless.
+                    return [...new Set([...runIds, ...profileIds, ...leaseIds])];
+                }),
+            ),
         );
 
     /**

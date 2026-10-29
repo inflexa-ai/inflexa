@@ -15,13 +15,12 @@ import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
  *  and the hardcoded sandbox turn budget. */
 export const PlanStepSchema = AnalysisStepSchema.omit({
     status: true,
-    timeout: true,
     summary: true,
     artifactIds: true,
     error: true,
     maxSteps: true,
 })
-    .required({ agent: true, resources: true, packages: true, capability: true })
+    .required({ agent: true, packages: true, capability: true })
     .extend({
         agent: z.enum(plannableAgentIds).describe("Sandbox agent ID, routed by the step's primary data object. Must be one of the available agents."),
     });

@@ -68,8 +68,11 @@ export async function probeLiveness(isAlive: (ref: SandboxRef) => Promise<Sandbo
     return liveness.alive ? { kind: "alive" } : { kind: "dead", oomKilled: liveness.oomKilled };
 }
 
-/** The closed set of reasons a synthetic failure carries. */
-export type SyntheticFailureReason = "sandbox-oom-killed" | "sandbox-dead";
+/**
+ * The closed set of reasons a synthetic failure carries. `sandbox-replaced`: a new machine of the lease found the
+ * exec cut by the end of the earlier machine.
+ */
+export type SyntheticFailureReason = "sandbox-oom-killed" | "sandbox-dead" | "sandbox-replaced";
 
 /**
  * An OOM-killed machine gets a distinguishable reason so the step failure

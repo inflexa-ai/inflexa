@@ -35,9 +35,12 @@ import { createStaticEyes, type AcquireEyes } from "../lib/eyes.js";
 import type { DomainError } from "../lib/result.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
+import type { SandboxClient } from "../sandbox/client.js";
+import { createSandboxLeases } from "../sandbox/leases.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import { dbosClientFor } from "../execution/dbos-workflow-purger.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
 import { registerDataProfileWorkflow, stopDataProfile, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
-import { createExtractionArm, runExtraction } from "../tasks/extract-values.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
 import type { AuthContext, Identity } from "../auth/types.js";
@@ -73,7 +76,7 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * the same memory that the conversation agent writes.
  */
 export type CoreWorkflowDeps = {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "runAuthorizer">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "runAuthorizer" | "leases">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<
         ExecuteAnalysisDeps,
         "usageRecorder" | "literatureReviewer" | "toolOutputStore" | "workingMemory"
@@ -81,7 +84,15 @@ export type CoreWorkflowDeps = {
         /** API keys for the bio/chem tools of the literature reviewer of the synthesis. */
         readonly bioKeys: BioToolKeys;
     };
-    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
+    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore" | "leases">;
+};
+
+/** The sandboxes of the runtime. The assembly builds the one sandbox module over the client. */
+export type CoreSandboxDeps = {
+    /** The backend client that the embedder made. Only the sandbox module calls it. */
+    readonly client: SandboxClient;
+    /** How long a lease can go unused before it loses its machine. Absent: 15 minutes. */
+    readonly idlePeriodMs?: number;
 };
 
 /** The registered, callable workflow handles. */
@@ -110,14 +121,7 @@ export type RegisteredWorkflows = {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    | "executeAnalysisWorkflow"
-    | "resourcePolicy"
-    | "usageRecorder"
-    | "citationResolver"
-    | "anchorReportSession"
-    | "eyes"
-    | "toolOutputStore"
-    | "registerSubAgent"
+    "executeAnalysisWorkflow" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes" | "toolOutputStore" | "registerSubAgent"
 >;
 
 /**
@@ -140,9 +144,9 @@ export type MakeReportReferenceResolver = (scope: ReportResolverScope) => Promis
 export type CoreRuntimeDeps = {
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
+    readonly sandbox: CoreSandboxDeps;
     /**
-     * Host resource policy — per-step ceilings and machine budget. One supply
-     * point for planner/routing guidance and workflow-input budget snapshots.
+     * Host resource policy — the per-step ceilings and the budget of the sandbox lease grant.
      */
     readonly resourcePolicy?: ResourcePolicy;
     /**
@@ -156,7 +160,7 @@ export type CoreRuntimeDeps = {
     readonly citationResolverConfig?: CitationResolverConfig;
     /**
      * The byte cap on the in-process host read of a report reference. A file over the
-     * cap falls through to the extraction arm. Absent, the resolver uses its 16 MiB
+     * cap falls through, and its reference fails as `extraction-unavailable`. Absent, the resolver uses its 16 MiB
      * default. The embedder tunes it here, thus a host changes it with no harness change.
      */
     readonly reportHostReadCapBytes?: number;
@@ -164,7 +168,7 @@ export type CoreRuntimeDeps = {
      * The report reference resolver of an embedder. A managed host reads its pinned
      * artifacts from its own store, thus it binds a realization of the seam here and the
      * report tools resolve through it. Absent, the harness wires the production resolver
-     * over the workspace tree and the extraction arm, which is the whole OSS path. A bound
+     * over the workspace tree, which is the whole OSS path. A bound
      * factory replaces that wiring, thus `reportHostReadCapBytes` then governs nothing.
      */
     readonly makeReportReferenceResolver?: MakeReportReferenceResolver;
@@ -345,7 +349,7 @@ export function resolveCompositionEyes(seam: AcquireEyes | undefined, chrome: Ch
 }
 
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
-    const { conversation, workflows: wf, resourcePolicy } = deps;
+    const { conversation, workflows: wf } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
     const citationResolver = createCitationResolver({
         ...deps.citationResolverConfig,
@@ -367,8 +371,22 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         }).afterFailure;
     const registerPausingSubAgent: SubAgentRegistrar = (name, body) => registerSubAgent(name, body, subAgentPauses);
 
+    // One sandbox module for each runtime: one budget, one lease workflow, and one reconciler.
+    const leases = createSandboxLeases({
+        pool: conversation.pool,
+        client: deps.sandbox.client,
+        resourcePolicy: deps.resourcePolicy,
+        resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
+        runAuthorizer: conversation.runAuthorizer,
+        idlePeriodMs: deps.sandbox.idlePeriodMs,
+        pauseRetryDelaysMs,
+        logger: conversation.logger,
+        dbosClient: () => dbosClientFor(conversation.pool, conversation.logger ?? createNoopLogger()),
+    });
+
     const sandboxStep = registerSandboxStep({
         ...wf.sandboxStep,
+        leases,
         citationResolver,
         usageRecorder,
         toolOutputStore,
@@ -396,7 +414,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         workingMemory: createWorkingMemory(conversation.pool),
         pauseRetryDelaysMs,
     });
-    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
+    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, leases, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
 
     // The session runtime binds the per-session state to the thread behind the
     // tool boundary, thus one instance serves every report thread. It comes before
@@ -418,7 +436,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
         anchorReportSession: reportSession.ensureSessionState.bind(reportSession),
-        resourcePolicy,
         usageRecorder,
         toolOutputStore,
         citationResolver,
@@ -437,24 +454,17 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
 
     // The read cache of the production report path, one for each recent analysis. A preview
     // and the record that follows it are two tool calls over one draft, thus they meet the
-    // same artifacts. The store carries the streamed hash and the extracted rows between
-    // them, and each resolver still binds its own extraction arm below. Thus the auth of a
-    // call never outlives the call, and one unchanged file costs one hash and one container.
+    // same artifacts. The store carries the streamed hash and the parsed rows between them,
+    // thus one unchanged file costs one hash and one parse.
     const reportArtifactReads = createArtifactReadStore();
 
     // The reference resolver of the report path, and its production wiring. A resolver reads
     // the pinned artifacts of one analysis, thus the factory binds one analysis and one caller
-    // for each tool call. The extraction arm falls through to an extraction pass on the sandbox
-    // rail of the profile for an over-cap file or a host parse fault. The pass runs inside the
-    // step of the tool call. The cap gates the host read, and the resolver defaults it to 16 MiB.
+    // for each tool call. The cap gates the host read, and the resolver defaults it to 16 MiB.
     const makeProductionReportResolver = async (scope: ReportResolverScope): Promise<ReferenceResolver> => {
-        const arm = createExtractionArm((requests) =>
-            runExtraction({ sandboxClient: wf.dataProfile.sandboxClient, logger: wf.dataProfile.logger }, scope, requests),
-        );
         return createProductionResolver({
             workspaceRoot: await conversation.resolveWorkspaceRoot(scope.analysisId),
             analysisId: scope.analysisId,
-            extractionArm: arm,
             readCache: reportArtifactReads.forAnalysis(scope.analysisId),
             cap: deps.reportHostReadCapBytes,
         });
@@ -471,11 +481,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         store: reportVersionStore,
         threads: reportThreads,
         chrome: conversation.chrome,
-        // The derivation tool draws the rail of the value tier: the same sandbox client. Thus a
-        // session derivation and an extraction run on one substrate, and neither one mints a run
-        // of the analysis.
-        derivations: reportSession.derivations,
-        sandboxClient: wf.dataProfile.sandboxClient,
         makeResolver: makeReportResolver,
         eyes,
         resolvePageAsset: deps.resolveReportPageAsset,
@@ -549,7 +554,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
                     executeAnalysisWorkflow: executeAnalysis,
                     runAuthorizer: conversation.runAuthorizer,
                     runLauncher: conversation.runLauncher,
-                    resourcePolicy,
                     extendAnalysisFarm: conversation.extendAnalysisFarm,
                     logger: conversation.logger,
                     provenance: deps.provenance,

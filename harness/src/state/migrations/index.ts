@@ -24,6 +24,8 @@ import { recordThePausedWork } from "./20261028120000_record_the_paused_work.js"
 import { endTheSuspendedRuns } from "./20261028120100_end_the_suspended_runs.js";
 import { referenceTheRunMandate } from "./20261029120000_reference_the_run_mandate.js";
 import { recordTheRunSessionOfAPause } from "./20261029120100_record_the_run_session_of_a_pause.js";
+import { leaseTheSandboxes } from "./20261030120000_lease_the_sandboxes.js";
+import { dropTheReportDerivations } from "./20261030120100_drop_the_report_derivations.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -43,5 +45,7 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261028120100_end_the_suspended_runs": endTheSuspendedRuns,
         "20261029120000_reference_the_run_mandate": referenceTheRunMandate,
         "20261029120100_record_the_run_session_of_a_pause": recordTheRunSessionOfAPause,
+        "20261030120000_lease_the_sandboxes": leaseTheSandboxes,
+        "20261030120100_drop_the_report_derivations": dropTheReportDerivations,
     };
 }

@@ -54,7 +54,6 @@ function fullyPopulatedStep(): AnalysisStep {
         },
         depends_on: [],
         status: "pending",
-        resources: { cpu: 1, memoryGb: 2 },
         agent: "bulk-transcriptomics-agent",
         maxSteps: 10,
     };
@@ -437,15 +436,8 @@ describe("composeStepBriefing", () => {
         expect(seed).toContain("/an-1");
     });
 
-    it("renders the resource budget and the workers-times-threads rule", () => {
+    it("names no fixed quota, because the grant of the sandbox carries the size", () => {
         const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
-        expect(seed).toContain("Resources (hard limits)");
-        expect(seed).toContain("workers × threads-per-worker");
-    });
-
-    it("omits the resources section for a historical step that carries none", () => {
-        const step = { ...fullyPopulatedStep(), resources: undefined };
-        const seed = composeStepBriefing({ step, workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
         expect(seed).not.toContain("Resources (hard limits)");
         expect(seed).not.toContain("\n\n\n");
     });

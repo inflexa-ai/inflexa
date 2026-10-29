@@ -40,6 +40,7 @@ export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"
  * store the way the sandbox does configures nothing further.
  */
 export const LIBS_CONTAINER_PATH = "/mnt/libs";
+export const EXEC_RECORDS_CONTAINER_PATH = "/mnt/exec-records";
 export const REFS_CONTAINER_PATH = "/mnt/refs";
 
 /** Container path of the per-analysis read-write cache, when a farm resolution carries a cache location. */
@@ -73,15 +74,18 @@ export type MountPlanCoords = {
      * contradiction, and the builders refuse it.
      */
     writableTail?: string;
+    /** The workspace-relative directory of the exec records of the lease, mounted read-write in each machine of the lease. */
+    recordTail: string;
 };
 
-export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "readOnly" | "writableTail">): MountPlanCoords {
+export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "readOnly" | "writableTail" | "recordTail">): MountPlanCoords {
     return {
         analysisId: session.scope.analysisId,
         runId: session.runFrame.runId,
         stepId: session.runFrame.stepId,
         readOnly: spec.readOnly,
         writableTail: spec.writableTail,
+        recordTail: spec.recordTail,
     };
 }
 
@@ -121,6 +125,10 @@ export type MountPlan = {
     cachePath?: string;
     /** Container path of the ref store, present only when `refs`. */
     refsPath?: string;
+    /** Container path of the exec records of the lease. */
+    recordsPath: string;
+    /** The workspace-relative source of the records mount. */
+    recordTail: string;
     /** Pre-created subdirectories under the writable mount. Empty when read-only
      *  (nothing to pre-create) and when a declared tail replaces the step tail. */
     stepSubdirs: readonly string[];
@@ -134,6 +142,8 @@ export type SessionSubPaths = {
     readonly ro: string;
     /** Read-write mount of the step's artifact dir, or of the declared tail; absent when read-only. */
     readonly rw?: string;
+    /** Read-write mount of the exec records of the lease. */
+    readonly records: string;
 };
 
 /**
@@ -203,6 +213,7 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
     return {
         ro: workspaceSubPath,
         rw: write === undefined ? undefined : `${workspaceSubPath}/${write.tail}`,
+        records: `${workspaceSubPath}/${assertSafeTail(coords.recordTail, "recordTail").join("/")}`,
     };
 }
 
@@ -249,7 +260,8 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
     const write = sandboxWriteTail(coords);
     const writableStepPath = write === undefined ? undefined : `${readonlyTreePath}/${write.tail}`;
     const cache = stores.libs && stores.cache === true;
-    const env: Record<string, string> = { PROVENANCE_WATCH_DIRS: readonlyTreePath };
+    const recordTail = assertSafeTail(coords.recordTail, "recordTail").join("/");
+    const env: Record<string, string> = { PROVENANCE_WATCH_DIRS: readonlyTreePath, EXEC_RECORD_DIR: EXEC_RECORDS_CONTAINER_PATH };
     if (stores.libs) Object.assign(env, libStoreEnv(stores.toolchainSource, cache));
 
     return {
@@ -260,6 +272,8 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         farmPath: stores.libs ? farmContainerPath(stores.toolchainSource) : undefined,
         cachePath: cache ? FARM_CACHE_CONTAINER_PATH : undefined,
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
+        recordsPath: EXEC_RECORDS_CONTAINER_PATH,
+        recordTail,
         stepSubdirs: write?.subdirs ?? [],
         env,
     };

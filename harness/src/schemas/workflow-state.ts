@@ -99,19 +99,6 @@ export const AnalysisStepSchema = z.object({
         .array(z.string())
         .describe("IDs of steps in this plan that must complete before this one runs. Empty when the step has no prerequisites. The graph must be acyclic."),
     status: z.enum(["pending", "running", "completed", "failed", "skipped"]).default("pending"),
-    // Optional on the persistence schema so historical plans (pre-resources)
-    // still parse on the read side. `PlanStepSchema` re-requires it for planner
-    // output, and the execution path rejects any step that reaches it without
-    // resources (no silent default) and clamps to cluster limits before use.
-    resources: z
-        .object({
-            cpu: z.number().describe("CPU cores the step needs."),
-            memoryGb: z.number().describe("Memory in GB the step needs."),
-            gpu: z.object({ count: z.number() }).optional().describe("GPUs the step needs. Omit unless the step genuinely requires one."),
-        })
-        .optional()
-        .describe("Resources the step needs. Ground the estimate in the actual data size — see the resource-estimation rules."),
-
     grounding: GroundingSchema.optional().describe(
         "The knowledge grounding of a method step: fill it from the answer of `knowledge_recommend` when that tool is attached. Omit it when no knowledge tool is attached.",
     ),
@@ -129,7 +116,6 @@ export const AnalysisStepSchema = z.object({
                 "One phrase, verbatim — never a paraphrase, never a list, never your own wording. " +
                 "The launch resolves the reference data that the capability declares before the run starts, so a reworded phrase loses that check and the step discovers an absent source itself.",
         ),
-    timeout: z.number().optional().describe("Execution timeout in seconds (falls back to image default)"),
     maxSteps: z.number().describe("Max LLM agentic steps for sandbox agent"),
     description: z.string().optional().describe("Human-readable description of what the step produces."),
 

@@ -26,15 +26,15 @@ import { chartSvgAssets, loadChartRuntime, type ChartRuntime } from "./chart-exp
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import type { ViewOptions } from "./views/lineage.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
-import { citationKeyOf, derivationChains, ReferenceLedger, type DerivationChain } from "./references.js";
+import { citationKeyOf, ReferenceLedger } from "./references.js";
 import { provenanceDataAssets, type ProvenanceExport } from "./provenance-data.js";
 import { encodeTablePayload, tableDataAsset, type DataAsset, type TablePayload } from "./table-data.js";
 import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
 
 /**
- * The optional inputs of one render: the bibliography of the pin, the chains of the session, the frozen
- * provenance of the analysis, and the options of the chart derivation.
+ * The optional inputs of one render: the bibliography of the pin, the frozen provenance of the analysis,
+ * and the options of the chart derivation.
  *
  * Each member is absent on its own, and a caller gives the members that it holds. A positional tail of
  * three optional inputs made a caller of the last one pad the two before it, thus the inputs ride one bag.
@@ -42,7 +42,6 @@ import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTab
  */
 export type RenderOptions = {
     readonly records?: CitationRecords;
-    readonly derivations?: readonly DerivationChain[];
     readonly provenance?: ProvenanceExport;
     readonly chart?: ChartOpts;
 };
@@ -56,11 +55,6 @@ export type RenderOptions = {
  *
  * The records are the bibliography of the pin, and they are optional. A caller that passes none renders
  * each citation from its key alone, thus a stored pin that holds no record map renders as it did before.
- *
- * The derivations are the chains of the session, and they are optional too. An appendix entry whose path a
- * chain names states its sources and its script. A document that binds no derived path renders
- * byte-identically with the chains and without them. A chain carries the relative source of its staged
- * script and of its derived file as data, thus the entry links both and this module stages nothing.
  *
  * The provenance is the frozen document of the analysis, and it is optional too. The renderer moves the
  * opaque text into two data assets that register one page global, and it parses no byte of it. Each
@@ -83,7 +77,7 @@ export type RenderOptions = {
 export async function renderReportPage(
     document: ReportDocument,
     values: RenderValues,
-    { records, derivations, provenance, chart = DEFAULT_CHART_OPTS }: RenderOptions = {},
+    { records, provenance, chart = DEFAULT_CHART_OPTS }: RenderOptions = {},
 ): Promise<Result<RenderedPage, RenderProblem[]>> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
@@ -109,7 +103,7 @@ export async function renderReportPage(
     // alone. Thus a page that carries the provenance and no table loads no decoder.
     const provenanceAssets = provenance === undefined ? [] : provenanceDataAssets(provenance);
     const nav = renderNav(document.sections);
-    const references = renderReferenceSection(ledger, document.sections.length, records, derivationChains(derivations));
+    const references = renderReferenceSection(ledger, document.sections.length, records);
     return ok({
         html: assemblePage(document.title, nav, content.join(""), references, { dataAssets: tableAssets, grids: data.mounts > 0, provenanceAssets }),
         dataAssets: [...provenanceAssets, ...tableAssets, ...data.svgs],

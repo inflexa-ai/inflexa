@@ -80,17 +80,8 @@ export type ExponentFormWarning = {
 /** One advisory warning about the prose of a block. */
 export type ProseWarning = FreeNumeralWarning | ExponentFormWarning;
 
-/**
- * An advisory warning about one derivation that no binding of the document names. The detail is the output
- * path of the record. The record stays, and the bytes are reproducible from the script and the sources.
- */
-export type UnusedDerivationWarning = {
-    kind: "unused-derivation";
-    detail: string;
-};
-
 /** One advisory warning about a report. A warning never makes a report invalid. */
-export type ReportWarning = ProseWarning | UnusedDerivationWarning;
+export type ReportWarning = ProseWarning;
 
 /** What one walk over a block tree found. */
 export type BlockWalk = {

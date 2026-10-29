@@ -169,11 +169,9 @@ export type DockerClientConfig = {
     /**
      * Optional logger so a store degradation (a resolved farm whose `inflexa.lock`
      * is absent or invalid by sandbox-create time) is observable instead of a
-     * silent libs-mount drop. Matches the `reaper`/`watchdog` logger seam.
+     * silent libs-mount drop.
      */
     logger?: Logger;
-    /** Hook called after the registry row is written. */
-    registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
 };
 
 /**
@@ -459,6 +457,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(libsMounted && farm && plan.farmPath ? [`${farm.farmPath}:${plan.farmPath}:ro`] : []),
                         ...(libsMounted && cacheBindable && farm?.cachePath && plan.cachePath ? [`${farm.cachePath}:${plan.cachePath}:rw`] : []),
                         ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${String(plan.refsPath)}:ro`] : []),
+                        `${tailWritePrefix({ workspaceRoot: hostTreePath, tail: plan.recordTail })}:${plan.recordsPath}:rw`,
                         ...cpuBinds,
                     ];
 
@@ -493,7 +492,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         Env: env,
                         User: SANDBOX_ROOT_USER,
                         WorkingDir: plan.workingDir,
-                        Labels: mergeLabels(hostLabels, { ...harnessLabels(session, sandboxId), [OWNER_WORKFLOW_LABEL]: spec.childWorkflowId }),
+                        Labels: mergeLabels(hostLabels, { ...harnessLabels(session, sandboxId), [OWNER_WORKFLOW_LABEL]: spec.ownerWorkflowId }),
                         ExposedPorts: { [`${SANDBOX_SERVER_PORT}/tcp`]: {} },
                         HostConfig: {
                             Binds: binds,
@@ -523,7 +522,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     };
                     if (config.platform !== undefined) createOpts.platform = config.platform;
 
-                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, spec.childWorkflowId, createFailed, logger);
+                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, spec.ownerWorkflowId, createFailed, logger);
                     if (sandbox.isErr()) return err(sandbox.error);
                     if (!sandbox.value.alreadyRunning) {
                         const started = await trySandbox(() => sandbox.value.container.start(), createFailed);
@@ -551,9 +550,6 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         port,
                         backend: "docker",
                     };
-
-                    const registered = await trySandbox(() => config.registerSandbox(session, spec, ref), createFailed);
-                    if (registered.isErr()) return err(registered.error);
                     return ok(ref);
                 })(),
             );

@@ -11,11 +11,8 @@
  * the workspace search, the run inspection, and the data-profile inspection. It
  * holds no planner, no run launcher, no working-memory write, and no sandbox
  * mutate surface. Thus no tool starts a run, and no tool changes an analysis. The
- * roster omits those tools, and no runtime guard blocks them.
- *
- * The derivation tool is the one tool that runs a container, and it changes no
- * analysis either. It mints no run id, it registers no artifact, and it writes under
- * the directory of the session alone.
+ * roster omits those tools, and no runtime guard blocks them. No tool runs a
+ * container.
  *
  * The definition carries no per-session value. The system prompt composes through
  * `composeSystemPrompt` with the identity part and the conversational part, the
@@ -29,9 +26,7 @@ import type { AuthContext, Identity } from "../auth/types.js";
 import type { CompactionRules } from "../loop/compaction.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
-import type { SandboxClient } from "../sandbox/client.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
-import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider, ProviderOptions } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
@@ -46,7 +41,6 @@ import type { ReportSessionStateGateway } from "../tools/report-authoring/author
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
 import {
-    createDeriveTableTool,
     createExaminePageTool,
     createListPinnedArtifactsTool,
     createPreviewReportTool,
@@ -64,7 +58,7 @@ import { composeSystemPrompt } from "./system-prompt.js";
 export const REPORT_SESSION_AGENT_ID = "report-session" as const;
 
 /**
- * Runaway guard. A full session — orient, derive, compose each section, preview,
+ * Runaway guard. A full session — orient, compose each section, preview,
  * look, record — drives more small tool calls than a conversation turn, thus it
  * gets the headroom of the report runner (REPORT_AGENT_MAX_STEPS).
  */
@@ -103,14 +97,6 @@ export type ReportSessionAgentDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Append-only version store -- the record tool gates the whole document first, then records one version. */
     readonly store: ReportVersionStore;
-    /** Derivation ledger -- the derivation tool appends one record for each derived table. */
-    readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
-    /**
-     * Sandbox client -- the derivation tool runs one ephemeral container for each derived table, inside the
-     * step of its call. Omitted, the tool reports that the composition gives no sandbox, and it derives
-     * nothing.
-     */
-    readonly sandboxClient?: SandboxClient;
     /** Thread store -- the record tool reads the anchor of the report thread, and the preview tool names it. */
     readonly threads: Pick<ThreadStore, "getThread" | "setAutoTitle">;
     /** Headless-Chrome config -- the eyes tool opens the rendered page. */
@@ -149,7 +135,7 @@ export type ReportSessionAgentDeps = {
     readonly resolvePageUrl?: ResolvePageUrl;
     /**
      * The provenance seam -- the acts of the session as typed events, and the frozen document of the
-     * analysis as opaque bytes. The tools that change the draft, derive a table, preview the page, and
+     * analysis as opaque bytes. The tools that change the draft, preview the page, and
      * record a version each emit through the session member, thus one bound member carries the whole
      * session. The preview asks the read member before each render, and the page then carries the
      * document. An unbound member emits nothing, or gives absence, and every tool acts the same.
@@ -164,7 +150,7 @@ export type ReportSessionAgentDeps = {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, sandboxClient, makeSessionPages, resolvePageUrl, provenance } = deps;
+    const { makeSessionPages, resolvePageUrl, provenance } = deps;
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
     const observation = provenance ? { provenance } : {};
@@ -197,16 +183,6 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             resolveWorkspaceRoot,
             logger,
         }),
-        // The derivation tool. It reshapes the pinned evidence into one table under the
-        // session directory, on the sandbox rails of the value tier.
-        createDeriveTableTool({
-            gateway,
-            resolveWorkspaceRoot,
-            derivations,
-            sandboxClient,
-            ...observation,
-            logger,
-        }),
         // The render-and-preview tool. It resolves the page root per call.
         createPreviewReportTool({
             gateway,
@@ -229,13 +205,11 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             resolvePageUrl,
             logger,
         }),
-        // The record tool. It gates the whole document, records one version, then prunes each
-        // derived table that the recorded document does not bind.
+        // The record tool. It gates the whole document, then records one version.
         createRecordVersionTool({
             gateway,
             store,
             threads,
-            resolveWorkspaceRoot,
             makeResolver,
             ...observation,
             logger,

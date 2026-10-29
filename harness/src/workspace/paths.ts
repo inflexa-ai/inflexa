@@ -280,17 +280,6 @@ export function reportSessionDir(threadId: string): string {
 }
 
 /**
- * Directory of the derived tables of one report session, workspace-root-relative.
- *
- * The derivation writes its output here, and the record prunes an output that the recorded document does
- * not name. Both spell the segment through this helper, thus the write mount and the prune scope cannot
- * disagree.
- */
-export function reportSessionDerivedDir(threadId: string): string {
-    return `${reportSessionDir(threadId)}/derived`;
-}
-
-/**
  * For an analysis-rooted input (`/{analysisId}/...`), strip the leading
  * `/{analysisId}/` segment so it can be resolved relative to the analysis
  * root. Returns `null` if the first segment does not match `analysisId` —
@@ -344,6 +333,12 @@ export function assertSafeId(value: string, label: string): void {
         throw new Error(`Invalid ${label}: ${value}`);
     }
 }
+
+/**
+ * The directory of the harness under each workspace root: the exec records of the sandbox leases. No workspace tool
+ * lists or reads it, and no artifact walk reaches it.
+ */
+export const HARNESS_PRIVATE_DIR = ".sandbox";
 
 /** Root directory for a specific workflow run, workspace-root-relative. */
 export function runDir(runId: string): string {

@@ -13,7 +13,7 @@ import { createNoopArtifactRegistry } from "../../execution/noop-artifact-regist
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
-import type { CoreWorkflowDeps } from "../assemble.js";
+import type { CoreSandboxDeps, CoreWorkflowDeps } from "../assemble.js";
 
 /** A seam no case drives: the first call throws and names the seam. */
 export function refuse(seam: string): never {
@@ -33,7 +33,6 @@ export function constructionSandboxStepDeps(): CoreWorkflowDeps["sandboxStep"] {
         pool: new Pool(),
         provider: unusedChatProvider(),
         embedding: refuseEmbedding(),
-        sandboxClient: makeFakeSandboxClient(),
         artifactRegistry: createNoopArtifactRegistry(),
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: () => Promise.resolve("/tmp/sessions/analysis-001"),
@@ -61,7 +60,6 @@ export function constructionDataProfileDeps(): CoreWorkflowDeps["dataProfile"] {
     return {
         provider: unusedChatProvider(),
         pool: new Pool(),
-        sandboxClient: makeFakeSandboxClient(),
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: () => Promise.resolve("/tmp/sessions/analysis-001"),
         model: "test/model",
@@ -78,4 +76,9 @@ export function constructionWorkflows(): CoreWorkflowDeps {
         buildExecuteAnalysis: () => constructionExecuteAnalysisDeps(),
         dataProfile: constructionDataProfileDeps(),
     };
+}
+
+/** The sandboxes of a construction test: a fake client that no case drives. */
+export function constructionSandbox(): CoreSandboxDeps {
+    return { client: makeFakeSandboxClient() };
 }

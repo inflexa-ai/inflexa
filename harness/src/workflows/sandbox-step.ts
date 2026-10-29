@@ -6,7 +6,8 @@
  * replays from the cache instead of re-issuing work):
  *
  *  1. `mark-running`        — update `cortex_step_executions` to running.
- *  2. `createSandbox`       — provision the sandbox; persist its handle.
+ *  2. the lease             — bind the lease of the step. The agent acquires
+ *                             its sandbox with `acquire_sandbox`.
  *  3. `runLoop`             — the harness agent loop. Every model call and
  *                             tool call inside is its own durable step.
  *  4. `generateFileMetadata`— the file-metadata follow-up request of the step agent.
@@ -16,19 +17,19 @@
  *  7. `syncArtifacts`       — register provenance + upload missing file_ids
  *                             via the managed root (scoped to this run+step).
  *  8. `vector-index`        — index file descriptions + summary into pgvector.
- *  9. `teardown`            — destroy the sandbox + clear sandbox_ref.
+ *  9. `sandbox.release`     — release the lease, which removes its machine.
  * 10. `mark-terminal`       — write the final status, emit `data-step-activity`
  *                             onto the parent's DBOS stream.
  *
- * The parent owns sibling lifecycle. This child owns its own teardown and its
- * own pause (work-pause spec): a failed model request of the agent loop with a
- * cause of a pause, or a refusal with the suspend flag of the label gate or the
- * register gate. The child waits in place, and the run row stays `running`. The
- * other steps go on, and each one pauses at its own failure.
+ * The parent owns sibling lifecycle. This child releases its own lease, and it
+ * owns its own pause (work-pause spec): a failed model request of the agent loop
+ * with a cause of a pause, or a refusal with the suspend flag of the register
+ * gate. The child waits in place, and the run row stays `running`. The other
+ * steps go on, and each one pauses at its own failure. A refused spawn pauses
+ * the lease workflow under the run, not this child.
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import type { Result } from "neverthrow";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
 import type { StepPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
@@ -63,7 +64,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
-import type { SandboxClient } from "../sandbox/client.js";
+import type { SandboxLeases, BoundLease } from "../sandbox/leases.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
@@ -77,10 +78,6 @@ import {
     vectorIndexStepOutputs,
     type StepFileMetadata,
 } from "../execution/post-step-pipeline.js";
-import { mintSandboxIdentity } from "../sandbox/identity.js";
-import type { ResourceSpec } from "../config/resource-limits.js";
-import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
-import { keepSuspendingRefusal, type SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
@@ -129,15 +126,6 @@ export type SandboxStepInput = {
     readonly image?: string;
     /** Per-step env overrides forwarded to sandbox-server. */
     readonly extraEnv?: Record<string, string>;
-    /** Planner-estimated CPU/memory/GPU request for this step's sandbox. */
-    readonly resources: ResourceSpec;
-    /**
-     * Per-step execution budget in seconds. The body translates this into the
-     * absolute unix-ms deadline that each exec of the step honours. Comes from the plan's `step.timeout` (defaulted on the parent
-     * side); falls back to `DEFAULT_STEP_TIMEOUT_SECONDS` when unset so a
-     * client that omits the field still gets a non-pathological ceiling.
-     */
-    readonly timeoutSeconds?: number;
     /**
      * Durable `RunSession` derived by the parent via `forStep`. Carries the
      * run-authorization credential, identity, scope, and `runFrame = { runId, stepId }`.
@@ -146,12 +134,6 @@ export type SandboxStepInput = {
      */
     readonly runSession: SpawnSession;
 };
-
-/**
- * Fallback when the plan step omits `timeout`. Plans that need 3-hour runs
- * declare it explicitly.
- */
-export const DEFAULT_STEP_TIMEOUT_SECONDS = 3600;
 
 /**
  * Deterministic `blocked_reason` for a loop that spent every iteration and
@@ -222,15 +204,15 @@ export type PostStepArtifacts = {
 
 /**
  * Per-step coordinates the workflow body computes once and threads to the
- * deps factory. The parent supplies the durable inputs; the factory
- * supplies the live sandbox ref and the deadline.
+ * deps factory. The parent supplies the durable inputs; the body supplies the
+ * lease of the step.
  */
 export type SandboxAgentBuildContext = {
     readonly input: SandboxStepInput;
     readonly session: RunSession;
-    readonly sandbox: SandboxRef;
+    /** The lease of the step. The agent tools acquire, release, and run commands through it. */
+    readonly lease: BoundLease;
     readonly stepWritePrefix: string;
-    readonly deadlineMs: () => number;
     /**
      * Step-scoped lineage collector. The body owns one per step and threads
      * it both here (so `execute_command` feeds each exec's provenance frame)
@@ -280,7 +262,8 @@ export type SandboxStepDeps = {
     readonly provider: ChatProvider;
     /** Write-side embedder for the post-step vector index. */
     readonly embedding: EmbeddingProvider;
-    readonly sandboxClient: SandboxClient;
+    /** The sandbox module. The step binds its lease, and releases it at the end. */
+    readonly leases: SandboxLeases;
     /**
      * External artifact registration + sync seam. The harness's post-step pipeline
      * registers each step's outputs through it (filesystem index in the
@@ -331,8 +314,6 @@ export type PostStepContext = {
     readonly fileMetadata: FileMetadataCell;
     /** Absolute path to the step's writable artifact directory. */
     readonly writePrefix: string;
-    /** Sandbox handle id — informational only, used in log lines. */
-    readonly sandboxId: string;
     /** Same step-scoped collector the agent loop fed each exec frame into. */
     readonly lineageCollector: ProvenanceCollector;
 };
@@ -453,7 +434,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         }
     };
 
-    // The step waits in place, and the sandbox, if one stands, stays up for the resume.
+    // The step waits in place. The lease stays, and its machine goes away when the pause outlasts the idle period.
     const pause = workPause({
         pool: deps.pool,
         workId: input.runId,
@@ -474,64 +455,24 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     const lineageCollector = createLineageCollector(input);
 
-    // (2a) sandbox.mint — checkpoint the machine's identity (its name)
-    // BEFORE it is spawned (see the harness-sandbox-exec spec). Durable-before-create is what makes (2b)
-    // idempotent: a crash between spawn and the spawn checkpoint re-runs (2b)
-    // with the same identity, which adopts the already-created machine instead
-    // of leaking a second one.
-    const identity = await DBOS.runStep(() => Promise.resolve(mintSandboxIdentity(input.runId)), { name: "sandbox.mint" });
-
-    // (2b) sandbox.create — spawn (or adopt) the machine under the minted
-    // identity. The handle is cached so recovery picks the same machine back up
-    // without re-provisioning.
-    const sandboxSpec: SandboxSpec = {
-        childWorkflowId,
-        image: input.image,
-        extraEnv: input.extraEnv,
-        resources: input.resources,
-    };
-    const spawn = (): Promise<Result<SandboxRef, SuspendingRefusal>> =>
-        DBOS.runStep(async () => keepSuspendingRefusal(await deps.sandboxClient.createSandbox(session, sandboxSpec, identity)), {
-            name: "sandbox.create",
-        });
-    let spawned = await spawn();
-    // A refusal of the label gate with the suspend flag waits in a pause, and the spawn runs again after the resume.
-    while (spawned.isErr()) {
-        await pauseAtGate(pause, spawned.error.reason);
-        spawned = await spawn();
-    }
-    const sandbox = spawned.value;
-
-    // Recovery path: re-check `isAlive` on the persisted ref before continuing.
-    // A classified-dead sandbox triggers a fresh `createSandbox` (task 4.6).
-    // For first execution this is a cheap no-op; on replay it's the seam
-    // that catches a dead pod between checkpoints.
-    await DBOS.runStep(
-        async () => {
-            const liveness = await deps.sandboxClient.isAlive(sandbox);
-            if (!liveness.alive) {
-                const cause = liveness.oomKilled ? "was killed for exceeding its memory limit (sandbox-oom-killed)" : "no longer alive on replay";
-                throw new Error(`sandbox ${sandbox.sandboxId} ${cause} — caller must restart the step`);
-            }
-        },
-        { name: "sandbox.recheck-alive" },
-    );
+    // (2) The lease of the step. The agent acquires its sandbox with `acquire_sandbox` when it needs one, and the
+    // sandbox module owns the machine: the admission, the spawn, a new machine after a pause or a death, and the
+    // pause of a refused spawn. The lease key is the id of this workflow.
+    const lease = deps.leases.bind({
+        leaseKey: childWorkflowId,
+        session: input.runSession,
+        work: { kind: "run", id: input.runId },
+        spawn: { image: input.image, extraEnv: input.extraEnv },
+        emit: safeEmit,
+    });
 
     // (3) runLoop — the harness loop, each call a durable step.
-    // The step deadline is captured ONCE at step start from the checkpointed
-    // clock so it reproduces on replay — a raw `Date.now()` here would grow the
-    // deadline on each recovery (see the harness-durable-runtime spec). `deadlineMs` is a getter so
-    // deps read the absolute ms without holding a captured value; returning a
-    // fresh `now + timeout` per call would make a step with N tool calls runnable
-    // for up to N × `timeoutSeconds`.
-    const stepDeadlineMs = (await DBOS.now()) + (input.timeoutSeconds ?? DEFAULT_STEP_TIMEOUT_SECONDS) * 1000;
     const fileMetadata = createFileMetadataCell();
     const agent = await deps.buildAgent({
         input,
         session,
-        sandbox,
+        lease,
         stepWritePrefix: writePrefix,
-        deadlineMs: () => stepDeadlineMs,
         lineageCollector,
         reportsBlocker: true,
         fileMetadata,
@@ -583,7 +524,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // control-flow, not a failure — re-raise it verbatim.
     const failStep = async (errorClass: "agent_loop" | "lineage_attestation", err: unknown): Promise<never> => {
         if (isWorkflowCancellation(err)) throw err;
-        await tryTeardown(logger, deps, sandbox);
+        await tryRelease(logger, deps, childWorkflowId);
         const durationMs = (await DBOS.now()) - startedAt;
         // The scrub below is deliberate and load-bearing, which makes this record
         // the ONLY account of why the step died — the thrown error carries just the
@@ -591,7 +532,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         // `durationMs`, the iteration cap, and the last exec of the sandbox are
         // what separate a step that died in the model from one that died in the
         // machine. `lastExec` holds no stream text (see `exec-outcome.ts`).
-        const lastExec = lastExecOutcome(sandbox.sandboxId);
+        const lastExec = lastExecOutcome(childWorkflowId);
         logger.error("step failure", {
             errorClass,
             durationMs,
@@ -766,7 +707,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     const cappedOutEmpty = hitMaxSteps && manifest.length === 0;
     if (blockerOutcome || cappedOutEmpty) {
         const blockedReason = blockerOutcome?.reason ?? CAPPED_OUT_EMPTY_REASON;
-        await tryTeardown(logger, deps, sandbox);
+        await tryRelease(logger, deps, childWorkflowId);
         const durationMs = (await DBOS.now()) - startedAt;
         await DBOS.runStep(
             async () => {
@@ -816,7 +757,6 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         agent,
         fileMetadata,
         writePrefix,
-        sandboxId: sandbox.sandboxId,
         lineageCollector,
     };
 
@@ -914,8 +854,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     await emitActivity("indexing", "Indexing outputs for search");
     await safeRun(logger, () => vectorIndexStepOutputs(deps, postCtx, postArtifacts), "post-step.vector-index");
 
-    // (9) teardown — destroy sandbox + clear sandbox_ref.
-    await DBOS.runStep(() => deps.sandboxClient.teardown(sandbox), { name: "sandbox.teardown" });
+    // (9) release — the lease workflow removes the machine of the step.
+    await deps.leases.release(childWorkflowId);
 
     // (10) mark-terminal + emit. The outcome metric is recorded inside the same
     // step as the ledger row: a replayed body reads the cached step and records
@@ -1031,10 +971,12 @@ async function safeRunValue<T>(logger: Logger, fn: () => Promise<T>, label: stri
     }
 }
 
-async function tryTeardown(logger: Logger, deps: SandboxStepDeps, sandbox: SandboxRef): Promise<void> {
+/** Release the lease of a step that failed or blocked. The owner test of the lease workflow covers a failed release. */
+async function tryRelease(logger: Logger, deps: SandboxStepDeps, leaseKey: string): Promise<void> {
     try {
-        await DBOS.runStep(() => deps.sandboxClient.teardown(sandbox), { name: "sandbox.teardown" });
+        await deps.leases.release(leaseKey);
     } catch (err) {
-        logger.warn("teardown failed (non-fatal)", logger.errorFields(err));
+        if (isWorkflowCancellation(err)) throw err;
+        logger.warn("release failed (non-fatal)", logger.errorFields(err));
     }
 }

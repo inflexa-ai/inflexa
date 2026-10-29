@@ -28,7 +28,6 @@ import type { Pool } from "pg";
 
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import type { EnsureSessionStateResult } from "../app/report-session-runtime.js";
-import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
@@ -207,13 +206,6 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
      */
     readonly provenance?: ProvenanceSeam;
     /**
-     * Host resource policy — per-step ceilings + machine budget. `generate_plan`
-     * states the ceilings to the planner and validates against them;
-     * `execute_analysis` snapshots the budget into the workflow input. Absent,
-     * planning guidance and scheduling keep their legacy behavior.
-     */
-    readonly resourcePolicy?: ResourcePolicy;
-    /**
      * Embedder-contributed conversation-tool seam — additional tools the host
      * supplies, appended after the built-in roster. The harness stays agnostic to
      * what they do; each receives the same `ToolContext` (including `ask`) as any
@@ -244,7 +236,6 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         runLauncher,
         bioKeys,
         chrome,
-        resourcePolicy,
         hostTools,
         refStorePath,
         farmLockFile,
@@ -344,7 +335,6 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             {
                 conversation: { provider, model },
                 pool,
-                resourcePolicy,
                 usageRecorder,
                 toolOutputStore,
                 bioKeys,
@@ -362,7 +352,6 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             executeAnalysisWorkflow,
             runAuthorizer,
             runLauncher,
-            resourcePolicy,
             utilityProvider,
             utilityModel,
             farmLockFile,

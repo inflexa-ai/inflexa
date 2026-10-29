@@ -7,13 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
-import {
-    makeFakeChatProvider,
-    makeFakePool,
-    makeFakeSandboxAgentDeps,
-    makeFakeSandboxClient,
-    makeFakeWorkspaceFs,
-} from "../../agents/sandbox/__fixtures__/deps.js";
+import { makeFakeChatProvider, makeFakePool, makeFakeSandboxAgentDeps, makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createDataProfilerAgent } from "../../agents/sandbox/data-profiler.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
@@ -28,12 +22,13 @@ const unusedEmbedding: EmbeddingProvider = {
 import { sandboxPackageLinkPrompt } from "../../prompts/sandbox-standards.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
 import { profilerSandboxAgentDeps, type DataProfileDeps } from "../data-profile.js";
+import { fakeLeases } from "../../sandbox/__fixtures__/leases.js";
 
 function makeProfileDeps(over: Partial<DataProfileDeps> = {}): DataProfileDeps {
     return {
         provider: makeFakeChatProvider(),
         pool: makeFakePool(),
-        sandboxClient: makeFakeSandboxClient(),
+        leases: fakeLeases(makeFakeSandboxAgentDeps().step.lease),
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: (resourceId: string) => Promise.resolve(`/tmp/sessions/${resourceId}`),
         model: "claude-opus-4-7",

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
+import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { createExecuteCommandTool } from "../execute-command.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWriteFileTool } from "../write-file.js";
@@ -40,6 +41,7 @@ function makeSandboxRef(): SandboxRef {
 function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } = {}): SandboxClient {
     return {
         toolchainSource: "store",
+        resourceLimits: { maxCpu: 4, maxMemoryGb: 16, maxGpuCount: 0 },
         createSandbox() {
             return okAsync(makeSandboxRef());
         },
@@ -118,9 +120,7 @@ describe("mutate surface — end-to-end", () => {
         });
 
         const tool = createExecuteCommandTool({
-            sandboxClient: client,
-            sandbox,
-            deadlineMs: () => 9_999_999,
+            lease: leaseOverClient(client, sandbox),
             defaultCwd: `/${ANALYSIS}/runs/${RUN}/${STEP}`,
         });
         const { ctx } = makeToolContext();

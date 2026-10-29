@@ -253,3 +253,43 @@ A sandbox agent MUST get `acquire_sandbox` and `release_sandbox`. `acquire_sandb
 
 - **WHEN** an agent calls `release_sandbox` and then continues to write files
 - **THEN** the machine goes away, and a later `execute_command` gives the error result that names `acquire_sandbox`
+
+### Requirement: The resource policy gives the per-step ceiling and the lease budget
+
+The harness MUST define `ResourcePolicy` in `config/resource-limits.ts`:
+
+```typescript
+type ResourcePolicy = {
+  perStep: ResourceLimits;
+  budget: { cpu: number; memoryGb: number };
+}
+```
+
+The policy is embedder-supplied at the composition root and optional. The `budget` is the budget of the lease grant, and it covers each lease of each consumer (see the sandbox-leases capability). An embedder that supplies no policy gets a grant at once for each lease, plus the historical per-step defaults.
+
+When a policy is supplied, construction MUST reject one
+where `perStep.maxCpu > budget.cpu` or
+`perStep.maxMemoryGb > budget.memoryGb`. The module clamps each lease request to `perStep`, thus a clamped request always fits an empty budget. `budget.cpu` and `budget.memoryGb` MUST be positive
+numbers. The policy MUST NOT contain an execution-mode-specific resource
+field.
+
+#### Scenario: Valid policy accepted
+
+- **WHEN** a policy with `perStep: { maxCpu: 4, maxMemoryGb: 8, maxGpuCount: 0 }` and `budget: { cpu: 8, memoryGb: 16 }` is constructed
+- **THEN** construction succeeds
+
+#### Scenario: Per-step ceiling exceeding the budget is rejected
+
+- **WHEN** a policy with `perStep.maxMemoryGb: 32` and `budget.memoryGb: 16` is constructed
+- **THEN** construction throws a configuration error naming the violated invariant
+
+#### Scenario: Resource policy has no ephemeral value
+
+- **WHEN** configuration includes an `ephemeral` resource value
+- **THEN** the resolved `ResourcePolicy` contains no `ephemeral` field and no special execution budget is supplied
+
+#### Scenario: No policy grants each lease at once
+
+- **GIVEN** an embedder that supplies no `ResourcePolicy`
+- **WHEN** some consumers acquire a lease at the same time
+- **THEN** each lease gets its grant with no wait for capacity

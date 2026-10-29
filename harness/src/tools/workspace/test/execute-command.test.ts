@@ -20,6 +20,7 @@ import { scriptSha256 } from "../decision-record.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../sandbox/types.js";
 import { createExecuteCommandTool } from "../execute-command.js";
+import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { presentAt } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
@@ -62,6 +63,7 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
     return {
         execs,
         toolchainSource: "store",
+        resourceLimits: { maxCpu: 4, maxMemoryGb: 16, maxGpuCount: 0 },
         createSandbox() {
             return okAsync(makeSandboxRef());
         },
@@ -87,9 +89,7 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
 
 function makeTool(client: SandboxClient, over: Partial<Parameters<typeof createExecuteCommandTool>[0]> = {}) {
     return createExecuteCommandTool({
-        sandboxClient: client,
-        sandbox: makeSandboxRef(),
-        deadlineMs: () => 9_999_999,
+        lease: leaseOverClient(client, makeSandboxRef()),
         defaultCwd: DEFAULT_CWD,
         ...over,
     });
@@ -116,9 +116,7 @@ describe("execute_command and the decision record of a script", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-abc", stepId: "step1" });
         const client = makeFakeClient();
         const tool = createExecuteCommandTool({
-            sandboxClient: client,
-            sandbox: makeSandboxRef(),
-            deadlineMs: () => 9_999_999,
+            lease: leaseOverClient(client, makeSandboxRef()),
             defaultCwd: DEFAULT_CWD,
             workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
             mutator: createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir }),
@@ -200,7 +198,6 @@ describe("execute_command tool", () => {
 
         expect(client.execs).toHaveLength(1);
         expect(presentAt(client.execs, 0).request.command).toEqual(["echo", "hi"]);
-        expect(presentAt(client.execs, 0).deadlineMs).toBe(9_999_999);
         expect(out.status).toBe("ok");
         expect(out.exitCode).toBe(0);
         expect(out.stdout).toBe("hello\n");
@@ -209,9 +206,7 @@ describe("execute_command tool", () => {
 
     it("names the real cap of each stream in its description", () => {
         const tool = createExecuteCommandTool({
-            sandboxClient: makeFakeClient(),
-            sandbox: makeSandboxRef(),
-            deadlineMs: () => 9_999_999,
+            lease: leaseOverClient(makeFakeClient(), makeSandboxRef()),
             defaultCwd: DEFAULT_CWD,
         });
 
@@ -226,9 +221,7 @@ describe("execute_command tool", () => {
         const stdout = "r".repeat(200 * 1024);
         const client = makeFakeClient({ result: { execId: "", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false } });
         const tool = createExecuteCommandTool({
-            sandboxClient: client,
-            sandbox: makeSandboxRef(),
-            deadlineMs: () => 9_999_999,
+            lease: leaseOverClient(client, makeSandboxRef()),
             defaultCwd: DEFAULT_CWD,
         });
 
@@ -357,5 +350,18 @@ describe("execute_command lineage", () => {
         const out = (await makeTool(client).execute({ command: ["ls"] }, ctx))._unsafeUnwrap();
 
         expect(readToolCallRecord(out)).toBeUndefined();
+    });
+});
+
+describe("execute_command with no lease", () => {
+    it("gives an error that names acquire_sandbox, and runs no command", async () => {
+        const client = makeFakeClient();
+        const tool = createExecuteCommandTool({ lease: leaseOverClient(client, makeSandboxRef(), { held: false }), defaultCwd: DEFAULT_CWD });
+
+        const out = await tool.execute({ command: ["echo", "hi"] }, makeToolContext().ctx);
+
+        expect(out.isErr()).toBe(true);
+        expect(out._unsafeUnwrapErr().error).toContain("acquire_sandbox");
+        expect(client.execs).toHaveLength(0);
     });
 });

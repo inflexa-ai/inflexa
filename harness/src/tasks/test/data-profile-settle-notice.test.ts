@@ -17,7 +17,8 @@ import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
-import type { SandboxClient } from "../../sandbox/client.js";
+import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
+import type { BoundLease } from "../../sandbox/leases.js";
 import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-profile.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps, type DataProfileSettlement, type NotifyDataProfileSettled } from "../data-profile.js";
@@ -81,13 +82,13 @@ describe("the settle notice of the data profile", () => {
         return analysisId;
     }
 
-    function depsWith(sandboxClient: SandboxClient, notifyDataProfileSettled: NotifyDataProfileSettled | undefined): DataProfileDeps {
+    function depsWith(lease: BoundLease, notifyDataProfileSettled: NotifyDataProfileSettled | undefined): DataProfileDeps {
         return {
             logger: silentLogger,
             // The profile body reaches the provider only inside the sandbox agent loop, which no case here enters.
             provider: unusedChatProvider(),
             pool,
-            sandboxClient,
+            leases: fakeLeases(lease),
             workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
             resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
             model: "test-model",
@@ -108,13 +109,11 @@ describe("the settle notice of the data profile", () => {
         };
     }
 
-    // The body calls only `createSandbox` of the client before it fails, thus only that method is overridden.
-    const refusingSandbox = {
-        ...makeFakeSandboxClient(),
-        createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-    };
-    // The empty-manifest path settles before any sandbox call, thus no method of the client is read.
-    const unusedSandbox = makeFakeSandboxClient();
+    const machine = { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" as const };
+    // The body acquires its lease before it fails, thus only the grant matters.
+    const refusingSandbox = leaseOverClient(makeFakeSandboxClient(), machine, { grant: () => ({ kind: "refused", reason: "labels_unavailable" }) });
+    // The empty-manifest path settles before any acquire, thus the lease is never read.
+    const unusedSandbox = leaseOverClient(makeFakeSandboxClient(), machine);
 
     function recordingNotice(): { notify: NotifyDataProfileSettled; settlements: DataProfileSettlement[] } {
         const settlements: DataProfileSettlement[] = [];

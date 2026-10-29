@@ -20,6 +20,7 @@ import { makeToolContext } from "../../../tools/__fixtures__/tool-context.js";
 import { createFileMetadataCell } from "../../../tools/sandbox/submit-file-metadata.js";
 
 import { makeFakeSandboxAgentDeps, makeFakeSandboxClient } from "../__fixtures__/deps.js";
+import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { BASE_SANDBOX_TOOLS, createSandboxAgent } from "../shared.js";
 import type { AgentMeta } from "../types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "../types.js";
@@ -144,7 +145,8 @@ describe("createSandboxAgent", () => {
         };
         const root = await mkdtemp(join(tmpdir(), "shared-refs-"));
         const base = makeFakeSandboxAgentDeps();
-        const def = createSandboxAgent({ ...base, sandboxClient, refStorePath: root }, meta, body);
+        const lease = leaseOverClient(sandboxClient, { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" });
+        const def = createSandboxAgent({ ...base, step: { ...base.step, lease }, refStorePath: root }, meta, body);
         const tool = presentFind(def.tools, (candidate) => candidate.id === "list_available_refs");
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
@@ -160,6 +162,18 @@ describe("createSandboxAgent", () => {
         const def = createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body);
 
         expect(def.tools.map((t) => t.id)).toContain("inspect_data_profile");
+    });
+
+    it("wires the two lease tools as always-on substrate, also under readOnly", () => {
+        const bare = { ...meta, tools: [] as const };
+        for (const def of [
+            createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body),
+            createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body, { readOnly: true }),
+        ]) {
+            const ids = def.tools.map((t) => t.id);
+            expect(ids).toContain("acquire_sandbox");
+            expect(ids).toContain("release_sandbox");
+        }
     });
 
     it("readOnly keeps inspect_data_profile — reading the profile is not a mutation", () => {
@@ -432,10 +446,10 @@ describe("createSandboxAgent — the toolchain keying of the orient core", () =>
         expect(image).toContain("An acquisition of a new package is a host action");
         expect(image).toContain("report it as missing");
 
-        // The bag carries no toolchain field: the composition reads the value
-        // of the client, thus the text and the environment cannot disagree.
+        // The bag carries the toolchain of the sandbox module, which is the value of the client, thus the text and
+        // the environment cannot disagree.
         const deps = makeFakeSandboxAgentDeps();
-        const def = createSandboxAgent({ ...deps, sandboxClient: { ...deps.sandboxClient, toolchainSource: "image" } }, meta, body);
+        const def = createSandboxAgent({ ...deps, toolchainSource: "image" }, meta, body);
         expect(def.systemPrompt).toContain("An acquisition of a new package is a host action");
         expect(def.systemPrompt).not.toContain(sandboxOrientCorePrompt.trim());
     });

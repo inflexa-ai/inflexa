@@ -41,7 +41,7 @@ import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs, errnoOf } from "../lib/fs-result.js";
 import { splitLines } from "../lib/text.js";
 import { classifyWithinRoot } from "../lib/fs-helpers.js";
-import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
+import { HARNESS_PRIVATE_DIR, resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
 
 // ── Result types ──────────────────────────────────────────────────────────
 
@@ -175,7 +175,7 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
                 op: "workspace.confineRealpath",
                 path: resolved.absolute,
                 cause,
-            })).map((verdict): ResolvedPath => (verdict === "escaped" ? { kind: "out_of_scope" } : resolved));
+            })).map((verdict): ResolvedPath => (verdict === "escaped" || isHarnessPrivate(resolved.relative) ? { kind: "out_of_scope" } : resolved));
         });
     }
 
@@ -266,7 +266,8 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
                         { path: absolute, onAbsent: () => ({ notFound: true }) },
                     ).andThen((dirents): ResultAsync<ListResult, FsError> => {
                         if ("notFound" in dirents) return okAsync<ListResult>({ kind: "not_found" });
-                        return collectEntries(absolute, dirents).map((entries): ListResult => ({ kind: "ok", entries }));
+                        const visible = resolved.relative === "" ? dirents.filter((d) => d.name !== HARNESS_PRIVATE_DIR) : dirents;
+                        return collectEntries(absolute, visible).map((entries): ListResult => ({ kind: "ok", entries }));
                     });
                 });
             });
@@ -298,6 +299,11 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/** True for a root-relative path inside the private directory of the harness, which no workspace tool reaches. */
+function isHarnessPrivate(relative: string): boolean {
+    return relative === HARNESS_PRIVATE_DIR || relative.startsWith(`${HARNESS_PRIVATE_DIR}/`);
+}
 
 /** A bare `ok(value)` as a `ResultAsync`, with no `fs` call to wrap. */
 function okAsync<T>(value: T): ResultAsync<T, FsError> {

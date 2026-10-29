@@ -11,6 +11,7 @@ import { createReadFileTool } from "../../tools/workspace/read-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 import { makeFakeSandboxClient, makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
+import { leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "../data-profile-activity.js";
 import { presentAt } from "../../lib/present.js";
 
@@ -41,9 +42,7 @@ const notDrivenMutator: WorkspaceMutator = {
 };
 const resolveDetail = createDetailResolver([
     createExecuteCommandTool({
-        sandboxClient: makeFakeSandboxClient(),
-        sandbox: { sandboxId: "sbx-test", host: "127.0.0.1", port: 8765, backend: "docker" },
-        deadlineMs: () => 0,
+        lease: leaseOverClient(makeFakeSandboxClient(), { sandboxId: "sbx-test", host: "127.0.0.1", port: 8765, backend: "docker" }),
         defaultCwd: "/analysis/runs/data-profile/profile",
     }),
     createReadFileTool(makeFakeWorkspaceFs(), "/analysis/runs/data-profile/profile"),

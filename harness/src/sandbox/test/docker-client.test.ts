@@ -18,7 +18,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
 }
 
 import { createDockerSandboxOps, engineConnectionOptions, type DockerEngine } from "../docker-client.js";
-import { mintSandboxIdentity } from "../identity.js";
+import { keyedSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
 import { presentAt, presentFind } from "../../lib/present.js";
@@ -197,7 +197,18 @@ function stubDocker(): {
     return { docker, created, removed, running, oomKilled, createdNetworks, labelsByName };
 }
 
-const META = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } } as const;
+const OWNER = "sandboxlease:an-1:run-1-0:1";
+const RECORD_TAIL = ".sandbox/exec-records/0123456789abcdef";
+const META = {
+    runId: "run-1",
+    stepId: "step-a",
+    analysisId: "an-1",
+    ownerWorkflowId: OWNER,
+    recordTail: RECORD_TAIL,
+    resources: { cpu: 2, memoryGb: 4 },
+} as const;
+/** The read-write bind of the exec records of the lease, under a workspace root. */
+const recordsBind = (root: string): string => `${root}/${RECORD_TAIL}:/mnt/exec-records:rw`;
 const okFetch = fetchDouble(() => Promise.resolve(new Response("ok", { status: 200 })));
 
 describe("docker createSandbox — confinement", () => {
@@ -209,10 +220,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created);
         if (sandbox === undefined) throw new Error("sandbox is absent");
@@ -240,10 +250,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         // Exactly one container — no sidecar.
         expect(created).toHaveLength(1);
@@ -256,9 +265,8 @@ describe("docker createSandbox — confinement", () => {
         expect(ref.port).toBe(32100);
     });
 
-    test("returns a SandboxRef and registers it; env + binds are wired", async () => {
+    test("returns a SandboxRef; env + binds are wired", async () => {
         const { docker, created } = stubDocker();
-        const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
@@ -267,14 +275,9 @@ describe("docker createSandbox — confinement", () => {
             refStorePath: refsRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: (session, _spec, ref) => {
-                registered.push({ runId: session.runFrame.runId, stepId: session.runFrame.stepId, sandboxId: ref.sandboxId });
-
-                return Promise.resolve();
-            },
         });
 
-        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
 
@@ -282,6 +285,7 @@ describe("docker createSandbox — confinement", () => {
         if (sandbox === undefined) throw new Error("sandbox is absent");
         const env = envMapOf(sandbox);
         expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+        expect(env.EXEC_RECORD_DIR).toBe("/mnt/exec-records");
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
         expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a");
@@ -293,8 +297,8 @@ describe("docker createSandbox — confinement", () => {
             `${libRoot}:/mnt/libs:ro`,
             `${farmDir}:/mnt/libs/current:ro`,
             `${refsRoot}:/mnt/refs:ro`,
+            recordsBind("/sessions/an-1"),
         ]);
-        expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
     });
 
     test("the thread pools default to one thread and the worker counts to the cpu request", async () => {
@@ -305,10 +309,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         // A fork copies the pool size of its parent, thus a pool at the quota
         // runs workers * quota threads. One thread per pool is the safe
@@ -330,13 +333,12 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
         (
             await ops.createSandbox(
                 ...splitSpawn({ ...META, resources: { cpu: 0.5, memoryGb: 1 }, extraEnv: { OMP_NUM_THREADS: "8" } }),
-                mintSandboxIdentity("run-1"),
+                keyedSandboxIdentity("run-1", "lease#1"),
                 {},
             )
         )._unsafeUnwrap();
@@ -355,10 +357,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         // With swap a fork storm thrashes instead of an OOM kill, and
         // sandbox-server in the same cgroup stops to answer /exec.
@@ -378,10 +379,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         // `parallel::detectCores()` greps /proc/cpuinfo and `os.cpu_count()` reads
         // the online list. Both files describe the host, thus a small file over
@@ -392,6 +392,7 @@ describe("docker createSandbox — confinement", () => {
         expect(sandbox.binds).toEqual([
             `${wsRoot}/an-1:/an-1:ro`,
             `${wsRoot}/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw`,
+            recordsBind(`${wsRoot}/an-1`),
             `${cpuDir}/online:/sys/devices/system/cpu/online:ro`,
             `${cpuDir}/cpuinfo:/proc/cpuinfo:ro`,
         ]);
@@ -414,10 +415,9 @@ describe("docker createSandbox — confinement", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const binds = sandboxOfCreated(created).binds;
         expect(binds).toContain(`${join(wsRoot, ".cpu", ref.sandboxId, "online")}:/sys/devices/system/cpu/online:ro`);
@@ -436,10 +436,9 @@ describe("docker createSandbox — confinement", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         // The sandbox still starts: the thread env limits each library, and only
         // the two base calls report the host.
@@ -479,10 +478,9 @@ describe("docker createSandbox — confinement", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
         expect(removed.length).toBeGreaterThan(0);
@@ -498,14 +496,13 @@ describe("docker createSandbox — the label set", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
         return { ops, created };
     }
 
     test("the container carries the six harness labels from the session and the owner workflow id", async () => {
         const { ops, created } = labelledOps();
-        const identity = mintSandboxIdentity("run-1");
+        const identity = keyedSandboxIdentity("run-1", "lease#1");
         (await ops.createSandbox(...splitSpawn(META), identity, {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).labels).toEqual({
@@ -515,14 +512,14 @@ describe("docker createSandbox — the label set", () => {
             "cortex/analysis-id": "an-1",
             "cortex/run-id": "run-1",
             "cortex/step-id": "step-a",
-            "cortex/owner-workflow-id": "run-1-0",
+            "cortex/owner-workflow-id": OWNER,
         });
     });
 
     test("the host labels merge under the harness labels, and each host value reaches the container with no change", async () => {
         const { ops, created } = labelledOps();
         (
-            await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {
+            await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {
                 "cortex/run-id": "other",
                 "cortex/owner-workflow-id": "other",
                 "example.com/tenant": "acme",
@@ -533,7 +530,7 @@ describe("docker createSandbox — the label set", () => {
         const labels = sandboxOf(created)?.labels;
         if (labels === undefined) throw new Error("labels is absent");
         expect(labels["cortex/run-id"]).toBe("run-1");
-        expect(labels["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(labels["cortex/owner-workflow-id"]).toBe(OWNER);
         expect(labels["example.com/tenant"]).toBe("acme");
         expect(labels["example.com/user"]).toBe("user@example.com");
     });
@@ -548,19 +545,23 @@ describe("docker createSandbox — mounts and platform", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created);
         if (sandbox === undefined) throw new Error("sandbox is absent");
         const env = envMapOf(sandbox);
-        expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
+        expect(sandbox.binds).toEqual([
+            "/sessions/an-1:/an-1:ro",
+            "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
+            recordsBind("/sessions/an-1"),
+        ]);
         expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(env.R_LIBS_SITE).toBeUndefined();
         expect(env.NODE_PATH).toBeUndefined();
         expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+        expect(env.EXEC_RECORD_DIR).toBe("/mnt/exec-records");
     });
 
     test("forwards the configured platform into createContainer options", async () => {
@@ -572,10 +573,9 @@ describe("docker createSandbox — mounts and platform", () => {
             platform: "linux/arm64",
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).hasPlatformKey).toBe(true);
         expect(sandboxOfCreated(created).platform).toBe("linux/arm64");
@@ -589,16 +589,15 @@ describe("docker createSandbox — mounts and platform", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).hasPlatformKey).toBe(false);
         expect(sandboxOfCreated(created).platform).toBeUndefined();
     });
 
-    test("readOnly omits the rw step bind and pins WorkingDir to the RO tree", async () => {
+    test("readOnly omits the rw step bind and pins WorkingDir to the RO tree; the records bind stays", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
@@ -607,7 +606,6 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
         (
@@ -616,17 +614,24 @@ describe("docker createSandbox — mounts and platform", () => {
                     runId: "ephemeral",
                     stepId: "ephemeral",
                     analysisId: "an-1",
-                    childWorkflowId: "ephemeral:x",
+                    ownerWorkflowId: "sandboxlease:an-1:ephemeral:1",
+                    recordTail: RECORD_TAIL,
                     resources: { cpu: 2, memoryGb: 4 },
                     readOnly: true,
                 }),
-                mintSandboxIdentity("ephemeral"),
+                keyedSandboxIdentity("ephemeral", "lease#1"),
                 {},
             )
         )._unsafeUnwrap();
 
-        expect(sandboxOfCreated(created).binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`, `${farmDir}:/mnt/libs/current:ro`]);
-        expect(sandboxOfCreated(created).binds.some((b) => b.endsWith(":rw"))).toBe(false);
+        expect(sandboxOfCreated(created).binds).toEqual([
+            "/sessions/an-1:/an-1:ro",
+            `${libRoot}:/mnt/libs:ro`,
+            `${farmDir}:/mnt/libs/current:ro`,
+            recordsBind("/sessions/an-1"),
+        ]);
+        // The records directory is the one read-write bind of a read-only sandbox.
+        expect(sandboxOfCreated(created).binds.filter((b) => b.endsWith(":rw"))).toEqual([recordsBind("/sessions/an-1")]);
         expect(sandboxOfCreated(created).workingDir).toBe("/an-1");
     });
 
@@ -638,13 +643,12 @@ describe("docker createSandbox — mounts and platform", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
         (
             await ops.createSandbox(
-                ...splitSpawn({ ...META, runId: "derive-table", stepId: "derive", writableTail: "report-sessions/thread-1/derived" }),
-                mintSandboxIdentity("derive-table"),
+                ...splitSpawn({ ...META, runId: "tail-run", stepId: "tail", writableTail: "report-sessions/thread-1/derived" }),
+                keyedSandboxIdentity("tail-run", "lease#1"),
                 {},
             )
         )._unsafeUnwrap();
@@ -652,9 +656,13 @@ describe("docker createSandbox — mounts and platform", () => {
         const sandbox = sandboxOf(created);
         if (sandbox === undefined) throw new Error("sandbox is absent");
         // The tree stays read-only, and the one read-write bind covers the declared tail alone.
-        expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/report-sessions/thread-1/derived:/an-1/report-sessions/thread-1/derived:rw"]);
+        expect(sandbox.binds).toEqual([
+            "/sessions/an-1:/an-1:ro",
+            "/sessions/an-1/report-sessions/thread-1/derived:/an-1/report-sessions/thread-1/derived:rw",
+            recordsBind("/sessions/an-1"),
+        ]);
         // No step directory of the coordinates reaches a bind.
-        expect(sandbox.binds.some((b) => b.includes("runs/derive-table"))).toBe(false);
+        expect(sandbox.binds.some((b) => b.includes("runs/tail-run"))).toBe(false);
         expect(sandbox.workingDir).toBe("/an-1/report-sessions/thread-1/derived");
     });
 
@@ -666,16 +674,49 @@ describe("docker createSandbox — mounts and platform", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
         // The mount builders validate each segment, thus a traversal never becomes a bind source. The
         // refusal is a throw at the builder, and the `ResultAsync` carries it as a rejection.
         const attempt = async (): Promise<void> => {
-            (await ops.createSandbox(...splitSpawn({ ...META, writableTail: "../escape" }), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+            (await ops.createSandbox(...splitSpawn({ ...META, writableTail: "../escape" }), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
         };
         await expect(attempt()).rejects.toThrow("Invalid writableTail");
         expect(created).toHaveLength(0);
+    });
+
+    test("refuses a crafted record tail before any container is created", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
+            farmSource,
+            docker,
+            fetch: okFetch,
+        });
+
+        const attempt = async (): Promise<void> => {
+            (await ops.createSandbox(...splitSpawn({ ...META, recordTail: "../escape" }), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+        };
+        await expect(attempt()).rejects.toThrow("Invalid recordTail");
+        expect(created).toHaveLength(0);
+    });
+
+    test("binds the records directory of the lease read-write at /mnt/exec-records, and names it in the env", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
+            farmSource,
+            docker,
+            fetch: okFetch,
+        });
+
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOfCreated(created);
+        expect(sandbox.binds).toContain(`/sessions/an-1/${RECORD_TAIL}:/mnt/exec-records:rw`);
+        expect(envMapOf(sandbox).EXEC_RECORD_DIR).toBe("/mnt/exec-records");
     });
 
     test("skips the /mnt/libs mounts when the farm has no inflexa.lock", async () => {
@@ -689,10 +730,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const env = envMapOf(sandboxOfCreated(created));
         expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
@@ -712,10 +752,9 @@ describe("docker createSandbox — mounts and platform", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const warnings = logger.records.filter((r) => r.level === "warn");
         expect(warnings).toHaveLength(1);
@@ -735,12 +774,11 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
         // The unusable-store path logs; with no logger injected it must take the
         // no-op fallback instead of dereferencing undefined.
-        expect((await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {})).isOk()).toBe(true);
+        expect((await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {})).isOk()).toBe(true);
     });
 
     test("skips the /mnt/libs mounts when the inflexa.lock does not parse", async () => {
@@ -754,10 +792,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
@@ -776,10 +813,9 @@ describe("docker createSandbox — mounts and platform", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -809,10 +845,9 @@ describe("docker createSandbox — mounts and platform", () => {
             packageStore: "required",
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr() && result.error.type === "farm_unusable") {
@@ -833,10 +868,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
@@ -857,10 +891,9 @@ describe("docker createSandbox — mounts and platform", () => {
             },
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(resolverCalls).toBe(0);
         expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
@@ -876,10 +909,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -904,10 +936,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("farm_unavailable");
@@ -931,10 +962,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(resolvedFor).toEqual(["an-1"]);
         expect(sandboxOfCreated(created).binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
@@ -953,10 +983,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created);
         if (sandbox === undefined) throw new Error("sandbox is absent");
@@ -983,10 +1012,9 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created);
         if (sandbox === undefined) throw new Error("sandbox is absent");
@@ -1017,10 +1045,9 @@ describe("docker createSandbox — ref store re-check", () => {
             docker,
             fetch: okFetch,
             logger,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
         // The harness must never materialize the bind source: a real bind would make Docker
@@ -1042,12 +1069,11 @@ describe("docker createSandbox — ref store re-check", () => {
             refStorePath: installedLater,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
         await mkdir(installedLater, { recursive: true });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).binds).toContain(`${installedLater}:/mnt/refs:ro`);
     });
@@ -1068,10 +1094,9 @@ describe("docker createSandbox — ref store re-check", () => {
             refStorePath: link,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(sandboxOfCreated(created).binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
     });
@@ -1086,10 +1111,9 @@ describe("docker teardown / isAlive", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
         (await ops.teardown(ref))._unsafeUnwrap();
         expect(removed).toContain(ref.sandboxId);
     });
@@ -1101,7 +1125,6 @@ describe("docker teardown / isAlive", () => {
             resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
-            registerSandbox: async () => {},
         });
         const result = await ops.teardown({ sandboxId: "sbx-missing", host: "127.0.0.1", port: 9999, backend: "docker" });
         expect(result.isOk()).toBe(true);
@@ -1114,7 +1137,6 @@ describe("docker teardown / isAlive", () => {
             resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
-            registerSandbox: async () => {},
         });
 
         // 404 (never created) → dead.
@@ -1143,7 +1165,6 @@ describe("docker teardown / isAlive", () => {
             resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker,
-            registerSandbox: async () => {},
         });
 
         running.set("oomed", false);
@@ -1181,7 +1202,6 @@ describe("docker teardown / isAlive", () => {
             resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
             farmSource,
             docker: erroringDocker,
-            registerSandbox: async () => {},
         });
 
         const result = await ops.isAlive({ sandboxId: "x", host: "h", port: 1, backend: "docker" });
@@ -1258,7 +1278,7 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
 }
 
 describe("docker createSandbox — recovery reconciliation", () => {
-    const ownedLabels = { [OWNER_WORKFLOW_LABEL]: META.childWorkflowId, role: "sandbox" };
+    const ownedLabels = { [OWNER_WORKFLOW_LABEL]: META.ownerWorkflowId, role: "sandbox" };
 
     const reconcileOps = (docker: DockerEngine) =>
         createDockerSandboxOps({
@@ -1267,7 +1287,6 @@ describe("docker createSandbox — recovery reconciliation", () => {
             farmSource,
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
     // The health-re-verification test advances the mocked clock; restore real time after
@@ -1279,7 +1298,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("adopts a running owned container when the engine answers the duplicate create with 500 (podman's shape)", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
 
-        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
         // Adopted as-is: no create landed and nothing was removed.
@@ -1290,7 +1309,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("adopts a running owned container when the engine answers the duplicate create with 409 (Docker's shape)", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 409, standing: { labels: ownedLabels, running: true } });
 
-        (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(created).toEqual([]);
         expect(removed).toEqual([]);
@@ -1302,7 +1321,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: true },
         });
 
-        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1320,7 +1339,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: false },
         });
 
-        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1338,7 +1357,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("returns the original create error (not the inspect 404) when no container stands under the name", async () => {
         const { docker } = reconcileDocker({ createStatus: 500, standing: null });
 
-        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1351,7 +1370,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("removes and recreates a stopped owned container", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: false } });
 
-        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
         // The stopped prior attempt is removed, then a fresh container is created.
@@ -1376,10 +1395,9 @@ describe("docker createSandbox — recovery reconciliation", () => {
             farmSource,
             docker,
             fetch: unhealthyFetch,
-            registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
+        const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
@@ -1412,10 +1430,9 @@ describe("docker createSandbox — engine connection", () => {
             engineSocketPath: "/nonexistent/should-not-be-dialed.sock",
             docker,
             fetch: okFetch,
-            registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 
         // The create landed through the injected stub — the configured socket was never dialed.
         expect(sandboxOf(created)).toBeDefined();

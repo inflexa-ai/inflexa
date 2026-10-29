@@ -7,14 +7,12 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
 import type { Scope } from "../../../auth/types.js";
-import { createNoopLogger } from "../../../lib/console-logger.js";
 import type { Logger } from "../../../lib/logger.js";
 import { createThreadStore, type ThreadStore } from "../../../memory/thread-store.js";
 import type { DraftDocument } from "../../../report-model/draft.js";
@@ -24,9 +22,7 @@ import type { ReportSnapshot } from "../../../report-model/reference-resolver.js
 import { createCapturingLogger } from "../../../__tests__/setup/logger.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "../../../state/analyses.js";
-import type { DerivationRecord } from "../../../state/report-session-state.js";
 import { createReportVersionStore, type ReportVersionStore } from "../../../state/report-versions.js";
-import { reportSessionDerivedDir } from "../../../workspace/paths.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import type { ToolContext } from "../../define-tool.js";
 import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../../report-authoring/authoring-tools.js";
@@ -77,94 +73,14 @@ function metricDoc(assertValue?: number): DraftDocument {
     };
 }
 
-/** The content hash that every derived table of these tests carries. */
-const DERIVED_HASH = `sha256:${"b".repeat(64)}`;
-
-/** One derivation record of a session. The output path is the workspace-relative path that the record holds. */
-function derivation(outputPath: string): DerivationRecord {
-    return {
-        outputPath,
-        outputHash: DERIVED_HASH,
-        sources: [{ path: "data/x.csv", hash: "sha256:aaa" }],
-        scriptHash: `sha256:${"c".repeat(64)}`,
-        script: "import pandas",
-    };
-}
-
-/** The path of one derived table of a thread, under the derived directory of its session. */
-function derivedPath(threadId: string, name: string): string {
-    return `${reportSessionDerivedDir(threadId)}/${name}`;
-}
-
-/** A snapshot that holds the metric artifact and each named derived table. */
-function snapshotWithDerived(paths: readonly string[]): ReportSnapshot {
-    const artifacts: ReportSnapshot["artifacts"] = { ...metricSnapshot.artifacts };
-    for (const path of paths) {
-        artifacts[path] = { hash: DERIVED_HASH, rows: [{ gene: "TP53", padj: 0.004 }] };
-    }
-    return { artifacts };
-}
-
-/** A valid draft with the metric of `metricDoc` and one table that binds the given derived path. */
-function docWithTable(path: string): DraftDocument {
-    const draft = metricDoc();
-    const section = draft.sections[0];
-    if (section === undefined) throw new Error("the metric draft holds no section");
-    section.blocks.push({ kind: "table", id: "tb1", binding: { kind: "artifact-table", path, hash: DERIVED_HASH } });
-    return draft;
-}
-
-/** A valid draft with the metric of `metricDoc` and one chart that binds the given derived path. */
-function docWithChart(path: string): DraftDocument {
-    const draft = metricDoc();
-    const section = draft.sections[0];
-    if (section === undefined) throw new Error("the metric draft holds no section");
-    section.blocks.push({
-        kind: "chart",
-        id: "ch1",
-        binding: { kind: "artifact-table", path, hash: DERIVED_HASH },
-        chartType: "bar",
-        encoding: { x: "gene", y: "padj" },
-    });
-    return draft;
-}
-
-/** Write one file under a workspace root, and make each directory over it. */
-async function stageFile(root: string, path: string): Promise<string> {
-    const absolute = join(root, path);
-    await mkdir(join(absolute, ".."), { recursive: true });
-    await writeFile(absolute, "gene,padj\nTP53,0.004\n", "utf8");
-    return absolute;
-}
-
-/** A logger that keeps each warn message, thus a test reads the one record of a failed prune. */
-function recordingLogger(): { logger: Logger; warns: string[] } {
-    const warns: string[] = [];
-    const logger: Logger = {
-        ...createNoopLogger(),
-        warn: (msg) => {
-            warns.push(msg);
-        },
-        with: () => logger,
-        named: () => logger,
-    };
-    return { logger, warns };
-}
-
-/** A gateway whose load gives the one thread its state, the seen hash, and the derivations that a test decides. */
-function gatewayFor(
-    threadId: string,
-    document: DraftDocument,
-    snapshot: ReportSnapshot,
-    seen: string | null,
-    derivations: readonly DerivationRecord[] = [],
-): ReportSessionStateGateway {
+/** A gateway whose load gives the one thread its state and the seen hash that a test decides. */
+function gatewayFor(threadId: string, document: DraftDocument, snapshot: ReportSnapshot, seen: string | null): ReportSessionStateGateway {
     const stamped = (): Promise<StampResult> => Promise.resolve({ outcome: "stamped" });
     return {
         load: (t): Promise<SessionStateLoad> =>
             Promise.resolve(
                 t === threadId
-                    ? { outcome: "found", state: { document, snapshot }, analysisId: ANALYSIS_ID, token: null, seenDocumentHash: seen, derivations }
+                    ? { outcome: "found", state: { document, snapshot }, analysisId: ANALYSIS_ID, token: null, seenDocumentHash: seen }
                     : { outcome: "absent" },
             ),
         persist: (): Promise<SessionStatePersist> => Promise.resolve({ outcome: "persisted" }),
@@ -185,7 +101,6 @@ function mutableSession(
     threadId: string,
     document: DraftDocument,
     snapshot: ReportSnapshot,
-    derivations: readonly DerivationRecord[] = [],
 ): { gateway: ReportSessionStateGateway; amend: (next: DraftDocument) => void; look: () => void } {
     let draft = document;
     let seen = computeDraftHash(document);
@@ -194,7 +109,7 @@ function mutableSession(
         load: (t): Promise<SessionStateLoad> =>
             Promise.resolve(
                 t === threadId
-                    ? { outcome: "found", state: { document: draft, snapshot }, analysisId: ANALYSIS_ID, token: null, seenDocumentHash: seen, derivations }
+                    ? { outcome: "found", state: { document: draft, snapshot }, analysisId: ANALYSIS_ID, token: null, seenDocumentHash: seen }
                     : { outcome: "absent" },
             ),
         persist: (): Promise<SessionStatePersist> => Promise.resolve({ outcome: "persisted" }),
@@ -224,8 +139,6 @@ describe("createRecordVersionTool", () => {
     let drop: () => Promise<void>;
     let store: ReportVersionStore;
     let threads: ThreadStore;
-    /** The workspace root of the suite. The prune resolves the derived directory of a session under it. */
-    let suiteRoot: string;
 
     beforeAll(async () => {
         const ctx = await withSchema("record_report_version");
@@ -234,7 +147,6 @@ describe("createRecordVersionTool", () => {
         store = createReportVersionStore({ pool });
         threads = createThreadStore(pool);
         (await upsertAnalysis(pool, ANALYSIS_ID, null))._unsafeUnwrap();
-        suiteRoot = await makeRoot("record-suite-");
     });
 
     afterAll(async () => {
@@ -244,12 +156,11 @@ describe("createRecordVersionTool", () => {
         await drop();
     });
 
-    function makeTool(gateway: ReportSessionStateGateway, root?: string, logger?: Logger, emitSessionEvent?: ProvenanceSeam["emitSessionEvent"]) {
+    function makeTool(gateway: ReportSessionStateGateway, logger?: Logger, emitSessionEvent?: ProvenanceSeam["emitSessionEvent"]) {
         return createRecordVersionTool({
             gateway,
             store,
             threads,
-            resolveWorkspaceRoot: () => Promise.resolve(root ?? suiteRoot),
             makeResolver: () => Promise.resolve(createFixtureResolver()),
             logger,
             provenance: { emitSessionEvent },
@@ -325,7 +236,7 @@ describe("createRecordVersionTool", () => {
             constructions += 1;
             return Promise.resolve(createFixtureResolver());
         };
-        const tool = createRecordVersionTool({ gateway, store, threads, resolveWorkspaceRoot: () => Promise.resolve(suiteRoot), makeResolver });
+        const tool = createRecordVersionTool({ gateway, store, threads, makeResolver });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
 
@@ -345,7 +256,6 @@ describe("createRecordVersionTool", () => {
             gateway,
             store,
             threads,
-            resolveWorkspaceRoot: () => Promise.resolve(suiteRoot),
             makeResolver: () => {
                 return Promise.reject(new Error("the workspace root did not resolve"));
             },
@@ -398,7 +308,6 @@ describe("createRecordVersionTool", () => {
             gateway: gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc)),
             store,
             threads,
-            resolveWorkspaceRoot: () => Promise.resolve(suiteRoot),
             makeResolver: () => Promise.resolve(createFixtureResolver()),
             stepKey: () => "wf-record:8",
         });
@@ -491,147 +400,6 @@ describe("createRecordVersionTool", () => {
         });
     });
 
-    describe("the derivation prune", () => {
-        it("removes the unused output, keeps the used one, and keeps both records", async () => {
-            const threadId = "thread-prune";
-            await anchorThread(threadId, "parent-prune");
-            const root = await makeRoot("record-prune-");
-
-            const used = derivedPath(threadId, "used.csv");
-            const unused = derivedPath(threadId, "unused.csv");
-            const usedFile = await stageFile(root, used);
-            const unusedFile = await stageFile(root, unused);
-
-            const doc = docWithTable(used);
-            const records = [derivation(used), derivation(unused)];
-            const gateway = gatewayFor(threadId, doc, snapshotWithDerived([used, unused]), computeDraftHash(doc), records);
-
-            const result = (await makeTool(gateway, root).execute({}, ctxForThread(threadId)))._unsafeUnwrap();
-
-            expect(result.outcome).toBe("recorded");
-            // A binding names the used path, thus its bytes stay. No binding names the other, thus its file
-            // goes and the disk of the session holds the closure of the recorded report.
-            expect(existsSync(usedFile)).toBe(true);
-            expect(existsSync(unusedFile)).toBe(false);
-            // The records are append-only. The bytes are reproducible from the script and the sources, thus
-            // the prune touches no record.
-            expect(records.map((record) => record.outputPath)).toEqual([used, unused]);
-        });
-
-        it("keeps the output that a chart block binds", async () => {
-            const threadId = "thread-prune-chart";
-            await anchorThread(threadId, "parent-prune-chart");
-            const root = await makeRoot("record-prune-chart-");
-
-            const plotted = derivedPath(threadId, "plotted.csv");
-            const plottedFile = await stageFile(root, plotted);
-
-            const doc = docWithChart(plotted);
-            const gateway = gatewayFor(threadId, doc, snapshotWithDerived([plotted]), computeDraftHash(doc), [derivation(plotted)]);
-
-            const result = (await makeTool(gateway, root).execute({}, ctxForThread(threadId)))._unsafeUnwrap();
-
-            expect(result.outcome).toBe("recorded");
-            // A chart holds no card of its own rows, and it still names its artifact. Thus the whole-table
-            // binding of a chart uses the derivation and the prune removes nothing.
-            expect(existsSync(plottedFile)).toBe(true);
-        });
-
-        it("keeps the version and logs when a removal fails", async () => {
-            const threadId = "thread-prune-fault";
-            await anchorThread(threadId, "parent-prune-fault");
-            const root = await makeRoot("record-prune-fault-");
-
-            const unused = derivedPath(threadId, "unused.csv");
-            // A directory at the output name refuses a plain file removal, thus the removal throws and the
-            // prune reports one failure.
-            await mkdir(join(root, unused, "inner"), { recursive: true });
-
-            const doc = metricDoc();
-            const { logger, warns } = recordingLogger();
-            const gateway = gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc), [derivation(unused)]);
-
-            const result = (await makeTool(gateway, root, logger).execute({}, ctxForThread(threadId)))._unsafeUnwrap();
-
-            // The prune runs after the version lands, thus a failed removal costs the cleanup alone.
-            expect(result.outcome).toBe("recorded");
-            expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).not.toBeNull();
-            expect(warns).toContain("an unused derivation did not go");
-        });
-
-        it("removes no file that sits outside the derived directory of the session", async () => {
-            const threadId = "thread-prune-escape";
-            await anchorThread(threadId, "parent-prune-escape");
-            const parent = await makeRoot("record-prune-escape-");
-            const root = join(parent, "workspace");
-            await mkdir(root, { recursive: true });
-
-            // One record names a run output inside the tree, and one climbs out of the tree. The prune owns
-            // the derived directory alone, thus it removes neither.
-            const inTree = "runs/r1/output/stray.csv";
-            const outOfTree = "../escape.csv";
-            const inTreeFile = await stageFile(root, inTree);
-            const outOfTreeFile = await stageFile(parent, "escape.csv");
-
-            const doc = metricDoc();
-            const { logger, warns } = recordingLogger();
-            const gateway = gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc), [derivation(inTree), derivation(outOfTree)]);
-
-            const result = (await makeTool(gateway, root, logger).execute({}, ctxForThread(threadId)))._unsafeUnwrap();
-
-            expect(result.outcome).toBe("recorded");
-            expect(existsSync(inTreeFile)).toBe(true);
-            expect(existsSync(outOfTreeFile)).toBe(true);
-            expect(warns.filter((line) => line === "an unused derivation sits outside the derived directory of the session").length).toBe(2);
-        });
-
-        it("prunes nothing for a session that derived nothing", async () => {
-            const threadId = "thread-prune-none";
-            await anchorThread(threadId, "parent-prune-none");
-            const root = await makeRoot("record-prune-none-");
-
-            // A file under the derived directory that no record names stays, because the prune reads the
-            // records and never the directory.
-            const stray = await stageFile(root, derivedPath(threadId, "stray.csv"));
-
-            const doc = metricDoc();
-            const gateway = gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc));
-
-            const result = (await makeTool(gateway, root).execute({}, ctxForThread(threadId)))._unsafeUnwrap();
-
-            expect(result.outcome).toBe("recorded");
-            expect(existsSync(stray)).toBe(true);
-        });
-
-        it("removes at the later record the output that an amend unbound", async () => {
-            const threadId = "thread-prune-rerecord";
-            await anchorThread(threadId, "parent-prune-rerecord");
-            const root = await makeRoot("record-prune-rerecord-");
-
-            const bound = derivedPath(threadId, "bound.csv");
-            const boundFile = await stageFile(root, bound);
-            const records = [derivation(bound)];
-
-            const doc = docWithTable(bound);
-            const session = mutableSession(threadId, doc, snapshotWithDerived([bound]), records);
-            const tool = makeTool(session.gateway, root);
-
-            expect((await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap().outcome).toBe("recorded");
-            // The first record binds the output, thus the prune keeps its bytes.
-            expect(existsSync(boundFile)).toBe(true);
-
-            // The amend drops the one block that binds the derived output.
-            session.amend(metricDoc());
-            session.look();
-            const second = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
-
-            expect(second.outcome).toBe("recorded");
-            // The prune runs again on the later record, thus the unbound output goes and the record stays.
-            expect(existsSync(boundFile)).toBe(false);
-            expect(records.map((record) => record.outputPath)).toEqual([bound]);
-        });
-    });
-
     it("serves the preview and the record gate through one resolver factory on the same reference", async () => {
         const parentId = "parent-shared";
         const threadId = "thread-shared";
@@ -656,7 +424,7 @@ describe("createRecordVersionTool", () => {
         const preview = (await previewTool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
         expect(preview.outcome).toBe("rendered");
 
-        const recordTool = createRecordVersionTool({ gateway, store, threads, resolveWorkspaceRoot: () => Promise.resolve(root), makeResolver });
+        const recordTool = createRecordVersionTool({ gateway, store, threads, makeResolver });
         const record = (await recordTool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
         expect(record.outcome).toBe("recorded");
 
@@ -740,7 +508,7 @@ describe("createRecordVersionTool", () => {
             await anchorThread(threadId, "parent-observed");
             const events: SessionProvenanceEvent[] = [];
             const session = mutableSession(threadId, metricDoc(), metricSnapshot);
-            const tool = makeTool(session.gateway, undefined, undefined, (event) => events.push(event));
+            const tool = makeTool(session.gateway, undefined, (event) => events.push(event));
 
             const first = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
             const amended = metricDoc();
@@ -763,7 +531,7 @@ describe("createRecordVersionTool", () => {
         it("emits nothing when the look-before-record rule refuses", async () => {
             const threadId = "thread-observed-never-seen";
             const events: SessionProvenanceEvent[] = [];
-            const tool = makeTool(gatewayFor(threadId, metricDoc(), metricSnapshot, null), undefined, undefined, (event) => events.push(event));
+            const tool = makeTool(gatewayFor(threadId, metricDoc(), metricSnapshot, null), undefined, (event) => events.push(event));
 
             expect((await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap().outcome).toBe("never-seen");
             expect(events).toEqual([]);
@@ -774,7 +542,7 @@ describe("createRecordVersionTool", () => {
             await anchorThread(threadId, "parent-observed-throws");
             const logger = createCapturingLogger();
             const doc = metricDoc();
-            const tool = makeTool(gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc)), undefined, logger, () => {
+            const tool = makeTool(gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc)), logger, () => {
                 throw new Error("the recorder is down");
             });
 

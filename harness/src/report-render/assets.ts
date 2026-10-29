@@ -89,22 +89,6 @@ function isNameChar(char: string): boolean {
     return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || (char >= "0" && char <= "9");
 }
 
-/**
- * The staged name of the script of one derivation: a hash head, in the content-address style of a data
- * asset.
- *
- * The chain line of the appendix links this name, and the stage writes the script text under it. Both read
- * this one function, thus the link and the file cannot disagree. The head is the head that the chain line
- * shows, thus a reader compares the shown hash against the file name by sight.
- *
- * The extension is `.py`, because a session derivation runs its script through the Python interpreter of the
- * container.
- */
-export function derivationScriptName(scriptHash: string): string {
-    const hex = keepAlphanumeric(scriptHash.slice(scriptHash.lastIndexOf(":") + 1));
-    return `d-${hex.slice(0, HASH_CHARS)}.py`;
-}
-
 /** The chart runtime. The page-side bootstrap reads the `echarts` global that this file declares. */
 export const ECHARTS_ASSET: PageAsset = {
     file: `${DEPS_DIR}/echarts.min.js`,

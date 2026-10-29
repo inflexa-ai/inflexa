@@ -68,6 +68,7 @@ const ANALYSIS_KEYED_TABLES = [
     "cortex_applied_memory_edits",
     "cortex_authoring_results",
     "cortex_paused_work",
+    "cortex_sandbox_leases",
 ] as const;
 
 const NOTHING_LEFT: Record<string, number> = {
@@ -87,6 +88,7 @@ const NOTHING_LEFT: Record<string, number> = {
     cortex_applied_memory_edits: 0,
     cortex_authoring_results: 0,
     cortex_paused_work: 0,
+    cortex_sandbox_leases: 0,
 };
 
 /** What `seedAnalysis` writes, so a survival assertion can name the same numbers. */
@@ -107,6 +109,7 @@ const FULLY_SEEDED: Record<string, number> = {
     cortex_applied_memory_edits: 1,
     cortex_authoring_results: 1,
     cortex_paused_work: 1,
+    cortex_sandbox_leases: 1,
 };
 
 const SEEDED_MESSAGES = 4;
@@ -116,7 +119,7 @@ type SeededAnalysis = {
     readonly threadIds: readonly string[];
     /** The `cortex_runs.run_id` values, which are the parent workflow ids directly. */
     readonly runIds: readonly string[];
-    /** Every workflow the analysis is traceable to: both runs, the child step, the data profile. */
+    /** Every workflow the analysis is traceable to: both runs, the child step, the data profile, the lease. */
     readonly workflowIds: readonly string[];
 };
 
@@ -278,12 +281,22 @@ describe("createAnalysisPurge", () => {
         const dataProfileWorkflowId = `dataprofile:${analysisId}:${run}`;
         await ledger.seedWorkflow(dataProfileWorkflowId);
 
+        // The lease of the child step, reachable only through its id namespace: a lease
+        // workflow is no descendant of its consumer.
+        const leaseWorkflowId = `sandboxlease:${analysisId}:${childWorkflowId}:1`;
+        await ledger.seedWorkflow(leaseWorkflowId);
+        await rig.pool.query({
+            text: `INSERT INTO cortex_sandbox_leases (lease_workflow_id, lease_key, generation, analysis_id, owner_workflow_id, work_kind, work_id, requested, state)
+                   VALUES ($1, $2, 1, $3, $2, 'run', $4, '{"cpu":1,"memoryGb":2}'::jsonb, 'granted')`,
+            values: [leaseWorkflowId, childWorkflowId, analysisId, runIds[0]],
+        });
+
         if (opts?.vectorIndex !== false) {
             const store = createVectorStore(rig.pool);
             (await store.createIndex({ indexName: searchIndexName(analysisId), dimension: 3, metric: "cosine" }))._unsafeUnwrap();
         }
 
-        return { analysisId, threadIds, runIds, workflowIds: [...runIds, childWorkflowId, dataProfileWorkflowId] };
+        return { analysisId, threadIds, runIds, workflowIds: [...runIds, childWorkflowId, dataProfileWorkflowId, leaseWorkflowId] };
     }
 
     async function countsByAnalysis(analysisId: string): Promise<Record<string, number>> {
@@ -330,11 +343,11 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(doomed.analysisId)).toBe(true);
-        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
-        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(4));
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(5);
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(5));
 
         const outcome = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
-        expect(outcome).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: true });
+        expect(outcome).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 5, vectorIndexDropped: true });
 
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(NOTHING_LEFT);
         expect(await countMessages(doomed.threadIds)).toBe(0);
@@ -407,8 +420,8 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(bystander.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(bystander.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(bystander.analysisId)).toBe(true);
-        expect(await ledger.countStatusRows(bystander.workflowIds)).toBe(4);
-        expect(await ledger.countDependentRows(bystander.workflowIds)).toEqual(ledger.dependentRows(4));
+        expect(await ledger.countStatusRows(bystander.workflowIds)).toBe(5);
+        expect(await ledger.countDependentRows(bystander.workflowIds)).toEqual(ledger.dependentRows(5));
 
         const { rows: survivors } = await rig.pool.query<{ chunks: number; orphans: number }>({
             text: `SELECT (SELECT COUNT(*)::int FROM cortex_regulatory_chunks WHERE doc_id = $1) AS chunks,
@@ -455,6 +468,25 @@ describe("createAnalysisPurge", () => {
 
         expect(await ledger.countStatusRows([profileWorkflowId])).toBe(0);
         expect(await ledger.countDependentRows([profileWorkflowId])).toEqual(ledger.dependentRows(0));
+    });
+
+    it("reclaims a lease workflow from its id namespace", async () => {
+        // A lease workflow is detached from its consumer, thus no run and no descendant
+        // walk reaches it: the `sandboxlease:{analysisId}:` namespace is the only route.
+        const analysisId = `purge-leased-${run}`;
+        const now = new Date().toISOString();
+        await rig.pool.query({
+            text: `INSERT INTO cortex_analysis_state (analysis_id, status, created_at, updated_at) VALUES ($1, 'active', $2, $2)`,
+            values: [analysisId, now],
+        });
+        const leaseWorkflowId = `sandboxlease:${analysisId}:step-wf-${run}:1`;
+        await ledger.seedWorkflow(leaseWorkflowId);
+
+        const outcome = (await purge.purgeAnalysis(analysisId))._unsafeUnwrap();
+        expect(outcome.workflows).toBe(1);
+
+        expect(await ledger.countStatusRows([leaseWorkflowId])).toBe(0);
+        expect(await ledger.countDependentRows([leaseWorkflowId])).toEqual(ledger.dependentRows(0));
     });
 
     it("leaves no thread row and no message for an analysis whose threads form a hierarchy", async () => {
@@ -651,7 +683,7 @@ describe("createAnalysisPurge", () => {
         expect(await vectorTableExists(doomed.analysisId)).toBe(false);
 
         const outcome = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
-        expect(outcome).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: false });
+        expect(outcome).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 5, vectorIndexDropped: false });
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(NOTHING_LEFT);
     });
 
@@ -673,7 +705,7 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(doomed.analysisId)).toBe(true);
-        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(5);
     });
 
     it("returns an error and destroys nothing for an analysis id outside the purgeable shape", async () => {
@@ -692,10 +724,10 @@ describe("createAnalysisPurge", () => {
         // are all still here, and a retry answers the same way at no cost.
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
-        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
-        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(4));
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(5);
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(5));
         // Untouched by the cancel stage too, which never ran.
-        expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING"]);
+        expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING", "PENDING"]);
     });
 
     it("returns an error and destroys nothing for an analysis id carrying the workflow-namespace delimiter", async () => {
@@ -715,9 +747,9 @@ describe("createAnalysisPurge", () => {
 
         expect(await countsByAnalysis(analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
-        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
-        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(4));
-        expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING"]);
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(5);
+        expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(5));
+        expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING", "PENDING"]);
     });
 
     it("returns an error for an empty analysis id, which derives a table belonging to no analysis", async () => {
@@ -796,12 +828,12 @@ describe("createAnalysisPurge", () => {
         });
         expect(rows.map((row) => row.run_id).sort()).toEqual([...doomed.runIds].sort());
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
-        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(5);
 
         // What the surviving mapping is for: a retry over a working seam still finds
-        // all four workflows and reclaims the whole footprint.
+        // all five workflows and reclaims the whole footprint.
         const retried = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
-        expect(retried).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: true });
+        expect(retried).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 5, vectorIndexDropped: true });
         expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(0);
         expect(await ledger.countDependentRows(doomed.workflowIds)).toEqual(ledger.dependentRows(0));
     });
