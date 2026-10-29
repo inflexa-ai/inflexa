@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 
-import { ToolBlock } from "./tool_block.tsx";
+import { MAX_NESTED_ROWS, ToolBlock } from "./tool_block.tsx";
 
 // Frame coverage for the inline-vs-completion-line status placement. captureCharFrame gives characters
 // only, which is all these assertions need: the invariant is WHICH ROW the status sits on, and (for the
@@ -168,5 +168,41 @@ describe("ToolBlock detail measurement", () => {
         const nameRowIdx = rowOf(frame, "read_file");
         expect(rowOf(frame, wide)).toBeGreaterThan(nameRowIdx);
         expect(frame.split("\n")[nameRowIdx]).not.toContain(wide);
+    });
+});
+
+describe("ToolBlock nested calls", () => {
+    const call = (n: number) => ({ tool: `lookup_${n}`, status: "ok" as const, durationMs: 120 });
+
+    test("each nested call shows under the call, with its outcome", async () => {
+        const nested = [
+            { tool: "get_pubmed_articles", label: "GSE12345", status: "ok" as const, durationMs: 420 },
+            { tool: "search_geo", status: "error" as const },
+        ];
+        const frame = await frameWith(
+            () => <ToolBlock name="run_script" detail="Fetch PubMed details" status="ok" durationMs={1100} nested={nested} />,
+            80,
+            8,
+            "search_geo",
+        );
+        const nameRow = rowOf(frame, "run_script");
+        const pubmedRow = rowOf(frame, "get_pubmed_articles");
+        expect(pubmedRow).toBeGreaterThan(nameRow);
+        expect(frame.split("\n")[pubmedRow]).toContain("GSE12345");
+        expect(frame.split("\n")[pubmedRow]).toContain("420ms");
+        expect(frame.split("\n")[rowOf(frame, "search_geo")]).toContain("error");
+    });
+
+    test("past the row cap, the newest calls show and one row counts the rest", async () => {
+        const nested = Array.from({ length: MAX_NESTED_ROWS + 3 }, (_, i) => call(i + 1));
+        const frame = await frameWith(
+            () => <ToolBlock name="run_script" status="ok" nested={nested} nestedDropped={2} />,
+            80,
+            12,
+            `lookup_${MAX_NESTED_ROWS + 3}`,
+        );
+        expect(frame).toContain("5 earlier calls");
+        expect(frame).not.toContain("lookup_3 ");
+        expect(frame).toContain("lookup_4");
     });
 });
