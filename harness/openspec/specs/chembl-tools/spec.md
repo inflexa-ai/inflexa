@@ -2,30 +2,29 @@
 
 ## Purpose
 
-Defines the five harness bio-lookup tools that wrap the ChEMBL REST API
+Defines the harness bio-lookup tool `chembl`, which wraps the ChEMBL REST API
 (`https://www.ebi.ac.uk/chembl/api/data`) so agents can resolve compounds,
 bioactivities, targets, mechanisms of action, and approved-drug records from a
-single curated cheminformatics source. Each tool is a thin `defineTool`
+single curated cheminformatics source. Its `action` is `compounds`, `drug`,
+`mechanism`, `bioactivity`, or `targets`. The tool is a thin `defineTool`
 wrapper over the shared pure-async client (`harness/src/tools/lib/chembl-client.ts`)
 and the shared `apiFetch` boundary; the client owns mapping and the HTTP error
-channel so the tools stay declarative.
+channel so the tool stays declarative.
 
 The tools follow the harness tool-error contract: an expected ChEMBL outcome —
 a `404` for an identifier that resolves to nothing — is returned as a data
 variant (an empty array), never an error. An unexpected failure (5xx, timeout,
 retry exhaustion, transport error) is thrown out of `execute`; the agent loop
 catches it at the dispatch boundary and turns it into a `tool_result
-{ is_error: true }`, so the tools themselves never fabricate a `success` flag or
+{ is_error: true }`, so the tool itself never fabricates a `success` flag or
 error envelope.
 
-On-wire tool ids are snake_case (`search_compounds`, `get_bioactivity`,
-`search_targets`, `get_mechanism`, `get_drug_info`) — that is the identifier the
-model sees and calls. The exported TypeScript symbols are the camelCase
-`...Tool` constants. The tools are not handed to every sandbox agent: they are
-entries in the central sandbox tool registry (`resolveSandboxTools` in
+The on-wire tool id is `chembl` — that is the identifier the model sees and
+calls. The exported TypeScript symbol is `chemblTool`. The tool is not handed to
+every sandbox agent: it is an entry in the central sandbox tool registry (`resolveSandboxTools` in
 `harness/src/agents/sandbox/shared.ts`) and reach a sandbox agent only when that
-agent's `meta.tools` allowlist names them; they are also wired directly into the
-conversation agent. They are deliberately absent from `BASE_SANDBOX_TOOLS`.
+agent's `meta.tools` allowlist names it; it is also wired directly into the
+conversation agent. It is deliberately absent from `BASE_SANDBOX_TOOLS`.
 
 ## Requirements
 

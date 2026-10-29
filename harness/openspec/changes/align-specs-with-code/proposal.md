@@ -13,6 +13,7 @@ The change also records one fix of the code. The conversation agent wrote under 
 - `literature-search`: the code has one `pubmed` tool with an `action` of `search`, `details`, or `fulltext`. The three tool requirements become the three action requirements, with the inputs, the defaults, and the outputs of the code.
 - `chembl-tools`: the code has one `chembl` tool with an `action` of `compounds`, `drug`, `mechanism`, `bioactivity`, or `targets`. The five tool requirements become the five action requirements, with the `limit` defaults of the code.
 - `pubchem-tools`: the code has one `pubchem` tool with an `action` of `compound`, `crossrefs`, or `assays`. The three tool requirements become the three action requirements. By default, the `assays` action keeps only the active assays, and its `limit` is 25.
+- `step-interpretation-summary`: the requirement that pinned the literature text of `sandbox-standards` goes. It named `search_pubmed` and `get_article_details`, which do not exist. The mask of the summary continuation stays in its own requirement.
 - `harness-workspace-tools`: the session-scoped mutator refuses a write or an edit under `data/inputs/` with the `read_only` data variant and a reason. The landing also refuses a symbolic link that aims into the staged inputs.
 
 ## Capabilities
@@ -27,10 +28,11 @@ None.
 - `run-synthesis-outcome`: "A non-fatal synthesis skip is logged" replaces "Non-fatal synthesis skips are logged". "Validation-rejection telemetry is captured and surfaced" goes.
 - `literature-search`: the requirements of `search_pubmed`, `get_article_details`, and `get_article_full_text` get the names and the text of the three actions of `pubmed`.
 - `chembl-tools`: "ChEMBL tools wrap the ChEMBL REST API", the five tool requirements, and "Error handling, retry, and timeout".
-- `pubchem-tools`: the three tool requirements, and "Cheminformatics agent teaches PubChem as Mode C".
+- `pubchem-tools`: the three tool requirements. "Cheminformatics agent teaches PubChem as Mode C" goes, because the prompt has no Mode C.
+- `step-interpretation-summary`: "Sandbox standards teach literature grounding during execution" goes.
 - `harness-workspace-tools`: "The conversation agent holds the write pair confined to the analysis root".
 
-The Purpose of `literature-search`, `chembl-tools`, and `pubchem-tools` still names the split tools. An OpenSpec delta cannot change the Purpose of a spec that exists, thus this change does not touch it.
+The Purpose of `literature-search`, `chembl-tools`, and `pubchem-tools` still names the split tools. An OpenSpec delta cannot change the Purpose of a spec that exists, thus the commit edits each Purpose directly in `openspec/specs/`.
 
 `workspace-layout` says that each surface treats the whole `data/` tree as read-only. The conversation agent can still write under `data/` outside `data/inputs/`. This change refuses only the staged inputs.
 

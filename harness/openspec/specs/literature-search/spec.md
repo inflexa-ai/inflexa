@@ -2,20 +2,19 @@
 
 ## Purpose
 
-Defines the three PubMed/PMC literature tools — `search_pubmed`,
-`get_article_details`, and `get_article_full_text` — that let agents discover,
-inspect, and read scientific articles via the NCBI E-utilities. Each tool is a
-`defineTool` factory closure (`createSearchPubMedTool`,
-`createGetArticleDetailsTool`, `createGetArticleFullTextTool`) over the shared
-pure-async PubMed client (`harness/src/tools/lib/pubmed-client.ts`); XML parsing
-lives in `harness/src/tools/lib/ncbi-utils.ts`. The factories are assembled by
+Defines the PubMed/PMC literature tool `pubmed`, which lets agents discover,
+inspect, and read scientific articles via the NCBI E-utilities. Its `action` is
+`search`, `details`, or `fulltext`. The tool is a `defineTool` factory closure
+(`createPubMedTool`) over the shared pure-async PubMed client
+(`harness/src/tools/lib/pubmed-client.ts`); XML parsing lives in
+`harness/src/tools/lib/ncbi-utils.ts`. The factory is assembled by
 `createNcbiTools(keys)` in `harness/src/tools/bio/keys.ts`.
 
 There is no `config/env.ts` and no `NCBI_API_KEY` env read inside the harness.
 The optional NCBI key is threaded in as `BioToolKeys.ncbi` from the embedder's
-composition root, captured by each factory as `deps.ncbiApiKey`, and appended as
+composition root, captured by the factory as `deps.ncbiApiKey`, and appended as
 the `api_key` query parameter by `ncbiUrl(apiKey, …)` only when present —
-absent, the tools still function at NCBI's lower anonymous rate limit.
+absent, the tool still functions at NCBI's lower anonymous rate limit.
 
 The tools follow the harness tool-error contract: expected outcomes are returned
 as data variants (an empty `results` array, a `notFound` list of unmatched

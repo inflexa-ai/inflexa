@@ -131,19 +131,10 @@ which carry spaces, for example `"Assay Name"`, `"Activity Outcome"`, and
 - **WHEN** the `assays` action is called with a CID that has not been screened (404)
 - **THEN** it returns `ok({ assays: [] })`
 
+## REMOVED Requirements
+
 ### Requirement: Cheminformatics agent teaches PubChem as Mode C
 
-The cheminformatics agent prompt SHALL present a dedicated **Mode C — PubChem
-Compound Resolution** path on the `pubchem` tool. The path resolves compounds with the `compound` action, bridges to ChEMBL with the `crossrefs` action, and adds activity data with the `assays` action. The prompt SHALL teach when to prefer PubChem (broader
-compound coverage, cross-database bridging) versus ChEMBL (curated bioactivity,
-target–compound relationships).
+**Reason**: The prompt has no Mode C. It names `pubchem` for a compound that ChEMBL does not hold, in its target-based input mode. The requirement pinned prompt wording, and prompt text is not a spec contract.
 
-#### Scenario: Agent uses PubChem for compound resolution
-
-- **WHEN** the agent receives a compound name ChEMBL does not recognize
-- **THEN** it calls the `pubchem` tool with `action: "compound"` to resolve the compound
-
-#### Scenario: Agent bridges PubChem to ChEMBL
-
-- **WHEN** the agent resolves a compound in PubChem and needs curated bioactivity
-- **THEN** it calls the `pubchem` tool with `action: "crossrefs"` to obtain the ChEMBL id, then it queries the `chembl` tool
+**Migration**: None. The `pubchem` tool reaches the cheminformatics agent through its `meta.tools` allowlist.

@@ -7,7 +7,7 @@
 
 ## 2. The specs
 
-- [x] 2.1 Write the deltas of `run-event-stream`, `run-synthesis-outcome`, `literature-search`, `chembl-tools`, `pubchem-tools`, and `harness-workspace-tools` from the code.
+- [x] 2.1 Write the deltas of `run-event-stream`, `run-synthesis-outcome`, `literature-search`, `chembl-tools`, `pubchem-tools`, `step-interpretation-summary`, and `harness-workspace-tools` from the code. Edit the Purpose of `literature-search`, `chembl-tools`, and `pubchem-tools` directly.
 - [x] 2.2 Run `openspec validate --strict` in `harness` for this change and for each open change, and make sure that each passes.
 - [x] 2.3 In a scratch copy of `openspec/`, archive this change before the open changes, and after them. Make sure that the two orders give the same specs.
 

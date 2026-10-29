@@ -2,29 +2,26 @@
 
 ## Purpose
 
-Defines the three harness tools that wrap PubChem's PUG-REST API
-(`https://pubchem.ncbi.nlm.nih.gov/rest/pug`): `search_pubchem_compound`,
-`get_pubchem_cross_refs`, and `get_pubchem_assays`. PubChem covers 110M+
-compounds — far broader than ChEMBL's curated set — so these tools give agents a
+Defines the harness tool `pubchem`, which wraps PubChem's PUG-REST API
+(`https://pubchem.ncbi.nlm.nih.gov/rest/pug`). Its `action` is `compound`,
+`crossrefs`, or `assays`. PubChem covers 110M+
+compounds — far broader than ChEMBL's curated set — so this tool gives agents a
 resolution path for compounds ChEMBL does not recognize and a bridge from a
 PubChem CID to other registries (ChEMBL, DrugBank, KEGG, PDB) and to
 high-throughput screening data.
 
-Each tool is a `defineTool` wrapper over the shared `apiFetch` boundary and the
-PubChem config module (`harness/src/tools/lib/pubchem-config.ts`). They follow
+The tool is a `defineTool` wrapper over the PubChem operations
+(`harness/src/tools/lib/pubchem-ops.ts`), which use the shared `apiFetch`
+boundary and the PubChem config module (`harness/src/tools/lib/pubchem-config.ts`). It follows
 the harness tool-error contract literally: an expected outcome — a `404` for a
 CID/query with no match, no cross-references, or no assay data — is returned as a
 data variant with an empty array; an unexpected failure (5xx, timeout, retry
 exhaustion) is thrown out of `execute` and the agent loop wraps it as a
-`tool_result { is_error: true }`. The tools return bare result objects
-(`ok({ results })`, `ok({ crossRefs })`, `ok({ assays })`) and never a
-self-authored `{ success, error }` envelope.
+`tool_result { is_error: true }`. The tool returns bare result objects and
+never a self-authored `{ success, error }` envelope.
 
-In the cheminformatics agent prompt these tools are taught as a dedicated
-**Mode C — PubChem Compound Resolution** (not an extension of the ChEMBL-centric
-Mode B): resolve a compound in PubChem, optionally bridge to ChEMBL via its
-cross-references, and supplement curated bioactivity with broader PubChem
-screening data.
+The cheminformatics agent uses this tool for a compound that ChEMBL does not
+hold.
 
 ## Requirements
 
