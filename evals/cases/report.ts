@@ -71,7 +71,6 @@ const COMPOSE_TOOLS: Readonly<Record<string, ToolScript>> = {
     write_derived: (input) => ({
         ok: { path: `report-sessions/thread-r/derived/${String(parseUnknownRecord(input)?.name ?? "table.csv")}`, hash: "sha256:d1", columns: [] },
     }),
-    derive_table: { ok: { outcome: "derived", path: "report-sessions/thread-r/derived/table.csv", hash: "sha256:d2", scriptHash: "sha256:s", sources: [] } },
     set_title: LANDED,
     add_block: LANDED,
     change_block: LANDED,
@@ -186,7 +185,7 @@ export const reportCases: readonly EvalCase[] = [
         ),
         maxSteps: 12,
         ...REPORT,
-        grade: all(decides("write_derived", ["derive_table"]), never(["derive_table"])),
+        grade: callsAny(["write_derived"]),
     },
     {
         id: "report-amend-one-block",
@@ -235,7 +234,7 @@ export const reportCases: readonly EvalCase[] = [
         user: seed("Lead with the number of genes that go up and the number that go down.", "The size of the treatment response."),
         maxSteps: 12,
         ...REPORT,
-        grade: all(decides("write_derived", ["derive_table"]), never(["derive_table"])),
+        grade: callsAny(["write_derived"]),
     },
     {
         id: "report-amend-one-block-held-out",

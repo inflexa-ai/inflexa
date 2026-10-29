@@ -137,7 +137,6 @@ function briefing(spec: StepSpec): string {
             acceptance_criteria: [...spec.acceptance],
             depends_on: (spec.upstream ?? []).map((handoff) => handoff.stepId),
             status: "pending",
-            resources: { cpu: 4, memoryGb: 16 },
             agent: spec.agent,
             maxSteps: 200,
         },

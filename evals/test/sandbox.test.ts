@@ -24,6 +24,7 @@ function sandboxCase(grade: EvalCase["grade"]): EvalCase {
 describe("a sandbox trial", () => {
     test("writes into the tree of the trial, answers an exec from the rules, and checks an import against the lock", async () => {
         const model = scriptedModel([
+            callTools(toolCall("c0", "acquire_sandbox", { cpu: 2, memoryGb: 8 })),
             callTools(toolCall("c1", "write_file", { path: "scripts/de.py", content: "import pandas\nimport pydeseq2\n" })),
             callTools(toolCall("c2", "execute_command", { command: ["python", "scripts/de.py"] })),
             callTools(toolCall("c3", "execute_command", { command: ["echo hi"] })),
@@ -35,8 +36,8 @@ describe("a sandbox trial", () => {
         const result = await runTrial(sandboxCase(hasFile("output/echo.txt")), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
 
         expect(result).toMatchObject({ kind: "graded", pass: true, files: ["output/echo.txt", "scripts/de.py"], unscripted: ["samtools view x.bam"] });
-        expect(model.calls).toHaveLength(5);
-        const python = model.calls[2]?.prompt.at(-1);
+        expect(model.calls).toHaveLength(6);
+        const python = model.calls[3]?.prompt.at(-1);
         expect(JSON.stringify(python)).toContain("No module named 'pydeseq2'");
     });
 
@@ -54,6 +55,7 @@ describe("a sandbox trial", () => {
 
     test("answers each command of a shell line, and keeps a separator inside quotes in its word", async () => {
         const model = scriptedModel([
+            callTools(toolCall("c0", "acquire_sandbox", { cpu: 2, memoryGb: 8 })),
             callTools(toolCall("c1", "execute_command", { command: ['ls /analysis-001/data/inputs; python -c "import pandas; print(1)" && echo hi | wc -l'] })),
             reply([text("done")]),
         ]);
@@ -62,7 +64,7 @@ describe("a sandbox trial", () => {
 
         expect(result).toMatchObject({ kind: "graded", pass: true });
         expect("unscripted" in result ? result.unscripted : undefined).toBeUndefined();
-        expect(JSON.stringify(model.calls[1]?.prompt.at(-1))).toContain("f-counts");
+        expect(JSON.stringify(model.calls[2]?.prompt.at(-1))).toContain("f-counts");
     });
 
     test("the working directory of a step is under the run of the trial", () => {

@@ -136,7 +136,7 @@ export function plannerAgent(): AgentDefinition {
         imagePackagesFile: "/eval/image-packages.json",
         toolOutputStore: unusedToolOutputStore,
     };
-    return plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(undefined, createNoopLogger()));
+    return plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(createNoopLogger()));
 }
 
 /** The report agent of a report session. Each tool is scripted, thus no dependency below is reached. */
@@ -199,10 +199,12 @@ function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
 
 /**
  * The tools of a sandbox agent that stay real in a trial. They read and write the tree of the trial, the lock of its
- * farm, and the skills of the repository, and an exec reaches only the scripted client. Each other tool reads a
+ * farm, and the skills of the repository, and a lease and an exec reach only the scripted client. Each other tool reads a
  * database or the network, thus it is scripted.
  */
 const SANDBOX_REAL_TOOLS = new Set([
+    "acquire_sandbox",
+    "release_sandbox",
     "execute_command",
     "write_file",
     "edit_file",

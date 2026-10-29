@@ -52,8 +52,9 @@ and its fields, \`read_outline\`, your map of the draft, and \`read_block\`, one
 in full.
 
 The argument spine gives the order of the sections. When you know the content of a
-section, add the section and its atoms in one call. Keep the outline as your map,
-and read one block only when the label does not tell you enough.
+section, add the section and its atoms in one call. Add an empty section only when
+its content waits for a derivation. Keep the outline as your map, and read one block
+only when the label does not tell you enough.
 
 A metric binds a numeric cell, and never a text one. An enumeration of three or more
 parallel points composes as the typed list of a text block. Make sure of the
@@ -66,17 +67,19 @@ names of the columns. Thus it shows what a chart can plot.
 Reach for a figure image only when no table carries the data. The run phase keeps
 its own plots, and this rule is about the report page alone.
 
-A figure image often shows what a pinned table can carry. Bind the chart when it
-does. The test is the pinned evidence, and never the picture. A pinned ranked-set
-table takes the horizontal bar. This is an obligation, and a busy category set is not
-an exemption, because the horizontal bar exists for that shape.
+A figure image often shows what a derivable table can carry. Derive that table and
+bind the chart when it does. The test is the pinned evidence, and never the picture.
+A pinned ranked-set table takes the horizontal bar. Pinned survival columns take the
+derived step table, and that table binds the \`km\` preset. Both cases are
+obligations, and a busy category set is not an exemption, because the horizontal bar
+exists for that shape.
 
 A figure block is the last choice. It serves a picture that no table can carry:
 a microscopy image, a schematic, or a genome browser track. Each other plot of a
 run is a chart block over the table that made it, and the block schema of \`add_block\`
 names each chart type and each preset that the chart grammar draws. When the pinned
-evidence holds the table of such a plot, bind the chart and leave the run figure out
-of the report.
+evidence holds the table of such a plot, or a derivation can give it, bind the chart
+and leave the run figure out of the report.
 
 A plot of a field takes its preset, and the preset draws the canonical figure of
 that field from one table. A statistic that the figure prints, such as the p-value
@@ -102,6 +105,10 @@ yield count, and the event count. A value that carries a caveat is not a headlin
 An unshrunken effect size that shrinkage collapses is such a value, thus it reads in
 the body under its caveat. When the pinned evidence holds no cohort value, the
 headline leads with what the evidence gives. Tell the user which value is absent.
+
+When the headline scalars sit in no artifact, derive the headline table first, and
+bind each card to that table. A cohort summary is one aggregate over the pinned
+evidence. Report an absent value only when the derivation cannot give it.
 
 A summary holds three cards or more, because one card alone states no comparison.
 When the pinned evidence gives fewer, name the reason to the user.
@@ -147,6 +154,10 @@ shows the ranked rows that carry the point.
 The row bound has two sizes. A tight bound serves an evidence table that carries one
 point. A wide bound serves a browsable table that the reader scans. The data rides an
 asset, thus a wide bound costs the page nothing.
+
+A model table reads best with a composed display column, for example the ratio
+beside its interval in one cell. Such a column is a small derivation, and you offer
+it to the user.
 
 The literature of the report composes as citation blocks, and each one binds to a
 citation of the pinned evidence. \`list_pinned_artifacts\` names the pinned
@@ -208,7 +219,7 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
   - content that stayed invisible: an empty band, a blank card, or a section that
     the picture does not show.
   - a raster figure that stands where a table serves: the pinned evidence holds the
-    data of that picture.
+    data of that picture, or a derivation can give it.
   - a statistic baked inside an image: a number that the picture draws, and that no
     block of the report carries.
   - a caption that promises what the plot does not show.

@@ -13,11 +13,11 @@ import { dirname, join, relative } from "node:path";
 import { okAsync } from "neverthrow";
 
 import { createSandboxAgents, type SandboxAgentDeps } from "@inflexa-ai/harness/agents/sandbox/index.js";
-import { makeFakeSandboxClient } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createPool } from "@inflexa-ai/harness/lib/storage.js";
 import type { ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
 import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
 import { unusedChatProvider } from "@inflexa-ai/harness/providers/__fixtures__/chat-provider.js";
+import { leaseOverClient } from "@inflexa-ai/harness/sandbox/__fixtures__/leases.js";
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness/sandbox/farm.js";
 import { createFileMetadataCell } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
@@ -342,7 +342,6 @@ export async function openSandboxTrial(
     const caseRules = setup.exec ?? [];
     const baseRules = defaultRules(setup.packages);
     const unscripted: string[] = [];
-    const client = makeFakeSandboxClient();
     const answer = (argv: readonly string[], line: string, cwd: string, rules: readonly ExecRule[]): ExecReply | undefined => {
         const view: ExecView = {
             argv,
@@ -435,7 +434,7 @@ export async function openSandboxTrial(
     const deps: SandboxAgentDeps = {
         provider: unusedChatProvider(),
         pool: unconnectedPool(),
-        sandboxClient: { ...client, toolchainSource: "image", exec },
+        toolchainSource: "image",
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: () => Promise.resolve(root) }),
         model: "eval",
         skillsDir: join(REPO, "skills"),
@@ -458,11 +457,11 @@ export async function openSandboxTrial(
         fileMetadata: profiler ? undefined : createFileMetadataCell(),
         toolOutputStore: options.toolOutputStore,
         step: {
-            sandbox: { sandboxId: "sb-eval", host: "127.0.0.1", port: 8765, backend: "docker" },
+            // A step acquires its sandbox with `acquire_sandbox`, and the profiler gets its lease before its loop.
+            lease: leaseOverClient({ exec }, { sandboxId: "sb-eval", host: "127.0.0.1", port: 8765, backend: "docker" }, { held: profiler }),
             workspaceRoot: root,
             analysisId: ANALYSIS_ID,
             allowedWritePrefix: workingDir,
-            deadlineMs: () => Date.now() + 600_000,
         },
     };
     const built = createSandboxAgents(deps)[setup.agentId];

@@ -60,7 +60,6 @@ const refuseThreads: Pick<ThreadStore, "getThread" | "setAutoTitle"> = {
         throw new Error("not used at composition time");
     },
 };
-
 const refuseDerivations: Pick<ReportSessionStateStore, "appendDerivation"> = {
     appendDerivation() {
         throw new Error("not used at composition time");
@@ -76,9 +75,9 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         gateway: refuseGateway,
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         store: refuseStore,
-        derivations: refuseDerivations,
         threads: refuseThreads,
         chrome: {},
+        derivations: refuseDerivations,
         toolOutputStore,
     });
 }
@@ -140,7 +139,7 @@ describe("createReportSessionAgent", () => {
         }
     });
 
-    test("holds the thirteen composition tools", () => {
+    test("holds the composition tools", () => {
         const ids = new Set(buildAgent().tools.map((tool) => tool.id));
         for (const expected of COMPOSITION_SURFACE) {
             expect(ids.has(expected)).toBe(true);
@@ -231,17 +230,18 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("The renderer writes the");
     });
 
-    test("the prompt teaches the chart over a pinned table as an obligation with its artifact test", () => {
-        // The rule stays at the mechanism level, thus the assertion pins the orientation
-        // and never a dataset or a column.
-        expect(reportSessionPrompt).toContain("Bind the chart when it");
+    test("the prompt teaches derive-and-chart as an obligation with its artifact test", () => {
+        // The rule and its two cases stay at the mechanism level, thus the assertion
+        // pins the preset and the orientation and never a dataset or a column.
+        expect(reportSessionPrompt).toContain("Derive that table and");
         // The pinned evidence decides the case, thus a figure image is not the test.
         expect(reportSessionPrompt).toContain("The test is the pinned evidence");
-        expect(reportSessionPrompt).toContain("A pinned ranked-set");
-        expect(reportSessionPrompt).toContain("takes the horizontal bar");
-        // The case is an obligation, and the busy category set is refused in words.
-        expect(reportSessionPrompt).toContain("This is an obligation");
-        expect(reportSessionPrompt).toContain("a busy category set is not");
+        expect(reportSessionPrompt).toContain("A pinned ranked-set table takes the horizontal bar");
+        expect(reportSessionPrompt).toContain("Pinned survival columns take the");
+        expect(reportSessionPrompt).toContain("`km`");
+        // The two cases are obligations, and the busy category set is refused in words.
+        expect(reportSessionPrompt).toContain("Both cases are");
+        expect(reportSessionPrompt).toContain("a busy category set is not an exemption");
     });
 
     test("the prompt makes the figure block the last choice, and names the chart plots through the block schema", () => {
@@ -275,7 +275,13 @@ describe("createReportSessionAgent", () => {
         expect(Array.from(paragraph).some((char) => char >= "0" && char <= "9")).toBe(false);
     });
 
-    test("the prompt teaches the declarations and the row bound", () => {
+    test("the prompt teaches the headline derivation", () => {
+        // The derivation comes first, and the absence branch is the last resort.
+        expect(reportSessionPrompt).toContain("derive the headline table first");
+        expect(reportSessionPrompt).toContain("Report an absent value only when the derivation cannot give it");
+    });
+
+    test("the prompt teaches the declarations, the row bound, and the composed column", () => {
         // The two declaration maps and the bound are stable substrings, thus a
         // binding that ships raw column names cannot pass as guidance.
         expect(reportSessionPrompt).toContain("Declare the column meanings and");
@@ -286,6 +292,8 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("A tight bound serves an evidence table");
         expect(reportSessionPrompt).toContain("A wide bound serves a browsable table");
         expect(reportSessionPrompt).toContain("a wide bound costs the page nothing");
+        // The composed display column is an offer, thus the agent proposes it.
+        expect(reportSessionPrompt).toContain("composed display column");
     });
 
     test("the prompt ends the probes at the block call", () => {
