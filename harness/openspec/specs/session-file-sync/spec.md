@@ -1,4 +1,9 @@
-## ADDED Requirements
+# session-file-sync Specification
+
+## Purpose
+A chat thread and a report session write files outside a run. A host that keeps the files of an analysis in its own store gets each such file, with its bytes and its owner, through one optional notice.
+
+## Requirements
 
 ### Requirement: A file of a session reaches the file sync of the host
 
@@ -24,4 +29,3 @@ The owner MUST be the thread for a script and a derived file of the scratch dire
 - **GIVEN** a bound `syncSessionFile`
 - **WHEN** the conversation agent writes `notes/summary.md`
 - **THEN** the hook receives `notes/summary.md` owned by the analysis, with its bytes
-
