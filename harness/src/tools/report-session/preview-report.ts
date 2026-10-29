@@ -9,7 +9,8 @@
  *
  * The renderer writes no file. It gives the page and the data asset of each table, and this tool stages
  * them beside the figures. The tool asks the optional provenance source for the frozen document of the
- * analysis first, and the renderer turns the opaque text into data assets of the same kind. The
+ * analysis first, and the renderer turns the opaque text into data assets of the same kind. It also writes
+ * the script of each derivation that the document references, from the text of the durable record. The
  * shipped libraries and fonts stage under `assets/deps/`, and each report-side file at the root of
  * `assets/`. The stage is authoritative over that root: what this preview wrote stays, and each other file
  * goes.
@@ -40,6 +41,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { relative as relativePosix } from "node:path/posix";
 import { z } from "zod";
 
 import { reportSessionDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
@@ -50,17 +52,19 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
-import type { ReportWarning } from "../../report-model/block-walk.js";
+import { referencedPaths, walkBlocks, type ReportWarning } from "../../report-model/block-walk.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import type { ReferenceResolver, ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, collectResolutions, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { resolvePageAssetFromInstallation } from "../../report-render/asset-lookup.js";
-import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
+import { ASSETS_DIR, DEPS_DIR, derivationScriptName, PAGE_ASSETS, stagedSource, tableSidecarName } from "../../report-render/assets.js";
+import type { DerivationChain } from "../../report-render/references.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { DataAsset } from "../../report-render/table-data.js";
 import type { RenderProblem } from "../../report-render/types.js";
+import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { bindReadExport, bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
@@ -210,6 +214,53 @@ function collectTableSidecars(blocks: readonly Block[]): TableSidecar[] {
 }
 
 /**
+ * The derivation records that the document references, in the order that they landed.
+ *
+ * A binding names an output path, thus the used set is the intersection of the recorded paths and the paths
+ * of the document. The record of a dropped block stays in the durable state, and this walk leaves it out.
+ * Thus the page states the chain of what it shows, and the stage writes the script of what it states.
+ */
+function referencedDerivations(document: ReportDocument, derivations: readonly DerivationRecord[]): DerivationRecord[] {
+    if (derivations.length === 0) {
+        return [];
+    }
+    const named = referencedPaths(walkBlocks(document.sections).references);
+    return derivations.filter((record) => named.has(record.outputPath));
+}
+
+/**
+ * The chain of one record, with the two relative links that its appendix entry carries.
+ *
+ * The script link names the staged asset through the shared name function, thus the link and the file that
+ * the stage writes cannot disagree. The output link is the path of the derived file against the directory of
+ * the page. The derived table already sits inside the session directory, thus the link needs no copy.
+ */
+function chainOf(record: DerivationRecord, sessionDir: string): DerivationChain {
+    return {
+        outputPath: record.outputPath,
+        sources: record.sources,
+        scriptHash: record.scriptHash,
+        scriptSource: stagedSource(derivationScriptName(record.scriptHash)),
+        outputSource: relativePosix(sessionDir, record.outputPath),
+    };
+}
+
+/**
+ * The script of each referenced derivation, keyed by its staged name.
+ *
+ * Two records of one script text carry one hash, thus they take one name and the map holds one entry. The
+ * name is content-addressed, thus an amended script stages beside no stale copy of itself and the sweep
+ * removes the name that the new page does not reference.
+ */
+function scriptAssets(records: readonly DerivationRecord[]): Map<string, string> {
+    const scripts = new Map<string, string>();
+    for (const record of records) {
+        scripts.set(derivationScriptName(record.scriptHash), record.script);
+    }
+    return scripts;
+}
+
+/**
  * Resolve each reference of the document, and split the resolutions from the unresolved references.
  *
  * The shared `resolveDocumentReferences` walks the tree, resolves each reference under the concurrency
@@ -251,8 +302,8 @@ type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-
  * and it spells no layout of its own. The manifest is never empty, thus both directories exist beside every
  * page.
  *
- * The data assets are the part that this preview produces rather than the disk. They write after the
- * copies and before the page. The sweep then runs, and the root of the directory holds
+ * The data assets and the derivation scripts are the parts that this preview produces rather than the disk.
+ * They write after the copies and before the page. The sweep then runs, and the root of the directory holds
  * the closure of this page alone.
  */
 async function renderToWorkspace(args: {
@@ -263,6 +314,7 @@ async function renderToWorkspace(args: {
     resolutions: readonly BlockResolution[];
     sidecars: readonly TableSidecar[];
     dataAssets: readonly DataAsset[];
+    scripts: ReadonlyMap<string, string>;
     page: string;
     logger: Logger;
 }): Promise<Result<string, PreviewWriteFailure>> {
@@ -337,9 +389,9 @@ async function renderToWorkspace(args: {
             return err({ kind: "fs", error: copied.error });
         }
     }
-    // A data asset is source text that the renderer derived. It sits on disk under no staged name, thus it
-    // writes and it does not copy.
-    const texts: Array<[string, string]> = args.dataAssets.map((asset): [string, string] => [asset.name, asset.bytes]);
+    // A data asset is source text that the renderer derived, and a script is the text of a durable record.
+    // Neither one sits on disk under its staged name, thus both write and neither one copies.
+    const texts: Array<[string, string]> = [...args.dataAssets.map((asset): [string, string] => [asset.name, asset.bytes]), ...args.scripts];
     for (const [name, text] of texts) {
         const assetPath = join(assetsDir, name);
         const wroteAsset = await tryFsWrite("preview.writeFile", () => writeFile(assetPath, text, "utf8"), { path: assetPath });
@@ -361,7 +413,8 @@ async function renderToWorkspace(args: {
  * Remove each report-side file of the assets directory that this preview did not stage.
  *
  * The stage is authoritative: the root of the directory holds the closure of the page and nothing else. A
- * block that goes leaves a stale data asset, a stale sidecar, and a stale figure. Each one costs disk and misleads a reader who opens the directory. The staged set is
+ * block that goes leaves a stale data asset, a stale sidecar, a stale figure, and the script of a derivation
+ * that nothing binds. Each one costs disk and misleads a reader who opens the directory. The staged set is
  * what this run wrote, thus the sweep needs no read of the page.
  *
  * The `deps/` directory holds the shipped libraries and fonts. The manifest governs that set, and the stage
@@ -466,10 +519,10 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             if (opened.isErr()) {
                 return ok({ outcome: "refused", refusal: opened.error });
             }
-            const { threadId, analysisId, state } = opened.value;
+            const { threadId, analysisId, state, derivations } = opened.value;
             const { document: draft, snapshot } = state;
 
-            const finished = finishDraft(draft, snapshot);
+            const finished = finishDraft(draft, snapshot, derivations);
             if (!finished.valid) {
                 return ok({ outcome: "gaps", gaps: finished.gaps, warnings: finished.warnings });
             }
@@ -499,14 +552,19 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "bridge-mismatch", mismatches: bridged.error });
             }
 
-            // The citation records are the bibliography of the pin. They ride the render call and never the
-            // value map, because the appendix reads them beside the cards and the value map is keyed by block.
+            // The citation records are the bibliography of the pin, and the derivation records are the chain
+            // of each derived path. Both ride the render call and never the value map, because the appendix
+            // reads them beside the cards and the value map is keyed by block. The chain carries the two
+            // relative links of its entry, thus the renderer states them and it stages nothing.
+            const used = referencedDerivations(document, derivations);
+            const sessionDir = reportSessionDir(threadId);
             // The provenance is the frozen document of the analysis. It rides the render as opaque text, thus
             // the renderer moves it into a data asset and no part of this path reads a field of it. Absence
             // gives a page with no provenance asset, and each other part of the render is unchanged.
             const provenance = await readProvenance(analysisId);
             const rendered = await renderReportPage(document, bridged.value, {
                 records: snapshot.citationRecords,
+                derivations: used.map((record) => chainOf(record, sessionDir)),
                 provenance,
             });
             if (rendered.isErr()) {
@@ -521,6 +579,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 resolutions,
                 sidecars: collectTableSidecars(document.sections),
                 dataAssets: rendered.value.dataAssets,
+                scripts: scriptAssets(used),
                 page: rendered.value.html,
                 logger,
             });

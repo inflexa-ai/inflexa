@@ -35,7 +35,7 @@ import { stagedSource } from "../assets.js";
 import { CHART_THEMES, chartTheme, DESIGN_CSS } from "../design.js";
 import type { DataAsset } from "../table-data.js";
 import type { CitationRecords } from "../../report-model/reference-resolver.js";
-import type { ReferenceLedger } from "../references.js";
+import type { DerivationChains, ReferenceLedger } from "../references.js";
 import { renderReferences } from "./references-view.js";
 import { scriptJson } from "../script-json.js";
 
@@ -89,10 +89,11 @@ export function renderBand(index: number, inner: string): string {
  *
  * An empty ledger renders no band. The index continues the band alternation of the sections, thus the
  * appendix takes the next surface. The records carry the bibliography of each cited key, and a ledger with
- * no citation reads none of them.
+ * no citation reads none of them. The chains carry the derivation of each derived path, and an entry of
+ * such a path states it.
  */
-export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords): string {
-    const references = renderReferences(ledger, records);
+export function renderReferenceSection(ledger: ReferenceLedger, index: number, records?: CitationRecords, chains?: DerivationChains): string {
+    const references = renderReferences(ledger, records, chains);
     if (references === "") {
         return "";
     }

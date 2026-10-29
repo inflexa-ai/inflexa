@@ -15,7 +15,7 @@ import type { PropsWithChildren } from "hono/jsx";
 
 import { citationRecordOf, type CitationRecords } from "../../report-model/reference-resolver.js";
 import type { ArtifactValueReference, CitationReference, Reference } from "../../contracts/report-reference.js";
-import { citationKeyOf, type ArtifactReference, type ReferenceLedger } from "../references.js";
+import { citationKeyOf, type ArtifactReference, type DerivationChain, type DerivationChains, type ReferenceLedger } from "../references.js";
 import { LineageControl } from "./lineage.js";
 
 /**
@@ -56,13 +56,93 @@ function Detail({ children }: PropsWithChildren) {
     return <span class="report-ref-detail">{children}</span>;
 }
 
+/** The head of a content hash in a monospace span. */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
+function HashCode({ children }: PropsWithChildren) {
+    return <code class="report-ref-hash">{children}</code>;
+}
+
 /**
- * The count of hash characters that a hop of the lineage popover shows.
+ * The count of hash characters that a chain line shows.
  *
- * A content hash is 64 hex characters, and a line that carries some whole ones reads as noise. The head
- * identifies the bytes.
+ * A content hash is 64 hex characters, and a line that carries three whole ones reads as noise. The head
+ * identifies the bytes, and it matches the count that a staged file name carries. Thus a reader compares the
+ * two by sight.
+ *
+ * The appendix line and the hop of the lineage popover both cut a hash to this count. Thus one hash reads
+ * the same in the two places.
  */
 export const CHAIN_HASH_CHARS = 12;
+
+/** The head of one content hash: the hex after the algorithm name, cut to the shown length. */
+function hashHead(hash: string): string {
+    return hash.slice(hash.lastIndexOf(":") + 1).slice(0, CHAIN_HASH_CHARS);
+}
+
+/**
+ * The head of the script hash, as a link to the staged script where the caller staged one.
+ *
+ * The hash head stays the text of the link. Thus the reader reads the same head as before, and the click
+ * opens the script itself. A chain with no staged script shows the head alone.
+ */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
+function ScriptLink({ chain }: { chain: DerivationChain }) {
+    const head = <HashCode>{hashHead(chain.scriptHash)}</HashCode>;
+    return chain.scriptSource === undefined ? (
+        head
+    ) : (
+        <a class="report-ref-link" href={chain.scriptSource}>
+            {head}
+        </a>
+    );
+}
+
+/**
+ * The chain of one derived path: each source with the head of its hash, then the head of the script hash,
+ * then the derived file.
+ *
+ * The line rides under the entry of the path, thus the entry itself keeps the form of a pinned artifact and
+ * the chain adds one quiet line under it. A reader mounts the same sources, runs the same script, and gets
+ * the same bytes.
+ *
+ * The script and the derived file are relative links, thus the whole chain walks with no network and no
+ * host. Each hash head stays beside its link, because the head is what a reader compares against the name of
+ * a staged file.
+ */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
+function ChainLine({ chain }: { chain: DerivationChain }) {
+    return (
+        <div class="report-ref-chain">
+            <RefKind>Derived from</RefKind>{" "}
+            {chain.sources.map((source, index) => (
+                <>
+                    {index > 0 ? " and " : ""}
+                    <PathCode>{source.path}</PathCode> <HashCode>{hashHead(source.hash)}</HashCode>
+                </>
+            ))}{" "}
+            <Detail>by script</Detail> <ScriptLink chain={chain} />
+            {chain.outputSource !== undefined ? (
+                <>
+                    {" "}
+                    <Detail>into</Detail>{" "}
+                    <a class="report-ref-link" href={chain.outputSource}>
+                        <PathCode>{chain.outputSource}</PathCode>
+                    </a>
+                </>
+            ) : null}
+        </div>
+    );
+}
+
+/**
+ * The one path that an artifact reference names, or `undefined` for a kind that names no single file.
+ *
+ * A derivation reference computes over two inputs, thus it names no output file of its own and no chain
+ * belongs to it.
+ */
+function pathOf(reference: ArtifactReference): string | undefined {
+    return reference.kind === "derivation" ? undefined : reference.path;
+}
 
 /**
  * Describe a locator as plain text: the column and the one row selector. The refine of the schema admits
@@ -121,6 +201,24 @@ function ReferenceBody({ reference }: { reference: ArtifactReference }) {
 }
 
 /**
+ * One artifact entry: the body of its kind, and the chain of its path where the records hold one.
+ *
+ * A path that no record names renders the body alone, thus a page over pinned artifacts alone reads exactly
+ * as it did before the chains existed.
+ */
+// oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
+function ArtifactEntry({ reference, chains }: { reference: ArtifactReference; chains: DerivationChains | undefined }) {
+    const path = pathOf(reference);
+    const chain = path === undefined ? undefined : chains?.get(path);
+    return (
+        <>
+            <ReferenceBody reference={reference} />
+            {chain !== undefined ? <ChainLine chain={chain} /> : null}
+        </>
+    );
+}
+
+/**
  * The inner markup of one literature entry: the kind tag, the short citation of the pinned record, the key,
  * and the description of the record on a line of its own. A key that the record map does not hold shows the
  * key alone, because absence is a normal condition.
@@ -149,8 +247,8 @@ function CitationEntry({ reference, records }: { reference: CitationReference; r
 
 /** One appendix entry. The kind of the reference selects the shape, and the two shapes share the ladder. */
 // oxlint-disable-next-line typescript/explicit-function-return-type -- hono's JSX ElementType contract demands FunctionComponentResult, which its own jsxDEV factory return (JSXNode) does not satisfy; no writable type names what the body returns, so the inferred JSXNode return stays.
-function ReferenceEntry({ reference, records }: { reference: Reference; records: CitationRecords | undefined }) {
-    return reference.kind === "citation" ? <CitationEntry reference={reference} records={records} /> : <ReferenceBody reference={reference} />;
+function ReferenceEntry({ reference, records, chains }: { reference: Reference; records: CitationRecords | undefined; chains: DerivationChains | undefined }) {
+    return reference.kind === "citation" ? <CitationEntry reference={reference} records={records} /> : <ArtifactEntry reference={reference} chains={chains} />;
 }
 
 /**
@@ -161,8 +259,10 @@ function ReferenceEntry({ reference, records }: { reference: Reference; records:
  * that sent the reader to it. An empty ledger gives an empty string, thus the page shows no empty list.
  *
  * The records carry the bibliography of each cited key, and a ledger with no citation reads none of them.
+ * The chains are the derivations of the session, keyed by the output path. An entry whose path the chains
+ * hold carries the chain line, and each other entry carries none.
  */
-export function renderReferences(ledger: ReferenceLedger, records?: CitationRecords): string {
+export function renderReferences(ledger: ReferenceLedger, records?: CitationRecords, chains?: DerivationChains): string {
     const entries = ledger.entries();
     if (entries.length === 0) {
         return "";
@@ -172,7 +272,7 @@ export function renderReferences(ledger: ReferenceLedger, records?: CitationReco
         <ol class="report-references">
             {entries.map((reference, index) => (
                 <li id={`ref-${index + 1}`} class="report-ref-item">
-                    <ReferenceEntry reference={reference} records={records} />
+                    <ReferenceEntry reference={reference} records={records} chains={chains} />
                 </li>
             ))}
         </ol>,

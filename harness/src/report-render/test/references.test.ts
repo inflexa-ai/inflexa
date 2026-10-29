@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { Reference } from "../../contracts/report-reference.js";
 import { renderReferences } from "../views/references-view.js";
-import { ReferenceLedger } from "../references.js";
+import { derivationChains, ReferenceLedger, type DerivationChain } from "../references.js";
 
 describe("ReferenceLedger.mark", () => {
     it("numbers references by first appearance", () => {
@@ -120,6 +120,83 @@ describe("renderReferences", () => {
 
         expect(list).toContain(`<span class="report-ref-kind">Artifact table</span>`);
         expect(list).toContain(`<span class="report-ref-kind">Citation</span>`);
+    });
+});
+
+describe("the chain line of a derived path", () => {
+    const DERIVED = "report-sessions/t1/derived/merged.csv";
+
+    /** One chain over two sources and one script. Each hash carries a long hex tail. */
+    const chain: DerivationChain = {
+        outputPath: DERIVED,
+        sources: [
+            { path: "runs/r1/de.csv", hash: `sha256:${"a".repeat(64)}` },
+            { path: "runs/r1/counts.csv", hash: `sha256:${"b".repeat(64)}` },
+        ],
+        scriptHash: `sha256:${"c".repeat(64)}`,
+    };
+
+    /** A ledger that holds one whole-table binding over the derived path. */
+    function ledgerOverDerived(): ReferenceLedger {
+        const ledger = new ReferenceLedger();
+        ledger.mark({ kind: "artifact-table", path: DERIVED, hash: `sha256:${"d".repeat(64)}` });
+        return ledger;
+    }
+
+    it("names each source with its hash head, and the script hash head", () => {
+        const list = renderReferences(ledgerOverDerived(), undefined, derivationChains([chain]));
+
+        expect(list).toContain("runs/r1/de.csv");
+        expect(list).toContain("runs/r1/counts.csv");
+        expect(list).toContain(`<code class="report-ref-hash">${"a".repeat(12)}</code>`);
+        expect(list).toContain(`<code class="report-ref-hash">${"b".repeat(12)}</code>`);
+        expect(list).toContain(`<code class="report-ref-hash">${"c".repeat(12)}</code>`);
+        // The head identifies the bytes. A whole hash reads as noise, thus no 64-character run reaches the
+        // page and the algorithm name stays off the line.
+        expect(list).not.toContain("a".repeat(13));
+        expect(list).not.toContain(`sha256:${"a".repeat(12)}`);
+    });
+
+    it("keeps the artifact-table entry form over the chain line", () => {
+        const list = renderReferences(ledgerOverDerived(), undefined, derivationChains([chain]));
+
+        // A whole-table binding of a derived path reads as an artifact table, and the chain adds one line
+        // under it.
+        expect(list).toContain("Artifact table");
+        expect(list).toContain(DERIVED);
+        expect(list).toContain(`<div class="report-ref-chain">`);
+    });
+
+    it("links the staged script and the derived file, and keeps the hash head beside each link", () => {
+        const linked: DerivationChain = { ...chain, scriptSource: `assets/d-${"c".repeat(12)}.py`, outputSource: "derived/merged.csv" };
+
+        const list = renderReferences(ledgerOverDerived(), undefined, derivationChains([linked]));
+
+        // The two links are relative, thus the chain walks with no network. The head of the script hash
+        // stays the text of its link, thus a reader compares it against the name of the staged file.
+        expect(list).toContain(`<a class="report-ref-link" href="assets/d-${"c".repeat(12)}.py">`);
+        expect(list).toContain(`<code class="report-ref-hash">${"c".repeat(12)}</code></a>`);
+        expect(list).toContain(`<a class="report-ref-link" href="derived/merged.csv">`);
+        expect(list).toContain(`<code class="report-ref-path">derived/merged.csv</code>`);
+    });
+
+    it("keeps the hash heads alone for a chain that carries no link", () => {
+        const list = renderReferences(ledgerOverDerived(), undefined, derivationChains([chain]));
+
+        // A caller that stages no script states no link, thus the line reads its hashes and it holds no
+        // anchor that resolves to nothing.
+        expect(list).toContain(`<code class="report-ref-hash">${"c".repeat(12)}</code>`);
+        expect(list).not.toContain("report-ref-link");
+    });
+
+    it("renders no chain line for a path that the records do not hold", () => {
+        const pinned = new ReferenceLedger();
+        pinned.mark({ kind: "artifact-table", path: "runs/r1/de.csv", hash: `sha256:${"a".repeat(64)}` });
+
+        // The chains hold one derived path, and this entry names another. Thus the entry reads exactly as
+        // it does with no chains at all.
+        expect(renderReferences(pinned, undefined, derivationChains([chain]))).toBe(renderReferences(pinned));
+        expect(renderReferences(pinned)).not.toContain("report-ref-chain");
     });
 });
 

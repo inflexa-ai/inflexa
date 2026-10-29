@@ -679,6 +679,32 @@ describe("createSessionEmit", () => {
         expect(event.call!.invocationId).toBe("call-2");
     });
 
+    test("a derivation carries its chain, restated pair by pair", () => {
+        const sources = [
+            { path: "data/inputs/f1/counts.csv", hash: "h1" },
+            { path: "runs/r1/s1/output/de.csv", hash: "h2" },
+        ];
+        emitSession({
+            type: "run-derivation",
+            analysisId: sessionAnalysisId,
+            threadId: reportThreadId,
+            outputPath: "report-sessions/t/tables/top.csv",
+            outputHash: "h-out",
+            scriptHash: "h-script",
+            sources,
+        });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.report_derivation_run") throw new Error("expected prov.report_derivation_run");
+        expect(event.derivation.outputPath).toBe("report-sessions/t/tables/top.csv");
+        expect(event.derivation.outputHash).toBe("h-out");
+        expect(event.derivation.scriptHash).toBe("h-script");
+        expect(event.derivation.sources).toEqual(sources);
+        // Nothing that the tool still holds reaches a subscriber.
+        expect(event.derivation.sources).not.toBe(sources);
+        expect(event.derivation.sources[0]).not.toBe(sources[0]);
+    });
+
     test("every act stamps the system actor", () => {
         emitSession({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
 

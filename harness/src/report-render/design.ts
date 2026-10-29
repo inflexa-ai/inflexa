@@ -1013,6 +1013,27 @@ a.report-citation-source:hover {
 .report-ref-detail {
   color: var(--color-text-muted);
 }
+/* The chain of a derived path reads under its entry, thus the entry line keeps the form of a pinned
+   artifact and the sources sit on a line of their own. */
+.report-ref-chain {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+/* A link of the chain: the staged script, and the derived file. The link carries the code span of its
+   subject, thus the underline arrives on hover alone and the line stays quiet. */
+.report-ref-link {
+  text-decoration: none;
+}
+.report-ref-link:hover {
+  text-decoration: underline;
+}
+/* The head of a content hash. It reads smaller than a path, because it identifies bytes and a reader
+   compares it against a staged file name instead of reading it. */
+.report-ref-hash {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
 .report-cite-source {
   color: var(--color-text-secondary);
 }

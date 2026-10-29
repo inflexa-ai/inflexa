@@ -52,6 +52,7 @@ import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js"
 import { AuthoringBlockSchema } from "../../report-model/authoring-grammar.js";
 import type { DraftBlock, DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
+import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
 import { durableStepKey } from "../workspace/edit-file.js";
 
@@ -258,12 +259,17 @@ export type SessionStateToken = DraftDocument | null;
 
 /**
  * The outcome of a gateway load. `found` carries the state, the analysis that owns the thread, the
- * concurrency token, and the seen-document hash of the look-before-record rule. `absent` and `wrong-type`
- * are permanent conditions, and `failed` is a transient fault that names its cause.
+ * concurrency token, the seen-document hash of the look-before-record rule, and the derivations of the
+ * session. `absent` and `wrong-type` are permanent conditions, and `failed` is a transient fault that names
+ * its cause.
  *
  * `seenDocumentHash` is the hash that the last eyes capture saw, or `null` before the first look. The record
  * tool compares it against the hash of the current draft, thus a never-seen page and a stale look each
  * refuse.
+ *
+ * `derivations` is the ledger of the session, in the order that the records landed. The snapshot already
+ * carries each derived path as a member, thus a tool that binds reads the snapshot. The records themselves
+ * carry the chain, and the finish, the appendix, and the prune each read them.
  */
 export type SessionStateLoad =
     | {
@@ -272,6 +278,7 @@ export type SessionStateLoad =
           analysisId: string;
           token: SessionStateToken;
           seenDocumentHash: string | null;
+          derivations: readonly DerivationRecord[];
           /** The stored result of the call that the load names, when an earlier run of that call landed. */
           landed?: unknown;
       }
@@ -338,7 +345,7 @@ export type ReportSessionStateGateway = {
 
 /**
  * The thread of a call, its analysis, the loaded state, the concurrency token that the persist compares
- * against, and the seen-document hash of the look-before-record rule.
+ * against, the seen-document hash of the look-before-record rule, and the derivations of the session.
  */
 export type OpenedThread = {
     readonly threadId: string;
@@ -347,6 +354,8 @@ export type OpenedThread = {
     readonly token: SessionStateToken;
     /** The hash that the last eyes capture saw, or `null` before the first look. */
     readonly seenDocumentHash: string | null;
+    /** The derivations of the session, in the order that the records landed. */
+    readonly derivations: readonly DerivationRecord[];
     /** The stored result of an earlier run of the call that the open names. */
     readonly landed?: unknown;
 };
@@ -393,6 +402,7 @@ export async function openReportThread(gateway: ReportSessionStateGateway, scope
         state: loaded.state,
         token: loaded.token,
         seenDocumentHash: loaded.seenDocumentHash,
+        derivations: loaded.derivations,
         landed: loaded.landed,
     });
 }
@@ -997,7 +1007,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             if (opened.isErr()) {
                 return ok({ refused: opened.error });
             }
-            const finished = finishDraft(opened.value.state.document, opened.value.state.snapshot);
+            const finished = finishDraft(opened.value.state.document, opened.value.state.snapshot, opened.value.derivations);
             return ok(finished.valid ? { valid: true, warnings: finished.warnings } : finished);
         },
     });
