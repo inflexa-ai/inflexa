@@ -147,6 +147,7 @@ function parentDeps(current: RunCase): ExecuteAnalysisDeps {
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
         sandboxStepCallable: sandboxStep,
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
+        workspaceFs: makeFakeWorkspaceFs(),
         workingMemory: createWorkingMemory(rig.pool),
         synthesisModel: "test-model",
         synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),

@@ -23,7 +23,8 @@ import type { WorkingMemoryStore } from "@inflexa-ai/harness/memory/working-memo
 import type { ChatProvider } from "@inflexa-ai/harness/providers/types.js";
 import type { CortexRunRow } from "@inflexa-ai/harness/state/schema.js";
 import { errorMessageOf } from "@inflexa-ai/harness/lib/thrown.js";
-import { withSandboxScripts, withScriptedTools, type StaticAgentKind } from "./agent.js";
+import { synthesisAgent, withSandboxScripts, withScriptedTools, type StaticAgentKind } from "./agent.js";
+import { synthesizerSeedOf } from "@inflexa-ai/harness/execution/run-synthesis.js";
 import { openSandboxTrial, type SandboxTrial } from "./sandbox.js";
 import { trialOf, type EvalCase, type Grade, type RunningRun, type TrialAsk, type TrialCall } from "./case.js";
 
@@ -76,6 +77,17 @@ export function promptDigest(agents: Readonly<Record<StaticAgentKind, AgentDefin
     return hash.digest("hex").slice(0, 16);
 }
 
+function synthesisOf(evalCase: EvalCase): NonNullable<EvalCase["synthesis"]> {
+    if (evalCase.synthesis === undefined) throw new Error(`the synthesis case ${evalCase.id} has no summaries`);
+    return evalCase.synthesis;
+}
+
+/** The first message of a synthesis case, as the run gives it. */
+function synthesisSeedOf(evalCase: EvalCase): string {
+    const { narrative, summaries } = synthesisOf(evalCase);
+    return synthesizerSeedOf(narrative, summaries);
+}
+
 function replyText(messages: readonly LoopMessage[]): string {
     const parts: string[] = [];
     for (const message of messages) {
@@ -119,6 +131,7 @@ function workingMemoryOf(render: string): WorkingMemoryStore {
 export async function turnInputOf(evalCase: EvalCase, history: readonly LoopMessage[]): Promise<LoopMessage[]> {
     const kind = evalCase.agent ?? "conversation";
     if (kind === "planner" || kind === "analogy" || kind === "sandbox") return [{ role: "user", content: evalCase.user }];
+    if (kind === "synthesis") return [{ role: "user", content: synthesisSeedOf(evalCase) }];
     const state = evalCase.state ?? {};
     const runs = (state.runningRuns ?? []).map(runningRow);
     const records = await contextRecordsFor(
@@ -153,6 +166,7 @@ async function trialAgentOf(
     store: ToolOutputStore,
 ): Promise<{ readonly agent: AgentDefinition; readonly sandbox?: SandboxTrial }> {
     const kind = evalCase.agent ?? "conversation";
+    if (kind === "synthesis") return { agent: withScriptedTools(synthesisAgent(synthesisOf(evalCase).summaries), evalCase.tools ?? {}) };
     if (kind !== "sandbox") return { agent: withScriptedTools(agents[kind], evalCase.tools ?? {}) };
     if (evalCase.sandbox === undefined) throw new Error(`the sandbox case ${evalCase.id} has no sandbox setup`);
     const sandbox = await openSandboxTrial(evalCase.sandbox, { toolOutputStore: store, label: evalCase.id });

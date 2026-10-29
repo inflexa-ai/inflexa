@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { createNoopLogger } from "../../../lib/console-logger.js";
+import { makeFakeChatProvider, makeFakeWorkspaceFs } from "../../../agents/sandbox/__fixtures__/deps.js";
 import { inProcessSubAgent } from "../../../loop/sub-agent.js";
 import { PLAN_ID_RE } from "../../../contracts/schemas/chat-parts.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { okAsync } from "neverthrow";
 import { z } from "zod";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
-import type { Pool } from "pg";
+import { Pool } from "pg";
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +25,7 @@ import { loadPlan, type DataProfileResult } from "../../../state/index.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
 import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
-import { createGeneratePlanTool, type GeneratePlanDeps } from "../generate-plan.js";
+import { buildPlannerSearchTools, createGeneratePlanTool, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "../generate-plan.js";
 import { presentAt, presentFirst, presentGet } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
 
@@ -260,7 +262,16 @@ describe("generatePlan loop-driving tool", () => {
 
     /** Rebuild the tool per test — the model and the optional deps are what vary. */
     function toolFor(provider: ChatProvider, extra: Partial<GeneratePlanDeps> = {}): Tool {
-        return createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, ...extra }, inProcessSubAgent);
+        return createGeneratePlanTool(
+            {
+                conversation: { provider, model: "claude-test" },
+                pool,
+                bioKeys: TEST_BIO_KEYS,
+                workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
+                ...extra,
+            },
+            inProcessSubAgent,
+        );
     }
 
     // ── Outcome shaping ──────────────────────────────────────────────
@@ -288,7 +299,7 @@ describe("generatePlan loop-driving tool", () => {
             return parsed.success ? [parsed.data] : [];
         });
         expect(presentAt(iteration, 0).source).toMatchObject({ agentId: "planner", callPath: ["conversation-agent", "planner"] });
-        expect(toolNamesOf(presentAt(model.calls, 0)).slice(-3)).toEqual(TERMINAL_TOOLS);
+        expect(toolNamesOf(presentAt(model.calls, 0)).slice(-4)).toEqual([...TERMINAL_TOOLS, "run_script"]);
     });
 
     // The planner has no sandbox, so reference discovery is only attachable because it
@@ -318,8 +329,10 @@ describe("generatePlan loop-driving tool", () => {
         await awaitOk(toolFor(model.provider, { toolOutputStore }).execute(INPUT, toolContext()));
 
         const ids = toolNamesOf(presentAt(model.calls, 0));
-        expect(ids.slice(-4)).toEqual(["read_tool_output", ...TERMINAL_TOOLS]);
-        expect(ids.indexOf("list_available_packages")).toBe(ids.indexOf("read_tool_output") - 1);
+        expect(ids.slice(-5)).toEqual(["read_tool_output", ...TERMINAL_TOOLS, "run_script"]);
+        // The read surface of the workspace follows the search tools, and its last tool precedes read_tool_output.
+        expect(ids.indexOf("list_available_packages")).toBe(ids.indexOf("read_file") - 1);
+        expect(ids.indexOf("inspect_data_profile")).toBe(ids.indexOf("read_tool_output") - 1);
     });
 
     it("declares the knowledge tools with the search tools, before the terminal tools", async () => {
@@ -329,7 +342,7 @@ describe("generatePlan loop-driving tool", () => {
         await awaitOk(toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext()));
 
         const ids = toolNamesOf(presentAt(model.calls, 0));
-        expect(ids.slice(-3)).toEqual(TERMINAL_TOOLS);
+        expect(ids.slice(-4)).toEqual([...TERMINAL_TOOLS, "run_script"]);
         expect(ids.indexOf("knowledge_recommend")).toBeGreaterThan(-1);
         expect(ids.indexOf("knowledge_check")).toBe(ids.indexOf("knowledge_recommend") + 1);
         expect(ids.indexOf("knowledge_check")).toBeLessThan(ids.indexOf("submit_plan"));
@@ -1213,5 +1226,23 @@ describe("generatePlan loop-driving tool", () => {
             // reason) in any sink that filters by name.
             expect(record.fields).not.toHaveProperty("reason");
         });
+    });
+});
+
+describe("plannerAgentOf", () => {
+    it("gives the planner the read-only workspace, and the script reads of a PDF and a table", () => {
+        const pool = new Pool();
+        const deps: GeneratePlanDeps = {
+            conversation: { provider: makeFakeChatProvider(), model: "claude-test" },
+            pool,
+            bioKeys: TEST_BIO_KEYS,
+            workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
+        };
+        const agent = plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(createNoopLogger()));
+
+        const tools = agent.tools.map((tool) => tool.id);
+        for (const id of ["read_file", "list_files", "file_stat", "grep", "inspect_data_profile"]) expect(tools).toContain(id);
+        expect(tools).not.toContain("write_file");
+        expect((agent.scriptTools ?? []).map((tool) => tool.id)).toEqual(["read_table", "read_pdf"]);
     });
 });

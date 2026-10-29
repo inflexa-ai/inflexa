@@ -79,7 +79,7 @@ export type CoreWorkflowDeps = {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "runAuthorizer" | "leases">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<
         ExecuteAnalysisDeps,
-        "usageRecorder" | "synthesisLookups" | "toolOutputStore" | "workingMemory"
+        "usageRecorder" | "synthesisLookups" | "toolOutputStore" | "workingMemory" | "workspaceFs"
     > & {
         /** API keys for the bio/chem tools of the lookups of the synthesis. */
         readonly bioKeys: BioToolKeys;
@@ -401,6 +401,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         ...executeAnalysisDeps,
         synthesisLookups,
         scriptRuntime: conversation.scriptRuntime,
+        workspaceFs: conversation.workspaceFs,
         usageRecorder,
         toolOutputStore,
         workingMemory: createWorkingMemory(conversation.pool),

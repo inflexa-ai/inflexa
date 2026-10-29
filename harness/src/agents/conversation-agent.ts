@@ -359,6 +359,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
                 usageRecorder,
                 toolOutputStore,
                 bioKeys,
+                workspace: { workspaceFs, pool, embedding, resolveWorkspaceRoot: deps.resolveWorkspaceRoot },
+                scriptRuntime: deps.scriptRuntime,
                 knowledge: deps.knowledge,
                 refStorePath,
                 farmLockFile,

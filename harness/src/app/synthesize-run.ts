@@ -15,6 +15,7 @@
  * a `skipped` phase.
  */
 
+import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
@@ -57,6 +58,8 @@ export type SynthesizeRunDeps = {
     readonly embedding: EmbeddingProvider;
     /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    /** The read path of the workspace. The synthesizer reads the files of the run through it. */
+    readonly workspaceFs: WorkspaceFilesystem;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
     /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). */
@@ -133,6 +136,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             scriptRuntime: deps.scriptRuntime,
             usageRecorder,
             toolOutputStore: deps.toolOutputStore,
+            workspace: { workspaceFs: deps.workspaceFs, pool, embedding, resolveWorkspaceRoot },
             summaries,
             planNarrative,
             runId,

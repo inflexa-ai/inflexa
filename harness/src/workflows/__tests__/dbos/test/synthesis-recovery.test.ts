@@ -7,6 +7,7 @@
  * the index step again.
  */
 
+import { makeFakeWorkspaceFs } from "../../../../agents/sandbox/__fixtures__/deps.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -123,6 +124,7 @@ function deps(): ExecuteAnalysisDeps {
         embedding,
         sandboxStepCallable: () => Promise.reject(new Error("the synthesis starts no sandbox step")),
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join(base, id)),
+        workspaceFs: makeFakeWorkspaceFs(),
         workingMemory: createWorkingMemory(rig.pool),
         synthesisModel: "test-model",
         synthesisLookups: [pubmed],

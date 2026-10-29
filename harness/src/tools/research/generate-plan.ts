@@ -23,6 +23,10 @@
  * and persists an accepted plan under an id that a rerun of the call gives again.
  */
 
+import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { createReadScriptTools } from "../script/file-tools.js";
+import type { ScriptRuntime } from "../script/run-script.js";
+import { createReadSurfaceTools, type ReadSurfaceDeps } from "../workspace/read-surface.js";
 import { errorMessageOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { createHash } from "node:crypto";
@@ -738,7 +742,9 @@ export function plannerAgentOf(deps: GeneratePlanDeps, searchTools: readonly Too
         model: deps.conversation.model,
         // The search tools come first, and the terminal tools come last. The order is the order of the prompt, and it
         // is stable across every invocation, thus the cached request prefix holds.
-        tools: [...searchTools, ...readTools, ...terminal],
+        tools: [...searchTools, ...createReadSurfaceTools(deps.workspace), ...readTools, ...terminal],
+        scriptTools: createReadScriptTools(deps.workspace),
+        scriptRuntime: deps.scriptRuntime,
         maxIterations: PLANNER_MAX_ITERATIONS,
     };
 }
@@ -1063,6 +1069,10 @@ export type GeneratePlanDeps = EnvironmentStorePaths & {
     readonly toolOutputStore?: ToolOutputStore;
     /** API keys for the search tools the planner uses to ground a plan. */
     readonly bioKeys: BioToolKeys;
+    /** The read-only workspace: the file tools, the search, the data profile, and the script reads of a PDF and a table. */
+    readonly workspace: ReadSurfaceDeps & { readonly resolveWorkspaceRoot: ResolveWorkspaceRoot };
+    /** Where the VM of `run_script` comes from, for the script reads. See `ScriptRuntime`. */
+    readonly scriptRuntime?: ScriptRuntime;
     /**
      * The knowledge service client. Bound, the planner gains `knowledge_recommend`
      * and `knowledge_check`. Absent, no knowledge tool attaches and no

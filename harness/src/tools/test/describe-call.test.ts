@@ -212,6 +212,7 @@ describe("describeCall — conversation roster", () => {
                 conversation: { provider: makeFakeChatProvider(), model: "test-model" },
                 pool: new Pool(),
                 bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                workspace: { workspaceFs: makeFakeWorkspaceFs(), pool: new Pool(), resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
             },
             inProcessSubAgent,
         );

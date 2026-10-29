@@ -63,6 +63,7 @@
  *       via `inspectRun`)
  */
 
+import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
@@ -260,6 +261,8 @@ export type ExecuteAnalysisDeps = {
     readonly sandboxStepCallable: SandboxStepCallable;
     /** Workspace-root resolution seam — run dir creation + synthesis disk reads. */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    /** The read path of the workspace. The synthesizer reads the files of the run through it. */
+    readonly workspaceFs: WorkspaceFilesystem;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
     /** The lookup tools of the synthesis (`createSynthesisLookupTools`). */
@@ -871,6 +874,7 @@ export function synthesizeFindings(args: {
             provider: deps.provider,
             embedding: deps.embedding,
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
+            workspaceFs: deps.workspaceFs,
             synthesisModel: deps.synthesisModel,
             synthesisLookups: deps.synthesisLookups,
             scriptRuntime: deps.scriptRuntime,

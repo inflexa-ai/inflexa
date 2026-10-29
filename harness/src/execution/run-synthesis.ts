@@ -60,6 +60,9 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
 import { defineTool, readToolResultImages, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { createReadScriptTools } from "../tools/script/file-tools.js";
+import { createReadSurfaceTools, type ReadSurfaceDeps } from "../tools/workspace/read-surface.js";
 import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from "../tools/sandbox/report-blocker.js";
 
 // ── Agent identity / budgets ────────────────────────────────────────
@@ -345,6 +348,8 @@ export type GenerateRunSynthesisInput = {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the synthesizer loop and of its read tool. */
     readonly toolOutputStore?: ToolOutputStore;
+    /** The read-only surface of the workspace. The synthesizer reads a file of the run where a summary is thin. */
+    readonly workspace: SynthesizerWorkspace;
     /** Step summaries from the completed run. Non-empty. */
     readonly summaries: readonly StepSummary[];
     /** Plan analytical narrative for context. */
@@ -359,6 +364,34 @@ export type GenerateRunSynthesisInput = {
     readonly pause?: LoopOptions["pause"];
 };
 
+/** The read-only workspace of the synthesizer: the file tools, the search, the data profile, and the script reads. */
+export type SynthesizerWorkspace = ReadSurfaceDeps & { readonly resolveWorkspaceRoot: ResolveWorkspaceRoot };
+
+/** What the synthesizer agent is built from, for a consumer that runs the agent outside `generateRunSynthesis`. */
+export type SynthesizerAgentInput = Pick<
+    GenerateRunSynthesisInput,
+    "model" | "synthesisLookups" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace"
+>;
+
+/** The synthesizer agent of one run. Its submit tool checks the step ids of the summaries and the PMIDs of its lookups. */
+export function synthesizerAgentOf(input: SynthesizerAgentInput): AgentDefinition {
+    const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
+    const lookedUpPmids = new Set<string>();
+    const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids };
+
+    const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
+    // The lookups run in `run_script`, which gives the PMID record of each nested call to its lookup.
+    return {
+        id: SYNTHESIS_AGENT_ID,
+        systemPrompt: composeSystemPrompt(synthesisAgentPrompt),
+        model: input.model,
+        tools: [...createReadSurfaceTools(input.workspace), buildSubmitTool(innerCtx), buildBlockerTool(), ...readTools],
+        scriptTools: [...input.synthesisLookups.map((tool) => recordingPmids(tool, lookedUpPmids)), ...createReadScriptTools(input.workspace)],
+        scriptRuntime: input.scriptRuntime,
+        maxIterations: SYNTHESIZER_MAX_ITERATIONS,
+    };
+}
+
 export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
 
 /**
@@ -371,26 +404,8 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         throw new Error("Run synthesis: no step summaries to synthesize");
     }
 
-    const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
-    const lookedUpPmids = new Set<string>();
-    const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids };
-
-    const submitTool = buildSubmitTool(innerCtx);
-    const blockerTool = buildBlockerTool();
-    const lookups = input.synthesisLookups.map((tool) => recordingPmids(tool, lookedUpPmids));
-    const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
-    // The lookups run in `run_script`, which gives the PMID record of each nested call to its lookup.
-    const agent: AgentDefinition = {
-        id: SYNTHESIS_AGENT_ID,
-        systemPrompt: composeSystemPrompt(synthesisAgentPrompt),
-        model: input.model,
-        tools: [submitTool, blockerTool, ...readTools],
-        scriptTools: lookups,
-        scriptRuntime: input.scriptRuntime,
-        maxIterations: SYNTHESIZER_MAX_ITERATIONS,
-    };
-
-    const prompt = buildSynthesizerPrompt(input.planNarrative, input.summaries);
+    const agent = synthesizerAgentOf(input);
+    const prompt = synthesizerSeedOf(input.planNarrative, input.summaries);
 
     const signal = input.signal ?? new AbortController().signal;
     const emit: EmitFn = input.emit ?? (() => {});
@@ -595,7 +610,8 @@ export function formatSynthesisEmbeddingText(synthesis: RunSynthesis): string {
 
 // ── Prompt builder ──────────────────────────────────────────────────
 
-function buildSynthesizerPrompt(planNarrative: string, summaries: readonly StepSummary[]): string {
+/** The first message of the synthesizer: the narrative of the plan and the summary of each step. */
+export function synthesizerSeedOf(planNarrative: string, summaries: readonly StepSummary[]): string {
     const summaryBlock = summaries.map((s) => `### ${s.stepId} (${s.agentId})\n\n${s.markdown}`).join("\n\n---\n\n");
 
     return ["## Analytical Narrative", planNarrative, "", "## Step Summaries", summaryBlock].join("\n");
